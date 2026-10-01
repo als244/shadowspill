@@ -2,41 +2,16 @@
 
 from __future__ import annotations
 
-import importlib
-from collections.abc import Callable, Iterator, Mapping, Sequence
+from collections.abc import Iterator, Mapping, Sequence
 from contextlib import contextmanager
 from dataclasses import dataclass, field, replace
 from typing import Any, Protocol, cast
 
 import torch
 import torch.nn as nn
-from mlops.dispatch import deterministic_kernels
 
-from workloads.mlops import (
-    Llama3 as MlopsLlama3,
-)
-from workloads.mlops import (
-    OLMoE as MlopsOLMoE,
-)
-from workloads.mlops import (
-    Qwen35 as MlopsQwen35,
-)
 from workloads.precision import TrainingDtypes
 from workloads.providers import MODEL_DTYPES, ModelImplementation
-from workloads.pytorch import (
-    Llama3 as PyTorchLlama3,
-)
-from workloads.pytorch import (
-    Llama3Config,
-    OLMoEConfig,
-    Qwen35Config,
-)
-from workloads.pytorch import (
-    OLMoE as PyTorchOLMoE,
-)
-from workloads.pytorch import (
-    Qwen35 as PyTorchQwen35,
-)
 
 _DEFAULT_DATA_GEOMETRY: tuple[dict[str, Any], ...] = (
     {
@@ -84,7 +59,12 @@ class NumericalCase:
         Deterministic accumulation is needed for numerical comparisons; it
         remains optional for performance measurements.
         """
-        with deterministic_kernels(deterministic):
+        if self.model_implementation == "mlops":
+            from mlops.dispatch import deterministic_kernels
+
+            with deterministic_kernels(deterministic):
+                yield
+        else:
             yield
 
     @property
@@ -99,8 +79,6 @@ def build_case(
     seed: int = 20_260_811,
     model_config: Mapping[str, Any] | None = None,
     data_geometry: Sequence[Mapping[str, Any]] | None = None,
-    case_factory: str | None = None,
-    case_options: Mapping[str, Any] | None = None,
     model_dtype: str | None = None,
     master_dtype: str | None = None,
     grad_dtype: str | None = None,
@@ -112,45 +90,6 @@ def build_case(
         raise ValueError(f"unknown model implementation {model_implementation!r}")
     if model_dtype is not None and model_dtype not in MODEL_DTYPES:
         raise ValueError(f"model_dtype must be one of {MODEL_DTYPES}")
-    if case_factory is not None and (
-        model_dtype is not None or opt_state_dtype is not None
-    ):
-        raise ValueError("custom factories configure dtypes through case_options")
-    if case_factory is not None:
-        module_name, separator, attribute = case_factory.partition(":")
-        if separator == "" or not module_name or not attribute:
-            raise ValueError("case_factory must use the form 'module:function'")
-        factory = getattr(importlib.import_module(module_name), attribute)
-        if not callable(factory):
-            raise TypeError(
-                f"qualification case factory is not callable: {case_factory}"
-            )
-        case = factory(
-            model_name=family,
-            model_implementation=model_implementation,
-            seed=seed,
-            model_config=dict(model_config or {}),
-            data_geometry=tuple(dict(item) for item in (data_geometry or ())),
-            case_options=dict(case_options or {}),
-        )
-        required = (
-            "family",
-            "model_implementation",
-            "model",
-            "microbatches",
-            "objective",
-            "optimizer",
-            "implementations",
-        )
-        missing = [name for name in required if not hasattr(case, name)]
-        if missing:
-            raise TypeError(
-                f"qualification case factory {case_factory} omitted: "
-                + ", ".join(missing)
-            )
-        return cast(NumericalCase, case)
-    if case_options:
-        raise ValueError("case_options require a custom case_factory")
     dtypes = TrainingDtypes(
         model_dtype or "bfloat16",
         master_dtype or "none",
@@ -158,19 +97,17 @@ def build_case(
         opt_state_dtype or "bfloat16",
     )
     torch.manual_seed(seed)
-    config: Llama3Config | Qwen35Config | OLMoEConfig
-    model_type: Callable[[Any], nn.Module]
-    if family == "llama3":
-        config = replace(Llama3Config.numerical(), max_seq_len=192)
-        model_type = PyTorchLlama3 if model_implementation == "pytorch" else MlopsLlama3
-    elif family == "qwen35":
-        config = replace(Qwen35Config.numerical(), max_seq_len=192)
-        model_type = PyTorchQwen35 if model_implementation == "pytorch" else MlopsQwen35
-    elif family == "olmoe":
-        config = replace(OLMoEConfig.numerical(), max_seq_len=192)
-        model_type = PyTorchOLMoE if model_implementation == "pytorch" else MlopsOLMoE
-    else:
+    from importlib import import_module
+
+    from workloads.pytorch import Llama3Config, OLMoEConfig, Qwen35Config
+
+    library = import_module("workloads." + model_implementation)
+    presets = {"llama3": Llama3Config, "qwen35": Qwen35Config, "olmoe": OLMoEConfig}
+    classes = {"llama3": "Llama3", "qwen35": "Qwen35", "olmoe": "OLMoE"}
+    if family not in presets:
         raise ValueError(f"unknown numerical family {family!r}")
+    config = replace(presets[family].numerical(), max_seq_len=192)
+    model_type = getattr(library, classes[family])
     if model_config:
         try:
             config = replace(config, **dict(model_config))
@@ -240,15 +177,4 @@ def build_case(
     return NumericalCase(family, model_implementation, model, microbatches, dtypes)
 
 
-DEFAULT_DEVICE_BUDGETS = {
-    "llama3": 10 << 30,
-    "qwen35": 10 << 30,
-    "olmoe": 8 << 30,
-}
-
-__all__ = [
-    "DEFAULT_DEVICE_BUDGETS",
-    "ModelImplementation",
-    "NumericalCase",
-    "build_case",
-]
+__all__ = ["ModelImplementation", "NumericalCase", "build_case"]

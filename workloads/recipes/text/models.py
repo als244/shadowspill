@@ -1,10 +1,11 @@
 """Building a model as structure only, and giving it its first values.
 
-A run takes its model on ``meta`` -- shapes and dtypes, no storage and no
-values -- so that each backend can materialize it where it will live: PyTorch
-on the device, ShadowSpill in its pinned pool. Either way every module then
-initializes the storage it owns, in one traversal, so the same seed gives both
-backends the same weights.
+A run can build its model on meta, declaring shapes and dtypes without values.
+The generic trainer's fresh initializer currently materializes ordinary CPU
+storage before the backend imports it. ShadowSpill then copies state into its
+pinned pool; direct pool or streaming initialization is not implied by this helper.
+Callers with tight host-memory limits can initialize once and supply file-backed
+values instead.
 """
 
 from __future__ import annotations

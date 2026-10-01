@@ -9,7 +9,7 @@ from pathlib import Path
 
 import pytest
 
-from training import config
+from shadowspill.training import config
 
 
 def _write(tmp_path: Path, value: object) -> Path:
@@ -85,40 +85,31 @@ def test_a_config_on_mlops_asks_it_for_weight_gradients_at_its_grad_dtype(
 
 
 @pytest.mark.parametrize("master", [None, "@torch:float32"])
-def test_fp16_model_and_optimizer_precision_survive_trainer_config(tmp_path, master):
+def test_fp16_model_and_optimizer_precision_survive_config(tmp_path, master):
     import torch
 
+    from shadowspill.training import Trainer, reset_parameters
+    from shadowspill.training.backends import PyTorch
     from tests.training._synthetic import write_dataset
-    from training.trainer import Trainer
 
     path = _write(
         tmp_path,
         {
-            "run_dir": str(tmp_path / "run"),
             "model": {
-                "@call": "training.models:build_on_meta",
+                "@call": "workloads.recipes.text.models:build_on_meta",
                 "model": "@tests.training._synthetic:TinyModel",
                 "dtype": "bfloat16",
             },
-            "objective": "@training.objectives:model_loss",
+            "objective": "@workloads.recipes.text.objectives:model_loss",
             "optimizer": "@mlops.optim:AdamW",
             "optimizer_args": {},
             "data": {
-                "@call": "training.data:PackedTokens",
+                "@call": "workloads.recipes.text.data:PackedTokens",
                 "directory": str(write_dataset(tmp_path / "tokens")),
             },
-            "backend": {
-                "@call": "training.backends.pytorch:PyTorch",
-                "device": "cpu",
-                "compile": False,
-            },
-            "steps": 1,
-            "max_seq_len": 512,
-            "max_tokens_per_step": 1024,
-            "max_tokens_per_microbatch": 512,
         },
     )
-    trainer = Trainer.from_config(
+    raw = config.load(
         path,
         [
             "model.dtype=float16",
@@ -128,17 +119,19 @@ def test_fp16_model_and_optimizer_precision_survive_trainer_config(tmp_path, mas
             "master_dtype=" + json.dumps(master),
         ],
     )
-    assert all(
-        p.is_meta and p.dtype == torch.float16 for p in trainer.model.parameters()
-    )
-    assert trainer.master_dtype is (None if master is None else torch.float32)
-    assert trainer.grad_dtype == torch.float16
-    assert trainer.optimizer_args["opt_state_dtype"] == torch.float32
-    assert trainer.record["model"]["dtype"] == "float16"
-    trainer.setup()
-    assert {p.dtype for p in trainer.model.parameters()} == {torch.float16}
-    assert {p.dtype for p in trainer.backend.masters.parameters()} == {
-        torch.float16 if master is None else torch.float32
-    }
-    assert trainer.backend.optimizer.param_groups[0]["opt_state_dtype"] == torch.float32
-    trainer.close()
+    values = config.resolve(raw)
+    model, data = values.pop("model"), values.pop("data")
+    assert all(p.is_meta and p.dtype == torch.float16 for p in model.parameters())
+    with (
+        PyTorch(device="cpu", compile=False) as backend,
+        Trainer(model, backend=backend, **values) as trainer,
+    ):
+        trainer.prepare(data.examples(1, 1, 512)[0], initialize=reset_parameters)
+        assert {p.dtype for p in trainer.model.parameters()} == {torch.float16}
+        assert {p.dtype for p in trainer._execution.weights.parameters()} == {
+            torch.float16 if master is None else torch.float32
+        }
+        assert (
+            trainer._execution.optimizer.param_groups[0]["opt_state_dtype"]
+            == torch.float32
+        )

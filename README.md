@@ -19,57 +19,46 @@ verifies the install.
 
 ## Minimal example
 
-Initialize the runtime before model state exists, so its pools and routes are
-ready first. Planning declares what exists: `hyperparams` names what a step
-may change, an optimizer value such as the learning rate or a model buffer.
+The trainer takes an ordinary model, objective and iterable. Enter the backend
+before creating accelerator resources. Initialized CPU models retain their state.
 
 ```python
 import torch
+from torch import nn
 
-from shadowspill.memory import device, pinned_host, transfer_route
-from shadowspill.pytorch import (
-    Runtime,
-    plan_step,
-    import_model_state,
-)
+from shadowspill.training import Trainer
+from shadowspill.training.backends import ShadowSpill
+from shadowspill.training.schedules import Constant
 
-runtime = Runtime(
-    pools={
-        "device": device(physical_capacity=24 << 30),
-        "spill": pinned_host(capacity=64 << 30),
-    },
-    routes={
-        "fetch": transfer_route(source="spill", destination="device"),
-        "evict": transfer_route(source="device", destination="spill"),
-    },
-)
+model = nn.Linear(16, 8)
+data = [(torch.randn(64, 16), torch.randn(64, 8)) for _ in range(5)]
 
-model = import_model_state(model, runtime=runtime, pool="spill")
+def objective(model, batch):
+    inputs, targets = batch
+    return (model(inputs) - targets).square().mean()
 
-train_step = plan_step(
-    model,
-    objective=lambda model, tokens, targets: model(
-        tokens, labels=targets
-    ).loss,
-    optimizer=torch.optim.AdamW,
-    hyperparams=("lr",),
-    example_inputs=[[tokens_example, targets_example]],
-    runtime=runtime,
-    execution="device",
-    spill="spill",
-)
-
-result = train_step([[tokens, targets]], hyperparams={"lr": 3e-4})
-print("loss", result.objectives[0])
-
-train_step.close()
+with ShadowSpill(execution_gib=2, spill_gib=2) as backend:
+    with Trainer(
+        model,
+        objective=objective,
+        optimizer=torch.optim.AdamW,
+        schedules={"lr": Constant(3e-4)},
+        backend=backend,
+    ) as trainer:
+        trainer.prepare(data[0])
+        trainer.fit(data, steps=5, run_dir="runs/example")
 ```
 
-One call performs one optimizer update. The
-[Python quickstart](docs/python/quickstart.md) covers accumulation, checkpoints,
-tracing, forward-only planning, and state lifecycle; the [quickstart
-script](benchmarking/quickstart.md) runs one model end to end, and the
-[examples](docs/examples/README.md) are complete workflows.
+Use `trainer.step(data)` in a custom loop, or `Forward` for inference.
+The [training API](docs/python/api/training.md) covers microbatches, schedules,
+evaluation, checkpointing and alternate PyTorch execution. The lower-level
+[Python quickstart](docs/python/quickstart.md) exposes planning and runtime
+ownership directly. The [benchmark quickstart](benchmarking/quickstart.md)
+accepts a user experiment factory or a supplied text recipe, and the
+[examples](docs/examples/README.md) show complete workflows. The
+[distributed example](docs/examples/generic-training.md#run-a-distributed-example)
+uses ordinary torchrun, explicit device/groups, per-rank startup traces, and
+separate rank plus aggregate W&B runs.
 
 ## Project structure
 
@@ -78,11 +67,11 @@ script](benchmarking/quickstart.md) runs one model end to end, and the
 | `src/shadowspill/` | Installed Python package and PyTorch frontend |
 | `csrc/` | The C library — planner, simulator, runtime — plus backends and the PyTorch adapter |
 | `tests/` | Tests mirroring Python, C, integration, and tooling boundaries |
-| `workloads/` | Model and data clients used by benchmarks and qualification |
+| `workloads/` | Optional models and recipes passed into generic APIs |
 | `benchmarking/` | The quickstart tour, program collection, and planning evaluation |
 | `qualification/` | Release gates: suite, numerical, performance, and remote |
-| `training/` | A generic trainer: real-text runs on PyTorch or ShadowSpill |
-| `src/tools/` | Source-tree diagnostics and acceptance tooling |
+| `training/` | Example text configs, launch scripts and run comparisons |
+| `src/tools/` | Repository naming checks and sanitizer support |
 | `reference/` | Readable reference implementations of the planner |
 | `scripts/` | One-command environment setup |
 | `docs/` | Architecture, Python, C, examples, and development guides |

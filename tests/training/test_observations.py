@@ -5,9 +5,13 @@ import math
 import pytest
 import torch
 
-from training.backends.pytorch import _Masters
-from training.observations import StepObservations, parameter_norms, parameter_scalars
-from training.olmoe_metrics import reduce_metrics
+from shadowspill.training.backends._weights import Weights as _Masters
+from shadowspill.training.observations import (
+    StepObservations,
+    parameter_norms,
+    parameter_scalars,
+)
+from workloads.recipes.text.olmoe_metrics import reduce_metrics
 
 
 def _microbatch(tokens, ce, aux, counts):
@@ -65,15 +69,15 @@ def test_norms_read_compute_weights_and_accumulated_gradients_before_master_upda
 
 def test_derived_norms_use_sizes_and_sum_squared_gradients_through_module_tree():
     observed = {
-        "model.blocks.0.attn.weight": {
+        "blocks.0.attn.weight": {
             "grad_norm": torch.tensor(3.0),
             "param_norm": torch.tensor(6.0),
         },
-        "model.blocks.0.moe.weight": {
+        "blocks.0.moe.weight": {
             "grad_norm": torch.tensor(4.0),
             "param_norm": torch.tensor(8.0),
         },
-        "model.blocks.1.weight": {
+        "blocks.1.weight": {
             "grad_norm": torch.tensor(12.0),
             "param_norm": torch.tensor(0.0),
         },
