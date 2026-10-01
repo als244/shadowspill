@@ -2,12 +2,19 @@
 
 from __future__ import annotations
 
+import hashlib
+import json
 from collections.abc import Callable, Iterable, Sequence
+from dataclasses import replace
+from functools import partial
 from typing import Protocol
 
 from shadowspill.errors import CaptureError, ProfilingError
 from shadowspill.profiling.store import ProfileStore
 from shadowspill.pytorch.capture.artifacts import GraphArtifact
+from shadowspill.pytorch.distributed import current as distributed_preparation
+from shadowspill.pytorch.distributed._profiling import cases as distributed_cases
+from shadowspill.pytorch.distributed._profiling import phase
 from shadowspill.task.profiles import (
     ProfileEnvironment,
     ProfileKey,
@@ -54,6 +61,19 @@ def profile_unique_artifacts(
         allocation_probe_repetitions=allocation_probe_repetitions,
         profiling_options=profiling_options or ProfilingOptions(),
     )
+    if distributed_preparation() is not None:
+        return _profile_distributed(
+            sequence,
+            metadata,
+            keys,
+            position_keys,
+            measure,
+            cache,
+            validate,
+            progress,
+            allocation_probe_seeds,
+            allocation_probe_repetitions,
+        )
     measurements, hits, misses = _measure_unique_keys(
         keys,
         positions,
@@ -73,6 +93,101 @@ def profile_unique_artifacts(
         misses,
         allocation_probe_seeds,
         allocation_probe_repetitions,
+    )
+
+
+def _profile_distributed(
+    sequence: tuple[ProfilableArtifact, ...],
+    metadata: tuple[str | None, ...],
+    local_keys: dict[str, ProfileKey],
+    local_position_keys: tuple[str, ...],
+    measure: Callable[[ProfilableArtifact], TaskMeasurement],
+    cache: ProfileStore,
+    validate: Callable[[ProfilableArtifact, TaskMeasurement], None] | None,
+    progress: Callable[[int, int, str, str], None] | None,
+    seeds: int,
+    repetitions: int,
+) -> ProfilingResult:
+    bound = distributed_preparation()
+    assert bound is not None
+    scheduled = distributed_cases(sequence, local_position_keys, purpose="measurement")
+    # Lowering currently addresses a profile by local contract and declared
+    # metadata. Refuse an ambiguous mapping instead of silently using the last
+    # remote context's cost for every occurrence of the local contract.
+    contexts: dict[str, str] = {}
+    for case in scheduled:
+        local = local_position_keys[case.position]
+        previous = contexts.setdefault(local, case.identity)
+        if previous != case.identity:
+            raise ValueError(
+                "one local task profile has different peer task contexts; "
+                "supply distinct profiling_metadata for those occurrences"
+            )
+    keys: dict[str, ProfileKey] = {}
+    positions: dict[str, list[int]] = {}
+    measurements: dict[str, TaskMeasurement] = {}
+    position_keys = [""] * len(sequence)
+    hits = misses = 0
+    for index, case in enumerate(scheduled, start=1):
+        artifact = sequence[case.position]
+        local_key = local_keys[local_position_keys[case.position]]
+        context = hashlib.sha256(
+            json.dumps([case.identity, bound.control.rank]).encode()
+        ).hexdigest()
+        key = replace(local_key, profiling_metadata_digest=context)
+        keys[key.digest] = key
+        positions[key.digest] = list(case.occurrences)
+        for position in case.occurrences:
+            position_keys[position] = key.digest
+
+        def read(
+            key: ProfileKey = key, artifact: ProfilableArtifact = artifact
+        ) -> tuple[TaskMeasurement | None, bool]:
+            cached = cache.read(key)
+            if cached is not None and validate is not None:
+                try:
+                    validate(artifact, cached)
+                except (CaptureError, ProfilingError):
+                    return None, True
+            return cached, False
+
+        cached, invalid = bound.control.run(f"measurement/{case.identity}/read", read)
+        complete = all(
+            bound.control.exchange(
+                f"measurement/{case.identity}/cached", cached is not None
+            )
+        )
+        if complete:
+            assert cached is not None
+            _report_progress(progress, index, len(scheduled), "cache-hit", key.digest)
+            measurement = cached
+            hits += 1
+        else:
+            _report_progress(progress, index, len(scheduled), "measuring", key.digest)
+            with phase(case.identity):
+                measured = bound.control.run(
+                    f"measurement/{case.identity}/measure",
+                    partial(measure, artifact),
+                )
+            if validate is not None:
+                validate(artifact, measured)
+            # A valid local record remains authoritative. Its rank still runs
+            # every invocation needed by peers with a cache miss.
+            measurement = measured if cached is None else cached
+            if cached is None:
+                cache.write(key, measurement, replace_invalid=invalid)
+            misses += 1
+        measurements[key.digest] = measurement
+    return _build_profiling_result(
+        metadata,
+        keys,
+        positions,
+        tuple(position_keys),
+        measurements,
+        hits,
+        misses,
+        seeds,
+        repetitions,
     )
 
 

@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import os
-from collections.abc import Collection, Iterable, Mapping, Sequence
+from collections.abc import Callable, Collection, Iterable, Mapping, Sequence
 
 import torch
 
@@ -204,6 +204,7 @@ def install_declared_optimizer_state(
     owning_plan: int,
     receives_gradient: Collection[str] | None = None,
     master_sources: Mapping[str, torch.Tensor] | None = None,
+    parameter_initializers: Mapping[str, Callable[[torch.Tensor], None]] | None = None,
 ) -> None:
     """Create the optimizer's declared state in ``pool``, each entry at its start.
 
@@ -256,24 +257,31 @@ def install_declared_optimizer_state(
             f"({described}). Import the optimizer's state before planning to "
             "give it one."
         )
-    created: list[tuple[StateStart, torch.Tensor, torch.Tensor, object]] = []
+    starts = dict(parameter_initializers or {})
+    created: list[tuple[StateStart, torch.Tensor, torch.Tensor, object, str]] = []
     for entry in declared:
         parameter = named[entry.parameter_name]
         entries = optimizer.state.setdefault(parameter, {})
         held = entries.get(entry.entry_name)
         value = torch.empty(entry.shape, dtype=entry.dtype, device="cpu")
         entries[entry.entry_name] = value
-        created.append((entry.start, value, parameter, held))
+        created.append((entry.start, value, parameter, held, entry.parameter_name))
 
     def fill() -> None:
         with torch.no_grad():
-            for _name, master, source in masters:
-                master.copy_(source)
-            for start, value, parameter, held in created:
+            for name, master, source in masters:
+                if name in starts:
+                    starts[name](master)
+                else:
+                    master.copy_(source)
+            for start, value, parameter, held, name in created:
                 if isinstance(start, ConstantStart):
                     value.fill_(start.value)
                 elif isinstance(start, ParameterStart):
-                    value.copy_(parameter)
+                    if name in starts:
+                        starts[name](value)
+                    else:
+                        value.copy_(parameter)
                 elif isinstance(start, ValueStart):
                     value.copy_(start.value)
                 elif isinstance(held, torch.Tensor):

@@ -21,7 +21,7 @@ from shadowspill.pytorch.capture.artifacts import TaskInputProvenance
 from shadowspill.pytorch.profiling.profiler import TaskProfiler, _SavedValues
 from shadowspill.pytorch.state.registry import registry_for
 from shadowspill.runtime import Runtime
-from tools.qualification.profiling import CORRECTNESS_PROFILING
+from qualification.profiling import CORRECTNESS_PROFILING
 
 from ..runtime_test_support import public_test_runtime
 from .test_01_public_training import _require_adapter

@@ -29,6 +29,7 @@ _C_FUNCTION = re.compile(r"\b(shadowspill_[A-Za-z0-9_]+)\s*\(")
 
 _MEMORY_MODULE = ROOT / "src" / "shadowspill" / "memory.py"
 _PYTORCH_MODULE = ROOT / "src" / "shadowspill" / "pytorch" / "__init__.py"
+_TRAINING_MODULE = ROOT / "src" / "shadowspill" / "training" / "__init__.py"
 _PLOTS_MODULE = ROOT / "src" / "shadowspill" / "plots" / "__init__.py"
 _CORE_PYTHON_MODULES = (
     ROOT / "src" / "shadowspill" / "errors.py",
@@ -42,6 +43,7 @@ _PUBLIC_PYTHON_MODULES = (
     *_CORE_PYTHON_MODULES,
     _PYTORCH_MODULE,
     _PLOTS_MODULE,
+    _TRAINING_MODULE,
 )
 
 _PUBLIC_HEADERS = ROOT / "csrc" / "include" / "shadowspill"
@@ -174,6 +176,7 @@ def _python_page_expectations() -> dict[Path, set[str]]:
     expectations = {
         PYTHON_API / "frontend.md": set(_all_exports(_MEMORY_MODULE)),
         PYTHON_API / "artifacts.md": set(),
+        PYTHON_API / "training.md": set(_all_exports(_TRAINING_MODULE)),
         PYTHON_API / "diagnostics.md": set(_all_exports(_PLOTS_MODULE)),
         PYTHON_API / "neutral.md": set(),
     }

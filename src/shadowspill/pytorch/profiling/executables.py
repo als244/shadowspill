@@ -12,6 +12,9 @@ from shadowspill.errors import CompilationError
 from shadowspill.pytorch.capture.artifacts import GraphArtifact
 from shadowspill.pytorch.compilation import compiler as compiler_api
 from shadowspill.pytorch.compilation.compiler import CompiledTask, CompiledTaskSet
+from shadowspill.pytorch.distributed import current as distributed_preparation
+from shadowspill.pytorch.distributed._profiling import all_ready, phase
+from shadowspill.pytorch.distributed._profiling import cases as distributed_cases
 from shadowspill.pytorch.optimizer import OpaqueOptimizerArtifact
 from shadowspill.task.inputs import RepresentativeInputSummary
 from shadowspill.task.manifest import ExecutableTaskManifest
@@ -186,6 +189,8 @@ class ProfileExecutableStore:
     ) -> CompiledTaskSet:
         """Transfer selected callables, warming cache-only entrypoints as needed."""
 
+        if distributed_preparation() is not None:
+            return self._take_distributed(artifacts, warmup=warmup, progress=progress)
         selected = _selected_graph_artifacts(artifacts)
         functions: dict[str, Callable[..., object]] = {}
         manifests: dict[str, ExecutableTaskManifest] = {}
@@ -213,6 +218,45 @@ class ProfileExecutableStore:
             self._warmed.discard(digest)
             functions[digest] = executable.function
             manifests[digest] = executable.manifest
+        return CompiledTaskSet(functions, manifests)
+
+    def _take_distributed(
+        self,
+        artifacts: Sequence[ProfilableArtifact],
+        *,
+        warmup: Callable[[ProfileExecutable, str], None],
+        progress: Callable[[int, int, str, str], None] | None,
+    ) -> CompiledTaskSet:
+        if any(not isinstance(item, GraphArtifact) for item in artifacts):
+            raise TypeError("distributed preparation requires compiled tensor tasks")
+        scheduled = distributed_cases(
+            artifacts,
+            [item.compatibility_digest for item in artifacts],
+            purpose="selected_entrypoints",
+        )
+        functions, manifests = {}, {}
+        for index, case in enumerate(scheduled, start=1):
+            artifact = artifacts[case.position]
+            assert isinstance(artifact, GraphArtifact)
+            digest = artifact.compatibility_digest
+            executable = self.get(artifact)
+            with phase("selected/" + case.identity):
+                ready = all_ready("warmed", digest in self._warmed)
+                if not ready:
+                    if not executable.example_arguments:
+                        executable = self._with_arguments(executable)
+                    try:
+                        warmup(executable, digest)
+                    finally:
+                        executable.occurrence_values.release()
+                    self._warmed.add(digest)
+            functions[digest] = executable.function
+            manifests[digest] = executable.manifest
+            if progress is not None:
+                progress(index, len(scheduled), "warmed", digest)
+        for digest in functions:
+            self._items.pop(digest, None)
+            self._warmed.discard(digest)
         return CompiledTaskSet(functions, manifests)
 
     def discard(self) -> None:

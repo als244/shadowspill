@@ -100,7 +100,8 @@ the microbatch's position, and capture derives both forms for every
 microbatch of an accumulating step; see
 [graph-pair construction](graph-pair-construction.md#accumulating-onto-gradients-that-already-exist).
 
-`plan_step_search()` lowers every `depth x breadth` factor pair of a geometry
+`plan_step_search()` accepts caller-named representative updates and lowers
+every `depth x breadth` factor pair of their microbatch counts
 into its own program over the geometry's one capture and profile set and
 plans each under every budget, so the winner at a budget is a walk of a
 geometry rather than a geometry alone. Which walk wins depends on the budget:
@@ -193,3 +194,19 @@ plan schemas separately from the callable's in-memory report.
 
 Previous: [Fixed-offset placement](fixed-placement.md). Next: [Plan
 identity](plan-identity.md).
+
+[Training composition](training.md) describes the generic runner, optional
+recipes and benchmark factories that supply these planning inputs.
+
+## Coordinated distributed preparation
+
+The PyTorch frontend can bind caller-owned process groups and parameter replicas
+through `Distributed`. A Gloo control group checks combined host budgets before
+Runtime allocation. Capture preserves borrowed group handles; profiling and
+cache decisions align actual collective-bearing calls across participants.
+
+The distributed search evaluates common ordered task choices using each rank's
+own memory facts and the slowest predicted rank duration. Every chosen local
+schedule receives ordinary physical admission. Execution adds no global task
+barriers: transfers and task progress remain local, and communication finishes
+inside each task. See [the distributed API](../python/api/distributed.md).

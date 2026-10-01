@@ -6,7 +6,7 @@ what the search answered in ``report``, the rule one point is answered by in
 wires the three together.
 """
 
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from os import PathLike
 from types import MappingProxyType
 from typing import Any, Literal
@@ -25,8 +25,12 @@ from shadowspill.planner.program_inputs import (
     TransferBandwidths,
 )
 from shadowspill.pytorch.capture.retention import MEMORY_BOUND_FLOPS_PER_BYTE
+from shadowspill.pytorch.distributed import Distributed
+from shadowspill.pytorch.distributed import current as distributed_preparation
+from shadowspill.pytorch.distributed._preparation import prepared
+from shadowspill.pytorch.partition import PartitionSpec
 from shadowspill.pytorch.runtime import Runtime
-from shadowspill.search.geometries import default_orderings, search_geometries
+from shadowspill.search.geometries import default_orderings
 from shadowspill.search.planner import _Planner
 from shadowspill.search.report import (
     StepSearchGeometryBuild,
@@ -45,26 +49,27 @@ __all__ = [
     "StepSearchReport",
     "default_orderings",
     "plan_step_search",
-    "search_geometries",
 ]
 
 
+@prepared
 def plan_step_search(
     model: nn.Module,
     *,
     objective: Any,
     optimizer: Any,
     hyperparams: Sequence[str] = (),
-    example_microbatches: Callable[[int, int], Sequence[Sequence[Any]]],
-    total_sequences_per_step: int,
-    sequence_length: int,
+    candidates: Mapping[str, Sequence[Sequence[Any]]],
     budgets: Sequence[tuple[int, int]],
     runtime: Runtime,
+    distributed: Distributed | None = None,
+    shard_optimizer: bool = True,
     execution: str,
     spill: str,
     transfer_bandwidths: TransferBandwidths | None = None,
-    min_tokens_per_microbatch: int | None = None,
-    max_tokens_per_microbatch: int | None = None,
+    metadata: Mapping[str, Any] | None = None,
+    partition: PartitionSpec = "auto",
+    execution_device: int | str | torch.device | None = None,
     optimizer_ordering: Literal["stage_interleaved", "tail"] = "stage_interleaved",
     orderings: Callable[[int], Sequence[StepDataOrdering]] | None = None,
     search_options: SearchOptions | None = None,
@@ -85,65 +90,25 @@ def plan_step_search(
     keep_resolutions: bool = False,
     profiling_options: ProfilingOptions | None = None,
 ) -> StepSearchReport:
-    """Plan every admitted geometry under every budget; execute nothing.
+    """Search named representative updates across budgets and task orderings.
 
-    ``example_microbatches(sequences, accumulation)`` supplies the example
-    inputs for one geometry — structure is what matters, values are not.
-    ``transfer_bandwidths`` overrides the calibration each step program
-    embeds from the runtime; leave it unset to plan against the measured
-    routes. Either way the report records the calibration each geometry's
-    program embeds, and the override when there was one, so two searches
-    can be compared or one pinned to another's. ``search_options`` reaches
-    every point unchanged, so a value set here is the value searched under.
-    Failures are outcomes, not errors: a geometry-budget point that proves
-    infeasible or exhausts its search budget is reported with that status
-    while the search continues. A geometry whose build exhausts the
-    device -- profiling runs real kernels, so the largest microbatch can --
-    reports every one of its budgets ``infeasible`` with the exhaustion as
-    the point's error, and the search moves to the next geometry; that
-    geometry contributes no build to the report, because it produced no
-    program. ``progress`` is called with a short line at every geometry and
-    point boundary; ``verbose`` additionally forwards each planning call's
-    own phase reporting.
+    ``candidates`` maps a caller-chosen name to the positional input sequences
+    for its microbatches. Each candidate must implement the same full update;
+    neither shapes nor the number of microbatches imply its normalization.
+    The caller's objective and scalar input values define that math.
 
-    ``orderings`` maps a geometry's accumulation count to the
-    :class:`StepDataOrdering` values to try for it; each ordering is lowered
-    into its own program, sharing the geometry's capture and profiles, and
-    planned under every budget. The default, :func:`default_orderings`, is
-    every ``depth x breadth`` factor pair with the flags at their defaults.
+    ``metadata`` is optional JSON-compatible report annotation. It never
+    changes capture or planning. Text recipes can record token geometry here;
+    the planner itself makes no assumption about tokens, sequences or losses.
 
-    ``search_options`` names the resolutions every point is searched
-    over, with the meaning it has for :func:`plan_step`; ``None`` is the
-    library's default of every quarter. Options that are not valid are
-    rejected before any geometry is built. ``master_dtype``, ``grad_dtype``,
-    ``parameter_metrics``, ``round_accumulation_once`` and
-    ``memory_bound_flops_per_byte`` have
-    their :func:`plan_step` meanings too: every geometry is built with the
-    masters and the gradients the step it plans will keep, accumulated as it
-    will accumulate them, its ``save`` variants retaining what that step's
-    will retain.
+    Each candidate is captured/profiled once, then lowered under the requested
+    orderings and searched at every budget. Capture device exhaustion and
+    infeasible searches are retained as outcomes. Other capture errors surface
+    immediately. ``incumbents`` carries an earlier budget's best plan forward.
+    The report retains winner plans for admission through ``plan_step``.
 
-    ``incumbents`` hands each point the best plan found at a smaller budget
-    of the same program, as the plan to beat: budgets are planned ascending,
-    a plan that fits in less memory fits in more, and the search answers
-    with it unless it does strictly better, so no program plans worse with
-    more memory. A point that answered with a handed-in plan records the
-    budget it came from as ``incumbent_budget_bytes``. ``False`` searches
-    every point alone, which is how the two are compared.
-
-    ``plan_store`` keeps every point's plan records apart from the
-    artifact store, so a search can reuse another run's captures, profiles
-    and lowering and still plan every point itself; ``None`` keeps them in
-    the store, where a matching plan would be read back instead of planned.
-
-    On a warm store a point is answered from the summary kept beside its
-    plan -- makespan, ``PlanSummary`` and graph-pair outcomes -- without
-    reading the plan. Whole plans are read only for each budget's winner,
-    which is what ``winner_plans`` hands the run phase, and for a plan to
-    beat the moment a later point has to beat it. A point whose plan in hand
-    claims to beat the stored answer is searched, as the store itself would
-    search it, and ``plan_store_mode`` ``require`` refuses a point the store
-    cannot answer either way.
+    Other arguments have their ``plan_step`` meanings. ``progress`` receives
+    candidate/point boundaries and ``verbose`` enables full phase reporting.
     """
 
     def announce(message: str) -> None:
@@ -152,18 +117,34 @@ def plan_step_search(
 
     if not budgets:
         raise ValueError("at least one (execution, spill) budget is required")
-    geometries, skipped = search_geometries(
-        total_sequences_per_step,
-        sequence_length=sequence_length,
-        min_tokens_per_microbatch=min_tokens_per_microbatch,
-        max_tokens_per_microbatch=max_tokens_per_microbatch,
-    )
+    if not candidates:
+        raise ValueError("at least one named microbatch candidate is required")
+    if any(
+        not isinstance(name, str) or not name or not inputs
+        for name, inputs in candidates.items()
+    ):
+        raise ValueError("each candidate needs a nonempty name and microbatch inputs")
+    geometries = tuple((name, len(inputs)) for name, inputs in candidates.items())
     orderings_for = default_orderings if orderings is None else orderings
     per_geometry = [
         tuple(orderings_for(accumulation)) for _sequences, accumulation in geometries
     ]
+    planner = _Planner
+    prepared = distributed_preparation()
+    if prepared is not None:
+        from shadowspill.pytorch.distributed._search import DistributedPlanner
+
+        planner = DistributedPlanner
+        prepared.control.agree(
+            "sweep/candidates",
+            [
+                [name, count, [item.label for item in walks]]
+                for (name, count), walks in zip(geometries, per_geometry, strict=True)
+            ],
+        )
+        prepared.control.agree("sweep/budget_count", len(budgets))
     sweep = _Sweep(
-        ask=_Planner(
+        ask=planner(
             transfer_bandwidths,
             search_options,
             artifact_store,
@@ -186,7 +167,9 @@ def plan_step_search(
             objective=objective,
             optimizer=optimizer,
             hyperparams=hyperparams,
-            example_microbatches=example_microbatches,
+            candidates=candidates,
+            partition=partition,
+            execution_device=execution_device,
             runtime=runtime,
             execution=execution,
             spill=spill,
@@ -204,12 +187,10 @@ def plan_step_search(
         ),
     )
     return StepSearchReport(
-        total_sequences_per_step=total_sequences_per_step,
-        sequence_length=sequence_length,
+        metadata=dict(metadata or {}),
         budgets=tuple(budgets),
         geometries=tuple(sweep.builds),
         points=tuple(sweep.points),
-        skipped=skipped,
         search_options=search_options,
         transfer_bandwidths=transfer_bandwidths,
         winner_plans=MappingProxyType(sweep.winner_plans()),

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import TYPE_CHECKING
 
 from shadowspill.ir import (
     AliasGroupSpec,
@@ -19,6 +20,9 @@ from shadowspill.step import StepDataOrdering
 from ...search import SearchOptions
 from .diagnostics import PlanDiagnostics
 from .summary import PlanSummary, summarize_selected_plan
+
+if TYPE_CHECKING:
+    from shadowspill.planner.admission.layout import FixedPhysicalLayout
 
 
 @dataclass(frozen=True, slots=True)
@@ -65,6 +69,8 @@ class PlanReport:
     aot_graph_pair_cache_hits: int = 0
     aot_graph_pair_cache_misses: int = 0
     search_results: tuple[ProgramPlanResult, ...] = ()
+    #: Exact final layout, including restored distributed program identities.
+    physical_layout: FixedPhysicalLayout | None = None
 
     @property
     def program(self) -> ShadowSpillProgram:

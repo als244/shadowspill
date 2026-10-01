@@ -29,7 +29,7 @@ from shadowspill.runtime.abi import (
     runtime_library,
 )
 from tests.spill_pool import spill_pool
-from tools.qualification.profiling import CORRECTNESS_PROFILING
+from qualification.profiling import CORRECTNESS_PROFILING
 
 
 class _Model(nn.Module):

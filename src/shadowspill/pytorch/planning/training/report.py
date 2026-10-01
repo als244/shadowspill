@@ -3,6 +3,7 @@ misses, the layouts, published beside the plan."""
 
 from __future__ import annotations
 
+from dataclasses import replace
 from typing import Literal
 
 import torch.nn as nn
@@ -93,6 +94,7 @@ def training_plan_report(
         memory=memory,
         memory_bound_flops_per_byte=captured.retention.memory_bound_flops_per_byte,
     )
+    report = replace(report, physical_layout=admitted.admission.fixed_layout)
     return publish_plan_report(
         model,
         report,

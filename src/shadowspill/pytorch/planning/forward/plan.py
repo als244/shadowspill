@@ -22,6 +22,7 @@ from shadowspill.planner import (
 )
 from shadowspill.planner.plan_store import resolve_plan
 from shadowspill.planner.search import SearchOptions
+from shadowspill.pytorch.distributed import current as distributed_preparation
 from shadowspill.pytorch.planning.admission import (
     FixedLayoutInfeasibleError,
     FixedLayoutSelection,
@@ -37,6 +38,29 @@ from ..stores import PlanningStores
 
 
 def plan_forward_program(
+    program: ForwardProgramArtifacts,
+    *,
+    search_options: SearchOptions | None,
+    stores: PlanningStores,
+    timer: PlanningTimer,
+) -> FixedLayoutSelection:
+    bound = distributed_preparation()
+
+    def plan() -> FixedLayoutSelection:
+        return _plan_local_forward_program(
+            program, search_options=search_options, stores=stores, timer=timer
+        )
+
+    if bound is None:
+        return plan()
+    bound.control.agree(
+        "forward/task_sequence",
+        [[task.task_id, task.phase] for task in program.lowered.program.tasks],
+    )
+    return bound.control.run("forward/physical_admission", plan)
+
+
+def _plan_local_forward_program(
     program: ForwardProgramArtifacts,
     *,
     search_options: SearchOptions | None,

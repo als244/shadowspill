@@ -6,7 +6,7 @@ import os
 import time
 from collections import OrderedDict
 from collections.abc import Callable, Mapping, Sequence
-from typing import Any
+from typing import Any, Literal
 
 import torch
 import torch.nn as nn
@@ -116,27 +116,30 @@ def _apply_hyperparams(
                 for tensor in in_groups:
                     tensor.fill_(value)
             continue
-        held = [
-            item
-            for group in groups
-            if isinstance(group.get(name), tuple | list)
-            for item in group[name]
-            if isinstance(item, torch.Tensor)
+        tuples = [
+            group[name] for group in groups if isinstance(group.get(name), tuple | list)
         ]
-        if held:
-            # An entry holding several values, as betas does: one number
-            # sets them all, a sequence sets them in order.
-            if isinstance(value, int | float):
-                values = [float(value)] * len(held)
-            else:
-                values = [float(item) for item in value]
-            if len(values) != len(held):
-                raise ValueError(
-                    f"{name!r} holds {len(held)} values, so it needs that "
-                    f"many, not {len(values)}"
+        if tuples:
+            writes: list[tuple[torch.Tensor, Any]] = []
+            for held in tuples:
+                if not all(isinstance(item, torch.Tensor) for item in held):
+                    raise TypeError(
+                        f"{name!r} contains captured constants; declare the key "
+                        "in plan_step(..., hyperparams=...) before changing it"
+                    )
+                values = (
+                    [float(value)] * len(held)
+                    if isinstance(value, int | float)
+                    else [float(item) for item in value]
                 )
+                if len(values) != len(held):
+                    raise ValueError(
+                        f"{name!r} holds {len(held)} values per group, so it "
+                        f"needs that many, not {len(values)}"
+                    )
+                writes.extend(zip(held, values, strict=True))
             with torch.no_grad():
-                for tensor, item in zip(held, values, strict=True):
+                for tensor, item in writes:
                     tensor.fill_(item)
             continue
         if any(name in group for group in groups):
@@ -506,6 +509,13 @@ class PlannedTrainStep:
         runtime: Runtime,
         plan_handle: int,
     ) -> None:
+        from .distributed import current
+
+        prepared = current()
+        self._distributed = prepared
+        self._distributed_layout = (
+            None if prepared is None else prepared.checkpoint_layout()
+        )
         self._model = model
         self._signatures = signatures
         self._executor = executor
@@ -705,7 +715,9 @@ class PlannedTrainStep:
 
         return self._executor.timing.prior_invocation_drain_seconds
 
-    def state_dict(self) -> dict[str, object]:
+    def state_dict(
+        self, *, weights: Literal["master", "compute"] = "master"
+    ) -> dict[str, object]:
         """Synchronously return CPU ``model``, ``optimizer``, and ``step`` state.
 
         The plan owns the storage holding optimizer state, so the complete
@@ -714,15 +726,16 @@ class PlannedTrainStep:
 
         self._require_open("read a checkpoint from")
         optimizer, masters = self._executor.optimizer_state.state_dict()
-        return {
-            "model": _with_masters(
-                self._state.state_dict(), masters, self._state.model
-            ),
-            "optimizer": optimizer,
-            "step": self._step,
-        }
+        return self._checkpoint_payload(
+            self._state.state_dict(), optimizer, masters, weights=weights
+        )
 
-    def save(self, path: str | os.PathLike[str]) -> None:
+    def save(
+        self,
+        path: str | os.PathLike[str],
+        *,
+        weights: Literal["master", "compute"] = "master",
+    ) -> None:
         """Write the checkpoint :meth:`state_dict` returns to ``path``, from the pool.
 
         The state is written from where it is in the spill pool rather than
@@ -731,7 +744,8 @@ class PlannedTrainStep:
         model is otherwise the largest transient a checkpoint asks for. The
         state stays where it is, and the callable goes on training. Resume
         with ``load_state_dict(torch.load(path, mmap=True))``. A weight with a
-        master copy is written once, as its master.
+        master copy is written once, as its master by default. With
+        ``weights="compute"``, save compute values and upcast them on restore.
         """
 
         self._require_open("save a checkpoint from")
@@ -740,23 +754,55 @@ class PlannedTrainStep:
             masters,
         ):
             torch.save(
-                {
-                    "model": _with_masters(
-                        self._state.state_dict(in_place=True),
-                        masters,
-                        self._state.model,
-                    ),
-                    "optimizer": optimizer,
-                    "step": self._step,
-                },
+                self._checkpoint_payload(
+                    self._state.state_dict(in_place=True),
+                    optimizer,
+                    masters,
+                    weights=weights,
+                ),
                 path,
             )
+
+    def _checkpoint_payload(
+        self,
+        model: Mapping[str, torch.Tensor],
+        optimizer: Mapping[str, object],
+        masters: Mapping[str, torch.Tensor],
+        *,
+        weights: Literal["master", "compute"] = "master",
+    ) -> dict[str, object]:
+        if weights not in {"master", "compute"}:
+            raise ValueError("weights must be 'master' or 'compute'")
+        if weights == "compute":
+            masters = {}
+        if self._distributed_layout is not None:
+            names = _weight_names(self._state.model)
+            omitted = {alias for name in masters for alias in names[name]}
+            return {
+                "model": {
+                    name: value for name, value in model.items() if name not in omitted
+                },
+                "optimizer": optimizer,
+                "masters": masters,
+                "distributed": self._distributed_layout,
+                "step": self._step,
+            }
+        return {
+            "model": _with_masters(model, masters, self._state.model),
+            "optimizer": optimizer,
+            "step": self._step,
+        }
 
     def load_state_dict(self, checkpoint: Mapping[str, object]) -> None:
         """Restore a checkpoint :meth:`state_dict` or :meth:`save` produced."""
 
         self._require_open("restore a checkpoint into")
-        if set(checkpoint) != {"model", "optimizer", "step"}:
+        expected_keys = {"model", "optimizer", "step"}
+        if self._distributed_layout is not None:
+            expected_keys |= {"masters", "distributed"}
+            if checkpoint.get("distributed") != self._distributed_layout:
+                raise ValueError("checkpoint distributed ownership differs")
+        if set(checkpoint) != expected_keys:
             raise RuntimeError("training state_dict keys differ")
         model_state = checkpoint["model"]
         optimizer_state = checkpoint["optimizer"]
@@ -769,11 +815,43 @@ class PlannedTrainStep:
             raise TypeError("training checkpoint step must be non-negative")
         # A master is where its weights were written; the weights are its cast.
         state = self._executor.optimizer_state
-        masters = {
-            name: model_state[name]
-            for name in state.master_names
-            if name in model_state
-        }
+        masters = (
+            checkpoint["masters"]
+            if self._distributed_layout is not None
+            else {
+                name: model_state[name]
+                for name in state.master_names
+                if name in model_state
+            }
+        )
+        if not isinstance(masters, Mapping) or set(masters) - set(state.master_names):
+            raise ValueError("checkpoint master parameter inventory differs")
+        if self._distributed is not None:
+            from .distributed._checkpoint import (
+                master_aliases,
+                masters_from_compute,
+                restore_compute_weights,
+            )
+
+            expected = set(self._state.model.state_dict())
+            omitted = master_aliases(checkpoint, self._distributed)
+            if set(model_state) != expected - omitted:
+                raise ValueError(
+                    "checkpoint model entries differ from non-mastered state"
+                )
+            weights = self._state.state_dict(in_place=True)
+            restore_compute_weights(weights, masters, self._distributed)
+            model_state = {**weights, **model_state}
+            masters = {
+                **masters_from_compute(
+                    model_state,
+                    set(state.master_names) - set(masters),
+                    self._distributed,
+                ),
+                **masters,
+            }
+        if set(masters) != set(state.master_names):
+            raise ValueError("checkpoint master parameter inventory differs")
         self._state.load_model_state(
             _as_weights(model_state, masters, self._state.model)
         )

@@ -531,6 +531,28 @@ def persistent_state(runtime: Runtime, target: object) -> PersistentState | None
     return registry_for(runtime).get(target)
 
 
+def refresh_persistent_state(runtime: Runtime, target: object) -> None:
+    """Publish setup changes made through host views of non-addressable state."""
+    state = persistent_state(runtime, target)
+    if state is not None:
+        for item in state.storages:
+            _refresh_storage(runtime, item)
+
+
+def _refresh_storage(runtime: Runtime, item: PersistentStorage) -> None:
+    if item.frontend_storage_is_separate:
+        _require_status(
+            runtime_library().shadowspill_write_object(
+                runtime._runtime_handle,
+                item.current_object_id,
+                item.pool_id,
+                int(item.anchor.untyped_storage().data_ptr()),
+                item.size_bytes,
+            ),
+            f"refresh persistent object {item.current_object_id}",
+        )
+
+
 def adopt_persistent_tensor(
     runtime: Runtime,
     target: object,
@@ -546,17 +568,7 @@ def adopt_persistent_tensor(
     item = state.by_storage_identity().get(int(tensor.untyped_storage()._cdata))
     if item is None:
         return None
-    if item.frontend_storage_is_separate:
-        _require_status(
-            runtime_library().shadowspill_write_object(
-                runtime._runtime_handle,
-                item.current_object_id,
-                item.pool_id,
-                int(item.anchor.untyped_storage().data_ptr()),
-                item.size_bytes,
-            ),
-            f"refresh persistent object {item.current_object_id}",
-        )
+    _refresh_storage(runtime, item)
     item.current_object_id = bridge.objects.adopt_persistent_object(
         alias_id,
         current_object_id=item.current_object_id,

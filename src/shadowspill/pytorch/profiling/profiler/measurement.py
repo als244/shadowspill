@@ -13,6 +13,7 @@ from shadowspill.profiling.timing import (
     collect_timing_samples,
     condition_task,
 )
+from shadowspill.pytorch.distributed._profiling import all_ready, continue_timing, phase
 from shadowspill.runtime.telemetry import (
     AllocationTelemetryError,
     TaskWorkspaceProfile,
@@ -119,9 +120,13 @@ def measure_task(
                     stabilization_iterations=profiler.options.stabilization_iterations,
                 )
         with timed(phases, "task_conditioning"):
-            conditioning = condition_task(sample, options=profiler.options)
+            conditioning = condition_task(
+                sample, options=profiler.options, continue_while=continue_timing
+            )
         with timed(phases, "timing_samples"):
-            timing = collect_timing_samples(sample, options=profiler.options)
+            timing = collect_timing_samples(
+                sample, options=profiler.options, continue_while=continue_timing
+            )
         boundary.require_idle(problem="timing measurement")
         audited = time.perf_counter_ns()
         observation = audit_workspace_retention(
@@ -174,7 +179,7 @@ def warm_persistent_allocations(
     for iteration in range(warmups + stabilization_iterations):
         invoke()
         current = requested_allocated_bytes()
-        if iteration + 1 >= warmups and current == previous:
+        if all_ready("warmup/stable", iteration + 1 >= warmups and current == previous):
             return
         previous = current
     raise AllocationTelemetryError(
@@ -188,7 +193,8 @@ def timed(phases: list[tuple[str, int]], name: str) -> Iterator[None]:
 
     started = time.perf_counter_ns()
     try:
-        yield
+        with phase(name):
+            yield
     finally:
         phases.append((name, time.perf_counter_ns() - started))
 

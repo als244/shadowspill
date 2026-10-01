@@ -12,6 +12,8 @@ from typing import Any
 
 import torch
 
+from shadowspill.errors import ObjectiveError
+
 
 def contiguous_stride(shape: tuple[int, ...]) -> tuple[int, ...]:
     """The stride PyTorch gives a contiguous tensor of this shape.
@@ -81,3 +83,31 @@ class ObjectiveResult:
 
     loss: torch.Tensor
     metrics: Any = None
+
+
+def normalize_objective_result(
+    value: torch.Tensor | ObjectiveResult | tuple[torch.Tensor, Any],
+    *,
+    require_grad: bool,
+) -> tuple[torch.Tensor, Any]:
+    """Validate the scalar differentiable objective contract."""
+
+    if isinstance(value, ObjectiveResult):
+        loss, metrics = value.loss, value.metrics
+    elif isinstance(value, tuple) and len(value) == 2:
+        loss, metrics = value
+    else:
+        loss, metrics = value, None
+    if not isinstance(loss, torch.Tensor):
+        raise ObjectiveError(
+            "objective must return a tensor, (loss, metrics), or ObjectiveResult"
+        )
+    if loss.numel() != 1:
+        raise ObjectiveError(
+            f"objective loss must be scalar, got shape {tuple(loss.shape)}"
+        )
+    if not (loss.is_floating_point() or loss.is_complex()):
+        raise ObjectiveError("objective loss must be floating point or complex")
+    if require_grad and not loss.requires_grad:
+        raise ObjectiveError("objective loss must require gradients")
+    return loss, metrics

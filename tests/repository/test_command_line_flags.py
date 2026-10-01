@@ -14,6 +14,9 @@ broke three entry points while the whole suite stayed green.
 from __future__ import annotations
 
 import ast
+import os
+import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -96,7 +99,18 @@ def _readers(path: Path) -> list[Path]:
     a flag nothing reads, which is what this checks.
     """
 
-    if path.name not in ("__init__.py", "__main__.py"):
+    # This CLI composes a generic package and an optional text recipe. Follow
+    # both explicit consumers when its parser is in a dedicated options module.
+    if path == ROOT / "benchmarking/quickstart/options.py":
+        return [
+            *sorted(path.parent.glob("*.py")),
+            ROOT / "workloads/recipes/text/quickstart.py",
+        ]
+    package_commands = {
+        ROOT / "qualification/numerical/run.py",
+        ROOT / "qualification/performance/run.py",
+    }
+    if path.name not in ("__init__.py", "__main__.py") and path not in package_commands:
         return [path]
     return sorted(item for item in path.parent.glob("*.py"))
 
@@ -183,3 +197,25 @@ def test_no_caller_passes_a_keyword_a_public_entry_point_does_not_accept() -> No
     assert not offences, "calls passing an argument that does not exist:\n" + "\n".join(
         offences
     )
+
+
+@pytest.mark.parametrize(
+    "module",
+    (
+        "qualification.gates",
+        "qualification.numerical.matrix",
+        "qualification.performance.matrix",
+    ),
+)
+def test_qualification_entrypoints_start_without_a_device(module: str) -> None:
+    """Import the actual CLI package, including wrappers around moved tooling."""
+    result = subprocess.run(
+        [sys.executable, "-m", module, "--help"],
+        cwd=ROOT,
+        env={**os.environ, "CUDA_VISIBLE_DEVICES": ""},
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "usage:" in result.stdout

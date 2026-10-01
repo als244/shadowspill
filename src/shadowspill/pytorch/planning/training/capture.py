@@ -118,7 +118,9 @@ def capture_training_graphs(
             round_accumulation_once=round_accumulation_once,
         )
         with timer.measure("storage_layout_lowering"):
-            layout = lower_training_storage_layout(fake_model, captures)
+            layout = lower_training_storage_layout(
+                fake_model, captures, device_ordinal=device_ordinal
+            )
     return TrainingCaptureArtifacts(
         signatures,
         cpu_inputs,

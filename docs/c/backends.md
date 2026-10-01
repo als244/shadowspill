@@ -177,3 +177,11 @@ builds every provider whose toolchain is installed, or the ones named in
 tree holds one accelerator backend and the accelerator-free mock backend
 (`mock/`), which the C canaries and sanitizer tests use, and whose extra test
 hooks live in `<shadowspill/backend_mock.h>`.
+
+### Host NUMA locality
+
+An optional `host_numa_node(state, &node)` entry returns the OS host-memory node
+nearest the selected device: zero plus a nonnegative node ID means known;
+nonzero means unavailable. A null entry means host locality is inapplicable,
+as with a simulated backend. The runtime implements host placement policy.
+The device query must respect the backend's logical device selection.

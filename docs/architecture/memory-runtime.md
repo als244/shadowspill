@@ -273,3 +273,19 @@ whole-process memory overruns; `True` rejects them. Pool bounds and actual
 device allocation failures remain enforced in both modes. Admission records
 retain both `external_headroom_bytes` and `reject_overbudget` so a report can
 distinguish a sizing budget from an enforced whole-process limit.
+
+## Host locality at initialization
+
+The backend exposes an optional `host_numa_node` query for its selected device.
+The neutral runtime owns Linux CPU-affinity and memory-policy handling in
+`csrc/src/runtime/numa.c`; framework adapters only forward configuration.
+Initialization narrows existing thread masks within their current restrictions,
+sets a preferred-memory policy on the calling thread, and applies an explicit
+preferred policy to each pinned-host pool mapping before registration. A
+one-time residency audit warns on remote-page fallback or unverifiable placement.
+The worker and subsequently created threads inherit their creator's placement.
+
+This is automatic by default and disabled by `numa_binding=False` in Python
+(`disable_numa_binding=1` in the runtime configuration). Unknown topology and OS
+restrictions warn without preventing startup. Existing pages are not migrated.
+These are process-lifetime placement changes, not task scheduling operations.

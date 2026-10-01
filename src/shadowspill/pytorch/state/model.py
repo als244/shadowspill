@@ -8,6 +8,8 @@ from typing import cast
 import torch
 import torch.nn as nn
 
+from shadowspill.pytorch.distributed import Distributed
+from shadowspill.pytorch.distributed._preparation import prepared_model_import
 from shadowspill.runtime import (
     MemoryPool,
     Runtime,
@@ -29,18 +31,22 @@ from .storage import (
 )
 
 
+@prepared_model_import
 def import_model_state[ModelT: nn.Module](
     model: ModelT,
     *,
     runtime: Runtime,
     pool: str,
     release_source: bool = True,
+    distributed: Distributed | None = None,
 ) -> ModelT:
     """Return a model copy whose registered state resides in ``pool``.
 
     The returned module has distinct Python module and tensor identities while
     preserving topology, ties, views, values, and metadata. Its registered
-    tensors point directly into runtime-owned pool leases.
+    tensors point directly into runtime-owned pool leases. Distributed replica
+    initialization writes into this imported state, never the source model.
+    In particular, mapped checkpoint pages remain shared and file-backed.
 
     The default ``release_source=True`` means neither the returned model nor
     ShadowSpill retains the input model. Assign the return value back to the

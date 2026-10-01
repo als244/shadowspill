@@ -393,6 +393,11 @@ def publish_plan_report(
             "allocation_probe_repetitions": report.allocation_probe_repetitions,
             "memory_bound_flops_per_byte": report.memory_bound_flops_per_byte,
             "execution_device": report.execution_device,
+            "physical_layout": (
+                None
+                if report.physical_layout is None
+                else report.physical_layout.to_dict()
+            ),
             "export_bypass_key": cache.export_bypass_key,
             "phase_timings_ns": [list(item) for item in report.phase_timings_ns],
             "artifacts": [item.as_dict() for item in artifacts_before_plan],

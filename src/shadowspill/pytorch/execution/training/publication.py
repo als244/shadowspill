@@ -393,9 +393,12 @@ def _dematerialization_tensors(
     newly_produced = {item.alias_id: item.tensor for item in adopted}
     pending: list[torch.Tensor] = []
     for alias_id in record.dematerialize_aliases:
-        tensor = newly_produced.get(alias_id)
+        # Replacement publication first rebinds the retained frontend view.
+        # Clear that stable storage handle when its lease ends, as forward-only
+        # execution does; the temporary output is discarded after publication.
+        tensor = executor._state.object_store.get(alias_id)
         if tensor is None:
-            tensor = executor._state.object_store.get(alias_id)
+            tensor = newly_produced.get(alias_id)
         if tensor is None:
             raise RuntimeError(f"action references unbound object {alias_id!r}")
         pending.append(tensor)

@@ -13,6 +13,8 @@ from torch.utils._pytree import tree_flatten
 
 from shadowspill.errors import CaptureError
 from shadowspill.pytorch.accelerator import DEVICE_TYPE
+from shadowspill.pytorch.distributed import current as distributed_preparation
+from shadowspill.pytorch.distributed._profiling import invocation
 from shadowspill.runtime.abi import (
     PROFILING_SCOPE_BASE,
     AdapterStatistics,
@@ -69,6 +71,14 @@ class AllocatorBoundary:
 
     @contextmanager
     def scope(self, stream: torch.cuda.Stream) -> Iterator[int]:
+        with invocation():
+            with self._local_scope(stream) as scope_id:
+                yield scope_id
+            if distributed_preparation() is not None:
+                self.drain(stream, problem="distributed profiling boundary")
+
+    @contextmanager
+    def _local_scope(self, stream: torch.cuda.Stream) -> Iterator[int]:
         """Open one allocation scope around the body; abort it if the body raises."""
 
         scope_id = next(profiling_scope_ids)

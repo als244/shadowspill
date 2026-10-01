@@ -84,7 +84,9 @@ def build_forward_program(
             public_output_locations=_shared_output_locations(captured, memory),
             shared_residency_by_root=_shared_input_residency(captured, memory),
         )
-        reserve = workspace_reserve(profiled.profiles.measurements)
+        reserve = workspace_reserve(
+            profiled.profiles.measurements, shared_slab=memory.slab_owner is not None
+        )
         simulation_config = build_simulation_config(
             memory,
             reserve,

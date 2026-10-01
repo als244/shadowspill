@@ -357,7 +357,7 @@ typedef struct ShadowSpillPoolMemoryTable {
 
 int shadowspill_pool_memory_table_initialize(
     ShadowSpillPoolMemoryTable *table,
-    const ShadowSpillBackend *backend,
+    ShadowSpillRuntime *runtime,
     const ShadowSpillPoolMemoryDescription *registered,
     uint32_t registered_count
 );
@@ -369,7 +369,7 @@ const ShadowSpillPoolMemoryDescription *shadowspill_pool_memory_for_kind(
 );
 
 void shadowspill_builtin_pool_memory_describe(
-    const ShadowSpillBackend *backend,
+    ShadowSpillRuntime *runtime,
     ShadowSpillPoolMemoryDescription descriptions[2]
 );
 

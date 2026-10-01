@@ -830,6 +830,71 @@ def accumulate_gradient_outputs(
     )
 
 
+def _dense_gradient_layout(value: torch.Tensor) -> bool:
+    """Static geometry check, including transposed dense tensors."""
+    if value.numel() == 0:
+        return True
+    expected = 1
+    for stride, extent in sorted(zip(value.stride(), value.shape, strict=True)):
+        if extent == 1:
+            continue
+        if stride != expected:
+            return False
+        expected *= extent
+    return True
+
+
+def materialize_gradient_outputs(
+    backward: GraphArtifact, leaf_indices: Sequence[int]
+) -> GraphArtifact:
+    """Give overlapping/broadcast parameter gradients dense writable storage.
+
+    Autograd may return a scalar expanded across a weight. The optimizer and
+    later accumulation consume a full gradient tensor. Materialize that layout
+    inside the backward task, before its allocation profile is measured.
+    Ordinary dense and transposed-dense gradients need no extra operation.
+    """
+    output = next(
+        node for node in backward.graph_module.graph.nodes if node.op == "output"
+    )
+    leaves = list(output.args[0])
+    needed = [
+        index
+        for index in leaf_indices
+        if not _dense_gradient_layout(leaves[index].meta["val"])
+    ]
+    if not needed:
+        return backward
+    graph_module = copy_graph_module(backward.graph_module)
+    graph = graph_module.graph
+    output = next(node for node in graph.nodes if node.op == "output")
+    leaves = list(output.args[0])
+    mode = detect_fake_mode(backward.example_arguments)
+    for index in needed:
+        produced = leaves[index]
+        with graph.inserting_before(output):
+            node = graph.call_function(
+                torch.ops.aten.clone.default,
+                args=(produced,),
+                kwargs={"memory_format": torch.contiguous_format},
+            )
+        node.meta = dict(produced.meta)
+        with mode if mode is not None else nullcontext():
+            _record_value(
+                node, produced.meta["val"].clone(memory_format=torch.contiguous_format)
+            )
+        leaves[index] = node
+    output.args = (tuple(leaves),)
+    graph.lint()
+    graph_module.recompile()
+    return GraphArtifact.capture(
+        kind="backward",
+        graph_module=graph_module,
+        example_inputs=backward.example_arguments,
+        input_provenance=backward.input_provenance,
+    )
+
+
 def cast_gradient_outputs(
     backward: GraphArtifact,
     leaf_indices: Sequence[int],
@@ -873,7 +938,9 @@ def cast_gradient_outputs(
         if unconverted is not None:
             outputs[leaf] = unconverted
             continue
-        if _write_at_dtype(graph, produced, outputs, dtype, fake_mode):
+        written = _write_at_dtype(graph, produced, outputs, dtype, fake_mode)
+        if written is not None:
+            outputs[leaf] = written
             continue
         with graph.inserting_before(output_node):
             cast = graph.call_function(
@@ -985,21 +1052,21 @@ def _write_at_dtype(
     outputs: Sequence[object],
     dtype: torch.dtype,
     fake_mode: Any,
-) -> bool:
+) -> torch.fx.Node | None:
     """Have the matrix multiply that computes ``produced`` write it at ``dtype``.
 
     It does when ``produced`` is a multiply's result, moved at most, that
     nothing else reads, and PyTorch has a kernel that writes that multiply at
     ``dtype`` from these operands on their device -- which dtypes it accepts
     is the operator's own check. Every node from the multiply to the output
-    then carries ``dtype``. Returns whether it did.
+    then carries ``dtype``. Returns the replacement output, or ``None``.
     """
 
     chain = [produced]
     while chain[-1].target in _MOVING_ONLY:
         source = chain[-1].args[0]
         if not isinstance(source, torch.fx.Node):
-            return False
+            return None
         chain.append(source)
     multiply = chain[-1]
     writing = _WRITING_AT_DTYPE.get(multiply.target)
@@ -1008,7 +1075,7 @@ def _write_at_dtype(
         or outputs.count(produced) != 1
         or any(len(node.users) != 1 for node in chain)
     ):
-        return False
+        return None
     operands = torch.fx.node.map_arg(multiply.args, lambda item: item.meta["val"])
     device = cast(torch.Tensor, operands[0]).device
     schema = writing._schema
@@ -1016,12 +1083,12 @@ def _write_at_dtype(
         f"{schema.name}.{schema.overload_name}",
         torch._C._dispatch_key_for_device(device.type),
     ):
-        return False
+        return None
     with fake_mode if fake_mode is not None else nullcontext():
         try:
             value = writing(*operands, dtype, **multiply.kwargs)
         except RuntimeError:  # not a dtype it writes from these operands
-            return False
+            return None
         with graph.inserting_after(multiply):
             written = graph.call_function(
                 writing, args=(*multiply.args, dtype), kwargs=dict(multiply.kwargs)
@@ -1035,7 +1102,7 @@ def _write_at_dtype(
                 (node.args, node.kwargs), lambda item: item.meta["val"]
             )
             _record_value(node, cast(Callable[..., Any], node.target)(*args, **kwargs))
-    return True
+    return chain[0] if len(chain) > 1 else written
 
 
 #: Matrix multiplies that can add their result into a running gradient

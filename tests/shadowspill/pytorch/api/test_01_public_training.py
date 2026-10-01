@@ -32,7 +32,7 @@ from shadowspill.runtime.abi import runtime_library
 from shadowspill.runtime.configuration import adapter_path
 from shadowspill.runtime.occupancy import live_allocations, plan_slices
 from tests.precision import low_precision_dtype
-from tools.qualification.profiling import CORRECTNESS_PROFILING
+from qualification.profiling import CORRECTNESS_PROFILING
 
 from ..runtime_test_support import public_test_runtime
 

@@ -7,6 +7,7 @@
 #include "backend_cuda_internal.h"
 
 #include <stdint.h>
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <sys/mman.h>
@@ -544,6 +545,36 @@ static int elapsed_nanoseconds(
 
 /* ----------------------------------------------------------------- facts */
 
+static int host_numa_node(void *state, int32_t *node) {
+    const ShadowSpillCudaBackend *backend = state;
+    int found = -1;
+#if CUDA_VERSION >= 12020
+    if (cuDeviceGetAttribute(&found, CU_DEVICE_ATTRIBUTE_HOST_NUMA_ID,
+                             backend->device) == CUDA_SUCCESS && found >= 0) {
+        *node = found;
+        return 0;
+    }
+#endif
+    /* Older drivers/device types may not report host locality. Query the PCI
+       device selected by the driver, never an NVML physical ordinal. */
+    char pci[32], path[128];
+    unsigned int domain, bus, slot, function;
+    if (cuDeviceGetPCIBusId(pci, (int)sizeof(pci), backend->device) != CUDA_SUCCESS ||
+        sscanf(pci, "%x:%x:%x.%x", &domain, &bus, &slot, &function) != 4) {
+        return -1;
+    }
+    (void)snprintf(path, sizeof(path),
+        "/sys/bus/pci/devices/%04x:%02x:%02x.%x/numa_node", domain, bus, slot, function);
+    FILE *file = fopen(path, "r");
+    if (file == NULL) { return -1; }
+    const int read = fscanf(file, "%d", &found);
+    (void)fclose(file);
+    if (read != 1 || found < 0) { return -1; }
+    *node = found;
+    return 0;
+}
+
+
 static int capabilities(void *state, ShadowSpillBackendCapabilities *out) {
     ShadowSpillCudaBackend *backend = state;
     if (backend == NULL || out == NULL) {
@@ -707,6 +738,7 @@ SHADOWSPILL_BACKEND_CUDA_API int shadowspill_backend_create(
         .wait_event = wait_event,
         .synchronize_event = synchronize_event,
         .elapsed_nanoseconds = elapsed_nanoseconds,
+        .host_numa_node = host_numa_node,
         .capabilities = capabilities,
         .physical_memory = physical_memory,
         .statistics = statistics,

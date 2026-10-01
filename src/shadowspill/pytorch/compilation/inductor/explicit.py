@@ -117,7 +117,7 @@ def _invoke_explicit_compiler(
         with (
             V.set_fake_mode(fake_mode),
             tracing(TracingContext(fake_mode)),
-            inductor_config.patch(_PINNED_OUTPUT_LAYOUT),
+            inductor_config.patch(dict(_PINNED_OUTPUT_LAYOUT)),
         ):
             compiler = cast(Callable[..., object], compile_fx_forward)
             return compiler(

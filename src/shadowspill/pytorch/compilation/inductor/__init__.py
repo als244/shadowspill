@@ -62,7 +62,7 @@ def compile_inductor_task(
 
     def invoke_compiler() -> Any:
         compiler: Any = compile_fx
-        with inductor_config.patch(_PINNED_OUTPUT_LAYOUT):
+        with inductor_config.patch(dict(_PINNED_OUTPUT_LAYOUT)):
             return compiler(
                 copy_graph_module(source_graph),
                 list(example_inputs),

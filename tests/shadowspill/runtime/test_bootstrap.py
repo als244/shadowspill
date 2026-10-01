@@ -382,3 +382,16 @@ def test_installer_rejects_invalid_physical_configuration(
             frontend=_NoProcessAllocator(),
             **arguments,
         )
+
+
+def test_numa_binding_requires_a_boolean_before_allocator_install() -> None:
+    with pytest.raises(RuntimeInstallError, match="numa_binding must be a bool"):
+        install_runtime(
+            "not-loaded.so",
+            frontend=_NoProcessAllocator(),
+            device_ordinal=0,
+            device_budget_bytes=1 << 30,
+            external_headroom_bytes=0,
+            numa_binding="auto",
+            **_two_pool_topology(),
+        )

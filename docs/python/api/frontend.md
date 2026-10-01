@@ -109,13 +109,17 @@ published `transfer_capabilities` snapshot rather than recalibrating.
 ```text
 Runtime(
     *,
-    pools: Mapping[str, MemoryPoolConfig],
-    routes: Mapping[str, TransferRoute],
-    library_path: str | Path | None = None,
-    calibrate: bool = True,
-    worker_poll_nanoseconds: int = 1_000,
-    background_transfer_window_bytes: int = DEFAULT_BACKGROUND_WINDOW_BYTES,
-    backend: str | None = None,
+    pools,
+    routes,
+    library_path=None,
+    calibrate=True,
+    numa_binding=True,
+    worker_poll_nanoseconds=1000,
+    background_transfer_window_bytes=DEFAULT_BACKGROUND_WINDOW_BYTES,
+    backend=None,
+    control_group=None,
+    host_headroom_bytes=2 << 30,
+    preparation_timeout=1800.0,
 )
 ```
 
@@ -125,6 +129,7 @@ Runtime(
 | `routes` | `Mapping[str, TransferRoute]` | required | Route name to directed pool pair. A plan can only move bytes along a route registered here. |
 | `library_path` | `str` \| `Path` \| `None` | `None` | The PyTorch adapter library to load; `None` resolves the one installed beside the package. |
 | `calibrate` | `bool` | `True` | Measure every registered route at construction. With `False`, planning refuses a route that was never calibrated until `calibrate_transfer_capabilities()` has run. |
+| `numa_binding` | `bool` | `True` | Discover device-local host placement during initialization; fallback warns. Set `False` to preserve caller placement. |
 | `worker_poll_nanoseconds` | `int` | `1_000` | How long the C transfer worker waits between polls. |
 | `background_transfer_window_bytes` | `int` | `64 << 20` | How far a lane may run ahead with transfers the plan did not schedule. |
 | `backend` | `str` \| `None` | `None` | Which backend shared object the adapter loads: `None` the one accelerator backend installed beside the libraries, a name resolves to `libshadowspill_backend_<name>.so` there, and a path is used as given. |
@@ -332,7 +337,8 @@ import_model_state(
     runtime,
     pool,
     release_source=True,
-) -> ModelT
+    distributed=None,
+)
 ```
 
 <!-- source-signature: src/shadowspill/pytorch/state/optimizer.py:import_optimizer_state -->
@@ -669,13 +675,19 @@ profiling = ProfilingOptions(
 Plans one fixed-shape forward program and returns a `PlannedForward` bound to
 the open runtime.
 
+`forward_fn=None` uses `model(*example_inputs)`. A supplied
+`forward_fn(model, *inputs)` is captured against the same logical model state,
+without rebinding the original module or adding a parameter-name prefix.
+
 <!-- source-signature: src/shadowspill/pytorch/api.py:plan_forward -->
 ```text
 plan_forward(
     model,
     *,
     example_inputs,
+    forward_fn=None,
     runtime,
+    distributed=None,
     execution,
     spill,
     execution_budget=None,
@@ -698,7 +710,7 @@ plan_forward(
     plan_store_mode='contribute',
     export_bypass_key=None,
     transfer_bandwidths=None,
-) -> PlannedForward
+)
 ```
 
 Beyond the shared and store arguments:
@@ -797,6 +809,8 @@ plan_step(
     hyperparams=(),
     example_inputs,
     runtime,
+    distributed=None,
+    shard_optimizer=True,
     execution,
     spill,
     execution_budget=None,
@@ -830,7 +844,7 @@ plan_step(
     round_accumulation_once=False,
     memory_bound_flops_per_byte=MEMORY_BOUND_FLOPS_PER_BYTE,
     keep_resolutions=False,
-) -> PlannedTrainStep
+)
 ```
 
 Beyond the shared and store arguments:
@@ -963,19 +977,12 @@ it was lowered with, and a different walk is a different program.
 
 ### `plan_step_search()`
 
-Plans every admitted split of one step's sequence total into microbatches and
-accumulation rounds, under every requested budget pair, and executes nothing.
-Each geometry pays capture, materialization and profiling once and lowering
-once per ordering, through `build_step_programs()`; with an `export_bypass_key`
-a geometry whose programs the build store already holds pays only their lookup.
-Every geometry-ordering-budget point then asks the planning store for the
-summary it keeps beside a certified plan, through `summarize_plan()`, and runs
-one search only where the store has no standing answer: a miss, a refusal with
-a plan to beat in hand, or a plan to beat that claims to be faster than the
-stored answer, which is the store's own rule. Whole plans are read for each
-budget's winner, which `winner_plans` hands the run that follows, and for a
-plan to beat the moment a later point has to beat it. It returns a
-`StepSearchReport`.
+Plans caller-named candidates under every requested budget pair. Each
+candidate supplies a sequence of positional microbatch inputs for the same
+normalized update; no text geometry is inferred. Capture, materialization and
+profiling happen once per candidate, and lowering once per ordering. Saved
+build and planning artifacts can be reused independently. The result is a
+`StepSearchReport`; searching does not execute optimizer updates.
 
 <!-- source-signature: src/shadowspill/pytorch/step_search/__init__.py:plan_step_search -->
 ```text
@@ -985,16 +992,17 @@ plan_step_search(
     objective,
     optimizer,
     hyperparams=(),
-    example_microbatches,
-    total_sequences_per_step,
-    sequence_length,
+    candidates,
     budgets,
     runtime,
+    distributed=None,
+    shard_optimizer=True,
     execution,
     spill,
     transfer_bandwidths=None,
-    min_tokens_per_microbatch=None,
-    max_tokens_per_microbatch=None,
+    metadata=None,
+    partition='auto',
+    execution_device=None,
     optimizer_ordering='stage_interleaved',
     orderings=None,
     search_options=None,
@@ -1014,7 +1022,7 @@ plan_step_search(
     memory_bound_flops_per_byte=MEMORY_BOUND_FLOPS_PER_BYTE,
     keep_resolutions=False,
     profiling_options=None,
-) -> StepSearchReport
+)
 ```
 
 `model`, `objective`, `optimizer`, `hyperparams`,
@@ -1025,38 +1033,26 @@ plan_step_search(
 
 | argument | type | default | what it must be |
 |---|---|---|---|
-| `example_microbatches` | `(sequences, accumulation) -> Sequence[Sequence[Any]]` | required | Supplies the example inputs for one geometry. Structure matters; values do not. |
-| `total_sequences_per_step` | `int` | required | Sequences one optimizer step consumes. Every divisor pair of it is a candidate geometry. |
-| `sequence_length` | `int` | required | Tokens per sequence, which is what makes the token bounds mean the same thing at every length. |
-| `budgets` | `Sequence[tuple[int, int]]` | required | The `(execution, spill)` byte pairs every geometry is planned under. At least one. |
-| `transfer_bandwidths` | `TransferBandwidths` \| `None` | `None` | Overrides the calibration each step program embeds from the runtime. The report records both, so two searches can be compared or one pinned to another's. |
-| `min_tokens_per_microbatch` | `int` \| `None` | `None` | Skips a geometry whose microbatch is smaller, recording the reason. |
-| `max_tokens_per_microbatch` | `int` \| `None` | `None` | Skips a geometry whose microbatch is larger, recording the reason. |
-| `orderings` | `(accumulation) -> Sequence[StepDataOrdering]` \| `None` | `None` | Which microbatch walks to try for a geometry. `None` tries the default set. |
-| `search_options` | `SearchOptions` \| `None` | `None` | As for `plan_step()`; every point is searched under it, worker count included. |
-| `incumbents` | `bool` | `True` | Plans each program's budgets ascending and hands every point the best plan found at a smaller budget as the plan to beat, so no program plans worse with more memory. `False` searches every point alone, which is how the two are compared. |
-| `verbose` | `bool` | `False` | Forwards each planning call's own phase progress. |
-| `progress` | `(str) -> None` \| `None` | `None` | Receives one line per geometry and point boundary, so a caller can tee a live log. |
-| `keep_resolutions` | `bool` | `False` | Files every resolved program's best plan beside each point's answer, certified, as `plan_program()` does; each is as large as the answer. |
+| `candidates` | `Mapping[str, Sequence[Sequence[Any]]]` | required | Nonempty names mapped to representative positional microbatches. Each candidate represents the same caller-normalized update. |
+| `metadata` | `Mapping[str, Any]` \| `None` | `None` | Optional report metadata, such as `units_per_step` and `unit_label` for throughput. No model semantics are inferred from it. |
+| `budgets` | `Sequence[tuple[int, int]]` | required | `(execution, spill)` byte pairs, at least one. |
+| `execution_device` | device/index \| `None` | `None` | The local execution device, as for `plan_step()`. |
+| `partition` | `PartitionSpec` | `'auto'` | The shared partition policy for every candidate. |
+| `transfer_bandwidths` | `TransferBandwidths` \| `None` | `None` | Explicit transfer calibration; the report records its effective `planned_lanes`. |
+| `orderings` | `(accumulation) -> Sequence[StepDataOrdering]` \| `None` | `None` | Candidate microbatch walks; the default tries every factor pair. |
+| `search_options` | `SearchOptions` \| `None` | `None` | The policy used for every point. |
+| `incumbents` | `bool` | `True` | Use smaller-budget plans as plans to beat at larger budgets. |
+| `verbose`, `progress` | `bool`, `(str) -> None` \| `None` | `False`, `None` | Phase output and per-candidate/per-point progress. |
+| `keep_resolutions` | `bool` | `False` | Save every resolved program's certified plan. |
 
-`StepSearchReport` carries `total_sequences_per_step` and `sequence_length`, the
-`budgets` searched, one `StepSearchGeometryBuild` per program built, that is
-per ordering of each geometry, carrying the frontend phases that program was
-charged -- the shared capture and profiling on a geometry's first ordering, each
-lowering on its own -- with the geometry's build wall clock on the first
-ordering's entry and zero on the rest, so the entries sum to the build; one
-`StepSearchPoint` per geometry-ordering-budget combination, the geometries the token bounds `skipped`
-with their reasons, the `search_options` every point was searched under, any
-`transfer_bandwidths` override, `planned_lanes` -- the lanes every point was
-priced against: the override, else the calibration the first built geometry
-planned with, which a caller running a winner hands to `plan_step()` -- and
-`winner_plans`, each budget pair's winning `AnnotatedProgramPlan` held in
-memory. A point carries its `status`,
-`makespan_seconds`, `summary` as a `PlanSummary`, `search_seconds`,
-`incumbent_budget_bytes` when it answered with a handed-in plan, and
-`graph_pair_selections`: one `GraphPairOutcome` (from `shadowspill.planner`)
-per graph-pair selection the search evaluated, not only the one it answered
-with.
+`StepSearchReport` contains `budgets`, optional `metadata`, `geometries`
+(`StepSearchGeometryBuild` entries), `points` (`StepSearchPoint` entries), the
+search options and calibration, and each budget's `winner_plans`. Builds and
+points identify their `candidate` by name and their microbatch ordering.
+Build times charge shared work only once. A point records status, makespan,
+summary, search time, any incumbent budget and `GraphPairOutcome` records
+for graph-pair selections.
+
 
 `orderings` lowers each ordering into its own program, sharing the geometry's
 capture and profiles, and plans it under every budget; the report's points and
@@ -1065,39 +1061,13 @@ any geometry. The default is every `depth x breadth` factor pair of the
 accumulation count with the flags at their defaults; the search never toggles
 `reverse_breadth` or `pair_loss`.
 
-### `search_geometries()`
+### Candidate enumeration
 
-The geometry enumeration `plan_step_search()` runs on its own: every divisor
-pair of the sequence total, largest microbatch first, with what the token bounds
-skipped and why. It is `shadowspill.search`'s, and re-exported here because it is
-usually reached alongside `plan_step_search()`; so are `StepSearchReport`,
-`StepSearchPoint`, `StepSearchGeometryBuild` and `default_orderings`, all
-documented on [the neutral page](neutral.md#shadowspillsearch). Reading a saved
-report needs none of this package.
-
-```text
-search_geometries(
-    total_sequences_per_step,
-    *,
-    sequence_length,
-    min_tokens_per_microbatch=None,
-    max_tokens_per_microbatch=None,
-) -> tuple[
-    tuple[tuple[int, int], ...],
-    tuple[tuple[int, int, str], ...],
-]
-```
-
-| argument | type | default | what it must be |
-|---|---|---|---|
-| `total_sequences_per_step` | `int` | required | Sequences one optimizer step consumes. |
-| `sequence_length` | `int` | required | Tokens per sequence, which is what makes the token bounds mean the same thing at every length. |
-| `min_tokens_per_microbatch` | `int` \| `None` | `None` | Skip a geometry whose microbatch is smaller. |
-| `max_tokens_per_microbatch` | `int` \| `None` | `None` | Skip a geometry whose microbatch is larger. |
-
-It returns two tuples: the admitted `(sequences_per_microbatch,
-accumulation_count)` pairs, and the skipped ones with the reason as a third
-element.
+The caller constructs candidate inputs. Optional text enumeration is provided
+by `workloads.recipes.text.geometry`; it is not a planning dependency.
+`default_orderings`, `StepSearchReport`, `StepSearchPoint` and
+`StepSearchGeometryBuild` are documented on
+[the neutral page](neutral.md#shadowspillsearch).
 
 Running a winner afterward is one warm `plan_step()` call at the chosen
 geometry, taking that budget's `winner_plans` entry as `incumbent` so it
@@ -1120,7 +1090,7 @@ cannot close while it remains. Any other build failure is raised.
 `TensorSpec` is storage-free fixed tensor geometry for planning. It records
 shape, dtype, optional stride, `requires_grad`, and layout.
 
-An objective may return a scalar loss tensor or `ObjectiveResult`. A bare
+An objective may return a scalar loss tensor, `(loss, metrics)`, or `ObjectiveResult`. A bare
 tensor becomes the corresponding `StepResult.objectives` entry and has
 `metrics=None`. `ObjectiveResult` explicitly names the differentiable `loss`
 and arbitrary nondifferentiated `metrics`; each becomes the corresponding
@@ -1313,20 +1283,24 @@ same way, and a failed step publishes no optimizer update in any case.
 `state_dict()` returns an independent snapshot -- for a training callable, the
 three keys `model`, `optimizer` and `step`, which is exactly what
 `load_state_dict()` requires back. A weight with a master copy
-(`master_dtype`) is written as its master, at the master's dtype, and loading
-writes the value to the master and its cast to the weight. Every tensor in it is its own compact host
+(`master_dtype`) is written as its master by default. With
+`state_dict(weights="compute")`, the saved value is the compute weight instead.
+Loading casts the saved representation into the weight and any configured master.
+Only one representation is saved; compute-only saves lose the master's extra
+precision. Every tensor in it is its own compact host
 allocation outside the runtime pools, so it can be serialized while training
 continues. The spill pool keeps the authoritative copy throughout and is read
 in place, so the snapshot is normally the only copy of the state outside the
 pool; an object whose pool copy is not current is read into a buffer first and
 costs two until the snapshot is built.
 
-`save(path)` writes that checkpoint to a file without the snapshot: the model's
+`save(path, weights="master")` writes that checkpoint to a file without the snapshot: the model's
 and the optimizer's state are viewed where they are in the spill pool and
 written from there, so saving costs no host copy of the state, however large,
 and the callable goes on training on the same state. Resume with
 `load_state_dict(torch.load(path, mmap=True))`. A pool this process cannot
-address is read out as `state_dict()` reads it.
+address is read out as `state_dict()` reads it. `weights="compute"` selects the
+compute-only representation for this direct save as well.
 
 ## Exceptions
 
@@ -1344,3 +1318,36 @@ Runtime failures raise `RuntimeConfigurationError` for a configuration a
 runtime cannot accept and `RuntimeExecutionError` for a failure during
 execution; both retain the first failure the C runtime reported and its task
 identity, reached through `Runtime.last_failure` as `RuntimeFailureDiagnostics`.
+
+## `Distributed`
+
+The optional `Distributed` binding supplies process groups and logical parameter
+replicas to preparation. It is available from both `shadowspill.pytorch` and
+`shadowspill.training`. Runtime takes a caller-owned Gloo `control_group` before
+allocating pools; accelerator communication groups are created afterwards. Optimizer/master sharding
+is enabled by default with `shard_optimizer=True`. See the
+[distributed guide](distributed.md) for initialization, normalization, task
+completion, checkpointing, and the current validation limits.
+
+### Host NUMA placement
+
+`Runtime(..., numa_binding=True)` discovers the selected device's host NUMA
+node automatically. It intersects each existing process thread's CPU affinity
+with the local CPU set, preserving stricter scheduler/user restrictions. New
+threads inherit their creator's affinity. Placement happens before spill-pool
+pages are pinned and before the runtime worker starts.
+
+Pinned host pools receive a preferred-node policy: local memory is preferred,
+but other permitted nodes can supply pages when necessary. Initialization checks
+actual pool page residency and prints a warning for remote pages, unavailable
+placement information, or OS restrictions. Single-node hosts follow the same
+path. `SHADOWSPILL_RUNTIME_PROGRESS=1` also prints successful placement details.
+No placement checks run during tasks.
+
+Set `numa_binding=False` when the caller manages placement. CPU affinity and the
+initializing thread's preferred-memory policy are process-lifetime changes;
+closing a Runtime does not undo them. Existing allocations are not migrated,
+and existing unrelated threads' default memory policies are not replaced. Pool
+mapping policies apply regardless of which thread faults the pages. Custom or
+remote pool implementations own their storage placement. The training
+`ShadowSpill` backend exposes the same `numa_binding` argument.

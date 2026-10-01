@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import time
 from collections import Counter
-from collections.abc import Callable, Iterator, Sequence
+from collections.abc import Callable, Iterator, Mapping, Sequence
 from dataclasses import dataclass, field
 from os import PathLike
 from types import MappingProxyType
@@ -23,6 +23,7 @@ from shadowspill.planner import StepDataOrdering
 from shadowspill.planner.annotated_plan import AnnotatedProgramPlan
 from shadowspill.planner.diagnostics import GraphPairOutcome
 from shadowspill.pytorch.api import build_step_programs
+from shadowspill.pytorch.partition import PartitionSpec
 from shadowspill.pytorch.runtime import Runtime
 from shadowspill.pytorch.state.registry import registry_for
 from shadowspill.runtime.failures import RuntimeFailureDiagnostics, format_bytes
@@ -56,7 +57,7 @@ class _Build:
     objective: Any
     optimizer: Any
     hyperparams: Sequence[str]
-    example_microbatches: Callable[[int, int], Sequence[Sequence[Any]]]
+    candidates: Mapping[str, Sequence[Sequence[Any]]]
     runtime: Runtime
     execution: str
     spill: str
@@ -72,10 +73,12 @@ class _Build:
     memory_bound_flops_per_byte: float
     parameter_metrics: Callable[[torch.Tensor, torch.Tensor], Any] | None = None
     profiling_options: ProfilingOptions = field(default_factory=ProfilingOptions)
+    partition: PartitionSpec = "auto"
+    execution_device: int | str | torch.device | None = None
 
     def programs(
         self,
-        sequences: int,
+        candidate: str,
         accumulation: int,
         orderings: Sequence[StepDataOrdering],
     ) -> tuple[tuple[StepProgram, ...], _Exhaustion | None]:
@@ -87,7 +90,7 @@ class _Build:
         held = registry_for(self.runtime).values()
         recorded = self.runtime.last_failure
         try:
-            examples = self.example_microbatches(sequences, accumulation)
+            examples = self.candidates[candidate]
             return (
                 build_step_programs(
                     self.model,
@@ -99,6 +102,8 @@ class _Build:
                     runtime=self.runtime,
                     execution=self.execution,
                     spill=self.spill,
+                    partition=self.partition,
+                    execution_device=self.execution_device,
                     optimizer_ordering=self.optimizer_ordering,
                     orderings=orderings,
                     verbose=self.verbose,
@@ -118,7 +123,7 @@ class _Build:
             if not _device_exhausted(error):
                 raise
             _refuse_state_left_behind(
-                self.runtime, held, sequences, accumulation, error
+                self.runtime, held, candidate, accumulation, error
             )
             # Exhaustion happens while profiling, which every ordering of
             # the geometry shares, so every ordering is infeasible.
@@ -143,21 +148,21 @@ class _Sweep:
 
     def run(
         self,
-        geometries: Sequence[tuple[int, int]],
+        geometries: Sequence[tuple[str, int]],
         per_geometry: Sequence[tuple[StepDataOrdering, ...]],
         build: _Build,
     ) -> None:
         """Walk every geometry, and within it every ordering and budget."""
 
-        for index, (sequences, accumulation) in enumerate(geometries, 1):
-            shape = f"{sequences} x {accumulation}"
+        for index, (candidate, accumulation) in enumerate(geometries, 1):
+            shape = f"{candidate} x {accumulation}"
             orderings = per_geometry[index - 1]
             self.announce(
                 f"geometry {index}/{len(geometries)}: building {shape}"
                 f" ({len(orderings)} orderings)"
             )
             started = time.perf_counter()
-            steps, exhausted = build.programs(sequences, accumulation, orderings)
+            steps, exhausted = build.programs(candidate, accumulation, orderings)
             build_seconds = time.perf_counter() - started
             if exhausted is not None:
                 self.announce(
@@ -170,14 +175,14 @@ class _Sweep:
             for position, ordering in enumerate(orderings, 1):
                 name = f"{shape} {ordering.label}"
                 if exhausted is not None:
-                    self._refuse(sequences, accumulation, ordering, name, exhausted)
+                    self._refuse(candidate, accumulation, ordering, name, exhausted)
                     continue
                 self.announce(
                     f"geometry {index}/{len(geometries)};"
                     f" ordering {position}/{len(orderings)}: built {name}"
                 )
                 self._record_build(
-                    sequences,
+                    candidate,
                     accumulation,
                     ordering,
                     steps[position - 1],
@@ -188,12 +193,12 @@ class _Sweep:
                     build_seconds if position == 1 else 0.0,
                 )
                 self._search(
-                    steps[position - 1], sequences, accumulation, ordering, name
+                    steps[position - 1], candidate, accumulation, ordering, name
                 )
 
     def _refuse(
         self,
-        sequences: int,
+        candidate: str,
         accumulation: int,
         ordering: StepDataOrdering,
         name: str,
@@ -209,7 +214,7 @@ class _Sweep:
             )
             self.points.append(
                 StepSearchPoint(
-                    sequences_per_microbatch=sequences,
+                    candidate=candidate,
                     accumulation_count=accumulation,
                     ordering=ordering,
                     execution_budget_bytes=execution_budget,
@@ -224,7 +229,7 @@ class _Sweep:
 
     def _record_build(
         self,
-        sequences: int,
+        candidate: str,
         accumulation: int,
         ordering: StepDataOrdering,
         step: StepProgram,
@@ -234,7 +239,7 @@ class _Sweep:
 
         self.builds.append(
             StepSearchGeometryBuild(
-                sequences_per_microbatch=sequences,
+                candidate=candidate,
                 accumulation_count=accumulation,
                 ordering=ordering,
                 step_program_digest=step.digest,
@@ -249,7 +254,7 @@ class _Sweep:
     def _search(
         self,
         step: StepProgram,
-        sequences: int,
+        candidate: str,
         accumulation: int,
         ordering: StepDataOrdering,
         name: str,
@@ -303,7 +308,7 @@ class _Sweep:
             )
             self.points.append(
                 StepSearchPoint(
-                    sequences_per_microbatch=sequences,
+                    candidate=candidate,
                     accumulation_count=accumulation,
                     ordering=ordering,
                     execution_budget_bytes=execution_budget,
@@ -404,7 +409,7 @@ def _readable(value: int) -> str:
 def _refuse_state_left_behind(
     runtime: Runtime,
     held: Sequence[object],
-    sequences: int,
+    candidate: str,
     accumulation: int,
     error: BaseException,
 ) -> None:
@@ -424,7 +429,7 @@ def _refuse_state_left_behind(
         return
     kinds = Counter(type(state.target).__name__ for state in left)
     raise PlanningError(
-        f"the {sequences} x {accumulation} build ran out of device memory and"
+        f"the {candidate} x {accumulation} build ran out of device memory and"
         f" left {len(left)} persistent state{'' if len(left) == 1 else 's'}"
         " registered in the runtime ("
         + ", ".join(f"{name} x{count}" for name, count in sorted(kinds.items()))

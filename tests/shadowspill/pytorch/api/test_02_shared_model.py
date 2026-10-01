@@ -12,7 +12,7 @@ import torch
 import torch.nn as nn
 
 from shadowspill.pytorch import import_model_state, plan_forward, plan_step
-from tools.qualification.profiling import CORRECTNESS_PROFILING
+from qualification.profiling import CORRECTNESS_PROFILING
 
 from ..runtime_test_support import public_test_runtime
 from .test_01_public_training import _require_adapter

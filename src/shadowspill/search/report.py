@@ -8,6 +8,7 @@ from dataclasses import dataclass, field
 from os import PathLike
 from pathlib import Path
 from types import MappingProxyType
+from typing import Any
 
 from shadowspill.planner import (
     SearchOptions,
@@ -42,9 +43,9 @@ _REJECTED = (RuntimeError,)
 
 @dataclass(frozen=True, slots=True)
 class StepSearchPoint:
-    """One geometry under one budget pair, with its search outcome."""
+    """One named candidate under one budget pair, with its search outcome."""
 
-    sequences_per_microbatch: int
+    candidate: str
     accumulation_count: int
     #: How this point's program walked its microbatches.
     ordering: StepDataOrdering
@@ -76,9 +77,9 @@ class StepSearchPoint:
             f"{path}.graph_pair_selections",
         )
         return cls(
-            sequences_per_microbatch=_integer(
-                record["sequences_per_microbatch"],
-                f"{path}.sequences_per_microbatch",
+            candidate=_string(
+                record["candidate"],
+                f"{path}.candidate",
             ),
             accumulation_count=_integer(
                 record["accumulation_count"], f"{path}.accumulation_count"
@@ -128,7 +129,7 @@ class StepSearchGeometryBuild:
     everything else for.
     """
 
-    sequences_per_microbatch: int
+    candidate: str
     accumulation_count: int
     ordering: StepDataOrdering
     step_program_digest: str
@@ -148,9 +149,9 @@ class StepSearchGeometryBuild:
         rates = record.get("transfer_bandwidths")
         phases = _mapping(record.get("phase_seconds", {}), f"{path}.phase_seconds")
         return cls(
-            sequences_per_microbatch=_integer(
-                record["sequences_per_microbatch"],
-                f"{path}.sequences_per_microbatch",
+            candidate=_string(
+                record["candidate"],
+                f"{path}.candidate",
             ),
             accumulation_count=_integer(
                 record["accumulation_count"], f"{path}.accumulation_count"
@@ -176,14 +177,12 @@ class StepSearchGeometryBuild:
 
 @dataclass(frozen=True, slots=True)
 class StepSearchReport:
-    """Every geometry-by-budget outcome of one geometry search."""
+    """Every candidate-by-budget outcome, with optional caller metadata."""
 
-    total_sequences_per_step: int
-    sequence_length: int
     budgets: tuple[tuple[int, int], ...]
     geometries: tuple[StepSearchGeometryBuild, ...]
     points: tuple[StepSearchPoint, ...]
-    skipped: tuple[tuple[int, int, str], ...]
+    metadata: Mapping[str, Any] = field(default_factory=dict)
     #: The resolution options every point was searched over, as exact
     #: fractions of the flexible groups recomputing.
     search_options: SearchOptions | None = None
@@ -197,10 +196,6 @@ class StepSearchReport:
     winner_plans: Mapping[tuple[int, int], AnnotatedProgramPlan] = field(
         default_factory=lambda: MappingProxyType({})
     )
-
-    @property
-    def tokens_per_step(self) -> int:
-        return self.total_sequences_per_step * self.sequence_length
 
     @property
     def total_build_seconds(self) -> float:
@@ -264,8 +259,7 @@ class StepSearchReport:
 
         return {
             "schema": artifact_schema("step_search_report"),
-            "total_sequences_per_step": self.total_sequences_per_step,
-            "sequence_length": self.sequence_length,
+            "metadata": dict(self.metadata),
             "budgets": [list(item) for item in self.budgets],
             "search_options": (
                 None if self.search_options is None else self.search_options.to_dict()
@@ -277,7 +271,7 @@ class StepSearchReport:
             ),
             "geometries": [
                 {
-                    "sequences_per_microbatch": item.sequences_per_microbatch,
+                    "candidate": item.candidate,
                     "accumulation_count": item.accumulation_count,
                     "ordering": item.ordering.to_dict(),
                     "ordering_label": item.ordering.label,
@@ -294,7 +288,7 @@ class StepSearchReport:
             ],
             "points": [
                 {
-                    "sequences_per_microbatch": item.sequences_per_microbatch,
+                    "candidate": item.candidate,
                     "accumulation_count": item.accumulation_count,
                     "ordering": item.ordering.to_dict(),
                     "ordering_label": item.ordering.label,
@@ -314,7 +308,6 @@ class StepSearchReport:
                 }
                 for item in self.points
             ],
-            "skipped": [list(item) for item in self.skipped],
         }
 
     @classmethod
@@ -339,15 +332,8 @@ class StepSearchReport:
         budgets = _list(record.get("budgets", []), f"{path}.budgets")
         geometries = _list(record.get("geometries", []), f"{path}.geometries")
         points = _list(record.get("points", []), f"{path}.points")
-        skipped = _list(record.get("skipped", []), f"{path}.skipped")
         return cls(
-            total_sequences_per_step=_integer(
-                record["total_sequences_per_step"],
-                f"{path}.total_sequences_per_step",
-            ),
-            sequence_length=_integer(
-                record["sequence_length"], f"{path}.sequence_length"
-            ),
+            metadata=dict(_mapping(record.get("metadata", {}), f"{path}.metadata")),
             budgets=tuple(
                 (
                     _integer(item[0], f"{path}.budgets[{index}][0]"),
@@ -362,14 +348,6 @@ class StepSearchReport:
             points=tuple(
                 StepSearchPoint.from_dict(item, f"{path}.points[{index}]")
                 for index, item in enumerate(points)
-            ),
-            skipped=tuple(
-                (
-                    _integer(item[0], f"{path}.skipped[{index}][0]"),
-                    _integer(item[1], f"{path}.skipped[{index}][1]"),
-                    _string(item[2], f"{path}.skipped[{index}][2]"),
-                )
-                for index, item in enumerate(skipped)
             ),
             search_options=(
                 None

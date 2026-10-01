@@ -74,7 +74,9 @@ def build_training_programs(
         _verify_provisional_layout(captured.layout, lowered)
         _report_training_program_inventory(lowered, timer)
     with timer.measure("admission_facts"):
-        reserve = workspace_reserve(profiled.profiles.measurements)
+        reserve = workspace_reserve(
+            profiled.profiles.measurements, shared_slab=memory.slab_owner is not None
+        )
         simulation_config = build_simulation_config(
             memory,
             reserve,
@@ -167,6 +169,7 @@ def _lower_training_program(
             digest: manifest.root_allocations
             for digest, manifest in profiled.manifests.manifests.items()
         },
+        device_ordinal=captured.device_ordinal,
         optimizer_ordering=optimizer_ordering,
         data_ordering=data_ordering,
         layout_cache=CompiledLayoutIndex(),
