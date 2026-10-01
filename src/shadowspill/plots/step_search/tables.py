@@ -50,7 +50,7 @@ def raw_data(root: Path, report: StepSearchReport, series: Series) -> tuple[Path
         step = point.makespan_seconds
         points.append(
             [
-                point.sequences_per_microbatch,
+                point.candidate,
                 point.accumulation_count,
                 point.ordering.label,
                 point.execution_budget_bytes / GIB,
@@ -58,7 +58,9 @@ def raw_data(root: Path, report: StepSearchReport, series: Series) -> tuple[Path
                 point.status,
                 point.error or "",
                 step,
-                None if step is None else report.tokens_per_step / step,
+                None
+                if step is None
+                else float(report.metadata.get("units_per_step", 1)) / step,
                 None if summary is None else summary.unconstrained_step_seconds,
                 None if summary is None else summary.recomputation_overhead_seconds,
                 None if summary is None else summary.idle_seconds,
@@ -104,7 +106,7 @@ def raw_data(root: Path, report: StepSearchReport, series: Series) -> tuple[Path
         write_rows(
             target / "points.csv",
             (
-                "sequences_per_microbatch",
+                "candidate",
                 "accumulation_count",
                 "ordering",
                 "execution_budget_gib",
@@ -112,7 +114,7 @@ def raw_data(root: Path, report: StepSearchReport, series: Series) -> tuple[Path
                 "status",
                 "error",
                 "simulated_step_seconds",
-                "simulated_tokens_per_second",
+                "simulated_units_per_second",
                 "unconstrained_seconds",
                 "recomputation_overhead_seconds",
                 "idle_seconds",
@@ -134,7 +136,7 @@ def raw_data(root: Path, report: StepSearchReport, series: Series) -> tuple[Path
             write_rows(
                 target / "graph_pair_selections.csv",
                 (
-                    "sequences_per_microbatch",
+                    "candidate",
                     "accumulation_count",
                     "ordering",
                     "execution_budget_gib",

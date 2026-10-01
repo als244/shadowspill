@@ -26,9 +26,9 @@ from .series import GeometryPoint, Series, geometry_label
 
 def _waste_segments(
     axes: matplotlib.axes.Axes,
-    ordered: tuple[tuple[tuple[int, int], tuple[GeometryPoint, ...]], ...],
-    colours: dict[tuple[int, int], tuple[float, float, float, float]],
-    best_geometry: dict[float, tuple[int, int]],
+    ordered: tuple[tuple[tuple[str, int], tuple[GeometryPoint, ...]], ...],
+    colours: dict[tuple[str, int], tuple[float, float, float, float]],
+    best_geometry: dict[float, tuple[str, int]],
     centres: dict[tuple[float, int], float],
     *,
     share: bool,
@@ -139,8 +139,8 @@ def _waste_axes(
 
 def _waste_legend(
     axes: matplotlib.axes.Axes,
-    ordered: tuple[tuple[tuple[int, int], tuple[GeometryPoint, ...]], ...],
-    colours: dict[tuple[int, int], tuple[float, float, float, float]],
+    ordered: tuple[tuple[tuple[str, int], tuple[GeometryPoint, ...]], ...],
+    colours: dict[tuple[str, int], tuple[float, float, float, float]],
     *,
     include_compute: bool,
 ) -> None:
@@ -186,8 +186,8 @@ def _waste_legend(
 def geometry_waste_bars(
     path: Path,
     series: Series,
-    colours: dict[tuple[int, int], tuple[float, float, float, float]],
-    best_geometry: dict[float, tuple[int, int]],
+    colours: dict[tuple[str, int], tuple[float, float, float, float]],
+    best_geometry: dict[float, tuple[str, int]],
     *,
     share: bool,
     include_compute: bool,
@@ -262,7 +262,7 @@ def geometry_waste_bars(
 
 def selection_waste(
     path: Path,
-    key: tuple[int, int],
+    key: tuple[str, int],
     points: tuple[GeometryPoint, ...],
     *,
     share: bool,

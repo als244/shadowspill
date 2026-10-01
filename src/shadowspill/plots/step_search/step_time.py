@@ -21,8 +21,8 @@ def geometry_step_time(
     path: Path,
     report: StepSearchReport,
     series: Series,
-    colours: dict[tuple[int, int], tuple[float, float, float, float]],
-    best_geometry: dict[float, tuple[int, int]],
+    colours: dict[tuple[str, int], tuple[float, float, float, float]],
+    best_geometry: dict[float, tuple[str, int]],
 ) -> Path:
     """Simulated throughput per geometry, with the best at each budget circled.
 
@@ -37,7 +37,7 @@ def geometry_step_time(
     choosing between are exactly the ones the full range cannot separate.
     """
 
-    tokens = report.tokens_per_step
+    tokens = float(report.metadata.get("units_per_step", 1))
 
     def rate(item: GeometryPoint) -> float:
         return tokens / item.step_seconds
@@ -58,7 +58,9 @@ def geometry_step_time(
 
     rates = [rate(item) for _key, points in series for item in points]
     overview.set_title("Simulated Throughput by Geometry")
-    overview.set_ylabel("Tokens per Second")
+    overview.set_ylabel(
+        f"{report.metadata.get('unit_label', 'updates').capitalize()} per Second"
+    )
     logarithmic = log_scale(overview, rates, floor=None)
     overview.grid(True, alpha=0.3, which="both")
     handles, labels = overview.get_legend_handles_labels()
@@ -90,7 +92,10 @@ def geometry_step_time(
         detail, [item.budget_gib for _key, points in series for item in points]
     )
     detail.set_xlabel("Execution Budget (GiB)")
-    detail.set_ylabel("Tokens per Second (Detail)")
+    detail.set_ylabel(
+        f"{report.metadata.get('unit_label', 'updates').capitalize()}"
+        " per Second (Detail)"
+    )
     detail.yaxis.set_major_locator(MaxNLocator(nbins=8, steps=[1, 2, 2.5, 5, 10]))
     detail.grid(True, alpha=0.3)
     detail.set_title(
@@ -102,7 +107,7 @@ def geometry_step_time(
 
 
 def ordering_step_time(
-    path: Path, report: StepSearchReport, key: tuple[int, int]
+    path: Path, report: StepSearchReport, key: tuple[str, int]
 ) -> Path:
     """One geometry's step time under every ordering the search tried.
 
@@ -150,8 +155,8 @@ def ordering_step_time(
 def geometry_floor_ratio(
     path: Path,
     series: Series,
-    colours: dict[tuple[int, int], tuple[float, float, float, float]],
-    winners: dict[float, tuple[int, int]],
+    colours: dict[tuple[str, int], tuple[float, float, float, float]],
+    winners: dict[float, tuple[str, int]],
 ) -> Path:
     """How close each geometry comes to its own compute floor.
 

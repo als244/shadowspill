@@ -25,8 +25,8 @@ from .series import GIB, GeometryPoint, Series, geometry_label
 def transfer_bars(
     path: Path,
     series: Series,
-    colours: dict[tuple[int, int], tuple[float, float, float, float]],
-    best_geometry: dict[float, tuple[int, int]],
+    colours: dict[tuple[str, int], tuple[float, float, float, float]],
+    best_geometry: dict[float, tuple[str, int]],
     *,
     share: bool,
 ) -> Path | None:
@@ -165,7 +165,7 @@ def transfer_bars(
 
 def selection_transfers(
     path: Path,
-    key: tuple[int, int],
+    key: tuple[str, int],
     points: tuple[GeometryPoint, ...],
     *,
     share: bool,

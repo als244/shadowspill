@@ -1,14 +1,68 @@
 # Quickstart
 
-`benchmarking/quickstart.py` is the one-command tour of ShadowSpill. Give
-it a model, a sequence length, and how many sequences one optimizer step
-must consume; it searches every way of splitting that total into
-microbatches and accumulation rounds, across every execution budget you
-name, then optionally renders figures over the results and runs the
-winning plan — reporting how the plan breaks down, what each step
-delivered, and how a traced step reconciles with the simulator.
+`benchmarking.quickstart` searches named microbatch candidates, runs the winner
+at each budget, saves artifacts and reports traced execution against simulation.
+The runner accepts ordinary models and objectives. Text presets are optional
+factories under `workloads/recipes/text`; the runner does not inspect text shapes
+or model families.
 
-## Three ways to use it
+## Any model or objective
+
+Supply a Python factory receiving the selected local `device` and returning a
+plain mapping. It is called after runtime installation, so it can safely create
+model resources then. No base class or registration is required.
+
+```bash
+python -u -m benchmarking.quickstart \
+  --factory workloads.recipes.regression:experiment \
+  --factory-args '{"rows": 64, "width": 16, "outputs": 8}' \
+  --search-budget-gib 2,3 --run-budget-gib 2,3 --spill-gib 2 \
+  --steps 5 --plots --resolution-plans \
+  --output-dir benchmarking/quickstart_reports/regression
+```
+
+The [regression factory](../workloads/recipes/regression.py) is a complete
+non-text example. Its mapping contains:
+
+| Key | Meaning |
+| --- | --- |
+| `model_factory` or `model` | Construct fresh model state for each budget, or copy a supplied initialized CPU model |
+| `objective` | Ordinary `objective(model, *microbatch_inputs)` function |
+| `optimizer` | Constructor receiving the model parameters |
+| `candidates` | Nonempty mapping of candidate names to positional microbatch-input sequences |
+| `initialize` | Optional explicit model initializer |
+| `hyperparams` | Runtime hyperparameter values, such as learning rate |
+| `plan_options` | Additional shared planning settings, such as partition, masters or gradient dtype |
+| `units_per_step`, `unit_label` | Optional throughput units; default `1`, `updates` |
+| `metadata` | Optional report metadata |
+| `metric_reducer` | Optional host reducer of completed-step observations |
+| `context` | Optional context factory enclosing search and execution |
+
+Every candidate must represent the same normalized update. The objective owns
+normalization, including any unit count; the runner only sums its returned
+contributions. A model factory must recreate the same initial values at each
+budget, for example with a local seeded RNG context. The provided factory does
+this. Prepared candidate data should stay on CPU until the runner uses it.
+
+Python callers may use the same workflow:
+
+```python
+from benchmarking.quickstart import run
+from workloads.recipes.regression import experiment
+
+run(
+    experiment, search_budget_gib=[2, 3], run_budget_gib=[2, 3],
+    spill_gib=2, steps=5, output_dir="benchmarking/quickstart_reports/regression",
+    plots=True, resolution_plans=True,
+)
+```
+
+`--device` selects a local device. Automatic selection uses the only visible
+device or `LOCAL_RANK` when several are visible. Device selection alone does
+not enable distributed collectives; coordinated distributed preparation is a
+separate phase of the implementation.
+
+## Three ways to use the supplied text presets
 
 **The default demo.** No budget flags: the model's retained qualification
 budget is searched and run.
@@ -93,7 +147,7 @@ What the search plans:
 | `--deterministic` / `--no-deterministic` | Make the **search** reproduce exactly at any worker count: a candidate's placement gate consults only its own placed plans rather than the shared best-placed record, so every graph-pair selection reports the plan it actually found rather than showing up only if it was measured before a better plan existed. Costs wall time, because the shared bound is what lets a candidate skip measuring a plan that cannot win. It does not reach the per-budget replan a run does before executing, which has no such option | on |
 | `--incumbents` / `--no-incumbents` | Hand each budget the best plan found at a smaller budget of the same program as the plan to beat, so no program plans worse with more memory: the search plans budgets ascending, and a point that did not beat the plan it was handed answers with it and says which budget it came from (`plan from 6 GiB` in the table, `incumbent_budget_bytes` in `search.json`). The run phase is handed the search's winning plan as its plan to beat, so it executes that plan or better even when its facts differ from the search's. `--no-incumbents` searches every point alone, for comparing the two | on |
 
-Precision, named as the [training harness](../training/README.md#configs)
+Precision, named as the [training harness](../training/README.md#run-a-supplied-text-recipe)
 names it, so a tour and a training run at one configuration are the same
 arithmetic:
 
@@ -257,7 +311,7 @@ The figures keep a handful of aggregate numbers per budget, and those answer
 *how far* the prediction was from the measurement; the trace is what answers
 *which* transfers drifted and *which* tasks ran long. It is the same
 `shadowspill.step_diagnostics` schema the performance matrix writes, so
-`python -m tools.qualification.gap_report` reads a quickstart run the same way
+`python -m qualification.gap_report` reads a quickstart run the same way
 it reads a matrix.
 
 Missing transfer timestamps do not fail a completed run. The console and
@@ -287,7 +341,7 @@ choice, which every index marks; and a table of contents at every level --
 the root `index.html` for everything, one per budget, per geometry within
 it and per plan -- with `summary.csv` beside the root, one row per page
 carrying the summary its cards show.
-`python -m tools.diagnostics.occupancy --run <run directory>` writes the same
+`python -m shadowspill.diagnostics.occupancy --run <run directory>` writes the same
 for a run made before the pages existed.
 
 ## What the output shows, in order
@@ -445,7 +499,7 @@ for a run made before the pages existed.
 
 | Term | Meaning |
 |---|---|
-| geometry | One split of the step's sequence total: sequences per microbatch times accumulation rounds. |
+| candidate / geometry | A named representative update and its microbatch count. Text recipes name candidates by sequences per microbatch. |
 | unconstrained | The compute floor: every graph-pair group priced at its cheapest option, with no waiting of any kind. Real plans exceed it on purpose — see [graph-pair selection](../docs/architecture/graph-pair-selection.md). |
 | extra recomputation | Compute the selection added over that floor by choosing to recompute rather than hold memory. |
 | stalled | Time the simulated step spends with tasks waiting on data or capacity rather than computing. |
@@ -463,3 +517,53 @@ mean the real timeline ran behind the prediction, and positive duration
 deltas mean the work took longer than profiled. The simulator error the
 figures and the gate report follows the same convention: positive means the
 step ran slower than predicted.
+
+## Distributed runs
+
+The distributed path uses the same model-independent planner as `Trainer`. Its
+separate-device qualification is in progress. Launch one process per GPU:
+
+```bash
+torchrun --standalone --nproc-per-node=2 -m benchmarking.quickstart mlops_llama3 \
+  --distributed --sequence-length 1024 --sequences-per-step 16 \
+  --search-budget-gib 12,16 --run-budget-gib 12,16 --spill-gib 40 \
+  --steps 5 --plots --resolution-plans --output-dir runs/llama_dp
+```
+
+Budgets and `sequences-per-step` are per rank. The text recipe produces distinct
+rank inputs and scales summed token losses by the total token count across the
+whole update. Generic factories define their own objective normalization.
+
+Gloo is initialized first for combined host-memory admission. The text recipe
+then creates its NCCL group after Runtime installation and declares replicated
+parameters. `--host-headroom-gib` (default 2 per rank) and
+`--preparation-timeout` (default 1800 seconds) are configurable. Data-parallel
+optimizer state and optional masters are sharded by default.
+
+Reports, figures, traces and stdout logs live in `<output-dir>/rank-00000/`, etc.
+Stores use `<output-dir>/artifact_store/rank-00000/` and
+`<output-dir>/plan_store/rank-00000/`. Explicit artifact/build/plan store paths also
+receive a rank suffix. Timing, loss observations, and throughput in each report
+are local to that rank. Do not describe the sum of rank throughputs as measured
+global throughput when ranks have different durations.
+
+For a custom factory, return `distributed=Distributed(...)` alongside the
+ordinary experiment fields. It may instead be a function of each fresh model
+returning its ownership specification. Supply `model_factory` so every budget can
+rebuild the model and its registered parameter ownership. The existing `context`
+field can manage factory-created groups/resources. The factory is called after
+Runtime installation. `--distributed` initializes only the CPU control group for
+a custom factory; that factory owns its accelerator communication groups and mathematical scaling.
+
+The Python interface accepts an already-created Gloo group:
+
+```python
+run(
+    experiment, control_group=control_group,
+    search_budget_gib=[12,16], spill_gib=40, output_dir="runs/custom_dp",
+)
+```
+
+Run all participants with the same sweep. `--reproduce runs/llama_dp` selects the
+current launcher's rank report and reuses its calibration and rank-specific
+stores. No global task barriers are added to the measured runtime sequence.

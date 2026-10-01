@@ -51,7 +51,7 @@ class GeometryPoint:
         return self.summary.recomputation_overhead_seconds + self.summary.idle_seconds
 
 
-Series = tuple[tuple[tuple[int, int], tuple[GeometryPoint, ...]], ...]
+Series = tuple[tuple[tuple[str, int], tuple[GeometryPoint, ...]], ...]
 
 
 def geometry_series(report: StepSearchReport) -> Series:
@@ -61,11 +61,11 @@ def geometry_series(report: StepSearchReport) -> Series:
     gap is a budget it could not fit rather than an interpolation across one.
     """
 
-    grouped: dict[tuple[int, int], dict[float, GeometryPoint]] = {}
+    grouped: dict[tuple[str, int], dict[float, GeometryPoint]] = {}
     for point in report.points:
         if point.summary is None or point.makespan_seconds is None:
             continue
-        key = (point.sequences_per_microbatch, point.accumulation_count)
+        key = (point.candidate, point.accumulation_count)
         candidate = GeometryPoint(
             budget_gib=point.execution_budget_bytes / GIB,
             ordering_label=point.ordering.label,
@@ -84,12 +84,12 @@ def geometry_series(report: StepSearchReport) -> Series:
 
 
 def ordering_series(
-    report: StepSearchReport, key: tuple[int, int]
+    report: StepSearchReport, key: tuple[str, int]
 ) -> tuple[tuple[str, tuple[tuple[float, float], ...]], ...]:
     """One geometry's orderings: label to (budget, step seconds) points."""
     grouped: dict[str, list[tuple[float, float]]] = {}
     for point in report.points:
-        if (point.sequences_per_microbatch, point.accumulation_count) != key:
+        if (point.candidate, point.accumulation_count) != key:
             continue
         if point.makespan_seconds is None:
             continue
@@ -99,7 +99,7 @@ def ordering_series(
     return tuple((label, tuple(sorted(grouped[label]))) for label in sorted(grouped))
 
 
-def winning_geometry(series: Series) -> dict[float, tuple[int, int]]:
+def winning_geometry(series: Series) -> dict[float, tuple[str, int]]:
     """The fastest geometry at each budget, which is the one a run would take.
 
     Every figure in this family marks it, so a reader can follow one budget's
@@ -107,7 +107,7 @@ def winning_geometry(series: Series) -> dict[float, tuple[int, int]]:
     floor rather than re-deriving it per figure.
     """
 
-    fastest: dict[float, tuple[float, tuple[int, int]]] = {}
+    fastest: dict[float, tuple[float, tuple[str, int]]] = {}
     for key, points in series:
         for item in points:
             standing = fastest.get(item.budget_gib)
@@ -116,13 +116,13 @@ def winning_geometry(series: Series) -> dict[float, tuple[int, int]]:
     return {budget: key for budget, (_step, key) in fastest.items()}
 
 
-def geometry_label(key: tuple[int, int]) -> str:
+def geometry_label(key: tuple[str, int]) -> str:
     return f"{key[0]} x {key[1]}"
 
 
 def geometry_colours(
     series: Series,
-) -> dict[tuple[int, int], tuple[float, float, float, float]]:
+) -> dict[tuple[str, int], tuple[float, float, float, float]]:
     """One colour per geometry, shared by every figure in the family.
 
     A search covers every way of splitting the step, so the count is the
