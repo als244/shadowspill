@@ -67,15 +67,15 @@ def _budget_filter(value: str) -> tuple[float, ...]:
         raise argparse.ArgumentTypeError(f"{value}: {error}") from error
 
 
-def _geometry_filter(value: str) -> tuple[tuple[int, int], ...]:
-    pairs: list[tuple[int, int]] = []
+def _geometry_filter(value: str) -> tuple[tuple[str, int], ...]:
+    pairs: list[tuple[str, int]] = []
     for item in value.split(","):
         item = item.strip()
         if not item:
             continue
-        head, _, tail = item.lower().partition("x")
+        head, _, tail = item.rpartition("x")
         try:
-            pairs.append((int(head), int(tail)))
+            pairs.append((head, int(tail)))
         except ValueError as error:
             raise argparse.ArgumentTypeError(
                 f"{item}: expected a geometry as MICROBATCH x ACCUMULATION,"
@@ -170,7 +170,7 @@ def _run_entries(
 def _filtered_report(
     report: StepSearchReport,
     budgets: Sequence[float],
-    geometries: Sequence[tuple[int, int]],
+    geometries: Sequence[tuple[str, int]],
     resolutions: Sequence[float],
 ) -> StepSearchReport:
     """The same search, narrowed to the points a caller asked to see.
@@ -181,7 +181,7 @@ def _filtered_report(
     the figures rather than promoting a runner-up.
     """
 
-    def keeps_geometry(microbatch: int, accumulation: int) -> bool:
+    def keeps_geometry(microbatch: str, accumulation: int) -> bool:
         return not geometries or (microbatch, accumulation) in tuple(geometries)
 
     def keeps_selection(outcome: object) -> bool:
@@ -202,7 +202,7 @@ def _filtered_report(
         )
         for point in report.points
         if _keeps_budget(point.execution_budget_bytes / _GIB, budgets)
-        and keeps_geometry(point.sequences_per_microbatch, point.accumulation_count)
+        and keeps_geometry(point.candidate, point.accumulation_count)
     )
     kept = {point.execution_budget_bytes for point in points}
     return replace(
@@ -211,32 +211,21 @@ def _filtered_report(
         geometries=tuple(
             item
             for item in report.geometries
-            if keeps_geometry(item.sequences_per_microbatch, item.accumulation_count)
+            if keeps_geometry(item.candidate, item.accumulation_count)
         ),
         points=points,
-        skipped=(
-            report.skipped
-            if not geometries
-            else tuple(
-                item for item in report.skipped if keeps_geometry(item[0], item[1])
-            )
-        ),
     )
 
 
-def _tokens_per_step(directory: Path) -> int:
-    """Tokens one step consumes, which turns a step time into throughput."""
-
-    report = directory / "search.json"
-    if report.is_file():
-        payload = json.loads(report.read_text())
-        sequences = payload.get("total_sequences_per_step")
-        length = payload.get("sequence_length")
-        if isinstance(sequences, int) and isinstance(length, int):
-            return sequences * length
-    raise SystemExit(
-        f"{directory}: cannot tell how many tokens a step consumes."
-        " search.json is missing or does not record the geometry."
+def _throughput(directory: Path) -> tuple[float, str]:
+    """Caller-defined quantity and label recorded alongside the measured data."""
+    path = directory / "throughput.json"
+    if path.is_file():
+        metadata = json.loads(path.read_text())
+    else:
+        metadata = StepSearchReport.load(directory / "search.json").metadata
+    return float(metadata.get("units_per_step", 1)), str(
+        metadata.get("unit_label", "updates")
     )
 
 
@@ -281,13 +270,15 @@ def main() -> int:
     arguments = parser.parse_args()
 
     directory = _raw_data_directory(arguments.raw_data)
-    tokens = _tokens_per_step(directory)
+    units, unit_label = _throughput(directory)
     output = arguments.output
     output.mkdir(parents=True, exist_ok=True)
 
     entries = _run_entries(directory, arguments.budget_gib)
     if entries:
-        written = plot_step_run(entries, output, tokens_per_step=tokens)
+        written = plot_step_run(
+            entries, output, units_per_step=units, unit_label=unit_label
+        )
         print(f"  measured: {len(entries)} budgets")
         for path in written:
             print(f"    {path}")

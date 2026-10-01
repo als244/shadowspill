@@ -21,6 +21,7 @@ from __future__ import annotations
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Any
 
 from matplotlib.figure import Figure
 
@@ -106,7 +107,7 @@ def plot_bandwidth_frontier(
         figsize=(7.6, 5.4 if crowded else 4.6), dpi=150, layout="constrained"
     )
     axes = figure.subplots()
-    colours: dict[str, str] = {}
+    colours: dict[str, Any] = {}
     for index, line in enumerate(lines):
         values = [line.at(budget) for budget in feasible]
         drawn = axes.plot(

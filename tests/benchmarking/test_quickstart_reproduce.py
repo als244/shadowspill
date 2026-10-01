@@ -11,14 +11,14 @@ from pathlib import Path
 import pytest
 import torch
 
-from benchmarking.quickstart import (
-    Precision,
+from benchmarking.quickstart.options import (
     _dtype_name,
     _reproduced_arguments,
     _request_record,
 )
 from shadowspill.planner.program_inputs import TransferBandwidths
 from shadowspill.pytorch import StepSearchReport
+from workloads.recipes.text.quickstart import Precision
 
 
 class _Parser:
@@ -29,6 +29,9 @@ class _Parser:
 def _arguments(**overrides: object) -> argparse.Namespace:
     named: dict[str, object] = dict(
         model="mlops_llama3",
+        distributed=False,
+        host_headroom_gib=2,
+        preparation_timeout=1800,
         sequence_length=1024,
         sequences_per_step=64,
         search_budget_gib=[6.0, 8.0],
@@ -74,12 +77,10 @@ def _run(tmp_path: Path) -> Path:
         evict_bytes_per_second=26_000_000_000,
     )
     StepSearchReport(
-        total_sequences_per_step=64,
-        sequence_length=1024,
+        metadata={"units_per_step": 64 * 1024, "unit_label": "tokens"},
         budgets=((8 << 30, 1 << 30),),
         geometries=(),
         points=(),
-        skipped=(),
         transfer_bandwidths=bandwidths,
     ).save(run / "search.json")
     return run
@@ -224,44 +225,37 @@ def test_a_dtype_flag_takes_a_torch_name_or_none() -> None:
         _dtype_name("float64")
 
 
-def test_the_request_manifest_carries_the_steps_sequences() -> None:
-    """The objective divides by the manifest's tokens per step, so a step of
-    other than the family's default sequences must reach the manifest."""
-
-    from benchmarking.quickstart import resolve_request
-    from workloads.full_model import manifest_for
+def test_text_recipe_normalizes_by_the_requested_step_total():
+    from workloads.recipes.text.quickstart import recipe
 
     arguments = _arguments(
         model="mlops_olmoe",
         sequence_length=8192,
         sequences_per_step=32,
-        search_budget_gib=[8.0],
-        run_budget_gib=[8.0],
-        spill_gib=None,
+        min_tokens_per_microbatch=None,
+        max_tokens_per_microbatch=None,
         sequences_per_microbatch=None,
-        remote_spill=None,
     )
-    request = resolve_request(_Parser(), arguments)  # type: ignore[arg-type]
-    assert request.tokens_per_step == 8192 * 32
-    assert request.manifest.tokens_per_step == request.tokens_per_step
-    assert manifest_for("olmoe", "mlops").tokens_per_step != request.tokens_per_step
+    setup, _, _ = recipe(_Parser(), arguments)
+    experiment = setup(device=torch.device("cuda:0"))
+    assert experiment["units_per_step"] == 8192 * 32
+    assert experiment["objective"].args[0].tokens_per_step == 8192 * 32
 
 
-def test_the_loss_shown_is_the_heads_share_when_the_objective_reports_one() -> None:
-    import torch
+def test_text_recipe_reports_head_loss_and_keeps_other_objectives():
+    from shadowspill.training.observations import StepObservations
+    from workloads.recipes.text.quickstart import text_metrics
 
-    from benchmarking.quickstart import _head_loss_share
-
-    assert _head_loss_share({"head_loss": torch.tensor(1.5)}) == 1.5
-    assert _head_loss_share(None) is None
-    assert _head_loss_share({"other": torch.tensor(1.5)}) is None
+    observed = StepObservations((2.0, 3.0), ({"head_loss": 1.5}, None))
+    assert text_metrics(observed)["loss"] == 4.5
 
 
 @pytest.mark.parametrize("master", ["none", "float32"])
 @pytest.mark.parametrize("grad", [None, "float16", "float32"])
 def test_fp16_quickstart_constructs_the_requested_model_and_precision(master, grad):
-    from benchmarking.quickstart import _parser, resolve_request
+    from benchmarking.quickstart.options import _parser
     from workloads.full_model import build_model
+    from workloads.recipes.text.quickstart import recipe
 
     parser = _parser()
     flags = [
@@ -276,11 +270,13 @@ def test_fp16_quickstart_constructs_the_requested_model_and_precision(master, gr
     if grad is not None:
         flags += ["--grad-dtype", grad]
     arguments = parser.parse_args(flags)
-    request = resolve_request(parser, arguments)
-    model = build_model(request.manifest)
+    setup, _, _ = recipe(parser, arguments)
+    experiment = setup(device=torch.device("cuda:0"))
+    manifest = experiment["objective"].args[0]
+    model = build_model(manifest)
     assert {p.dtype for p in model.parameters()} == {torch.float16}
     assert all(p.is_meta for p in model.parameters())
-    assert request.manifest.dtypes.as_dict() == {
+    assert manifest.dtypes.as_dict() == {
         "model_dtype": "float16",
         "master_dtype": master,
         "grad_dtype": grad or "float16",
@@ -298,11 +294,13 @@ def test_fp16_quickstart_constructs_the_requested_model_and_precision(master, gr
 
 
 def test_quickstart_keeps_bf16_defaults_without_probing_the_gpu():
-    from benchmarking.quickstart import _parser, resolve_request
+    from benchmarking.quickstart.options import _parser
+    from workloads.recipes.text.quickstart import recipe
 
     parser = _parser()
     arguments = parser.parse_args(["mlops_llama3"])
-    manifest = resolve_request(parser, arguments).manifest
+    setup, _, _ = recipe(parser, arguments)
+    manifest = setup(device=torch.device("cuda:0"))["objective"].args[0]
     assert manifest.dtypes.as_dict() == {
         "model_dtype": "bfloat16",
         "master_dtype": "none",
