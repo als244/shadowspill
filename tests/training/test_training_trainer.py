@@ -1,50 +1,49 @@
-"""The trainer end to end on the CPU: a tiny model on the PyTorch backend."""
+"""The supplied text recipe composes the generic trainer, including exact resume."""
 
 from __future__ import annotations
 
 import json
-from pathlib import Path
-from types import MappingProxyType
 
 import pytest
 import torch
 
-from shadowspill.planner.diagnostics.plan import PlanSummary
 from tests.training._synthetic import NOTES, write_dataset
-from training.backends import Microbatch
-from training.backends.pytorch import PyTorch
-from training.trainer import Trainer
+from workloads.recipes.text.run import run_config
 
 
-def _config(tmp_path: Path) -> Path:
-    config = {
+def _config(tmp_path):
+    raw = {
         "settings": [
             {"@call": "tests.training._synthetic:note", "text": "first"},
             {"@call": "tests.training._synthetic:note", "text": "second"},
         ],
+        "run_dir": str(tmp_path / "run"),
         "model": {
-            "@call": "training.models:build_on_meta",
+            "@call": "workloads.recipes.text.models:build_on_meta",
             "model": "@tests.training._synthetic:TinyModel",
         },
-        "objective": "@training.objectives:model_loss",
+        "objective": "@workloads.recipes.text.objectives:model_loss",
         "optimizer": "@torch.optim:AdamW",
         "optimizer_args": {"lr": 0.01},
         "data": {
-            "@call": "training.data:PackedTokens",
+            "@call": "workloads.recipes.text.data:PackedTokens",
             "directory": str(write_dataset(tmp_path / "tokens")),
         },
         "steps": 6,
         "max_seq_len": 512,
         "max_tokens_per_step": 4096,
         "max_tokens_per_microbatch": 2048,
-        "schedule": {
-            "@call": "training.schedules:WarmupCosine",
-            "lr": 0.01,
-            "min_lr": 0.001,
-            "warmup_steps": 2,
+        "schedules": {
+            "lr": {
+                "@call": "shadowspill.training.schedules:WarmupCosine",
+                "lr": 0.01,
+                "min_lr": 0.001,
+                "warmup_steps": 2,
+                "total_steps": 6,
+            }
         },
         "backend": {
-            "@call": "training.backends.pytorch:PyTorch",
+            "@call": "shadowspill.training.backends:PyTorch",
             "compile": False,
             "device": "cpu",
         },
@@ -53,216 +52,98 @@ def _config(tmp_path: Path) -> Path:
         "checkpoint_every": 3,
     }
     path = tmp_path / "config.json"
-    path.write_text(json.dumps(config))
+    path.write_text(json.dumps(raw))
     return path
 
 
-def _records(run_dir: Path, key: str) -> dict[int, dict]:
-    found = {}
-    for line in (run_dir / "metrics.jsonl").read_text().splitlines():
-        record = json.loads(line)
-        if key in record:
-            found[record["step"]] = record
-    return found
+def _records(root, key):
+    return {
+        row["step"]: row
+        for line in (root / "metrics.jsonl").read_text().splitlines()
+        if key in (row := json.loads(line))
+    }
 
 
-def test_a_run_trains_logs_and_resumes_where_it_stopped(
-    tmp_path: Path, capsys: pytest.CaptureFixture[str]
-) -> None:
-    config = _config(tmp_path)
-    whole = tmp_path / "whole"
-    NOTES.clear()
-    trainer = Trainer.from_config(config, [f"run_dir={whole}"])
-    assert NOTES == ["first", "second"]  # the config's settings, in order
-    last = trainer.train()
-    steps = _records(whole, "loss")
-    packing = _records(whole, "packing/sequences")
-    assert sorted(steps) == sorted(packing) == list(range(6))
-    for step in range(6):
-        trained = packing[step]["packing/trained_tokens"]
-        assert steps[step]["tokens_per_second"] == trained / steps[step]["step_seconds"]
-    assert steps[5]["loss"] < steps[0]["loss"]
-    assert last["val_loss"] == _records(whole, "val_loss")[5]["val_loss"]
-    printed = [
-        line for line in capsys.readouterr().out.splitlines() if "| loss" in line
-    ]
-    assert len(printed) == 6  # one line a step; what was packed stays off stdout
-    assert json.loads((whole / "config.json").read_text())["steps"] == 6
-
-    resumed = tmp_path / "resumed"
-    Trainer.from_config(config, [f"run_dir={resumed}", "steps=3"]).train()
-    Trainer.from_config(config, [f"run_dir={resumed}"]).train()
-    again = _records(resumed, "loss")
-    for step in range(6):
-        assert again[step]["loss"] == steps[step]["loss"]
-        assert again[step]["lr"] == steps[step]["lr"]
-    again_packing = _records(resumed, "packing/sequences")
-    for step in range(6):
-        for name, value in packing[step].items():
-            if name.startswith("packing/"):
-                assert again_packing[step][name] == value
-
-
-class _Recorded(PyTorch):
-    """The CPU backend, noting what the trainer asks of it, in order."""
-
-    def __init__(self) -> None:
-        super().__init__(compile=False, device="cpu")
-        self.calls: list[str] = []
-
-    def step(
-        self, microbatches: list[Microbatch], lr: float | None, trained_total: int
-    ) -> list[float]:
-        self.calls.append("step")
-        return super().step(microbatches, lr, trained_total)
-
-    def synchronize(self) -> None:
-        self.calls.append("synchronize")
-        super().synchronize()
-
-    def evaluate(
-        self, microbatches: list[Microbatch], trained_total: int
-    ) -> list[float]:
-        self.calls.append("evaluate")
-        return super().evaluate(microbatches, trained_total)
-
-    def save(self, path: Path) -> None:
-        self.calls.append("save")
-        super().save(path)
-
-
-def test_a_step_is_finished_before_it_is_evaluated_or_saved(tmp_path: Path) -> None:
-    run_dir = tmp_path / "run"
-    overrides = [f"run_dir={run_dir}", "steps=4", "eval_every=2", "checkpoint_every=4"]
-    trainer = Trainer.from_config(_config(tmp_path), overrides)
-    trainer.backend = backend = _Recorded()
-    trainer.train()
-
-    assert backend.calls == [
-        "step", "step", "synchronize", "evaluate",
-        "step", "step", "synchronize", "evaluate", "save",
-    ]  # fmt: skip
-    # A step's line is written when the next step starts, or once it has
-    # finished when an evaluation follows: always before that evaluation's.
-    lines = [json.loads(line) for line in (run_dir / "metrics.jsonl").open()]
-    order = [
-        (line["step"], "val_loss" if "val_loss" in line else "loss")
-        for line in lines
-        if "loss" in line or "val_loss" in line
-    ]
-    assert order == [
-        (0, "loss"), (1, "loss"), (1, "val_loss"),
-        (2, "loss"), (3, "loss"), (3, "val_loss"),
-    ]  # fmt: skip
-
-
-def test_masters_keep_the_weights_and_the_checkpoint_on_pytorch(
-    tmp_path: Path,
-) -> None:
-    """With fp32 masters of a bf16 model and gradients kept at fp32, each
-    weight is its master's cast after every step, a checkpoint holds the
-    masters, and a resumed run replays the uninterrupted one."""
-
-    config = _config(tmp_path)
-    overrides = [
-        "model.dtype=bfloat16",
-        "master_dtype=@torch:float32",
-        "grad_dtype=@torch:float32",
-    ]
-    whole = tmp_path / "whole"
-    trainer = Trainer.from_config(config, [f"run_dir={whole}", *overrides])
-    trainer.train()
-    kept = trainer.backend.masters
-    assert kept.masters and all(
-        master.dtype == torch.float32 for master in kept.masters.values()
-    )
-    for name, master in kept.masters.items():
-        assert torch.equal(kept.named[name].detach(), master.detach().bfloat16())
-    saved = torch.load(whole / "checkpoint.pt", weights_only=True)
-    for name, master in kept.masters.items():
-        assert torch.equal(saved["model"][name], master.detach())
-
-    resumed = tmp_path / "resumed"
-    Trainer.from_config(config, [f"run_dir={resumed}", *overrides, "steps=3"]).train()
-    Trainer.from_config(config, [f"run_dir={resumed}", *overrides]).train()
-    losses = {step: line["loss"] for step, line in _records(whole, "loss").items()}
-    assert {
-        step: line["loss"] for step, line in _records(resumed, "loss").items()
-    } == losses
-
-
-def test_setting_up_on_pytorch_plans_nothing(tmp_path: Path) -> None:
-    trainer = Trainer.from_config(_config(tmp_path), [f"run_dir={tmp_path / 'run'}"])
-    assert trainer.setup() is None
-    assert trainer.plan is None and trainer.planning is None
-    assert (trainer.tokens, trainer.microbatches) == (2048, 2)
-    trainer.close()
-
-
-class _Planned(PyTorch):
-    """The CPU backend, reporting a plan the way ShadowSpill's backend does: a
-    real ``PlanSummary``, whose read-only mappings no deep copy can take."""
-
-    plan = PlanSummary(
-        simulated_step_seconds=2.0,
-        unconstrained_step_seconds=1.5,
-        recomputation_overhead_seconds=0.25,
-        idle_seconds=0.25,
-        terminal_writeback_seconds=0.0,
-        recomputing_group_count=1,
-        task_alternative_group_count=2,
-        flexible_group_count=2,
-        planning_phase_seconds=MappingProxyType({"search": 3.0}),
-    )
-
-    def __init__(self) -> None:
-        super().__init__(compile=False, device="cpu")
-
-
-def test_a_planned_run_writes_and_logs_what_its_plan_promises(tmp_path: Path) -> None:
-    run_dir = tmp_path / "run"
-    trainer = Trainer.from_config(_config(tmp_path), [f"run_dir={run_dir}", "steps=1"])
-    trainer.backend = _Planned()
-    trainer.train()
-
-    written = json.loads((run_dir / "plan.json").read_text())
-    assert written["planning_phase_seconds"] == {"search": 3.0}
-    (start,) = _records(run_dir, "plan/simulated_step_seconds").values()
-    assert start["plan/simulated_step_seconds"] == 2.0
-    assert start["plan/recomputing_group_fraction"] == 0.5
-
-
-def test_token_counts_must_fit_the_data(tmp_path: Path) -> None:
-    config = _config(tmp_path)
-    with pytest.raises(ValueError, match="multiple of max_seq_len"):
-        Trainer.from_config(config, ["run_dir=x", "max_tokens_per_step=1000"])
-    with pytest.raises(ValueError, match="must divide"):
-        Trainer.from_config(config, ["run_dir=x", "max_tokens_per_microbatch=3072"])
-
-
-def test_trainer_logs_derived_parameter_metrics_and_elapsed_seconds(tmp_path):
-    run_dir = tmp_path / "run"
-    trainer = Trainer.from_config(
-        _config(tmp_path),
+@pytest.mark.parametrize("masters", [False, True])
+def test_recipe_preserves_data_schedules_and_weights_on_explicit_resume(
+    tmp_path, masters
+):
+    path = _config(tmp_path)
+    precision = (
         [
-            f"run_dir={run_dir}",
+            "model.dtype=bfloat16",
+            "master_dtype=@torch:float32",
+            "grad_dtype=@torch:float32",
+        ]
+        if masters
+        else []
+    )
+    whole, resumed = tmp_path / "whole", tmp_path / "resumed"
+    NOTES.clear()
+    last = run_config(path, [f"run_dir={whole}", *precision])
+    assert NOTES == ["first", "second"]
+    assert last.step == 6
+    losses = _records(whole, "train/loss")
+    assert list(losses) == [1, 2, 3, 4, 5, 6]
+    assert losses[6]["train/loss"] < losses[1]["train/loss"]
+    assert list(_records(whole, "eval/loss")) == [3, 6]
+    packing = _records(whole, "packing/trained_tokens")
+    for step, row in packing.items():
+        assert row["train/tokens_per_second"] == (
+            row["packing/trained_tokens"] / losses[step]["train/step_seconds"]
+        )
+    run_config(path, [f"run_dir={resumed}", "steps=3", *precision])
+    checkpoint = resumed / "checkpoints" / "step_00000003"
+    run_config(path, [f"run_dir={resumed}", f"resume={checkpoint}", *precision])
+    again = _records(resumed, "train/loss")
+    for step in losses:
+        for name in ("train/loss", "hyperparameters/lr"):
+            assert again[step][name] == losses[step][name]
+    assert (whole / "packing.jsonl").read_text() == (
+        resumed / "packing.jsonl"
+    ).read_text()
+
+    def state(root):
+        return torch.load(
+            root / "checkpoints" / "step_00000006" / "state.pt", weights_only=True
+        )
+
+    expected, actual = state(whole), state(resumed)
+    for name, value in expected["model"].items():
+        assert torch.equal(value, actual["model"][name])
+        if masters:
+            assert value.dtype == torch.float32
+
+
+def test_recipe_logs_tensor_observations_with_real_parameter_names(tmp_path):
+    path = _config(tmp_path)
+    root = tmp_path / "observed"
+    run_config(
+        path,
+        [
+            f"run_dir={root}",
             "steps=2",
             "eval_every=0",
             "checkpoint_every=0",
-            "parameter_metrics=@training.observations:parameter_norms",
+            "parameter_metrics=@shadowspill.training.observations:parameter_norms",
         ],
     )
-    trainer.train()
-    rows = _records(run_dir, "grad_norm/global/l2")
-    assert list(rows) == [0, 1]
-    for step, row in rows.items():
-        assert row["grad_rms/embed/weight"] > 0
-        assert row["param_rms/embed/weight"] > 0
-        assert row["grad_weight_ratio/head/weight"] > 0
+    rows = _records(root, "train/grad_norm/global/l2")
+    assert list(rows) == [1, 2]
+    for row in rows.values():
+        assert row["train/grad_rms/embed/weight"] > 0
+        assert row["train/param_rms/embed/weight"] > 0
+        assert row["train/grad_weight_ratio/head/weight"] > 0
         assert not any(
-            name.startswith(("grad_squared_share/", "param_norm/")) for name in row
+            name.startswith(("train/grad_squared_share/", "train/param_norm/"))
+            for name in row
         )
-        assert (
-            row["elapsed_seconds"] >= _records(run_dir, "loss")[step]["elapsed_seconds"]
-        )
-    assert rows[1]["elapsed_seconds"] > rows[0]["elapsed_seconds"]
+    assert rows[2]["train/elapsed_seconds"] > rows[1]["train/elapsed_seconds"]
+
+
+def test_recipe_rejects_invalid_text_geometry(tmp_path):
+    path = _config(tmp_path)
+    with pytest.raises(ValueError, match="whole fixed-length"):
+        run_config(path, ["max_tokens_per_step=1000"])
+    with pytest.raises(ValueError, match="no text microbatch"):
+        run_config(path, ["max_tokens_per_microbatch=3072"])

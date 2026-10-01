@@ -29,10 +29,10 @@ def read(run: Path) -> tuple[dict[int, float], dict[int, float]]:
     train, val = {}, {}
     for line in (run / "metrics.jsonl").read_text().splitlines():
         record = json.loads(line)
-        if "loss" in record:
-            train[record["step"]] = record["loss"]
-        if "val_loss" in record:
-            val[record["step"]] = record["val_loss"]
+        if "train/loss" in record:
+            train[record["step"]] = record["train/loss"]
+        if "eval/loss" in record:
+            val[record["step"]] = record["eval/loss"]
     return train, val
 
 
@@ -83,8 +83,9 @@ def main() -> None:
                 else "identical at every step"
             )
         )
-        first = f"{train[0]:.6f} vs {ref_train[0]:.6f}"
-        print(f"  step 0 loss      {first} (diff {gap[0]:+.2e})")
+        first_step = steps[0]
+        first = f"{train[first_step]:.6f} vs {ref_train[first_step]:.6f}"
+        print(f"  first-step loss      {first} (diff {gap[first_step]:+.2e})")
         print(f"  max |diff| 0-9   {max(abs(gap[s]) for s in steps[:10]):.2e}")
         print("  mean |diff| / 100 steps  " + "  ".join(f"{w:.4f}" for w in windows))
         if val:

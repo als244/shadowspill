@@ -6,32 +6,38 @@
 shadowspill/
 ├── src/
 │   ├── shadowspill/       installed Python package
-│   └── tools/             reusable source-tree diagnostics and qualification tools
+│   └── tools/             naming checks and sanitizer support
 ├── csrc/                  the C library, its backends and public C headers,
 │                          the network extension, and the memory daemon
 ├── tests/                 fast tests mirroring product/tool boundaries
 ├── workloads/             model and data clients
 ├── reference/             executable reference implementations
 ├── benchmarking/          the quickstart tour, StepProgram corpora, and planning evaluation
-├── qualification/         thin release gates: suite, numerical, performance, remote
+├── qualification/         gate commands, implementations, configurations, and docs
 ├── docs/                  architecture, Python, C, and development
 ├── scripts/               one-command setup
 ├── CMakeLists.txt         build orchestrator for the C tree
 └── pyproject.toml         Python build, dependency, lint, type, and test configuration
 ```
 
-`qualification/` contains launchers and protocol descriptions only. Reusable
-logic lives under `src/tools/qualification/`, and product behavior remains
-under `src/shadowspill/`. The numerical gate is a package there,
-`src/tools/qualification/numerical/`, holding one case end to end: the
+`qualification/` owns the complete gate implementation and its documentation.
+There is no forwarding package under `src/tools/`. `qualification/gates.py`
+runs the selected gates; each gate's `matrix.py` launches its cases, and its
+`run.py` implements the single-case command. Product behavior remains under
+`src/shadowspill/`. The numerical gate is a package,
+`qualification/numerical/`, holding one case end to end: the
 request and its identity, the reference arm, the planned run, the two
 comparisons, the artifact, the verdict, and the matrix that launches cells.
 The throughput gate is the package beside it,
-`src/tools/qualification/performance/`, holding one cell in the order it
+`qualification/performance/`, holding one cell in the order it
 runs: the manifest and its budgets, the readings taken off the runtime, the
 phases (calibrate, plan, warm, measure), and the verdict each gate reaches.
 
-`benchmarking/` holds the quickstart, which takes one model end to end, and
+`workloads/` supplies optional model and data recipes; qualification budgets and
+acceptance rules live under `qualification/`. `shadowspill.training`
+accepts ordinary user models, functions and iterables, without importing recipes.
+
+`benchmarking/` holds the generic quickstart factory runner and text CLI presets, and
 two harnesses that split that job so its expensive half is paid once: program
 collection builds programs -- capture, compilation, profiling, lowering --
 and planning evaluation plans saved programs across budgets and transfer
@@ -112,9 +118,12 @@ src/shadowspill/
 ├── search/                a step planned at every geometry, budget and walk:
 │                          the geometries, the rule one point is answered by,
 │                          the refusals it records, and the report
+├── training/              generic model/objective/data execution and loop policy
+│   └── backends/          PyTorch and planned execution of the same objective
 ├── plots/                 step-run and step-search figures
 │   └── step_search/       one module per figure family, over shared series and axes
 └── pytorch/
+    ├── distributed/       replica ownership, coordinated preparation and local execution
     ├── capture/           Export/AOT capture and semantic storage contracts
     │   └── storage/       one task's contract: the records, the roots, the
     │                      capture, the symbolic replay

@@ -299,3 +299,16 @@ public C headers, local links and heading anchors, and the Python signatures
 mirrored in API examples. Installed headers remain authoritative for C layouts,
 ABI constants, and exact C signatures. Source remains authoritative for cache
 schema labels and internal implementation details.
+
+The [generic trainer API](python/api/training.md) and
+[generic training example](examples/generic-training.md) cover ordinary user models
+and data iterables; the [text recipes](../training/README.md) compose these APIs.
+
+[Training composition](architecture/training.md) documents the boundaries among
+caller code, recipes, execution backends and planning.
+
+### Distributed PyTorch execution
+
+- [Distributed planning and training](python/api/distributed.md) — explicit
+  devices/groups, replica ownership, optimizer shards, local execution, and
+  checkpoint representation; separate-device qualification is in progress.

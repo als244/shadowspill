@@ -8,7 +8,7 @@ from pathlib import Path
 import torch
 import torch.nn as nn
 
-from training import checkpoints
+from shadowspill.training import checkpoints
 
 
 def _bf16_model(seed: int) -> nn.Module:

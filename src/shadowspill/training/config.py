@@ -1,6 +1,7 @@
 """Build a run from a JSON config: its settings, and the objects they name.
 
-A config is one JSON object of ``Trainer`` arguments. Three forms name Python
+A config is a JSON object of explicit Python construction arguments.
+Three forms name Python
 objects, so that a config can say which model, objective, optimizer and data a
 run uses without this package knowing any of them:
 
@@ -34,7 +35,10 @@ def load(
 ) -> dict[str, Any]:
     """The config at ``path``, with ``key=value`` overrides applied, unresolved."""
 
-    config = json.loads(Path(path).read_text())
+    loaded = json.loads(Path(path).read_text())
+    if not isinstance(loaded, dict):
+        raise ValueError("configuration must be a JSON object")
+    config: dict[str, Any] = loaded
     for override in overrides:
         key, separator, text = override.partition("=")
         if not separator:
@@ -60,7 +64,9 @@ def resolve(value: Any) -> Any:
         return [resolve(item) for item in value]
     if not isinstance(value, dict):
         return value
-    arguments = {key: resolve(item) for key, item in value.items() if key[0] != "@"}
+    arguments = {
+        key: resolve(item) for key, item in value.items() if not key.startswith("@")
+    }
     if CALL in value:
         return reference(value[CALL])(**arguments)
     if PARTIAL in value:

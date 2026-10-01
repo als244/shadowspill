@@ -12,7 +12,7 @@ from collections.abc import Sequence
 
 import torch
 
-from training.observations import MetricSummary, MetricTable
+from shadowspill.training.observations import MetricSummary, MetricTable
 
 
 def reduce_metrics(microbatches: Sequence[dict[str, torch.Tensor]]) -> MetricSummary:

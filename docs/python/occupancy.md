@@ -1,6 +1,6 @@
 # Pool occupancy over a step
 
-`python -m tools.diagnostics.occupancy` reads a plan the store holds and says
+`python -m shadowspill.diagnostics.occupancy` reads a plan the store holds and says
 what occupies the spill pool and the execution pool at every moment of the
 step, attributed to objects and to what those objects are for, as tables and
 as pages. It runs on the machine that planned the step or on any other: the
@@ -21,11 +21,11 @@ Some entries under `results/` name a plan without carrying its evidence (no
 `simulation_result`); the tool refuses those and says so.
 
 ```text
-python -m tools.diagnostics.occupancy <selection.json>
+python -m shadowspill.diagnostics.occupancy <selection.json>
     [--program program.json] [--step steps/12gib.json] [--tokens-per-step N]
     [--by category|role] [--at 5.46,11.05] [--html DIRECTORY] [--json]
 
-python -m tools.diagnostics.occupancy --run <run directory> [--html DIRECTORY]
+python -m shadowspill.diagnostics.occupancy --run <run directory> [--html DIRECTORY]
 ```
 
 | argument | meaning |
@@ -261,7 +261,7 @@ its own.
 
 ## From Python
 
-`tools.diagnostics.occupancy.attribute(selection, program, diagnostics=None)`
+`shadowspill.diagnostics.occupancy.attribute(selection, program, diagnostics=None)`
 takes the three files' contents as mappings (`unconstrained(program,
 selections)` takes the program and a plan's choices, `all_save(program)` the
 program alone) and returns a `PlanOccupancy`

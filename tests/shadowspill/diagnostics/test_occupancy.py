@@ -5,7 +5,9 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from tools.diagnostics.occupancy import (
+import pytest
+
+from shadowspill.diagnostics.occupancy import (
     SUMMARY_COLUMNS,
     WORKSPACE,
     Clock,
@@ -578,7 +580,7 @@ def test_a_transfer_the_trace_could_not_time_is_left_off_the_lanes() -> None:
     needs the input's fetch time takes its trigger task's end instead, and
     the page counts what it left off."""
 
-    from tools.diagnostics.occupancy import page_data
+    from shadowspill.diagnostics.occupancy import page_data
 
     diagnostics = _diagnostics()
     diagnostics["transfers"]["fetch"]["fetch_1"]["lane"] = {
@@ -729,19 +731,23 @@ def test_the_program_is_found_beside_the_selection_in_the_store(tmp_path: Path) 
     )
 
 
+@pytest.mark.parametrize("external_store", [False, True])
 def test_a_run_gets_pages_for_every_plan_and_both_clocks_for_a_budget_that_ran(
     tmp_path: Path,
+    external_store: bool,
 ) -> None:
     """The store layout the quickstart leaves behind, in miniature: one
     program, one selection the search made at 1 GiB, and the traced step of
     the budget that ran it."""
 
-    from tools.diagnostics.occupancy import write_run_timelines
+    from shadowspill.diagnostics.occupancy import write_run_timelines
 
     run = tmp_path / "run"
     selection = _selection()
     digest = selection["program_digest"]
-    planning = run / "plan_store" / "v1" / "planning"
+    run.mkdir(parents=True)
+    store = tmp_path / "separate_store" if external_store else run / "plan_store"
+    planning = store / "v1" / "planning"
     (planning / "programs" / digest[:2] / digest).mkdir(parents=True)
     (planning / "programs" / digest[:2] / digest / "program.json").write_text(
         json.dumps(_program())
@@ -789,7 +795,7 @@ def test_a_run_gets_pages_for_every_plan_and_both_clocks_for_a_budget_that_ran(
                 "budgets": [[1 << 30, 4 << 30]],
                 "points": [
                     {
-                        "sequences_per_microbatch": 4,
+                        "candidate": "4",
                         "accumulation_count": 2,
                         "ordering_label": "1x2rp",
                         "makespan_seconds": 10.0,
@@ -803,7 +809,14 @@ def test_a_run_gets_pages_for_every_plan_and_both_clocks_for_a_budget_that_ran(
     (run / "steps" / "1gib.json").write_text(json.dumps(_diagnostics()))
     (run / "request.json").write_text(
         json.dumps(
-            {"request": {"model": "toy", "sequence_length": 8, "sequences_per_step": 4}}
+            {
+                "request": {
+                    "model": "toy",
+                    "sequence_length": 8,
+                    "sequences_per_step": 4,
+                    **({"plan_store": str(store)} if external_store else {}),
+                }
+            }
         )
     )
 
@@ -880,7 +893,7 @@ def test_a_run_gets_pages_for_every_plan_and_both_clocks_for_a_budget_that_ran(
     traced = (plan / "recompute_0" / "traced.html").read_text()
     assert "<title>Occupancy 4x2_1x2rp at 1gib, recompute 0 · traced</title>" in traced
     assert payload(plan / "recompute_0" / "traced.html")["plan"] == (
-        "toy · 4 sequences per microbatch, 2 microbatches, ordering 1x2rp"
+        "toy · candidate 4, 2 microbatches, ordering 1x2rp"
         " · 8 tokens by 4 sequences = 32 tokens a step"
         " · execution budget 1gib (pool 0.88 GiB) · spill pool 0.39 GiB"
         " · resolution: 0 of the flexible groups recompute, the search's choice"
@@ -957,7 +970,7 @@ def test_the_summary_reads_the_step_off_the_same_spans() -> None:
 
 
 def test_the_traced_page_shows_the_execution_pool_on_the_device_clock() -> None:
-    from tools.diagnostics.occupancy import page_data
+    from shadowspill.diagnostics.occupancy import page_data
 
     traced = attribute(_selection(), _program(), diagnostics=_diagnostics())
     page = page_data(traced, tokens_per_step=100)

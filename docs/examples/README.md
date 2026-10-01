@@ -7,6 +7,9 @@ while API pages define individual contracts.
 
 ## Suggested order
 
+Start with the [generic trainer example](generic-training.md) for ordinary models
+and iterable data. The pages below expose the lower-level planning lifecycle.
+
 1. [Training loop](training-lifecycle.md) — end-to-end training and checkpoint.
 2. [Forward-only execution](forward-only.md) — plan and execute a fixed-shape
    inference graph.

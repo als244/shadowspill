@@ -1,21 +1,14 @@
 # Source-tree tools
 
-This package contains reusable repository tooling that is intentionally not
-part of ShadowSpill's wheel. Qualification launchers, NSYS analysis, naming
-checks, and sanitizer support call these modules instead of duplicating product
-logic.
+This package contains repository support files outside ShadowSpill's wheel.
 
-- `qualification/` implements reusable acceptance-run orchestration. `gates.py`
-  is the entry point that runs the suite, numerical and performance gates --
-  and, when a peer is named, the two remote ones -- in order under one run
-  name, taking each gate's own arguments from one config file. `nondeterminism/` locates the stage of a step that is not bitwise
-  reproducible.
-- `diagnostics/` reads serialized planning and step evidence: `occupancy.py`
-  attributes what occupies each pool over a step to objects and their roles,
-  and writes the pools and the transfer lanes as pages
-  ([guide](../../docs/python/occupancy.md)).
-- `check_naming.py` enforces provider and vocabulary boundaries.
+- `check_naming.py` enforces naming and component boundaries.
 - `sanitizers/` contains tool-specific support files.
 
-The source tree is added to Python's import path by the development install and
-test configuration. Product behavior remains in `src/shadowspill/`.
+[Qualification](../../qualification/README.md) owns gate orchestration and
+acceptance checks. Runtime diagnostics and occupancy rendering live in the
+installed `shadowspill.diagnostics` package; see the
+[occupancy guide](../../docs/python/occupancy.md).
+
+The development install and test configuration put `src/` on Python's import
+path. Product behavior remains in `src/shadowspill/`.

@@ -3,9 +3,9 @@
 from __future__ import annotations
 
 from collections import defaultdict
-from collections.abc import Iterator, Mapping
+from collections.abc import Iterator, Mapping, Sequence
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, Self
 
 import torch
 from torch.utils._pytree import tree_flatten, tree_unflatten
@@ -68,7 +68,12 @@ class StepObservations:
         return iter(self.losses)
 
     @classmethod
-    def collect(cls, losses, metrics=(), parameter_metrics=None):
+    def collect(
+        cls,
+        losses: Sequence[torch.Tensor],
+        metrics: Sequence[Any] = (),
+        parameter_metrics: Mapping[str, Any] | None = None,
+    ) -> Self:
         host_losses, host_metrics, host_parameters = to_host(
             (losses, metrics, parameter_metrics or {})
         )
@@ -105,11 +110,10 @@ def parameter_scalars(
     nonzero. Empty tensors omit RMS, and all-zero gradients have zero shares.
     """
 
-    result = {}
-    squared = defaultdict(float)
-    module_squared = defaultdict(float)
+    result: dict[str, float] = {}
+    squared: defaultdict[str, float] = defaultdict(float)
+    module_squared: defaultdict[str, float] = defaultdict(float)
     for name, value in observations.items():
-        name = name.removeprefix("model.")
         path = name.split(".")
         path = [part.zfill(2) if part.isdecimal() else part for part in path]
         module = ".".join(path[:-1]) or "parameters"

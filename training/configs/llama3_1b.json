@@ -7,16 +7,16 @@
     }
   ],
   "model": {
-    "@call": "training.models:build_on_meta",
+    "@call": "workloads.recipes.text.models:build_on_meta",
     "model": "@workloads.mlops:Llama3",
     "dtype": "bfloat16",
     "config": {
-      "@call": "training.models:config_preset",
+      "@call": "workloads.recipes.text.models:config_preset",
       "preset": "@workloads.mlops:Llama3Config.numerical",
       "max_seq_len": 2048
     }
   },
-  "objective": "@training.objectives:model_loss",
+  "objective": "@workloads.recipes.text.objectives:model_loss",
   "optimizer": "@mlops.optim:AdamW",
   "optimizer_args": {
     "betas": [
@@ -26,28 +26,31 @@
     "weight_decay": 0.1
   },
   "data": {
-    "@call": "training.data:PackedTokens",
+    "@call": "workloads.recipes.text.data:PackedTokens",
     "directory": "training/data/tokens/llama3"
   },
   "steps": 1000,
   "max_seq_len": 2048,
   "max_tokens_per_step": 16384,
   "max_tokens_per_microbatch": 8192,
-  "schedule": {
-    "@call": "training.schedules:WarmupCosine",
-    "lr": 0.0003,
-    "min_lr": 3e-05,
-    "warmup_steps": 100
-  },
   "backend": {
-    "@call": "training.backends.shadowspill:ShadowSpill",
+    "@call": "shadowspill.training.backends:ShadowSpill",
     "execution_gib": 8,
-    "spill_gib": 32
+    "spill_gib": 32,
+    "artifact_store": "training/artifact_store"
   },
   "seed": 0,
   "eval_every": 100,
   "eval_batches": 10,
   "checkpoint_every": 500,
-  "artifact_store": "training/artifact_store",
-  "wandb_project": "shadowspill-training"
+  "wandb_project": "shadowspill-training",
+  "schedules": {
+    "lr": {
+      "@call": "shadowspill.training.schedules:WarmupCosine",
+      "lr": 0.0003,
+      "min_lr": 3e-05,
+      "warmup_steps": 100,
+      "total_steps": 1000
+    }
+  }
 }

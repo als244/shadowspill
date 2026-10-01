@@ -27,12 +27,14 @@ ordered outward from the framework-neutral layer to the PyTorch frontend.
 
 - [Framework-neutral Python APIs](api/neutral.md)
 - [Reusable planning artifacts](api/artifacts.md)
+- [Generic trainer and forward runner](api/training.md)
+- [Distributed planning and training](api/distributed.md)
 - [Frontend and lifecycle](api/frontend.md)
 - [Planning and step diagnostics](api/diagnostics.md)
 - [Timing: the step on the device clock](api/timing.md)
 
 The supported user entrypoints are imported from `shadowspill.memory` and
-`shadowspill.pytorch`. The lower-level packages `shadowspill.ir`,
+`shadowspill.pytorch`, and the optional high-level `shadowspill.training`. The lower-level packages `shadowspill.ir`,
 `shadowspill.step`, `shadowspill.task`, `shadowspill.store`,
 `shadowspill.profiling`, `shadowspill.planner`, `shadowspill.search`,
 `shadowspill.simulator`, `shadowspill.diagnostics` and `shadowspill.runtime`

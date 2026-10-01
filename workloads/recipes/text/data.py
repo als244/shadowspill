@@ -7,8 +7,8 @@ from pathlib import Path
 
 import torch
 
-from training.documents import TokenDocuments
-from training.packing import Packer, seq_slots, uniform_microbatch
+from workloads.recipes.text.documents import TokenDocuments
+from workloads.recipes.text.packing import Packer, seq_slots, uniform_microbatch
 
 
 class PackedTokens:

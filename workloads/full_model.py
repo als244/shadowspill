@@ -1,4 +1,4 @@
-"""Shared full-model manifests and deterministic workload construction."""
+"""Full-model specifications, example geometries and deterministic construction."""
 
 from __future__ import annotations
 
@@ -8,96 +8,19 @@ from contextlib import AbstractContextManager
 from dataclasses import asdict, dataclass
 from typing import Any, cast
 
-import mlops
 import torch
 import torch.nn as nn
 
-from shadowspill.pytorch import ObjectiveResult, Runtime
 from workloads.common import auxiliary_share, language_model_loss
-from workloads.mlops import Llama3 as MlopsLlama3
-from workloads.mlops import OLMoE as MlopsOLMoE
-from workloads.mlops import Qwen35 as MlopsQwen35
 from workloads.precision import TrainingDtypes
 from workloads.providers import MODEL_DTYPES, ModelImplementation
-from workloads.pytorch import Llama3 as PyTorchLlama3
-from workloads.pytorch import Llama3Config, OLMoEConfig, Qwen35Config
-from workloads.pytorch import Qwen35 as PyTorchQwen35
 
 _GIB = 1 << 30
 _RETAINED_HEAD_SCRATCH_BYTES = 512 << 20
 
-#: Throughput recorded on the RTX 5090 configuration below, in tokens/second.
-#: The performance gate applies its 0.95 floor only when the hardware and
-#: configuration match (see tools.qualification.performance.baseline). Other
-#: cells still report throughput and run their runtime/budget/simulator checks.
-#:
-#: Each is the median of three consecutive matrix runs on 2026-09-01 with
-#: first-use initial ordering (5ae17b7), on an idle RTX 5090 under the
-#: standard probe (no checkpoint, warm step, three groups of four steps):
-#:
-#:     mlops_llama3    3423.5   3441.4   3410.2
-#:     mlops_qwen35    3026.6   3057.1   3015.8
-#:     mlops_olmoe    13907.1  14085.9  13897.6
-#:
-#: Run-to-run spread is now up to 1.4%, dominated by which schedule the
-#: planner draws rather than by measurement jitter, so the 5% margin is
-#: roughly 3.5x the spread. Re-measure and update these deliberately when a
-#: change is meant to move throughput.
-#:
-#: These replace entries measured on 2026-08-29 at a54da6c, which were
-#: 3254.9, 2897.5 and 12807.8. The whole rise (+5.2%, +4.5%, +8.6%) is
-#: first-use ordering of the initial placement batch: the opening restore
-#: no longer strands a first-task input at the end of the FIFO fetch
-#: queue. See docs/internal/investigations/step-prologue-and-terminal-tail.md.
-_REGRESSION_TOKENS_PER_SECOND = {
-    "mlops_llama3": 3_423.5,
-    "mlops_qwen35": 3_026.6,
-    "mlops_olmoe": 13_907.1,
-}
-
-#: The same floors for the same cells with the spill pool on a peer, in
-#: tokens per second: what the `remote_perf` gate judges against, at the same
-#: 0.95 margin. A peer's pool is reached over a 25 Gb/s link against about
-#: 25 GB/s to pinned host memory, so these sit far below the local floors and
-#: the local floors say nothing about a remote run.
-#:
-#: Each is the median of one matrix run on 2026-09-21 at af39235b with the
-#: remote lane rewritten around the direct path, on an idle RTX 5090 with the
-#: pool on tubingen (112 GiB) under the standard probe (no checkpoint, warm
-#: step, three groups of four steps). The run three days earlier read within
-#: 0.25 % of these in every cell, so the margin is twenty times the spread.
-#: Re-measure and update these deliberately when a change is meant to move
-#: remote throughput.
-_REMOTE_REGRESSION_TOKENS_PER_SECOND = {
-    "mlops_llama3": 584.4,
-    "mlops_qwen35": 777.0,
-    "mlops_olmoe": 1_934.2,
-}
-
-#: What the predecessor `dataflow` system measured on the same geometry, in
-#: tokens per second. ShadowSpill replaces that system, so these are a parity
-#: target rather than a regression floor: the harness reports the ratio and
-#: never fails a cell on it.
-#:
-#: Source: `dataflow` at e04b1454, qualification runs of 2026-08-08 and
-#: 2026-08-09, archived at combating_fragmentation/experiments/
-#: E004-recompute-refinement/archive_INDEX.json. The geometry matches this
-#: manifest exactly - sequence 1024, 65,536 tokens per step, 16 GiB execution
-#: budget - and the transfer bandwidths agree within 3%, so the comparison is
-#: like for like.
-#:
-#: ShadowSpill measures 88-90% of these as of 2026-08-23. That gap is the open
-#: plan-quality item, and it is the reason these are kept: re-basing them onto
-#: current numbers would erase the only standing measure of it.
-_PREDECESSOR_TOKENS_PER_SECOND = {
-    "mlops_llama3": 3_669.2969982952136,
-    "mlops_qwen35": 3_316.344617868151,
-    "mlops_olmoe": 15_654.904932252315,
-}
-
 
 @dataclass(frozen=True, slots=True)
-class FullModelManifest:
+class FullModelSpec:
     """One reproducible provider/model/geometry performance request."""
 
     family: str
@@ -105,19 +28,12 @@ class FullModelManifest:
     sequence_length: int
     sequences_per_microbatch: int
     accumulation_count: int
-    device_physical_capacity_bytes: int
-    spill_budget_bytes: int
-    regression_tokens_per_second: float | None
-    remote_regression_tokens_per_second: float | None
-    predecessor_tokens_per_second: float | None
     model_config: Any
     head_scratch_bytes: int = _RETAINED_HEAD_SCRATCH_BYTES
     model_dtype: str = "bfloat16"
     master_dtype: str = "none"
     grad_dtype: str = "bfloat16"
     opt_state_dtype: str = "bfloat16"
-    external_headroom_bytes: int = 512 << 20
-    reject_overbudget: bool = False
 
     @property
     def dtypes(self) -> TrainingDtypes:
@@ -146,112 +62,11 @@ class FullModelManifest:
         return result
 
 
-@dataclass(frozen=True, slots=True)
-class FullModelCase:
-    """Initialized CPU model and one complete accumulated-step template."""
+def throughput_spec(family: str, implementation: ModelImplementation) -> FullModelSpec:
+    """A supplied model/geometry recipe, independent of gate budgets or verdicts."""
 
-    manifest: FullModelManifest
-    model: nn.Module
-    microbatches: tuple[tuple[object, ...], ...]
+    from workloads.pytorch import Llama3Config, OLMoEConfig, Qwen35Config
 
-    def implementations(self) -> AbstractContextManager[Any]:
-        """Leave implementation selection to the model's operation library."""
-        return contextlib.nullcontext()
-
-    def objective(
-        self, model: nn.Module, *values: object
-    ) -> torch.Tensor | ObjectiveResult:
-        """The microbatch's share of the step's mean loss over trained tokens:
-        its loss summed over trained positions, divided by the step's trained
-        total. Random targets train every position, so that total is the
-        step's token count, which the manifest carries for the step being
-        run. A mixture of experts returns `ObjectiveResult`: its objective
-        adds the router's balancing term, and the head's share alone travels
-        as the metric `HEAD_LOSS_METRIC`."""
-
-        tokens, targets, sequence_lengths = values
-        if not isinstance(tokens, torch.Tensor) or not isinstance(
-            targets, torch.Tensor
-        ):
-            raise TypeError("performance tokens and targets must be tensors")
-        total = float(self.manifest.tokens_per_step)
-        callable_model: Any = model
-        if self.manifest.implementation == "pytorch":
-            if self.manifest.family == "olmoe":
-                hidden, auxiliary = callable_model.hidden(tokens, sequence_lengths)
-                return _with_balancing(
-                    language_model_loss(hidden, callable_model.lm_head, targets, "sum"),
-                    auxiliary_share(auxiliary, targets, "sum"),
-                    total,
-                )
-            summed = callable_model.loss(
-                tokens, targets, seq_lens=sequence_lengths, reduction="sum"
-            )
-            return cast(torch.Tensor, summed / total)
-
-        chunk = _head_chunk_size(
-            int(callable_model.config.vocab_size),
-            self.manifest.head_scratch_bytes,
-        )
-        if self.manifest.family == "olmoe":
-            hidden, auxiliary = callable_model.hidden(tokens, sequence_lengths)
-            return _with_balancing(
-                mlops.head_loss(
-                    hidden,
-                    callable_model.lm_head.weight,
-                    targets,
-                    chunk_size=chunk,
-                    reduction="sum",
-                ),
-                auxiliary_share(auxiliary, targets, "sum"),
-                total,
-            )
-        hidden = callable_model.hidden(tokens, sequence_lengths)
-        summed = mlops.head_loss(
-            hidden,
-            callable_model.lm_head.weight,
-            targets,
-            chunk_size=chunk,
-            reduction="sum",
-        )
-        return cast(torch.Tensor, summed / total)
-
-    @property
-    def optimizer(self) -> Any:
-        return self.manifest.dtypes.optimizer()
-
-
-#: The weight of the router's balancing term in a mixture of experts' objective.
-BALANCING_COEFFICIENT = 0.01
-
-#: The metric an MoE objective reports beside its loss: the head's share alone.
-HEAD_LOSS_METRIC = "head_loss"
-
-
-def _with_balancing(
-    head: torch.Tensor, balancing: torch.Tensor, total: float
-) -> ObjectiveResult:
-    """A mixture of experts' microbatch objective: the head's share of the
-    step's mean loss plus the balancing term's, weighted. The head's share
-    alone is the metric, since the loss read across models is the head's and
-    the balancing term is the router's; a metric is not differentiated."""
-
-    share = head / total
-    return ObjectiveResult(
-        loss=share + BALANCING_COEFFICIENT * (balancing / total),
-        metrics={HEAD_LOSS_METRIC: share.detach()},
-    )
-
-
-def _head_chunk_size(vocabulary: int, scratch_bytes: int) -> int:
-    rows = scratch_bytes // (2 * vocabulary)
-    return max(512, (rows // 256) * 256)
-
-
-def _manifest(
-    family: str,
-    implementation: ModelImplementation,
-) -> FullModelManifest:
     if family == "llama3":
         config: Any = Llama3Config.throughput()
         tokens = 8_192
@@ -265,38 +80,112 @@ def _manifest(
         tokens = 32_768
     else:
         raise ValueError(f"unknown full-model family {family!r}")
-    sequence_length = 1_024
-    return FullModelManifest(
+    return FullModelSpec(
         family=family,
         implementation=implementation,
-        sequence_length=sequence_length,
-        sequences_per_microbatch=tokens // sequence_length,
+        sequence_length=1_024,
+        sequences_per_microbatch=tokens // 1_024,
         accumulation_count=65_536 // tokens,
-        device_physical_capacity_bytes=16 * _GIB,
-        spill_budget_bytes=112 * _GIB,
-        regression_tokens_per_second=_REGRESSION_TOKENS_PER_SECOND.get(
-            f"{implementation}_{family}"
-        ),
-        remote_regression_tokens_per_second=_REMOTE_REGRESSION_TOKENS_PER_SECOND.get(
-            f"{implementation}_{family}"
-        ),
-        predecessor_tokens_per_second=_PREDECESSOR_TOKENS_PER_SECOND.get(
-            f"{implementation}_{family}"
-        ),
         model_config=config,
     )
 
 
-def manifests() -> tuple[FullModelManifest, ...]:
-    """Return the five accepted provider cells in stable execution order."""
+@dataclass(frozen=True, slots=True)
+class FullModelCase:
+    """Initialized CPU model and one complete accumulated-step template."""
 
-    return (
-        _manifest("llama3", "mlops"),
-        _manifest("qwen35", "mlops"),
-        _manifest("olmoe", "mlops"),
-        _manifest("llama3", "pytorch"),
-        _manifest("qwen35", "pytorch"),
+    manifest: FullModelSpec
+    model: nn.Module
+    microbatches: tuple[tuple[object, ...], ...]
+
+    def implementations(self) -> AbstractContextManager[Any]:
+        """Leave implementation selection to the model's operation library."""
+        return contextlib.nullcontext()
+
+    def objective(self, model: nn.Module, *values: object) -> Any:
+        return full_model_objective(self.manifest, model, *values)
+
+    @property
+    def optimizer(self) -> Any:
+        return self.manifest.dtypes.optimizer()
+
+
+def full_model_objective(
+    manifest: FullModelSpec, model: nn.Module, *values: object
+) -> Any:
+    """One microbatch's contribution, normalized by this recipe's update total."""
+    tokens, targets, sequence_lengths = values
+    if not isinstance(tokens, torch.Tensor) or not isinstance(targets, torch.Tensor):
+        raise TypeError("performance tokens and targets must be tensors")
+    total = float(manifest.tokens_per_step)
+    callable_model: Any = model
+    if manifest.implementation == "pytorch":
+        if manifest.family == "olmoe":
+            hidden, auxiliary = callable_model.hidden(tokens, sequence_lengths)
+            return _with_balancing(
+                language_model_loss(hidden, callable_model.lm_head, targets, "sum"),
+                auxiliary_share(auxiliary, targets, "sum"),
+                total,
+            )
+        summed = callable_model.loss(
+            tokens, targets, seq_lens=sequence_lengths, reduction="sum"
+        )
+        return cast(torch.Tensor, summed / total)
+
+    import mlops
+
+    chunk = _head_chunk_size(
+        int(callable_model.config.vocab_size),
+        manifest.head_scratch_bytes,
     )
+    if manifest.family == "olmoe":
+        hidden, auxiliary = callable_model.hidden(tokens, sequence_lengths)
+        return _with_balancing(
+            mlops.head_loss(
+                hidden,
+                callable_model.lm_head.weight,
+                targets,
+                chunk_size=chunk,
+                reduction="sum",
+            ),
+            auxiliary_share(auxiliary, targets, "sum"),
+            total,
+        )
+    hidden = callable_model.hidden(tokens, sequence_lengths)
+    summed = mlops.head_loss(
+        hidden,
+        callable_model.lm_head.weight,
+        targets,
+        chunk_size=chunk,
+        reduction="sum",
+    )
+    return cast(torch.Tensor, summed / total)
+
+
+#: The weight of the router's balancing term in a mixture of experts' objective.
+BALANCING_COEFFICIENT = 0.01
+
+#: The metric an MoE objective reports beside its loss: the head's share alone.
+HEAD_LOSS_METRIC = "head_loss"
+
+
+def _with_balancing(
+    head: torch.Tensor, balancing: torch.Tensor, total: float
+) -> tuple[torch.Tensor, dict[str, torch.Tensor]]:
+    """A mixture of experts' microbatch objective: the head's share of the
+    step's mean loss plus the balancing term's, weighted. The head's share
+    alone is the metric, since the loss read across models is the head's and
+    the balancing term is the router's; a metric is not differentiated."""
+
+    share = head / total
+    return share + BALANCING_COEFFICIENT * (balancing / total), {
+        HEAD_LOSS_METRIC: share.detach()
+    }
+
+
+def _head_chunk_size(vocabulary: int, scratch_bytes: int) -> int:
+    rows = scratch_bytes // (2 * vocabulary)
+    return max(512, (rows // 256) * 256)
 
 
 @contextlib.contextmanager
@@ -330,18 +219,17 @@ def initialize_model(model: nn.Module) -> None:
             reset()
 
 
-def build_model(manifest: FullModelManifest) -> nn.Module:
+def build_model(manifest: FullModelSpec) -> nn.Module:
     """Return this manifest's model on `meta`: structure only, no storage."""
 
-    model_types: dict[tuple[str, ModelImplementation], type[nn.Module]] = {
-        ("llama3", "pytorch"): PyTorchLlama3,
-        ("llama3", "mlops"): MlopsLlama3,
-        ("qwen35", "pytorch"): PyTorchQwen35,
-        ("qwen35", "mlops"): MlopsQwen35,
-        ("olmoe", "mlops"): MlopsOLMoE,
-    }
+    from importlib import import_module
+
+    models = import_module("workloads." + manifest.implementation)
+    model_types = {"llama3": models.Llama3, "qwen35": models.Qwen35}
+    if manifest.family == "olmoe":
+        model_types["olmoe"] = models.OLMoE
     try:
-        model_type = model_types[(manifest.family, manifest.implementation)]
+        model_type = model_types[manifest.family]
     except KeyError as exc:
         raise ValueError(
             "unsupported full-model cell "
@@ -354,35 +242,16 @@ def build_model(manifest: FullModelManifest) -> nn.Module:
 
 
 def build_case(
-    manifest: FullModelManifest,
+    manifest: FullModelSpec,
     *,
     seed: int,
-    runtime: Runtime | None,
 ) -> FullModelCase:
-    """Build one model and its deterministic packed microbatches.
-
-    With a `runtime`, the model's state is materialised directly in that
-    runtime's spill pool and never exists on the host -- which is the path to
-    take, and the only one whose cost does not scale with the model.
-
-    `runtime=None` materialises on the host instead. The argument has no
-    default, so that is something a caller states rather than gets by
-    omission: it is for callers with no runtime to place the model in, such as
-    unit tests and the reference a gate compares against.
-    """
+    """Build initialized CPU state and deterministic packed microbatches."""
 
     torch.manual_seed(seed)
     model = build_model(manifest)
-    if runtime is not None:
-        from shadowspill.pytorch.state.model import import_model_state
-
-        # Materialises in the pool and initialises there: the values are
-        # written where they will live, so no host memory proportional to the
-        # model is ever allocated.
-        model = import_model_state(model, runtime=runtime, pool="spill")
-    else:
-        model.to_empty(device="cpu")
-        initialize_model(model)
+    model.to_empty(device="cpu")
+    initialize_model(model)
     model.train()
     shape = (1, manifest.tokens_per_microbatch)
     lengths = (manifest.sequence_length,) * manifest.sequences_per_microbatch
@@ -398,17 +267,11 @@ def build_case(
     return FullModelCase(manifest, model, microbatches)
 
 
-def manifest_for(family: str, implementation: ModelImplementation) -> FullModelManifest:
-    for item in manifests():
-        if item.family == family and item.implementation == implementation:
-            return item
-    raise ValueError(f"unknown full-model cell {(family, implementation)!r}")
-
-
 __all__ = [
     "FullModelCase",
-    "FullModelManifest",
+    "FullModelSpec",
     "build_case",
-    "manifest_for",
-    "manifests",
+    "build_model",
+    "full_model_objective",
+    "throughput_spec",
 ]

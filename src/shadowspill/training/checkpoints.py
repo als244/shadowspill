@@ -3,8 +3,9 @@
 A checkpoint is ``torch.save`` of ``{"model", "optimizer", "step"}``: the
 model's state dict, the optimizer's, and the steps taken. A weight trained over
 a master copy at another precision is written as its master, under the weight's
-name, so the checkpoint holds the training state at full precision once and the
-weight follows from it -- and it loads into a plain model of either precision
+name by default. With weights="compute", only the compute representation is
+saved and restored masters take its upcast values. Either choice stores weights
+once and loads into a plain model of either precision
 as it stands. ShadowSpill's ``PlannedTrainStep.save`` writes this format
 straight from its pool; the PyTorch backend writes it with ``save`` here.
 """
@@ -13,7 +14,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 import torch
 import torch.nn as nn
@@ -25,12 +26,18 @@ def save(
     optimizer: torch.optim.Optimizer,
     step: int,
     masters: Mapping[str, torch.Tensor] | None = None,
+    *,
+    weights: Literal["master", "compute"] = "master",
 ) -> None:
-    """Write the module's and the optimizer's state, each master in place of
-    its weight."""
+    """Write one weight representation and the optimizer's state.
 
+    ``master`` uses a master where available; ``compute`` uses model weights.
+    Loading casts the saved values into both destinations when masters exist.
+    """
+    if weights not in {"master", "compute"}:
+        raise ValueError("weights must be 'master' or 'compute'")
     model = module.state_dict()
-    for name, master in (masters or {}).items():
+    for name, master in (masters or {}).items() if weights == "master" else ():
         for alias in _names(module)[name]:
             model[alias] = master.detach()
     torch.save(
