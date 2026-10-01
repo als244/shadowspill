@@ -9,6 +9,7 @@ from everything the search writes.
 from __future__ import annotations
 
 import csv
+import json
 from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
@@ -117,7 +118,8 @@ def plot_step_run(
     entries: Sequence[RunBudgetOutcome],
     directory: str | Path,
     *,
-    tokens_per_step: int,
+    units_per_step: float = 1,
+    unit_label: str = "updates",
 ) -> tuple[Path, ...]:
     """Write the run figures and return their paths."""
 
@@ -129,10 +131,13 @@ def plot_step_run(
     target = Path(directory) / "real"
     target.mkdir(parents=True, exist_ok=True)
     return (
-        _throughput(target / "throughput.png", ordered, tokens_per_step),
+        _throughput(target / "throughput.png", ordered, units_per_step, unit_label),
         _fidelity(target / "sim_fidelity.png", ordered),
         write_run_tables(
-            ordered, target.parent / "raw_data", tokens_per_step=tokens_per_step
+            ordered,
+            target.parent / "raw_data",
+            units_per_step=units_per_step,
+            unit_label=unit_label,
         ),
     )
 
@@ -141,7 +146,8 @@ def write_run_tables(
     entries: Sequence[RunBudgetOutcome],
     directory: str | Path,
     *,
-    tokens_per_step: int,
+    units_per_step: float = 1,
+    unit_label: str = "updates",
 ) -> Path:
     """The numbers both run figures draw, as one tidy table.
 
@@ -155,6 +161,16 @@ def write_run_tables(
     ordered = sorted(entries, key=lambda item: item.execution_budget_bytes)
 
     target.mkdir(parents=True, exist_ok=True)
+    (target / "throughput.json").write_text(
+        json.dumps(
+            {
+                "units_per_step": units_per_step,
+                "unit_label": unit_label,
+            },
+            indent=2,
+        )
+        + "\n"
+    )
     path = target / "run_budgets.csv"
     with path.open("w", newline="") as handle:
         writer = csv.writer(handle)
@@ -163,8 +179,8 @@ def write_run_tables(
                 "execution_budget_gib",
                 "simulated_step_seconds",
                 "measured_step_seconds",
-                "simulated_tokens_per_second",
-                "measured_tokens_per_second",
+                "simulated_units_per_second",
+                "measured_units_per_second",
                 "relative_error",
                 "profiled_task_seconds",
                 "real_task_seconds",
@@ -184,8 +200,8 @@ def write_run_tables(
                 item.execution_budget_bytes / _GIB,
                 item.simulated_step_seconds,
                 item.measured_step_seconds,
-                tokens_per_step / item.simulated_step_seconds,
-                tokens_per_step / item.measured_step_seconds,
+                units_per_step / item.simulated_step_seconds,
+                units_per_step / item.measured_step_seconds,
                 item.relative_error,
                 item.profiled_task_seconds,
                 item.real_task_seconds,
@@ -205,15 +221,13 @@ def write_run_tables(
     steps = target / "steps.csv"
     with steps.open("w", newline="") as handle:
         writer = csv.writer(handle)
-        writer.writerow(
-            ("execution_budget_gib", "step", "seconds", "tokens_per_second")
-        )
+        writer.writerow(("execution_budget_gib", "step", "seconds", "units_per_second"))
         writer.writerows(
             (
                 item.execution_budget_bytes / _GIB,
                 index,
                 seconds,
-                tokens_per_step / seconds,
+                units_per_step / seconds,
             )
             for item in ordered
             for index, seconds in enumerate(item.step_seconds, start=1)
@@ -222,7 +236,10 @@ def write_run_tables(
 
 
 def _throughput(
-    path: Path, ordered: Sequence[RunBudgetOutcome], tokens_per_step: int
+    path: Path,
+    ordered: Sequence[RunBudgetOutcome],
+    units_per_step: float,
+    unit_label: str,
 ) -> Path:
     """Measured throughput over the simulated line, one point per budget."""
 
@@ -231,7 +248,7 @@ def _throughput(
     axes = figure.subplots()
     axes.plot(
         budgets,
-        [tokens_per_step / item.simulated_step_seconds for item in ordered],
+        [units_per_step / item.simulated_step_seconds for item in ordered],
         linestyle="--",
         color="gray",
         marker="o",
@@ -239,7 +256,7 @@ def _throughput(
     )
     axes.plot(
         budgets,
-        [tokens_per_step / item.measured_step_seconds for item in ordered],
+        [units_per_step / item.measured_step_seconds for item in ordered],
         marker="o",
         label="Measured",
     )
@@ -251,7 +268,7 @@ def _throughput(
     )
     axes.set_title("Throughput, Measured Against Simulated")
     axes.set_xlabel("Execution Budget (GiB)")
-    axes.set_ylabel("Tokens per Second")
+    axes.set_ylabel(f"{unit_label.capitalize()} per Second")
     axes.grid(True, alpha=0.3)
     axes.legend()
     figure.tight_layout()

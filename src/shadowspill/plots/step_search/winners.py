@@ -43,7 +43,7 @@ def winner_figures(
         cellText=[
             [
                 f"{point.execution_budget_bytes / GIB:.2f} GiB",
-                f"{point.sequences_per_microbatch}",
+                f"{point.candidate}",
                 f"{point.accumulation_count}",
                 point.ordering.label,
                 f"{summary.recomputing_group_count}"
@@ -53,7 +53,7 @@ def winner_figures(
         ],
         colLabels=[
             "Execution Budget",
-            "Sequences / Microbatch",
+            "Candidate",
             "Accumulation",
             "Ordering",
             "Groups Recomputing",
@@ -71,9 +71,14 @@ def winner_figures(
         line_figure(
             tree.throughput / "winners.png",
             "Throughput",
-            "Tokens per Second",
+            f"{report.metadata.get('unit_label', 'updates').capitalize()} per Second",
             budgets,
-            {"Simulated": [report.tokens_per_step / value for value in steps]},
+            {
+                "Simulated": [
+                    float(report.metadata.get("units_per_step", 1)) / value
+                    for value in steps
+                ]
+            },
         ),
         line_figure(
             tree.throughput / "winners_step_time.png",

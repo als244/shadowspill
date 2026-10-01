@@ -21,9 +21,10 @@ def test_data_geometry_groups_primary_and_derived_axes() -> None:
     }
 
 
-def test_benchmarking_python_does_not_import_qualification() -> None:
+def test_benchmarks_and_workloads_do_not_import_qualification() -> None:
     violations: list[str] = []
-    for path in sorted(_BENCHMARKING.rglob("*.py")):
+    paths = (*_BENCHMARKING.rglob("*.py"), *(_REPOSITORY / "workloads").rglob("*.py"))
+    for path in sorted(paths):
         tree = ast.parse(path.read_text(), filename=str(path))
         for node in ast.walk(tree):
             modules: tuple[str, ...] = ()

@@ -70,7 +70,7 @@ def line_figure(
 def circle_winners(
     axes: Axes,
     series: Series,
-    winners: dict[float, tuple[int, int]],
+    winners: dict[float, tuple[str, int]],
     measure: Callable[[GeometryPoint], float],
 ) -> None:
     """Ring the winning geometry's own value at each budget."""

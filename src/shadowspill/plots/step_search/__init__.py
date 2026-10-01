@@ -19,6 +19,7 @@ whole set renders from a search with nothing executed.
 from __future__ import annotations
 
 from pathlib import Path
+from urllib.parse import quote
 
 from shadowspill.search import StepSearchReport
 
@@ -95,12 +96,14 @@ def plot_step_search(
             if lanes is not None:
                 written += (lanes,)
         written += tuple(
-            ordering_step_time(tree.orderings / f"{key[0]}x{key[1]}.png", report, key)
+            ordering_step_time(
+                tree.orderings / f"{quote(key[0], safe='')}x{key[1]}.png", report, key
+            )
             for key, _points in series
         )
         written += raw_data(tree.root, report, series)
         for key, points in series:
-            name = f"{key[0]}x{key[1]}"
+            name = f"{quote(key[0], safe='')}x{key[1]}"
             for share, suffix in ((False, ""), (True, "_shares")):
                 figure = selection_waste(
                     tree.by_selection / f"{name}{suffix}.png", key, points, share=share

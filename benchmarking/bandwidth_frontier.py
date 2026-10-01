@@ -344,21 +344,26 @@ def plan_one_calibration(parsed: argparse.Namespace, raw_data: Path) -> Path:
     from shadowspill.memory import device, pinned_host, transfer_route
     from shadowspill.planner import StepDataOrdering
     from shadowspill.planner.program_inputs import TransferBandwidths
-    from shadowspill.pytorch import Runtime, plan_step_search
-    from tools.qualification.model_state import release_case_model
-    from workloads.full_model import build_case, manifest_for
+    from shadowspill.pytorch import (
+        Runtime,
+        import_model_state,
+        plan_step_search,
+        release_model_state,
+    )
+    from workloads.full_model import build_case, throughput_spec
+    from workloads.recipes.text.geometry import search_geometries
 
     fetch, evict = _bandwidth_pairs(parsed.plan_one)[0]
     spill_gib = parsed.plan_spill if parsed.plan_spill is not None else parsed.spill_gib
     label = f"{label_for(fetch, evict)}_spill{spill_gib:g}"
     # `mlops_qwen35` names the implementation first and the family second.
     implementation, _, family = parsed.identity.partition("_")
-    manifest = manifest_for(family, implementation)
+    manifest = throughput_spec(family, implementation)
     manifest = replace(
         manifest,
         sequence_length=parsed.sequence_length,
-        spill_budget_bytes=int(parsed.spill_gib * GIB),
-        device_physical_capacity_bytes=int(parsed.physical_capacity_gib * GIB),
+        sequences_per_microbatch=parsed.sequences_per_step,
+        accumulation_count=1,
     )
     runtime = Runtime(
         pools={
@@ -372,7 +377,10 @@ def plan_one_calibration(parsed: argparse.Namespace, raw_data: Path) -> Path:
             "evict": transfer_route(source="execution", destination="spill"),
         },
     )
-    case = build_case(manifest, seed=parsed.seed, runtime=runtime)
+    case = build_case(manifest, seed=parsed.seed)
+    case = replace(
+        case, model=import_model_state(case.model, runtime=runtime, pool="spill")
+    )
     vocabulary = int(manifest.model_config.vocab_size)
 
     def example_microbatches(sequences: int, accumulation: int) -> Any:
@@ -397,17 +405,26 @@ def plan_one_calibration(parsed: argparse.Namespace, raw_data: Path) -> Path:
     )
     build_store, plan_store = store_paths(parsed)
     started = time.perf_counter()
-    # `build_case` already materialised the model into the runtime's spill
-    # pool, so the search is handed the model the runtime owns.
+    # The model was imported above; search borrows its runtime-owned state.
     with case.implementations():
         report = plan_step_search(
             case.model,
             objective=case.objective,
             optimizer=case.optimizer,
             hyperparams=("lr",),
-            example_microbatches=example_microbatches,
-            total_sequences_per_step=parsed.sequences_per_step,
-            sequence_length=parsed.sequence_length,
+            candidates={
+                str(sequences): example_microbatches(sequences, accumulation)
+                for sequences, accumulation in search_geometries(
+                    parsed.sequences_per_step,
+                    sequence_length=parsed.sequence_length,
+                    min_tokens_per_microbatch=parsed.min_tokens_per_microbatch,
+                    max_tokens_per_microbatch=parsed.max_tokens_per_microbatch,
+                )[0]
+            },
+            metadata={
+                "units_per_step": parsed.sequences_per_step * parsed.sequence_length,
+                "unit_label": "tokens",
+            },
             budgets=[
                 (int(budget * GIB), int(spill_gib * GIB))
                 for budget in parsed.budget_gib
@@ -416,8 +433,6 @@ def plan_one_calibration(parsed: argparse.Namespace, raw_data: Path) -> Path:
             execution="execution",
             spill="spill",
             transfer_bandwidths=bandwidths,
-            min_tokens_per_microbatch=parsed.min_tokens_per_microbatch,
-            max_tokens_per_microbatch=parsed.max_tokens_per_microbatch,
             artifact_store=str(build_store),
             build_store=str(build_store),
             plan_store=str(plan_store),
@@ -440,7 +455,7 @@ def plan_one_calibration(parsed: argparse.Namespace, raw_data: Path) -> Path:
         f" {time.perf_counter() - started:.0f} s -> {path}",
         flush=True,
     )
-    release_case_model(case, runtime=runtime)
+    release_model_state(case.model, runtime=runtime)
     runtime.close()
     return path
 
@@ -515,7 +530,7 @@ def _rows(raw_data: Path) -> list[dict[str, Any]]:
                     ),
                     "execution_budget_gib": point.execution_budget_bytes / GIB,
                     "spill_budget_gib": point.spill_budget_bytes / GIB,
-                    "sequences_per_microbatch": point.sequences_per_microbatch,
+                    "candidate": point.candidate,
                     "accumulation_count": point.accumulation_count,
                     "ordering": point.ordering.label,
                     "status": point.status,
@@ -523,12 +538,12 @@ def _rows(raw_data: Path) -> list[dict[str, Any]]:
                     "tokens_per_second": (
                         None
                         if point.makespan_seconds is None
-                        else report.tokens_per_step / point.makespan_seconds
+                        else float(report.metadata["units_per_step"])
+                        / point.makespan_seconds
                     ),
                     "is_winner": bool(
                         winner is not None
-                        and winner.sequences_per_microbatch
-                        == point.sequences_per_microbatch
+                        and winner.candidate == point.candidate
                         and winner.accumulation_count == point.accumulation_count
                         and winner.ordering.label == point.ordering.label
                     ),
@@ -559,10 +574,10 @@ def _rows(raw_data: Path) -> list[dict[str, Any]]:
                         None
                         if point.summary is None
                         or not point.summary.unconstrained_step_seconds
-                        else report.tokens_per_step
+                        else float(report.metadata["units_per_step"])
                         / point.summary.unconstrained_step_seconds
                     ),
-                    "tokens_per_step": report.tokens_per_step,
+                    "tokens_per_step": float(report.metadata["units_per_step"]),
                     "error": point.error,
                 }
             )
