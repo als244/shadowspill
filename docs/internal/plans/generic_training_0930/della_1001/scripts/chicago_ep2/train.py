@@ -1,0 +1,342 @@
+"""Chicago's sparse OLMoE recipe, with two-rank QuackMoE expert parallelism.
+
+The JSON config controls the short run length separately from the original
+9,537-update LR schedule. Model/data/optimizer construction stays caller-side.
+"""
+
+# ruff: noqa: E402 -- direct experiment entrypoint imports repository workloads.
+from __future__ import annotations
+
+import argparse
+import copy
+import json
+import math
+import os
+import sys
+import traceback
+from contextlib import ExitStack
+from datetime import UTC, datetime, timedelta
+from fractions import Fraction
+from pathlib import Path
+
+ROOT = next(p for p in Path(__file__).resolve().parents if (p / "workloads").is_dir())
+sys.path.insert(0, str(ROOT))
+
+import torch
+import torch.distributed as dist
+from mlops.dispatch import set_deterministic_kernels, set_weight_gradient_dtype
+from mlops.optim import AdamW
+
+from shadowspill.planner import SearchOptions
+from shadowspill.planner.search.algorithms.pressurefit import (
+    PressureFit,
+    PressureFitOptions,
+)
+from shadowspill.pytorch import ProfilingOptions
+from shadowspill.search.geometries import default_orderings
+from shadowspill.training import Distributed, Trainer
+from shadowspill.training.backends import ShadowSpill
+from shadowspill.training.logging import DistributedLogger
+from shadowspill.training.observations import MetricSummary, parameter_norms
+from shadowspill.training.schedules import WarmupCosine
+from workloads.pytorch.olmoe import OLMoEConfig
+from workloads.recipes.text.data import PackedTokens
+from workloads.recipes.text.olmoe_metrics import reduce_metrics
+from workloads.recipes.text.source import PackedUpdates, validation_update
+
+
+def write_json(path, value):
+    path = Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temporary = path.with_suffix(path.suffix + ".tmp")
+    temporary.write_text(json.dumps(value, indent=2) + "\n")
+    temporary.replace(path)
+
+
+class EPUpdates:
+    """Partition a deterministic global packed update, normalizing globally."""
+
+    def __init__(self, data, config, rank, world):
+        self.rank, self.world = rank, world
+        self.name = "packed"
+        self.global_source = PackedUpdates(
+            data,
+            name=self.name,
+            tokens=config["microbatch_tokens"],
+            accumulation=config["tokens_per_step"] // config["microbatch_tokens"],
+            max_seq_len=config["max_seq_len"],
+        )
+
+    def partition(self, update):
+        parts = update["candidates"][self.name]
+        assert len(parts) % self.world == 0
+        return {
+            "parts": parts[self.rank :: self.world],
+            "normalizer": update["normalizer"],
+        }
+
+    def __iter__(self):
+        return self
+
+    def __next__(self):
+        return self.partition(next(self.global_source))
+
+    def state_dict(self):
+        return self.global_source.state_dict()
+
+    def load_state_dict(self, state):
+        self.global_source.load_state_dict(state)
+
+
+def microbatches(update):
+    for values in update["parts"]:
+        yield values, 1.0 / update["normalizer"]
+
+
+def metrics(observed):
+    summary = reduce_metrics(observed.metrics)
+    count = sum(v["trained_tokens"].item() for v in observed.metrics)
+    return MetricSummary({**summary.scalars, "work_units": count}, summary.tables)
+
+
+def aggregate(records):
+    result = {"step": records[0]["step"]}
+    for name in ("train/loss", "train/work_units", "eval/loss"):
+        if all(name in row for row in records):
+            result[name] = sum(row[name] for row in records)
+    for name in ("train/step_seconds", "train/elapsed_seconds", "eval/seconds"):
+        if all(name in row for row in records):
+            result[name] = max(row[name] for row in records)
+    if "train/work_units" in result:
+        total = result["train/work_units"]
+        result["train/units_per_second"] = total / result["train/step_seconds"]
+        for key in ("cross_entropy", "auxiliary", "weighted_auxiliary", "total"):
+            name = "train/loss/" + key
+            result[name] = (
+                sum(row[name] * row["train/work_units"] for row in records) / total
+            )
+    for name, value in records[0].items():
+        if name.startswith("hyperparameters/"):
+            result[name] = value
+    return result
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument(
+        "--config", type=Path, default=Path(__file__).with_name("config.json")
+    )
+    parser.add_argument("--steps", type=int)
+    args = parser.parse_args()
+    cfg = json.loads(args.config.read_text())
+    if args.steps is not None:
+        cfg["steps"] = args.steps
+    rank, world = int(os.environ["RANK"]), int(os.environ["WORLD_SIZE"])
+    assert world == cfg["world_size"]
+    assert cfg["tokens_per_step"] % (world * cfg["microbatch_tokens"]) == 0
+    root = Path(cfg["outdir"])
+    rank_dir = root / f"rank-{rank:05d}"
+    rank_dir.mkdir(parents=True, exist_ok=True)
+    if (rank_dir / "metrics.jsonl").exists():
+        raise FileExistsError("Refusing to append fresh training to an earlier run")
+
+    def phase(name, **extra):
+        event = dict(utc=datetime.now(UTC).isoformat(), rank=rank, phase=name, **extra)
+        print(json.dumps(event), flush=True)
+        with (rank_dir / "events.jsonl").open("a") as stream:
+            stream.write(json.dumps(event) + "\n")
+
+    data = PackedTokens(cfg["data"], long_documents="splice", window=1024)
+    source = EPUpdates(data, cfg, rank, world)
+    initial_source = copy.deepcopy(source.state_dict())
+    example = next(source)
+    source.load_state_dict(initial_source)
+    model_config = OLMoEConfig(**cfg["model"])
+    set_deterministic_kernels(True)
+    set_weight_gradient_dtype(torch.bfloat16)
+    write_json(rank_dir / "config.json", cfg)
+    with ExitStack() as stack:
+        dist.init_process_group("gloo", timeout=timedelta(seconds=1800))
+        stack.callback(dist.destroy_process_group)
+        phase("runtime")
+        backend = stack.enter_context(
+            ShadowSpill(
+                device="auto",
+                execution_gib=cfg["execution_gib"],
+                spill_gib=cfg["spill_gib"],
+                external_headroom_gib=cfg["external_headroom_gib"],
+                control_group=dist.group.WORLD,
+                artifact_store=rank_dir / "artifacts",
+                preparation_timeout=1800,
+                profiling_options=ProfilingOptions(**cfg["profiling"]),
+                search_options=SearchOptions(
+                    algorithm=PressureFit(
+                        PressureFitOptions(
+                            resolution_options=tuple(
+                                Fraction(v) for v in cfg["resolution_options"]
+                            )
+                        )
+                    ),
+                    workers=cfg["planning_workers"],
+                ),
+                orderings=default_orderings,
+            )
+        )
+        from mlops.expert_parallel import QuackMoEConfig, create_buffer
+        from moonep.buffer import get_vmm_granularity
+
+        from workloads.quack import OLMoE
+
+        group = dist.new_group(
+            backend="nccl", device_id=backend.device, timeout=timedelta(seconds=1800)
+        )
+        stack.callback(dist.destroy_process_group, group)
+        options = QuackMoEConfig(
+            ep_size=world,
+            num_experts=model_config.n_experts,
+            top_k=model_config.top_k,
+            model_dim=model_config.d_model,
+            expert_hidden_dim=model_config.d_ff_expert,
+            weight_grad_dtype=torch.bfloat16,
+            router_dtype=torch.bfloat16,
+            router_weight_grad_dtype=torch.bfloat16,
+            renormalize_topk=False,
+        )
+        phase("model_initialization", vmm_granularity=int(get_vmm_granularity()))
+        buffer = create_buffer(options, cfg["microbatch_tokens"], group)
+        stack.callback(buffer.destroy)
+        torch.manual_seed(cfg["seed"] + rank)
+        model = OLMoE(
+            model_config,
+            ep_group=group,
+            buffers=[buffer] * model_config.n_layers,
+            device=backend.device,
+            parameter_device="cpu",
+            router_dtype=torch.bfloat16,
+        )
+        stack.callback(model.close)
+        # Match the Chicago workload's initialization distributions. EP shards
+        # draw independent values; this is a fresh run, not a checkpoint replay.
+        with torch.no_grad():
+            for block in model.blocks:
+                expert = block.moe.experts
+                torch.nn.init.kaiming_uniform_(expert.router_weight, a=math.sqrt(5))
+                expert.gate_up_weight.normal_(std=model_config.d_model**-0.5)
+                expert.down_weight.normal_(std=model_config.d_ff_expert**-0.5)
+        phase(
+            "model_ready",
+            local_parameters=sum(p.numel() for p in model.parameters()),
+            gpu_free_bytes=torch.cuda.mem_get_info(backend.device)[0],
+        )
+
+        def objective(model, values):
+            tokens, targets, lengths = values
+            return model.loss(
+                tokens,
+                targets,
+                seq_lens=lengths,
+                reduction="sum",
+                aux_coef=cfg["aux_coef"],
+                return_metrics=True,
+            )
+
+        optimizer_args = dict(cfg["optimizer_args"])
+        for key in ("gradient_dtype", "reduction_dtype", "opt_state_dtype"):
+            optimizer_args[key] = getattr(torch, optimizer_args[key])
+        trainer = stack.enter_context(
+            Trainer(
+                model,
+                objective=objective,
+                microbatches=microbatches,
+                backend=backend,
+                optimizer=AdamW,
+                optimizer_args=optimizer_args,
+                schedules={
+                    "lr": WarmupCosine(
+                        **cfg["schedule"], total_steps=cfg["schedule_total_steps"]
+                    )
+                },
+                master_dtype=None,
+                grad_dtype=torch.bfloat16,
+                parameter_metrics=parameter_norms,
+                metric_reducer=metrics,
+                distributed=Distributed(
+                    group,
+                    replica_overrides=[(model.expert_parameters(), None)],
+                    groups={"ep": group},
+                    timeout=1800,
+                ),
+            )
+        )
+        logger = stack.enter_context(
+            DistributedLogger(
+                dist.group.WORLD,
+                run_dir=root,
+                device=backend.device,
+                reduce=aggregate,
+                wandb=dict(
+                    project=cfg["wandb_project"],
+                    mode="online",
+                    group=root.name,
+                    config=cfg,
+                ),
+            )
+        )
+        write_json(
+            rank_dir / "wandb.json",
+            dict(
+                rank_url=logger.local.run.url,
+                aggregate_url=logger.aggregate.run.url if logger.aggregate else None,
+            ),
+        )
+        phase("planning")
+        trainer.prepare(example)
+        phase("planned")
+
+        def evaluation():
+            update = validation_update(
+                data,
+                name=source.name,
+                tokens=cfg["microbatch_tokens"],
+                max_seq_len=cfg["max_seq_len"],
+                microbatches=cfg["eval_batches"],
+            )
+            return [source.partition(update)]
+
+        def check_step(_trainer, result):
+            if not math.isfinite(result.loss):
+                raise FloatingPointError(f"Nonfinite loss at update {result.step}")
+            phase(
+                "step_completed",
+                step=result.step,
+                local_loss=result.loss,
+                seconds=result.seconds,
+                lr=result.hyperparams["lr"],
+            )
+
+        trainer.fit(
+            source,
+            steps=cfg["steps"],
+            run_dir=root,
+            logger=logger,
+            startup_diagnostics=True,
+            callbacks=[check_step],
+            tables_every=100,
+            eval_data=evaluation,
+            eval_every=cfg["eval_every"],
+            checkpoint_every=cfg["checkpoint_every"],
+            checkpoint_dir=root / "checkpoints",
+            checkpoint_weights="compute",
+        )
+        write_json(
+            rank_dir / "completed.json", dict(passed=True, steps=trainer.step_count)
+        )
+        phase("complete", steps=trainer.step_count)
+
+
+if __name__ == "__main__":
+    try:
+        main()
+    except BaseException:
+        traceback.print_exc()
+        raise
