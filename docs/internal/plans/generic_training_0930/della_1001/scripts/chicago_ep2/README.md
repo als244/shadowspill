@@ -59,6 +59,8 @@ console output and `planning-progress.json`; `candidates/tokens-N/` contains
 each configuration’s per-rank artifact stores and graph pairs, plans, startup
 diagnostics, metric JSONL files, W&B files, and checkpoints. W&B HTTPS is relayed
 through the Della head node because the compute node has no public DNS/network.
+Each rank's `plan-diagnostics.json` retains both graph-pair variants, their
+input/mutation/output/workspace sizes, measured runtimes, and object mappings.
 `launch.sh` expects that loopback SSH relay on port 18375; online machines can
 run `train.py` directly without it.
 

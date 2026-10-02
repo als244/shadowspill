@@ -296,6 +296,9 @@ def main():
             external_headroom_gib=cfg["external_headroom_gib"],
         )
         write_json(rank_dir / "planning.json", plan_record)
+        write_json(
+            rank_dir / "plan-diagnostics.json", trainer.plan.diagnostics.as_dict()
+        )
         (rank_dir / "plan.json").write_text(
             trainer.plan.execution_plan.to_json() + "\n"
         )
