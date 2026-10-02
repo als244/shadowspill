@@ -1,0 +1,67 @@
+{
+  "cases": [
+    {
+      "artifact": "/home/as1669/shadowspill/qualification/results/numerical_della_saved_lifetimes_h100_1002/pytorch_llama3.json",
+      "device_budget_bytes": 10737418240,
+      "elapsed_seconds": 176.6798505561892,
+      "failure_categories": [],
+      "failures": [],
+      "family": "llama3",
+      "implementation": "pytorch",
+      "passed": true,
+      "reference": "/scratch/gpfs/LI/as1669/shadowspill/qualification/references/h100/approximately_1b/llama3/pytorch/reference.pt",
+      "return_code": 0
+    },
+    {
+      "artifact": "/home/as1669/shadowspill/qualification/results/numerical_della_saved_lifetimes_h100_1002/mlops_llama3.json",
+      "device_budget_bytes": 10737418240,
+      "elapsed_seconds": 133.24942427803762,
+      "failure_categories": [],
+      "failures": [],
+      "family": "llama3",
+      "implementation": "mlops",
+      "passed": true,
+      "reference": "/scratch/gpfs/LI/as1669/shadowspill/qualification/references/h100/approximately_1b/llama3/mlops/reference.pt",
+      "return_code": 0
+    },
+    {
+      "artifact": "/home/as1669/shadowspill/qualification/results/numerical_della_saved_lifetimes_h100_1002/pytorch_qwen35.json",
+      "device_budget_bytes": 10737418240,
+      "elapsed_seconds": 481.5259384759702,
+      "failure_categories": [],
+      "failures": [],
+      "family": "qwen35",
+      "implementation": "pytorch",
+      "passed": true,
+      "reference": "/scratch/gpfs/LI/as1669/shadowspill/qualification/references/h100/approximately_1b/qwen35/pytorch/reference.pt",
+      "return_code": 0
+    },
+    {
+      "artifact": "/home/as1669/shadowspill/qualification/results/numerical_della_saved_lifetimes_h100_1002/mlops_qwen35.json",
+      "device_budget_bytes": 10737418240,
+      "elapsed_seconds": 237.1601287559606,
+      "failure_categories": [],
+      "failures": [],
+      "family": "qwen35",
+      "implementation": "mlops",
+      "passed": true,
+      "reference": "/scratch/gpfs/LI/as1669/shadowspill/qualification/references/h100/approximately_1b/qwen35/mlops/reference.pt",
+      "return_code": 0
+    },
+    {
+      "artifact": "/home/as1669/shadowspill/qualification/results/numerical_della_saved_lifetimes_h100_1002/mlops_olmoe.json",
+      "device_budget_bytes": 8589934592,
+      "elapsed_seconds": 141.81497299904004,
+      "failure_categories": [],
+      "failures": [],
+      "family": "olmoe",
+      "implementation": "mlops",
+      "passed": true,
+      "reference": "/scratch/gpfs/LI/as1669/shadowspill/qualification/references/h100/approximately_1b/olmoe/mlops/reference.pt",
+      "return_code": 0
+    }
+  ],
+  "empty_caches": false,
+  "passed": true,
+  "schema": "shadowspill.model_correctness_matrix/v1"
+}

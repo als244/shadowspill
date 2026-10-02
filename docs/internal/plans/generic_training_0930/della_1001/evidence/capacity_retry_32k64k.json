@@ -1,0 +1,57 @@
+{
+  "root": "/home/as1669/storage/shadowspill/generic_training_0930/della_1001/chicago-ep2-capacity-fixes-1002",
+  "cases": [
+    {
+      "tokens_per_rank": 32768,
+      "status": "passed",
+      "started_utc": "2026-10-02T11:14:19.655020+00:00",
+      "exit_code": 0,
+      "seconds": 865.0413569549564,
+      "finished_utc": "2026-10-02T11:28:44.696376+00:00",
+      "ranks": [
+        {
+          "passed": true,
+          "tokens_per_rank": 32768,
+          "accumulation_per_rank": 16,
+          "predicted_seconds": 6.53339467,
+          "execution_gib": 50,
+          "external_headroom_gib": 6
+        },
+        {
+          "passed": true,
+          "tokens_per_rank": 32768,
+          "accumulation_per_rank": 16,
+          "predicted_seconds": 6.673830701,
+          "execution_gib": 50,
+          "external_headroom_gib": 6
+        }
+      ]
+    },
+    {
+      "tokens_per_rank": 65536,
+      "status": "passed",
+      "started_utc": "2026-10-02T11:28:44.700407+00:00",
+      "exit_code": 0,
+      "seconds": 686.1755445390008,
+      "finished_utc": "2026-10-02T11:40:10.875954+00:00",
+      "ranks": [
+        {
+          "passed": true,
+          "tokens_per_rank": 65536,
+          "accumulation_per_rank": 8,
+          "predicted_seconds": 6.563667222,
+          "execution_gib": 50,
+          "external_headroom_gib": 6
+        },
+        {
+          "passed": true,
+          "tokens_per_rank": 65536,
+          "accumulation_per_rank": 8,
+          "predicted_seconds": 6.573061416,
+          "execution_gib": 50,
+          "external_headroom_gib": 6
+        }
+      ]
+    }
+  ]
+}

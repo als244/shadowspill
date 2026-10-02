@@ -1,0 +1,62 @@
+[
+  {
+    "source": "/home/as1669/storage/shadowspill/generic_training_0930/della_1001/moonep-planner-o2-validation/mlops.log",
+    "file": "moonep-planner-o2-validation__mlops.log",
+    "sha256": "e4a29590fa982acf52c77887c3373840b75bef9590a12378be30c66c7ed295a2",
+    "bytes": 8199
+  },
+  {
+    "source": "/home/as1669/storage/shadowspill/generic_training_0930/della_1001/moonep-planner-o2-validation/mlops/moonep-planner-32k-64k/rank-0.json",
+    "file": "moonep-planner-o2-validation__mlops__moonep-planner-32k-64k__rank-0.json",
+    "sha256": "63dd070d52f783d313f7b280ab8b9804c23b47c90273ec51e539adc6fb8c70a0",
+    "bytes": 561
+  },
+  {
+    "source": "/home/as1669/storage/shadowspill/generic_training_0930/della_1001/moonep-planner-o2-validation/mlops/moonep-planner-32k-64k/rank-1.json",
+    "file": "moonep-planner-o2-validation__mlops__moonep-planner-32k-64k__rank-1.json",
+    "sha256": "63dd070d52f783d313f7b280ab8b9804c23b47c90273ec51e539adc6fb8c70a0",
+    "bytes": 561
+  },
+  {
+    "source": "/home/as1669/storage/shadowspill/generic_training_0930/della_1001/moonep-planner-o2-validation/recompute/oracle.json",
+    "file": "moonep-planner-o2-validation__recompute__oracle.json",
+    "sha256": "ff5d280c530d990f2d3a9315ecc6a1632690fc564ac0dac49a9248ccf3999bc8",
+    "bytes": 6778
+  },
+  {
+    "source": "/home/as1669/storage/shadowspill/generic_training_0930/della_1001/moonep-planner-o2-validation/save/oracle.json",
+    "file": "moonep-planner-o2-validation__save__oracle.json",
+    "sha256": "ff5d280c530d990f2d3a9315ecc6a1632690fc564ac0dac49a9248ccf3999bc8",
+    "bytes": 6778
+  },
+  {
+    "source": "/home/as1669/shadowspill/qualification/results/gates_della_saved_lifetimes_1002/suite.log",
+    "file": "qualification__gates_della_saved_lifetimes_1002__suite.log",
+    "bytes": 16945,
+    "sha256": "979dbfc62c1376d07645b00b89d32deef817afa5744b292150bdcae37b1a457d"
+  },
+  {
+    "source": "/home/as1669/shadowspill/qualification/results/gates_della_saved_lifetimes_h100_1002/numerical.log",
+    "file": "qualification__gates_della_saved_lifetimes_h100_1002__numerical.log",
+    "bytes": 85880,
+    "sha256": "4621785a42bcf4d5d2bef99d9fb55cfcb1722235551e8e697d87c81d5fed102c"
+  },
+  {
+    "source": "/home/as1669/shadowspill/qualification/results/numerical_della_saved_lifetimes_h100_1002/summary.json",
+    "file": "qualification__numerical_della_saved_lifetimes_h100_1002__summary.json",
+    "bytes": 2708,
+    "sha256": "7bfcd4da2a2a74be667147091804951f0bb57f3cadd797f616893a034af725c5"
+  },
+  {
+    "source": "/home/as1669/storage/shadowspill/generic_training_0930/della_1001/saved-value-lifetimes/test_a_plan_keeps_no_host_copy_of_what_its_forwards_saved.log",
+    "file": "saved-value-lifetimes__test_a_plan_keeps_no_host_copy_of_what_its_forwards_saved.log",
+    "sha256": "61e8ecbaefc2521a015bb2fb41ca885ea61d6ed17bfb1f058e6e2d9d258d3b99",
+    "bytes": 14719
+  },
+  {
+    "source": "/home/as1669/storage/shadowspill/generic_training_0930/della_1001/saved-value-lifetimes/test_planning_fails_when_the_spill_pool_has_no_room_for_saved_values.log",
+    "file": "saved-value-lifetimes__test_planning_fails_when_the_spill_pool_has_no_room_for_saved_values.log",
+    "sha256": "65febcd897e631dc19faba7b8569285ab89008f836d03a579386b40e03bc603b",
+    "bytes": 4412
+  }
+]

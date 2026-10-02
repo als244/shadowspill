@@ -1,0 +1,135 @@
+[default0]:{"utc": "2026-10-02T10:13:11.415075+00:00", "rank": 0, "phase": "stock_import", "torch": "2.13.0+cu132", "cuda": "13.2", "cutlass_dsl": "4.7.1", "moon_source": "{\"dir_info\": {\"editable\": true}, \"url\": \"file:///home/as1669/shadowspill/dev/moonep_codex_handoff/third_party/MoonEP\"}", "planning_sha256": "6a9d03a968042d24c514fe4230d6c16f5dc81518b0986637ade6cfd9524025be", "imported_mlops_or_shadowspill": []}
+[default1]:{"utc": "2026-10-02T10:13:11.417925+00:00", "rank": 1, "phase": "stock_import", "torch": "2.13.0+cu132", "cuda": "13.2", "cutlass_dsl": "4.7.1", "moon_source": "{\"dir_info\": {\"editable\": true}, \"url\": \"file:///home/as1669/shadowspill/dev/moonep_codex_handoff/third_party/MoonEP\"}", "planning_sha256": "6a9d03a968042d24c514fe4230d6c16f5dc81518b0986637ade6cfd9524025be", "imported_mlops_or_shadowspill": []}
+[default0]:/home/as1669/shadowspill/dev/conda-envs/moonep-te-dev/lib/python3.12/site-packages/torch/distributed/c10d_logger.py:83: FutureWarning: `torch.distributed.all_gather_into_tensor` is deprecated. Please use `torch.distributed.all_gather_single` instead.
+[default0]:  return func(*args, **kwargs)
+[default1]:/home/as1669/shadowspill/dev/conda-envs/moonep-te-dev/lib/python3.12/site-packages/torch/distributed/c10d_logger.py:83: FutureWarning: `torch.distributed.all_gather_into_tensor` is deprecated. Please use `torch.distributed.all_gather_single` instead.
+[default1]:  return func(*args, **kwargs)
+[default0]:/home/as1669/shadowspill/dev/conda-envs/moonep-te-dev/lib/python3.12/site-packages/torch/distributed/c10d_logger.py:83: UserWarning: barrier(): using the device under current context. You can specify `device_id` in `init_process_group` to mute this warning.
+[default0]:  return func(*args, **kwargs)
+[default0]:{"utc": "2026-10-02T10:13:12.157396+00:00", "rank": 0, "phase": "inputs_valid", "tokens": 65536, "assignments": 262144, "expert_min": 0, "expert_max": 191, "operation": "dispatch", "experts": 192, "top_k": 4, "dim": 1024, "world_size": 2, "iterations": 1, "exact_payload": false}
+[default0]:{"utc": "2026-10-02T10:13:12.158179+00:00", "rank": 0, "phase": "operation_begin", "iteration": 0}
+[default1]:{"utc": "2026-10-02T10:13:12.147115+00:00", "rank": 1, "phase": "inputs_valid", "tokens": 65536, "assignments": 262144, "expert_min": 0, "expert_max": 191, "operation": "dispatch", "experts": 192, "top_k": 4, "dim": 1024, "world_size": 2, "iterations": 1, "exact_payload": false}
+[default1]:{"utc": "2026-10-02T10:13:12.158181+00:00", "rank": 1, "phase": "operation_begin", "iteration": 0}
+[default0]:Traceback (most recent call last):
+[default0]:  File "/home/as1669/shadowspill/docs/internal/plans/generic_training_0930/della_1001/scripts/repro_moonep_64k.py", line 123, in <module>
+[default0]:    main()
+[default0]:  File "/home/as1669/shadowspill/docs/internal/plans/generic_training_0930/della_1001/scripts/repro_moonep_64k.py", line 93, in main
+[default0]:    received, probabilities, ends, plan = buffer.dispatch(x, weights, ids, histogram)
+[default0]:                                          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+[default0]:  File "/home/as1669/shadowspill/dev/moonep_codex_handoff/third_party/MoonEP/moonep/api.py", line 811, in dispatch
+[default0]:    self._run_dispatch_on_current_stream(
+[default0]:  File "/home/as1669/shadowspill/dev/moonep_codex_handoff/third_party/MoonEP/moonep/api.py", line 643, in _run_dispatch_on_current_stream
+[default0]:    launch_dispatch(
+[default0]:  File "/home/as1669/shadowspill/dev/moonep_codex_handoff/third_party/MoonEP/moonep/dispatch.py", line 965, in launch_dispatch
+[default0]:    dispatch_compiled(
+[default0]:  File "/home/as1669/shadowspill/dev/moe_lab/implementations/QuackMoE/python-deps/site-packages/nvidia_cutlass_dsl/dsl_packages/cutlass/base_dsl/jit_executor.py", line 1401, in __call__
+[default0]:    return self.run_compiled_program(exe_args)
+[default0]:           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+[default0]:  File "/home/as1669/shadowspill/dev/moe_lab/implementations/QuackMoE/python-deps/site-packages/nvidia_cutlass_dsl/dsl_packages/cutlass/base_dsl/jit_executor.py", line 1418, in run_compiled_program
+[default0]:    return self._default_executor.run_compiled_program(exe_args)
+[default0]:           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+[default0]:  File "/home/as1669/shadowspill/dev/moe_lab/implementations/QuackMoE/python-deps/site-packages/nvidia_cutlass_dsl/dsl_packages/cutlass/base_dsl/jit_executor.py", line 1082, in run_compiled_program
+[default0]:    raise e
+[default0]:  File "/home/as1669/shadowspill/dev/moe_lab/implementations/QuackMoE/python-deps/site-packages/nvidia_cutlass_dsl/dsl_packages/cutlass/base_dsl/jit_executor.py", line 1080, in run_compiled_program
+[default0]:    raise cuda_helpers.create_cuda_runtime_error(error_code)
+[default0]:cutlass.base_dsl.common.DSLCudaRuntimeError: 
+[default0]:[91m[1merror:[0m CUDA_ERROR_ILLEGAL_ADDRESS (error code: 700) 
+[default0]: 
+[default0]:
+[default0]:[0m
+[default0]:  [94m= note:[0m error code 700
+[default0]:  [94m= note:[0m 
+[default0]:- [1mError name: CUDA_ERROR_ILLEGAL_ADDRESS
+[default0]:- Error code: 700
+[default0]:- CUDA_TOOLKIT_PATH: not set
+[default0]:- Target SM ARCH: unknown (unspecified)[0m
+[default0]:
+[default0]:[94m📊 GPU Information:[0m
+[default0]:[1m- CUDA devices available: 2 (current: <CUdevice 0>)
+[default0]:- Architecture: [94mHopper[0m ([92msm_90a[0m)
+[default0]:- Compatible SM archs: [92msm_90a[0m
+[default0]:- Total Memory: [94m79.17 GB[0m
+[default0]:
+[default0]:
+[default1]:Traceback (most recent call last):
+[default1]:  File "/home/as1669/shadowspill/docs/internal/plans/generic_training_0930/della_1001/scripts/repro_moonep_64k.py", line 123, in <module>
+[default1]:    main()
+[default1]:  File "/home/as1669/shadowspill/docs/internal/plans/generic_training_0930/della_1001/scripts/repro_moonep_64k.py", line 93, in main
+[default1]:    received, probabilities, ends, plan = buffer.dispatch(x, weights, ids, histogram)
+[default1]:                                          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+[default1]:  File "/home/as1669/shadowspill/dev/moonep_codex_handoff/third_party/MoonEP/moonep/api.py", line 811, in dispatch
+[default1]:    self._run_dispatch_on_current_stream(
+[default1]:  File "/home/as1669/shadowspill/dev/moonep_codex_handoff/third_party/MoonEP/moonep/api.py", line 643, in _run_dispatch_on_current_stream
+[default1]:    launch_dispatch(
+[default1]:  File "/home/as1669/shadowspill/dev/moonep_codex_handoff/third_party/MoonEP/moonep/dispatch.py", line 965, in launch_dispatch
+[default1]:    dispatch_compiled(
+[default1]:  File "/home/as1669/shadowspill/dev/moe_lab/implementations/QuackMoE/python-deps/site-packages/nvidia_cutlass_dsl/dsl_packages/cutlass/base_dsl/jit_executor.py", line 1401, in __call__
+[default1]:    return self.run_compiled_program(exe_args)
+[default1]:           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+[default1]:  File "/home/as1669/shadowspill/dev/moe_lab/implementations/QuackMoE/python-deps/site-packages/nvidia_cutlass_dsl/dsl_packages/cutlass/base_dsl/jit_executor.py", line 1418, in run_compiled_program
+[default1]:    return self._default_executor.run_compiled_program(exe_args)
+[default1]:           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+[default1]:  File "/home/as1669/shadowspill/dev/moe_lab/implementations/QuackMoE/python-deps/site-packages/nvidia_cutlass_dsl/dsl_packages/cutlass/base_dsl/jit_executor.py", line 1082, in run_compiled_program
+[default1]:    raise e
+[default1]:  File "/home/as1669/shadowspill/dev/moe_lab/implementations/QuackMoE/python-deps/site-packages/nvidia_cutlass_dsl/dsl_packages/cutlass/base_dsl/jit_executor.py", line 1080, in run_compiled_program
+[default1]:    raise cuda_helpers.create_cuda_runtime_error(error_code)
+[default1]:cutlass.base_dsl.common.DSLCudaRuntimeError: 
+[default1]:[91m[1merror:[0m CUDA_ERROR_ILLEGAL_ADDRESS (error code: 700) 
+[default1]: 
+[default1]:
+[default1]:[0m
+[default1]:  [94m= note:[0m error code 700
+[default1]:  [94m= note:[0m 
+[default1]:- [1mError name: CUDA_ERROR_ILLEGAL_ADDRESS
+[default1]:- Error code: 700
+[default1]:- CUDA_TOOLKIT_PATH: not set
+[default1]:- Target SM ARCH: unknown (unspecified)[0m
+[default1]:
+[default1]:[94m📊 GPU Information:[0m
+[default1]:[1m- CUDA devices available: 2 (current: <CUdevice 1>)
+[default1]:- Architecture: [94mHopper[0m ([92msm_90a[0m)
+[default1]:- Compatible SM archs: [92msm_90a[0m
+[default1]:- Total Memory: [94m79.17 GB[0m
+[default1]:
+[default1]:
+W1002 06:13:16.616000 3499663 /scratch/gpfs/LI/as1669/shadowspill/dev/conda-envs/moonep-te-dev/lib/python3.12/site-packages/torch/distributed/elastic/multiprocessing/api.py:1028] Sending process 3499933 closing signal SIGTERM
+E1002 06:13:16.815000 3499663 /scratch/gpfs/LI/as1669/shadowspill/dev/conda-envs/moonep-te-dev/lib/python3.12/site-packages/torch/distributed/elastic/multiprocessing/api.py:1002] failed (exitcode: 1) local_rank: 0 (pid: 3499932) of binary: /home/as1669/shadowspill/dev/conda-envs/moonep-te-dev/bin/python
+Traceback (most recent call last):
+  File "<frozen runpy>", line 198, in _run_module_as_main
+  File "<frozen runpy>", line 88, in _run_code
+  File "/home/as1669/shadowspill/dev/conda-envs/moonep-te-dev/lib/python3.12/site-packages/torch/distributed/run.py", line 1032, in <module>
+    main()
+  File "/home/as1669/shadowspill/dev/conda-envs/moonep-te-dev/lib/python3.12/site-packages/torch/distributed/elastic/multiprocessing/errors/__init__.py", line 367, in wrapper
+    return f(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^
+  File "/home/as1669/shadowspill/dev/conda-envs/moonep-te-dev/lib/python3.12/site-packages/torch/distributed/run.py", line 1028, in main
+    run(args)
+  File "/home/as1669/shadowspill/dev/conda-envs/moonep-te-dev/lib/python3.12/site-packages/torch/distributed/run.py", line 1019, in run
+    elastic_launch(
+  File "/home/as1669/shadowspill/dev/conda-envs/moonep-te-dev/lib/python3.12/site-packages/torch/distributed/launcher/api.py", line 194, in __call__
+    return launch_agent(
+           ^^^^^^^^^^^^^
+  File "/home/as1669/shadowspill/dev/conda-envs/moonep-te-dev/lib/python3.12/site-packages/torch/distributed/launcher/api.py", line 383, in launch_agent
+    raise ChildFailedError(
+torch.distributed.elastic.multiprocessing.errors.ChildFailedError: 
+============================================================
+/home/as1669/shadowspill/docs/internal/plans/generic_training_0930/della_1001/scripts/repro_moonep_64k.py FAILED
+------------------------------------------------------------
+Failures:
+[1]:
+  time      : 2026-10-02_06:13:16
+  host      : della-j15g1
+  rank      : 1 (local_rank: 1)
+  exitcode  : 1 (pid: 3499933) 
+  error_file: <N/A>
+  traceback : To enable traceback see: https://pytorch.org/docs/stable/elastic/errors.html
+------------------------------------------------------------
+Root Cause (first observed failure):
+[0]:
+  time      : 2026-10-02_06:13:16
+  host      : della-j15g1
+  rank      : 0 (local_rank: 0)
+  exitcode  : 1 (pid: 3499932) 
+  error_file: <N/A>
+  traceback : To enable traceback see: https://pytorch.org/docs/stable/elastic/errors.html
+============================================================

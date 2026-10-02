@@ -1,0 +1,40 @@
+[
+  {
+    "utc": "2026-10-02T09:44:26.403379+00:00",
+    "rank": 0,
+    "phase": "stock_import",
+    "torch": "2.13.0+cu132",
+    "cuda": "13.2",
+    "cutlass_dsl": "4.4.2",
+    "moon_source": "{\"url\": \"https://github.com/moonshotAI/moonep.git\", \"vcs_info\": {\"commit_id\": \"2bd860b4dd083df62b79d5e916fca71ec5742228\", \"requested_revision\": \"2bd860b4dd083df62b79d5e916fca71ec5742228\", \"vcs\": \"git\"}}",
+    "planning_sha256": "6a9d03a968042d24c514fe4230d6c16f5dc81518b0986637ade6cfd9524025be",
+    "imported_mlops_or_shadowspill": []
+  },
+  {
+    "utc": "2026-10-02T09:44:27.143101+00:00",
+    "rank": 0,
+    "phase": "inputs_valid",
+    "tokens": 65536,
+    "assignments": 262144,
+    "expert_min": 0,
+    "expert_max": 191,
+    "operation": "dispatch"
+  },
+  {
+    "utc": "2026-10-02T09:44:27.143906+00:00",
+    "rank": 0,
+    "phase": "operation_begin"
+  },
+  {
+    "utc": "2026-10-02T09:44:34.007063+00:00",
+    "rank": 0,
+    "phase": "operation_end",
+    "max_padded_rows": 268672
+  },
+  {
+    "utc": "2026-10-02T09:44:34.506001+00:00",
+    "rank": 0,
+    "phase": "completed",
+    "passed": true
+  }
+]

@@ -1,0 +1,35 @@
+[
+  {
+    "utc": "2026-10-02T10:13:11.417925+00:00",
+    "rank": 1,
+    "phase": "stock_import",
+    "torch": "2.13.0+cu132",
+    "cuda": "13.2",
+    "cutlass_dsl": "4.7.1",
+    "moon_source": "{\"dir_info\": {\"editable\": true}, \"url\": \"file:///home/as1669/shadowspill/dev/moonep_codex_handoff/third_party/MoonEP\"}",
+    "planning_sha256": "6a9d03a968042d24c514fe4230d6c16f5dc81518b0986637ade6cfd9524025be",
+    "imported_mlops_or_shadowspill": []
+  },
+  {
+    "utc": "2026-10-02T10:13:12.147115+00:00",
+    "rank": 1,
+    "phase": "inputs_valid",
+    "tokens": 65536,
+    "assignments": 262144,
+    "expert_min": 0,
+    "expert_max": 191,
+    "operation": "dispatch",
+    "experts": 192,
+    "top_k": 4,
+    "dim": 1024,
+    "world_size": 2,
+    "iterations": 1,
+    "exact_payload": false
+  },
+  {
+    "utc": "2026-10-02T10:13:12.158181+00:00",
+    "rank": 1,
+    "phase": "operation_begin",
+    "iteration": 0
+  }
+]

@@ -1,0 +1,38 @@
+[
+  {
+    "tokens": 32768,
+    "routing": "random",
+    "exact": true,
+    "passed": true
+  },
+  {
+    "tokens": 32768,
+    "routing": "skewed",
+    "exact": true,
+    "passed": true
+  },
+  {
+    "tokens": 32768,
+    "routing": "random",
+    "exact": true,
+    "passed": true
+  },
+  {
+    "tokens": 65536,
+    "routing": "random",
+    "exact": true,
+    "passed": true
+  },
+  {
+    "tokens": 65536,
+    "routing": "skewed",
+    "exact": true,
+    "passed": true
+  },
+  {
+    "tokens": 65536,
+    "routing": "random",
+    "exact": true,
+    "passed": true
+  }
+]

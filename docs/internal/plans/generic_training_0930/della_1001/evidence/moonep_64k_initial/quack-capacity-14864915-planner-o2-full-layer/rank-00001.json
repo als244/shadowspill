@@ -1,0 +1,383 @@
+[
+  {
+    "utc": "2026-10-02T10:05:44.421400+00:00",
+    "rank": 1,
+    "phase": "initializing",
+    "tokens": 65536,
+    "inputs": "random",
+    "compiled": false
+  },
+  {
+    "utc": "2026-10-02T10:05:44.595227+00:00",
+    "rank": 1,
+    "phase": "buffer_ready",
+    "geometry": {
+      "S": 65536,
+      "N": 262144,
+      "E": 192,
+      "B": 96,
+      "R": 2,
+      "K": 4,
+      "NvS": 286528,
+      "NvS_padded": 286720,
+      "meta_chunk_padded": 1572864,
+      "num_vblocks": 128
+    }
+  },
+  {
+    "utc": "2026-10-02T10:05:46.285350+00:00",
+    "rank": 1,
+    "phase": "model_ready",
+    "allocated_bytes": 758615552
+  },
+  {
+    "utc": "2026-10-02T10:05:47.217894+00:00",
+    "rank": 1,
+    "phase": "routing_ready",
+    "histogram_total": 262144,
+    "histogram_matches": true,
+    "expert_min": 0,
+    "expert_max": 191,
+    "max_expert_tokens": 1994
+  },
+  {
+    "utc": "2026-10-02T10:05:47.223355+00:00",
+    "rank": 1,
+    "phase": "_publish_begin"
+  },
+  {
+    "utc": "2026-10-02T10:05:47.224247+00:00",
+    "rank": 1,
+    "phase": "_publish_end"
+  },
+  {
+    "utc": "2026-10-02T10:05:47.224566+00:00",
+    "rank": 1,
+    "phase": "rank_sync_begin"
+  },
+  {
+    "utc": "2026-10-02T10:05:47.311015+00:00",
+    "rank": 1,
+    "phase": "rank_sync_end"
+  },
+  {
+    "utc": "2026-10-02T10:05:47.311443+00:00",
+    "rank": 1,
+    "phase": "rank_sync_begin"
+  },
+  {
+    "utc": "2026-10-02T10:05:47.311822+00:00",
+    "rank": 1,
+    "phase": "rank_sync_end"
+  },
+  {
+    "utc": "2026-10-02T10:05:47.312763+00:00",
+    "rank": 1,
+    "phase": "launch_planning_begin"
+  },
+  {
+    "utc": "2026-10-02T10:05:50.699659+00:00",
+    "rank": 1,
+    "phase": "launch_planning_end"
+  },
+  {
+    "utc": "2026-10-02T10:05:50.700466+00:00",
+    "rank": 1,
+    "phase": "launch_dispatch_begin"
+  },
+  {
+    "utc": "2026-10-02T10:05:51.102916+00:00",
+    "rank": 1,
+    "phase": "launch_dispatch_end"
+  },
+  {
+    "utc": "2026-10-02T10:05:51.376582+00:00",
+    "rank": 1,
+    "phase": "rank_sync_begin"
+  },
+  {
+    "utc": "2026-10-02T10:05:51.377647+00:00",
+    "rank": 1,
+    "phase": "rank_sync_end"
+  },
+  {
+    "utc": "2026-10-02T10:05:56.008374+00:00",
+    "rank": 1,
+    "phase": "rank_sync_begin"
+  },
+  {
+    "utc": "2026-10-02T10:05:56.132596+00:00",
+    "rank": 1,
+    "phase": "rank_sync_end"
+  },
+  {
+    "utc": "2026-10-02T10:05:56.135830+00:00",
+    "rank": 1,
+    "phase": "forward",
+    "iteration": 0,
+    "seconds": 8.911831062054262,
+    "finite": true
+  },
+  {
+    "utc": "2026-10-02T10:05:56.137392+00:00",
+    "rank": 1,
+    "phase": "_publish_begin"
+  },
+  {
+    "utc": "2026-10-02T10:05:56.138411+00:00",
+    "rank": 1,
+    "phase": "_publish_end"
+  },
+  {
+    "utc": "2026-10-02T10:05:56.138775+00:00",
+    "rank": 1,
+    "phase": "rank_sync_begin"
+  },
+  {
+    "utc": "2026-10-02T10:05:56.139146+00:00",
+    "rank": 1,
+    "phase": "rank_sync_end"
+  },
+  {
+    "utc": "2026-10-02T10:05:56.139467+00:00",
+    "rank": 1,
+    "phase": "rank_sync_begin"
+  },
+  {
+    "utc": "2026-10-02T10:05:56.139793+00:00",
+    "rank": 1,
+    "phase": "rank_sync_end"
+  },
+  {
+    "utc": "2026-10-02T10:05:56.140200+00:00",
+    "rank": 1,
+    "phase": "launch_dispatch_begin"
+  },
+  {
+    "utc": "2026-10-02T10:05:56.304366+00:00",
+    "rank": 1,
+    "phase": "launch_dispatch_end"
+  },
+  {
+    "utc": "2026-10-02T10:05:56.305249+00:00",
+    "rank": 1,
+    "phase": "rank_sync_begin"
+  },
+  {
+    "utc": "2026-10-02T10:05:56.305691+00:00",
+    "rank": 1,
+    "phase": "rank_sync_end"
+  },
+  {
+    "utc": "2026-10-02T10:06:01.378779+00:00",
+    "rank": 1,
+    "phase": "rank_sync_begin"
+  },
+  {
+    "utc": "2026-10-02T10:06:01.463780+00:00",
+    "rank": 1,
+    "phase": "rank_sync_end"
+  },
+  {
+    "utc": "2026-10-02T10:06:03.148381+00:00",
+    "rank": 1,
+    "phase": "rank_sync_begin"
+  },
+  {
+    "utc": "2026-10-02T10:06:03.161368+00:00",
+    "rank": 1,
+    "phase": "rank_sync_end"
+  },
+  {
+    "utc": "2026-10-02T10:06:03.695194+00:00",
+    "rank": 1,
+    "phase": "rank_sync_begin"
+  },
+  {
+    "utc": "2026-10-02T10:06:03.696700+00:00",
+    "rank": 1,
+    "phase": "rank_sync_end"
+  },
+  {
+    "utc": "2026-10-02T10:06:03.716780+00:00",
+    "rank": 1,
+    "phase": "backward",
+    "iteration": 0,
+    "seconds": 7.5798533950001,
+    "finite": true,
+    "allocated_peak": 7030376960
+  },
+  {
+    "utc": "2026-10-02T10:06:03.719104+00:00",
+    "rank": 1,
+    "phase": "_publish_begin"
+  },
+  {
+    "utc": "2026-10-02T10:06:03.720135+00:00",
+    "rank": 1,
+    "phase": "_publish_end"
+  },
+  {
+    "utc": "2026-10-02T10:06:03.720576+00:00",
+    "rank": 1,
+    "phase": "rank_sync_begin"
+  },
+  {
+    "utc": "2026-10-02T10:06:03.721019+00:00",
+    "rank": 1,
+    "phase": "rank_sync_end"
+  },
+  {
+    "utc": "2026-10-02T10:06:03.721422+00:00",
+    "rank": 1,
+    "phase": "rank_sync_begin"
+  },
+  {
+    "utc": "2026-10-02T10:06:03.721839+00:00",
+    "rank": 1,
+    "phase": "rank_sync_end"
+  },
+  {
+    "utc": "2026-10-02T10:06:03.722748+00:00",
+    "rank": 1,
+    "phase": "launch_planning_begin"
+  },
+  {
+    "utc": "2026-10-02T10:06:03.723417+00:00",
+    "rank": 1,
+    "phase": "launch_planning_end"
+  },
+  {
+    "utc": "2026-10-02T10:06:03.723883+00:00",
+    "rank": 1,
+    "phase": "launch_dispatch_begin"
+  },
+  {
+    "utc": "2026-10-02T10:06:03.727062+00:00",
+    "rank": 1,
+    "phase": "launch_dispatch_end"
+  },
+  {
+    "utc": "2026-10-02T10:06:03.728095+00:00",
+    "rank": 1,
+    "phase": "rank_sync_begin"
+  },
+  {
+    "utc": "2026-10-02T10:06:03.728632+00:00",
+    "rank": 1,
+    "phase": "rank_sync_end"
+  },
+  {
+    "utc": "2026-10-02T10:06:03.729754+00:00",
+    "rank": 1,
+    "phase": "rank_sync_begin"
+  },
+  {
+    "utc": "2026-10-02T10:06:03.734532+00:00",
+    "rank": 1,
+    "phase": "rank_sync_end"
+  },
+  {
+    "utc": "2026-10-02T10:06:03.735671+00:00",
+    "rank": 1,
+    "phase": "forward",
+    "iteration": 1,
+    "seconds": 0.01785035990178585,
+    "finite": true
+  },
+  {
+    "utc": "2026-10-02T10:06:03.736701+00:00",
+    "rank": 1,
+    "phase": "_publish_begin"
+  },
+  {
+    "utc": "2026-10-02T10:06:03.737866+00:00",
+    "rank": 1,
+    "phase": "_publish_end"
+  },
+  {
+    "utc": "2026-10-02T10:06:03.738376+00:00",
+    "rank": 1,
+    "phase": "rank_sync_begin"
+  },
+  {
+    "utc": "2026-10-02T10:06:03.739198+00:00",
+    "rank": 1,
+    "phase": "rank_sync_end"
+  },
+  {
+    "utc": "2026-10-02T10:06:03.739652+00:00",
+    "rank": 1,
+    "phase": "rank_sync_begin"
+  },
+  {
+    "utc": "2026-10-02T10:06:03.740090+00:00",
+    "rank": 1,
+    "phase": "rank_sync_end"
+  },
+  {
+    "utc": "2026-10-02T10:06:03.740602+00:00",
+    "rank": 1,
+    "phase": "launch_dispatch_begin"
+  },
+  {
+    "utc": "2026-10-02T10:06:03.743064+00:00",
+    "rank": 1,
+    "phase": "launch_dispatch_end"
+  },
+  {
+    "utc": "2026-10-02T10:06:03.743809+00:00",
+    "rank": 1,
+    "phase": "rank_sync_begin"
+  },
+  {
+    "utc": "2026-10-02T10:06:03.744354+00:00",
+    "rank": 1,
+    "phase": "rank_sync_end"
+  },
+  {
+    "utc": "2026-10-02T10:06:03.746339+00:00",
+    "rank": 1,
+    "phase": "rank_sync_begin"
+  },
+  {
+    "utc": "2026-10-02T10:06:03.752216+00:00",
+    "rank": 1,
+    "phase": "rank_sync_end"
+  },
+  {
+    "utc": "2026-10-02T10:06:03.753066+00:00",
+    "rank": 1,
+    "phase": "rank_sync_begin"
+  },
+  {
+    "utc": "2026-10-02T10:06:03.759939+00:00",
+    "rank": 1,
+    "phase": "rank_sync_end"
+  },
+  {
+    "utc": "2026-10-02T10:06:03.760756+00:00",
+    "rank": 1,
+    "phase": "rank_sync_begin"
+  },
+  {
+    "utc": "2026-10-02T10:06:03.762546+00:00",
+    "rank": 1,
+    "phase": "rank_sync_end"
+  },
+  {
+    "utc": "2026-10-02T10:06:03.766766+00:00",
+    "rank": 1,
+    "phase": "backward",
+    "iteration": 1,
+    "seconds": 0.030484945978969336,
+    "finite": true,
+    "allocated_peak": 7063931392
+  },
+  {
+    "utc": "2026-10-02T10:06:04.107593+00:00",
+    "rank": 1,
+    "phase": "completed",
+    "passed": true
+  }
+]

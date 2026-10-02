@@ -1,0 +1,47 @@
+{
+  "revision": "2bd860b4dd083df62b79d5e916fca71ec5742228",
+  "files": [
+    {
+      "file": "planning.py",
+      "upstream_url": "https://raw.githubusercontent.com/moonshotAI/moonep/2bd860b4dd083df62b79d5e916fca71ec5742228/moonep/planning.py",
+      "matches_upstream": true,
+      "sha256": "6a9d03a968042d24c514fe4230d6c16f5dc81518b0986637ade6cfd9524025be"
+    },
+    {
+      "file": "api.py",
+      "upstream_url": "https://raw.githubusercontent.com/moonshotAI/moonep/2bd860b4dd083df62b79d5e916fca71ec5742228/moonep/api.py",
+      "matches_upstream": true,
+      "sha256": "611afd09d694db24c6eb8ae33301eda40ecab388981590f813e853696046e4ec"
+    },
+    {
+      "file": "buffer.py",
+      "upstream_url": "https://raw.githubusercontent.com/moonshotAI/moonep/2bd860b4dd083df62b79d5e916fca71ec5742228/moonep/buffer.py",
+      "matches_upstream": true,
+      "sha256": "005d1d20b802cf390716f8a1198801f9a61c61d9e4d0e0906ac257239ddff28d"
+    },
+    {
+      "file": "_common.py",
+      "upstream_url": "https://raw.githubusercontent.com/moonshotAI/moonep/2bd860b4dd083df62b79d5e916fca71ec5742228/moonep/_common.py",
+      "matches_upstream": true,
+      "sha256": "2547572811a4ab4ac01cbca3faad19c4be62aad7de40c54c0c33c481aae086a5"
+    },
+    {
+      "file": "dispatch.py",
+      "upstream_url": "https://raw.githubusercontent.com/moonshotAI/moonep/2bd860b4dd083df62b79d5e916fca71ec5742228/moonep/dispatch.py",
+      "matches_upstream": true,
+      "sha256": "5415544783b54ac9def877c72a388c288c062c952a826981391ed2731628e56b"
+    },
+    {
+      "file": "dispatch_epilogue.py",
+      "upstream_url": "https://raw.githubusercontent.com/moonshotAI/moonep/2bd860b4dd083df62b79d5e916fca71ec5742228/moonep/dispatch_epilogue.py",
+      "matches_upstream": true,
+      "sha256": "a0f36c989bafe13b2f61cafc29cd4f0e0e763b1e673e4641cc8962cab91570c1"
+    },
+    {
+      "file": "inter_rank_sync.py",
+      "upstream_url": "https://raw.githubusercontent.com/moonshotAI/moonep/2bd860b4dd083df62b79d5e916fca71ec5742228/moonep/inter_rank_sync.py",
+      "matches_upstream": true,
+      "sha256": "218cea7d1c4b3769e5faccfb58b6b797ee13428afe708fdf9ac4038f1f2627bf"
+    }
+  ]
+}
