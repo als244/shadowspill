@@ -1,70 +1,28 @@
-"""Bind every saved value a backward takes from the forward that makes it."""
+"""Register forward producers without retaining their activation values."""
 
 from __future__ import annotations
 
 from collections.abc import Callable
-from dataclasses import replace
 
 from shadowspill.pytorch.capture.artifacts import AotGraphPair
 
-from .artifacts import (
-    DifferentiatedStage,
-    GraphPairVariant,
-    PartitionedTrainingCapture,
-    TaskGraphPairs,
-)
+from .artifacts import PartitionedTrainingCapture
 
 
-def resolve_partitioned_saved_values(
+def register_saved_value_producers(
     captures: tuple[PartitionedTrainingCapture, ...],
-    resolve_pair: Callable[[AotGraphPair, str | None], AotGraphPair],
-    metadata_digests: tuple[str | None, ...] | None = None,
-) -> tuple[PartitionedTrainingCapture, ...]:
-    """Bind producer-derived saved values to every backward occurrence.
+    register_pair: Callable[[AotGraphPair], None],
+) -> None:
+    """Retain each occurrence's producer recipe; run it only when needed.
 
-    ``metadata_digests`` aligns with ``captures``: producer executions are
-    shared per (producer contract, declared profiling metadata), matching
-    profile identity, so structurally identical microbatches reuse one
-    saved-value production while metadata-distinguished microbatches
-    keep their own.
+    Values and declared metadata can differ between structurally identical
+    occurrences, so registration preserves the actual graph-pair objects.
+    Profile deduplication still chooses which occurrences need measuring.
     """
-
-    digests = metadata_digests or (None,) * len(captures)
-    return tuple(
-        replace(
-            capture,
-            stages=tuple(
-                _resolve_stage(stage, resolve_pair, metadata_digest)
-                for stage in capture.stages
-            ),
-        )
-        for capture, metadata_digest in zip(captures, digests, strict=True)
-    )
+    for capture in captures:
+        for stage in capture.stages:
+            for variant in stage.graph_pairs.variants:
+                register_pair(variant.pair)
 
 
-def _resolve_stage(
-    stage: DifferentiatedStage,
-    resolve_pair: Callable[[AotGraphPair, str | None], AotGraphPair],
-    metadata_digest: str | None,
-) -> DifferentiatedStage:
-    graph_pairs = stage.graph_pairs
-    return replace(
-        stage,
-        graph_pairs=TaskGraphPairs(
-            structural_contract=graph_pairs.structural_contract,
-            root_output_indices=graph_pairs.root_output_indices,
-            variants=tuple(
-                GraphPairVariant(
-                    variant.option_id,
-                    variant.memory_budget,
-                    resolve_pair(variant.pair, metadata_digest),
-                    variant.accumulates,
-                )
-                for variant in graph_pairs.variants
-            ),
-            reference_option_id=graph_pairs.reference_option_id,
-        ),
-    )
-
-
-__all__ = ["resolve_partitioned_saved_values"]
+__all__ = ["register_saved_value_producers"]

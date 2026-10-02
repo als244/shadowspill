@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import time
 from collections.abc import Callable, Sequence
+from contextlib import AbstractContextManager, nullcontext
 from dataclasses import dataclass, field, replace
 
 import torch
@@ -186,11 +187,16 @@ class ProfileExecutableStore:
         *,
         warmup: Callable[[ProfileExecutable, str], None],
         progress: Callable[[int, int, str, str], None] | None = None,
+        prepare: Callable[
+            [ProfileExecutable], AbstractContextManager[ProfileExecutable]
+        ] = nullcontext,
     ) -> CompiledTaskSet:
         """Transfer selected callables, warming cache-only entrypoints as needed."""
 
         if distributed_preparation() is not None:
-            return self._take_distributed(artifacts, warmup=warmup, progress=progress)
+            return self._take_distributed(
+                artifacts, warmup=warmup, progress=progress, prepare=prepare
+            )
         selected = _selected_graph_artifacts(artifacts)
         functions: dict[str, Callable[..., object]] = {}
         manifests: dict[str, ExecutableTaskManifest] = {}
@@ -210,9 +216,13 @@ class ProfileExecutableStore:
                 executable = replace(executable, artifact=artifact)
             try:
                 if digest not in self._warmed:
-                    if not executable.example_arguments:
-                        executable = self._with_arguments(executable)
-                    warmup(executable, digest)
+                    with prepare(executable) as prepared:
+                        if not prepared.example_arguments:
+                            prepared = self._with_arguments(prepared)
+                        try:
+                            warmup(prepared, digest)
+                        finally:
+                            prepared.occurrence_values.release()
             finally:
                 executable.occurrence_values.release()
             self._warmed.discard(digest)
@@ -226,6 +236,9 @@ class ProfileExecutableStore:
         *,
         warmup: Callable[[ProfileExecutable, str], None],
         progress: Callable[[int, int, str, str], None] | None,
+        prepare: Callable[
+            [ProfileExecutable], AbstractContextManager[ProfileExecutable]
+        ],
     ) -> CompiledTaskSet:
         if any(not isinstance(item, GraphArtifact) for item in artifacts):
             raise TypeError("distributed preparation requires compiled tensor tasks")
@@ -243,12 +256,13 @@ class ProfileExecutableStore:
             with phase("selected/" + case.identity):
                 ready = all_ready("warmed", digest in self._warmed)
                 if not ready:
-                    if not executable.example_arguments:
-                        executable = self._with_arguments(executable)
-                    try:
-                        warmup(executable, digest)
-                    finally:
-                        executable.occurrence_values.release()
+                    with prepare(executable) as prepared:
+                        if not prepared.example_arguments:
+                            prepared = self._with_arguments(prepared)
+                        try:
+                            warmup(prepared, digest)
+                        finally:
+                            prepared.occurrence_values.release()
                     self._warmed.add(digest)
             functions[digest] = executable.function
             manifests[digest] = executable.manifest

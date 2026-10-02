@@ -9,7 +9,7 @@ from .artifacts import (
 )
 from .capture import capture_training_stages
 from .footprint import SavedValueFootprint, saved_value_footprint
-from .saved_values import resolve_partitioned_saved_values
+from .saved_values import register_saved_value_producers
 from .store import GraphPairStore
 from .training import partition_training_capture
 
@@ -23,6 +23,6 @@ __all__ = [
     "capture_training_stages",
     "parameter_gradient_leaves",
     "partition_training_capture",
-    "resolve_partitioned_saved_values",
+    "register_saved_value_producers",
     "saved_value_footprint",
 ]

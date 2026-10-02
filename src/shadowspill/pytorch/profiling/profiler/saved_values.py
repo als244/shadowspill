@@ -10,7 +10,7 @@ from torch.utils._pytree import tree_flatten
 
 from shadowspill.errors import CaptureError
 from shadowspill.pytorch.capture.artifacts import AotGraphPair
-from shadowspill.pytorch.distributed._profiling import all_ready, any_needed, phase
+from shadowspill.pytorch.distributed._profiling import any_needed, phase
 from shadowspill.pytorch.profiling.geometry import distinct_locations
 
 if TYPE_CHECKING:
@@ -20,8 +20,6 @@ if TYPE_CHECKING:
 def resolve_graph_pair_saved_values(
     profiler: TaskProfiler,
     pair: AotGraphPair,
-    metadata_digest: str | None,
-    produced: dict[tuple[str, str | None, int], tuple[tuple[torch.Tensor, str], ...]],
 ) -> AotGraphPair:
     """Populate a backward's saved inputs from the forward that produces them.
 
@@ -36,8 +34,9 @@ def resolve_graph_pair_saved_values(
     So a pair is measured as a pair. The forward runs on its own
     representative inputs and the backward runs on what came out of it, with
     only its tangents invented. Nothing here decides which saved values may
-    be invented, because none of them may.  ``produced`` memoizes one
-    forward run per (forward contract, metadata, saved arity).
+    be invented, because none of them may. Only values without an authentic
+    reference are copied. The caller releases those copies after measuring or
+    warming this backward; no other graph pair's activations are retained.
     """
 
     provenance = pair.backward.input_provenance
@@ -48,13 +47,10 @@ def resolve_graph_pair_saved_values(
     )
     if not any_needed("saved_values/missing", bool(missing)):
         return pair
-    key = (pair.forward.compatibility_digest, metadata_digest, pair.saved_value_count)
-    values = produced.get(key)
-    if not all_ready("saved_values/cached", values is not None):
-        with phase("saved_values"):
-            values = _run_producer(profiler, pair)
-        produced[key] = values
-    assert values is not None
+    # Every rank participates when any peer needs a replay: the producer may
+    # contain collectives even if this rank already has all its saved inputs.
+    with phase("saved_values"):
+        values = _run_producer(profiler, pair, missing)
     rebound = tuple(
         replace(
             item,
@@ -74,8 +70,9 @@ def resolve_graph_pair_saved_values(
 def _run_producer(
     profiler: TaskProfiler,
     pair: AotGraphPair,
-) -> tuple[tuple[torch.Tensor, str], ...]:
-    """Run one forward task and snapshot every value it saves, and where."""
+    positions: tuple[int, ...],
+) -> dict[int, tuple[torch.Tensor, str]]:
+    """Replay one forward and snapshot only the backward's missing inputs."""
 
     executables = profiler.executables
     executable = executables.get(pair.forward)
@@ -91,8 +88,9 @@ def _run_producer(
             saved = leaves[original_count:]
             if len(saved) != pair.saved_value_count:
                 raise CaptureError("paired forward changed its saved-value arity")
-            values = _snapshot(profiler, saved)
-            del output
+            copies = _snapshot(profiler, [saved[position] for position in positions])
+            values = dict(zip(positions, copies, strict=True))
+            del output, leaves, saved
         boundary.drain(stream, problem="saved-value producer")
         return values
     finally:
