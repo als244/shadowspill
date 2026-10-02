@@ -10,7 +10,8 @@ from __future__ import annotations
 from collections.abc import Sequence
 
 import torch
-from mlops.expert_parallel import QuackMoE, QuackMoEConfig as MoEConfig
+from mlops.expert_parallel import QuackMoE
+from mlops.expert_parallel import QuackMoEConfig as MoEConfig
 from mlops.expert_parallel.quack.router import route_op
 from torch import nn
 from torch.nn import functional as F
@@ -25,7 +26,14 @@ from workloads.pytorch.olmoe import OLMoEConfig
 
 class MoE(nn.Module):
     def __init__(
-        self, config: OLMoEConfig, *, ep_group, buffer, device, parameter_device
+        self,
+        config: OLMoEConfig,
+        *,
+        ep_group,
+        buffer,
+        device,
+        parameter_device,
+        router_dtype,
     ):
         super().__init__()
         self.config = config
@@ -37,6 +45,8 @@ class MoE(nn.Module):
             expert_hidden_dim=config.d_ff_expert,
             compute_precision="bf16",
             weight_grad_dtype=torch.bfloat16,
+            router_dtype=router_dtype,
+            router_weight_grad_dtype=router_dtype,
             renormalize_topk=False,
         )
         self.experts = QuackMoE(options, ep_group, buffer=buffer, device=device)
@@ -49,7 +59,8 @@ class MoE(nn.Module):
 
     def forward(self, hidden, residual, *, return_metrics=False):
         flat = hidden.reshape(-1, self.config.d_model)
-        logits = F.linear(flat.float(), self.experts.router_weight)
+        router = self.experts.router_weight
+        logits = F.linear(flat.to(router.dtype), router).float()
         weights, ids, counts = route_op(logits, self.config.top_k, False)
         routed = self.experts(flat, expert_ids=ids, routing_weights=weights)
         probability_sum = logits.softmax(-1).sum(0)
@@ -65,7 +76,14 @@ class MoE(nn.Module):
 
 class Block(BaseBlock):
     def __init__(
-        self, config: OLMoEConfig, *, ep_group, buffer, device, parameter_device
+        self,
+        config: OLMoEConfig,
+        *,
+        ep_group,
+        buffer,
+        device,
+        parameter_device,
+        router_dtype,
     ):
         nn.Module.__init__(self)
         self.attn_norm = RMSNorm(config.d_model).to(dtype=torch.bfloat16)
@@ -77,6 +95,7 @@ class Block(BaseBlock):
             buffer=buffer,
             device=device,
             parameter_device=parameter_device,
+            router_dtype=router_dtype,
         )
 
 
@@ -88,7 +107,7 @@ class OLMoE(BaseOLMoE):
     home shards; all other parameters are replicas within this EP group.
     Parameters normally start on the compute device. ``parameter_device="cpu"``
     also supports callers that materialize compute values from host state.
-    This initial workload uses BF16 experts and an FP32 router.
+    Experts use BF16. The router supports BF16 or FP32 (the default).
     """
 
     def __init__(
@@ -99,6 +118,7 @@ class OLMoE(BaseOLMoE):
         buffers: Sequence,
         device=None,
         parameter_device=None,
+        router_dtype=torch.float32,
     ):
         nn.Module.__init__(self)
         if len(buffers) != config.n_layers:
@@ -131,6 +151,7 @@ class OLMoE(BaseOLMoE):
                             buffer=buffer,
                             device=device,
                             parameter_device=parameter_device,
+                            router_dtype=router_dtype,
                         )
                     )
             except BaseException:
