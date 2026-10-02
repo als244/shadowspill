@@ -6,6 +6,7 @@ from collections.abc import Mapping
 from typing import Any
 
 import torch
+from torch._inductor import ir
 from torch._inductor.graph import GraphLowering
 from torch.fx import GraphModule
 
@@ -92,6 +93,22 @@ def _build_executable_root(
 def _graph_buffer_extent(graph: GraphLowering, name: str) -> int:
     try:
         buffer: Any = graph.get_buffer(name)
+        # A fallback operator allocates its own results. Inductor's strided
+        # layout describes the returned view, not necessarily its underlying
+        # allocation (for example, a two-element slice of a padded tensor).
+        # Keep the fake implementation's storage extent for these outputs.
+        fallback = isinstance(buffer, ir.FallbackKernel) or (
+            isinstance(buffer, ir.MultiOutput)
+            and len(buffer.inputs) == 1
+            and isinstance(buffer.inputs[0], ir.FallbackKernel)
+        )
+        if fallback:
+            origin = buffer.get_origin_node()
+            value = origin.meta.get("val") if origin is not None else None
+            if isinstance(value, torch.Tensor):
+                return _static_int(
+                    graph, value.untyped_storage().nbytes(), "fallback output storage"
+                )
         elements = _static_int(
             graph,
             graph.get_allocation_storage_size(buffer),
