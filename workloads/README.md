@@ -22,35 +22,23 @@ Install the optional backend from the MLOps checkout with
 `./scripts/setup_expert_parallel.sh --backend quack --python /path/to/python`.
 The workload imports the installed MLOps package and its external dependencies.
 
-The caller selects the compute device and supplies an initialized NCCL EP group
-and a MoonEP buffer for each block. Blocks with the same shape can share a
-caller-owned buffer. For example, after distributed initialization:
+The caller selects the compute device, initialized NCCL EP group and local
+microbatch capacity. The workload creates one MoonEP token buffer and one set of
+expert communication banks, shared across all blocks. Parameters remain distinct.
 
 ```python
 from workloads.quack import OLMoE, OLMoEConfig
-from moonep import Buffer
 
 config = OLMoEConfig(
     n_layers=2, d_model=512, n_heads=4, n_kv_heads=4, head_dim=128,
     n_experts=8, top_k=2, d_ff_expert=1024, vocab_size=1024, max_seq_len=256,
 )
-buffers = [
-    Buffer(
-        S=1024, H=config.d_model, K=config.top_k, E=config.n_experts,
-        num_ep_ranks=ep_group.size(), B=config.n_experts // ep_group.size(),
-        group=ep_group, token_padding=128, num_sms=32,
-        enable_pdl=False, explicitly_destroy=True,
-    )
-    for _ in range(config.n_layers)
-]
-model = OLMoE(config, ep_group=ep_group, buffers=buffers, device=device)
+model = OLMoE(config, ep_group=ep_group, token_capacity=1024, device=device)
 try:
     loss = model.loss(tokens, targets, reduction="sum", aux_coef=0.01)
     loss.backward()
 finally:
     model.close()
-    for buffer in buffers:
-        buffer.destroy()
 ```
 
 Here `tokens` and `targets` contain 1,024 tokens on this rank's selected compute
@@ -64,8 +52,12 @@ The model does not own a trainer, planner, optimizer or data source. Its
 `expert_parameters()` identifies home expert shards; all other parameters are
 replicated within the EP group. A training caller sums replicated gradients
 once and supplies the global loss normalization. QuackMoE already assembles the
-home expert gradients. The caller owns buffer destruction; `model.close()`
-releases the resources created by its expert modules.
+home expert gradients. `model.close()` releases model-owned communication resources. Advanced callers
+can instead pass `buffers=[buffer] * config.n_layers`; those buffers remain
+caller-owned. Do not pass `token_capacity` along with `buffers`. When searching
+microbatch capacities, construct the candidate model with its corresponding
+capacity before capture/profiling and close it before constructing another.
+The resource footprint then follows the candidate, rather than the largest case.
 
 When using ShadowSpill, enter its runtime before importing this workload or
 creating device communication resources: Quack's dependencies can inspect the
