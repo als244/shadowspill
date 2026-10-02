@@ -145,6 +145,15 @@ collective participation even when one rank already has a cached result. Candida
 selection uses the slowest rank's predicted duration and requires all ranks to
 admit the same ordered task sequence. Memory schedules remain local.
 
+A geometry that exhausts device memory during preparation is rejected only
+after every rank has unwound that attempt. Its failure does not poison the next
+geometry. Non-memory failures remain fatal; an unrelated peer error is never
+hidden by a simultaneous allocation failure. This recovery does not cover a
+worker blocked in a GPU driver call or an incomplete device collective.
+Preparation/control timeouts bound peer coordination, not uninterruptible
+kernel calls. Launchers must supervise whole-process failures; a driver reset
+may still be needed before its memory can be reclaimed.
+
 During execution, there is no added global barrier between tasks or updates.
 Fetch and eviction follow each rank's own schedule. Communication can overlap
 computation inside a task, but it must finish on that task's current stream before
