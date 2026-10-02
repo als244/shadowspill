@@ -1,0 +1,63 @@
+{
+  "model": {
+    "n_layers": 16,
+    "d_model": 1024,
+    "n_heads": 16,
+    "n_kv_heads": 16,
+    "head_dim": 64,
+    "n_experts": 192,
+    "top_k": 4,
+    "d_ff_expert": 1280,
+    "vocab_size": 50304,
+    "max_seq_len": 2048
+  },
+  "world_size": 2,
+  "seed": 0,
+  "tokens_per_step": 1048576,
+  "max_seq_len": 2048,
+  "microbatch_tokens": 16384,
+  "steps": 100,
+  "schedule_total_steps": 9537,
+  "schedule": {
+    "lr": 0.0003,
+    "min_lr": 3e-05,
+    "warmup_steps": 100
+  },
+  "optimizer_args": {
+    "lr": 0.0003,
+    "betas": [
+      0.9,
+      0.95
+    ],
+    "eps": 1e-08,
+    "weight_decay": 0.0,
+    "gradient_dtype": "bfloat16",
+    "reduction_dtype": "bfloat16",
+    "opt_state_dtype": "bfloat16",
+    "parameter_rounding": "stochastic",
+    "opt_state_rounding": "stochastic"
+  },
+  "aux_coef": 0.01,
+  "execution_gib": 78,
+  "external_headroom_gib": 52,
+  "spill_gib": 80,
+  "data": "/home/as1669/storage/datasets/fineweb_edu_gpt2_chicago_sample",
+  "outdir": "/home/as1669/storage/shadowspill/generic_training_0930/della_1001/chicago-olmoe12b-ep2-1002",
+  "wandb_project": "shadowspill-della-ep-training",
+  "eval_every": 100,
+  "eval_batches": 10,
+  "checkpoint_every": 500,
+  "profiling": {
+    "conditioning_seconds": 1,
+    "measurement_seconds": 0.3,
+    "warmup_iterations": 3
+  },
+  "resolution_options": [
+    "0",
+    "1/4",
+    "1/2",
+    "3/4",
+    "1"
+  ],
+  "planning_workers": 4
+}
