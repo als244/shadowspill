@@ -29,8 +29,8 @@ routing statistics can differ from Chicago's single-device execution.
 
 ## Resource choices
 
-Planning searches 16K, 32K and 64K tokens per rank per microbatch, with 32,
-16 and 8 accumulated microbatches per rank respectively. The workload owns
+Planning searches 16K, 32K, 64K, 128K and 256K tokens per rank per microbatch,
+with 32, 16, 8, 4 and 2 accumulated microbatches per rank respectively. The workload owns
 one correctly sized MoonEP token buffer shared by every layer, plus shared
 expert publication/reduction banks. Each candidate runs in fresh worker
 processes so its communication resources are released before the next capacity.
@@ -65,6 +65,23 @@ Each rank's `plan-diagnostics.json` retains both graph-pair variants, their
 input/mutation/output/workspace sizes, measured runtimes, and object mappings.
 `launch.sh` expects that loopback SSH relay on port 18375; online machines can
 run `train.py` directly without it.
+
+## Resuming the October 2 capacity retry
+
+The 16K training baseline is complete. After the MoonEP compiler and generic
+profiling-lifetime fixes, retry the larger capacities in `codex:0.0`:
+
+```bash
+bash docs/internal/plans/generic_training_0930/della_1001/scripts/retry_chicago_capacities.sh
+```
+
+This preparation-only command defaults to 32K, 64K, 128K and 256K. Use
+`--tokens 131072 262144` to select particular capacities. It skips passed
+cases and preserves per-case `result.json`, console logs and complete artifact
+stores under `~/storage/shadowspill/generic_training_0930/della_1001/chicago-ep2-capacity-fixes-1002`.
+Interrupted or failed cases are retried. Worker processes are recreated between
+capacities. Training uses the admitted plan with the lowest predicted step time;
+online W&B authentication and the relay are checked before launching it.
 
 ## Validation before launch
 
