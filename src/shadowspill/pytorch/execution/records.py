@@ -375,14 +375,12 @@ def _input_aliases(
 
 
 def _object_ids_by_alias(plan: ExecutionPlan) -> dict[str, tuple[str, ...]]:
-    return {
-        group.alias_group_id: tuple(
-            item.object_id
-            for item in plan.program.objects
-            if item.alias_group_id == group.alias_group_id
-        )
-        for group in plan.program.alias_groups
+    groups: dict[str, list[str]] = {
+        group.alias_group_id: [] for group in plan.program.alias_groups
     }
+    for item in plan.program.objects:
+        groups[item.alias_group_id].append(item.object_id)
+    return {alias: tuple(object_ids) for alias, object_ids in groups.items()}
 
 
 def _ephemeral_aliases(plan: ExecutionPlan) -> frozenset[str]:

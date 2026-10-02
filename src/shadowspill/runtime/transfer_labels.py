@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import re
 from collections.abc import Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 from shadowspill.ir import MemoryAction, MemoryActionKind, ShadowSpillProgram
 
@@ -22,6 +22,33 @@ class TransferLabelIndex:
 
     program: ShadowSpillProgram
     task_labels: Mapping[str, str]
+    _task_positions: Mapping[str, int] = field(init=False, repr=False, compare=False)
+    _aliases_by_object: Mapping[str, str] = field(init=False, repr=False, compare=False)
+    _alias_labels: Mapping[str, str] = field(init=False, repr=False, compare=False)
+
+    def __post_init__(self) -> None:
+        roles: dict[str, set[str]] = {}
+        aliases_by_object: dict[str, str] = {}
+        for item in self.program.objects:
+            aliases_by_object[item.object_id] = item.alias_group_id
+            roles.setdefault(item.alias_group_id, set()).add(item.role.value)
+        alias_labels = {}
+        for group in self.program.alias_groups:
+            alias = group.alias_group_id
+            role = "-".join(sorted(roles.get(alias, ()))) or "unknown"
+            alias_labels[alias] = (
+                f"{_component(alias)}.role_{_component(role)}.bytes_{group.size_bytes}"
+            )
+        object.__setattr__(
+            self,
+            "_task_positions",
+            {
+                task.task_id: position
+                for position, task in enumerate(self.program.tasks)
+            },
+        )
+        object.__setattr__(self, "_aliases_by_object", aliases_by_object)
+        object.__setattr__(self, "_alias_labels", alias_labels)
 
     def labels_for(self, actions: tuple[MemoryAction, ...]) -> tuple[str, ...]:
         """Return one immutable profiler label for every ordered action."""
@@ -29,33 +56,19 @@ class TransferLabelIndex:
         return tuple(self._label(action) for action in actions)
 
     def _label(self, action: MemoryAction) -> str:
-        task_positions = {
-            task.task_id: position for position, task in enumerate(self.program.tasks)
-        }
-        aliases_by_object = {
-            item.object_id: item.alias_group_id for item in self.program.objects
-        }
         alias = action.alias_group_id
-        members = tuple(
-            item for item in self.program.objects if item.alias_group_id == alias
-        )
-        roles = "-".join(sorted({item.role.value for item in members})) or "unknown"
-        sizes = {
-            item.alias_group_id: item.size_bytes for item in self.program.alias_groups
-        }
-        trigger_position = task_positions[action.trigger_task_id]
+        trigger_position = self._task_positions[action.trigger_task_id]
         trigger = self._task_label(action.trigger_task_id)
 
         prefix = (
             f"shadowspill.runtime.transfer.{self._operation(action.kind)}."
-            f"{_component(alias)}.role_{_component(roles)}."
-            f"bytes_{sizes[alias]}"
+            f"{self._alias_labels[alias]}"
         )
         if action.kind is MemoryActionKind.FETCH:
             consumer = self._next_consumer(
                 alias,
                 trigger_position,
-                aliases_by_object,
+                self._aliases_by_object,
             )
             relationship = (
                 f"for_input.{self._task_label(consumer)}"
@@ -66,7 +79,7 @@ class TransferLabelIndex:
             relation, producer = self._latest_source(
                 alias,
                 trigger_position,
-                aliases_by_object,
+                self._aliases_by_object,
             )
             relationship = (
                 f"from_{relation}.{self._task_label(producer)}"
