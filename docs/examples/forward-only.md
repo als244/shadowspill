@@ -25,6 +25,12 @@ print(output.shape)
 run_forward.close()
 ```
 
+Use `forward_fn=lambda model, batch: ...` to select another model method or
+include an objective. Automatic partitioning still uses the model's registered
+layer paths, including when the callback calls `model.loss(...)`. A custom
+`PartitionPolicy` receives those same paths. Use `partition="whole"` only when
+one compiled task for the complete forward is intended.
+
 Forward outputs use caller-owned dynamic leases because the caller may retain
 them after another invocation. Release references when they are no longer
 needed. Each call and each `submit()` on a `PlannedForward` also accepts

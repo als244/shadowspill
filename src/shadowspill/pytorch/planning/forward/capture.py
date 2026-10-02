@@ -199,8 +199,9 @@ def _capture_partitioned_forward(
     try:
         fake_mode = FakeTensorMode(allow_non_fake_inputs=True)
         fake_model = fake_device_model(model, fake_mode, device_index=device_ordinal)
+        forward_view = None
         if forward_fn is not None:
-            _select_forward(fake_model, forward_fn)
+            forward_view = _select_forward(fake_model, forward_fn)
         fake_inputs = fake_device_inputs(
             cpu_inputs,
             fake_mode,
@@ -216,6 +217,8 @@ def _capture_partitioned_forward(
             )
             del output_leaves
             capture = capture_forward(fake_model, fake_inputs)
+        if forward_view is not None:
+            _restore_registered_module_paths(capture, fake_model, forward_view)
         with timer.measure("export_archival"):
             stores.archive_export(capture, mode="forward", position=0)
         representative_roots = tuple(
@@ -244,7 +247,7 @@ def _capture_partitioned_forward(
     )
 
 
-def _select_forward(model: nn.Module, forward_fn: Callable[..., Any]) -> None:
+def _select_forward(model: nn.Module, forward_fn: Callable[..., Any]) -> nn.Module:
     """Select only the capture copy's call, retaining its registered state names.
 
     The shallow view calls the model's original forward, so a callback can use
@@ -258,3 +261,26 @@ def _select_forward(model: nn.Module, forward_fn: Callable[..., Any]) -> None:
         return forward_fn(view, *inputs)
 
     model.forward = MethodType(call, model)
+    return view
+
+
+def _restore_registered_module_paths(
+    capture: ExportCapture, model: nn.Module, view: nn.Module
+) -> None:
+    """Keep callback provenance in the source model's registered namespace.
+
+    Strict Export can name a shared submodule through the callback closure
+    instead of its registered path. Its stack key still identifies that same
+    module object. Resolve those keys while the capture objects are alive so
+    automatic and caller-defined partition policies see the usual layer paths.
+    Tensor state names, graph operations and unregistered modules are unchanged.
+    """
+    paths = {str(id(module)): path for path, module in model.named_modules()}
+    paths[str(id(view))] = ""
+    for node in capture.exported_program.graph.nodes:
+        stack = node.meta.get("nn_module_stack")
+        if isinstance(stack, dict):
+            node.meta["nn_module_stack"] = {
+                key: (paths.get(key, path), module_type)
+                for key, (path, module_type) in stack.items()
+            }
