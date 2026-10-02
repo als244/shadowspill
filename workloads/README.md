@@ -11,7 +11,9 @@ Core planning, runtime, and lowering code must never import `workloads`.
 `workloads.quack.OLMoE` is a regular decoder model: it has the same configuration,
 forward, packed-input and loss interfaces as `workloads.mlops.OLMoE`, with
 QuackMoE routed experts in each block. It uses MLOps attention and head/loss
-operations, BF16 expert computation and an FP32 router. The layer is packaged
+operations and BF16 expert computation. The router defaults to FP32;
+`router_dtype=torch.bfloat16` selects BF16 router weights, computation and
+gradients. The layer is packaged
 as `mlops.expert_parallel.QuackMoE`. MoonEP and
 their GPU dependencies are optional; importing the other workloads does not
 import them. The current QuackMoE kernels require H100/SM90.
@@ -21,7 +23,8 @@ Install the optional backend from the MLOps checkout with
 The workload imports the installed MLOps package and its external dependencies.
 
 The caller selects the compute device and supplies an initialized NCCL EP group
-and one MoonEP buffer per block. For example, after distributed initialization:
+and a MoonEP buffer for each block. Blocks with the same shape can share a
+caller-owned buffer. For example, after distributed initialization:
 
 ```python
 from workloads.quack import OLMoE, OLMoEConfig
