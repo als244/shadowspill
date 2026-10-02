@@ -439,6 +439,8 @@ component. Its inputs, output tensors, workspace and runtime participate in
 ordinary compilation, profiling and planning. This preserves stage-interleaved
 updates and does not make the entire model resident at once. Results are
 snapshots, so later updates cannot overwrite them.
+Observation capture uses the same explicit device ordinal as the surrounding
+training plan, including nonzero device ordinals in distributed processes.
 
 `result.parameter_metrics[name]` has the callback's pytree, once per optimizer
 step. **Its leaves are detached tensors on the device**, not Python numbers.
