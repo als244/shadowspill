@@ -1,0 +1,64 @@
+START moonep-planner-32k-64k 2026-10-02T10:21:32.873927+00:00 log=/scratch/gpfs/LI/as1669/shadowspill/generic_training_0930/della_1001/moonep-planner-o2-validation/mlops/moonep-planner-32k-64k/console.log
+PASS moonep-planner-32k-64k 16.38s
+.START quack-bf16-save-chunks1 2026-10-02T10:21:49.260923+00:00 log=/scratch/gpfs/LI/as1669/shadowspill/generic_training_0930/della_1001/moonep-planner-o2-validation/mlops/quack-bf16-save-chunks1/console.log
+PASS quack-bf16-save-chunks1 23.44s
+.START quack-bf16-recompute-chunks1 2026-10-02T10:22:12.706151+00:00 log=/scratch/gpfs/LI/as1669/shadowspill/generic_training_0930/della_1001/moonep-planner-o2-validation/mlops/quack-bf16-recompute-chunks1/console.log
+PASS quack-bf16-recompute-chunks1 13.38s
+.START quack-fp8_current-save-chunks1 2026-10-02T10:22:26.088499+00:00 log=/scratch/gpfs/LI/as1669/shadowspill/generic_training_0930/della_1001/moonep-planner-o2-validation/mlops/quack-fp8_current-save-chunks1/console.log
+PASS quack-fp8_current-save-chunks1 21.94s
+.START quack-fp8_current-recompute-chunks1 2026-10-02T10:22:48.031480+00:00 log=/scratch/gpfs/LI/as1669/shadowspill/generic_training_0930/della_1001/moonep-planner-o2-validation/mlops/quack-fp8_current-recompute-chunks1/console.log
+PASS quack-fp8_current-recompute-chunks1 13.28s
+.START quack-lora-bf16-save-chunks1 2026-10-02T10:23:01.314213+00:00 log=/scratch/gpfs/LI/as1669/shadowspill/generic_training_0930/della_1001/moonep-planner-o2-validation/mlops/quack-lora-bf16-save-chunks1/console.log
+PASS quack-lora-bf16-save-chunks1 25.00s
+.START quack-lora-bf16-recompute-chunks1 2026-10-02T10:23:26.311674+00:00 log=/scratch/gpfs/LI/as1669/shadowspill/generic_training_0930/della_1001/moonep-planner-o2-validation/mlops/quack-lora-bf16-recompute-chunks1/console.log
+PASS quack-lora-bf16-recompute-chunks1 15.03s
+.START quack-lora-fp8_current-save-chunks1 2026-10-02T10:23:41.347651+00:00 log=/scratch/gpfs/LI/as1669/shadowspill/generic_training_0930/della_1001/moonep-planner-o2-validation/mlops/quack-lora-fp8_current-save-chunks1/console.log
+PASS quack-lora-fp8_current-save-chunks1 14.78s
+.START quack-lora-fp8_current-recompute-chunks1 2026-10-02T10:23:56.134308+00:00 log=/scratch/gpfs/LI/as1669/shadowspill/generic_training_0930/della_1001/moonep-planner-o2-validation/mlops/quack-lora-fp8_current-recompute-chunks1/console.log
+PASS quack-lora-fp8_current-recompute-chunks1 14.88s
+.START quack-bf16-save-chunks4 2026-10-02T10:24:11.019680+00:00 log=/scratch/gpfs/LI/as1669/shadowspill/generic_training_0930/della_1001/moonep-planner-o2-validation/mlops/quack-bf16-save-chunks4/console.log
+PASS quack-bf16-save-chunks4 16.24s
+.START quack-bf16-recompute-chunks4 2026-10-02T10:24:27.257006+00:00 log=/scratch/gpfs/LI/as1669/shadowspill/generic_training_0930/della_1001/moonep-planner-o2-validation/mlops/quack-bf16-recompute-chunks4/console.log
+PASS quack-bf16-recompute-chunks4 13.63s
+.START quack-fp8_current-save-chunks4 2026-10-02T10:24:40.890569+00:00 log=/scratch/gpfs/LI/as1669/shadowspill/generic_training_0930/della_1001/moonep-planner-o2-validation/mlops/quack-fp8_current-save-chunks4/console.log
+PASS quack-fp8_current-save-chunks4 16.03s
+.START quack-fp8_current-recompute-chunks4 2026-10-02T10:24:56.926834+00:00 log=/scratch/gpfs/LI/as1669/shadowspill/generic_training_0930/della_1001/moonep-planner-o2-validation/mlops/quack-fp8_current-recompute-chunks4/console.log
+PASS quack-fp8_current-recompute-chunks4 13.93s
+.START quack-lora-bf16-save-chunks4 2026-10-02T10:25:10.860555+00:00 log=/scratch/gpfs/LI/as1669/shadowspill/generic_training_0930/della_1001/moonep-planner-o2-validation/mlops/quack-lora-bf16-save-chunks4/console.log
+PASS quack-lora-bf16-save-chunks4 16.94s
+.START quack-lora-bf16-recompute-chunks4 2026-10-02T10:25:27.797888+00:00 log=/scratch/gpfs/LI/as1669/shadowspill/generic_training_0930/della_1001/moonep-planner-o2-validation/mlops/quack-lora-bf16-recompute-chunks4/console.log
+PASS quack-lora-bf16-recompute-chunks4 14.68s
+.START quack-lora-fp8_current-save-chunks4 2026-10-02T10:25:42.482471+00:00 log=/scratch/gpfs/LI/as1669/shadowspill/generic_training_0930/della_1001/moonep-planner-o2-validation/mlops/quack-lora-fp8_current-save-chunks4/console.log
+PASS quack-lora-fp8_current-save-chunks4 15.13s
+.START quack-lora-fp8_current-recompute-chunks4 2026-10-02T10:25:57.618125+00:00 log=/scratch/gpfs/LI/as1669/shadowspill/generic_training_0930/della_1001/moonep-planner-o2-validation/mlops/quack-lora-fp8_current-recompute-chunks4/console.log
+PASS quack-lora-fp8_current-recompute-chunks4 15.33s
+.START te-bf16-save-chunks1 2026-10-02T10:26:12.953564+00:00 log=/scratch/gpfs/LI/as1669/shadowspill/generic_training_0930/della_1001/moonep-planner-o2-validation/mlops/te-bf16-save-chunks1/console.log
+PASS te-bf16-save-chunks1 17.89s
+.START te-bf16-recompute-chunks1 2026-10-02T10:26:30.842310+00:00 log=/scratch/gpfs/LI/as1669/shadowspill/generic_training_0930/della_1001/moonep-planner-o2-validation/mlops/te-bf16-recompute-chunks1/console.log
+PASS te-bf16-recompute-chunks1 15.73s
+.START te-fp8_current-save-chunks1 2026-10-02T10:26:46.578291+00:00 log=/scratch/gpfs/LI/as1669/shadowspill/generic_training_0930/della_1001/moonep-planner-o2-validation/mlops/te-fp8_current-save-chunks1/console.log
+PASS te-fp8_current-save-chunks1 16.23s
+.START te-fp8_current-recompute-chunks1 2026-10-02T10:27:02.814866+00:00 log=/scratch/gpfs/LI/as1669/shadowspill/generic_training_0930/della_1001/moonep-planner-o2-validation/mlops/te-fp8_current-recompute-chunks1/console.log
+PASS te-fp8_current-recompute-chunks1 16.53s
+.START te-fp8_block-save-chunks1 2026-10-02T10:27:19.351743+00:00 log=/scratch/gpfs/LI/as1669/shadowspill/generic_training_0930/della_1001/moonep-planner-o2-validation/mlops/te-fp8_block-save-chunks1/console.log
+PASS te-fp8_block-save-chunks1 16.59s
+.START te-fp8_block-recompute-chunks1 2026-10-02T10:27:35.939479+00:00 log=/scratch/gpfs/LI/as1669/shadowspill/generic_training_0930/della_1001/moonep-planner-o2-validation/mlops/te-fp8_block-recompute-chunks1/console.log
+PASS te-fp8_block-recompute-chunks1 16.59s
+.START te-lora-bf16-save-chunks1 2026-10-02T10:27:52.526395+00:00 log=/scratch/gpfs/LI/as1669/shadowspill/generic_training_0930/della_1001/moonep-planner-o2-validation/mlops/te-lora-bf16-save-chunks1/console.log
+PASS te-lora-bf16-save-chunks1 14.63s
+.START te-lora-bf16-recompute-chunks1 2026-10-02T10:28:07.161215+00:00 log=/scratch/gpfs/LI/as1669/shadowspill/generic_training_0930/della_1001/moonep-planner-o2-validation/mlops/te-lora-bf16-recompute-chunks1/console.log
+PASS te-lora-bf16-recompute-chunks1 14.63s
+.START te-lora-fp8_current-save-chunks1 2026-10-02T10:28:21.796102+00:00 log=/scratch/gpfs/LI/as1669/shadowspill/generic_training_0930/della_1001/moonep-planner-o2-validation/mlops/te-lora-fp8_current-save-chunks1/console.log
+PASS te-lora-fp8_current-save-chunks1 14.48s
+.START te-lora-fp8_current-recompute-chunks1 2026-10-02T10:28:36.280517+00:00 log=/scratch/gpfs/LI/as1669/shadowspill/generic_training_0930/della_1001/moonep-planner-o2-validation/mlops/te-lora-fp8_current-recompute-chunks1/console.log
+PASS te-lora-fp8_current-recompute-chunks1 14.58s
+.START te-lora-fp8_block-save-chunks1 2026-10-02T10:28:50.866706+00:00 log=/scratch/gpfs/LI/as1669/shadowspill/generic_training_0930/della_1001/moonep-planner-o2-validation/mlops/te-lora-fp8_block-save-chunks1/console.log
+PASS te-lora-fp8_block-save-chunks1 14.78s
+.START te-lora-fp8_block-recompute-chunks1 2026-10-02T10:29:05.652715+00:00 log=/scratch/gpfs/LI/as1669/shadowspill/generic_training_0930/della_1001/moonep-planner-o2-validation/mlops/te-lora-fp8_block-recompute-chunks1/console.log
+PASS te-lora-fp8_block-recompute-chunks1 14.53s
+.START public-layers-coexist 2026-10-02T10:29:20.187226+00:00 log=/scratch/gpfs/LI/as1669/shadowspill/generic_training_0930/della_1001/moonep-planner-o2-validation/mlops/public-layers-coexist/console.log
+PASS public-layers-coexist 21.84s
+.START shared-expert-banks 2026-10-02T10:29:42.031243+00:00 log=/scratch/gpfs/LI/as1669/shadowspill/generic_training_0930/della_1001/moonep-planner-o2-validation/mlops/shared-expert-banks/console.log
+PASS shared-expert-banks 22.94s
+.
+31 passed in 514.25s (0:08:34)

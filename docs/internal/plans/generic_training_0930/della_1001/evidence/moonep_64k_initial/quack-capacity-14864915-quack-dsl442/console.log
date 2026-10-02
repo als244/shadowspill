@@ -1,0 +1,80 @@
+[default0]:[rank0]: Traceback (most recent call last):
+[default0]:[rank0]:   File "/home/as1669/shadowspill/docs/internal/plans/generic_training_0930/della_1001/scripts/probe_quack_capacity.py", line 203, in <module>
+[default0]:[rank0]:     main()
+[default0]:[rank0]:   File "/home/as1669/shadowspill/docs/internal/plans/generic_training_0930/della_1001/scripts/probe_quack_capacity.py", line 42, in main
+[default0]:[rank0]:     from mlops.expert_parallel.quack import MoEConfig, QuackMoE
+[default0]:[rank0]:   File "/home/as1669/mlops/src/mlops/expert_parallel/quack/__init__.py", line 28, in __getattr__
+[default0]:[rank0]:     _initialize()
+[default0]:[rank0]:   File "/home/as1669/mlops/src/mlops/expert_parallel/quack/__init__.py", line 18, in _initialize
+[default0]:[rank0]:     quack_pipeline.apply()
+[default0]:[rank0]:   File "/home/as1669/mlops/src/mlops/expert_parallel/_compat/quack_pipeline.py", line 40, in apply
+[default0]:[rank0]:     from quack import cache
+[default0]:[rank0]:   File "/home/as1669/.conda/envs/shadowspill/lib/python3.12/site-packages/quack/__init__.py", line 18, in <module>
+[default0]:[rank0]:     from quack.rmsnorm import rmsnorm  # noqa: E402
+[default0]:[rank0]:     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+[default0]:[rank0]:   File "/home/as1669/.conda/envs/shadowspill/lib/python3.12/site-packages/quack/rmsnorm.py", line 18, in <module>
+[default0]:[rank0]:     import quack.utils as utils
+[default0]:[rank0]:   File "/home/as1669/.conda/envs/shadowspill/lib/python3.12/site-packages/quack/utils.py", line 10, in <module>
+[default0]:[rank0]:     from cutlass.base_dsl.typing import Vector
+[default0]:[rank0]: ImportError: cannot import name 'Vector' from 'cutlass.base_dsl.typing' (/home/as1669/storage/shadowspill/generic_training_0930/della_1001/moonep-declared-dsl442/nvidia_cutlass_dsl/python_packages/cutlass/base_dsl/typing.py)
+[default1]:[rank1]: Traceback (most recent call last):
+[default1]:[rank1]:   File "/home/as1669/shadowspill/docs/internal/plans/generic_training_0930/della_1001/scripts/probe_quack_capacity.py", line 203, in <module>
+[default1]:[rank1]:     main()
+[default1]:[rank1]:   File "/home/as1669/shadowspill/docs/internal/plans/generic_training_0930/della_1001/scripts/probe_quack_capacity.py", line 42, in main
+[default1]:[rank1]:     from mlops.expert_parallel.quack import MoEConfig, QuackMoE
+[default1]:[rank1]:   File "/home/as1669/mlops/src/mlops/expert_parallel/quack/__init__.py", line 28, in __getattr__
+[default1]:[rank1]:     _initialize()
+[default1]:[rank1]:   File "/home/as1669/mlops/src/mlops/expert_parallel/quack/__init__.py", line 18, in _initialize
+[default1]:[rank1]:     quack_pipeline.apply()
+[default1]:[rank1]:   File "/home/as1669/mlops/src/mlops/expert_parallel/_compat/quack_pipeline.py", line 40, in apply
+[default1]:[rank1]:     from quack import cache
+[default1]:[rank1]:   File "/home/as1669/.conda/envs/shadowspill/lib/python3.12/site-packages/quack/__init__.py", line 18, in <module>
+[default1]:[rank1]:     from quack.rmsnorm import rmsnorm  # noqa: E402
+[default1]:[rank1]:     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+[default1]:[rank1]:   File "/home/as1669/.conda/envs/shadowspill/lib/python3.12/site-packages/quack/rmsnorm.py", line 18, in <module>
+[default1]:[rank1]:     import quack.utils as utils
+[default1]:[rank1]:   File "/home/as1669/.conda/envs/shadowspill/lib/python3.12/site-packages/quack/utils.py", line 10, in <module>
+[default1]:[rank1]:     from cutlass.base_dsl.typing import Vector
+[default1]:[rank1]: ImportError: cannot import name 'Vector' from 'cutlass.base_dsl.typing' (/home/as1669/storage/shadowspill/generic_training_0930/della_1001/moonep-declared-dsl442/nvidia_cutlass_dsl/python_packages/cutlass/base_dsl/typing.py)
+[default0]:[rank0]:[W1002 05:49:44.196134032 ProcessGroupNCCL.cpp:1624] Warning: WARNING: destroy_process_group() was not called before program exit, which can leak resources. For more info, please see https://pytorch.org/docs/stable/distributed.html#shutdown (function operator())
+W1002 05:49:45.557000 3328597 /scratch/gpfs/LI/as1669/.conda/envs/shadowspill/lib/python3.12/site-packages/torch/distributed/elastic/multiprocessing/api.py:1028] Sending process 3328789 closing signal SIGTERM
+E1002 05:49:45.856000 3328597 /scratch/gpfs/LI/as1669/.conda/envs/shadowspill/lib/python3.12/site-packages/torch/distributed/elastic/multiprocessing/api.py:1002] failed (exitcode: 1) local_rank: 1 (pid: 3328790) of binary: /home/as1669/.conda/envs/shadowspill/bin/python
+Traceback (most recent call last):
+  File "<frozen runpy>", line 198, in _run_module_as_main
+  File "<frozen runpy>", line 88, in _run_code
+  File "/home/as1669/.conda/envs/shadowspill/lib/python3.12/site-packages/torch/distributed/run.py", line 1032, in <module>
+    main()
+  File "/home/as1669/.conda/envs/shadowspill/lib/python3.12/site-packages/torch/distributed/elastic/multiprocessing/errors/__init__.py", line 367, in wrapper
+    return f(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^
+  File "/home/as1669/.conda/envs/shadowspill/lib/python3.12/site-packages/torch/distributed/run.py", line 1028, in main
+    run(args)
+  File "/home/as1669/.conda/envs/shadowspill/lib/python3.12/site-packages/torch/distributed/run.py", line 1019, in run
+    elastic_launch(
+  File "/home/as1669/.conda/envs/shadowspill/lib/python3.12/site-packages/torch/distributed/launcher/api.py", line 194, in __call__
+    return launch_agent(
+           ^^^^^^^^^^^^^
+  File "/home/as1669/.conda/envs/shadowspill/lib/python3.12/site-packages/torch/distributed/launcher/api.py", line 383, in launch_agent
+    raise ChildFailedError(
+torch.distributed.elastic.multiprocessing.errors.ChildFailedError: 
+============================================================
+/home/as1669/shadowspill/docs/internal/plans/generic_training_0930/della_1001/scripts/probe_quack_capacity.py FAILED
+------------------------------------------------------------
+Failures:
+[1]:
+  time      : 2026-10-02_05:49:45
+  host      : della-j15g1
+  rank      : 0 (local_rank: 0)
+  exitcode  : -15 (pid: 3328789)  (SIGTERM)
+  error_file: <N/A>
+  traceback : Signal 15 (SIGTERM) received by PID 3328789
+------------------------------------------------------------
+Root Cause (first observed failure):
+[0]:
+  time      : 2026-10-02_05:49:45
+  host      : della-j15g1
+  rank      : 1 (local_rank: 1)
+  exitcode  : 1 (pid: 3328790) 
+  error_file: <N/A>
+  traceback : To enable traceback see: https://pytorch.org/docs/stable/elastic/errors.html
+============================================================

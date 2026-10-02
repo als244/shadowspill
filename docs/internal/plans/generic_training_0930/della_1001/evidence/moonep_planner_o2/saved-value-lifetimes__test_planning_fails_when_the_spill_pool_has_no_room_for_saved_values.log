@@ -1,0 +1,61 @@
+[shadowspill.plan +   0.000s] validation: started
+[shadowspill.plan +   0.000s] validation: finished in 0.000s
+[shadowspill.plan +   0.000s] runtime_binding: started
+[shadowspill.plan +   0.000s] runtime_binding: finished in 0.000s
+[shadowspill.plan +   0.000s] capture_lowering: started
+[shadowspill.plan +   0.008s]   objective_export: started
+[shadowspill.plan +   0.524s]   objective_export: finished in 0.516s
+[shadowspill.plan +   0.524s]   export_archival: started
+[shadowspill.plan +   0.534s]   export_archival: finished in 0.010s
+[shadowspill.plan +   0.535s]   stage_partition_aot: started
+[shadowspill.plan +   0.813s]   stage_partition_aot: finished in 0.279s
+[shadowspill.plan +   0.813s]   storage_layout_lowering: started
+[shadowspill.plan +   0.814s]   storage_layout_lowering: finished in 0.001s
+[shadowspill.plan +   0.814s] capture_lowering: finished in 0.814s
+[shadowspill.plan +   0.814s] model_materialization: started
+[shadowspill.plan +   0.815s] model_materialization: finished in 0.001s
+[shadowspill.plan +   0.815s] optimizer_capture: started
+[shadowspill.plan +   0.816s]   optimizer_state_install: started
+[shadowspill.plan +   0.818s]   optimizer_state_install: finished in 0.002s
+[shadowspill.plan +   0.818s]   optimizer_discovery: started
+[shadowspill.plan +   0.818s]   optimizer_discovery: finished in 0.001s
+[shadowspill.plan +   0.822s]   optimizer_trace: started
+[shadowspill.plan +   0.994s]   optimizer_trace: finished in 0.172s
+[shadowspill.plan +   1.001s] optimizer_capture: finished in 0.186s
+[shadowspill.plan +   1.001s] optimizer_state_import: started
+[shadowspill.plan +   1.002s] optimizer_state_import: finished in 0.000s
+[shadowspill.plan +   1.002s] model_placeholder_restoration: started
+[shadowspill.plan +   1.002s] model_placeholder_restoration: finished in 0.000s
+[shadowspill.plan +   1.002s] saved_value_resolution: started
+[shadowspill.plan +   1.002s] saved_value_resolution: finished in 0.000s
+[shadowspill.plan +   1.002s] structural artifact inventory: graph=10, optimizer=2, unique=12, profile_variants=12, optimizer_tasks=2
+[shadowspill.plan +   1.002s] compiler_manifest: started
+[shadowspill.plan +   1.002s]   compiled manifest 1/12 cache-miss: 17e7acc333d8
+[shadowspill.plan +   1.002s]   compiled manifest 2/12 cache-miss: 2c21e904beea
+[shadowspill.plan +   1.002s]   compiled manifest 3/12 cache-miss: 417f1025b9c6
+[shadowspill.plan +   1.002s]   compiled manifest 4/12 cache-miss: 502d252b6e6c
+[shadowspill.plan +   1.002s]   compiled manifest 5/12 cache-miss: 6b95ac061d38
+[shadowspill.plan +   1.002s]   compiled manifest 6/12 cache-miss: 858033bddb9b
+[shadowspill.plan +   1.002s]   compiled manifest 7/12 cache-miss: 912673a5ebcc
+[shadowspill.plan +   1.003s]   compiled manifest 8/12 cache-miss: bfbaa3ccdbdc
+[shadowspill.plan +   1.003s]   compiled manifest 9/12 cache-miss: e8edf634d907
+[shadowspill.plan +   1.003s]   compiled manifest 10/12 cache-miss: e9bfa96242f3
+[shadowspill.plan +   1.003s]   compiled manifest 11/12 cache-miss: f2ab87355b0d
+[shadowspill.plan +   1.003s]   compiled manifest 12/12 cache-miss: fd279ea90d30
+[shadowspill.plan +   3.644s]   compiled manifest cache: hits=0, misses=12
+[shadowspill.plan +   3.644s] compiler_manifest: finished in 2.642s
+[shadowspill.plan +   3.644s] structural_profiling: started
+[shadowspill.plan +   3.645s]   structural profile 1/12 measuring: 205b6abfe24c
+[shadowspill.plan +   3.650s] structural_profiling: failed in 0.006s
+.
+=============================== warnings summary ===============================
+../.conda/envs/shadowspill/lib/python3.12/site-packages/torch/jit/_script.py:365: 14 warnings
+  /home/as1669/.conda/envs/shadowspill/lib/python3.12/site-packages/torch/jit/_script.py:365: DeprecationWarning: `torch.jit.script_method` is deprecated. Please switch to `torch.compile` or `torch.export`.
+    warnings.warn(
+
+tests/shadowspill/pytorch/api/test_03_planning_host_memory.py::test_planning_fails_when_the_spill_pool_has_no_room_for_saved_values
+  /home/as1669/.conda/envs/shadowspill/lib/python3.12/site-packages/torch/_inductor/compile_fx.py:321: UserWarning: TensorFloat32 tensor cores for float32 matrix multiplication available but not enabled. Consider setting `torch.set_float32_matmul_precision('high')` for better performance.
+    warnings.warn(
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+1 passed, 15 warnings in 8.02s

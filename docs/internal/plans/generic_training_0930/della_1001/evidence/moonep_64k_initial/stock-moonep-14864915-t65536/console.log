@@ -1,0 +1,55 @@
+[default0]:{"utc": "2026-10-02T09:41:48.593521+00:00", "rank": 0, "phase": "stock_import", "torch": "2.13.0+cu132", "cuda": "13.2", "cutlass_dsl": "4.7.1", "moon_source": "{\"url\": \"https://github.com/moonshotAI/moonep.git\", \"vcs_info\": {\"commit_id\": \"2bd860b4dd083df62b79d5e916fca71ec5742228\", \"requested_revision\": \"2bd860b4dd083df62b79d5e916fca71ec5742228\", \"vcs\": \"git\"}}", "planning_sha256": "6a9d03a968042d24c514fe4230d6c16f5dc81518b0986637ade6cfd9524025be", "imported_mlops_or_shadowspill": []}
+[default1]:{"utc": "2026-10-02T09:41:48.593519+00:00", "rank": 1, "phase": "stock_import", "torch": "2.13.0+cu132", "cuda": "13.2", "cutlass_dsl": "4.7.1", "moon_source": "{\"url\": \"https://github.com/moonshotAI/moonep.git\", \"vcs_info\": {\"commit_id\": \"2bd860b4dd083df62b79d5e916fca71ec5742228\", \"requested_revision\": \"2bd860b4dd083df62b79d5e916fca71ec5742228\", \"vcs\": \"git\"}}", "planning_sha256": "6a9d03a968042d24c514fe4230d6c16f5dc81518b0986637ade6cfd9524025be", "imported_mlops_or_shadowspill": []}
+[default0]:/home/as1669/.conda/envs/shadowspill/lib/python3.12/site-packages/torch/distributed/c10d_logger.py:83: FutureWarning: `torch.distributed.all_gather_into_tensor` is deprecated. Please use `torch.distributed.all_gather_single` instead.
+[default0]:  return func(*args, **kwargs)
+[default1]:/home/as1669/.conda/envs/shadowspill/lib/python3.12/site-packages/torch/distributed/c10d_logger.py:83: FutureWarning: `torch.distributed.all_gather_into_tensor` is deprecated. Please use `torch.distributed.all_gather_single` instead.
+[default1]:  return func(*args, **kwargs)
+[default0]:/home/as1669/.conda/envs/shadowspill/lib/python3.12/site-packages/torch/distributed/c10d_logger.py:83: UserWarning: barrier(): using the device under current context. You can specify `device_id` in `init_process_group` to mute this warning.
+[default0]:  return func(*args, **kwargs)
+[default1]:{"utc": "2026-10-02T09:41:49.328310+00:00", "rank": 1, "phase": "inputs_valid", "tokens": 65536, "assignments": 262144, "expert_min": 0, "expert_max": 191, "operation": "dispatch"}
+[default0]:{"utc": "2026-10-02T09:41:49.339773+00:00", "rank": 0, "phase": "inputs_valid", "tokens": 65536, "assignments": 262144, "expert_min": 0, "expert_max": 191, "operation": "dispatch"}
+[default0]:{"utc": "2026-10-02T09:41:49.340536+00:00", "rank": 0, "phase": "operation_begin"}
+[default1]:{"utc": "2026-10-02T09:41:49.340534+00:00", "rank": 1, "phase": "operation_begin"}
+[default1]:[rank1]:[W1002 05:41:53.732188039 nccl_devcomm_manager.hpp:225] Failed to destroy the NCCL device communicator, skipping
+[default0]:[rank0]:[W1002 05:41:53.744932605 nccl_devcomm_manager.hpp:225] Failed to destroy the NCCL device communicator, skipping
+W1002 05:41:54.239000 3279591 /scratch/gpfs/LI/as1669/.conda/envs/shadowspill/lib/python3.12/site-packages/torch/distributed/elastic/multiprocessing/api.py:1028] Sending process 3279641 closing signal SIGTERM
+E1002 05:41:54.537000 3279591 /scratch/gpfs/LI/as1669/.conda/envs/shadowspill/lib/python3.12/site-packages/torch/distributed/elastic/multiprocessing/api.py:1002] failed (exitcode: 1) local_rank: 1 (pid: 3279642) of binary: /home/as1669/.conda/envs/shadowspill/bin/python
+Traceback (most recent call last):
+  File "<frozen runpy>", line 198, in _run_module_as_main
+  File "<frozen runpy>", line 88, in _run_code
+  File "/home/as1669/.conda/envs/shadowspill/lib/python3.12/site-packages/torch/distributed/run.py", line 1032, in <module>
+    main()
+  File "/home/as1669/.conda/envs/shadowspill/lib/python3.12/site-packages/torch/distributed/elastic/multiprocessing/errors/__init__.py", line 367, in wrapper
+    return f(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^
+  File "/home/as1669/.conda/envs/shadowspill/lib/python3.12/site-packages/torch/distributed/run.py", line 1028, in main
+    run(args)
+  File "/home/as1669/.conda/envs/shadowspill/lib/python3.12/site-packages/torch/distributed/run.py", line 1019, in run
+    elastic_launch(
+  File "/home/as1669/.conda/envs/shadowspill/lib/python3.12/site-packages/torch/distributed/launcher/api.py", line 194, in __call__
+    return launch_agent(
+           ^^^^^^^^^^^^^
+  File "/home/as1669/.conda/envs/shadowspill/lib/python3.12/site-packages/torch/distributed/launcher/api.py", line 383, in launch_agent
+    raise ChildFailedError(
+torch.distributed.elastic.multiprocessing.errors.ChildFailedError: 
+============================================================
+/home/as1669/shadowspill/docs/internal/plans/generic_training_0930/della_1001/scripts/repro_moonep_64k.py FAILED
+------------------------------------------------------------
+Failures:
+[1]:
+  time      : 2026-10-02_05:41:54
+  host      : della-j15g1
+  rank      : 0 (local_rank: 0)
+  exitcode  : 1 (pid: 3279641) 
+  error_file: <N/A>
+  traceback : To enable traceback see: https://pytorch.org/docs/stable/elastic/errors.html
+------------------------------------------------------------
+Root Cause (first observed failure):
+[0]:
+  time      : 2026-10-02_05:41:54
+  host      : della-j15g1
+  rank      : 1 (local_rank: 1)
+  exitcode  : 1 (pid: 3279642) 
+  error_file: <N/A>
+  traceback : To enable traceback see: https://pytorch.org/docs/stable/elastic/errors.html
+============================================================

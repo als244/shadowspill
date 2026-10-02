@@ -1,0 +1,196 @@
+{
+  "passed": true,
+  "tolerances": {
+    "loss_relative": 0.001,
+    "gradient_relative_l2": 0.05,
+    "gradient_cosine": 0.995
+  },
+  "observed_losses": [
+    3.56048321723938,
+    3.554166555404663
+  ],
+  "expected_losses": [
+    3.5605223178863525,
+    3.5541791915893555
+  ],
+  "relative_loss": 7.271820412442239e-06,
+  "failed_parameters": [],
+  "gradients": {
+    "blocks.0.attn_norm.weight": {
+      "max_absolute": 1.6689300537109375e-06,
+      "relative_l2": 0.007570100163169875,
+      "cosine": 0.9999714249588061,
+      "reference_l2": 0.001552497087387946,
+      "observed_l2": 0.00155306816915735
+    },
+    "blocks.0.attn.wq.weight": {
+      "max_absolute": 2.0178122213110328e-06,
+      "relative_l2": 0.007082880421877975,
+      "cosine": 0.9999749290581773,
+      "reference_l2": 0.030102458748481904,
+      "observed_l2": 0.030096855777075517
+    },
+    "blocks.0.attn.wk.weight": {
+      "max_absolute": 2.286848030053079e-06,
+      "relative_l2": 0.0075178722618585376,
+      "cosine": 0.9999717490963295,
+      "reference_l2": 0.03014706501724989,
+      "observed_l2": 0.030142237330578168
+    },
+    "blocks.0.attn.wv.weight": {
+      "max_absolute": 2.5014323909999803e-06,
+      "relative_l2": 0.006390085970496634,
+      "cosine": 0.9999795935098384,
+      "reference_l2": 0.037658194043631674,
+      "observed_l2": 0.03765201603062748
+    },
+    "blocks.0.attn.q_norm.weight": {
+      "max_absolute": 7.897615432739258e-07,
+      "relative_l2": 0.007276646345295815,
+      "cosine": 0.999973613001996,
+      "reference_l2": 0.0007797990134278274,
+      "observed_l2": 0.0007794510305702761
+    },
+    "blocks.0.attn.k_norm.weight": {
+      "max_absolute": 8.940660336520523e-07,
+      "relative_l2": 0.008189326834649758,
+      "cosine": 0.9999664686677616,
+      "reference_l2": 0.0007554231519136286,
+      "observed_l2": 0.0007553529143586314
+    },
+    "blocks.0.attn.wo.weight": {
+      "max_absolute": 1.8473947420716286e-06,
+      "relative_l2": 0.005196648878115041,
+      "cosine": 0.9999865030639697,
+      "reference_l2": 0.03761465994340271,
+      "observed_l2": 0.037610123849493304
+    },
+    "blocks.0.ffn_norm.weight": {
+      "max_absolute": 2.384185791015625e-06,
+      "relative_l2": 0.04446985993154011,
+      "cosine": 0.9990122654238157,
+      "reference_l2": 0.0003582523994392788,
+      "observed_l2": 0.00035727033052738056
+    },
+    "blocks.0.moe.experts.router_weight": {
+      "max_absolute": 1.2399657862260938e-05,
+      "relative_l2": 0.03339935573728944,
+      "cosine": 0.9994423734572457,
+      "reference_l2": 0.004816789183274941,
+      "observed_l2": 0.004817755170805169
+    },
+    "blocks.0.moe.experts.gate_up_weight": {
+      "max_absolute": 8.672475814819336e-06,
+      "relative_l2": 0.04444248307369079,
+      "cosine": 0.9990124469048348,
+      "reference_l2": 0.017913061019077345,
+      "observed_l2": 0.01791331417151559
+    },
+    "blocks.0.moe.experts.down_weight": {
+      "max_absolute": 5.125999450683594e-06,
+      "relative_l2": 0.0445005371066316,
+      "cosine": 0.9990099163021796,
+      "reference_l2": 0.012605301157081465,
+      "observed_l2": 0.012606105389094189
+    },
+    "blocks.1.attn_norm.weight": {
+      "max_absolute": 2.2649765014648438e-06,
+      "relative_l2": 0.009223070523814145,
+      "cosine": 0.9999582053417574,
+      "reference_l2": 0.0014139013464898517,
+      "observed_l2": 0.0014121236442792575
+    },
+    "blocks.1.attn.wq.weight": {
+      "max_absolute": 2.124928869307041e-06,
+      "relative_l2": 0.008224951798167686,
+      "cosine": 0.9999662156771311,
+      "reference_l2": 0.029326617417963143,
+      "observed_l2": 0.029317212005239582
+    },
+    "blocks.1.attn.wk.weight": {
+      "max_absolute": 2.5826884666457772e-06,
+      "relative_l2": 0.008519227557616459,
+      "cosine": 0.9999637667588037,
+      "reference_l2": 0.02961045996402368,
+      "observed_l2": 0.02959947448737876
+    },
+    "blocks.1.attn.wv.weight": {
+      "max_absolute": 2.2786989575251937e-06,
+      "relative_l2": 0.0065504361488017224,
+      "cosine": 0.9999785482908946,
+      "reference_l2": 0.03657103750445518,
+      "observed_l2": 0.03656760171423684
+    },
+    "blocks.1.attn.q_norm.weight": {
+      "max_absolute": 8.940678526414558e-07,
+      "relative_l2": 0.008941430084959734,
+      "cosine": 0.9999601608839023,
+      "reference_l2": 0.0007449989928664796,
+      "observed_l2": 0.0007445803926615
+    },
+    "blocks.1.attn.k_norm.weight": {
+      "max_absolute": 8.344650268554688e-07,
+      "relative_l2": 0.00930630401875361,
+      "cosine": 0.9999566964431142,
+      "reference_l2": 0.0007422535996705252,
+      "observed_l2": 0.0007422551128660152
+    },
+    "blocks.1.attn.wo.weight": {
+      "max_absolute": 1.9638973753899336e-06,
+      "relative_l2": 0.0058971425381385625,
+      "cosine": 0.9999826157521897,
+      "reference_l2": 0.03640594121997559,
+      "observed_l2": 0.036402032448490766
+    },
+    "blocks.1.ffn_norm.weight": {
+      "max_absolute": 2.026557694989606e-06,
+      "relative_l2": 0.03988690506247555,
+      "cosine": 0.999204201337151,
+      "reference_l2": 0.00034973753769460746,
+      "observed_l2": 0.0003494472783361748
+    },
+    "blocks.1.moe.experts.router_weight": {
+      "max_absolute": 1.979374064831063e-05,
+      "relative_l2": 0.04089130831916834,
+      "cosine": 0.999163648102807,
+      "reference_l2": 0.004786633733868973,
+      "observed_l2": 0.0047841041018872954
+    },
+    "blocks.1.moe.experts.gate_up_weight": {
+      "max_absolute": 8.40798020362854e-06,
+      "relative_l2": 0.039544621627107604,
+      "cosine": 0.9992181799040046,
+      "reference_l2": 0.01770516089541801,
+      "observed_l2": 0.017706632854158563
+    },
+    "blocks.1.moe.experts.down_weight": {
+      "max_absolute": 6.541609764099121e-06,
+      "relative_l2": 0.04022231752892766,
+      "cosine": 0.9991911667189449,
+      "reference_l2": 0.012431515106652724,
+      "observed_l2": 0.012432734287980727
+    },
+    "embed.weight": {
+      "max_absolute": 1.311301275563892e-06,
+      "relative_l2": 0.0037656792688395132,
+      "cosine": 0.9999929098560583,
+      "reference_l2": 0.01286663121415766,
+      "observed_l2": 0.012866670410601078
+    },
+    "final_norm.weight": {
+      "max_absolute": 7.62939453125e-06,
+      "relative_l2": 0.0022341057807568456,
+      "cosine": 0.9999975056383551,
+      "reference_l2": 0.019175209164106394,
+      "observed_l2": 0.0191742003573793
+    },
+    "lm_head.weight": {
+      "max_absolute": 3.814697265625e-05,
+      "relative_l2": 0.002483783068799042,
+      "cosine": 0.9999969154512147,
+      "reference_l2": 0.5020719807713063,
+      "observed_l2": 0.5020752035683336
+    }
+  },
+  "note": "Independent full-model routing; BF16 projection/fusion rounding can change near-tied routes."
+}

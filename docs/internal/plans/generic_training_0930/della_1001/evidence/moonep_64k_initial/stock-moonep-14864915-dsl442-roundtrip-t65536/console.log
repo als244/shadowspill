@@ -1,0 +1,32 @@
+[default0]:{"utc": "2026-10-02T10:02:22.214814+00:00", "rank": 0, "phase": "stock_import", "torch": "2.13.0+cu132", "cuda": "13.2", "cutlass_dsl": "4.4.2", "moon_source": "{\"url\": \"https://github.com/moonshotAI/moonep.git\", \"vcs_info\": {\"commit_id\": \"2bd860b4dd083df62b79d5e916fca71ec5742228\", \"requested_revision\": \"2bd860b4dd083df62b79d5e916fca71ec5742228\", \"vcs\": \"git\"}}", "planning_sha256": "6a9d03a968042d24c514fe4230d6c16f5dc81518b0986637ade6cfd9524025be", "imported_mlops_or_shadowspill": []}
+[default1]:{"utc": "2026-10-02T10:02:22.215197+00:00", "rank": 1, "phase": "stock_import", "torch": "2.13.0+cu132", "cuda": "13.2", "cutlass_dsl": "4.4.2", "moon_source": "{\"url\": \"https://github.com/moonshotAI/moonep.git\", \"vcs_info\": {\"commit_id\": \"2bd860b4dd083df62b79d5e916fca71ec5742228\", \"requested_revision\": \"2bd860b4dd083df62b79d5e916fca71ec5742228\", \"vcs\": \"git\"}}", "planning_sha256": "6a9d03a968042d24c514fe4230d6c16f5dc81518b0986637ade6cfd9524025be", "imported_mlops_or_shadowspill": []}
+[default0]:/home/as1669/.conda/envs/shadowspill/lib/python3.12/site-packages/torch/distributed/c10d_logger.py:83: FutureWarning: `torch.distributed.all_gather_into_tensor` is deprecated. Please use `torch.distributed.all_gather_single` instead.
+[default0]:  return func(*args, **kwargs)
+[default1]:/home/as1669/.conda/envs/shadowspill/lib/python3.12/site-packages/torch/distributed/c10d_logger.py:83: FutureWarning: `torch.distributed.all_gather_into_tensor` is deprecated. Please use `torch.distributed.all_gather_single` instead.
+[default1]:  return func(*args, **kwargs)
+[default0]:/home/as1669/.conda/envs/shadowspill/lib/python3.12/site-packages/torch/distributed/c10d_logger.py:83: UserWarning: barrier(): using the device under current context. You can specify `device_id` in `init_process_group` to mute this warning.
+[default0]:  return func(*args, **kwargs)
+[default0]:{"utc": "2026-10-02T10:02:22.954196+00:00", "rank": 0, "phase": "inputs_valid", "tokens": 65536, "assignments": 262144, "expert_min": 0, "expert_max": 191, "operation": "dispatch", "experts": 192, "top_k": 4, "dim": 1024, "world_size": 2, "iterations": 3}
+[default0]:{"utc": "2026-10-02T10:02:22.954998+00:00", "rank": 0, "phase": "operation_begin", "iteration": 0}
+[default1]:{"utc": "2026-10-02T10:02:22.944908+00:00", "rank": 1, "phase": "inputs_valid", "tokens": 65536, "assignments": 262144, "expert_min": 0, "expert_max": 191, "operation": "dispatch", "experts": 192, "top_k": 4, "dim": 1024, "world_size": 2, "iterations": 3}
+[default1]:{"utc": "2026-10-02T10:02:22.954993+00:00", "rank": 1, "phase": "operation_begin", "iteration": 0}
+[default0]:{"utc": "2026-10-02T10:02:29.926108+00:00", "rank": 0, "phase": "operation_end", "iteration": 0, "max_padded_rows": 268672}
+[default1]:{"utc": "2026-10-02T10:02:29.904330+00:00", "rank": 1, "phase": "operation_end", "iteration": 0, "max_padded_rows": 268032}
+[default0]:{"utc": "2026-10-02T10:02:31.529073+00:00", "rank": 0, "phase": "roundtrip_passed", "iteration": 0, "exact": true, "saved_plan_backward": true}
+[default0]:{"utc": "2026-10-02T10:02:31.529604+00:00", "rank": 0, "phase": "operation_begin", "iteration": 1}
+[default0]:{"utc": "2026-10-02T10:02:31.533714+00:00", "rank": 0, "phase": "operation_end", "iteration": 1, "max_padded_rows": 268672}
+[default0]:{"utc": "2026-10-02T10:02:31.542905+00:00", "rank": 0, "phase": "roundtrip_passed", "iteration": 1, "exact": true, "saved_plan_backward": true}
+[default0]:{"utc": "2026-10-02T10:02:31.543247+00:00", "rank": 0, "phase": "operation_begin", "iteration": 2}
+[default0]:{"utc": "2026-10-02T10:02:31.547254+00:00", "rank": 0, "phase": "operation_end", "iteration": 2, "max_padded_rows": 268672}
+[default0]:{"utc": "2026-10-02T10:02:31.556427+00:00", "rank": 0, "phase": "roundtrip_passed", "iteration": 2, "exact": true, "saved_plan_backward": true}
+[default1]:{"utc": "2026-10-02T10:02:31.529075+00:00", "rank": 1, "phase": "roundtrip_passed", "iteration": 0, "exact": true, "saved_plan_backward": true}
+[default0]:/home/as1669/.conda/envs/shadowspill/lib/python3.12/site-packages/torch/distributed/c10d_logger.py:83: UserWarning: barrier(): using the device under current context. You can specify `device_id` in `init_process_group` to mute this warning.
+[default0]:  return func(*args, **kwargs)
+[default1]:{"utc": "2026-10-02T10:02:31.529540+00:00", "rank": 1, "phase": "operation_begin", "iteration": 1}
+[default1]:{"utc": "2026-10-02T10:02:31.533713+00:00", "rank": 1, "phase": "operation_end", "iteration": 1, "max_padded_rows": 268032}
+[default1]:{"utc": "2026-10-02T10:02:31.542909+00:00", "rank": 1, "phase": "roundtrip_passed", "iteration": 1, "exact": true, "saved_plan_backward": true}
+[default1]:{"utc": "2026-10-02T10:02:31.543252+00:00", "rank": 1, "phase": "operation_begin", "iteration": 2}
+[default1]:{"utc": "2026-10-02T10:02:31.547258+00:00", "rank": 1, "phase": "operation_end", "iteration": 2, "max_padded_rows": 268032}
+[default1]:{"utc": "2026-10-02T10:02:31.556439+00:00", "rank": 1, "phase": "roundtrip_passed", "iteration": 2, "exact": true, "saved_plan_backward": true}
+[default0]:{"utc": "2026-10-02T10:02:31.838389+00:00", "rank": 0, "phase": "completed", "passed": true}
+[default1]:{"utc": "2026-10-02T10:02:31.838302+00:00", "rank": 1, "phase": "completed", "passed": true}

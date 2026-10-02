@@ -1,0 +1,187 @@
+[06:37:15] host: load 22.98 23.93 24.12; gpu tenants none
+.................................Test project /home/as1669/shadowspill/build/cp312-cp312-linux_x86_64
+      Start  1: shadowspill_build_canary
+ 1/20 Test  #1: shadowspill_build_canary .................   Passed    0.00 sec
+      Start  2: shadowspill_backend_contract_canary
+ 2/20 Test  #2: shadowspill_backend_contract_canary ......   Passed    0.00 sec
+      Start  3: shadowspill_stream_ordering_canary
+ 3/20 Test  #3: shadowspill_stream_ordering_canary .......   Passed    0.01 sec
+      Start  5: shadowspill_simulator_canary
+ 4/20 Test  #5: shadowspill_simulator_canary .............   Passed    0.00 sec
+      Start  6: shadowspill_pressurefit_canary
+ 5/20 Test  #6: shadowspill_pressurefit_canary ...........   Passed    0.00 sec
+      Start  7: shadowspill_runtime_canary
+ 6/20 Test  #7: shadowspill_runtime_canary ...............   Passed    0.53 sec
+      Start  8: shadowspill_runtime_plan_canary
+ 7/20 Test  #8: shadowspill_runtime_plan_canary ..........   Passed    0.21 sec
+      Start  9: shadowspill_memory_pool_canary
+ 8/20 Test  #9: shadowspill_memory_pool_canary ...........   Passed    0.00 sec
+      Start 10: shadowspill_fixed_layout_canary
+ 9/20 Test #10: shadowspill_fixed_layout_canary ..........   Passed    0.60 sec
+      Start 11: shadowspill_admission_replay_canary
+10/20 Test #11: shadowspill_admission_replay_canary ......   Passed    0.00 sec
+      Start 12: shadowspill_runtime_abandon_canary
+11/20 Test #12: shadowspill_runtime_abandon_canary .......   Passed    0.00 sec
+      Start 13: shadowspill_runtime_blocking_canary
+12/20 Test #13: shadowspill_runtime_blocking_canary ......   Passed    0.01 sec
+      Start 14: shadowspill_runtime_calibration_canary
+13/20 Test #14: shadowspill_runtime_calibration_canary ...   Passed    0.00 sec
+      Start 15: shadowspill_runtime_completion_canary
+14/20 Test #15: shadowspill_runtime_completion_canary ....   Passed    0.52 sec
+      Start 16: shadowspill_runtime_failure_canary
+15/20 Test #16: shadowspill_runtime_failure_canary .......   Passed    0.01 sec
+      Start 17: shadowspill_runtime_telemetry_canary
+16/20 Test #17: shadowspill_runtime_telemetry_canary .....   Passed    0.52 sec
+      Start 18: shadowspill_runtime_transitions_canary
+17/20 Test #18: shadowspill_runtime_transitions_canary ...   Passed    1.76 sec
+      Start 19: shadowspill_transfer_queue_canary
+18/20 Test #19: shadowspill_transfer_queue_canary ........   Passed    0.00 sec
+      Start 23: shadowspill_pytorch_adapter_canary
+19/20 Test #23: shadowspill_pytorch_adapter_canary .......   Passed    0.35 sec
+      Start 24: shadowspill_numa_canary
+20/20 Test #24: shadowspill_numa_canary ..................   Passed    0.00 sec
+
+100% tests passed out of 20
+
+Total Test time (real) =   4.54 sec
+.Test project /home/as1669/shadowspill/build/cp312-cp312-linux_x86_64
+      Start  4: shadowspill_stream_ordering_canary_cuda
+ 1/48 Test  #4: shadowspill_stream_ordering_canary_cuda ...................................................................   Passed    0.31 sec
+      Start 22: shadowspill_cuda_backend_canary
+ 2/48 Test #22: shadowspill_cuda_backend_canary ...........................................................................   Passed    0.30 sec
+      Start 25: shadowspill_pytorch_allocator_canary
+ 3/48 Test #25: shadowspill_pytorch_allocator_canary ......................................................................   Passed    5.26 sec
+      Start 26: shadowspill_pytorch_runtime_close_canary
+ 4/48 Test #26: shadowspill_pytorch_runtime_close_canary ..................................................................   Passed    4.16 sec
+      Start 27: shadowspill_pytorch_overlap_canary
+ 5/48 Test #27: shadowspill_pytorch_overlap_canary ........................................................................   Passed    5.70 sec
+      Start 28: shadowspill_pytorch_physical_failure_canary
+ 6/48 Test #28: shadowspill_pytorch_physical_failure_canary ...............................................................   Passed    4.08 sec
+      Start 29: shadowspill_pytorch_physical_report_only_canary
+ 7/48 Test #29: shadowspill_pytorch_physical_report_only_canary ...........................................................   Passed   11.96 sec
+      Start 30: shadowspill_pytorch_allocator_oom_canary
+ 8/48 Test #30: shadowspill_pytorch_allocator_oom_canary ..................................................................   Passed    4.20 sec
+      Start 31: shadowspill_pytorch_allocation_contract_failure_canary
+ 9/48 Test #31: shadowspill_pytorch_allocation_contract_failure_canary ....................................................   Passed    4.22 sec
+      Start 32: shadowspill_pytorch_invalid_access_canary
+10/48 Test #32: shadowspill_pytorch_invalid_access_canary .................................................................   Passed    5.27 sec
+      Start 33: shadowspill_pytorch_planning_failure_canary
+11/48 Test #33: shadowspill_pytorch_planning_failure_canary ...............................................................   Passed    8.41 sec
+      Start 34: shadowspill_pytorch_profiler_canary
+12/48 Test #34: shadowspill_pytorch_profiler_canary .......................................................................   Passed    6.18 sec
+      Start 35: shadowspill_pytorch_forward_canary
+13/48 Test #35: shadowspill_pytorch_forward_canary ........................................................................   Passed    8.23 sec
+      Start 36: shadowspill_pytorch_state_import_export_canary
+14/48 Test #36: shadowspill_pytorch_state_import_export_canary ............................................................   Passed    7.33 sec
+      Start 37: shadowspill_pytorch_mutation_canary
+15/48 Test #37: shadowspill_pytorch_mutation_canary .......................................................................   Passed    7.06 sec
+      Start 38: shadowspill_pytorch_training_canary
+16/48 Test #38: shadowspill_pytorch_training_canary .......................................................................   Passed   10.02 sec
+      Start 39: shadowspill_pytorch_step_archive_canary
+17/48 Test #39: shadowspill_pytorch_step_archive_canary ...................................................................   Passed   13.52 sec
+      Start 40: shadowspill_pytorch_public_test_public_forward_executes_reloads_and_restores
+18/48 Test #40: shadowspill_pytorch_public_test_public_forward_executes_reloads_and_restores ..............................   Passed    8.06 sec
+      Start 41: shadowspill_pytorch_public_test_public_forward_sets_a_model_buffer_each_call
+19/48 Test #41: shadowspill_pytorch_public_test_public_forward_sets_a_model_buffer_each_call ..............................   Passed    7.82 sec
+      Start 42: shadowspill_pytorch_public_test_public_training_accumulates_replays_and_restores
+20/48 Test #42: shadowspill_pytorch_public_test_public_training_accumulates_replays_and_restores ..........................   Passed   13.31 sec
+      Start 43: shadowspill_pytorch_public_test_public_training_breadth_first_matches_the_eager_reference
+21/48 Test #43: shadowspill_pytorch_public_test_public_training_breadth_first_matches_the_eager_reference .................   Passed   13.21 sec
+      Start 44: shadowspill_pytorch_public_test_parameter_metrics_depth_first
+22/48 Test #44: shadowspill_pytorch_public_test_parameter_metrics_depth_first .............................................   Passed   13.70 sec
+      Start 45: shadowspill_pytorch_public_test_parameter_metrics_breadth_first
+23/48 Test #45: shadowspill_pytorch_public_test_parameter_metrics_breadth_first ...........................................   Passed   13.85 sec
+      Start 46: shadowspill_pytorch_public_test_public_training_declared_adamw_state_replays
+24/48 Test #46: shadowspill_pytorch_public_test_public_training_declared_adamw_state_replays ..............................   Passed   14.78 sec
+      Start 47: shadowspill_pytorch_public_test_public_training_fills_declared_state_in_the_spill_pool
+25/48 Test #47: shadowspill_pytorch_public_test_public_training_fills_declared_state_in_the_spill_pool ....................   Passed   10.51 sec
+      Start 48: shadowspill_pytorch_public_test_public_training_refuses_state_with_no_value_before_its_first_step
+26/48 Test #48: shadowspill_pytorch_public_test_public_training_refuses_state_with_no_value_before_its_first_step .........   Passed    6.53 sec
+      Start 49: shadowspill_pytorch_public_test_public_training_owns_the_model_state_it_imported
+27/48 Test #49: shadowspill_pytorch_public_test_public_training_owns_the_model_state_it_imported ..........................   Passed    9.95 sec
+      Start 50: shadowspill_pytorch_public_test_public_training_saves_straight_from_the_pool
+28/48 Test #50: shadowspill_pytorch_public_test_public_training_saves_straight_from_the_pool ..............................   Passed   11.32 sec
+      Start 51: shadowspill_pytorch_public_test_public_training_steps_masters_of_its_weights
+29/48 Test #51: shadowspill_pytorch_public_test_public_training_steps_masters_of_its_weights ..............................   Passed   15.30 sec
+      Start 52: shadowspill_pytorch_public_test_public_training_steps_masters_beside_weights_that_have_none
+30/48 Test #52: shadowspill_pytorch_public_test_public_training_steps_masters_beside_weights_that_have_none ...............   Passed   14.09 sec
+      Start 53: shadowspill_pytorch_public_test_public_training_keeps_masters_gradients_and_moments_at_their_own_dtypes
+31/48 Test #53: shadowspill_pytorch_public_test_public_training_keeps_masters_gradients_and_moments_at_their_own_dtypes ...   Passed   29.88 sec
+      Start 54: shadowspill_pytorch_public_test_public_training_checkpoints_masters_in_place_of_their_weights
+32/48 Test #54: shadowspill_pytorch_public_test_public_training_checkpoints_masters_in_place_of_their_weights .............   Passed   11.32 sec
+      Start 55: shadowspill_pytorch_public_test_public_training_profiles_bounded_opaque_optimizer
+33/48 Test #55: shadowspill_pytorch_public_test_public_training_profiles_bounded_opaque_optimizer .........................   Passed    9.58 sec
+      Start 56: shadowspill_pytorch_public_test_public_training_partitions_device_only_optimizer_and_replays
+34/48 Test #56: shadowspill_pytorch_public_test_public_training_partitions_device_only_optimizer_and_replays ..............   Passed   11.99 sec
+      Start 57: shadowspill_pytorch_public_test_public_training_follows_a_learning_rate_schedule
+35/48 Test #57: shadowspill_pytorch_public_test_public_training_follows_a_learning_rate_schedule ..........................   Passed    7.95 sec
+      Start 58: shadowspill_pytorch_public_test_public_training_sets_a_model_buffer_each_step
+36/48 Test #58: shadowspill_pytorch_public_test_public_training_sets_a_model_buffer_each_step .............................   Passed    7.96 sec
+      Start 59: shadowspill_pytorch_public_test_public_training_keeps_no_output_the_caller_dropped
+37/48 Test #59: shadowspill_pytorch_public_test_public_training_keeps_no_output_the_caller_dropped ........................   Passed    7.47 sec
+      Start 60: shadowspill_pytorch_public_test_a_forward_planned_after_training_sees_every_update
+38/48 Test #60: shadowspill_pytorch_public_test_a_forward_planned_after_training_sees_every_update ........................   Passed   14.71 sec
+      Start 61: shadowspill_pytorch_public_test_a_training_step_planned_after_a_forward_shares_its_model
+39/48 Test #61: shadowspill_pytorch_public_test_a_training_step_planned_after_a_forward_shares_its_model ..................   Passed   11.70 sec
+      Start 62: shadowspill_pytorch_public_test_state_a_plan_imported_for_itself_is_not_shared
+40/48 Test #62: shadowspill_pytorch_public_test_state_a_plan_imported_for_itself_is_not_shared ............................   Passed   11.25 sec
+      Start 63: shadowspill_pytorch_public_test_a_plan_keeps_no_host_copy_of_what_its_forwards_saved
+41/48 Test #63: shadowspill_pytorch_public_test_a_plan_keeps_no_host_copy_of_what_its_forwards_saved ......................   Passed   10.38 sec
+      Start 64: shadowspill_pytorch_public_test_planning_fails_when_the_spill_pool_has_no_room_for_saved_values
+42/48 Test #64: shadowspill_pytorch_public_test_planning_fails_when_the_spill_pool_has_no_room_for_saved_values ...........   Passed    9.52 sec
+      Start 65: shadowspill_pytorch_public_test_a_forward_is_planned_beside_a_step_holding_more_than_it_reserves
+43/48 Test #65: shadowspill_pytorch_public_test_a_forward_is_planned_beside_a_step_holding_more_than_it_reserves ..........   Passed   11.66 sec
+      Start 66: shadowspill_pytorch_public_test_a_forward_shares_the_slab_of_the_step_it_evaluates
+44/48 Test #66: shadowspill_pytorch_public_test_a_forward_shares_the_slab_of_the_step_it_evaluates ........................   Passed   13.02 sec
+      Start 67: shadowspill_pytorch_public_test_shadowspill_generic_candidates_shared_forward_and_checkpoint
+45/48 Test #67: shadowspill_pytorch_public_test_shadowspill_generic_candidates_shared_forward_and_checkpoint ..............   Passed   24.08 sec
+      Start 68: shadowspill_pytorch_public_test_generic_quickstart_search_run_plot
+46/48 Test #68: shadowspill_pytorch_public_test_generic_quickstart_search_run_plot ........................................   Passed   18.62 sec
+      Start 69: shadowspill_pytorch_public_test_distributed_training_matches_combined_reference
+
+ctest still running after 500s
+
+ctest still running after 530s
+47/48 Test #69: shadowspill_pytorch_public_test_distributed_training_matches_combined_reference ...........................   Passed   66.97 sec
+      Start 70: shadowspill_pytorch_public_test_mutable_buffer_survives_diagnostics_and_repeated_training
+48/48 Test #70: shadowspill_pytorch_public_test_mutable_buffer_survives_diagnostics_and_repeated_training .................   Passed   11.96 sec
+
+100% tests passed out of 48
+
+Label Time Summary:
+cuda       = 548.69 sec*proc (48 tests)
+pytorch    = 548.08 sec*proc (46 tests)
+
+Total Test time (real) = 548.72 sec
+.s.................................... [  6%]
+........................................................................ [ 13%]
+........................................................................ [ 19%]
+........................................................................ [ 26%]
+........................................................................ [ 32%]
+........................................................................ [ 39%]
+........................................................................ [ 45%]
+........................................................................ [ 52%]
+........................................................................ [ 58%]
+........................................................................ [ 65%]
+........................................................................ [ 71%]
+........................................................................ [ 78%]
+........................................................................ [ 84%]
+........................................................................ [ 91%]
+........................................................................ [ 97%]
+.........................                                                [100%]
+=============================== warnings summary ===============================
+../.conda/envs/shadowspill/lib/python3.12/site-packages/torch/jit/_script.py:365: 14 warnings
+  /home/as1669/.conda/envs/shadowspill/lib/python3.12/site-packages/torch/jit/_script.py:365: DeprecationWarning: `torch.jit.script_method` is deprecated. Please switch to `torch.compile` or `torch.export`.
+    warnings.warn(
+
+tests/shadowspill/pytorch/capture/test_gradient_accumulation.py::test_rewritten_backward_adds_into_the_gradient_it_is_given
+  /home/as1669/.conda/envs/shadowspill/lib/python3.12/site-packages/torch/autograd/graph.py:979: UserWarning: Attempting to run cuBLAS, but there was no current CUDA context! Attempting to set the primary context... (Triggered internally at /__w/pytorch/pytorch/aten/src/ATen/cuda/CublasHandlePool.cpp:408.)
+    return Variable._execution_engine.run_backward(  # Calls into the C++ engine to run the backward pass
+
+tests/workloads/test_full_model_cases.py::test_a_mixture_objective_reports_the_heads_share_as_its_metric
+  /home/as1669/.conda/envs/shadowspill/lib/python3.12/site-packages/torch/utils/_device.py:122: UserWarning: Converting a tensor with requires_grad=True to a scalar may lead to unexpected behavior.
+  Consider using tensor.detach() first. (Triggered internally at /__w/pytorch/pytorch/torch/csrc/autograd/generated/python_variable_methods.cpp:822.)
+    return func(*args, **kwargs)
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+1104 passed, 1 skipped, 35 deselected, 16 warnings in 703.28s (0:11:43)

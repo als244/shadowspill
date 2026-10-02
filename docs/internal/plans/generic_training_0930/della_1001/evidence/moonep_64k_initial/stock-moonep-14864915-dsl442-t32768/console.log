@@ -1,0 +1,16 @@
+[default0]:{"utc": "2026-10-02T09:44:13.547583+00:00", "rank": 0, "phase": "stock_import", "torch": "2.13.0+cu132", "cuda": "13.2", "cutlass_dsl": "4.4.2", "moon_source": "{\"url\": \"https://github.com/moonshotAI/moonep.git\", \"vcs_info\": {\"commit_id\": \"2bd860b4dd083df62b79d5e916fca71ec5742228\", \"requested_revision\": \"2bd860b4dd083df62b79d5e916fca71ec5742228\", \"vcs\": \"git\"}}", "planning_sha256": "6a9d03a968042d24c514fe4230d6c16f5dc81518b0986637ade6cfd9524025be", "imported_mlops_or_shadowspill": []}
+[default0]:/home/as1669/.conda/envs/shadowspill/lib/python3.12/site-packages/torch/distributed/c10d_logger.py:83: FutureWarning: `torch.distributed.all_gather_into_tensor` is deprecated. Please use `torch.distributed.all_gather_single` instead.
+[default0]:  return func(*args, **kwargs)
+[default1]:{"utc": "2026-10-02T09:44:13.547578+00:00", "rank": 1, "phase": "stock_import", "torch": "2.13.0+cu132", "cuda": "13.2", "cutlass_dsl": "4.4.2", "moon_source": "{\"url\": \"https://github.com/moonshotAI/moonep.git\", \"vcs_info\": {\"commit_id\": \"2bd860b4dd083df62b79d5e916fca71ec5742228\", \"requested_revision\": \"2bd860b4dd083df62b79d5e916fca71ec5742228\", \"vcs\": \"git\"}}", "planning_sha256": "6a9d03a968042d24c514fe4230d6c16f5dc81518b0986637ade6cfd9524025be", "imported_mlops_or_shadowspill": []}
+[default1]:/home/as1669/.conda/envs/shadowspill/lib/python3.12/site-packages/torch/distributed/c10d_logger.py:83: FutureWarning: `torch.distributed.all_gather_into_tensor` is deprecated. Please use `torch.distributed.all_gather_single` instead.
+[default1]:  return func(*args, **kwargs)
+[default0]:/home/as1669/.conda/envs/shadowspill/lib/python3.12/site-packages/torch/distributed/c10d_logger.py:83: UserWarning: barrier(): using the device under current context. You can specify `device_id` in `init_process_group` to mute this warning.
+[default0]:  return func(*args, **kwargs)
+[default0]:{"utc": "2026-10-02T09:44:14.312040+00:00", "rank": 0, "phase": "inputs_valid", "tokens": 32768, "assignments": 131072, "expert_min": 0, "expert_max": 191, "operation": "dispatch"}
+[default0]:{"utc": "2026-10-02T09:44:14.312861+00:00", "rank": 0, "phase": "operation_begin"}
+[default1]:{"utc": "2026-10-02T09:44:14.301153+00:00", "rank": 1, "phase": "inputs_valid", "tokens": 32768, "assignments": 131072, "expert_min": 0, "expert_max": 191, "operation": "dispatch"}
+[default1]:{"utc": "2026-10-02T09:44:14.312811+00:00", "rank": 1, "phase": "operation_begin"}
+[default0]:{"utc": "2026-10-02T09:44:20.977094+00:00", "rank": 0, "phase": "operation_end", "max_padded_rows": 136192}
+[default1]:{"utc": "2026-10-02T09:44:21.011891+00:00", "rank": 1, "phase": "operation_end", "max_padded_rows": 136448}
+[default0]:{"utc": "2026-10-02T09:44:21.173276+00:00", "rank": 0, "phase": "completed", "passed": true}
+[default1]:{"utc": "2026-10-02T09:44:21.173920+00:00", "rank": 1, "phase": "completed", "passed": true}

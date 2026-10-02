@@ -1,0 +1,383 @@
+[
+  {
+    "utc": "2026-10-02T10:05:44.421403+00:00",
+    "rank": 0,
+    "phase": "initializing",
+    "tokens": 65536,
+    "inputs": "random",
+    "compiled": false
+  },
+  {
+    "utc": "2026-10-02T10:05:44.595232+00:00",
+    "rank": 0,
+    "phase": "buffer_ready",
+    "geometry": {
+      "S": 65536,
+      "N": 262144,
+      "E": 192,
+      "B": 96,
+      "R": 2,
+      "K": 4,
+      "NvS": 286528,
+      "NvS_padded": 286720,
+      "meta_chunk_padded": 1572864,
+      "num_vblocks": 128
+    }
+  },
+  {
+    "utc": "2026-10-02T10:05:46.283119+00:00",
+    "rank": 0,
+    "phase": "model_ready",
+    "allocated_bytes": 758615552
+  },
+  {
+    "utc": "2026-10-02T10:05:47.225379+00:00",
+    "rank": 0,
+    "phase": "routing_ready",
+    "histogram_total": 262144,
+    "histogram_matches": true,
+    "expert_min": 0,
+    "expert_max": 191,
+    "max_expert_tokens": 1999
+  },
+  {
+    "utc": "2026-10-02T10:05:47.230624+00:00",
+    "rank": 0,
+    "phase": "_publish_begin"
+  },
+  {
+    "utc": "2026-10-02T10:05:47.231511+00:00",
+    "rank": 0,
+    "phase": "_publish_end"
+  },
+  {
+    "utc": "2026-10-02T10:05:47.231824+00:00",
+    "rank": 0,
+    "phase": "rank_sync_begin"
+  },
+  {
+    "utc": "2026-10-02T10:05:47.311041+00:00",
+    "rank": 0,
+    "phase": "rank_sync_end"
+  },
+  {
+    "utc": "2026-10-02T10:05:47.311482+00:00",
+    "rank": 0,
+    "phase": "rank_sync_begin"
+  },
+  {
+    "utc": "2026-10-02T10:05:47.311834+00:00",
+    "rank": 0,
+    "phase": "rank_sync_end"
+  },
+  {
+    "utc": "2026-10-02T10:05:47.312814+00:00",
+    "rank": 0,
+    "phase": "launch_planning_begin"
+  },
+  {
+    "utc": "2026-10-02T10:05:50.699574+00:00",
+    "rank": 0,
+    "phase": "launch_planning_end"
+  },
+  {
+    "utc": "2026-10-02T10:05:50.700396+00:00",
+    "rank": 0,
+    "phase": "launch_dispatch_begin"
+  },
+  {
+    "utc": "2026-10-02T10:05:51.102917+00:00",
+    "rank": 0,
+    "phase": "launch_dispatch_end"
+  },
+  {
+    "utc": "2026-10-02T10:05:51.377150+00:00",
+    "rank": 0,
+    "phase": "rank_sync_begin"
+  },
+  {
+    "utc": "2026-10-02T10:05:51.377674+00:00",
+    "rank": 0,
+    "phase": "rank_sync_end"
+  },
+  {
+    "utc": "2026-10-02T10:05:56.131066+00:00",
+    "rank": 0,
+    "phase": "rank_sync_begin"
+  },
+  {
+    "utc": "2026-10-02T10:05:56.132594+00:00",
+    "rank": 0,
+    "phase": "rank_sync_end"
+  },
+  {
+    "utc": "2026-10-02T10:05:56.135574+00:00",
+    "rank": 0,
+    "phase": "forward",
+    "iteration": 0,
+    "seconds": 8.904311458114535,
+    "finite": true
+  },
+  {
+    "utc": "2026-10-02T10:05:56.136927+00:00",
+    "rank": 0,
+    "phase": "_publish_begin"
+  },
+  {
+    "utc": "2026-10-02T10:05:56.137941+00:00",
+    "rank": 0,
+    "phase": "_publish_end"
+  },
+  {
+    "utc": "2026-10-02T10:05:56.138303+00:00",
+    "rank": 0,
+    "phase": "rank_sync_begin"
+  },
+  {
+    "utc": "2026-10-02T10:05:56.139137+00:00",
+    "rank": 0,
+    "phase": "rank_sync_end"
+  },
+  {
+    "utc": "2026-10-02T10:05:56.139470+00:00",
+    "rank": 0,
+    "phase": "rank_sync_begin"
+  },
+  {
+    "utc": "2026-10-02T10:05:56.139799+00:00",
+    "rank": 0,
+    "phase": "rank_sync_end"
+  },
+  {
+    "utc": "2026-10-02T10:05:56.140200+00:00",
+    "rank": 0,
+    "phase": "launch_dispatch_begin"
+  },
+  {
+    "utc": "2026-10-02T10:05:56.304341+00:00",
+    "rank": 0,
+    "phase": "launch_dispatch_end"
+  },
+  {
+    "utc": "2026-10-02T10:05:56.305247+00:00",
+    "rank": 0,
+    "phase": "rank_sync_begin"
+  },
+  {
+    "utc": "2026-10-02T10:05:56.305698+00:00",
+    "rank": 0,
+    "phase": "rank_sync_end"
+  },
+  {
+    "utc": "2026-10-02T10:06:01.462375+00:00",
+    "rank": 0,
+    "phase": "rank_sync_begin"
+  },
+  {
+    "utc": "2026-10-02T10:06:01.463776+00:00",
+    "rank": 0,
+    "phase": "rank_sync_end"
+  },
+  {
+    "utc": "2026-10-02T10:06:03.158693+00:00",
+    "rank": 0,
+    "phase": "rank_sync_begin"
+  },
+  {
+    "utc": "2026-10-02T10:06:03.161367+00:00",
+    "rank": 0,
+    "phase": "rank_sync_end"
+  },
+  {
+    "utc": "2026-10-02T10:06:03.695159+00:00",
+    "rank": 0,
+    "phase": "rank_sync_begin"
+  },
+  {
+    "utc": "2026-10-02T10:06:03.696700+00:00",
+    "rank": 0,
+    "phase": "rank_sync_end"
+  },
+  {
+    "utc": "2026-10-02T10:06:03.716478+00:00",
+    "rank": 0,
+    "phase": "backward",
+    "iteration": 0,
+    "seconds": 7.580317350104451,
+    "finite": true,
+    "allocated_peak": 7030376960
+  },
+  {
+    "utc": "2026-10-02T10:06:03.718520+00:00",
+    "rank": 0,
+    "phase": "_publish_begin"
+  },
+  {
+    "utc": "2026-10-02T10:06:03.719547+00:00",
+    "rank": 0,
+    "phase": "_publish_end"
+  },
+  {
+    "utc": "2026-10-02T10:06:03.720008+00:00",
+    "rank": 0,
+    "phase": "rank_sync_begin"
+  },
+  {
+    "utc": "2026-10-02T10:06:03.721012+00:00",
+    "rank": 0,
+    "phase": "rank_sync_end"
+  },
+  {
+    "utc": "2026-10-02T10:06:03.721427+00:00",
+    "rank": 0,
+    "phase": "rank_sync_begin"
+  },
+  {
+    "utc": "2026-10-02T10:06:03.721842+00:00",
+    "rank": 0,
+    "phase": "rank_sync_end"
+  },
+  {
+    "utc": "2026-10-02T10:06:03.722821+00:00",
+    "rank": 0,
+    "phase": "launch_planning_begin"
+  },
+  {
+    "utc": "2026-10-02T10:06:03.723416+00:00",
+    "rank": 0,
+    "phase": "launch_planning_end"
+  },
+  {
+    "utc": "2026-10-02T10:06:03.723863+00:00",
+    "rank": 0,
+    "phase": "launch_dispatch_begin"
+  },
+  {
+    "utc": "2026-10-02T10:06:03.727062+00:00",
+    "rank": 0,
+    "phase": "launch_dispatch_end"
+  },
+  {
+    "utc": "2026-10-02T10:06:03.728083+00:00",
+    "rank": 0,
+    "phase": "rank_sync_begin"
+  },
+  {
+    "utc": "2026-10-02T10:06:03.728644+00:00",
+    "rank": 0,
+    "phase": "rank_sync_end"
+  },
+  {
+    "utc": "2026-10-02T10:06:03.729717+00:00",
+    "rank": 0,
+    "phase": "rank_sync_begin"
+  },
+  {
+    "utc": "2026-10-02T10:06:03.734531+00:00",
+    "rank": 0,
+    "phase": "rank_sync_end"
+  },
+  {
+    "utc": "2026-10-02T10:06:03.736042+00:00",
+    "rank": 0,
+    "phase": "forward",
+    "iteration": 1,
+    "seconds": 0.018521141028031707,
+    "finite": true
+  },
+  {
+    "utc": "2026-10-02T10:06:03.737027+00:00",
+    "rank": 0,
+    "phase": "_publish_begin"
+  },
+  {
+    "utc": "2026-10-02T10:06:03.738200+00:00",
+    "rank": 0,
+    "phase": "_publish_end"
+  },
+  {
+    "utc": "2026-10-02T10:06:03.738717+00:00",
+    "rank": 0,
+    "phase": "rank_sync_begin"
+  },
+  {
+    "utc": "2026-10-02T10:06:03.739207+00:00",
+    "rank": 0,
+    "phase": "rank_sync_end"
+  },
+  {
+    "utc": "2026-10-02T10:06:03.739644+00:00",
+    "rank": 0,
+    "phase": "rank_sync_begin"
+  },
+  {
+    "utc": "2026-10-02T10:06:03.740085+00:00",
+    "rank": 0,
+    "phase": "rank_sync_end"
+  },
+  {
+    "utc": "2026-10-02T10:06:03.740603+00:00",
+    "rank": 0,
+    "phase": "launch_dispatch_begin"
+  },
+  {
+    "utc": "2026-10-02T10:06:03.743065+00:00",
+    "rank": 0,
+    "phase": "launch_dispatch_end"
+  },
+  {
+    "utc": "2026-10-02T10:06:03.743806+00:00",
+    "rank": 0,
+    "phase": "rank_sync_begin"
+  },
+  {
+    "utc": "2026-10-02T10:06:03.744349+00:00",
+    "rank": 0,
+    "phase": "rank_sync_end"
+  },
+  {
+    "utc": "2026-10-02T10:06:03.746857+00:00",
+    "rank": 0,
+    "phase": "rank_sync_begin"
+  },
+  {
+    "utc": "2026-10-02T10:06:03.752215+00:00",
+    "rank": 0,
+    "phase": "rank_sync_end"
+  },
+  {
+    "utc": "2026-10-02T10:06:03.753069+00:00",
+    "rank": 0,
+    "phase": "rank_sync_begin"
+  },
+  {
+    "utc": "2026-10-02T10:06:03.759938+00:00",
+    "rank": 0,
+    "phase": "rank_sync_end"
+  },
+  {
+    "utc": "2026-10-02T10:06:03.760734+00:00",
+    "rank": 0,
+    "phase": "rank_sync_begin"
+  },
+  {
+    "utc": "2026-10-02T10:06:03.762546+00:00",
+    "rank": 0,
+    "phase": "rank_sync_end"
+  },
+  {
+    "utc": "2026-10-02T10:06:03.766757+00:00",
+    "rank": 0,
+    "phase": "backward",
+    "iteration": 1,
+    "seconds": 0.03008042392320931,
+    "finite": true,
+    "allocated_peak": 7063931392
+  },
+  {
+    "utc": "2026-10-02T10:06:04.106578+00:00",
+    "rank": 0,
+    "phase": "completed",
+    "passed": true
+  }
+]
