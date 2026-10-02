@@ -91,6 +91,8 @@ class SerializedFxGraph:
             )
 
             def decode(value: Any, record_name: str = record.name) -> Any:
+                if isinstance(value, FxCallableTarget):
+                    return _decode_callable(value)
                 if not isinstance(value, FxNodeReference):
                     return value
                 try:
@@ -123,6 +125,10 @@ class SerializedFxGraph:
 def _encode_argument_leaf(value: Any) -> Any:
     if isinstance(value, Node):
         return FxNodeReference(value.name)
+    if isinstance(value, (torch._ops.OpOverload, torch._ops.HigherOrderOperator)):
+        # Higher-order calls take another operator as a constant argument.
+        # Its dispatch-table internals cannot be pickled as Python state.
+        return _encode_callable(value)
     if isinstance(value, torch.Tensor):
         raise CaptureError(
             "explicit FX task contains a literal Tensor argument; lift it to an input"
@@ -131,6 +137,14 @@ def _encode_argument_leaf(value: Any) -> Any:
 
 
 def _encode_callable(target: Any) -> FxCallableTarget:
+    if isinstance(target, torch._ops.HigherOrderOperator):
+        name = getattr(target, "__name__", None)
+        if (
+            not isinstance(name, str)
+            or getattr(torch.ops.higher_order, name, None) is not target
+        ):
+            raise CaptureError(f"higher-order target has no stable identity: {target}")
+        return FxCallableTarget("higher_order", "higher_order", name)
     if isinstance(target, torch._ops.OpOverload):
         schema = target._schema
         namespace, separator, operator_name = schema.name.partition("::")
@@ -156,6 +170,15 @@ def _encode_callable(target: Any) -> FxCallableTarget:
 
 
 def _decode_callable(target: FxCallableTarget) -> Any:
+    if target.kind == "higher_order":
+        if target.module != "higher_order" or target.overload is not None:
+            raise CaptureError(f"serialized higher-order target is invalid: {target}")
+        resolved = getattr(torch.ops.higher_order, target.name, None)
+        if not isinstance(resolved, torch._ops.HigherOrderOperator):
+            raise CaptureError(
+                f"serialized higher-order operator is unavailable: {target.name}"
+            )
+        return resolved
     if target.kind == "python":
         if target.overload is not None:
             raise CaptureError(f"serialized Python target has an overload: {target}")
