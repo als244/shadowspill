@@ -122,3 +122,118 @@ def worker(rank, root):
 def test_actual_profiler_coordinates_warmups_and_partial_cache():
     with tempfile.TemporaryDirectory() as root:
         mp.spawn(worker, args=(root,), nprocs=2, join=True)
+
+
+def _geometry_failure_worker(rank, root):
+    from unittest.mock import patch
+
+    from shadowspill.errors import ProfilingError
+    from shadowspill.planner import StepDataOrdering
+    from shadowspill.pytorch.failures import device_exhausted
+    from shadowspill.pytorch.step_search.sweep import _Build
+
+    dist.init_process_group(
+        "gloo",
+        init_method="file://" + str(Path(root, "geometry-rendezvous")),
+        rank=rank,
+        world_size=2,
+        timeout=timedelta(seconds=30),
+    )
+    model = torch.nn.Linear(1, 1)
+    bound = Distributed(dist.group.WORLD, timeout=20)._bind(
+        model, dist.group.WORLD, namespace="geometry-recovery"
+    )
+
+    class LocalRuntime:
+        last_failure = None
+
+    build = _Build(
+        model=model,
+        objective=None,
+        optimizer=None,
+        hyperparams=(),
+        candidates={name: [(name,)] for name in ("early", "invoke", "small", "fatal")},
+        runtime=LocalRuntime(),
+        execution="execution",
+        spill="spill",
+        optimizer_ordering="stage_interleaved",
+        verbose=False,
+        artifact_store=None,
+        build_store=None,
+        build_store_mode="contribute",
+        export_bypass_key=None,
+        master_dtype=None,
+        grad_dtype=None,
+        round_accumulation_once=False,
+        memory_bound_flops_per_byte=1,
+    )
+    calls = []
+
+    def wrapped_oom():
+        raise ProfilingError("wrapped allocation failure") from torch.OutOfMemoryError(
+            "test device exhaustion"
+        )
+
+    def fake_build(*args, **kwargs):
+        name = kwargs["example_inputs"][0][0]
+        calls.append(name)
+        if name == "early" and rank:
+            wrapped_oom()
+        if name == "invoke":
+
+            def measure():
+                if rank:
+                    wrapped_oom()
+
+            bound.control.run("measurement/test/measure", measure)
+        if name == "fatal":
+            with invocation():
+                # Both ranks must reach the body before either injected error
+                # can interrupt the peer's preparation boundary.
+                dist.barrier()
+                if rank:
+                    raise ValueError("invalid operator contract")
+                wrapped_oom()
+        if name == "small":
+            with invocation():
+                value = torch.tensor(rank + 1)
+                dist.all_reduce(value)
+                assert value.item() == 3
+        return tuple(object() for _ in kwargs["orderings"])
+
+    orderings = (StepDataOrdering.depth_first(1),)
+    try:
+        with (
+            bound.activate(),
+            patch(
+                "shadowspill.pytorch.step_search.sweep.build_step_programs", fake_build
+            ),
+        ):
+            parent = bound.control
+            for name in ("early", "invoke"):
+                programs, exhausted = build.programs(name, 1, orderings)
+                assert programs == () and exhausted is not None
+                assert device_exhausted(exhausted.error)
+                assert "wrapped allocation failure" in str(exhausted.error)
+                assert bound.control is parent
+                # A real collective in the next geometry must still work even
+                # when only one rank failed, including before profiling began.
+                programs, exhausted = build.programs("small", 1, orderings)
+                assert len(programs) == 1 and exhausted is None
+                assert bound.control is parent
+            try:
+                build.programs("fatal", 1, orderings)
+            except Exception as error:
+                assert "invalid operator contract" in str(error)
+                assert not device_exhausted(error)
+            else:
+                raise AssertionError("a non-OOM error was incorrectly skipped")
+            assert calls == ["early", "small", "invoke", "small", "fatal"]
+    finally:
+        bound.close()
+        dist.destroy_process_group()
+
+
+def test_geometry_oom_recovers_collectively_without_hiding_other_errors():
+    with tempfile.TemporaryDirectory() as root:
+        mp.spawn(_geometry_failure_worker, args=(root,), nprocs=2, join=True)
