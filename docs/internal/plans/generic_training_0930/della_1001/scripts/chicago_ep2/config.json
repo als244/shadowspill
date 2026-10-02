@@ -59,6 +59,7 @@
     "1"
   ],
   "planning_workers": 4,
+  "planning_max_breadth": 2,
   "microbatch_candidates": [
     16384,
     32768,

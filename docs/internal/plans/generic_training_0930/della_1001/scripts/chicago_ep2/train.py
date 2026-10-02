@@ -149,6 +149,14 @@ def main():
         with (rank_dir / "events.jsonl").open("a") as stream:
             stream.write(json.dumps(event) + "\n")
 
+    def orderings(accumulation):
+        maximum = cfg.get("planning_max_breadth")
+        return tuple(
+            ordering
+            for ordering in default_orderings(accumulation)
+            if maximum is None or ordering.breadth <= maximum
+        )
+
     data = PackedTokens(cfg["data"], long_documents="splice", window=1024)
     source = EPUpdates(data, cfg, rank, world)
     initial_source = copy.deepcopy(source.state_dict())
@@ -182,7 +190,7 @@ def main():
                     ),
                     workers=cfg["planning_workers"],
                 ),
-                orderings=default_orderings,
+                orderings=orderings,
             )
         )
         from moonep.buffer import get_vmm_granularity
