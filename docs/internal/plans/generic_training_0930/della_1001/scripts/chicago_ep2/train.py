@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import argparse
 import copy
+import inspect
 import json
 import math
 import os
@@ -129,6 +130,8 @@ def main():
     parser.add_argument("--plan-only", action="store_true")
     args = parser.parse_args()
     cfg = json.loads(args.config.read_text())
+    # Reject recipe/API drift before allocating pools or constructing the model.
+    inspect.signature(AdamW).bind([], **cfg["optimizer_args"])
     if args.steps is not None:
         cfg["steps"] = args.steps
     rank, world = int(os.environ["RANK"]), int(os.environ["WORLD_SIZE"])
@@ -254,7 +257,7 @@ def main():
             )
 
         optimizer_args = dict(cfg["optimizer_args"])
-        for key in ("gradient_dtype", "reduction_dtype", "opt_state_dtype"):
+        for key in ("gradient_dtype", "opt_state_dtype"):
             optimizer_args[key] = getattr(torch, optimizer_args[key])
         trainer = stack.enter_context(
             Trainer(
