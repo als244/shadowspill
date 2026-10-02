@@ -1,0 +1,354 @@
+{
+  "status": "PASS",
+  "validated_utc": "2026-10-02T18:10:50.133643+00:00",
+  "allocation": {
+    "job": "14882626",
+    "node": "della-j13g2",
+    "gpus": 2,
+    "host_memory_gib": 240,
+    "cpus": 32,
+    "time_limit": "01:00:00",
+    "end_utc": "2026-10-02T18:19:33+00:00"
+  },
+  "report": "/home/as1669/storage/shadowspill/generic_training_0930/della_1001/chicago-ep2-capacity-fixes-1002/nsys-128k-5steps-1002/trace.nsys-rep",
+  "report_bytes": 557803041,
+  "report_sha256": "f5f7251e78e557feff00ed5cfa00169a194b6af41d708dc26150923f9af31cf9",
+  "source": {
+    "revisions": {
+      "shadowspill": "a4e17d1773bcb05b3f0c11b1a9f2a84acf650438",
+      "mlops": "e61e7b298ed687242725857d5c1ebfc35bfb6482"
+    },
+    "python": "/home/as1669/.conda/envs/shadowspill/bin/python",
+    "packages": {
+      "torch": "2.13.0+cu132",
+      "quack-kernels": "0.6.5",
+      "nvidia-cutlass-dsl": "4.7.1",
+      "moonep": "0.0.1"
+    },
+    "nsys": "NVIDIA Nsight Systems version 2025.5.2.266-255236693005v0",
+    "note": "Each worker calls cudaProfilerStart before the control barrier; the source snapshot and hashes describe the exact client. Production source remains unchanged."
+  },
+  "source_hashes": {
+    "profile_chicago_ep2.py": "083b290306bba7ecb60eb81b821757dedd07fddea4421870e4ba76aafce05c05",
+    "train.py": "c00a7d7eeabfedf5e21ef87065812600d89626d32cf95a012309ad77837ce745",
+    "nsys_profile.py": "d1e077f143d27a17101d9383e125220453d3dbf32064849075f684ef1c5d0bdb"
+  },
+  "model": {
+    "n_layers": 16,
+    "d_model": 1024,
+    "n_heads": 16,
+    "n_kv_heads": 16,
+    "head_dim": 64,
+    "n_experts": 192,
+    "top_k": 4,
+    "d_ff_expert": 1280,
+    "vocab_size": 50304,
+    "max_seq_len": 2048
+  },
+  "precision": "bf16",
+  "ep_size": 2,
+  "microbatch_tokens_per_rank": 131072,
+  "microbatches_per_rank": 4,
+  "global_token_slots_per_update": 1048576,
+  "execution_gib": 50,
+  "external_headroom_gib": 6,
+  "spill_gib_per_rank": 80,
+  "checkpoint": "/scratch/gpfs/LI/as1669/shadowspill/generic_training_0930/della_1001/chicago-ep2-capacity-fixes-1002/training-128k-v2/checkpoints/step_00000900",
+  "warmup_steps": [
+    901,
+    902,
+    903
+  ],
+  "captured_steps": [
+    904,
+    905,
+    906,
+    907,
+    908
+  ],
+  "command": [
+    "/usr/local/cuda-13.1/bin/nsys",
+    "profile",
+    "--trace=cuda,nvtx,osrt,cublas",
+    "--sample=none",
+    "--cpuctxsw=none",
+    "--gpu-metrics-devices=all",
+    "--gpu-metrics-frequency=10000",
+    "--capture-range=cudaProfilerApi",
+    "--capture-range-end=stop",
+    "--wait=all",
+    "--cuda-graph-trace=node",
+    "--export=sqlite",
+    "--output=/scratch/gpfs/LI/as1669/shadowspill/generic_training_0930/della_1001/chicago-ep2-capacity-fixes-1002/nsys-128k-5steps-1002/trace",
+    "/home/as1669/.conda/envs/shadowspill/bin/python",
+    "-u",
+    "-m",
+    "torch.distributed.run",
+    "--standalone",
+    "--nproc-per-node=2",
+    "--tee",
+    "3",
+    "--log-dir",
+    "/scratch/gpfs/LI/as1669/shadowspill/generic_training_0930/della_1001/chicago-ep2-capacity-fixes-1002/nsys-128k-5steps-1002/processes",
+    "/home/as1669/shadowspill/docs/internal/plans/generic_training_0930/della_1001/scripts/chicago_ep2/train.py",
+    "--config",
+    "/scratch/gpfs/LI/as1669/shadowspill/generic_training_0930/della_1001/chicago-ep2-capacity-fixes-1002/nsys-128k-5steps-1002/config.json",
+    "--profile-steps",
+    "5",
+    "--profile-warmup",
+    "3",
+    "--profile-checkpoint",
+    "/scratch/gpfs/LI/as1669/shadowspill/generic_training_0930/della_1001/chicago-ep2-capacity-fixes-1002/training-128k-v2/checkpoints/step_00000900"
+  ],
+  "profiler_annotations": true,
+  "runtime_trace": false,
+  "updates": [
+    {
+      "step": 904,
+      "execution_and_metrics_seconds_per_rank": [
+        6.5001942939125,
+        6.500241691013798
+      ],
+      "execution_and_metrics_seconds_max": 6.500241691013798,
+      "outer_range_seconds_per_rank": [
+        6.715343406,
+        6.715261234
+      ],
+      "outer_range_seconds_max": 6.715343406,
+      "loss_contribution_per_rank": [
+        1.8341618180274963,
+        1.808297485113144
+      ],
+      "global_objective": 3.6424593031406403,
+      "lr": 0.0002952040965595773
+    },
+    {
+      "step": 905,
+      "execution_and_metrics_seconds_per_rank": [
+        6.500500814057887,
+        6.500535889994353
+      ],
+      "execution_and_metrics_seconds_max": 6.500535889994353,
+      "outer_range_seconds_per_rank": [
+        6.728232394,
+        6.728312598
+      ],
+      "outer_range_seconds_max": 6.728312598,
+      "loss_contribution_per_rank": [
+        1.8135436177253723,
+        1.8219285011291504
+      ],
+      "global_objective": 3.6354721188545227,
+      "lr": 0.0002951922156106775
+    },
+    {
+      "step": 906,
+      "execution_and_metrics_seconds_per_rank": [
+        6.47757052606903,
+        6.477589139016345
+      ],
+      "execution_and_metrics_seconds_max": 6.477589139016345,
+      "outer_range_seconds_per_rank": [
+        6.711555904,
+        6.712197991
+      ],
+      "outer_range_seconds_max": 6.712197991,
+      "loss_contribution_per_rank": [
+        1.8162398040294647,
+        1.8082576096057892
+      ],
+      "global_objective": 3.624497413635254,
+      "lr": 0.0002951803202303634
+    },
+    {
+      "step": 907,
+      "execution_and_metrics_seconds_per_rank": [
+        6.635844195028767,
+        6.635766393970698
+      ],
+      "execution_and_metrics_seconds_max": 6.635844195028767,
+      "outer_range_seconds_per_rank": [
+        6.857030682,
+        6.856950434
+      ],
+      "outer_range_seconds_max": 6.857030682,
+      "loss_contribution_per_rank": [
+        1.8464776873588562,
+        1.8709787428379059
+      ],
+      "global_objective": 3.717456430196762,
+      "lr": 0.0002951684104199536
+    },
+    {
+      "step": 908,
+      "execution_and_metrics_seconds_per_rank": [
+        6.557319017127156,
+        6.557205338962376
+      ],
+      "execution_and_metrics_seconds_max": 6.557319017127156,
+      "outer_range_seconds_per_rank": [
+        6.777682032,
+        6.777601494
+      ],
+      "outer_range_seconds_max": 6.777682032,
+      "loss_contribution_per_rank": [
+        1.788403868675232,
+        1.7962142527103424
+      ],
+      "global_objective": 3.5846181213855743,
+      "lr": 0.00029515648618076826
+    }
+  ],
+  "timing": {
+    "definition": "Execution, final writeback and CPU metric collection exclude CPU input preparation. Outer NVTX includes input preparation. Times are from the Nsight run.",
+    "execution_and_metrics_median_seconds": 6.500535889994353,
+    "outer_range_median_seconds": 6.728312598
+  },
+  "audit": {
+    "status": "PASS",
+    "errors": [],
+    "steps": [
+      {
+        "rank": 0,
+        "step": 904,
+        "start_ns": 37088302,
+        "end_ns": 6752431708,
+        "seconds": 6.715343406
+      },
+      {
+        "rank": 0,
+        "step": 905,
+        "start_ns": 6753162859,
+        "end_ns": 13481395253,
+        "seconds": 6.728232394
+      },
+      {
+        "rank": 0,
+        "step": 906,
+        "start_ns": 13482953254,
+        "end_ns": 20194509158,
+        "seconds": 6.711555904
+      },
+      {
+        "rank": 0,
+        "step": 907,
+        "start_ns": 20195234588,
+        "end_ns": 27052265270,
+        "seconds": 6.857030682
+      },
+      {
+        "rank": 0,
+        "step": 908,
+        "start_ns": 27052911595,
+        "end_ns": 33830593627,
+        "seconds": 6.777682032
+      },
+      {
+        "rank": 1,
+        "step": 904,
+        "start_ns": 37216732,
+        "end_ns": 6752477966,
+        "seconds": 6.715261234
+      },
+      {
+        "rank": 1,
+        "step": 905,
+        "start_ns": 6753117557,
+        "end_ns": 13481430155,
+        "seconds": 6.728312598
+      },
+      {
+        "rank": 1,
+        "step": 906,
+        "start_ns": 13482329588,
+        "end_ns": 20194527579,
+        "seconds": 6.712197991
+      },
+      {
+        "rank": 1,
+        "step": 907,
+        "start_ns": 20195239117,
+        "end_ns": 27052189551,
+        "seconds": 6.856950434
+      },
+      {
+        "rank": 1,
+        "step": 908,
+        "start_ns": 27052948492,
+        "end_ns": 33830549986,
+        "seconds": 6.777601494
+      }
+    ],
+    "kernel_devices": {
+      "0": 70175,
+      "1": 70175
+    },
+    "gpu_activity_coverage": {
+      "CUPTI_ACTIVITY_KIND_KERNEL": {
+        "activities": 140350,
+        "inside_training_step": 140350
+      },
+      "CUPTI_ACTIVITY_KIND_MEMCPY": {
+        "activities": 34720,
+        "inside_training_step": 34720
+      },
+      "CUPTI_ACTIVITY_KIND_MEMSET": {
+        "activities": 15960,
+        "inside_training_step": 15960
+      }
+    },
+    "outside_step_examples": [],
+    "gpu_metrics": [
+      {
+        "typeId": 281479271677952,
+        "samples": 10221240,
+        "metrics": 30
+      },
+      {
+        "typeId": 281479271677953,
+        "samples": 10234890,
+        "metrics": 30
+      }
+    ],
+    "annotation_counts": {
+      "shadowspill.compiled_call.": 1990,
+      "shadowspill.before_task.": 1990,
+      "shadowspill.after_task.": 1990,
+      "moon_quack/": 60000,
+      "shadowspill.": 214415
+    },
+    "annotation_examples": [
+      "shadowspill.wkr",
+      "shadowspill.before_task.execution_000000.control.component_0000",
+      "shadowspill.storage_rebind.execution_000000.control.component_0000",
+      "shadowspill.pytorch.task.execution_000000.control.component_0000",
+      "shadowspill.allocation_reuse.execution_000000.control.component_0000",
+      "shadowspill.compiled_call.execution_000000.control.component_0000",
+      "shadowspill.after_task.execution_000000.control.component_0000",
+      "shadowspill.output_processing.execution_000000.control.component_0000",
+      "shadowspill.runtime.after_task.execution_000000.control.component_0000",
+      "shadowspill.runtime.wait_event",
+      "shadowspill.runtime.transfer.fetch.alias_000000.role_activation-parameter.bytes_2048.for_input.task_000003.trigger.execution_000000.control.component_0000",
+      "shadowspill.runtime.transfer.fetch.alias_000001.role_activation-parameter.bytes_2097152.for_input.task_000003.trigger.execution_000000.control.component_0000",
+      "shadowspill.runtime.transfer.fetch.alias_000002.role_activation-parameter.bytes_2097152.for_input.task_000003.trigger.execution_000000.control.component_0000",
+      "shadowspill.runtime.transfer.fetch.alias_000003.role_activation-parameter.bytes_2097152.for_input.task_000003.trigger.execution_000000.control.component_0000",
+      "shadowspill.runtime.transfer.fetch.alias_000004.role_activation-parameter.bytes_2048.for_input.task_000003.trigger.execution_000000.control.component_0000",
+      "shadowspill.runtime.transfer.fetch.alias_000005.role_activation-parameter.bytes_2048.for_input.task_000003.trigger.execution_000000.control.component_0000",
+      "shadowspill.runtime.transfer.fetch.alias_000006.role_activation-parameter.bytes_2097152.for_input.task_000003.trigger.execution_000000.control.component_0000",
+      "shadowspill.runtime.transfer.fetch.alias_000007.role_activation-parameter.bytes_2048.for_input.task_000003.trigger.execution_000000.control.component_0000",
+      "shadowspill.runtime.transfer.fetch.alias_000008.role_activation-parameter.bytes_393216.for_input.task_000003.trigger.execution_000000.control.component_0000",
+      "shadowspill.runtime.transfer.fetch.alias_000009.role_activation-parameter.bytes_503316480.for_input.task_000003.trigger.execution_000000.control.component_0000",
+      "shadowspill.runtime.transfer.fetch.alias_000010.role_activation-parameter.bytes_251658240.for_input.task_000003.trigger.execution_000000.control.component_0000",
+      "shadowspill.runtime.transfer.fetch.alias_000176.role_parameter.bytes_103022592.for_input.execution_000001.microbatch_0000.stage_0000.forward.save.trigger.execution_000000.control.component_0000",
+      "shadowspill.runtime.transfer.fetch.alias_000179.role_activation-buffer.bytes_524288.for_input.task_000003.trigger.execution_000000.control.component_0000",
+      "shadowspill.runtime.transfer.fetch.alias_000180.role_activation-buffer.bytes_524288.for_input.task_000003.trigger.execution_000000.control.component_0000",
+      "shadowspill.runtime.transfer.fetch.alias_000181.role_control.bytes_1048576.for_input.execution_000001.microbatch_0000.stage_0000.forward.save.trigger.execution_000000.control.component_0000",
+      "shadowspill.runtime.transfer.fetch.alias_000183.role_control.bytes_4096.for_input.execution_000001.microbatch_0000.stage_0000.forward.save.trigger.execution_000000.control.component_0000",
+      "shadowspill.before_task.execution_000001.microbatch_0000.stage_0000.forward.save",
+      "shadowspill.storage_rebind.execution_000001.microbatch_0000.stage_0000.forward.save",
+      "shadowspill.pytorch.task.execution_000001.microbatch_0000.stage_0000.forward.save",
+      "shadowspill.allocation_reuse.execution_000001.microbatch_0000.stage_0000.forward.save"
+    ],
+    "report": "/scratch/gpfs/LI/as1669/shadowspill/generic_training_0930/della_1001/chicago-ep2-capacity-fixes-1002/nsys-128k-5steps-1002/trace.nsys-rep"
+  }
+}
