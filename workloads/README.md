@@ -11,9 +11,14 @@ Core planning, runtime, and lowering code must never import `workloads`.
 `workloads.quack.OLMoE` is a regular decoder model: it has the same configuration,
 forward, packed-input and loss interfaces as `workloads.mlops.OLMoE`, with
 QuackMoE routed experts in each block. It uses MLOps attention and head/loss
-operations, BF16 expert computation and an FP32 router. QuackMoE, MoonEP and
+operations, BF16 expert computation and an FP32 router. The layer is packaged
+as `mlops.expert_parallel.QuackMoE`. MoonEP and
 their GPU dependencies are optional; importing the other workloads does not
 import them. The current QuackMoE kernels require H100/SM90.
+
+Install the optional backend from the MLOps checkout with
+`./scripts/setup_expert_parallel.sh --backend quack --python /path/to/python`.
+The workload imports the installed MLOps package and its external dependencies.
 
 The caller selects the compute device and supplies an initialized NCCL EP group
 and one MoonEP buffer per block. For example, after distributed initialization:
@@ -65,4 +70,6 @@ device during import. Pass the model into the ordinary `Trainer`. Declare unique
 parameters with `Distributed(group, replica_overrides=[(model.expert_parameters(),
 None)], groups={"ep": ep_group})`. The model itself contains no ShadowSpill code.
 The Della integration probe and its validation evidence are maintained under
-`docs/internal/plans/generic_training_0930/della_1001/`; GPU validation is pending.
+`docs/internal/plans/generic_training_0930/della_1001/`. Two-rank save/recompute
+passed the independent full-model reference. The 50-step real-data EP1/EP2
+comparison had a maximum objective difference of 0.000459.
