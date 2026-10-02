@@ -70,4 +70,11 @@ order, which is the stream's order and what completion follows. The window
 is `ShadowSpillRuntimeConfig.background_transfer_window_bytes`; zero removes
 the bound.
 
+## Diagnostic labels
+
+Transfer labels name the object, byte size, triggering task, and producing or
+consuming task. Plan admission builds the object/alias and task-position indexes
+once and passes the resulting labels to the runtime. Repeated steps reuse these
+labels; transfer workers do not inspect the program or rebuild its indexes.
+
 Previous: [Lanes](lanes.md). Next: [Events](events.md).
