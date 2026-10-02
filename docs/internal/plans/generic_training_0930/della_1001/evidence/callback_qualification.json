@@ -1,0 +1,83 @@
+{
+  "utc": "2026-10-02T13:20:38.889084+00:00",
+  "host": "tubingen",
+  "run": "tubingen_callback_partition_1002",
+  "suite": {
+    "passed": true,
+    "python_passed": 1110,
+    "python_skipped": 1,
+    "cuda_ctests_passed": 48,
+    "neutral_ctests_passed": 20
+  },
+  "numerical": {
+    "cases": [
+      {
+        "artifact": "/home/shein/Documents/shadowspill/qualification/results/numerical_tubingen_callback_partition_1002/pytorch_llama3.json",
+        "device_budget_bytes": 10737418240,
+        "elapsed_seconds": 224.18525581702124,
+        "failure_categories": [],
+        "failures": [],
+        "family": "llama3",
+        "implementation": "pytorch",
+        "passed": true,
+        "reference": "/home/shein/Documents/shadowspill/qualification/results/references/approximately_1b/llama3/pytorch/reference.pt",
+        "return_code": 0
+      },
+      {
+        "artifact": "/home/shein/Documents/shadowspill/qualification/results/numerical_tubingen_callback_partition_1002/mlops_llama3.json",
+        "device_budget_bytes": 10737418240,
+        "elapsed_seconds": 189.50320602301508,
+        "failure_categories": [],
+        "failures": [],
+        "family": "llama3",
+        "implementation": "mlops",
+        "passed": true,
+        "reference": "/home/shein/Documents/shadowspill/qualification/results/references/approximately_1b/llama3/mlops/reference.pt",
+        "return_code": 0
+      },
+      {
+        "artifact": "/home/shein/Documents/shadowspill/qualification/results/numerical_tubingen_callback_partition_1002/pytorch_qwen35.json",
+        "device_budget_bytes": 10737418240,
+        "elapsed_seconds": 480.71413685701555,
+        "failure_categories": [],
+        "failures": [],
+        "family": "qwen35",
+        "implementation": "pytorch",
+        "passed": true,
+        "reference": "/home/shein/Documents/shadowspill/qualification/results/references/approximately_1b/qwen35/pytorch/reference.pt",
+        "return_code": 0
+      },
+      {
+        "artifact": "/home/shein/Documents/shadowspill/qualification/results/numerical_tubingen_callback_partition_1002/mlops_qwen35.json",
+        "device_budget_bytes": 10737418240,
+        "elapsed_seconds": 267.15382595098345,
+        "failure_categories": [],
+        "failures": [],
+        "family": "qwen35",
+        "implementation": "mlops",
+        "passed": true,
+        "reference": "/home/shein/Documents/shadowspill/qualification/results/references/approximately_1b/qwen35/mlops/reference.pt",
+        "return_code": 0
+      },
+      {
+        "artifact": "/home/shein/Documents/shadowspill/qualification/results/numerical_tubingen_callback_partition_1002/mlops_olmoe.json",
+        "device_budget_bytes": 8589934592,
+        "elapsed_seconds": 195.11194606201025,
+        "failure_categories": [],
+        "failures": [],
+        "family": "olmoe",
+        "implementation": "mlops",
+        "passed": true,
+        "reference": "/home/shein/Documents/shadowspill/qualification/results/references/approximately_1b/olmoe/mlops/reference.pt",
+        "return_code": 0
+      }
+    ],
+    "empty_caches": false,
+    "passed": true,
+    "schema": "shadowspill.model_correctness_matrix/v1"
+  },
+  "source_sha256": {
+    "src/shadowspill/pytorch/planning/forward/capture.py": "04c4f14902191e99d8b0695c500601c1104f4ecb24efad67f681bcf6b9714d05",
+    "tests/shadowspill/pytorch/partition/test_partition.py": "4aa74b2832a3b67f4447d7b5fac335ec2153bb544652b1e9c244a691a4e35962"
+  }
+}

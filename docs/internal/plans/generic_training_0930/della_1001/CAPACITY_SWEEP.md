@@ -12,8 +12,8 @@ layers. Source revisions: ShadowSpill `17c0a2d1`, MLOps `e61e7b2`.
 | 16,384 | 32 | Prior 100-step run complete | 8.464 s |
 | 32,768 | 16 | Plan and physical admission pass on both ranks | 6.674 s |
 | 65,536 | 8 | Plan and physical admission pass on both ranks | 6.573 s |
-| 131,072 | 4 | Running | Pending |
-| 262,144 | 2 | Queued in resumable retry | Pending |
+| 131,072 | 4 | Plan and physical admission pass; selected for training | 6.398 s |
+| 262,144 | 2 | Plan and physical admission pass on both ranks | 6.878 s |
 
 The 16K measured median was 7.785 s/update. The other rows are planning
 results until explicitly marked as measured training. New 32K preparation took
@@ -44,9 +44,9 @@ Do not edit a shell wrapper while it is running.
 
 ## Reservation and logging
 
-Current job 14864915 ends at 12:07:27 UTC. Follow-up 14868213 requests two GPUs,
-240 GiB host RAM, 32 CPUs and three hours, with `afterany:14864915` to avoid
-overlapping allocations. The allocation watcher polls every ten seconds and
+Job 14864915 completed the capacity sweep. Replacement 14868213 is active with
+two GPUs, 240 GiB host RAM, 32 CPUs and three hours through 15:09:42 UTC. Its
+`afterany:14864915` dependency avoided overlapping allocations. The allocation watcher polls every ten seconds and
 wakes the agent; it launches no workload. GPU work stays in `codex:0.0`.
 
 The W&B relay and authenticated API query succeeded from della-j15g1 on
@@ -54,3 +54,43 @@ October 2. Reconnect and verify the reverse SSH relay on any replacement node.
 The training recipe records separate per-rank and aggregate runs in project
 `shadowspill-della-ep-training`; planning-only trials create no training runs.
 The LR horizon remains 9,537 updates, independent of the allocated run length.
+
+## Training under the replacement allocation
+
+Allocation 14868213 started at 12:09:42 UTC on della-j15g1, ending at 15:09:42
+UTC. The watcher reported RUNNING at 12:09:45. Its shell was moved into
+`codex:0.0`; the W&B tunnel was reconnected and authenticated before launch.
+
+The fastest admitted case is 128K tokens/rank, four microbatches per rank.
+Training uses the separately copied 1,999,999,310-token GPT-2 prefix, which
+matches the full original planning sample byte for byte. Data stays under
+`~/storage/datasets/fineweb_edu_gpt2_chicago_2b`.
+
+The normal zero-LR warmup and traced step ran once. The slower-rank trace was
+7.327 s, which selected 1,100 training updates with 15% timing headroom and a
+ten-minute final checkpoint/sync reserve. LR still follows the original
+9,537-update schedule; evaluation is every 100 and checkpointing every 500
+plus the final update. This is an estimated run length, not a hard time stop.
+
+The first attempt completed 100 updates: median 6.412 s/update, aggregate loss
+11.157→6.234. Its first evaluation then failed during physical admission.
+The callback capture had hidden registered module paths, collapsing evaluation
+into one whole-model task. See [EVALUATION_CALLBACK.md](EVALUATION_CALLBACK.md).
+The following links belong to that failed attempt, whose complete evidence
+is preserved in `tokens-131072/`:
+
+- Aggregate W&B: https://wandb.ai/andrew-sheinberg-princeton-university/shadowspill-della-ep-training/runs/8uqx2s62
+- Rank 0 W&B: https://wandb.ai/andrew-sheinberg-princeton-university/shadowspill-della-ep-training/runs/vayee76b
+- Rank 1 W&B: https://wandb.ai/andrew-sheinberg-princeton-university/shadowspill-della-ep-training/runs/sspu1hic
+
+The generic callback provenance correction passes 97 CPU checks and the full
+EP2 evaluation preflight. The retry uses `training-128k-v2/` and is training
+900 updates with online W&B. At update 11, the measured median was 6.425 s.
+[Live aggregate run](https://wandb.ai/andrew-sheinberg-princeton-university/shadowspill-della-ep-training/runs/26c6iq9k).
+Its per-rank `training-window.json` records the common run length and unchanged
+9,537-update LR horizon. The preflight and startup trace occur before W&B
+logging; they are not training updates. The head-node
+watcher polls every ten seconds for errors, milestones and completion.
+Tübingen passed all three capacity-fix gates and the additional callback-fix
+suite (1,110 passed, one skip, 48 CUDA CTests) and numerical gate (5/5). Allocation-length control lives only in the
+experiment client; no optimizer behavior changed.
