@@ -177,7 +177,9 @@ def main():
                 spill_gib=cfg["spill_gib"],
                 external_headroom_gib=cfg["external_headroom_gib"],
                 control_group=dist.group.WORLD,
-                artifact_store=rank_dir / "artifacts",
+                artifact_store=Path(cfg.get("artifact_store", root))
+                / f"rank-{rank:05d}"
+                / "artifacts",
                 preparation_timeout=1800,
                 profiling_options=ProfilingOptions(**cfg["profiling"]),
                 search_options=SearchOptions(
@@ -316,6 +318,64 @@ def main():
         if args.plan_only:
             return
 
+        def evaluation():
+            update = validation_update(
+                data,
+                name=source.name,
+                tokens=cfg["microbatch_tokens"],
+                max_seq_len=cfg["max_seq_len"],
+                microbatches=cfg["eval_batches"],
+            )
+            return [source.partition(update)]
+
+        # Admit and exercise evaluation before spending time on real updates.
+        # Its compiled forward and physical layout differ from the training plan.
+        phase("evaluation_preflight")
+        evaluated = trainer.evaluate(evaluation)
+        write_json(
+            rank_dir / "evaluation-preflight.json",
+            dict(loss=evaluated.mean_loss, seconds=evaluated.seconds),
+        )
+        phase("evaluation_ready", loss=evaluated.mean_loss)
+
+        startup_diagnostics = True
+        if cfg.get("training_end_utc"):
+            startup = trainer.diagnose(example, directory=rank_dir / "startup")
+            startup_diagnostics = False
+            seconds = torch.tensor(
+                [max(predicted_seconds, startup["traced_seconds"])],
+                dtype=torch.float64,
+                device="cpu",
+            )
+            dist.all_reduce(seconds, op=dist.ReduceOp.MAX)
+            decision = [None]
+            if rank == 0:
+                remaining = (
+                    datetime.fromisoformat(cfg["training_end_utc"]) - datetime.now(UTC)
+                ).total_seconds()
+                # The deadline already reserves checkpoint/sync time. Leave an
+                # additional 15% for data preparation, evaluation and timing drift.
+                count = min(
+                    cfg["steps"], math.floor(remaining / (1.15 * seconds.item()))
+                )
+                if count >= 100:
+                    count = count // 100 * 100
+                decision[0] = count
+            dist.broadcast_object_list(decision, src=0)
+            if decision[0] < 1:
+                raise RuntimeError(
+                    "The allocation has no training time left after preparation"
+                )
+            cfg["steps"] = decision[0]
+            window = dict(
+                steps=cfg["steps"],
+                seconds_per_step_estimate=seconds.item(),
+                training_end_utc=cfg["training_end_utc"],
+                schedule_total_steps=cfg["schedule_total_steps"],
+            )
+            write_json(rank_dir / "training-window.json", window)
+            phase("training_window", **window)
+
         logger = stack.enter_context(
             DistributedLogger(
                 dist.group.WORLD,
@@ -325,7 +385,7 @@ def main():
                 wandb=dict(
                     project=cfg["wandb_project"],
                     mode="online",
-                    group=root.name,
+                    group=cfg.get("wandb_group", root.name),
                     config=cfg,
                 ),
             )
@@ -337,16 +397,6 @@ def main():
                 aggregate_url=logger.aggregate.run.url if logger.aggregate else None,
             ),
         )
-
-        def evaluation():
-            update = validation_update(
-                data,
-                name=source.name,
-                tokens=cfg["microbatch_tokens"],
-                max_seq_len=cfg["max_seq_len"],
-                microbatches=cfg["eval_batches"],
-            )
-            return [source.partition(update)]
 
         def check_step(_trainer, result):
             if not math.isfinite(result.loss):
@@ -364,7 +414,7 @@ def main():
             steps=cfg["steps"],
             run_dir=root,
             logger=logger,
-            startup_diagnostics=True,
+            startup_diagnostics=startup_diagnostics,
             callbacks=[check_step],
             tables_every=100,
             eval_data=evaluation,
@@ -374,7 +424,8 @@ def main():
             checkpoint_weights="compute",
         )
         write_json(
-            rank_dir / "completed.json", dict(passed=True, steps=trainer.step_count)
+            rank_dir / "completed.json",
+            dict(passed=True, steps=trainer.step_count, requested_steps=cfg["steps"]),
         )
         phase("complete", steps=trainer.step_count)
 

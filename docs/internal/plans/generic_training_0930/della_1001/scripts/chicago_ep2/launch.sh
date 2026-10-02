@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 set -euo pipefail
-[[ "${SLURM_JOB_ID:-}" == 14860963 ]] || { echo 'Expected Della allocation 14860963'; exit 2; }
+: "${SLURM_JOB_ID:?Run inside the reserved codex GPU pane}"
 cd /home/as1669/shadowspill
 recipe="$PWD/docs/internal/plans/generic_training_0930/della_1001/scripts/chicago_ep2"
 out=/home/as1669/storage/shadowspill/generic_training_0930/della_1001/chicago-olmoe12b-ep2-1002

@@ -83,6 +83,45 @@ Interrupted or failed cases are retried. Worker processes are recreated between
 capacities. Training uses the admitted plan with the lowest predicted step time;
 online W&B authentication and the relay are checked before launching it.
 
+After every candidate has finished, launch the fastest admitted one with:
+
+```bash
+/home/as1669/.conda/envs/shadowspill/bin/python -u \
+  docs/internal/plans/generic_training_0930/della_1001/scripts/train_best_capacity.py \
+  --steps 100
+```
+
+`--select-only` prints the choice without running it. A longer run can use
+`--data /path/to/prepared/tokens` and a larger `--steps`; the launcher checks
+that the prepared prefix is long enough. It retains the original LR schedule,
+uses the winning artifact store, refuses to overwrite previous training, and
+places the aggregate/rank W&B runs in the same experiment group. Checkpoints,
+metrics and `training-console.log` remain beneath the winning case directory.
+
+For an allocation-length run, use `--until-allocation-end` instead of `--steps`:
+
+```bash
+/home/as1669/.conda/envs/shadowspill/bin/python -u \
+  docs/internal/plans/generic_training_0930/della_1001/scripts/train_best_capacity.py \
+  --until-allocation-end \
+  --data /home/as1669/storage/datasets/fineweb_edu_gpt2_chicago_2b \
+  --training-outdir /path/to/fresh/run
+```
+
+`--training-outdir` separates a fresh run's logs, checkpoints and W&B files
+from its reused planning artifacts. Evaluation is admitted and executed once
+before real updates, so an evaluation planning failure cannot first appear at
+the 100-update cadence. This preflight is not logged as a training update.
+
+After evaluation preflight, the normal warmup and traced zero-LR step run once. Their
+slower-rank runtime and the predicted runtime determine a common update count,
+with 15% timing headroom and a ten-minute checkpoint/sync reserve before the
+Slurm deadline. The count is bounded by the prepared data and original LR
+horizon. This estimates a safe run length; it does not change the training
+engine or place a timer inside compiled tasks. `training-window.json` records
+the decision on each rank. The two-billion-token prefix has been checked
+against the complete original planning sample and ends at a document boundary.
+
 ## Validation before launch
 
 Both save and recompute passed a two-block EP2 test with a BF16 router and one
