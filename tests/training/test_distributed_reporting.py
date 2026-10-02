@@ -36,6 +36,7 @@ def reporting_worker(rank, root, use_wandb, mismatched):
             dist.group.WORLD,
             run_dir=root,
             wandb=options,
+            device="cpu",
             max_pending=4,
             timeout=10,
         )
@@ -76,9 +77,14 @@ def reporting_worker(rank, root, use_wandb, mismatched):
         if use_wandb:
             assert logger.local.run.group == "test"
             assert logger.local.run.job_type == "rank"
+            assert logger.local.run.settings.x_stats_gpu_device_ids == [-1]
+            assert logger.local.run.config["shadowspill_device"]["rank"] == rank
+            assert "/node-00000/rank-" in logger.local.run.name
             if rank == 0:
                 assert logger.aggregate.run.group == "test"
                 assert logger.aggregate.run.job_type == "aggregate"
+                assert logger.aggregate.run.settings.x_stats_gpu_device_ids == [-1]
+                assert len(logger.aggregate.run.config["shadowspill_devices"]) == 2
         if not mismatched:
             (root / f"complete-{rank}").write_text("ok")
     finally:
@@ -108,6 +114,15 @@ def test_distributed_records_and_wandb_keep_rank_and_aggregate_runs(
     assert (tmp_path / "complete-1").is_file()
     if use_wandb:
         assert len(list(tmp_path.glob("**/run-*.wandb"))) == 3
+        tables = list((tmp_path / "aggregate/wandb").rglob("*.table.json"))
+        assert len(tables) == 1
+        table = json.loads(tables[0].read_text())
+        assert table["columns"][:3] == ["node_id", "hostname", "rank"]
+        assert len(table["data"]) == 2
+        devices = json.loads((tmp_path / "aggregate/devices.json").read_text())
+        assert [item["rank"] for item in devices] == [0, 1]
+        assert {item["node_id"] for item in devices} == {"node-00000"}
+        assert all(item["aggregate_metric_prefix"] is None for item in devices)
 
 
 def test_reporting_order_mismatch_fails_both_ranks_without_hanging(tmp_path):

@@ -303,6 +303,7 @@ from shadowspill.training.logging import DistributedLogger
 with DistributedLogger(
     cpu_control_group,
     run_dir="runs/example",
+    device=backend.device,
     wandb={"project": "experiment", "group": "run-001"},  # optional
 ) as logger:
     trainer.fit(source, steps=1000, run_dir="runs/example", logger=logger)
@@ -313,6 +314,25 @@ the CPU group. The first rank writes `aggregate/metrics.jsonl` and prints lines
 prefixed `[aggregate]`. With W&B enabled there is one `rank-NNNNN` run per process
 and one `aggregate` run, all in the same group. Each record uses the completed
 training step. Detailed tables remain in the corresponding rank's run.
+
+Each rank's W&B system telemetry monitors only its selected GPU. Pass
+`device=backend.device` explicitly, or use the current accelerator device (launch-device
+resolution before accelerator initialization). W&B's GPU indices are system-monitor
+indices, not process-local ordinals or training ranks; UUID-based lookup handles device
+masking and reordering.
+
+Rank run names include `node-NNNNN/rank-NNNNN`. The aggregate's
+`system/gpu_mapping` table and `aggregate/devices.json` map **node → GPU → rank**:
+node ID, hostname, global rank, process-local device, GPU model/UUID, rank
+metric prefix, and aggregate metric prefix. Node IDs are assigned in first-rank
+order for this run. Each rank also saves `device.json` and its mapping in W&B
+config. This makes `gpu.0.*` unambiguous across hosts.
+
+The aggregate's automatic system telemetry covers participating GPUs accessible
+on its own host. It does not collect remote hosts' GPU samples. Their entries
+have no aggregate metric prefix; follow their per-rank W&B runs. GPU system
+series retain W&B's original names and sampling cadence. Device discovery and
+the mapping exchange occur once at logger initialization, outside training.
 
 Default aggregation sums `train/loss` contributions, which must already use the
 caller's global normalization. It reports `train/step_seconds` as the maximum
