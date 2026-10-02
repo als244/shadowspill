@@ -29,15 +29,23 @@ routing statistics can differ from Chicago's single-device execution.
 
 ## Resource choices
 
-The initial test uses 16K tokens per rank per microbatch, 32 accumulated
-microbatches per rank, and one communication buffer shared by all blocks.
-Expert communication banks remain specific to each layer. Before VMM padding,
-the local expert weights occupy 11.25 GiB; home/replica BF16 publication banks
-and the replica FP32 gradient bank together occupy 45 GiB per rank outside the
-ShadowSpill pool. The initial physical limit is 78 GiB with 52 GiB external
-headroom, leaving 26 GiB for the execution pool, and 80 GiB host spill per rank.
-Physical measurements at model construction and planning determine feasibility.
-The planner searches quarter increments of recomputation and factor orderings.
+Planning searches 16K, 32K and 64K tokens per rank per microbatch, with 32,
+16 and 8 accumulated microbatches per rank respectively. The workload owns
+one correctly sized MoonEP token buffer shared by every layer, plus shared
+expert publication/reduction banks. Each candidate runs in fresh worker
+processes so its communication resources are released before the next capacity.
+The ordinary Trainer searches recomputation fractions and factor orderings for
+each capacity; the outer experiment compares their admitted predicted step times.
+Candidate progress is saved immediately and completed candidates are resumable.
+
+Distinct expert parameters occupy 11.25 GiB per rank across all 16 layers.
+Communication banks are allocated once: 1.40625 GiB BF16 home/replica weights
+and 1.40625 GiB FP32 replica-gradient scratch, totaling 2.8125 GiB per GPU.
+Returned expert gradients and optimizer state are BF16. The execution budget is
+50 GiB with 6 GiB external headroom, leaving 44 GiB for the managed execution
+pool, and 80 GiB host spill per rank. Physical measurements at model construction
+and admission are recorded for each capacity. No MoonEP-specific behavior is
+added to ShadowSpill's planner or allocator.
 
 The data subset is under
 `/home/as1669/storage/datasets/fineweb_edu_gpt2_chicago_sample`.
@@ -47,7 +55,8 @@ ordinary text recipe with `long_documents="splice"` and window 1,024.
 
 All run artifacts are under
 `/home/as1669/storage/shadowspill/generic_training_0930/della_1001/chicago-olmoe12b-ep2-1002`:
-console output, per-rank artifact stores and graph pairs, plans, startup
+console output and `planning-progress.json`; `candidates/tokens-N/` contains
+each configuration’s per-rank artifact stores and graph pairs, plans, startup
 diagnostics, metric JSONL files, W&B files, and checkpoints. W&B HTTPS is relayed
 through the Della head node because the compute node has no public DNS/network.
 `launch.sh` expects that loopback SSH relay on port 18375; online machines can
