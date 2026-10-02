@@ -2,13 +2,15 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Callable, Iterator, Mapping, Sequence
+from contextlib import contextmanager
 from functools import wraps
 from typing import Any
 
 from torch import nn
 
 from shadowspill.planner import StepDataOrdering
+from shadowspill.pytorch.failures import device_exhausted
 from shadowspill.pytorch.runtime import Runtime
 
 from . import Distributed, current
@@ -81,6 +83,47 @@ def prepared[**P, R](
             return result
 
     return call
+
+
+@contextmanager
+def geometry_attempt(name: str) -> Iterator[None]:
+    """Finish or unwind one geometry on every rank before trying another.
+
+    Failures within the attempt wake peers waiting on its profiling channel.
+    The parent channel remains usable for agreeing on the outcome after all
+    participants have left their build/cleanup paths. A failed cleanup or
+    participant that never reaches this boundary still stops the search.
+    """
+    bound = current()
+    if bound is None:
+        yield
+        return
+    parent = bound.control
+    parent.agree("geometry/begin", name)
+    child = parent.fork(f"geometry/{parent.sequence}")
+    error: BaseException | None = None
+    bound.control = child
+    try:
+        yield
+    except BaseException as caught:
+        error = caught
+        child.fail(name, caught)
+    finally:
+        bound.control = parent
+
+    outcomes = parent.exchange(
+        "geometry/complete",
+        None if error is None else child.failure_record(name, error),
+    )
+    failures = [item for item in outcomes if item is not None]
+    if not failures:
+        return
+    # A programming/communication error must not be hidden by another rank's
+    # allocation failure. Only an all-OOM outcome is a recoverable rejection.
+    failed = next((item for item in failures if not item["out_of_memory"]), failures[0])
+    if error is not None and device_exhausted(error) == failed["out_of_memory"]:
+        raise error
+    parent.raise_failure(failed)
 
 
 def collective_identity(local: dict[str, Any]) -> dict[str, Any]:

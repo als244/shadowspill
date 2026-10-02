@@ -9,17 +9,24 @@ from __future__ import annotations
 import json
 import time
 from collections.abc import Callable
-from typing import Any, TypeVar, cast
+from typing import Any, NoReturn, TypeVar, cast
 
 import torch.distributed as dist
+from torch import OutOfMemoryError
 from torch._C._distributed_c10d import PrefixStore
 from torch.distributed.distributed_c10d import _get_process_group_store
+
+from shadowspill.pytorch.failures import device_exhausted
 
 T = TypeVar("T")
 
 
 class PreparationError(RuntimeError):
     """A participant failed or the preparation contract disagreed."""
+
+    def __init__(self, message: str, *, failure: dict[str, Any] | None = None) -> None:
+        super().__init__(message)
+        self.failure = failure
 
 
 class Control:
@@ -35,35 +42,56 @@ class Control:
             raise ValueError("this rank does not belong to the participant group")
         if not namespace:
             raise ValueError("the control namespace must be nonempty")
+        self.namespace = namespace
         self.store = PrefixStore(
             "shadowspill/" + namespace + "/", _get_process_group_store(group)
         )
         self.timeout = timeout
         self.sequence = 0
 
+    def fork(self, name: str) -> Control:
+        """Use a distinct failure channel for one coordinated preparation attempt."""
+        return Control(
+            self.group, namespace=f"{self.namespace}/{name}", timeout=self.timeout
+        )
+
+    def failure_record(self, phase: str, error: BaseException) -> dict[str, Any]:
+        if isinstance(error, PreparationError) and error.failure is not None:
+            return error.failure
+        return {
+            "rank": self.rank,
+            "phase": phase,
+            "error": f"{type(error).__name__}: {error}",
+            "out_of_memory": device_exhausted(error),
+        }
+
     def fail(self, phase: str, error: BaseException) -> None:
         if isinstance(error, PreparationError):
             return
         self.store.set(
-            f"failure/{self.rank}",
-            json.dumps(
-                {
-                    "rank": self.rank,
-                    "phase": phase,
-                    "error": f"{type(error).__name__}: {error}",
-                }
-            ),
+            f"failure/{self.rank}", json.dumps(self.failure_record(phase, error))
         )
+
+    @staticmethod
+    def raise_failure(failed: dict[str, Any]) -> NoReturn:
+        error = PreparationError(
+            f"distributed preparation failed on rank {failed['rank']} "
+            f"during {failed['phase']}: {failed['error']}",
+            failure=failed,
+        )
+        if failed["out_of_memory"]:
+            # Keep the allocation failure typed when crossing the CPU channel.
+            # The sweep must never identify recoverable errors from their text.
+            raise error from OutOfMemoryError(failed["error"])
+        # This rank may be unwinding its own OOM when a peer reports a fatal
+        # error. The selected peer failure replaces that local failure.
+        raise error from None
 
     def check_failure(self) -> None:
         for rank in self.members:
             key = f"failure/{rank}"
             if self.store.check([key]):
-                failed = json.loads(self.store.get(key))
-                raise PreparationError(
-                    f"distributed preparation failed on rank {failed['rank']} "
-                    f"during {failed['phase']}: {failed['error']}"
-                )
+                self.raise_failure(json.loads(self.store.get(key)))
 
     def exchange(self, phase: str, value: Any) -> tuple[Any, ...]:
         """Exchange one JSON value per participant, detecting phase mismatches."""

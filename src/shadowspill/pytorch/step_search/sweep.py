@@ -9,20 +9,22 @@ from __future__ import annotations
 
 import time
 from collections import Counter
-from collections.abc import Callable, Iterator, Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from os import PathLike
 from types import MappingProxyType
 from typing import Any, Literal
 
 import torch
-from torch import OutOfMemoryError, nn
+from torch import nn
 
 from shadowspill.errors import PlanningError
 from shadowspill.planner import StepDataOrdering
 from shadowspill.planner.annotated_plan import AnnotatedProgramPlan
 from shadowspill.planner.diagnostics import GraphPairOutcome
 from shadowspill.pytorch.api import build_step_programs
+from shadowspill.pytorch.distributed._preparation import geometry_attempt
+from shadowspill.pytorch.failures import device_exhausted, exception_chain
 from shadowspill.pytorch.partition import PartitionSpec
 from shadowspill.pytorch.runtime import Runtime
 from shadowspill.pytorch.state.registry import registry_for
@@ -90,37 +92,38 @@ class _Build:
         held = registry_for(self.runtime).values()
         recorded = self.runtime.last_failure
         try:
-            examples = self.candidates[candidate]
-            return (
-                build_step_programs(
-                    self.model,
-                    profiling_options=self.profiling_options,
-                    objective=self.objective,
-                    optimizer=self.optimizer,
-                    hyperparams=self.hyperparams,
-                    example_inputs=examples,
-                    runtime=self.runtime,
-                    execution=self.execution,
-                    spill=self.spill,
-                    partition=self.partition,
-                    execution_device=self.execution_device,
-                    optimizer_ordering=self.optimizer_ordering,
-                    orderings=orderings,
-                    verbose=self.verbose,
-                    artifact_store=self.artifact_store,
-                    build_store=self.build_store,
-                    build_store_mode=self.build_store_mode,
-                    export_bypass_key=self.export_bypass_key,
-                    master_dtype=self.master_dtype,
-                    grad_dtype=self.grad_dtype,
-                    parameter_metrics=self.parameter_metrics,
-                    round_accumulation_once=self.round_accumulation_once,
-                    memory_bound_flops_per_byte=self.memory_bound_flops_per_byte,
-                ),
-                None,
-            )
+            with geometry_attempt(f"{candidate} x {accumulation}"):
+                examples = self.candidates[candidate]
+                return (
+                    build_step_programs(
+                        self.model,
+                        profiling_options=self.profiling_options,
+                        objective=self.objective,
+                        optimizer=self.optimizer,
+                        hyperparams=self.hyperparams,
+                        example_inputs=examples,
+                        runtime=self.runtime,
+                        execution=self.execution,
+                        spill=self.spill,
+                        partition=self.partition,
+                        execution_device=self.execution_device,
+                        optimizer_ordering=self.optimizer_ordering,
+                        orderings=orderings,
+                        verbose=self.verbose,
+                        artifact_store=self.artifact_store,
+                        build_store=self.build_store,
+                        build_store_mode=self.build_store_mode,
+                        export_bypass_key=self.export_bypass_key,
+                        master_dtype=self.master_dtype,
+                        grad_dtype=self.grad_dtype,
+                        parameter_metrics=self.parameter_metrics,
+                        round_accumulation_once=self.round_accumulation_once,
+                        memory_bound_flops_per_byte=self.memory_bound_flops_per_byte,
+                    ),
+                    None,
+                )
         except Exception as error:
-            if not _device_exhausted(error):
+            if not device_exhausted(error):
                 raise
             _refuse_state_left_behind(
                 self.runtime, held, candidate, accumulation, error
@@ -343,28 +346,6 @@ class _Sweep:
         return winners
 
 
-def _device_exhausted(error: BaseException) -> bool:
-    """Whether a build failed because the device ran out of memory.
-
-    Profiling runs a task's real kernels, so the largest geometries can
-    exhaust the device before any plan exists. The frontend wraps what a
-    phase raised, chaining the original, so the exhaustion is found by
-    walking the chain rather than by matching the outermost type.
-    """
-    return any(isinstance(link, OutOfMemoryError) for link in _links(error))
-
-
-def _links(error: BaseException) -> Iterator[BaseException]:
-    """The error and everything it chains, each once."""
-
-    seen: set[int] = set()
-    current: BaseException | None = error
-    while current is not None and id(current) not in seen:
-        seen.add(id(current))
-        yield current
-        current = current.__cause__ or current.__context__
-
-
 def _allocator_report(
     error: BaseException,
     failure: RuntimeFailureDiagnostics | None,
@@ -382,7 +363,7 @@ def _allocator_report(
     diagnostics = next(
         (
             found
-            for link in _links(error)
+            for link in exception_chain(error)
             if isinstance(
                 found := getattr(link, "diagnostics", None), RuntimeFailureDiagnostics
             )
