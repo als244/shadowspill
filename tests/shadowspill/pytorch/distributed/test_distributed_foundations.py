@@ -19,6 +19,51 @@ from shadowspill.pytorch.distributed._preparation import prepared_model_import
 from shadowspill.pytorch.runtime import Runtime
 
 
+def test_cgroup_budget_reuses_clean_unmapped_checkpoint_cache(tmp_path):
+    from shadowspill.pytorch.distributed._bootstrap import _cgroup_available_memory
+    from shadowspill.pytorch.distributed._resources import (
+        Limit,
+        Resources,
+        validate_resources,
+    )
+
+    gib = 1 << 30
+    (tmp_path / "memory.stat").write_text(
+        f"anon {2 * gib}\nfile {32 * gib}\n"
+        f"active_file {31 * gib}\ninactive_file {gib}\n"
+        f"file_mapped {gib}\nfile_dirty 0\nfile_writeback 0\nshmem 0\nunevictable 0\n"
+    )
+    available = _cgroup_available_memory(tmp_path, 240 * gib, 34 * gib)
+    assert available == 237 * gib
+    # Two 104 GiB pools plus 2 GiB staging each fit without forcing the user
+    # to drop caches or change a previously admitted configuration.
+    validate_resources(
+        [
+            Resources(
+                "node", f"gpu{rank}", 104 * gib, 2 * gib, (Limit("cgroup", available),)
+            )
+            for rank in range(2)
+        ]
+    )
+
+
+def test_cgroup_budget_keeps_nonreclaimable_file_memory_charged(tmp_path):
+    from shadowspill.pytorch.distributed._bootstrap import _cgroup_available_memory
+
+    (tmp_path / "memory.stat").write_text(
+        "file 60\nshmem 10\nfile_mapped 10\n"
+        "file_dirty 5\nfile_writeback 5\nunevictable 10\n"
+    )
+    assert _cgroup_available_memory(tmp_path, 100, 90) == 30
+    # Counters can race, and exclusions can overlap. Never admit more than
+    # the cgroup ceiling or report negative space because of a snapshot.
+    assert _cgroup_available_memory(tmp_path, 100, 10) == 100
+    (tmp_path / "memory.stat").write_text("file 10\nshmem 20\n")
+    assert _cgroup_available_memory(tmp_path, 100, 110) == 0
+    (tmp_path / "memory.stat").unlink()
+    assert _cgroup_available_memory(tmp_path, 100, 90) == 10
+
+
 class GroupModel(nn.Module):
     def __init__(self, group):
         super().__init__()

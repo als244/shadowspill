@@ -12,6 +12,39 @@ from ._control import Control
 from ._resources import Limit, Resources, validate_resources
 
 
+def _cgroup_available_memory(directory: Path, maximum: int, used: int) -> int:
+    """Estimate headroom without charging clean, unmapped file cache as live state.
+
+    A prior checkpoint read can leave tens of GiB charged to memory.current
+    after its process exits. The kernel can reclaim those pages for a new
+    pool. Keep mapped files, shared memory, dirty/writeback pages and all
+    unevictable memory charged; overlapping exclusions are conservative.
+    """
+
+    try:
+        statistics = {
+            name: int(value)
+            for name, value in (
+                line.split()
+                for line in (directory / "memory.stat").read_text().splitlines()
+            )
+        }
+    except (OSError, ValueError):
+        statistics = {}
+    excluded = sum(
+        statistics.get(name, 0)
+        for name in (
+            "shmem",
+            "file_mapped",
+            "file_dirty",
+            "file_writeback",
+            "unevictable",
+        )
+    )
+    reclaimable = min(used, max(0, statistics.get("file", 0) - excluded))
+    return min(maximum, max(0, maximum - used + reclaimable))
+
+
 def host_limits() -> tuple[Limit, ...]:
     meminfo = {}
     for line in Path("/proc/meminfo").read_text().splitlines():
@@ -34,7 +67,9 @@ def host_limits() -> tuple[Limit, ...]:
             if maximum.exists() and used.exists():
                 value = maximum.read_text().strip()
                 if value != "max":
-                    available = max(0, int(value) - int(used.read_text()))
+                    available = _cgroup_available_memory(
+                        current, int(value), int(used.read_text())
+                    )
                     limits.append(Limit(f"cgroup:{current.stat().st_ino}", available))
             if current == root:
                 break

@@ -50,6 +50,11 @@ supply rank-local data; the trainer does not silently shard an iterable. An acce
 model or communication library can use `backend.device` and caller-created groups.
 `host_headroom_gib` reserves process/staging room per participant in the host check;
 execution and spill budgets are also per process.
+Linux cgroup headroom includes clean, unmapped filesystem cache that the kernel
+can reclaim. Mapped files, shared memory, dirty/writeback pages, and unevictable
+memory remain charged. This avoids rejecting a repeated run solely because an
+earlier checkpoint is still cached. Host and cgroup checks are estimates made
+before allocation; concurrent users can change available memory afterward.
 
 The generic PyTorch eager/compiled backends currently accept single-process
 training. Distributed ownership in this API is implemented by the ShadowSpill
@@ -159,6 +164,18 @@ Fetch and eviction follow each rank's own schedule. Communication can overlap
 computation inside a task, but it must finish on that task's current stream before
 its completion event. Cross-task outstanding communication is outside this initial
 contract. Model code must supply truthful custom-op tensor/mutation contracts.
+
+Ordered custom operators keep their compiler ordering dependencies inside each
+captured task. These empty PyTorch tokens are not model inputs, saved activations,
+or communication buffers. Recompute uses one backward ordering chain for replayed
+forward calls and derivative calls. An operator that is eligible for replay must
+remain correct when called again with the same explicit inputs; ordering alone
+does not make an arbitrary state update safe to repeat.
+
+For an operator that allocates its own outputs, its fake implementation must
+also describe backing storage, including padding behind a returned view.
+Compilation records that extent; profiling checks the actual allocation
+against it. A smaller logical tensor shape does not imply a smaller allocation.
 
 Named `groups` preserve caller-owned handles during fake-model construction and
 bind explicit functional collective names in compiled artifacts. Restarted
