@@ -1,4 +1,4 @@
-"""Optional expert-parallel models using the separately installed QuackMoE package."""
+"""Optional expert-parallel models using MLOps' QuackMoE layers."""
 
 from .olmoe import OLMoE, OLMoEConfig
 

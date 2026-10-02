@@ -10,8 +10,8 @@ from __future__ import annotations
 from collections.abc import Sequence
 
 import torch
-from quack_moe import MoEConfig, QuackMoE
-from quack_moe.router import route_op
+from mlops.expert_parallel import QuackMoE, QuackMoEConfig as MoEConfig
+from mlops.expert_parallel.quack.router import route_op
 from torch import nn
 from torch.nn import functional as F
 
