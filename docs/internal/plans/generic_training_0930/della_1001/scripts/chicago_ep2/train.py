@@ -13,7 +13,6 @@ import json
 import math
 import os
 import sys
-import traceback
 from contextlib import ExitStack
 from datetime import UTC, datetime, timedelta
 from fractions import Fraction
@@ -335,8 +334,4 @@ def main():
 
 
 if __name__ == "__main__":
-    try:
-        main()
-    except BaseException:
-        traceback.print_exc()
-        raise
+    main()
