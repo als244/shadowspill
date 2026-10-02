@@ -38,6 +38,7 @@ from shadowspill.pytorch.contracts import ObjectiveResult
 from shadowspill.task.inputs import TaskInputRole
 
 from .accumulate import ACCUMULATE_MATMUL, ADDING_INTO
+from .effects import normalize_export_effects
 from .torch_deprecations import copy_graph_module, quiet_leaf_spec_deprecation
 
 
@@ -194,6 +195,7 @@ def _export(module: nn.Module, inputs: Sequence[Any]) -> ExportCapture:
             exported = exported.run_decompositions(
                 {torch.ops.aten.copy.default: _functional_copy}
             )
+            normalize_export_effects(exported)
     except BaseException as exc:
         raise CaptureError(f"strict PyTorch export failed: {exc}") from exc
     flat_inputs = _flatten_inputs(exported, inputs)
@@ -423,7 +425,12 @@ def capture_graph_pair(
 # the guess off asks for the canonical memory format of the output, which is
 # a function of the graph's structure rather than of the strides one capture
 # happened to produce.
-_PINNED_TANGENT_LAYOUT: Mapping[str, Any] = {"guess_tangent_strides_as_outputs": False}
+_PINNED_AOT_CONFIG: Mapping[str, Any] = {
+    "guess_tangent_strides_as_outputs": False,
+    # Compiler ordering tokens belong inside tasks, not in model inputs or
+    # saved activations. Keep with_effects chains in the compiled graphs.
+    "unlift_effect_tokens": True,
+}
 
 
 def _execute_aot_capture(
@@ -436,7 +443,7 @@ def _execute_aot_capture(
     root_output_positions: tuple[int, ...] | None,
 ) -> tuple[torch.Tensor, ...]:
     try:
-        with functorch_config.patch(**_PINNED_TANGENT_LAYOUT):
+        with functorch_config.patch(**_PINNED_AOT_CONFIG):
             aot: Any = aot_function
             compiled = cast(
                 Callable[..., object],

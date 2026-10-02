@@ -53,6 +53,8 @@ from torch.utils.flop_counter import FlopCounterMode, flop_registry
 
 from shadowspill.errors import CaptureError
 
+from .effects import join_recomputed_effects
+
 #: Flops per byte moved, at or below which an operator is memory-bound and the
 #: ``save`` variant regenerates its results rather than retaining them.
 MEMORY_BOUND_FLOPS_PER_BYTE = 16.0
@@ -199,6 +201,9 @@ def partition_function(
             forward, backward = min_cut_rematerialization_partition(
                 joint_module, joint_inputs, **kwargs
             )
+        join_recomputed_effects(
+            forward, backward, num_fwd_outputs=kwargs["num_fwd_outputs"]
+        )
         regenerated = _regenerated_operators(backward)
         _strip_marks(marked, joint_module, forward, backward)
         record.summary = RetentionSummary(
