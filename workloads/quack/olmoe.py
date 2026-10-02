@@ -1,7 +1,7 @@
 """OLMoE decoder with MLOps attention and QuackMoE expert parallelism.
 
-The caller supplies the process group and MoonEP buffers. This module knows
-nothing about planning or training backends; it is an ordinary PyTorch model
+The caller supplies the process group and token capacity or existing buffers.
+This module knows nothing about planning or training backends; it is a PyTorch model
 with fixed-device communication resources, like its QuackMoE submodules.
 """
 
@@ -24,6 +24,22 @@ from workloads.mlops.olmoe import OLMoE as BaseOLMoE
 from workloads.pytorch.olmoe import OLMoEConfig
 
 
+def _expert_options(config, ep_group, router_dtype):
+    return MoEConfig(
+        ep_size=torch.distributed.get_world_size(ep_group),
+        num_experts=config.n_experts,
+        top_k=config.top_k,
+        model_dim=config.d_model,
+        expert_hidden_dim=config.d_ff_expert,
+        compute_precision="bf16",
+        weight_grad_dtype=torch.bfloat16,
+        router_dtype=router_dtype,
+        router_weight_grad_dtype=router_dtype,
+        renormalize_topk=False,
+        share_expert_banks=True,
+    )
+
+
 class MoE(nn.Module):
     def __init__(
         self,
@@ -37,18 +53,7 @@ class MoE(nn.Module):
     ):
         super().__init__()
         self.config = config
-        options = MoEConfig(
-            ep_size=torch.distributed.get_world_size(ep_group),
-            num_experts=config.n_experts,
-            top_k=config.top_k,
-            model_dim=config.d_model,
-            expert_hidden_dim=config.d_ff_expert,
-            compute_precision="bf16",
-            weight_grad_dtype=torch.bfloat16,
-            router_dtype=router_dtype,
-            router_weight_grad_dtype=router_dtype,
-            renormalize_topk=False,
-        )
+        options = _expert_options(config, ep_group, router_dtype)
         self.experts = QuackMoE(options, ep_group, buffer=buffer, device=device)
         if parameter_device != device:
             # Copy the logical parameters, not their larger communication-bank
@@ -102,8 +107,10 @@ class Block(BaseBlock):
 class OLMoE(BaseOLMoE):
     """MLOps attention/head and QuackMoE routed experts, all with BF16 compute.
 
-    ``buffers`` supplies one caller-owned resource per block. The model's token
-    capacity follows those resources. ``expert_parameters`` identifies unique
+    ``token_capacity`` creates one model-owned MoonEP buffer shared by all blocks.
+    Alternatively, ``buffers`` supplies borrowed resources, one entry per block.
+    Expert publication/reduction banks are shared along with each token buffer;
+    model parameters remain distinct. ``expert_parameters`` identifies unique
     home shards; all other parameters are replicas within this EP group.
     Parameters normally start on the compute device. ``parameter_device="cpu"``
     also supports callers that materialize compute values from host state.
@@ -115,14 +122,23 @@ class OLMoE(BaseOLMoE):
         config: OLMoEConfig,
         *,
         ep_group,
-        buffers: Sequence,
+        token_capacity: int | None = None,
+        buffers: Sequence | None = None,
         device=None,
         parameter_device=None,
         router_dtype=torch.float32,
     ):
         nn.Module.__init__(self)
-        if len(buffers) != config.n_layers:
-            raise ValueError("Supply one MoonEP buffer per transformer block")
+        if (buffers is None) == (token_capacity is None):
+            raise ValueError("Supply token_capacity or existing buffers, exclusively")
+        if buffers is not None and len(buffers) != config.n_layers:
+            raise ValueError(
+                "Supply one buffer entry per block; entries may share a buffer"
+            )
+        if token_capacity is not None and (
+            type(token_capacity) is not int or token_capacity <= 0
+        ):
+            raise ValueError("token_capacity must be a positive integer")
         device = torch.device(device or f"cuda:{torch.cuda.current_device()}")
         if device.type != "cuda":
             raise ValueError("QuackMoE computation requires a CUDA device")
@@ -134,15 +150,28 @@ class OLMoE(BaseOLMoE):
         if parameter_device != device and parameter_device.type != "cpu":
             raise ValueError("Parameters must start on the compute device or CPU")
         self.config = config
-        with torch.device(parameter_device):
-            self.embed = nn.Embedding(
-                config.vocab_size, config.d_model, dtype=torch.bfloat16
+        # Runtime handles retain the resources. Model copies used for capture
+        # must not attempt to copy CUDA streams or device mappings.
+        self._owns_buffer = False
+        owned_buffer = None
+        self.blocks = nn.ModuleList()
+        if buffers is None:
+            from mlops.expert_parallel import create_buffer
+
+            owned_buffer = create_buffer(
+                _expert_options(config, ep_group, router_dtype),
+                token_capacity,
+                ep_group,
             )
-            self.rotary = RotaryEmbedding(
-                config.head_dim, base=config.rope_base, capacity=config.max_seq_len
-            )
-            self.blocks = nn.ModuleList()
-            try:
+            buffers = [owned_buffer] * config.n_layers
+        try:
+            with torch.device(parameter_device):
+                self.embed = nn.Embedding(
+                    config.vocab_size, config.d_model, dtype=torch.bfloat16
+                )
+                self.rotary = RotaryEmbedding(
+                    config.head_dim, base=config.rope_base, capacity=config.max_seq_len
+                )
                 for buffer in buffers:
                     self.blocks.append(
                         Block(
@@ -154,21 +183,32 @@ class OLMoE(BaseOLMoE):
                             router_dtype=router_dtype,
                         )
                     )
-            except BaseException:
-                self.close()
-                raise
-            self.final_norm = RMSNorm(config.d_model).to(dtype=torch.bfloat16)
-            self.lm_head = nn.Linear(
-                config.d_model, config.vocab_size, bias=False, dtype=torch.bfloat16
-            )
+                self.final_norm = RMSNorm(config.d_model).to(dtype=torch.bfloat16)
+                self.lm_head = nn.Linear(
+                    config.d_model, config.vocab_size, bias=False, dtype=torch.bfloat16
+                )
+        except BaseException:
+            self.close()
+            if owned_buffer is not None:
+                owned_buffer.destroy()
+            raise
+        self._owns_buffer = owned_buffer is not None
 
     def expert_parameters(self):
         for block in self.blocks:
             yield from block.moe.experts.expert_parameters()
 
     def close(self):
+        buffer = (
+            self.blocks[0].moe.experts.communication_buffer
+            if self._owns_buffer
+            else None
+        )
+        self._owns_buffer = False
         for block in self.blocks:
             block.moe.experts.close()
+        if buffer is not None:
+            buffer.destroy()
 
 
 __all__ = ["OLMoE", "OLMoEConfig"]
