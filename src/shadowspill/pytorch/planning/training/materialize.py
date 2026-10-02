@@ -198,7 +198,9 @@ def materialize_training_state(
                     },
                 )
             optimizer_capture = with_parameter_metrics(
-                optimizer_capture, parameter_metrics
+                optimizer_capture,
+                parameter_metrics,
+                device_index=captured.device_ordinal,
             )
             if layouts is not None and parameter_metrics is not None:
                 from shadowspill.pytorch.distributed._reductions import (

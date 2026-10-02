@@ -105,3 +105,16 @@ def test_returned_views_are_snapshots_before_optimizer_mutation():
     assert (
         observation.metric_schema.rebuild_metrics(values)["weight"]["first"].item() == 1
     )
+
+
+def test_observations_capture_on_the_selected_process_device():
+    parameter = torch.nn.Parameter(torch.ones(4))
+    parameter.grad = torch.ones_like(parameter)
+    captured = capture_optimizer(
+        {"weight": parameter}, torch.optim.SGD([parameter], lr=0.1)
+    )
+    observation = with_parameter_metrics(captured, norm, device_index=3).update_tasks[0]
+    assert all(
+        value.device == torch.device("cuda:3")
+        for value in observation.artifact.example_arguments
+    )
