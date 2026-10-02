@@ -3,7 +3,7 @@ and measured once, independent of the walk the step will take."""
 
 from __future__ import annotations
 
-from dataclasses import dataclass, replace
+from dataclasses import dataclass
 
 from shadowspill.errors import (
     PlanningError,
@@ -35,7 +35,7 @@ from shadowspill.runtime.teardown import prepare_failure_cleanup
 from shadowspill.task.profiling import ProfilingOptions
 
 from ...graph_pairs import (
-    resolve_partitioned_saved_values,
+    register_saved_value_producers,
 )
 from ..artifacts import (
     TrainingCaptureArtifacts,
@@ -131,18 +131,12 @@ def _profile_training_tasks(
     timer: PlanningTimer,
 ) -> TrainingProfileArtifacts:
     with timer.measure("saved_value_resolution"):
-        partitioned = resolve_partitioned_saved_values(
+        register_saved_value_producers(
             captured.partitioned,
-            profiler.resolve_graph_pair_saved_values,
-            tuple(workload.digest for workload in captured.workloads),
+            profiler.register_graph_pair,
         )
-    timer.progress(
-        f"saved values: {format_bytes(profiler.saved_value_bytes_in_pool)} "
-        "in the spill pool"
-    )
-    resolved_capture = replace(captured, partitioned=partitioned)
     inventory = _training_task_inventory(
-        resolved_capture,
+        captured,
         materialized.optimizer_capture,
     )
     _report_training_profile_inventory(
@@ -173,8 +167,13 @@ def _profile_training_tasks(
         allocation_probe_repetitions=allocation_probe_repetitions,
         profiling_options=profiling_options,
     )
+    timer.progress(
+        "saved-value snapshots: "
+        f"peak {format_bytes(profiler.peak_saved_value_bytes_in_pool)}, "
+        f"live {format_bytes(profiler.saved_value_bytes_in_pool)} in the spill pool"
+    )
     return TrainingProfileArtifacts(
-        partitioned,
+        captured.partitioned,
         inventory.compile_tasks,
         inventory.profile_keys,
         inventory.profile_tasks,

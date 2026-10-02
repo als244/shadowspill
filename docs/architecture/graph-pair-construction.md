@@ -294,13 +294,19 @@ came from somewhere is not obliged to survive state that did not.
 
 So the forward runs on its own representative inputs and the backward runs
 on what came out of it, with only its tangents invented. Nothing decides
-which saved values may be invented, because none of them may. One forward
-run is shared per forward contract, declared metadata and saved arity, which
-is the identity a profile already has.
+which saved values may be invented, because none of them may. Each backward
+measurement replays its own forward occurrence when authentic saved inputs
+are missing. Cached backward entrypoints follow the same rule when warming.
+Ranks coordinate these replays during distributed profiling, since a producer
+may contain communication. Replay is outside the backward's measured runtime
+and workspace; its setup time is reported as preparation overhead.
 
-What the forward saved is kept in the plan's spill pool, not beside it: it can
-be as large as the step's activations. It is released when planning is done,
-and planning fails when the pool has no room for it.
+The missing saved values are copied into the plan's spill pool and released
+immediately after that backward is measured or warmed. Forward recipes, rather
+than their activations, survive between measurements. Profiling therefore needs
+room for the largest single forward snapshot, rather than the sum of snapshots
+across layers and variants. Planning still fails when even that snapshot cannot
+fit. On a profiling failure, allocator recovery precedes snapshot release.
 
 What a saved value is worth belongs to the forward that made it; how it is
 laid out belongs to the backward that reads it, and the two need not agree.
