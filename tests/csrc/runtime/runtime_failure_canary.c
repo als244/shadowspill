@@ -272,6 +272,8 @@ static int failed_task_retirement_recovery(void) {
     }
     ShadowSpillRuntime *runtime = NULL;
     ShadowSpillBackendStream stream = 0U;
+    ShadowSpillBackendSignals signals = 0U;
+    uint64_t *gate = NULL;
     ShadowSpillAllocation live = {0};
     ShadowSpillAllocation impossible = {0};
     ShadowSpillAllocation recovered = {0};
@@ -281,6 +283,8 @@ static int failed_task_retirement_recovery(void) {
         ) !=
             SHADOWSPILL_STATUS_OK ||
         mock.create_stream(mock.state, &stream) != 0 ||
+        mock.allocate_signals(mock.state, 1U, &signals, &gate) != 0 ||
+        mock.wait_value(mock.state, stream, signals, 0U, 1U) != 0 ||
         shadowspill_test_admit_task(runtime, &task) !=
             SHADOWSPILL_STATUS_OK || shadowspill_test_before_task(
             runtime, task.task_id, stream, NULL, 0U
@@ -308,8 +312,15 @@ static int failed_task_retirement_recovery(void) {
             SHADOWSPILL_STATUS_OK ||
         statistics.runtime.pending_retirements != 1U ||
         statistics.runtime.retirement_records_fenced != 1U ||
-        statistics.runtime.retirement_records_unfenced != 0U ||
-        shadowspill_runtime_recover_no_progress(runtime) !=
+        statistics.runtime.retirement_records_unfenced != 0U) {
+        result = -1;
+        goto done;
+    }
+    /* Keep completion blocked until the fenced record has been inspected.
+       With an immediately completed mock event, the worker can retire it
+       before statistics are read. This checks the state, not thread timing. */
+    __atomic_store_n(gate, 1U, __ATOMIC_RELEASE);
+    if (shadowspill_runtime_recover_no_progress(runtime) !=
             SHADOWSPILL_STATUS_OK ||
         shadowspill_runtime_wait_idle(runtime) != SHADOWSPILL_STATUS_OK ||
         shadowspill_test_statistics(runtime, &statistics) !=
@@ -325,9 +336,15 @@ static int failed_task_retirement_recovery(void) {
     }
 
 done:
+    if (gate != NULL) {
+        __atomic_store_n(gate, 1U, __ATOMIC_RELEASE);
+    }
     shadowspill_test_destroy_runtime(runtime);
     if (stream != 0U) {
         (void)mock.destroy_stream(mock.state, stream);
+    }
+    if (signals != 0U) {
+        (void)mock.free_signals(mock.state, signals);
     }
     shadowspill_backend_destroy(&mock);
     return result;
