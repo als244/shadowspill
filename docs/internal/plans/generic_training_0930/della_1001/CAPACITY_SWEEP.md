@@ -12,11 +12,11 @@ layers. Source revisions: ShadowSpill `17c0a2d1`, MLOps `e61e7b2`.
 | 16,384 | 32 | Prior 100-step run complete | 8.464 s |
 | 32,768 | 16 | Plan and physical admission pass on both ranks | 6.674 s |
 | 65,536 | 8 | Plan and physical admission pass on both ranks | 6.573 s |
-| 131,072 | 4 | Plan and physical admission pass; selected for training | 6.398 s |
+| 131,072 | 4 | Plan and physical admission pass; 900 training updates complete | 6.398 s |
 | 262,144 | 2 | Plan and physical admission pass on both ranks | 6.878 s |
 
-The 16K measured median was 7.785 s/update. The other rows are planning
-results until explicitly marked as measured training. New 32K preparation took
+The 16K measured median was 7.785 s/update; 128K measured 6.399 s/update over
+900 updates. The remaining rows are planning results. New 32K preparation took
 865 seconds including model initialization, two ordering searches and final
 plan construction. The final cached construction measured 132 cache hits,
 zero misses and zero retained saved-value snapshots.
@@ -84,13 +84,43 @@ is preserved in `tokens-131072/`:
 - Rank 1 W&B: https://wandb.ai/andrew-sheinberg-princeton-university/shadowspill-della-ep-training/runs/sspu1hic
 
 The generic callback provenance correction passes 97 CPU checks and the full
-EP2 evaluation preflight. The retry uses `training-128k-v2/` and is training
+EP2 evaluation preflight. The retry uses `training-128k-v2/` and completed
 900 updates with online W&B. At update 11, the measured median was 6.425 s.
-[Live aggregate run](https://wandb.ai/andrew-sheinberg-princeton-university/shadowspill-della-ep-training/runs/26c6iq9k).
+[Completed aggregate run](https://wandb.ai/andrew-sheinberg-princeton-university/shadowspill-della-ep-training/runs/26c6iq9k).
 Its per-rank `training-window.json` records the common run length and unchanged
 9,537-update LR horizon. The preflight and startup trace occur before W&B
 logging; they are not training updates. The head-node
-watcher polls every ten seconds for errors, milestones and completion.
+watcher polled every ten seconds and woke the agent at milestones and completion.
 Tübingen passed all three capacity-fix gates and the additional callback-fix
 suite (1,110 passed, one skip, 48 CUDA CTests) and numerical gate (5/5). Allocation-length control lives only in the
 experiment client; no optimizer behavior changed.
+
+## Final result
+
+Both ranks completed all 900 requested updates on October 2 at approximately
+14:32 UTC, before the allocation expired. The unchanged LR schedule still has
+9,537 updates; this allocation-sized run trained 943,718,400 token slots
+(942,781,562 valid tokens).
+
+| Measurement | Result |
+| --- | ---: |
+| Median step time | 6.398974 s |
+| Mean step time | 6.410908 s |
+| Planning prediction, slower rank | 6.398133 s |
+| Median valid tokens/s, aggregate | 163,705 |
+| Initial → final training loss, including auxiliary | 11.15658 → 3.69174 |
+| Final training cross-entropy | 3.53073 |
+| Final evaluation loss, including auxiliary | 3.80065 |
+
+All nine scheduled evaluations passed. Checkpoints at updates 500 and 900
+contain both ranks' model/optimizer and loop state. The final manifest and ZIP
+central directories were inspected; a full restore was not performed during
+this validation. The W&B API reports the aggregate and both rank runs as
+`finished`, at update 900, and the console confirms synchronization.
+
+The run directory contains `final-summary.json`, all per-rank graph-pair tables,
+plans, startup timelines, metrics, console output and checkpoints. A compact
+copy is tracked in `evidence/ep2_training_900.json`. The experiment client and
+generic callback correction are published as `6f5473ff` and `f77950ee`, and
+Tübingen has the same tested source on master. The earlier failed attempt is
+retained separately for the callback regression evidence.

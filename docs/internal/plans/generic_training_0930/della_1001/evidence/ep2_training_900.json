@@ -1,0 +1,117 @@
+{
+  "utc": "2026-10-02T14:34:23.080794+00:00",
+  "passed": true,
+  "steps": 900,
+  "tokens_per_rank": 131072,
+  "global_token_slots_per_step": 1048576,
+  "total_token_slots": 943718400,
+  "total_valid_tokens": 942781562,
+  "schedule_horizon_steps": 9537,
+  "first_train_loss": 11.156583547592163,
+  "final_train_loss": 3.6917386949062347,
+  "final_cross_entropy": 3.5307263729551224,
+  "final_auxiliary": 16.10124744688568,
+  "final_eval_loss": 3.8006549179553986,
+  "median_step_seconds": 6.398974274517968,
+  "mean_step_seconds": 6.410908303458709,
+  "planning_predicted_seconds": 6.39813273,
+  "median_sim_error_percent": 0.0131529706162814,
+  "median_valid_tokens_per_second": 163705.3149759535,
+  "evaluations": [
+    {
+      "eval/loss": 6.439523339271545,
+      "eval/seconds": 2.368697994854301,
+      "step": 100
+    },
+    {
+      "eval/loss": 5.251345157623291,
+      "eval/seconds": 2.386083443881944,
+      "step": 200
+    },
+    {
+      "eval/loss": 4.794629245996475,
+      "eval/seconds": 2.3369643269106746,
+      "step": 300
+    },
+    {
+      "eval/loss": 4.479875177145004,
+      "eval/seconds": 2.335071702953428,
+      "step": 400
+    },
+    {
+      "eval/loss": 4.287739008665085,
+      "eval/seconds": 2.3554944100324064,
+      "step": 500
+    },
+    {
+      "eval/loss": 4.125543415546417,
+      "eval/seconds": 2.3349881190806627,
+      "step": 600
+    },
+    {
+      "eval/loss": 3.9780165255069733,
+      "eval/seconds": 2.3333941670134664,
+      "step": 700
+    },
+    {
+      "eval/loss": 3.8803536891937256,
+      "eval/seconds": 2.3441463380586356,
+      "step": 800
+    },
+    {
+      "eval/loss": 3.8006549179553986,
+      "eval/seconds": 2.3288028449751437,
+      "step": 900
+    }
+  ],
+  "checkpoint_files": [
+    {
+      "path": "checkpoints/step_00000900/rank-00000/loop.pt",
+      "bytes": 5355405,
+      "zip_entries": 8
+    },
+    {
+      "path": "checkpoints/step_00000900/rank-00000/state.pt",
+      "bytes": 36932403599,
+      "zip_entries": 727
+    },
+    {
+      "path": "checkpoints/step_00000900/rank-00001/loop.pt",
+      "bytes": 5355469,
+      "zip_entries": 8
+    },
+    {
+      "path": "checkpoints/step_00000900/rank-00001/state.pt",
+      "bytes": 36932403599,
+      "zip_entries": 727
+    }
+  ],
+  "checkpoint_manifest_published": true,
+  "checkpoint_validation": "Manifest and ZIP central directories inspected; full restore not performed.",
+  "wandb": [
+    {
+      "id": "26c6iq9k",
+      "state": "finished",
+      "url": "https://wandb.ai/andrew-sheinberg-princeton-university/shadowspill-della-ep-training/runs/26c6iq9k",
+      "step": 900,
+      "training_loss": 3.6917386949062343,
+      "eval_loss": 3.8006549179553986
+    },
+    {
+      "id": "hcmiagvb",
+      "state": "finished",
+      "url": "https://wandb.ai/andrew-sheinberg-princeton-university/shadowspill-della-ep-training/runs/hcmiagvb",
+      "step": 900,
+      "training_loss": 1.8472670316696167,
+      "eval_loss": 1.8973999321460724
+    },
+    {
+      "id": "z7xtua5y",
+      "state": "finished",
+      "url": "https://wandb.ai/andrew-sheinberg-princeton-university/shadowspill-della-ep-training/runs/z7xtua5y",
+      "step": 900,
+      "training_loss": 1.844471663236618,
+      "eval_loss": 1.9032549858093264
+    }
+  ]
+}

@@ -85,9 +85,25 @@ and both rank runs were running with live metrics:
 - Rank 1: https://wandb.ai/andrew-sheinberg-princeton-university/shadowspill-della-ep-training/runs/z7xtua5y
 
 The head-node watcher verified its wakeup connection and delivered the
-10-update milestone. This is a running experiment, not a completed 900-step
-result. Tübingen qualification for the callback change has passed.
+10-update milestone. These were preliminary measurements; the completed result
+is recorded below. Tübingen qualification for the callback change has passed.
 
 At update 100 the scheduled evaluation completed on both ranks (aggregate loss 6.43952, 2.37 seconds) and training continued. The first 100 training losses differ from the preserved pre-fix run by at most 0. The median update time is 6.410 seconds versus 6.398 seconds predicted. Evidence: `training-128k-v2/milestone-0100.json`.
 
 At 13:19 UTC training had reached update 248, with aggregate loss 4.849. Scheduled evaluations at 100 and 200 passed. The qualification summary and tested source hashes are saved in `evidence/callback_qualification.json`.
+
+## Completed validation
+
+The fresh run completed all 900 updates on both ranks at approximately
+14:32 UTC. All nine scheduled evaluations passed, including the final
+evaluation loss of 3.80065. Median training step time was 6.398974 seconds,
+versus the planning prediction of 6.398133 seconds. Training loss decreased
+from 11.15658 to 3.69174. Checkpoints at 500 and 900 are saved for both ranks;
+the final manifest and archive central directories are readable. Full checkpoint
+restore was not part of this run.
+
+The aggregate and both per-rank W&B runs report `finished` with update 900.
+`training-128k-v2/final-summary.json` and the tracked copy
+`evidence/ep2_training_900.json` contain the final metrics and validation details.
+The source fix is published as `f77950ee`; the experiment/preflight changes are
+`6f5473ff`. Both are pulled on Tübingen with the qualified source hashes unchanged.
