@@ -34,8 +34,10 @@ Planning searches 16K, 32K and 64K tokens per rank per microbatch, with 32,
 one correctly sized MoonEP token buffer shared by every layer, plus shared
 expert publication/reduction banks. Each candidate runs in fresh worker
 processes so its communication resources are released before the next capacity.
-The ordinary Trainer searches recomputation fractions and factor orderings for
-each capacity; the outer experiment compares their admitted predicted step times.
+The ordinary Trainer searches recomputation fractions and depth-first/breadth-two
+factor orderings for each capacity; the outer experiment compares their admitted
+predicted step times. `planning_max_breadth=2` bounds CPU search time for this
+reservation; set it to `null` to search every factor ordering.
 Candidate progress is saved immediately and completed candidates are resumable.
 
 Distinct expert parameters occupy 11.25 GiB per rank across all 16 layers.
