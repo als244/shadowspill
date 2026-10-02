@@ -128,7 +128,14 @@ def main():
     )
     parser.add_argument("--steps", type=int)
     parser.add_argument("--plan-only", action="store_true")
+    parser.add_argument("--profile-steps", type=int)
+    parser.add_argument("--profile-warmup", type=int, default=3)
+    parser.add_argument("--profile-checkpoint", type=Path)
     args = parser.parse_args()
+    if args.profile_steps is not None and (
+        args.profile_steps < 1 or args.profile_warmup < 1 or args.plan_only
+    ):
+        parser.error("Profiling requires positive steps/warmup and no --plan-only")
     cfg = json.loads(args.config.read_text())
     # Reject recipe/API drift before allocating pools or constructing the model.
     inspect.signature(AdamW).bind([], **cfg["optimizer_args"])
@@ -316,6 +323,19 @@ def main():
             trainer.planning.save(rank_dir / "search.json")
         phase("planned", **plan_record)
         if args.plan_only:
+            return
+        if args.profile_steps is not None:
+            from nsys_profile import profile_trainer
+
+            profile_trainer(
+                trainer,
+                source,
+                rank_dir=rank_dir,
+                steps=args.profile_steps,
+                warmup=args.profile_warmup,
+                checkpoint=args.profile_checkpoint,
+                phase=phase,
+            )
             return
 
         def evaluation():

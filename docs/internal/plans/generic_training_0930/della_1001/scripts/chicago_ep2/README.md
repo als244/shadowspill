@@ -129,3 +129,22 @@ shared communication buffer: three updates, identical replicated parameters,
 and an independent PyTorch full-model loss/gradient reference. Data checks
 verify disjoint microbatch assignment, global target normalization and the
 unchanged LR schedule endpoints.
+
+## Nsight profiling
+
+The profiling client restores the completed run's step-900 checkpoint, warms up
+three updates, then captures five full training updates with EP2 and 128K tokens
+per rank per microbatch. Run it in the allocated `codex` pane:
+
+```bash
+/home/as1669/.conda/envs/shadowspill/bin/python -u \
+  docs/internal/plans/generic_training_0930/della_1001/scripts/profile_chicago_ep2.py \
+  --outdir /path/to/fresh/profile
+```
+
+Use `--config`, `--checkpoint`, `--steps` and `--warmup` to change those inputs.
+The existing planned-call option `profiler_annotations=True` enables ShadowSpill
+task/transfer ranges. Nsight captures CUDA, NVTX, OS runtime and cuBLAS events,
+plus both GPUs' device metrics. Setup and warmup occur before collection starts.
+The profile writes no new checkpoints or W&B runs. Commands, validation and the
+completed report are documented in [NSYS_128K.md](../../NSYS_128K.md).
