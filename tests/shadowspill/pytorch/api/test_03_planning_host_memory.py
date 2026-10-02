@@ -1,27 +1,25 @@
 """Where profiling keeps what it measures on, and that a plan keeps none of it.
 
 Each backward is measured on what its forward saved, copied to the host. Those
-copies are kept in the spill pool while the backwards are measured, so they
-spend none of the host memory the pool was sized to leave free, and they are
-all released before the plan's first step.
+copies live in the spill pool for just one backward measurement or warmup.
+Their total must not accumulate across stages, variants, or cached plans.
 """
 
 from __future__ import annotations
 
-import gc
+from collections.abc import Callable
 from functools import partial
 
 import pytest
 import torch
 import torch.nn as nn
 
+from qualification.profiling import CORRECTNESS_PROFILING
 from shadowspill.errors import PlanningError
 from shadowspill.pytorch import import_model_state, plan_step
-from shadowspill.pytorch.capture.artifacts import TaskInputProvenance
 from shadowspill.pytorch.profiling.profiler import TaskProfiler, _SavedValues
 from shadowspill.pytorch.state.registry import registry_for
 from shadowspill.runtime import Runtime
-from qualification.profiling import CORRECTNESS_PROFILING
 
 from ..runtime_test_support import public_test_runtime
 from .test_01_public_training import _require_adapter
@@ -50,21 +48,35 @@ def _plan(model: nn.Module, runtime: Runtime, tmp_path: object):
 def test_a_plan_keeps_no_host_copy_of_what_its_forwards_saved(
     tmp_path: object, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """The saved values are measured on in the spill pool, and all released.
-
-    Planning keeps the artifacts the copies are attached to, so they are
-    emptied, and the pool given back what they occupied, once every task is
-    measured and warmed.
-    """
+    """Both fresh profiles and cache-only warmups retain one snapshot at a time."""
 
     _require_adapter()
-    in_pool: list[int] = []
+    snapshots: list[tuple[torch.Tensor, ...]] = []
+    sizes: list[int] = []
+    completed: list[tuple[int, int]] = []
+    keep = TaskProfiler.keep_saved_values
     release = TaskProfiler.release_host_memory
 
+    def recording_keep(
+        self: TaskProfiler, copies: tuple[torch.Tensor, ...], fill: Callable[[], None]
+    ) -> None:
+        assert self.saved_value_bytes_in_pool == 0, "previous backward still retained"
+        assert all(
+            value.untyped_storage().nbytes() == 0
+            for snapshot in snapshots
+            for value in snapshot
+        )
+        keep(self, copies, fill)
+        snapshots.append(copies)
+        sizes.append(self.saved_value_bytes_in_pool)
+
     def recording_release(self: TaskProfiler) -> None:
-        in_pool.append(self.saved_value_bytes_in_pool)
+        completed.append(
+            (self.saved_value_bytes_in_pool, self.peak_saved_value_bytes_in_pool)
+        )
         release(self)
 
+    monkeypatch.setattr(TaskProfiler, "keep_saved_values", recording_keep)
     monkeypatch.setattr(TaskProfiler, "release_host_memory", recording_release)
     torch.manual_seed(79)
     runtime = public_test_runtime()
@@ -73,26 +85,27 @@ def test_a_plan_keeps_no_host_copy_of_what_its_forwards_saved(
         runtime=runtime,
         pool="spill",
     )
-    training = _plan(model, runtime, tmp_path)
-    assert in_pool and in_pool[0] > 0, "the saved values were kept in the pool"
-    # By exact type: isinstance would reach through any dead weak proxy the
-    # collector is tracking and raise.
-    saved = [
-        item.representative_value
-        for item in gc.get_objects()
-        if type(item) is TaskInputProvenance
-        and item.produced_device_type is not None
-        and item.representative_value is not None
-    ]
-    assert saved, "the backward is measured on what its forward saved"
-    assert all(value.untyped_storage().nbytes() == 0 for value in saved)
-    # No saved value is left in the pool for the plan's steps to find.
-    assert not [
-        state
-        for state in registry_for(runtime).values()
-        if type(state.target) is _SavedValues
-    ]
-    training.close()
+    for cached in (False, True):
+        first_snapshot = len(snapshots)
+        training = _plan(model, runtime, tmp_path)
+        assert len(snapshots) > first_snapshot, "backward inputs must come from replay"
+        if cached:
+            assert training.plan_report.profile_cache_misses == 0
+            assert training.plan_report.profile_cache_hits > 0
+        else:
+            assert sum(sizes) > max(sizes), "exercise multiple forward snapshots"
+        assert completed[-1] == (0, max(sizes[first_snapshot:]))
+        assert all(
+            value.untyped_storage().nbytes() == 0
+            for snapshot in snapshots
+            for value in snapshot
+        )
+        assert not [
+            state
+            for state in registry_for(runtime).values()
+            if type(state.target) is _SavedValues
+        ]
+        training.close()
 
 
 @pytest.mark.cuda
