@@ -139,6 +139,13 @@ def main():
     )
     if code:
         raise SystemExit(code)
+    ranks = [
+        json.loads((directory / f"rank-{rank:05d}" / "completed.json").read_text())
+        for rank in range(config["world_size"])
+    ]
+    if not all(rank["passed"] and rank["steps"] == config["steps"] for rank in ranks):
+        raise RuntimeError("Workers did not complete the requested training steps")
+    write(root / "completed.json", {"passed": True, "selected": winner, "ranks": ranks})
 
 
 if __name__ == "__main__":

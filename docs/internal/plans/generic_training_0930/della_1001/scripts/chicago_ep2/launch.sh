@@ -15,11 +15,13 @@ export TMPDIR="/tmp/ss_ep2_${SLURM_JOB_ID}" TORCHINDUCTOR_CACHE_DIR="$out/induct
 export TRITON_CACHE_DIR="$out/triton_cache" CUDA_CACHE_PATH="$out/cuda_cache"
 mkdir -p "$out" "$TMPDIR"
 [[ ! -e "$out/exit.json" ]] || { echo 'Use a fresh output directory'; exit 2; }
+trap 'exit 130' INT
+trap 'exit 143' TERM
 trap 'code=$?; python - "$out/exit.json" "$code" <<"PY"
 from pathlib import Path
 from datetime import datetime, timezone
 import json,sys
-Path(sys.argv[1]).write_text(json.dumps({"exit_code":int(sys.argv[2]),"passed":int(sys.argv[2])==0,"utc":datetime.now(timezone.utc).isoformat()})+"\n")
+Path(sys.argv[1]).write_text(json.dumps({"exit_code":int(sys.argv[2]),"passed":int(sys.argv[2])==0 and (Path(sys.argv[1]).parent / "completed.json").exists(),"utc":datetime.now(timezone.utc).isoformat()})+"\n")
 PY
 ' EXIT
 git rev-parse HEAD > "$out/shadowspill_revision.txt"

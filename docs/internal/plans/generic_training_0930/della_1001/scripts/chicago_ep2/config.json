@@ -32,7 +32,6 @@
     "eps": 1e-08,
     "weight_decay": 0.0,
     "gradient_dtype": "bfloat16",
-    "reduction_dtype": "bfloat16",
     "opt_state_dtype": "bfloat16",
     "parameter_rounding": "stochastic",
     "opt_state_rounding": "stochastic"
