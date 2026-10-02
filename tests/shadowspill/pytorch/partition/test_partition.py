@@ -181,6 +181,32 @@ class _PlainBlock(nn.Module):
         return torch.relu(self.inner(value))
 
 
+@pytest.mark.parametrize("partition,stage_count", [("auto", 4), ("whole", 1)])
+def test_forward_callback_keeps_registered_module_paths(partition, stage_count):
+    """Strict Export's closure paths must not collapse a repeated model."""
+    from shadowspill.pytorch.planning.forward.capture import (
+        _restore_registered_module_paths,
+        _select_forward,
+    )
+
+    model = _NestedRepeatedNetwork().eval()
+    inputs = (torch.randn(2, 8),)
+    with torch.no_grad():
+        expected = model(*inputs).square().sum()
+    view = _select_forward(model, lambda model, x: model(x).square().sum())
+    with torch.no_grad():
+        captured = capture_forward(model, inputs)
+        _restore_registered_module_paths(captured, model, view)
+        split = partition_export(captured, model, partition=partition)
+    assert len(split.stages) == stage_count
+    assert set(captured.exported_program.state_dict) == set(model.state_dict())
+    torch.testing.assert_close(captured.exported_program.module()(*inputs), expected)
+    registered = dict(model.named_modules())
+    for node in captured.exported_program.graph.nodes:
+        for path, _ in node.meta.get("nn_module_stack", {}).values():
+            assert path in registered
+
+
 def test_a_stage_with_no_kernel_is_folded_into_the_stage_that_uses_it() -> None:
     """A stage that only renames its input has nothing to compile.
 
