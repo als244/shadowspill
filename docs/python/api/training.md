@@ -146,6 +146,10 @@ ordinary callables work as well.
 norms; `parameter_scalars` derives host RMS, gradient/weight ratios and module
 shares. Observers must not mutate their inputs. The compiled tasks return
 summary tensors; conversion to Python values happens after completion.
+Observation tasks use the selected process device. Host collection batches
+asynchronous transfers by device and dtype, waits for those transfers, then
+copies the small summaries from pinned staging into ordinary CPU storage.
+Returned results can safely outlive the trainer and runtime streams.
 
 ## Optional loop policy
 

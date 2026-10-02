@@ -26,8 +26,9 @@ def to_host(value: Any) -> Any:
     """Copy only returned summaries; synchronize once per contributing GPU.
 
     No GPU packing allocation is made outside an admitted task. Copies share
-    pinned host storage by dtype, and all are submitted before waiting. Returned
-    CPU views own that storage; no device tensor is retained by the result.
+    pinned staging storage by dtype, and all are submitted before waiting. After
+    synchronization, one CPU copy per group gives returned views ordinary host
+    storage. They can then outlive the runtime and its device streams safely.
     """
 
     leaves, spec = tree_flatten(value)
@@ -42,19 +43,26 @@ def to_host(value: Any) -> Any:
                     raise ValueError(f"metric copies do not support {leaf.device.type}")
                 groups[(leaf.device, leaf.dtype)].append((index, leaf))
     devices = set()
+    staging = []
     for (device, dtype), tensors in groups.items():
         host = torch.empty(
             sum(t.numel() for _, t in tensors), dtype=dtype, pin_memory=True
         )
         offset = 0
+        views = []
         for index, tensor in tensors:
             view = host[offset : offset + tensor.numel()].view(tensor.shape)
             view.copy_(tensor.detach(), non_blocking=True)
-            result[index] = view
+            views.append((index, offset, tensor.numel(), tensor.shape))
             offset += tensor.numel()
+        staging.append((host, views))
         devices.add(device)
     for device in devices:
         torch.cuda.current_stream(device).synchronize()
+    for host, views in staging:
+        owned = torch.empty_like(host, pin_memory=False).copy_(host)
+        for index, offset, count, shape in views:
+            result[index] = owned[offset : offset + count].view(shape)
     return tree_unflatten(result, spec)
 
 

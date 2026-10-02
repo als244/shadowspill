@@ -23,6 +23,7 @@ from torch import nn
 from shadowspill.pytorch import ProfilingOptions
 from shadowspill.training import Distributed, Trainer
 from shadowspill.training.backends import ShadowSpill
+from shadowspill.training.observations import parameter_norms
 
 
 class Model(nn.Module):
@@ -212,6 +213,9 @@ def run(args):
                         grad_dtype=torch.float32,
                         master_dtype=torch.float32 if args.masters else None,
                         shard_optimizer=args.sharded,
+                        parameter_metrics=parameter_norms
+                        if args.parameter_metrics
+                        else None,
                     )
 
                 example = batch(rank, 0, dtype, world)
@@ -310,6 +314,15 @@ def run(args):
                             loss.backward()
                         reference_optimizer.step()
                         result = trainer.step(batch(rank, step, dtype, world))
+                        if args.parameter_metrics:
+                            assert result.parameter_metrics
+                            assert all(
+                                value.device.type == "cpu"
+                                and not value.is_pinned()
+                                and torch.isfinite(value).all()
+                                for metrics in result.parameter_metrics.values()
+                                for value in metrics.values()
+                            )
                         if diagnostic_tasks is not None:
                             assert diagnostic_tasks == expected_tasks
                             diagnostic_tasks.clear()
@@ -436,6 +449,7 @@ if __name__ == "__main__":
     parser.add_argument("--masters", action="store_true")
     parser.add_argument("--stochastic", action="store_true")
     parser.add_argument("--diagnostics", action="store_true")
+    parser.add_argument("--parameter-metrics", action="store_true")
     parser.add_argument(
         "--optimizer", choices=("torch", "mlops", "matrix"), default="torch"
     )

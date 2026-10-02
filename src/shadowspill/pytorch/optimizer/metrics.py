@@ -28,7 +28,10 @@ ParameterMetrics = Callable[[torch.Tensor, torch.Tensor], Any]
 
 
 def with_parameter_metrics(
-    captured: OptimizerCapture, observer: ParameterMetrics | None
+    captured: OptimizerCapture,
+    observer: ParameterMetrics | None,
+    *,
+    device_index: int = 0,
 ) -> OptimizerCapture:
     """Read compute weights and accumulated gradients before optimizer casts.
 
@@ -64,7 +67,12 @@ def with_parameter_metrics(
             arguments = tuple(bindings[name].tensor for name in names)
             tasks.append(
                 _capture_observer(
-                    observer, names, gradients, arguments, update.completion_stage_index
+                    observer,
+                    names,
+                    gradients,
+                    arguments,
+                    update.completion_stage_index,
+                    device_index=device_index,
                 )
             )
             observed.update(gradients)
@@ -78,9 +86,11 @@ def _capture_observer(
     gradients: tuple[str, ...],
     arguments: tuple[torch.Tensor, ...],
     stage: int | None,
+    *,
+    device_index: int,
 ) -> OptimizerTask:
     mode = FakeTensorMode(allow_non_fake_inputs=True)
-    arguments = fake_device_inputs(arguments, mode)
+    arguments = fake_device_inputs(arguments, mode, device_index=device_index)
 
     def metrics(*values: torch.Tensor) -> dict[str, Any]:
         return {
