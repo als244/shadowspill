@@ -6,10 +6,13 @@ import json
 from collections.abc import Mapping
 from pathlib import Path
 from types import TracebackType
-from typing import Any, Self
+from typing import TYPE_CHECKING, Any, Self
 
 from ._reporting import RecordExchange, Reducer, sum_rank_records
 from .observations import MetricTable
+
+if TYPE_CHECKING:
+    import torch
 
 
 class Wandb:
@@ -68,6 +71,8 @@ class DistributedLogger:
     Pass as Trainer.fit's logger. Trainer retains per-rank console/JSONL output;
     this helper adds aggregate console/JSONL output and optional grouped W&B runs.
     All ranks construct/close it in matching order using their CPU control group.
+    W&B rank telemetry follows device (the current CUDA device by default).
+    The aggregate maps nodes/GPUs/ranks and monitors this host's participating GPUs.
     """
 
     def __init__(
@@ -76,12 +81,15 @@ class DistributedLogger:
         *,
         run_dir: str | Path,
         wandb: Mapping[str, Any] | None = None,
+        device: str | int | torch.device | None = None,
         reduce: Reducer = sum_rank_records,
         max_pending: int = 256,
         timeout: float = 120,
     ) -> None:
         import torch.distributed as dist
 
+        if str(dist.get_backend(control_group)).lower() != "gloo":
+            raise ValueError("distributed reporting needs a CPU Gloo group")
         self.rank = dist.get_rank()
         self.members = tuple(dist.get_process_group_ranks(control_group))
         self.local: Wandb | None = None
@@ -95,6 +103,33 @@ class DistributedLogger:
             self.output = (aggregate_root / "metrics.jsonl").open("a", buffering=1)
         try:
             if wandb is not None:
+                from ._wandb_devices import (
+                    aggregate_devices,
+                    device_record,
+                    monitored_options,
+                )
+
+                # Exchange identity only during setup. Metric logging never
+                # inspects GPU tensors or adds a training-step collective.
+                local: dict[str, Any]
+                try:
+                    local = dict(device_record(device), rank=self.rank)
+                except Exception as error:
+                    local = {"rank": self.rank, "error": str(error)}
+                devices: list[Any] = [None] * len(self.members)
+                dist.all_gather_object(devices, local, group=control_group)
+                failures = [item for item in devices if "error" in item]
+                if failures:
+                    raise RuntimeError(f"cannot identify W&B rank devices: {failures}")
+                nodes = list(dict.fromkeys(item["hostname"] for item in devices))
+                for item in devices:
+                    item["node_id"] = f"node-{nodes.index(item['hostname']):05d}"
+                local = devices[self.members.index(self.rank)]
+                rank_root = root / f"rank-{self.rank:05d}"
+                rank_root.mkdir(parents=True, exist_ok=True)
+                (rank_root / "device.json").write_text(
+                    json.dumps(local, indent=2) + "\n"
+                )
                 options = dict(wandb)
                 project = options.pop("project")
                 name = options.pop("name", root.name)
@@ -102,18 +137,35 @@ class DistributedLogger:
                 options["reinit"] = "create_new"
                 # Explicit run IDs, when supplied for resume, remain distinct.
                 identity = options.pop("id", None)
-                local_options = dict(options)
+                local_options = monitored_options(
+                    options,
+                    []
+                    if local["wandb_gpu_index"] is None
+                    else [local["wandb_gpu_index"]],
+                )
                 local_options["job_type"] = "rank"
                 if identity is not None:
                     local_options["id"] = f"{identity}-rank-{self.rank:05d}"
                 self.local = Wandb(
                     project=project,
                     run_dir=root / f"rank-{self.rank:05d}",
-                    name=f"{name}/rank-{self.rank:05d}",
+                    name=f"{name}/{local['node_id']}/rank-{self.rank:05d}",
                     **local_options,
                 )
+                self.local.run.config.update({"shadowspill_device": local})  # type: ignore[no-untyped-call]
                 if self.rank == self.members[0]:
-                    aggregate_options = dict(options)
+                    mapping = aggregate_devices(devices)
+                    (aggregate_root / "devices.json").write_text(
+                        json.dumps(mapping, indent=2) + "\n"
+                    )
+                    indices = sorted(
+                        {
+                            item["aggregate_gpu_index"]
+                            for item in mapping
+                            if item["aggregate_gpu_index"] is not None
+                        }
+                    )
+                    aggregate_options = monitored_options(options, indices)
                     aggregate_options["job_type"] = "aggregate"
                     if identity is not None:
                         aggregate_options["id"] = f"{identity}-aggregate"
@@ -122,6 +174,30 @@ class DistributedLogger:
                         run_dir=aggregate_root,
                         name=f"{name}/aggregate",
                         **aggregate_options,
+                    )
+                    self.aggregate.run.config.update(  # type: ignore[no-untyped-call]
+                        {
+                            "shadowspill_devices": mapping,
+                            "system_metrics_scope": (
+                                "participating GPUs visible on this host"
+                            ),
+                        }
+                    )
+                    import wandb as wandb_sdk
+
+                    columns = [
+                        "node_id",
+                        "hostname",
+                        "rank",
+                        "device",
+                        "name",
+                        "uuid",
+                        "metric_prefix",
+                        "aggregate_metric_prefix",
+                    ]
+                    self.aggregate.run.summary["system/gpu_mapping"] = wandb_sdk.Table(
+                        columns=list(columns),
+                        data=[[item[key] for key in columns] for item in mapping],
                     )
             self.exchange = RecordExchange(
                 control_group,
