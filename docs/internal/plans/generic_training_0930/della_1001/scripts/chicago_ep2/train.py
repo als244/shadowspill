@@ -126,6 +126,7 @@ def main():
         "--config", type=Path, default=Path(__file__).with_name("config.json")
     )
     parser.add_argument("--steps", type=int)
+    parser.add_argument("--plan-only", action="store_true")
     args = parser.parse_args()
     cfg = json.loads(args.config.read_text())
     if args.steps is not None:
@@ -181,7 +182,6 @@ def main():
                 orderings=default_orderings,
             )
         )
-        from mlops.expert_parallel import QuackMoEConfig, create_buffer
         from moonep.buffer import get_vmm_granularity
 
         from workloads.quack import OLMoE
@@ -190,25 +190,12 @@ def main():
             backend="nccl", device_id=backend.device, timeout=timedelta(seconds=1800)
         )
         stack.callback(dist.destroy_process_group, group)
-        options = QuackMoEConfig(
-            ep_size=world,
-            num_experts=model_config.n_experts,
-            top_k=model_config.top_k,
-            model_dim=model_config.d_model,
-            expert_hidden_dim=model_config.d_ff_expert,
-            weight_grad_dtype=torch.bfloat16,
-            router_dtype=torch.bfloat16,
-            router_weight_grad_dtype=torch.bfloat16,
-            renormalize_topk=False,
-        )
         phase("model_initialization", vmm_granularity=int(get_vmm_granularity()))
-        buffer = create_buffer(options, cfg["microbatch_tokens"], group)
-        stack.callback(buffer.destroy)
         torch.manual_seed(cfg["seed"] + rank)
         model = OLMoE(
             model_config,
             ep_group=group,
-            buffers=[buffer] * model_config.n_layers,
+            token_capacity=cfg["microbatch_tokens"],
             device=backend.device,
             parameter_device="cpu",
             router_dtype=torch.bfloat16,
@@ -222,10 +209,37 @@ def main():
                 torch.nn.init.kaiming_uniform_(expert.router_weight, a=math.sqrt(5))
                 expert.gate_up_weight.normal_(std=model_config.d_model**-0.5)
                 expert.down_weight.normal_(std=model_config.d_ff_expert**-0.5)
+        # Experiment evidence: verify that depth does not multiply scratch.
+        from mlops.expert_parallel.quack.registry import _runtime
+
+        runtimes = [_runtime(block.moe.experts._handle) for block in model.blocks]
+        banks = {id(bank): bank for runtime in runtimes for bank in runtime.banks}
+        buffers = {
+            id(runtime.caller_buffer): runtime.caller_buffer for runtime in runtimes
+        }
+        assert len(banks) == 2 and len(buffers) == 1
+        context = next(iter(buffers.values()))._require_ctx()
+        communication = dict(
+            token_capacity=context["S"],
+            token_buffers=len(buffers),
+            projection_banks=len(banks),
+            expert_bank_bytes_per_rank=sum(
+                tensor.numel() * tensor.element_size() // world
+                for bank in banks.values()
+                for tensor in bank.external_tensors()
+            ),
+            token_buffer_external_bytes_per_rank=sum(
+                context[name].numel() * context[name].element_size() // world
+                for name in ("hidden_buf", "meta_buf")
+            ),
+        )
+        del banks, buffers, runtimes, context
+        write_json(rank_dir / "communication-memory.json", communication)
         phase(
             "model_ready",
             local_parameters=sum(p.numel() for p in model.parameters()),
             gpu_free_bytes=torch.cuda.mem_get_info(backend.device)[0],
+            communication=communication,
         )
 
         def objective(model, values):
@@ -267,6 +281,27 @@ def main():
                 ),
             )
         )
+        phase("planning")
+        trainer.prepare(example)
+        predicted_seconds = trainer.plan.search_result.simulation.makespan_ns / 1e9
+        plan_record = dict(
+            passed=True,
+            tokens_per_rank=cfg["microbatch_tokens"],
+            accumulation_per_rank=len(example["parts"]),
+            predicted_seconds=predicted_seconds,
+            execution_gib=cfg["execution_gib"],
+            external_headroom_gib=cfg["external_headroom_gib"],
+        )
+        write_json(rank_dir / "planning.json", plan_record)
+        (rank_dir / "plan.json").write_text(
+            trainer.plan.execution_plan.to_json() + "\n"
+        )
+        if trainer.planning is not None:
+            trainer.planning.save(rank_dir / "search.json")
+        phase("planned", **plan_record)
+        if args.plan_only:
+            return
+
         logger = stack.enter_context(
             DistributedLogger(
                 dist.group.WORLD,
@@ -288,9 +323,6 @@ def main():
                 aggregate_url=logger.aggregate.run.url if logger.aggregate else None,
             ),
         )
-        phase("planning")
-        trainer.prepare(example)
-        phase("planned")
 
         def evaluation():
             update = validation_update(

@@ -11,7 +11,7 @@ export NCCL_SOCKET_IFNAME=lo GLOO_SOCKET_IFNAME=lo
 export HTTP_PROXY=http://127.0.0.1:18375 HTTPS_PROXY=http://127.0.0.1:18375
 export NO_PROXY=localhost,127.0.0.1
 export WANDB_DIR="$out" WANDB_MODE=online
-export TMPDIR="$out/tmp" TORCHINDUCTOR_CACHE_DIR="$out/inductor_cache"
+export TMPDIR="/tmp/ss_ep2_${SLURM_JOB_ID}" TORCHINDUCTOR_CACHE_DIR="$out/inductor_cache"
 export TRITON_CACHE_DIR="$out/triton_cache" CUDA_CACHE_PATH="$out/cuda_cache"
 mkdir -p "$out" "$TMPDIR"
 [[ ! -e "$out/exit.json" ]] || { echo 'Use a fresh output directory'; exit 2; }
@@ -24,7 +24,5 @@ PY
 ' EXIT
 git rev-parse HEAD > "$out/shadowspill_revision.txt"
 git -C /home/as1669/mlops rev-parse HEAD > "$out/mlops_revision.txt"
-cp "$recipe/config.json" "$recipe/train.py" "$out/"
-python -u -m torch.distributed.run --standalone --nproc-per-node=2 \
-  --tee 3 --log-dir "$out/processes" "$recipe/train.py" \
-  --config "$recipe/config.json" "$@" 2>&1 | tee "$out/console.log"
+cp "$recipe/config.json" "$recipe/train.py" "$recipe/search.py" "$out/"
+python -u "$recipe/search.py" --config "$recipe/config.json" "$@" 2>&1 | tee -a "$out/console.log"
