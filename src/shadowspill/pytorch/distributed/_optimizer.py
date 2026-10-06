@@ -22,8 +22,16 @@ from shadowspill.pytorch.optimizer.artifacts import (
     OptimizerTensorBinding,
     OptimizerTensorRole,
 )
-from shadowspill.pytorch.optimizer.bindings import optimizer_input_provenance
+from shadowspill.pytorch.optimizer.bindings import (
+    optimizer_input_provenance,
+    physical_bindings,
+)
 from shadowspill.pytorch.optimizer.tasks import partition_optimizer_graph
+from shadowspill.pytorch.representations import (
+    detached_representation,
+    empty_representation,
+    map_tensor,
+)
 
 
 @dataclass(frozen=True)
@@ -130,7 +138,10 @@ def distribute_capture(
     # Preserve the current CPU storage when model Parameter.data later becomes
     # a device placeholder. Retaining the Parameter itself follows that rebind.
     provenance_values.update(
-        {name: value.detach() for name, value in (representative_values or {}).items()}
+        {
+            name: detached_representation(value)
+            for name, value in (representative_values or {}).items()
+        }
     )
     for binding in captured.bindings:
         if binding.role == roles.PARAMETER:
@@ -152,25 +163,39 @@ def distribute_capture(
         incoming.append(replace(binding, tensor=tensor))
     for name, layout in layouts.items():
         if layout.master:
+            like = next(b.tensor for b in captured.bindings if b.name == name)
+            source = (representative_values or {}).get(f"compute.{name}")
+            compute = (
+                empty_representation(source, like)
+                if source is not None
+                else like.new_empty_strided(
+                    layout.shape,
+                    layout.stride or _contiguous_strides(layout.shape),
+                    dtype=layout.dtype,
+                )
+            )
             incoming.append(
                 OptimizerTensorBinding(
                     f"compute.{name}",
                     roles.COMPUTE_COPY,
-                    next(
-                        b.tensor for b in captured.bindings if b.name == name
-                    ).new_empty_strided(
-                        layout.shape,
-                        layout.stride or _contiguous_strides(layout.shape),
-                        dtype=layout.dtype,
-                    ),
+                    compute,
                     True,
                     True,
                 )
             )
     positions = {b.name: i for i, b in enumerate(incoming)}
     original = captured.update.graph_module
+    physical = physical_bindings(tuple(incoming))
 
-    def update(*values: torch.Tensor) -> tuple[torch.Tensor, ...]:
+    def update(*physical_values: torch.Tensor) -> tuple[torch.Tensor, ...]:
+        mapped = {
+            id(binding.tensor): value
+            for binding, value in zip(physical, physical_values, strict=True)
+        }
+        values = tuple(
+            map_tensor(binding.tensor, lambda value: mapped[id(value)])
+            for binding in incoming
+        )
         arguments: list[torch.Tensor] = []
         owned: dict[str, torch.Tensor] = {}
         for binding in captured.bindings:
@@ -195,28 +220,28 @@ def distribute_capture(
         for name, layout in layouts.items():
             destination = f"compute.{name}" if layout.master else name
             values[positions[destination]].copy_(_gather(owned[name], layout))
-        return tuple(v for v, b in zip(values, incoming, strict=True) if b.mutable)
+        return tuple(
+            v for v, b in zip(physical_values, physical, strict=True) if b.mutable
+        )
 
-    examples = tuple(b.tensor for b in incoming)
+    examples = tuple(b.tensor for b in physical)
     with torch.no_grad():
         graph = make_fx(update, tracing_mode="fake")(*examples)
         artifact = GraphArtifact.capture(
             kind="optimizer",
             graph_module=graph,
             example_inputs=examples,
-            input_provenance=optimizer_input_provenance(
-                tuple(incoming), provenance_values
-            ),
+            input_provenance=optimizer_input_provenance(physical, provenance_values),
         )
     tasks = partition_optimizer_graph(
-        artifact, tuple(incoming), parameter_stage_owners=parameter_stage_owners
+        artifact, physical, parameter_stage_owners=parameter_stage_owners
     )
     return replace(
         captured,
         update=artifact,
-        bindings=tuple(incoming),
+        bindings=physical,
         update_tasks=tasks,
-        mutation_names=tuple(b.name for b in incoming if b.mutable),
+        mutation_names=tuple(b.name for b in physical if b.mutable),
     )
 
 

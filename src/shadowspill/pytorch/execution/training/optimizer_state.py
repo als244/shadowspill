@@ -61,6 +61,11 @@ class OptimizerState:
         self._state = state
         self._bridge = bridge
         self._lowered = lowered
+        self._objects = tuple(
+            item
+            for item in lowered.optimizer_objects
+            if item.role is not OptimizerTensorRole.COMPUTE_COPY
+        )
         self._size_by_alias = {
             item.alias_group_id: item.size_bytes
             for item in lowered.program.alias_groups
@@ -144,9 +149,7 @@ class OptimizerState:
         exposed = self.expose_cpu()
         try:
             planned = tuple(
-                item
-                for item in self._lowered.optimizer_objects
-                if item.name not in self.master_names
+                item for item in self._objects if item.name not in self.master_names
             )
             tensors = {
                 item.name: item
@@ -159,7 +162,7 @@ class OptimizerState:
             }
             current = self.current_bindings()
             self._write_restored_tensors(planned, current, tensors)
-            for item in self._lowered.optimizer_objects:
+            for item in self._objects:
                 if item.name not in self.master_names:
                     continue
                 master = current[item.name].tensor
@@ -255,7 +258,7 @@ class OptimizerState:
         current = self.current_bindings()
         exposed: list[ExposedOptimizerTensor] = []
         owners: dict[str, torch.Tensor] = {}
-        for item in self._lowered.optimizer_objects:
+        for item in self._objects:
             actual = current.get(item.name)
             if actual is None:
                 continue

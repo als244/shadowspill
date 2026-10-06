@@ -3,6 +3,15 @@
 What ShadowSpill needs from an optimizer, what it promises in return, and why
 the boundary falls where it does.
 
+Quantized parameter wrappers expose their payloads and scales through the
+[tensor representation contract](state-import.md#tensor-representations).
+Their optimizer gradient remains one dense logical tensor. If a backward
+returns several parameter gradients as views of one larger allocation,
+lowering materializes independent gradient tensors inside the measured backward
+task. This preserves their separate optimizer lifetimes; the copies count
+toward the reported workspace and runtime. A full dense gradient that already
+owns its allocation needs no such copy.
+
 ## One principle
 
 **Declaration is separated from value, and each belongs to the side that knows
@@ -155,8 +164,24 @@ parameters.
   cast to the weight's dtype, so every forward reads the weights as of the
   last update. The pool holds both, and the weights are what a plan fetches
   to compute with.
-- A weight already at `master_dtype` is its own master, and nothing is added
-  for it.
+- An ordinary weight already at `master_dtype` is its own master, and nothing
+  is added for it. A tensor wrapper still gets a dense master: its logical
+  dtype can be fp32 while its physical payload is quantized.
+
+For a [tensor representation](state-import.md#tensor-representations), the
+update publishes the master with `compute.copy_(master)`. That operation's
+captured graph owns quantization and writes every physical component. The
+forward and backward tasks consume those components; the dense master belongs
+to the optimizer task. There is one logical dense gradient per parameter,
+regardless of the number of physical components.
+
+Distributed master shards use the same publication rule after gathering the
+logical compute value. For arbitrary scaled representations, quantizing each
+flat shard independently would change the scaling recipe. Checkpoint restore
+therefore stages one complete logical parameter on CPU before publication;
+that temporary is bounded by the largest parameter, not the whole model.
+The current generic sharded update gathers at the wrapper's logical dtype;
+it does not infer a compressed collective format from its component dtypes.
 
 `grad_dtype` is the dtype gradients are created and accumulated at, the
 weights' own when it is `None`, and it is independent of the masters. With

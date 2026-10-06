@@ -199,3 +199,12 @@ shadowspill_add_public_api_test(
 shadowspill_add_public_api_test(
   test_05_generic_training.py test_mutable_buffer_survives_diagnostics_and_repeated_training 300
 )
+shadowspill_add_public_api_test(
+  test_08_tensor_representations.py test_planned_representation_save 300
+)
+shadowspill_add_public_api_test(
+  test_08_tensor_representations.py test_planned_representation_recompute 300
+)
+shadowspill_add_public_api_test(
+  test_08_tensor_representations.py test_planned_packed_parameter_gradients 300
+)

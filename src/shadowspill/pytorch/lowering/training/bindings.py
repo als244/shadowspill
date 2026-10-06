@@ -12,6 +12,7 @@ from shadowspill.pytorch.capture.artifacts import (
     GraphArtifact,
 )
 from shadowspill.pytorch.capture.storage import TaskStorageContract
+from shadowspill.pytorch.representations import RootInputKey, tensor_components
 from shadowspill.step import StepDataOrdering
 from shadowspill.task.inputs import TaskInputRole
 from shadowspill.task.layout import CompiledTaskLayout
@@ -50,13 +51,7 @@ def bind_training_boundaries(
     metadata: tuple[str | None, ...],
 ) -> TrainingBoundaries:
     root_objects = tuple(
-        {
-            slot.leaf_index: slot.object_id
-            for slot in _tensor_slots(
-                capture.partitioned.root_inputs,
-                objects.catalog,
-            )
-        }
+        _root_objects(capture.partitioned.root_inputs, objects.catalog)
         for capture in captures
     )
     boundary_ids: list[tuple[tuple[str, ...], ...]] = []
@@ -108,7 +103,7 @@ def _bind_canonical_stage_boundary(
     capture: PartitionedTrainingCapture,
     stage: DifferentiatedStage,
     prior_boundaries: list[tuple[str, ...]],
-    root_objects: dict[int, str],
+    root_objects: dict[RootInputKey, str],
     catalog: ObjectCatalog,
     profiles: TaskProfileCatalog,
     metadata_digest: str | None,
@@ -314,7 +309,11 @@ def _prior_gradient_inputs(
         parameter_gradient_leaves(pair),
         strict=True,
     ):
-        parameter = sources.get(leaf)
+        parameter = (
+            pair.gradient_provenance[leaf].source
+            if pair.gradient_provenance
+            else sources.get(leaf)
+        )
         destination = (
             gradient_by_parameter.get(parameter) if parameter is not None else None
         )
@@ -616,14 +615,34 @@ def _stage_backward_contributions(
     )
     output_leaves = {item.leaf_index for item in storage_contract.output_views}
     results: list[ObjectSlot] = []
-    for output_index in pair.forward.tensor_argument_positions:
-        object_id = input_by_position.get(output_index)
-        if object_id is None or output_index not in output_leaves:
+    indices = (
+        range(len(pair.gradient_provenance))
+        if pair.gradient_provenance
+        else pair.forward.tensor_argument_positions
+    )
+    logical_positions = {
+        logical: physical
+        for physical, (logical, path) in enumerate(pair.forward.input_components)
+        if not path
+    }
+    for output_index in indices:
+        object_id = input_by_position.get(
+            logical_positions.get(output_index, output_index)
+        )
+        if output_index not in output_leaves:
             continue
         destination: str | None
-        if object_id in parameter_ids:
+        provenance = (
+            pair.gradient_provenance[output_index] if pair.gradient_provenance else None
+        )
+        if provenance is not None and provenance.role is TaskInputRole.PARAMETER:
+            assert provenance.source is not None
+            destination = gradient_by_parameter[provenance.source]
+        elif object_id in parameter_ids:
             destination = gradient_by_parameter[object_id]
         else:
+            if object_id is None:
+                continue
             destination = cotangent_by_activation.get((position, object_id))
             if destination is None:
                 continue
@@ -637,21 +656,21 @@ def _stage_backward_contributions(
     return tuple(results), resolver.storage_handoffs
 
 
-def _tensor_slots(
+def _root_objects(
     values: tuple[object, ...], inventory: ObjectCatalog
-) -> tuple[ObjectSlot, ...]:
-    return tuple(
-        ObjectSlot(
-            index,
-            inventory.add(
-                value,
-                role=tensor_value_role(value, continuous_role=ObjectRole.INPUT),
+) -> dict[RootInputKey, str]:
+    result: dict[RootInputKey, str] = {}
+    for index, value in enumerate(values):
+        if not isinstance(value, torch.Tensor):
+            continue
+        for path, component in tensor_components(value):
+            key: RootInputKey = (index, path) if path else index
+            result[key] = inventory.add(
+                component,
+                role=tensor_value_role(component, continuous_role=ObjectRole.INPUT),
                 persistence=Persistence.STEP,
-            ),
-        )
-        for index, value in enumerate(values)
-        if isinstance(value, torch.Tensor)
-    )
+            )
+    return result
 
 
 __all__ = ["bind_training_boundaries", "prepare_training_variants"]

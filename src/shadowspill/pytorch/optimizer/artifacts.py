@@ -68,6 +68,12 @@ class OptimizerTensorBinding:
     tensor: torch.Tensor
     mutable: bool
     spillable: bool
+    component_path: tuple[str, ...] = ()
+
+    @property
+    def logical_name(self) -> str:
+        suffix = ".".join(self.component_path)
+        return self.name[: -len(suffix) - 1] if suffix else self.name
 
 
 @dataclass(frozen=True, slots=True)

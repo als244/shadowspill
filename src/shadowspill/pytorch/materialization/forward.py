@@ -25,6 +25,7 @@ from shadowspill.pytorch.materialization.replacement import (
     MaterializedState,
     ReplacementStorageViews,
 )
+from shadowspill.pytorch.representations import component_at
 from shadowspill.pytorch.runtime_adapter.boundaries import (
     publish_initial_tensor,
     submit_initial_actions,
@@ -206,12 +207,7 @@ class MaterializedForwardState(MaterializedState):
         if self._closed:
             return OrderedDict(self.model.state_dict())
         owners = self._read_model_aliases()
-        result: OrderedDict[str, torch.Tensor] = OrderedDict()
-        for item in self._registrations():
-            if item.binding.name not in self._state_names:
-                continue
-            alias_id = self.bridge.objects.alias_for_object(item.binding.object_id)
-            result[item.binding.name] = self._cpu_view(owners[alias_id], item.tensor)
+        result = self._state_from_owners(owners)
         missing = set(self._state_names) - set(result)
         if missing:
             raise RuntimeError(
@@ -234,28 +230,8 @@ class MaterializedForwardState(MaterializedState):
             raise RuntimeError(
                 f"state_dict keys differ: missing={missing}, unexpected={unexpected}"
             )
-        owners = self._read_model_aliases()
-        for item in self._registrations():
-            name = item.binding.name
-            if name not in expected:
-                continue
-            source = state[name]
-            if not isinstance(source, torch.Tensor):
-                raise TypeError(f"state_dict entry {name!r} must be a tensor")
-            destination = self._cpu_view(
-                owners[self.bridge.objects.alias_for_object(item.binding.object_id)],
-                item.tensor,
-            )
-            if (
-                tuple(source.shape) != tuple(destination.shape)
-                or source.dtype != destination.dtype
-            ):
-                raise RuntimeError(
-                    f"state_dict entry {name!r} has incompatible shape or dtype"
-                )
-            destination.copy_(source.detach().to(device="cpu"))
-        for alias_id, owner in owners.items():
-            write_spill_tensor(self.bridge.objects, alias_id, owner)
+        with torch.no_grad():
+            self.write_model_entries(state)
 
     def refresh_inputs(self, inputs: Sequence[Any]) -> tuple[object, ...]:
         """Write guarded CPU payloads into persistent input-slot spill storage."""
@@ -592,7 +568,7 @@ class MaterializedForwardState(MaterializedState):
         if persistent is not None:
             self._persistent_aliases.add(alias_id)
             return
-        if alias_id in self._model_aliases:
+        if alias_id in self._model_aliases and source.untyped_storage().nbytes():
             raise PlanningError(
                 f"registered model alias {alias_id!r} has no imported runtime storage"
             )
@@ -640,7 +616,9 @@ class MaterializedForwardState(MaterializedState):
                 if binding.parameter
                 else self.model.get_buffer(binding.name)
             )
-            values.append(_Registration(binding, tensor))
+            values.append(
+                _Registration(binding, component_at(tensor, binding.component_path))
+            )
         return tuple(values)
 
 

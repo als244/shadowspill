@@ -152,10 +152,13 @@ def restore_compute_weights(
     """Rebuild compute weights from saved masters using bounded CPU transfers.
 
     Checkpoints store each trained weight once. Owners broadcast their saved
-    slices through the CPU control group. Replicas cast directly into existing
-    model storage; no full master is gathered and no device task runs.
+    slices through the CPU control group. Ordinary replicas cast directly into
+    existing model storage. A tensor representation may quantize across shard
+    boundaries, so it receives one complete logical CPU tensor at a time.
     """
     control = bound.control
+    from shadowspill.pytorch.representations import is_wrapper
+
     parameters = {item.name: item for item in bound.parameters}
 
     def describe() -> list[dict[str, Any]]:
@@ -230,6 +233,9 @@ def restore_compute_weights(
             destination = (
                 destinations[name] if control.rank in item["replicas"] else None
             )
+            representation = destination if is_wrapper(destination) else None
+            if representation is not None:
+                destination = torch.empty(item["shape"], dtype=dtype, device="cpu")
             for index, owner in enumerate(owners):
                 start = index * capacity
                 length = max(0, min(capacity, count - start))
@@ -276,6 +282,18 @@ def restore_compute_weights(
                             ] = tile.to(destination.dtype)
 
                     control.run("checkpoint/install_compute_tile", install_tile)
+
+            def publish_representation(
+                representation: torch.Tensor | None = representation,
+                destination: torch.Tensor | None = destination,
+            ) -> None:
+                if representation is not None:
+                    assert destination is not None
+                    representation.copy_(destination)
+
+            control.run(
+                "checkpoint/publish_compute_representation", publish_representation
+            )
     control.exchange("checkpoint/weights_restored", True)
 
 

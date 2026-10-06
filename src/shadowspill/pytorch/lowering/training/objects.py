@@ -11,11 +11,11 @@ from torch.export.graph_signature import InputKind
 from shadowspill.errors import CaptureError
 from shadowspill.ir import ObjectRole, Persistence
 from shadowspill.pytorch.capture.aot import TrainingObjectiveCapture
-from shadowspill.pytorch.capture.live_storage import live_view_key
 from shadowspill.pytorch.optimizer import (
     OptimizerCapture,
     OptimizerTensorRole,
 )
+from shadowspill.pytorch.representations import component_at, is_wrapper
 from shadowspill.task.slots import ObjectSlot
 
 from ...graph_pairs import PartitionedTrainingCapture
@@ -88,10 +88,14 @@ def register_training_objects(
     gradient_by_parameter = {
         item.parameter_object_id: item.gradient_object_id for item in gradients
     }
+    gradient_by_parameter.update(
+        {f"model.{item.parameter_name}": item.gradient_object_id for item in gradients}
+    )
     optimizer_objects = _register_optimizer_objects(
         optimizer,
         catalog,
         gradients,
+        model,
     )
     return TrainingObjects(
         catalog,
@@ -147,7 +151,7 @@ def _register_supplied_inputs(
 def _register_gradients(
     model: nn.Module,
     inventory: ObjectCatalog,
-    parameter_objects: dict[tuple[int, int], str],
+    parameter_objects: dict[str, str],
     *,
     receives_gradient: Collection[str],
     dtypes: Mapping[str, torch.dtype],
@@ -165,14 +169,23 @@ def _register_gradients(
     for name, parameter in model.named_parameters():
         if not parameter.requires_grad or name not in receives_gradient:
             continue
-        parameter_id = parameter_objects[live_view_key(parameter)]
+        parameter_id = parameter_objects[name]
         # A program is lowered from fake tensors, so this describes the
         # gradient's geometry and allocates nothing; the object it becomes
         # is created in a pool when the plan runs.
-        gradient = torch.empty_like(
-            parameter,
-            memory_format=torch.preserve_format,
-            dtype=dtypes.get(name, parameter.dtype),
+        gradient = (
+            torch.empty_strided(
+                parameter.shape,
+                parameter.stride(),
+                dtype=dtypes.get(name, parameter.dtype),
+                device=parameter.device,
+            )
+            if is_wrapper(parameter)
+            else torch.empty_like(
+                parameter,
+                memory_format=torch.preserve_format,
+                dtype=dtypes.get(name, parameter.dtype),
+            )
         )
         gradient_id = inventory.add(
             gradient, role=ObjectRole.GRADIENT, persistence=Persistence.STEP
@@ -185,13 +198,14 @@ def _register_optimizer_objects(
     optimizer: OptimizerCapture,
     inventory: ObjectCatalog,
     gradients: tuple[GradientBinding, ...],
+    model: nn.Module,
 ) -> tuple[OptimizerObjectBinding, ...]:
     parameter_names = {item.parameter_name for item in gradients}
     gradient_names = {f"gradient.{item.parameter_name}" for item in gradients}
     # Where the update writes a compute copy, the optimizer's parameter is a
     # master copy of the weights, and an object of the optimizer's own.
     mastered = {
-        binding.name.removeprefix("compute.")
+        binding.logical_name.removeprefix("compute.")
         for binding in optimizer.bindings
         if binding.role is OptimizerTensorRole.COMPUTE_COPY
     }
@@ -203,6 +217,24 @@ def _register_optimizer_objects(
     results: list[OptimizerObjectBinding] = []
     for binding in optimizer.bindings:
         if binding.role is OptimizerTensorRole.COMPUTE_COPY:
+            if binding.component_path:
+                value = component_at(
+                    model.get_parameter(binding.logical_name.removeprefix("compute.")),
+                    binding.component_path,
+                )
+                results.append(
+                    OptimizerObjectBinding(
+                        binding.name,
+                        inventory.add(
+                            value,
+                            role=ObjectRole.PARAMETER,
+                            persistence=Persistence.CHECKPOINT,
+                            retain_spill_copy=True,
+                        ),
+                        binding.role,
+                        binding.mutable,
+                    )
+                )
             continue  # the model's weights, registered with its state
         if binding.role is OptimizerTensorRole.PARAMETER:
             if binding.name not in parameter_names:

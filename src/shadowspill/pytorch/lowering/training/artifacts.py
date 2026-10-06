@@ -19,6 +19,7 @@ from shadowspill.pytorch.capture.artifacts import (
     ObjectiveSchema,
 )
 from shadowspill.pytorch.optimizer import OptimizerTaskArtifact, OptimizerTensorRole
+from shadowspill.pytorch.representations import RootInputKey
 from shadowspill.task.entrypoints import TaskEntrypoint
 from shadowspill.task.slots import ObjectSlot, TaskStorageHandoff
 
@@ -102,7 +103,7 @@ class TrainingObjects:
     catalog: ObjectCatalog
     registrations: tuple[RegistrationBinding, ...]
     root_slots: tuple[tuple[ObjectSlot, ...], ...]
-    parameter_objects: dict[tuple[int, int], str]
+    parameter_objects: dict[str, str]
     gradients: tuple[GradientBinding, ...]
     gradient_by_parameter: dict[str, str]
     optimizer_objects: tuple[OptimizerObjectBinding, ...]
@@ -111,7 +112,7 @@ class TrainingObjects:
 @dataclass(frozen=True, slots=True)
 class TrainingBoundaries:
     object_ids: tuple[tuple[tuple[str, ...], ...], ...]
-    root_objects: tuple[dict[int, str], ...]
+    root_objects: tuple[dict[RootInputKey, str], ...]
     cotangents: dict[tuple[int, str], str]
     fixed_tensors: dict[str, FixedTensorBinding]
     public_outputs: dict[int, tuple[str, ...]]

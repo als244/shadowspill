@@ -10,6 +10,7 @@ import torch
 import torch.nn as nn
 
 from shadowspill.pytorch.distributed import borrowed_group_memo
+from shadowspill.pytorch.representations import map_tensor
 
 from .records import PersistentStorage, TensorView
 
@@ -53,6 +54,18 @@ def copy_model_with_runtime_storages(
         storage.views = tuple(views)
         storage.frontend_storage_is_separate = not addressable
         imported.append(storage)
+
+    def empty_leaf(value: torch.Tensor) -> torch.Tensor:
+        if value.untyped_storage().nbytes():
+            raise RuntimeError("imported model component has no storage registration")
+        return copy.deepcopy(value, memo)
+
+    for _, tensor in (
+        *model.named_parameters(remove_duplicate=False),
+        *model.named_buffers(remove_duplicate=False),
+    ):
+        # Nonempty leaves are already in memo; empty state has no pool storage.
+        map_tensor(tensor, empty_leaf, memo=memo)
     copied = copy.deepcopy(model, memo)
     if copied is model:
         raise RuntimeError("model copy unexpectedly retained source identity")

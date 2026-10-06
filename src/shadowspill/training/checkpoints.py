@@ -19,6 +19,11 @@ from typing import Any, Literal
 import torch
 import torch.nn as nn
 
+from shadowspill.pytorch.state.serialization import (
+    decode_tensor_state,
+    encode_tensor_state,
+)
+
 
 def save(
     path: Path,
@@ -41,7 +46,12 @@ def save(
         for alias in _names(module)[name]:
             model[alias] = master.detach()
     torch.save(
-        {"model": model, "optimizer": optimizer.state_dict(), "step": step}, path
+        {
+            "model": encode_tensor_state(model),
+            "optimizer": optimizer.state_dict(),
+            "step": step,
+        },
+        path,
     )
 
 
@@ -55,7 +65,7 @@ def load(
     return its step. A master takes the value written for its weight, and the
     weight that value's cast."""
 
-    model = dict(state["model"])
+    model = decode_tensor_state(state["model"], module.state_dict())
     dtypes = {name: value.dtype for name, value in module.state_dict().items()}
     with torch.no_grad():
         for name, master in (masters or {}).items():

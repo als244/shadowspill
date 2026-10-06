@@ -23,6 +23,7 @@ from shadowspill.pytorch.optimizer import (
     training_parameter_stage_owners,
     training_parameters_with_gradients,
 )
+from shadowspill.pytorch.representations import is_wrapper
 from shadowspill.pytorch.state.optimizer import (
     adopt_optimizer_state_for_plan,
     declare_varying_hyperparams,
@@ -59,8 +60,9 @@ def materialize_training_state(
 ) -> TrainingMaterializationArtifacts:
     """Materialize registered state and invoke/capture the optimizer exactly once.
 
-    With a ``master_dtype``, every weight a step trains at another dtype gets
-    a master copy at that one, and the optimizer is built over the masters.
+    With a ``master_dtype``, each tensor-wrapper weight and every ordinary
+    weight at another dtype gets a dense master copy at that dtype, and the
+    optimizer is built over those masters.
     ``grad_dtype`` is the dtype the step keeps gradients at, which the
     captured update takes them in.
     """
@@ -272,7 +274,7 @@ def _master_copies(
         if parameter.requires_grad
         and name in receives_gradient
         and parameter.dtype.is_floating_point
-        and parameter.dtype != master_dtype
+        and (parameter.dtype != master_dtype or is_wrapper(parameter))
     }
 
 

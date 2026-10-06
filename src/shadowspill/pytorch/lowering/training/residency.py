@@ -23,7 +23,9 @@ def derive_training_residency(
     aliases = objects.catalog.alias_groups()
     alias_by_object = {item.object_id: item.alias_group_id for item in catalog_objects}
     parameter_aliases = {
-        alias_by_object[binding.parameter_object_id] for binding in objects.gradients
+        alias_by_object[binding.object_id]
+        for binding in objects.registrations
+        if binding.parameter
     }
     input_aliases = _external_input_aliases(
         catalog_objects,

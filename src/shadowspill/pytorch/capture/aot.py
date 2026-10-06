@@ -24,6 +24,7 @@ from shadowspill.pytorch.capture.artifacts import (
     GraphArtifact,
     ObjectiveSchema,
     TaskInputProvenance,
+    capture_inference_artifact,
     capture_objective_schema,
     normalize_objective_result,
 )
@@ -35,10 +36,13 @@ from shadowspill.pytorch.capture.retention import (
 )
 from shadowspill.pytorch.capture.storage import ExplicitMutation, StorageRootKind
 from shadowspill.pytorch.contracts import ObjectiveResult
+from shadowspill.pytorch.representations import is_wrapper, tensor_components
 from shadowspill.task.inputs import TaskInputRole
 
 from .accumulate import ACCUMULATE_MATMUL, ADDING_INTO
 from .effects import normalize_export_effects
+from .functional import functionalize_logical_export
+from .materialize import MATERIALIZE_GRADIENT
 from .torch_deprecations import copy_graph_module, quiet_leaf_spec_deprecation
 
 
@@ -192,9 +196,18 @@ def _export(module: nn.Module, inputs: Sequence[Any]) -> ExportCapture:
     try:
         with quiet_leaf_spec_deprecation():
             exported = torch.export.export(module, tuple(inputs), strict=True)
-            exported = exported.run_decompositions(
-                {torch.ops.aten.copy.default: _functional_copy}
-            )
+            # Decomposition unwraps tensor subclasses before differentiation,
+            # losing their logical gradient contract (and can mark integer
+            # payloads requires_grad). Preserve logical operators until AOT.
+            flat_inputs = _flatten_inputs(exported, inputs)
+            if any(is_wrapper(value) for value in flat_inputs):
+                exported = functionalize_logical_export(
+                    exported, flat_inputs, _functional_copy
+                )
+            else:
+                exported = exported.run_decompositions(
+                    {torch.ops.aten.copy.default: _functional_copy}
+                )
             normalize_export_effects(exported)
     except BaseException as exc:
         raise CaptureError(f"strict PyTorch export failed: {exc}") from exc
@@ -330,8 +343,7 @@ def rebind_training_objective(
 def inference_artifact(capture: ExportCapture) -> GraphArtifact:
     """Create the structural task contract for a functional Export graph."""
 
-    return GraphArtifact.capture(
-        kind="inference",
+    return capture_inference_artifact(
         graph_module=capture.exported_program.graph_module,
         example_inputs=capture.flat_inputs,
         explicit_mutations=_explicit_mutations(capture),
@@ -386,7 +398,19 @@ def capture_graph_pair(
     if not 0.0 <= memory_budget <= 1.0:
         raise ValueError("memory_budget must be between zero and one")
     normalized_mutations = _tensor_only_mutations(explicit_mutations, tuple(inputs))
-    tensor_provenance = _tensor_input_provenance(inputs, input_provenance)
+    if any(is_wrapper(value) for value in inputs):
+        offsets = []
+        offset = 0
+        for value in inputs:
+            if isinstance(value, torch.Tensor):
+                offsets.append(offset)
+                offset += sum(1 for _ in tensor_components(value))
+        normalized_mutations = tuple(
+            replace(item, input_position=offsets[item.input_position])
+            for item in normalized_mutations
+        )
+    logical_provenance = _tensor_input_provenance(inputs, input_provenance)
+    tensor_provenance = physical_input_provenance(inputs, input_provenance)
     capture_inputs = _capture_inputs(inputs)
     collector = _GraphPairCollector(normalized_mutations, tensor_provenance)
     record = RetentionRecord()
@@ -401,7 +425,7 @@ def capture_graph_pair(
         root_output_positions=root_output_positions,
     )
     forward, backward_graph, backward_inputs = collector.require_complete()
-    return _build_graph_pair(
+    pair = _build_graph_pair(
         forward,
         backward_graph,
         backward_inputs,
@@ -410,6 +434,44 @@ def capture_graph_pair(
         retention=record.require(),
         specialize_unit_tangents=specialize_unit_tangents,
     )
+    if any(is_wrapper(value) for value in inputs):
+        components = tuple(
+            (index, path)
+            for index, value in enumerate(inputs)
+            if isinstance(value, torch.Tensor)
+            for path, _ in tensor_components(value)
+        )
+        pair = replace(
+            pair,
+            forward=replace(pair.forward, input_components=components),
+            gradient_provenance=logical_provenance
+            or tuple(
+                TaskInputProvenance(TaskInputRole.USER_INPUT)
+                for value in inputs
+                if isinstance(value, torch.Tensor)
+            ),
+        )
+    return pair
+
+
+def physical_input_provenance(
+    inputs: Sequence[object], provenance: tuple[TaskInputProvenance, ...] | None
+) -> tuple[TaskInputProvenance, ...] | None:
+    """Expand logical input provenance in AOT's physical-component order."""
+    if provenance is None:
+        return None
+    expanded = []
+    for value, item in zip(inputs, provenance, strict=True):
+        if not isinstance(value, torch.Tensor):
+            continue
+        references = (
+            dict(tensor_components(item.representative_value))
+            if item.representative_value is not None
+            else {}
+        )
+        for path, _component in tensor_components(value):
+            expanded.append(replace(item, representative_value=references.get(path)))
+    return tuple(expanded)
 
 
 # A backward graph is captured for one tangent layout and is then called
@@ -854,21 +916,38 @@ def _dense_gradient_layout(value: torch.Tensor) -> bool:
 def materialize_gradient_outputs(
     backward: GraphArtifact, leaf_indices: Sequence[int]
 ) -> GraphArtifact:
-    """Give overlapping/broadcast parameter gradients dense writable storage.
+    """Give parameter gradients independent dense writable storage.
 
     Autograd may return a scalar expanded across a weight. The optimizer and
     later accumulation consume a full gradient tensor. Materialize that layout
     inside the backward task, before its allocation profile is measured.
-    Ordinary dense and transposed-dense gradients need no extra operation.
+    A fused backward may also return slices of one larger gradient allocation.
+    Each parameter has its own canonical gradient and independent optimizer
+    lifetime, so those slices are materialized inside the measured task too.
+    Ordinary full-storage dense and transposed-dense gradients need no copy.
     """
     output = next(
         node for node in backward.graph_module.graph.nodes if node.op == "output"
     )
     leaves = list(output.args[0])
+    views = {view.leaf_index: view for view in backward.storage_contract.output_views}
+    roots = {root.root_id: root for root in backward.storage_contract.roots}
+    root_uses: dict[int, int] = {}
+    for view in views.values():
+        root_uses[view.root_id] = root_uses.get(view.root_id, 0) + 1
     needed = [
         index
         for index in leaf_indices
         if not _dense_gradient_layout(leaves[index].meta["val"])
+        or (
+            index in views
+            and (
+                root_uses[views[index].root_id] > 1
+                or views[index].offset_bytes != 0
+                or roots[views[index].root_id].minimum_span_bytes
+                > views[index].span_bytes
+            )
+        )
     ]
     if not needed:
         return backward
@@ -879,11 +958,20 @@ def materialize_gradient_outputs(
     mode = detect_fake_mode(backward.example_arguments)
     for index in needed:
         produced = leaves[index]
+        # Preserve an explicit allocation for slices of a shared gradient bank.
+        # An ordinary broadcast-layout clone can still fuse with its producer.
+        independent = index in views and (
+            root_uses[views[index].root_id] > 1
+            or views[index].offset_bytes != 0
+            or roots[views[index].root_id].minimum_span_bytes > views[index].span_bytes
+        )
         with graph.inserting_before(output):
             node = graph.call_function(
-                torch.ops.aten.clone.default,
+                MATERIALIZE_GRADIENT if independent else torch.ops.aten.clone.default,
                 args=(produced,),
-                kwargs={"memory_format": torch.contiguous_format},
+                kwargs={}
+                if independent
+                else {"memory_format": torch.contiguous_format},
             )
         node.meta = dict(produced.meta)
         with mode if mode is not None else nullcontext():

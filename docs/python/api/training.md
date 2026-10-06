@@ -240,6 +240,12 @@ upcasting compute weights cannot recover discarded master precision. Optimizer
 state is saved independently in both cases. `fit(checkpoint_weights=...)` selects
 the same policy for periodic saves.
 
+For tensor-wrapper weights, compute checkpoints retain the exact component
+payloads and scales. Loading reconstructs their logical type from the receiving
+model; the file itself contains ordinary tensors and remains compatible with
+`torch.load(..., weights_only=True)`. Use the same representation configuration
+when restoring a compute checkpoint.
+
 The backend also saves the completed-update count. Loop state includes RNG, elapsed time,
 selected candidate and optional source/schedule progress.
 
@@ -365,3 +371,18 @@ as described in [W&B's multiple-run API](https://docs.wandb.ai/ref/python/experi
 Runtime setup automatically discovers device-local host NUMA placement.
 `ShadowSpill(..., numa_binding=False)` opts out; see
 [host placement](frontend.md#host-numa-placement) for scope and fallback warnings.
+
+## Quantized parameter representations
+
+The model chooses its compute representation. Use the existing
+`master_dtype=torch.float32` and `grad_dtype=torch.float32` options when training
+quantized wrapper parameters with a dense optimizer such as AdamW or SGD.
+A wrapper gets a dense master even when its nominal dtype is already FP32.
+Its payloads and scales are separate physical state; its gradient remains one
+logical tensor. No FP8 flag belongs to the generic Trainer.
+
+The representation must expose its components through PyTorch's tensor
+flatten/unflatten protocol and provide traceable `copy_` conversion between
+the logical value and dense masters. See the
+[state contract](../../architecture/state-import.md#tensor-representations) and
+[optimizer ownership](../../architecture/optimizer.md#master-copies-and-the-dtype-gradients-are-kept-at).

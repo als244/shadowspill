@@ -73,6 +73,46 @@ API](../python/api/frontend.md#persistent-state).
 
 ## The contract
 
+### Tensor representations
+
+A registered tensor can use PyTorch's `__tensor_flatten__` /
+`__tensor_unflatten__` protocol to represent one logical value with several
+ordinary tensors, such as quantized bytes, scales and a transposed payload.
+ShadowSpill imports and accounts for those physical components, preserving
+shared storage, views and tied parameter identities. It rebuilds the logical
+wrapper for capture and state reads; the wrapper's nominal dtype does not
+determine its storage size. Nested representations use the same traversal.
+
+All physical state must be named by that protocol. Its metadata must be
+serializable, data-free configuration. Allocations hidden in a library or a
+communication handle remain external memory. The layer's logical backward
+defines the parameter gradient; integer payloads and scale components do not
+become separate trainable parameters just because they hold the bytes.
+
+For dense optimizer masters, the representation implements ordinary PyTorch
+`dense.copy_(wrapped)` for initialization and `wrapped.copy_(dense)` for
+publication and restore. Publication must be traceable, including every
+component it changes. A custom operation can expose an external kernel's tensor
+inputs and mutations. The tensor library supplies the conversion math;
+ShadowSpill neither chooses quantization nor recognizes particular libraries.
+
+This state protocol does not imply support for arbitrary wrapper-valued public
+inputs or task outputs. The supported boundary is registered state whose
+captured operations produce ordinary tensors and logical dense gradients.
+
+Profiling also records allocations retained by a library during task warmup.
+Their measured bytes reserve execution-pool capacity once; they are separate
+from the workspace allocated on each invocation. Allocations outside the
+framework allocator remain covered by external-memory headroom.
+
+Reusable library resources should be initialized outside individual task
+invocations. An allocation made inside a plan's task scope belongs to that plan
+and is reclaimed when it closes; a process-global library cache must not retain
+it for a later plan. Setup allocations made through the framework allocator are
+included in the runtime's fixed reserve before planning.
+
+### Construction and initialization
+
 Constructing into the pool asks three things of a model. They are not
 ShadowSpill inventions: they are the standard recipe for a model too large to
 build on the host, and a model that satisfies them works with other systems
@@ -275,6 +315,15 @@ conversion on the way to the device is not something a single alias can
 express.
 
 ## And back out, the same way
+
+Training checkpoint files encode tensor wrappers as their ordinary component
+tensors, plus a description of the representation. They remain readable with
+`torch.load(..., weights_only=True)`. Loading through ShadowSpill reconstructs
+the wrapper using the receiving model's class and metadata, after checking the
+description and component geometry. No quantizer object is unpickled from the
+checkpoint. Compute checkpoints preserve both quantized orientations and scales
+exactly; master checkpoints still save only the dense master where one exists.
+In-memory `state_dict()` results retain the model's logical tensor types.
 
 State leaves a pool by copying, exactly as it enters. `read_model_state()` and
 its optimizer counterpart answer with ordinary host memory -- one buffer per

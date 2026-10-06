@@ -8,6 +8,7 @@ import torch
 import torch.nn as nn
 
 from shadowspill.ir import ObjectRole, Persistence, SharedResidencyPolicy
+from shadowspill.pytorch.representations import RootInputKey, tensor_components
 from shadowspill.task.slots import ObjectSlot
 
 from ...partition import PartitionedExport
@@ -31,28 +32,31 @@ def register_forward_objects(
     registrations, _parameter_objects = register_model_state(model, catalog)
     shared = dict(shared_residency_by_root or {})
     root_slots: list[ObjectSlot] = []
+    roots: dict[RootInputKey, str] = {}
     for position, value in enumerate(partitioned.root_inputs):
         if not isinstance(value, torch.Tensor):
             continue
-        object_id = catalog.add(
-            value,
-            role=tensor_value_role(value, continuous_role=ObjectRole.INPUT),
-            persistence=Persistence.STEP,
-            retain_spill_copy=True,
-        )
-        policy = shared.get(position)
-        if policy is not None:
-            catalog.mark_shared_residency(
-                object_id,
-                policy[0],
-                retain_spill_copy=policy[1],
+        for path, component in tensor_components(value):
+            object_id = catalog.add(
+                component,
+                role=tensor_value_role(component, continuous_role=ObjectRole.INPUT),
+                persistence=Persistence.STEP,
+                retain_spill_copy=True,
             )
-        root_slots.append(ObjectSlot(position, object_id))
+            key: RootInputKey = (position, path) if path else position
+            roots[key] = object_id
+            policy = shared.get(position)
+            if policy is not None:
+                catalog.mark_shared_residency(
+                    object_id, policy[0], retain_spill_copy=policy[1]
+                )
+            if not path:
+                root_slots.append(ObjectSlot(position, object_id))
     return ForwardObjects(
         catalog,
         registrations,
         tuple(root_slots),
-        {slot.leaf_index: slot.object_id for slot in root_slots},
+        roots,
     )
 
 

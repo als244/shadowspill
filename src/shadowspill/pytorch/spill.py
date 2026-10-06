@@ -20,9 +20,11 @@ from shadowspill.runtime.failures import RuntimeExecutionError
 def _host_bytes(
     tensor: torch.Tensor, whose: str, error: type[Exception]
 ) -> tuple[int, int]:
+    storage = tensor.untyped_storage()
+    if not storage.nbytes():
+        return 0, 0
     if tensor.device.type != "cpu":
         raise error(f"{whose} must be CPU resident")
-    storage = tensor.untyped_storage()
     return storage.data_ptr(), storage.nbytes()
 
 

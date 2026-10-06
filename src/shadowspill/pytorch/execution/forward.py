@@ -18,6 +18,7 @@ from shadowspill.pytorch.lowering.forward import LoweredForwardProgram, TaskEntr
 from shadowspill.pytorch.materialization.forward import MaterializedForwardState
 from shadowspill.pytorch.materialization.replacement import ReplacementStorageViews
 from shadowspill.pytorch.partition import PartitionedExport
+from shadowspill.pytorch.representations import component_at
 from shadowspill.pytorch.runtime_adapter.boundaries import (
     PublishedStorage,
     acquire_for_caller,
@@ -122,10 +123,12 @@ class _ExecutingStage(nn.Module):
         annotations: TaskBoundaryAnnotations,
         timing: ExecutionTiming,
         ends_compute_span: bool,
+        input_components: tuple[tuple[int, tuple[str, ...]], ...] = (),
     ) -> None:
         super().__init__()
         self._timing = timing
         self._ends_compute_span = ends_compute_span
+        self._input_components = input_components
         self._entrypoint = entrypoint
         self._task = task
         self._function = function
@@ -151,6 +154,11 @@ class _ExecutingStage(nn.Module):
         )
 
     def forward(self, *arguments: object) -> object:
+        if self._input_components:
+            arguments = tuple(
+                component_at(arguments[index], path)  # type: ignore[arg-type]
+                for index, path in self._input_components
+            )
         task = self._timing.begin_task(self._entrypoint)
         prepared = self._before_task(arguments, task)
         try:
@@ -480,6 +488,7 @@ class ForwardExecutor(AnnotatedExecutor):
                 self._task_annotations,
                 self.timing,
                 execution_ordinal == len(self._entrypoints) - 1,
+                () if artifact is None else artifact.input_components,
             )
             if task.requires_entrypoint:
                 self._root.set_submodule(
