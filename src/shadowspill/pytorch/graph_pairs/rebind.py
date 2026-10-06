@@ -2,11 +2,17 @@
 
 from __future__ import annotations
 
+from dataclasses import replace
+
 import torch
 
 from shadowspill.errors import CaptureError
-from shadowspill.pytorch.capture.aot import rebind_backward_input_provenance
+from shadowspill.pytorch.capture.aot import (
+    physical_input_provenance,
+    rebind_backward_input_provenance,
+)
 from shadowspill.pytorch.capture.artifacts import AotGraphPair
+from shadowspill.pytorch.representations import component_at
 
 from ..partition.artifacts import StageExample
 from .artifacts import GraphPairVariant, TaskGraphPairs
@@ -44,7 +50,10 @@ def _rebind_graph_pair(
     roots: tuple[int, ...],
 ) -> AotGraphPair:
     forward_arguments: list[torch.Tensor] = []
-    for position in pair.forward.tensor_argument_positions:
+    components = pair.forward.input_components or tuple(
+        (position, ()) for position in pair.forward.tensor_argument_positions
+    )
+    for position, path in components:
         try:
             value = example.inputs[position]
         except IndexError as exc:
@@ -53,17 +62,22 @@ def _rebind_graph_pair(
             ) from exc
         if not isinstance(value, torch.Tensor):
             raise CaptureError("reused stage tensor argument became static")
-        forward_arguments.append(value.detach())
+        forward_arguments.append(component_at(value, path).detach())
     if len(forward_arguments) != pair.forward.argument_count:
         raise CaptureError("reused stage forward tensor argument count changed")
-    forward_provenance = tuple(
-        example.stage.input_provenance[position]
-        for position in pair.forward.tensor_argument_positions
+    forward_provenance = (
+        physical_input_provenance(example.inputs, example.stage.input_provenance)
+        if pair.forward.input_components
+        else tuple(
+            example.stage.input_provenance[position]
+            for position in pair.forward.tensor_argument_positions
+        )
     )
     forward = pair.forward.rebind_examples(
         tuple(forward_arguments),
         input_provenance=forward_provenance,
     )
+    forward = replace(forward, input_components=pair.forward.input_components)
     backward = pair.backward.rebind_examples(
         pair.backward.example_arguments,
         input_provenance=rebind_backward_input_provenance(pair, forward),
@@ -76,6 +90,15 @@ def _rebind_graph_pair(
         retention=pair.retention,
         saved_value_count=pair.saved_value_count,
         specialized_unit_tangent_count=pair.specialized_unit_tangent_count,
+        gradient_provenance=tuple(
+            provenance
+            for value, provenance in zip(
+                example.inputs, example.stage.input_provenance, strict=True
+            )
+            if isinstance(value, torch.Tensor)
+        )
+        if pair.gradient_provenance
+        else (),
     )
 
 

@@ -14,6 +14,11 @@ from shadowspill.errors import CaptureError
 from shadowspill.pytorch.accelerator import accelerator_device
 from shadowspill.pytorch.contracts import TensorSpec
 from shadowspill.pytorch.distributed import borrowed_group_memo
+from shadowspill.pytorch.representations import (
+    is_wrapper,
+    map_tensor,
+    tensor_components,
+)
 
 
 def fake_device_model(
@@ -25,20 +30,27 @@ def fake_device_model(
         model.named_buffers(remove_duplicate=False)
     )
     groups: dict[tuple[int, int], list[torch.Tensor]] = {}
-    for name, tensor in registrations:
-        if tensor.device.type != "cpu" or tensor.layout is not torch.strided:
+    for name, tensor in (
+        (".".join((name, *path)), component)
+        for name, value in registrations
+        for path, component in tensor_components(value)
+    ):
+        if tensor.layout is not torch.strided or (
+            tensor.device.type != "cpu"
+            and (tensor.is_meta or tensor.untyped_storage().nbytes())
+        ):
             raise CaptureError(
                 f"registered tensor {name!r} must be a strided CPU tensor"
             )
         storage = tensor.untyped_storage()
-        groups.setdefault((int(storage.data_ptr()), int(storage.nbytes())), []).append(
+        groups.setdefault((int(storage._cdata), int(storage.nbytes())), []).append(
             tensor
         )
 
     memo: dict[int, Any] = borrowed_group_memo()
     device = accelerator_device(device_index)
     with mode:
-        for (_address, storage_bytes), tensors in groups.items():
+        for (_identity, storage_bytes), tensors in groups.items():
             storage_owner = torch.empty(storage_bytes, dtype=torch.uint8, device=device)
             for tensor in tensors:
                 replica = torch.empty(0, dtype=tensor.dtype, device=device).set_(
@@ -53,6 +65,8 @@ def fake_device_model(
                         replica, requires_grad=bool(tensor.requires_grad)
                     )
                 memo[id(tensor)] = replica
+        for _, tensor in registrations:
+            map_tensor(tensor, lambda value: memo[id(value)], memo=memo)
         try:
             return copy.deepcopy(model, memo)
         except BaseException as exc:
@@ -66,8 +80,11 @@ def fake_device_inputs(
 
     device = accelerator_device(device_index)
     storage_owners: dict[tuple[str, int], torch.Tensor] = {}
+    tensor_memo: dict[int, Any] = {}
 
     def convert(value: object) -> object:
+        if isinstance(value, torch.Tensor) and is_wrapper(value):
+            return map_tensor(value, convert, memo=tensor_memo)
         if isinstance(value, TensorSpec):
             shape = value.shape
             stride = value.resolved_stride

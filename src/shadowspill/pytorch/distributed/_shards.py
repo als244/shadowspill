@@ -9,6 +9,8 @@ import torch
 import torch.distributed as dist
 from torch import nn
 
+from shadowspill.pytorch.representations import is_wrapper
+
 from ._optimizer import UpdateLayout
 
 if TYPE_CHECKING:
@@ -50,7 +52,8 @@ def parameter_layouts(
             alias,
             size,
             record.replicas.index(dist.get_rank()) if size > 1 else 0,
-            master_dtype is not None and master_dtype != weight.dtype,
+            master_dtype is not None
+            and (master_dtype != weight.dtype or is_wrapper(weight)),
             gradient_alias,
             len(record.contributions),
             tuple(weight.stride()),
@@ -119,6 +122,17 @@ def fill_parameter(
     """Copy an owned logical slice without flattening a noncontiguous full weight."""
     target = destination.view(-1)
     target.zero_()
+    if is_wrapper(source) and layout.group_size == 1:
+        destination.copy_(source)
+        return
+    if is_wrapper(source):
+        # Copying to a dense destination is the representation's ordinary
+        # PyTorch conversion contract, even when logical dtypes already match.
+        dense = torch.empty(
+            tuple(source.shape), dtype=destination.dtype, device=source.device
+        )
+        dense.copy_(source)
+        source = dense
     start = layout.start if layout.group_size > 1 else 0
     length = layout.length if layout.group_size > 1 else source.numel()
     elements = max(

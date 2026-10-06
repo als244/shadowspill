@@ -13,6 +13,7 @@ from torch.fx import GraphModule
 
 from shadowspill.errors import CaptureError
 from shadowspill.pytorch.capture.artifacts import GraphArtifact
+from shadowspill.pytorch.representations import detached_representation
 
 from .artifacts import (
     OpaqueOptimizerArtifact,
@@ -23,6 +24,7 @@ from .artifacts import (
 )
 from .bindings import (
     optimizer_input_provenance,
+    physical_bindings,
     restore_binding_values,
     step_bindings,
     tensor_bindings,
@@ -65,17 +67,21 @@ def capture_optimizer_update(
     copies = dict(compute_copies or {})
     for name, copy in copies.items():
         if not isinstance(copy, FakeTensor) and not copy.is_meta:
-            discovery.representative_values[f"compute.{name}"] = copy.detach()
+            discovery.representative_values[f"compute.{name}"] = (
+                detached_representation(copy)
+            )
     if has_optimizer_step_hooks(optimizer):
         return _hooked_optimizer_capture(discovery)
     key: str | None = None
     if store is not None:
         key = update_capture_identity(
             discovery.sandbox,
-            step_bindings(
-                tensor_bindings(discovery.sandbox, discovery.name_by_sandbox_id),
-                copies,
-                gradient_dtype,
+            physical_bindings(
+                step_bindings(
+                    tensor_bindings(discovery.sandbox, discovery.name_by_sandbox_id),
+                    copies,
+                    gradient_dtype,
+                )
             ),
             parameter_stage_owners=parameter_stage_owners,
         )
@@ -85,10 +91,14 @@ def capture_optimizer_update(
             # tasks is graph analysis, derived here as it is on a miss.
             with timer.measure("optimizer_trace_read"):
                 fake_update_sandbox(discovery)
-                bindings = step_bindings(
-                    tensor_bindings(discovery.sandbox, discovery.name_by_sandbox_id),
-                    copies,
-                    gradient_dtype,
+                bindings = physical_bindings(
+                    step_bindings(
+                        tensor_bindings(
+                            discovery.sandbox, discovery.name_by_sandbox_id
+                        ),
+                        copies,
+                        gradient_dtype,
+                    )
                 )
                 artifact = stored.restore(
                     bindings,
@@ -177,6 +187,8 @@ def _capture_optimizer_artifact(
         (binding.tensor, masters[binding.name.removeprefix("compute.")])
         for binding in bindings[len(own) :]
     )
+    closed = physical_bindings(closed)
+    bindings = physical_bindings(bindings)
     snapshots = {
         id(binding.tensor): binding.tensor.detach().clone() for binding in closed
     }

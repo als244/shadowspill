@@ -181,7 +181,7 @@ class FrameworkArtifacts:
         )
         os.close(descriptor)
         try:
-            torch.export.save(exported_program, temporary)
+            torch.export.save(_serializable_export(exported_program), temporary)
             os.replace(temporary, artifact_path)
         finally:
             with suppress(FileNotFoundError):
@@ -230,6 +230,51 @@ class FrameworkArtifacts:
             access="write",
             schema=_EXPORT_SCHEMA,
         )
+
+
+def _serializable_export(program: Any) -> Any:
+    """Remove FakeTensor implementation state from logical wrapper payloads.
+
+    Export's serializer handles an ordinary FakeTensor itself, but pickles a
+    wrapper as an object and encounters its components' unpicklable fake mode.
+    The archive contains geometry, so real meta components represent the same
+    uninitialized state without retaining that process-local capture machinery.
+    """
+    import torch
+    from torch._subclasses.fake_tensor import FakeTensor, unset_fake_temporarily
+
+    from shadowspill.pytorch.representations import (
+        empty_representation,
+        tensor_components,
+    )
+
+    owners: dict[int, torch.Tensor] = {}
+    memo: dict[int, Any] = {}
+
+    def state(values: Mapping[str, Any]) -> dict[str, Any]:
+        result = dict(values)
+        for name, value in values.items():
+            if not isinstance(value, torch.Tensor):
+                continue
+            if not any(
+                isinstance(tensor, FakeTensor) for _, tensor in tensor_components(value)
+            ):
+                continue
+            with unset_fake_temporarily():
+                result[name] = empty_representation(
+                    value,
+                    torch.empty(0, device="meta"),
+                    owners=owners,
+                    memo=memo,
+                )
+        return result
+
+    return program._update(
+        program.graph_module,
+        program.graph_signature,
+        state_dict=state(program.state_dict),
+        constants=state(program.constants),
+    )
 
 
 def _clear_compiler_caches() -> None:

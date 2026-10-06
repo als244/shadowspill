@@ -346,8 +346,6 @@ class PlanObjects:
         self._bind_plan_object(alias_id)
 
     def write_spill_bytes(self, alias_id: str, *, address: int, size: int) -> None:
-        if alias_id not in self._registered:
-            raise RuntimeExecutionError(f"object {alias_id!r} is not registered")
         expected = self._size(alias_id)
         if size != expected:
             raise RuntimeExecutionError(
@@ -356,6 +354,8 @@ class PlanObjects:
             )
         if expected == 0:
             return
+        if alias_id not in self._registered:
+            raise RuntimeExecutionError(f"object {alias_id!r} is not registered")
         require_status(
             self.library,
             self.runtime_library.shadowspill_write_object(

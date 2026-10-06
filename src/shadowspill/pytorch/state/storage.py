@@ -11,6 +11,7 @@ from typing import Any
 
 import torch
 
+from shadowspill.pytorch.representations import map_tensor, tensor_components
 from shadowspill.runtime import (
     MemoryPool,
     Runtime,
@@ -29,6 +30,7 @@ from shadowspill.runtime.plan import RuntimeBridge
 
 from .records import PersistentState, PersistentStorage, TensorView
 from .registry import registry_for
+from .serialization import decode_tensor_state
 
 
 @dataclass(frozen=True, slots=True)
@@ -145,6 +147,7 @@ def import_state_from_file(
             "checkpoints are not supported"
         )
     named = tuple(tensors)
+    values = decode_tensor_state(values, {item.name: item.tensor for item in named})
     _require_checkpoint_agrees(named, values, path)
 
     def fill() -> None:
@@ -214,8 +217,9 @@ def import_then_fill(
     moved = [
         item.name
         for item in named
-        if item.tensor.untyped_storage().nbytes()
-        and int(item.tensor.untyped_storage().data_ptr()) not in leases
+        for _, tensor in tensor_components(item.tensor)
+        if tensor.untyped_storage().nbytes()
+        and int(tensor.untyped_storage().data_ptr()) not in leases
     ]
     if moved:
         raise RuntimeConfigurationError(
@@ -494,17 +498,25 @@ def read_state(
         id(view.tensor): (item, view) for item in state.storages for view in item.views
     }
     result: dict[str, torch.Tensor] = {}
-    for named in tensors:
-        found = located.get(id(named.tensor))
-        if found is None:
-            continue
-        item, view = found
-        result[named.name] = torch.empty(0, dtype=view.tensor.dtype).set_(
+    memo: dict[int, Any] = {}
+
+    def read_leaf(tensor: torch.Tensor) -> torch.Tensor:
+        if tensor.untyped_storage().nbytes() == 0:
+            return tensor.detach().cpu()
+        item, view = located[id(tensor)]
+        return torch.empty(0, dtype=view.tensor.dtype).set_(
             owners[id(item)].untyped_storage(),
             view.storage_offset,
             view.shape,
             view.stride,
         )
+
+    for named in tensors:
+        if all(
+            id(value) in located or value.untyped_storage().nbytes() == 0
+            for _, value in tensor_components(named.tensor)
+        ):
+            result[named.name] = map_tensor(named.tensor, read_leaf, memo=memo).detach()
     return result
 
 
@@ -688,7 +700,12 @@ def _storage_roots(
 ) -> tuple[tuple[torch.Tensor, tuple[TensorView, ...]], ...]:
     grouped: dict[int, tuple[torch.Tensor, list[TensorView]]] = {}
     seen_tensors: set[int] = set()
-    for item in tensors:
+    leaves = (
+        NamedTensor(".".join((item.name, *path)), tensor)
+        for item in tensors
+        for path, tensor in tensor_components(item.tensor)
+    )
+    for item in leaves:
         tensor = item.tensor
         if not isinstance(tensor, torch.Tensor):
             raise TypeError(f"state entry {item.name!r} is not a tensor")

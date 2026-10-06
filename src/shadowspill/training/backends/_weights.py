@@ -7,6 +7,8 @@ from typing import Any
 import torch
 from torch import nn
 
+from shadowspill.pytorch.representations import is_wrapper
+
 from .._types import ParameterObserver
 
 
@@ -20,9 +22,14 @@ class Weights:
         self.named = dict(model.named_parameters())
         self.trainable = {n: p for n, p in self.named.items() if p.requires_grad}
         self.masters = {
-            name: nn.Parameter(weight.detach().to(master_dtype))
+            name: nn.Parameter(
+                torch.empty(
+                    weight.shape, dtype=master_dtype, device=weight.device
+                ).copy_(weight.detach())
+            )
             for name, weight in self.trainable.items()
-            if master_dtype is not None and weight.dtype != master_dtype
+            if master_dtype is not None
+            and (weight.dtype != master_dtype or is_wrapper(weight))
         }
         self.grad_dtype = grad_dtype
         self.sums: dict[str, torch.Tensor] = {}

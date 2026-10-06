@@ -20,8 +20,8 @@ from shadowspill.pytorch.accelerator import DEVICE_TYPE
 from shadowspill.pytorch.capture.live_storage import (
     live_storage_bytes,
     live_storage_identity,
-    live_view_key,
 )
+from shadowspill.pytorch.representations import tensor_components
 
 
 @dataclass(frozen=True, slots=True)
@@ -31,6 +31,7 @@ class RegistrationBinding:
     name: str
     object_id: str
     parameter: bool
+    component_path: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -455,31 +456,35 @@ class ObjectCatalog:
 def register_model_state(
     model: nn.Module,
     catalog: ObjectCatalog,
-) -> tuple[tuple[RegistrationBinding, ...], dict[tuple[int, int], str]]:
+) -> tuple[tuple[RegistrationBinding, ...], dict[str, str]]:
     """Register parameters and buffers once for every lowering mode."""
 
     registrations: list[RegistrationBinding] = []
-    parameter_objects: dict[tuple[int, int], str] = {}
-    checkpoint_names = set(model.state_dict())
+    parameter_objects: dict[str, str] = {}
+    checkpoint_names = set(model.state_dict(keep_vars=True))
     for name, parameter in model.named_parameters(remove_duplicate=False):
-        object_id = catalog.add(
-            parameter,
-            role=ObjectRole.PARAMETER,
-            persistence=Persistence.CHECKPOINT,
-            retain_spill_copy=True,
-        )
-        registrations.append(RegistrationBinding(name, object_id, True))
-        parameter_objects[live_view_key(parameter)] = object_id
+        for path, component in tensor_components(parameter):
+            object_id = catalog.add(
+                component,
+                role=ObjectRole.PARAMETER,
+                persistence=Persistence.CHECKPOINT,
+                retain_spill_copy=True,
+            )
+            registrations.append(RegistrationBinding(name, object_id, True, path))
+            parameter_objects.setdefault(name, object_id)
     for name, buffer in model.named_buffers(remove_duplicate=False):
-        object_id = catalog.add(
-            buffer,
-            role=ObjectRole.BUFFER,
-            persistence=(
-                Persistence.CHECKPOINT if name in checkpoint_names else Persistence.RUN
-            ),
-            retain_spill_copy=True,
-        )
-        registrations.append(RegistrationBinding(name, object_id, False))
+        for path, component in tensor_components(buffer):
+            object_id = catalog.add(
+                component,
+                role=ObjectRole.BUFFER,
+                persistence=(
+                    Persistence.CHECKPOINT
+                    if name in checkpoint_names
+                    else Persistence.RUN
+                ),
+                retain_spill_copy=True,
+            )
+            registrations.append(RegistrationBinding(name, object_id, False, path))
     return tuple(registrations), parameter_objects
 
 

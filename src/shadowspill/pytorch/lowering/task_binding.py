@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping
+
 import torch
 from torch.utils._pytree import tree_flatten
 
@@ -14,6 +16,7 @@ from shadowspill.pytorch.capture.storage import (
     StorageRootKind,
     TaskStorageContract,
 )
+from shadowspill.pytorch.representations import RootInputKey
 from shadowspill.task.layout import CompiledTaskLayout
 from shadowspill.task.slots import ObjectSlot, TaskStorageHandoff
 
@@ -345,7 +348,7 @@ def resolve_stage_input_slots(
     stage: StageExample,
     artifact: GraphArtifact,
     *,
-    root_objects: dict[int, str],
+    root_objects: Mapping[RootInputKey, str],
     stage_outputs: tuple[dict[int, str], ...],
     compact_leaf_indices: bool,
 ) -> tuple[ObjectSlot, ...]:
@@ -355,7 +358,10 @@ def resolve_stage_input_slots(
     if len(stage.stage.input_sources) != len(input_leaves):
         raise CaptureError("stage input provenance arity changed")
     slots: list[ObjectSlot] = []
-    for compact_index, stage_position in enumerate(artifact.tensor_argument_positions):
+    components = artifact.input_components or tuple(
+        (position, ()) for position in artifact.tensor_argument_positions
+    )
+    for compact_index, (stage_position, path) in enumerate(components):
         if stage_position >= len(input_leaves) or not isinstance(
             input_leaves[stage_position], torch.Tensor
         ):
@@ -364,7 +370,10 @@ def resolve_stage_input_slots(
         if source is None:
             raise CaptureError("tensor stage argument has no semantic source")
         if source.root_input_index is not None:
-            object_id = root_objects.get(source.root_input_index)
+            key: RootInputKey = (
+                (source.root_input_index, path) if path else source.root_input_index
+            )
+            object_id = root_objects.get(key)
             if object_id is None:
                 raise CaptureError("stage references an unregistered root input")
         else:
@@ -380,7 +389,9 @@ def resolve_stage_input_slots(
                 ) from exc
         slots.append(
             ObjectSlot(
-                compact_index if compact_leaf_indices else stage_position,
+                compact_index
+                if compact_leaf_indices or artifact.input_components
+                else stage_position,
                 object_id,
             )
         )

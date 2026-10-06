@@ -5,6 +5,7 @@ from __future__ import annotations
 import copy
 import hashlib
 import json
+import pickle
 import time
 from dataclasses import dataclass, field, replace
 from typing import TYPE_CHECKING, Any, Literal
@@ -26,6 +27,11 @@ from shadowspill.pytorch.contracts import (
     normalize_objective_result as normalize_objective_result,
 )
 from shadowspill.pytorch.distributed import current as current_preparation
+from shadowspill.pytorch.representations import (
+    is_wrapper,
+    map_tensor,
+    tensor_components,
+)
 from shadowspill.task.inputs import TaskInputRole
 
 from .retention import RetentionSummary
@@ -64,6 +70,40 @@ class TensorGeometry:
             "device_type": self.device_type,
             "requires_grad": self.requires_grad,
         }
+
+
+def _representation_identity(
+    tensor: torch.Tensor, aliases: dict[int, int]
+) -> dict[str, object]:
+    if not is_wrapper(tensor):
+        return {
+            "alias": aliases.setdefault(live_storage_identity(tensor), len(aliases))
+        }
+    names, metadata = tensor.__tensor_flatten__()
+    try:
+        metadata_bytes = pickle.dumps(metadata, protocol=5)
+    except Exception as error:
+        raise CaptureError(
+            "tensor representation metadata must be serializable"
+        ) from error
+    return {
+        "type": f"{type(tensor).__module__}.{type(tensor).__qualname__}",
+        "metadata": hashlib.sha256(metadata_bytes).hexdigest(),
+        "components": [
+            {
+                "name": name,
+                "geometry": TensorGeometry.from_tensor(value).identity(),
+                "alias": (
+                    None
+                    if is_wrapper(value)
+                    else aliases.setdefault(live_storage_identity(value), len(aliases))
+                ),
+                "representation": _representation_identity(value, aliases),
+            }
+            for name in names
+            for value in (getattr(tensor, name),)
+        ],
+    }
 
 
 @dataclass(frozen=True, slots=True)
@@ -122,6 +162,8 @@ class GraphArtifact:
     storage_contract_capture_ns: int = field(compare=False)
     compatibility_digest: str
     example_arguments: tuple[object, ...] = field(repr=False, compare=False)
+    #: Physical compiled arguments mapped to logical stage inputs.
+    input_components: tuple[tuple[int, tuple[str, ...]], ...] = ()
 
     @classmethod
     def input_compatibility_digest(
@@ -150,7 +192,7 @@ class GraphArtifact:
             value for value in example_inputs if isinstance(value, torch.Tensor)
         )
         alias_group_by_storage: dict[int, int] = {}
-        identity = {
+        identity: dict[str, object] = {
             "graph": _canonical_graph(graph_module),
             "inputs": [
                 TensorGeometry.from_tensor(value).identity()
@@ -168,7 +210,8 @@ class GraphArtifact:
             "input_roles": [item.role.value for item in normalized],
             "tensor_argument_alias_groups": [
                 alias_group_by_storage.setdefault(
-                    live_storage_identity(value), len(alias_group_by_storage)
+                    id(value) if is_wrapper(value) else live_storage_identity(value),
+                    len(alias_group_by_storage),
                 )
                 for value in tensor_arguments
             ],
@@ -183,6 +226,13 @@ class GraphArtifact:
             "torch": torch.__version__,
             "provider": provider_version(),
         }
+        # Every graph pair uses the logical-to-physical input contract, even
+        # when each logical tensor has only one ordinary storage component.
+        component_aliases: dict[int, int] = {}
+        identity["representations"] = [
+            _representation_identity(value, component_aliases)
+            for value in tensor_arguments
+        ]
         encoded = json.dumps(identity, sort_keys=True, separators=(",", ":"))
         return hashlib.sha256(encoded.encode()).hexdigest()
 
@@ -533,8 +583,7 @@ def capture_forward_stage_artifacts(
     """
 
     return tuple(
-        GraphArtifact.capture(
-            kind="inference",
+        capture_inference_artifact(
             graph_module=example.stage.graph_module,
             example_inputs=example.inputs,
             explicit_mutations=example.stage.mutations,
@@ -542,6 +591,66 @@ def capture_forward_stage_artifacts(
         )
         for example in partitioned.stages
     )
+
+
+def capture_inference_artifact(
+    *,
+    graph_module: GraphModule,
+    example_inputs: tuple[object, ...],
+    explicit_mutations: tuple[ExplicitMutation, ...] = (),
+    input_provenance: tuple[TaskInputProvenance, ...] | None = None,
+) -> GraphArtifact:
+    """Lower logical representations only after inference semantics are captured."""
+    components: tuple[tuple[int, tuple[str, ...]], ...] = ()
+    if any(is_wrapper(value) for value in example_inputs):
+        from torch.fx.experimental.proxy_tensor import make_fx
+
+        from .aot import physical_input_provenance
+
+        logical = example_inputs
+        graph = graph_module
+        components = tuple(
+            (index, path)
+            for index, value in enumerate(logical)
+            if isinstance(value, torch.Tensor)
+            for path, _ in tensor_components(value)
+        )
+        leaves = tuple(
+            component
+            for value in logical
+            if isinstance(value, torch.Tensor)
+            for _, component in tensor_components(value)
+        )
+
+        def execute(*values: torch.Tensor) -> object:
+            mapped = {id(old): new for old, new in zip(leaves, values, strict=True)}
+            return graph(
+                *(
+                    map_tensor(value, lambda leaf: mapped[id(leaf)])
+                    if isinstance(value, torch.Tensor)
+                    else value
+                    for value in logical
+                )
+            )
+
+        with torch.no_grad():
+            graph_module = make_fx(
+                execute, tracing_mode="fake", _allow_non_fake_inputs=True
+            )(*leaves)
+        explicit_mutations = tuple(
+            replace(item, input_position=components.index((item.input_position, ())))
+            for item in explicit_mutations
+        )
+        input_provenance = physical_input_provenance(logical, input_provenance)
+        example_inputs = leaves
+    result = GraphArtifact.capture(
+        kind="inference",
+        graph_module=graph_module,
+        example_inputs=example_inputs,
+        explicit_mutations=explicit_mutations,
+        input_provenance=input_provenance,
+    )
+    return replace(result, input_components=components)
 
 
 @dataclass(frozen=True, slots=True)
@@ -554,6 +663,8 @@ class AotGraphPair:
     retention: RetentionSummary
     saved_value_count: int
     specialized_unit_tangent_count: int = 0
+    #: Backward outputs follow logical tensors, even when forward inputs expand.
+    gradient_provenance: tuple[TaskInputProvenance, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)

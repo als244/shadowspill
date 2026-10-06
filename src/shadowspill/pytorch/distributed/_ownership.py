@@ -11,6 +11,12 @@ import torch
 import torch.distributed as dist
 from torch import nn
 
+from shadowspill.pytorch.representations import (
+    component_at,
+    is_wrapper,
+    tensor_components,
+)
+
 from ._control import Control
 
 
@@ -24,6 +30,7 @@ class Parameter:
     requires_grad: bool
     replicas: tuple[int, ...]
     contributions: tuple[int, ...]
+    components: tuple[tuple[tuple[str, ...], tuple[int, ...], str], ...] = ()
 
     def record(self) -> dict[str, Any]:
         return {
@@ -35,6 +42,16 @@ class Parameter:
             "requires_grad": self.requires_grad,
             "replicas": list(self.replicas),
             "contributions": list(self.contributions),
+            **(
+                {
+                    "components": [
+                        [list(path), list(shape), dtype]
+                        for path, shape, dtype in self.components
+                    ]
+                }
+                if self.components
+                else {}
+            ),
         }
 
 
@@ -54,7 +71,11 @@ def validate_parameter_storage(model: nn.Module) -> None:
     explicit, separately owned storage for this first distributed contract.
     """
     storages: dict[int, list[tuple[int, int, str]]] = {}
-    for name, parameter in model.named_parameters():
+    for name, parameter in (
+        (name, component)
+        for name, logical in model.named_parameters()
+        for _, component in tensor_components(logical)
+    ):
         if parameter.numel() == 0:
             continue
         key = parameter.untyped_storage()._cdata
@@ -69,13 +90,14 @@ def validate_parameter_storage(model: nn.Module) -> None:
     for values in storages.values():
         previous_end, previous_name = -1, ""
         for start, end, name in sorted(values):
-            if start < previous_end:
+            if start < previous_end and name != previous_name:
                 raise ValueError(
                     f"{name} and {previous_name}: distinct Parameters have overlapping "
                     "storage spans; tie the same Parameter object "
                     "or use disjoint storage"
                 )
-            previous_end, previous_name = end, name
+            if end > previous_end:
+                previous_end, previous_name = end, name
 
 
 _INHERIT = object()
@@ -161,6 +183,12 @@ def resolve(
                 parameter.requires_grad,
                 replica_members,
                 gradient_members,
+                tuple(
+                    (path, tuple(value.shape), str(value.dtype))
+                    for path, value in tensor_components(parameter)
+                )
+                if is_wrapper(parameter)
+                else (),
             )
         )
     return tuple(records), groups
@@ -250,40 +278,46 @@ def synchronize_initial(
                 unique[(tuple(item["replicas"]), item["name"])] = item
     named = dict(model.named_parameters())
     for (replicas, name), item in sorted(unique.items()):
-        dtype = getattr(torch, item["dtype"].removeprefix("torch."))
-        element_size = torch.empty((), dtype=dtype).element_size()
-        geometry = torch.empty(tuple(item["shape"]), device="meta", dtype=dtype)
-        target = named[name] if dist.get_rank() in replicas else None
-        for index, piece in enumerate(tiles(geometry, chunk_bytes // element_size)):
-            # Derive the matching strided slice from a storage offset in the
-            # contiguous meta geometry; the live parameter may be noncontiguous.
-            origin = []
-            offset = int(piece.storage_offset())
-            for stride in geometry.stride():
-                coordinate, offset = divmod(offset, stride)
-                origin.append(coordinate)
-            slices = tuple(
-                slice(start, start + extent)
-                for start, extent in zip(origin, piece.shape, strict=True)
+        components = item.get("components", (((), item["shape"], item["dtype"]),))
+        for path, shape, dtype_name in components:
+            dtype = getattr(torch, dtype_name.removeprefix("torch."))
+            element_size = torch.empty((), dtype=dtype).element_size()
+            geometry = torch.empty(tuple(shape), device="meta", dtype=dtype)
+            target = (
+                component_at(named[name], tuple(path))
+                if dist.get_rank() in replicas
+                else None
             )
-
-            def broadcast(
-                piece: torch.Tensor = piece,
-                dtype: torch.dtype = dtype,
-                replicas: tuple[int, ...] = replicas,
-                target: nn.Parameter | None = target,
-                slices: tuple[slice, ...] = slices,
-            ) -> None:
-                staging = torch.empty(tuple(piece.shape), dtype=dtype, device="cpu")
-                if dist.get_rank() == replicas[0]:
-                    assert target is not None
-                    staging.copy_(target[slices])
-                dist.broadcast(
-                    staging.reshape(-1).view(torch.uint8),
-                    src=replicas[0],
-                    group=control.group,
+            for index, piece in enumerate(tiles(geometry, chunk_bytes // element_size)):
+                # Derive the matching strided slice from a storage offset in the
+                # contiguous meta geometry; the live parameter may be noncontiguous.
+                origin = []
+                offset = int(piece.storage_offset())
+                for stride in geometry.stride():
+                    coordinate, offset = divmod(offset, stride)
+                    origin.append(coordinate)
+                slices = tuple(
+                    slice(start, start + extent)
+                    for start, extent in zip(origin, piece.shape, strict=True)
                 )
-                if target is not None:
-                    target[slices].copy_(staging)
 
-            control.run(f"initialize/{replicas}/{name}/{index}", broadcast)
+                def broadcast(
+                    piece: torch.Tensor = piece,
+                    dtype: torch.dtype = dtype,
+                    replicas: tuple[int, ...] = replicas,
+                    target: torch.Tensor | None = target,
+                    slices: tuple[slice, ...] = slices,
+                ) -> None:
+                    staging = torch.empty(tuple(piece.shape), dtype=dtype, device="cpu")
+                    if dist.get_rank() == replicas[0]:
+                        assert target is not None
+                        staging.copy_(target[slices])
+                    dist.broadcast(
+                        staging.reshape(-1).view(torch.uint8),
+                        src=replicas[0],
+                        group=control.group,
+                    )
+                    if target is not None:
+                        target[slices].copy_(staging)
+
+                control.run(f"initialize/{replicas}/{name}/{path}/{index}", broadcast)

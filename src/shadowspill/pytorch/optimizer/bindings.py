@@ -11,6 +11,12 @@ from torch._subclasses.fake_tensor import FakeTensor
 
 from shadowspill.errors import CaptureError
 from shadowspill.pytorch.capture.artifacts import TaskInputProvenance
+from shadowspill.pytorch.representations import (
+    component_at,
+    detached_representation,
+    empty_representation,
+    tensor_components,
+)
 from shadowspill.task.inputs import TaskInputRole
 
 from .artifacts import (
@@ -185,12 +191,28 @@ def step_bindings(
             OptimizerTensorBinding(
                 f"compute.{name}",
                 OptimizerTensorRole.COMPUTE_COPY,
-                beside(parameters[name], copy, copy.dtype),
+                empty_representation(copy, parameters[name]),
                 True,
                 True,
             )
         )
     return tuple(result)
+
+
+def physical_bindings(
+    bindings: tuple[OptimizerTensorBinding, ...],
+) -> tuple[OptimizerTensorBinding, ...]:
+    """Name every storage-owning component of a logical optimizer binding."""
+    return tuple(
+        replace(
+            binding,
+            name=".".join((binding.name, *path)),
+            tensor=value,
+            component_path=(*binding.component_path, *path),
+        )
+        for binding in bindings
+        for path, value in tensor_components(binding.tensor)
+    )
 
 
 def representative_optimizer_values(
@@ -200,7 +222,7 @@ def representative_optimizer_values(
     """Retain occurrence-local initialized values before symbolic conversion."""
 
     return {
-        binding.name: binding.tensor.detach()
+        binding.name: detached_representation(binding.tensor)
         for binding in tensor_bindings(
             optimizer,
             name_by_id,
@@ -227,7 +249,13 @@ def optimizer_input_provenance(
         TaskInputProvenance(
             role_map[binding.role],
             binding.name,
-            representative_value=representative_values.get(binding.name),
+            representative_value=(
+                component_at(
+                    representative_values[binding.logical_name], binding.component_path
+                )
+                if binding.logical_name in representative_values
+                else None
+            ),
         )
         for binding in bindings
     )

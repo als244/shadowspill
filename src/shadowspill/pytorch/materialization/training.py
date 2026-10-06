@@ -27,6 +27,7 @@ from shadowspill.pytorch.materialization.replacement import (
     ReplacementStorageViews,
 )
 from shadowspill.pytorch.optimizer import current_optimizer_bindings
+from shadowspill.pytorch.representations import component_at
 from shadowspill.pytorch.runtime_adapter.boundaries import (
     publish_initial_tensor,
     submit_initial_actions,
@@ -220,6 +221,9 @@ class TrainingMaterializedState(MaterializedState):
         }
         entries: dict[str, list[tuple[str, torch.Tensor]]] = {}
         for item in lowered.optimizer_objects:
+            if item.role.value == "compute_copy":
+                # Physical compute components are already model registrations.
+                continue
             actual = current.get(item.name)
             if actual is None:
                 raise PlanningError(
@@ -330,12 +334,7 @@ class TrainingMaterializedState(MaterializedState):
         if self._closed:
             return OrderedDict(self.model.state_dict())
         owners = self._model_alias_views() if in_place else self._read_model_aliases()
-        result: OrderedDict[str, torch.Tensor] = OrderedDict()
-        for item in self._registrations():
-            if item.binding.name not in self._state_names:
-                continue
-            alias_id = self.bridge.objects.alias_for_object(item.binding.object_id)
-            result[item.binding.name] = self._cpu_view(owners[alias_id], item.tensor)
+        result = self._state_from_owners(owners)
         missing = set(self._state_names) - set(result)
         if missing:
             raise RuntimeError(f"unsupported model state entries: {sorted(missing)}")
@@ -361,23 +360,20 @@ class TrainingMaterializedState(MaterializedState):
         if set(state) != expected:
             raise RuntimeError("model state_dict keys differ")
         owners = self._model_alias_views()
-        for item in self._registrations():
-            if item.binding.name not in expected:
-                continue
-            source = state[item.binding.name]
-            if not isinstance(source, torch.Tensor):
-                raise TypeError(
-                    f"model state entry {item.binding.name!r} must be a tensor"
-                )
-            destination = self._cpu_view(
-                owners[self.bridge.objects.alias_for_object(item.binding.object_id)],
-                item.tensor,
-            )
-            if source.shape != destination.shape or source.dtype != destination.dtype:
-                raise RuntimeError(
-                    f"model state entry {item.binding.name!r} has incompatible geometry"
-                )
-            destination.copy_(source.detach().to(device="cpu"))
+        destinations = self._state_from_owners(owners)
+        with torch.no_grad():
+            for name, destination in destinations.items():
+                source = state[name]
+                if not isinstance(source, torch.Tensor):
+                    raise TypeError(f"model state entry {name!r} must be a tensor")
+                if (
+                    source.shape != destination.shape
+                    or source.dtype != destination.dtype
+                ):
+                    raise RuntimeError(
+                        f"model state entry {name!r} has incompatible geometry"
+                    )
+                destination.copy_(source.detach().to(device="cpu"))
         for alias_id, owner in owners.items():
             write_spill_tensor(self.bridge.objects, alias_id, owner)
 
@@ -509,7 +505,7 @@ class TrainingMaterializedState(MaterializedState):
             alias_id,
         )
         if persistent is None:
-            if alias_id in self._model_aliases:
+            if alias_id in self._model_aliases and source.untyped_storage().nbytes():
                 raise PlanningError(
                     f"registered model alias {alias_id!r} has no imported "
                     "runtime storage"
@@ -562,7 +558,8 @@ class TrainingMaterializedState(MaterializedState):
         if alias_id not in self._model_aliases:
             return
         owner = torch.empty(0, dtype=torch.uint8, device="cpu")
-        owner.set_(source.untyped_storage())
+        if source.untyped_storage().nbytes():
+            owner.set_(source.untyped_storage())
         self._planning_cpu_owners[alias_id] = owner
 
     def _initial_device_view(
@@ -641,9 +638,12 @@ class TrainingMaterializedState(MaterializedState):
         return tuple(
             _Registration(
                 binding,
-                self.model.get_parameter(binding.name)
-                if binding.parameter
-                else self.model.get_buffer(binding.name),
+                component_at(
+                    self.model.get_parameter(binding.name)
+                    if binding.parameter
+                    else self.model.get_buffer(binding.name),
+                    binding.component_path,
+                ),
             )
             for binding in self.layout.registrations
         )
@@ -692,8 +692,10 @@ def representative_training_arguments(
 ) -> tuple[object, ...]:
     """Expose authentic root values for isolated task profiling."""
 
+    from shadowspill.pytorch.representations import detached_representation
+
     return tuple(
-        value.detach() if isinstance(value, torch.Tensor) else value
+        detached_representation(value) if isinstance(value, torch.Tensor) else value
         for value in _flat_training_arguments(capture, model, microbatch)
     )
 

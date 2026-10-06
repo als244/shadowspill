@@ -10,6 +10,7 @@ import torch.nn as nn
 
 from shadowspill.pytorch.distributed import Distributed
 from shadowspill.pytorch.distributed._preparation import prepared_model_import
+from shadowspill.pytorch.representations import materialize_meta_state
 from shadowspill.runtime import (
     MemoryPool,
     Runtime,
@@ -162,22 +163,7 @@ def _materialize_meta_model[ModelT: nn.Module](
         )
     # Fails here rather than after a whole model has been built.
     _require_pool(runtime, pool)
-    for module in model.modules():
-        for name, parameter in list(module._parameters.items()):
-            if parameter is None or not parameter.is_meta:
-                continue
-            module._parameters[name] = nn.Parameter(
-                torch.empty(
-                    tuple(parameter.shape), dtype=parameter.dtype, device="cpu"
-                ),
-                requires_grad=parameter.requires_grad,
-            )
-        for name, buffer in list(module._buffers.items()):
-            if buffer is None or not buffer.is_meta:
-                continue
-            module._buffers[name] = torch.empty(
-                tuple(buffer.shape), dtype=buffer.dtype, device="cpu"
-            )
+    materialize_meta_state(model)
     for module in model.modules():
         reset = getattr(module, "reset_parameters", None)
         if callable(reset):

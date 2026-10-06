@@ -5,10 +5,13 @@ from __future__ import annotations
 from collections.abc import Collection, Iterable, Iterator, Mapping
 from contextlib import contextmanager
 from dataclasses import dataclass
-from typing import Any, Self, cast
+from typing import Any, Self
 
 import torch
 from torch import nn
+
+from shadowspill.pytorch.representations import materialize_meta_state
+from shadowspill.pytorch.state.serialization import decode_tensor_state
 
 from ._types import Initializer, OptimizerConstructor, ParameterGroups
 
@@ -36,38 +39,11 @@ def initialize_model(
                     + "; supply initialize= for values omitted by the checkpoint"
                 )
         # Keep tied parameter identities. No reset runs unless explicitly supplied.
-        converted: dict[int, torch.Tensor] = {}
-        storages: dict[int, torch.Tensor] = {}
-        for module in model.modules():
-            for registry in (module._parameters, module._buffers):
-                for name, value in registry.items():
-                    if value is None:
-                        continue
-                    if id(value) not in converted:
-                        source = value.untyped_storage()
-                        if source._cdata not in storages:
-                            storages[source._cdata] = torch.empty(
-                                source.nbytes(), dtype=torch.uint8, device="cpu"
-                            )
-                        tensor = torch.empty(0, dtype=value.dtype, device="cpu").set_(
-                            storages[source._cdata].untyped_storage(),
-                            value.storage_offset(),
-                            value.shape,
-                            value.stride(),
-                        )
-                        tensor.requires_grad_(value.requires_grad)
-                        converted[id(value)] = (
-                            nn.Parameter(tensor, requires_grad=value.requires_grad)
-                            if isinstance(value, nn.Parameter)
-                            else tensor
-                        )
-                    # Parameter values retain their subclass above.
-                    cast(dict[str, torch.Tensor | None], registry)[name] = converted[
-                        id(value)
-                    ]
+        materialize_meta_state(model)
     if initialize is not None:
         initialize(model)
     if state is not None:
+        state = decode_tensor_state(state, model.state_dict())
         if missing_parameters:
             omitted = set(missing_parameters)
             if not omitted <= set(dict(model.named_parameters(remove_duplicate=False))):

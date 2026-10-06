@@ -19,6 +19,7 @@ import torch
 import torch.nn as nn
 
 from shadowspill.profiling.metadata import repeated_profiling_metadata
+from shadowspill.pytorch.capture.artifacts import _representation_identity
 from shadowspill.pytorch.capture.retention import MEMORY_BOUND_FLOPS_PER_BYTE
 from shadowspill.pytorch.guards import capture_training_signatures
 from shadowspill.pytorch.optimizer.artifacts import (
@@ -28,6 +29,7 @@ from shadowspill.pytorch.optimizer.artifacts import (
     optimizer_value_identity,
 )
 from shadowspill.pytorch.partition import PartitionSpec
+from shadowspill.pytorch.representations import is_wrapper
 from shadowspill.runtime.plan import PlanMemory
 from shadowspill.schema import artifact_schema
 from shadowspill.step import StepDataOrdering
@@ -88,6 +90,7 @@ def step_identity(
     workloads = repeated_profiling_metadata(
         profiling_metadata, repetitions=len(example_inputs)
     )
+    representation_aliases: dict[int, int] = {}
     return {
         "schema": _SCHEMA,
         "export_bypass_key": export_bypass_key,
@@ -104,6 +107,11 @@ def step_identity(
                 (name, tuple(item.shape), str(item.dtype), tuple(item.stride()))
                 for name, item in model.named_buffers()
             ],
+            "representations": {
+                name: _representation_identity(item, representation_aliases)
+                for name, item in (*model.named_parameters(), *model.named_buffers())
+                if is_wrapper(item)
+            },
         },
         "objective": code_identity(objective),
         "inputs": [item.digest for item in signatures],

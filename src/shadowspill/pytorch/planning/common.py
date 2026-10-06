@@ -11,6 +11,7 @@ from shadowspill.errors import (
     PlanningError,
 )
 from shadowspill.pipeline.common import round_up
+from shadowspill.pytorch.representations import tensor_components
 
 _MIB = 1 << 20
 _SPILL_LEEWAY_MINIMUM = 256 * _MIB
@@ -23,7 +24,12 @@ def validate_cpu_model(model: nn.Module) -> None:
     if not isinstance(model, nn.Module):
         raise TypeError("model must be a torch.nn.Module")
     for name, tensor in tuple(model.named_parameters()) + tuple(model.named_buffers()):
-        if tensor.device.type != "cpu":
+        # Empty device placeholders have no payload to import or synchronize.
+        if any(
+            value.device.type != "cpu"
+            and (value.is_meta or value.untyped_storage().nbytes())
+            for _, value in tensor_components(tensor)
+        ):
             raise PlanningError(
                 f"registered tensor {name!r} must be CPU resident before planning"
             )
@@ -46,7 +52,9 @@ def estimate_spill_reservation(
     leaves, _ = tree_flatten(example_inputs)
     tensors.extend(value for value in leaves if isinstance(value, torch.Tensor))
     unique: dict[tuple[str, int], int] = {}
-    for tensor in tensors:
+    for tensor in (
+        component for value in tensors for _, component in tensor_components(value)
+    ):
         storage = tensor.untyped_storage()
         unique[(tensor.device.type, storage._cdata)] = int(storage.nbytes())
     base = sum(unique.values())

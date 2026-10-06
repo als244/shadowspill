@@ -38,6 +38,7 @@ class CachedGraphArtifact:
     storage_contract: TaskStorageContract
     storage_contract_capture_ns: int
     compatibility_digest: str
+    input_components: tuple[tuple[int, tuple[str, ...]], ...] = ()
 
     @classmethod
     def capture(cls, artifact: GraphArtifact) -> CachedGraphArtifact:
@@ -58,6 +59,7 @@ class CachedGraphArtifact:
             artifact.storage_contract,
             artifact.storage_contract_capture_ns,
             artifact.compatibility_digest,
+            artifact.input_components,
         )
 
     def restore(self) -> GraphArtifact:
@@ -82,6 +84,7 @@ class CachedGraphArtifact:
             storage_contract_capture_ns=self.storage_contract_capture_ns,
             compatibility_digest=self.compatibility_digest,
             example_arguments=arguments,
+            input_components=self.input_components,
         )
 
 
@@ -94,6 +97,7 @@ class CachedAotGraphPair:
     retention: RetentionSummary
     saved_value_count: int
     specialized_unit_tangent_count: int
+    gradient_provenance: tuple[TaskInputProvenance, ...] = ()
 
     @classmethod
     def capture(cls, pair: AotGraphPair) -> CachedAotGraphPair:
@@ -103,6 +107,10 @@ class CachedAotGraphPair:
             pair.retention,
             pair.saved_value_count,
             pair.specialized_unit_tangent_count,
+            tuple(
+                TaskInputProvenance(p.role, p.source, p.consumer_targets)
+                for p in pair.gradient_provenance
+            ),
         )
 
     def restore(self) -> AotGraphPair:
@@ -112,6 +120,7 @@ class CachedAotGraphPair:
             retention=self.retention,
             saved_value_count=self.saved_value_count,
             specialized_unit_tangent_count=self.specialized_unit_tangent_count,
+            gradient_provenance=self.gradient_provenance,
         )
 
 

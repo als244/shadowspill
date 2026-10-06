@@ -79,6 +79,7 @@ def update_capture_identity(
                 "shape": tuple(binding.tensor.shape),
                 "stride": tuple(binding.tensor.stride()),
                 "dtype": str(binding.tensor.dtype),
+                "component_path": binding.component_path,
             }
             for binding in bindings
         ],

@@ -34,6 +34,7 @@ from shadowspill.pytorch.planning.common import (
     estimate_spill_reservation,
     validate_cpu_model,
 )
+from shadowspill.pytorch.representations import detached_representation
 from shadowspill.runtime.plan import PlanMemory
 
 from ...guards import InputSignature, capture_input_signature
@@ -222,7 +223,7 @@ def _capture_partitioned_forward(
         with timer.measure("export_archival"):
             stores.archive_export(capture, mode="forward", position=0)
         representative_roots = tuple(
-            value.detach() if isinstance(value, torch.Tensor) else value
+            detached_representation(value) if isinstance(value, torch.Tensor) else value
             for value in flat_runtime_arguments(capture, model, cpu_inputs)
         )
         with fake_mode, torch.no_grad():

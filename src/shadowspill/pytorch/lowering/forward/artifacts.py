@@ -10,6 +10,7 @@ from torch.utils._pytree import TreeSpec
 from shadowspill.ir import ResidencySpec, ShadowSpillProgram, TaskSpec
 from shadowspill.pytorch.capture.artifacts import GraphArtifact
 from shadowspill.pytorch.capture.storage import TaskStorageContract
+from shadowspill.pytorch.representations import RootInputKey
 from shadowspill.task.entrypoints import TaskEntrypoint
 from shadowspill.task.layout import CompiledTaskLayout
 from shadowspill.task.slots import ObjectSlot
@@ -41,7 +42,7 @@ class ForwardObjects:
     catalog: ObjectCatalog
     registrations: tuple[RegistrationBinding, ...]
     root_input_slots: tuple[ObjectSlot, ...]
-    root_objects: dict[int, str]
+    root_objects: dict[RootInputKey, str]
 
 
 @dataclass(frozen=True, slots=True)

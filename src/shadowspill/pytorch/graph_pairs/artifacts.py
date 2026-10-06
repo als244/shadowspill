@@ -180,11 +180,15 @@ def parameter_gradient_leaves(pair: AotGraphPair) -> tuple[int, ...]:
     a hole, and those are not accumulated onto.
     """
 
-    provenance = pair.forward.input_provenance
+    provenance = pair.gradient_provenance or pair.forward.input_provenance
     produced = _produced_output_leaves(pair.backward)
     return tuple(
         position
-        for position in pair.forward.tensor_argument_positions
+        for position in (
+            range(len(provenance))
+            if pair.gradient_provenance
+            else pair.forward.tensor_argument_positions
+        )
         if position < len(provenance)
         and provenance[position].role is TaskInputRole.PARAMETER
         and position in produced

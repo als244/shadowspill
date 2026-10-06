@@ -375,11 +375,16 @@ def _attach_gradient(
     executor: TrainingExecutor, alias_id: str, gradient: torch.Tensor
 ) -> None:
     """Give the parameter its gradient as ``.grad``, as an eager optimizer
-    reads it. A gradient kept at another dtype than its parameter cannot be
-    one, and is read only by a traced update, which takes it as an input."""
+    reads it. A gradient on a different device or at another dtype cannot be
+    attached, and is read by a traced update through its explicit input instead.
+    A logical wrapper may remain a CPU handle while its components move."""
 
     parameter = executor._gradients.get(alias_id)
-    if parameter is not None and parameter.dtype == gradient.dtype:
+    if (
+        parameter is not None
+        and parameter.dtype == gradient.dtype
+        and parameter.device == gradient.device
+    ):
         parameter.grad = gradient
 
 

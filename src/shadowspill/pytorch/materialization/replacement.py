@@ -2,12 +2,14 @@
 
 from __future__ import annotations
 
+from collections import OrderedDict
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any
 
 import torch
 
+from shadowspill.pytorch.representations import map_tensor
 from shadowspill.pytorch.spill import read_spill_tensor, write_spill_tensor
 from shadowspill.runtime.plan import RuntimeBridge
 
@@ -35,6 +37,7 @@ class MaterializedState:
     """
 
     bridge: RuntimeBridge
+    model: torch.nn.Module
     object_store: dict[str, torch.Tensor]
     #: The model's state entries by name, as ``state_dict()`` enumerates them.
     _state_names: tuple[str, ...]
@@ -70,24 +73,24 @@ class MaterializedState:
                 f"no persistent model state entries named {unknown}; a buffer "
                 "registered with persistent=False is not state a call can set"
             )
-        targets = {
-            item.binding.name: item
-            for item in self._registrations()
-            if item.binding.name in values
-        }
-        missing = sorted(set(values) - set(targets))
+        targets = [
+            item for item in self._registrations() if item.binding.name in values
+        ]
+        missing = sorted(set(values) - {item.binding.name for item in targets})
         if missing:
             raise RuntimeError(f"unsupported model state entries: {missing}")
         aliases = {
-            name: self.bridge.objects.alias_for_object(item.binding.object_id)
-            for name, item in targets.items()
+            self.bridge.objects.alias_for_object(item.binding.object_id)
+            for item in targets
         }
-        owners = self._read_model_aliases(aliases=set(aliases.values()))
-        for name, item in targets.items():
+        owners = self._read_model_aliases(aliases=aliases)
+        destinations = self._state_from_owners(owners, names=set(values))
+        for name, destination in destinations.items():
+            if name not in values:
+                continue
             source = values[name]
             if not isinstance(source, torch.Tensor):
                 raise TypeError(f"model state entry {name!r} must be a tensor")
-            destination = self._cpu_view(owners[aliases[name]], item.tensor)
             if (
                 tuple(source.shape) != tuple(destination.shape)
                 or source.dtype != destination.dtype
@@ -98,6 +101,32 @@ class MaterializedState:
             destination.copy_(source.detach().to(device="cpu"))
         for alias_id, owner in owners.items():
             write_spill_tensor(self.bridge.objects, alias_id, owner)
+
+    def _state_from_owners(
+        self, owners: Mapping[str, torch.Tensor], *, names: set[str] | None = None
+    ) -> OrderedDict[str, torch.Tensor]:
+        """Rebuild logical state around a set of physical CPU storage owners."""
+        mapped = {}
+        requested = set(self._state_names) if names is None else names
+        for item in self._registrations():
+            alias_id = self.bridge.objects.alias_for_object(item.binding.object_id)
+            if alias_id in owners and item.binding.name in requested:
+                mapped[id(item.tensor)] = self._cpu_view(owners[alias_id], item.tensor)
+        tensors: dict[str, torch.Tensor] = dict(
+            self.model.named_parameters(remove_duplicate=False)
+        )
+        tensors.update(self.model.named_buffers(remove_duplicate=False))
+        memo: dict[int, Any] = {}
+        return OrderedDict(
+            (
+                name,
+                map_tensor(
+                    tensors[name], lambda value: mapped[id(value)], memo=memo
+                ).detach(),
+            )
+            for name in self._state_names
+            if name in requested
+        )
 
     def publish_replacement_views(self, replacement: ReplacementStorageViews) -> None:
         """Keep the stable frontend representative rebound by the runtime boundary."""

@@ -148,6 +148,9 @@ class _PooledState(MaterializedState):
             ("temperature", "b-temperature", (), 0),
             ("other", "b-other", (), 1),
         )
+        self.model = nn.Module()
+        for name, _object_id, shape, offset in self._entries:
+            self.model.register_buffer(name, _template(shape, offset))
         with torch.no_grad():
             self.view("a", 0, (4,)).copy_(torch.tensor([1.0, 2.0, 3.0, 4.0]))
             self.view("b", 0, ()).fill_(1.0)
@@ -169,7 +172,7 @@ class _PooledState(MaterializedState):
         return [
             SimpleNamespace(
                 binding=SimpleNamespace(name=name, object_id=object_id),
-                tensor=_template(shape, offset),
+                tensor=getattr(self.model, name),
             )
             for name, object_id, shape, offset in self._entries
         ]

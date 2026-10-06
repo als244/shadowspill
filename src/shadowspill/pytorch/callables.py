@@ -6,7 +6,7 @@ import os
 import time
 from collections import OrderedDict
 from collections.abc import Callable, Mapping, Sequence
-from typing import Any, Literal
+from typing import Any, Literal, cast
 
 import torch
 import torch.nn as nn
@@ -20,6 +20,10 @@ from shadowspill.pytorch.invocation import InvocationResult
 from shadowspill.pytorch.materialization import (
     MaterializedForwardState,
     TrainingMaterializedState,
+)
+from shadowspill.pytorch.state.serialization import (
+    decode_tensor_state,
+    encode_tensor_state,
 )
 from shadowspill.pytorch.state.storage import (
     release_plan_owned_state,
@@ -753,15 +757,16 @@ class PlannedTrainStep:
             optimizer,
             masters,
         ):
-            torch.save(
-                self._checkpoint_payload(
-                    self._state.state_dict(in_place=True),
-                    optimizer,
-                    masters,
-                    weights=weights,
-                ),
-                path,
+            payload = self._checkpoint_payload(
+                self._state.state_dict(in_place=True),
+                optimizer,
+                masters,
+                weights=weights,
             )
+            payload["model"] = encode_tensor_state(
+                cast(Mapping[str, Any], payload["model"])
+            )
+            torch.save(payload, path)
 
     def _checkpoint_payload(
         self,
@@ -811,6 +816,9 @@ class PlannedTrainStep:
             optimizer_state, Mapping
         ):
             raise TypeError("training checkpoint model/optimizer must be mappings")
+        model_state = decode_tensor_state(
+            model_state, self._state.state_dict(in_place=True)
+        )
         if isinstance(step, bool) or not isinstance(step, int) or step < 0:
             raise TypeError("training checkpoint step must be non-negative")
         # A master is where its weights were written; the weights are its cast.
@@ -833,7 +841,7 @@ class PlannedTrainStep:
                 restore_compute_weights,
             )
 
-            expected = set(self._state.model.state_dict())
+            expected = set(self._state.model.state_dict(keep_vars=True))
             omitted = master_aliases(checkpoint, self._distributed)
             if set(model_state) != expected - omitted:
                 raise ValueError(
