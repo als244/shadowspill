@@ -11,7 +11,8 @@ Core planning, runtime, and lowering code must never import `workloads`.
 `workloads.quack.OLMoE` is a regular decoder model: it has the same configuration,
 forward, packed-input and loss interfaces as `workloads.mlops.OLMoE`, with
 QuackMoE routed experts in each block. It uses MLOps attention and head/loss
-operations and BF16 expert computation. The router defaults to FP32;
+operations. Expert computation defaults to BF16; `compute_precision="fp8_current"`
+selects FP8. The router defaults to FP32;
 `router_dtype=torch.bfloat16` selects BF16 router weights, computation and
 gradients. The layer is packaged
 as `mlops.expert_parallel.QuackMoE`. MoonEP and
@@ -47,6 +48,14 @@ microbatch size. Construct with the intended compute device; QuackMoE's fixed
 communication mappings cannot be moved with `model.to()` afterward.
 `parameter_device="cpu"` optionally initializes compact host model state for a
 caller that supplies compute values from host memory during execution.
+
+For FP8 training, construct with `compute_precision="fp8_current"` and
+`weight_grad_dtype=torch.float32`. `activation_transport="fp8"` also sends
+quantized activations through MoonEP; its default is `"bf16"`. The workload
+constructs a compatible buffer. Pass `master_dtype=torch.float32` and
+`grad_dtype=torch.float32` to the ordinary Trainer for dense optimizer masters
+and gradients. ShadowSpill manages the weight payloads and scales through the
+generic [tensor representation contract](../docs/architecture/state-import.md#tensor-representations).
 
 The model does not own a trainer, planner, optimizer or data source. Its
 `expert_parameters()` identifies home expert shards; all other parameters are
