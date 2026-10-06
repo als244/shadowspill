@@ -24,15 +24,23 @@ from workloads.mlops.olmoe import OLMoE as BaseOLMoE
 from workloads.pytorch.olmoe import OLMoEConfig
 
 
-def _expert_options(config, ep_group, router_dtype):
+def _expert_options(
+    config,
+    ep_group,
+    router_dtype,
+    compute_precision,
+    weight_grad_dtype,
+    activation_transport,
+):
     return MoEConfig(
         ep_size=torch.distributed.get_world_size(ep_group),
         num_experts=config.n_experts,
         top_k=config.top_k,
         model_dim=config.d_model,
         expert_hidden_dim=config.d_ff_expert,
-        compute_precision="bf16",
-        weight_grad_dtype=torch.bfloat16,
+        compute_precision=compute_precision,
+        weight_grad_dtype=weight_grad_dtype,
+        activation_transport=activation_transport,
         router_dtype=router_dtype,
         router_weight_grad_dtype=router_dtype,
         renormalize_topk=False,
@@ -50,10 +58,20 @@ class MoE(nn.Module):
         device,
         parameter_device,
         router_dtype,
+        compute_precision,
+        weight_grad_dtype,
+        activation_transport,
     ):
         super().__init__()
         self.config = config
-        options = _expert_options(config, ep_group, router_dtype)
+        options = _expert_options(
+            config,
+            ep_group,
+            router_dtype,
+            compute_precision,
+            weight_grad_dtype,
+            activation_transport,
+        )
         self.experts = QuackMoE(options, ep_group, buffer=buffer, device=device)
         if parameter_device != device:
             # Copy the logical parameters, not their larger communication-bank
@@ -89,6 +107,9 @@ class Block(BaseBlock):
         device,
         parameter_device,
         router_dtype,
+        compute_precision,
+        weight_grad_dtype,
+        activation_transport,
     ):
         nn.Module.__init__(self)
         self.attn_norm = RMSNorm(config.d_model).to(dtype=torch.bfloat16)
@@ -101,11 +122,14 @@ class Block(BaseBlock):
             device=device,
             parameter_device=parameter_device,
             router_dtype=router_dtype,
+            compute_precision=compute_precision,
+            weight_grad_dtype=weight_grad_dtype,
+            activation_transport=activation_transport,
         )
 
 
 class OLMoE(BaseOLMoE):
-    """MLOps attention/head and QuackMoE routed experts, all with BF16 compute.
+    """MLOps BF16 attention/head and QuackMoE BF16 or FP8 routed experts.
 
     ``token_capacity`` creates one model-owned MoonEP buffer shared by all blocks.
     Alternatively, ``buffers`` supplies borrowed resources, one entry per block.
@@ -114,7 +138,9 @@ class OLMoE(BaseOLMoE):
     home shards; all other parameters are replicas within this EP group.
     Parameters normally start on the compute device. ``parameter_device="cpu"``
     also supports callers that materialize compute values from host state.
-    Experts use BF16. The router supports BF16 or FP32 (the default).
+    Experts default to BF16; ``compute_precision="fp8_current"`` selects FP8.
+    Expert gradient precision and activation transport are independent options.
+    The router supports BF16 or FP32 (the default).
     """
 
     def __init__(
@@ -127,6 +153,9 @@ class OLMoE(BaseOLMoE):
         device=None,
         parameter_device=None,
         router_dtype=torch.float32,
+        compute_precision="bf16",
+        weight_grad_dtype=torch.bfloat16,
+        activation_transport="bf16",
     ):
         nn.Module.__init__(self)
         if (buffers is None) == (token_capacity is None):
@@ -159,7 +188,14 @@ class OLMoE(BaseOLMoE):
             from mlops.expert_parallel import create_buffer
 
             owned_buffer = create_buffer(
-                _expert_options(config, ep_group, router_dtype),
+                _expert_options(
+                    config,
+                    ep_group,
+                    router_dtype,
+                    compute_precision,
+                    weight_grad_dtype,
+                    activation_transport,
+                ),
                 token_capacity,
                 ep_group,
             )
@@ -181,6 +217,9 @@ class OLMoE(BaseOLMoE):
                             device=device,
                             parameter_device=parameter_device,
                             router_dtype=router_dtype,
+                            compute_precision=compute_precision,
+                            weight_grad_dtype=weight_grad_dtype,
+                            activation_transport=activation_transport,
                         )
                     )
                 self.final_norm = RMSNorm(config.d_model).to(dtype=torch.bfloat16)
