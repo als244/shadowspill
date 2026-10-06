@@ -305,6 +305,9 @@ def test_execution_reservation_accepts_fragmented_dynamic_capacity(
         fixed_execution_bytes=16,
     )
 
+    from shadowspill.runtime.bootstrap import existing_execution_reserve
+
+    assert existing_execution_reserve(installed) == 0
     assert validate_dynamic_execution_reservation(installed, reserved_bytes=16) == 16
     with pytest.raises(ValueError, match="smaller"):
         validate_dynamic_execution_reservation(installed, reserved_bytes=15)
@@ -315,6 +318,13 @@ def test_execution_reservation_accepts_fragmented_dynamic_capacity(
     library.free = 108
     library.free_prefix = 96
     library.largest = 96
+    assert existing_execution_reserve(installed) == 4
+    installed.admitted_layout_bytes[7] = 3
+    assert existing_execution_reserve(installed) == 1
+    installed.lent_slabs.add(7)
+    assert existing_execution_reserve(installed) == 4
+    installed.lent_slabs.clear()
+    installed.admitted_layout_bytes.clear()
     assert validate_dynamic_execution_reservation(installed, reserved_bytes=32) == 20
     with pytest.raises(RuntimeInstallError, match="exceed"):
         validate_dynamic_execution_reservation(installed, reserved_bytes=16)

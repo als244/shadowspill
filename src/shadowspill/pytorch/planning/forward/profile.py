@@ -1,5 +1,7 @@
 """Every structurally unique forward task compiled and measured."""
 
+from dataclasses import replace
+
 from shadowspill.errors import (
     PlanningError,
 )
@@ -12,6 +14,7 @@ from shadowspill.pytorch.profiling import (
 )
 from shadowspill.pytorch.profiling.profiler import TaskProfiler
 from shadowspill.runtime.bootstrap import (
+    existing_execution_reserve,
     validate_dynamic_execution_reservation,
 )
 from shadowspill.runtime.failures import wait_allocator_idle
@@ -37,6 +40,7 @@ def profile_forward_tasks(
 ) -> ForwardProfileArtifacts:
     """Compile and profile every unique structural task contract exactly once."""
 
+    setup_reserve = existing_execution_reserve(captured.installed)
     profiling_options = profiling_options or ProfilingOptions()
     profiler = TaskProfiler(
         captured.installed.library,
@@ -81,6 +85,9 @@ def profile_forward_tasks(
             allocation_probe_seeds=allocation_probe_seeds,
             allocation_probe_repetitions=allocation_probe_repetitions,
             profiling_options=profiling_options,
+        )
+        profiles = replace(
+            profiles, fixed_slab_bytes=profiles.fixed_slab_bytes + setup_reserve
         )
     with timer.measure("compilation"):
         compiled_tasks = profiler.take_compiled_tasks(

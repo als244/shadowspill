@@ -32,6 +32,7 @@ def test_a_failed_profile_recovers_the_runtime_before_releasing_what_it_kept(
         calls.append("recover")
 
     monkeypatch.setattr(training_profile, "TaskProfiler", Profiler)
+    monkeypatch.setattr(training_profile, "existing_execution_reserve", lambda _: 0)
     monkeypatch.setattr(training_profile, "SavedValuePool", lambda *args: None)
     monkeypatch.setattr(training_profile, "_profile_training_tasks", fail)
     monkeypatch.setattr(training_profile, "prepare_failure_cleanup", recover)

@@ -3,7 +3,7 @@ and measured once, independent of the walk the step will take."""
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 
 from shadowspill.errors import (
     PlanningError,
@@ -28,6 +28,7 @@ from shadowspill.pytorch.profiling.environment import DEVICE_POOL_PROVIDER_ID
 from shadowspill.pytorch.profiling.profiler import SavedValuePool, TaskProfiler
 from shadowspill.runtime.bootstrap import (
     InstalledRuntime,
+    existing_execution_reserve,
     validate_dynamic_execution_reservation,
 )
 from shadowspill.runtime.failures import format_bytes, wait_allocator_idle
@@ -71,6 +72,7 @@ def profile_training_tasks(
     """
 
     state = materialized.state
+    setup_reserve = existing_execution_reserve(captured.installed)
     profiling_options = profiling_options or ProfilingOptions()
     profiler = TaskProfiler(
         captured.installed.library,
@@ -91,7 +93,7 @@ def profile_training_tasks(
         ),
     )
     try:
-        return _profile_training_tasks(
+        profiled = _profile_training_tasks(
             captured,
             materialized,
             profiler,
@@ -100,6 +102,13 @@ def profile_training_tasks(
             allocation_probe_seeds=allocation_probe_seeds,
             allocation_probe_repetitions=allocation_probe_repetitions,
             profiling_options=profiling_options,
+        )
+        return replace(
+            profiled,
+            profiles=replace(
+                profiled.profiles,
+                fixed_slab_bytes=profiled.profiles.fixed_slab_bytes + setup_reserve,
+            ),
         )
     except BaseException as error:
         # A device that ran out of memory while profiling leaves the
