@@ -58,6 +58,7 @@ class WorkspaceObservation:
 
     profile: TaskWorkspaceProfile
     timings: WorkspaceTimings
+    off_device_output_leaves: tuple[int, ...] = ()
 
 
 def measure_workspace(
@@ -98,6 +99,12 @@ def _measure_once(
     try:
         with boundary.scope(stream) as task_id:
             output = task()
+            leaves, _ = tree_flatten(output)
+            off_device = tuple(
+                index
+                for index, leaf in enumerate(leaves)
+                if isinstance(leaf, torch.Tensor) and not leaf.is_cuda
+            )
             output_allocations, output_input_bindings = output_allocation_views(
                 boundary,
                 output,
@@ -111,7 +118,7 @@ def _measure_once(
             # task range is still active so output-dependent temporary frees
             # remain attributable to this contract. The allocator retires their
             # physical ranges against the active compute stream.
-            del output
+            del output, leaves
         boundary.drain(stream, problem="workspace measurement")
     except BaseException as error:
         primary_error = error
@@ -138,7 +145,7 @@ def _measure_once(
     )
     replay_ns = time.perf_counter_ns() - replay_started
     return WorkspaceObservation(
-        profile, WorkspaceTimings(execution_ns, copy_ns, replay_ns)
+        profile, WorkspaceTimings(execution_ns, copy_ns, replay_ns), off_device
     )
 
 

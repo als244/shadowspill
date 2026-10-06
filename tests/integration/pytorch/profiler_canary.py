@@ -24,6 +24,10 @@ from shadowspill.pytorch.profiling import (
     profile_unique_artifacts,
 )
 from shadowspill.pytorch.profiling.profiler import TaskProfiler
+from shadowspill.pytorch.profiling.profiler.measurement import (
+    MeasuredTask,
+    measure_task,
+)
 from shadowspill.runtime.abi import AdapterStatistics, runtime_library
 from shadowspill.runtime.bootstrap import install_runtime
 from shadowspill.task.profiling import ProfilingOptions
@@ -158,6 +162,23 @@ def main() -> int:
         raise AssertionError("dynamic slab accounting does not reconcile")
     if int(pool.largest_free_range_bytes) > int(pool.free_bytes):
         raise AssertionError("largest free range exceeds total free capacity")
+    phase("warmup-retained-workspace")
+    retained: list[torch.Tensor] = []
+
+    def lazy_workspace() -> torch.Tensor:
+        if not retained:
+            retained.append(torch.empty(32 << 20, dtype=torch.uint8, device="cuda:0"))
+        return torch.ones(8, device="cuda:0")
+
+    lazy = measure_task(
+        profiler, MeasuredTask(lazy_workspace), execution_provider="test-lazy-cache"
+    )
+    if sum(lazy.persistent_extent_bytes) != 32 << 20:
+        raise AssertionError("warmup's retained workspace was omitted or counted twice")
+    if lazy.workspace_charged_bytes >= 32 << 20:
+        raise AssertionError("one-time workspace was charged to every task invocation")
+    retained.clear()
+    profiler.boundary.drain(profiler.boundary.stream(), problem="lazy cache release")
     return 0
 
 

@@ -341,6 +341,42 @@ def _initialize_persistent_state(
     )
 
 
+def existing_execution_reserve(installed: InstalledRuntime) -> int:
+    """Reserve live setup allocations beyond bootstrap before profiling starts.
+
+    A caller may construct accelerator resources after entering the runtime.
+    This snapshot conservatively keeps those bytes out of plan capacity. Task
+    warmup growth is measured separately; task inputs have not been allocated
+    yet. Other plans' currently held layouts are already accounted elsewhere.
+    """
+    message = wait_allocator_idle(
+        installed.library, installed.runtime_handle, problem="pre-profiling allocations"
+    )
+    if message is not None:
+        raise RuntimeInstallError(message)
+    statistics = AdapterStatistics()
+    status = int(
+        installed.library.shadowspill_pytorch_allocator_statistics(
+            ctypes.byref(statistics)
+        )
+    )
+    if status != 0:
+        raise RuntimeInstallError(
+            f"setup allocation accounting failed (status {status})"
+        )
+    held = sum(
+        size
+        for plan, size in installed.admitted_layout_bytes.items()
+        if plan not in installed.lent_slabs
+    )
+    return max(
+        0,
+        int(statistics.allocator_pool.allocated_bytes)
+        - held
+        - installed.fixed_execution_bytes,
+    )
+
+
 def validate_dynamic_execution_reservation(
     installed: InstalledRuntime,
     *,

@@ -71,10 +71,13 @@ def measure_task(
     phases: list[tuple[str, int]] = []
 
     off_device_leaves: list[tuple[int, ...]] = []
+    warmup_persistent: list[int] = []
 
     def invoke() -> None:
         with source.open() as task:
-            off_device_leaves.append(boundary.invoke(task, stream))
+            observed = measure_workspace(boundary, task, stream)
+            off_device_leaves.append(observed.off_device_output_leaves)
+            warmup_persistent.extend(observed.profile.persistent_extent_bytes)
 
     def sample() -> int:
         with source.open() as task:
@@ -158,6 +161,7 @@ def measure_task(
         off_device_leaves[-1] if off_device_leaves else (),
         profiling_options=profiler.options,
         conditioning=conditioning,
+        warmup_persistent=tuple(warmup_persistent),
     )
 
 
@@ -211,6 +215,7 @@ def task_measurement(
     *,
     profiling_options: ProfilingOptions,
     conditioning: TimingWindow,
+    warmup_persistent: tuple[int, ...] = (),
 ) -> TaskMeasurement:
     """Assemble the record the profile store keeps for one task.
 
@@ -222,7 +227,10 @@ def task_measurement(
     still-live, otherwise-unbound allocations are persistent in-pool state.
     """
 
-    fixed_extents = workspace.persistent_extent_bytes
+    # One-time library allocations belong to the warmup invocation that made
+    # them. Repeated-step allocation contracts omit that setup, while planning
+    # still reserves the storage those exact task-local traces proved retained.
+    fixed_extents = warmup_persistent + workspace.persistent_extent_bytes
     return TaskMeasurement(
         runtime_ns=round(statistics.median(timing.samples)),
         workspace_requested_bytes=workspace.peak_requested_bytes,
