@@ -1215,7 +1215,7 @@ def test_public_training_partitions_device_only_optimizer_and_replays(
 
 @pytest.mark.cuda
 @pytest.mark.fresh_process
-def test_public_training_follows_a_learning_rate_schedule() -> None:
+def test_public_training_follows_a_learning_rate_schedule(tmp_path: Path) -> None:
     """A rate named at planning and set per step reproduces eager training.
 
     This is the whole claim behind ``hyperparams``: one plan, one capture, and
@@ -1254,6 +1254,7 @@ def test_public_training_follows_a_learning_rate_schedule() -> None:
         optimizer=build,
         hyperparams=("lr",),
         example_inputs=batches(92),
+        artifact_store=tmp_path,
         runtime=runtime,
         execution="execution",
         spill="spill",
@@ -1284,7 +1285,7 @@ def test_public_training_follows_a_learning_rate_schedule() -> None:
 
 @pytest.mark.cuda
 @pytest.mark.fresh_process
-def test_public_training_keeps_no_output_the_caller_dropped() -> None:
+def test_public_training_keeps_no_output_the_caller_dropped(tmp_path: Path) -> None:
     """A step's outputs are the caller's alone once handed over.
 
     The losses a step returns live in the execution pool for as long as the
@@ -1313,6 +1314,7 @@ def test_public_training_keeps_no_output_the_caller_dropped() -> None:
         objective=objective,
         optimizer=partial(torch.optim.SGD, lr=0.1),
         example_inputs=batches(),
+        artifact_store=tmp_path,
         runtime=runtime,
         execution="execution",
         spill="spill",
@@ -1347,7 +1349,7 @@ def test_public_training_keeps_no_output_the_caller_dropped() -> None:
 
 @pytest.mark.cuda
 @pytest.mark.fresh_process
-def test_public_training_sets_a_model_buffer_each_step() -> None:
+def test_public_training_sets_a_model_buffer_each_step(tmp_path: Path) -> None:
     """A buffer named at planning and set per step is read by the step.
 
     The objective divides by the buffer, so the value the step read shows in
@@ -1392,6 +1394,7 @@ def test_public_training_sets_a_model_buffer_each_step() -> None:
         objective=objective,
         optimizer=build,
         hyperparams=("lr", "trained_total"),
+        artifact_store=tmp_path,
         example_inputs=batches(92),
         runtime=runtime,
         execution="execution",

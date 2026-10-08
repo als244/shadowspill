@@ -7,6 +7,8 @@ model must come back to host views when the last plan over it closes.
 
 from __future__ import annotations
 
+from pathlib import Path
+
 import pytest
 import torch
 import torch.nn as nn
@@ -33,7 +35,7 @@ def _batch(seed: int) -> list[torch.Tensor]:
     return [value, torch.randn(3, 4, generator=generator)]
 
 
-def _plan_training(model: nn.Module, runtime: object):
+def _plan_training(model: nn.Module, runtime: object, store: Path):
     return plan_step(
         model,
         profiling_options=CORRECTNESS_PROFILING,
@@ -44,10 +46,11 @@ def _plan_training(model: nn.Module, runtime: object):
         runtime=runtime,
         execution="execution",
         spill="spill",
+        artifact_store=store,
     )
 
 
-def _plan_forward(model: nn.Module, runtime: object):
+def _plan_forward(model: nn.Module, runtime: object, store: Path):
     return plan_forward(
         model,
         profiling_options=CORRECTNESS_PROFILING,
@@ -55,6 +58,7 @@ def _plan_forward(model: nn.Module, runtime: object):
         runtime=runtime,
         execution="execution",
         spill="spill",
+        artifact_store=store,
     )
 
 
@@ -67,12 +71,12 @@ def _forward_matches_the_trained_weights(training, forward) -> None:
 
 @pytest.mark.cuda
 @pytest.mark.fresh_process
-def test_a_forward_planned_after_training_sees_every_update() -> None:
+def test_a_forward_planned_after_training_sees_every_update(tmp_path: Path) -> None:
     _require_adapter()
     runtime = public_test_runtime()
     model = import_model_state(_network(), runtime=runtime, pool="spill")
-    training = _plan_training(model, runtime)
-    forward = _plan_forward(model, runtime)
+    training = _plan_training(model, runtime, tmp_path)
+    forward = _plan_forward(model, runtime, tmp_path)
     for step in range(3):
         training([_batch(10 + step)], hyperparams={"lr": 1e-2})
         _forward_matches_the_trained_weights(training, forward)
@@ -85,13 +89,13 @@ def test_a_forward_planned_after_training_sees_every_update() -> None:
 
 @pytest.mark.cuda
 @pytest.mark.fresh_process
-def test_a_training_step_planned_after_a_forward_shares_its_model() -> None:
+def test_a_training_step_planned_after_a_forward_shares_its_model(tmp_path: Path) -> None:
     _require_adapter()
     runtime = public_test_runtime()
     model = import_model_state(_network(), runtime=runtime, pool="spill")
-    forward = _plan_forward(model, runtime)
+    forward = _plan_forward(model, runtime, tmp_path)
     before = forward([_batch(99)[0]]).cpu()
-    training = _plan_training(model, runtime)
+    training = _plan_training(model, runtime, tmp_path)
     training([_batch(10)], hyperparams={"lr": 1e-2})
     _forward_matches_the_trained_weights(training, forward)
     assert not torch.equal(forward([_batch(99)[0]]).cpu(), before)
@@ -104,11 +108,11 @@ def test_a_training_step_planned_after_a_forward_shares_its_model() -> None:
 
 @pytest.mark.cuda
 @pytest.mark.fresh_process
-def test_state_a_plan_imported_for_itself_is_not_shared() -> None:
+def test_state_a_plan_imported_for_itself_is_not_shared(tmp_path: Path) -> None:
     _require_adapter()
     runtime = public_test_runtime()
     model = _network()  # not imported: the training plan imports it and owns it
-    training = _plan_training(model, runtime)
+    training = _plan_training(model, runtime, tmp_path)
     with pytest.raises(RuntimeError, match="import_model_state"):
-        _plan_forward(model, runtime)
+        _plan_forward(model, runtime, tmp_path)
     training.close()

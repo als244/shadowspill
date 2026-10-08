@@ -241,15 +241,17 @@ def main() -> int:
     # A model the caller did not import is imported by planning, which then
     # owns the state and releases it when the callable closes.
     adopted = _Model().eval()
-    planned = plan_forward(
-        adopted,
-        profiling_options=CORRECTNESS_PROFILING,
-        example_inputs=[torch.randn(3, 32)],
-        runtime=runtime,
-        execution="execution",
-        spill="spill",
-        verbose=False,
-    )
+    with tempfile.TemporaryDirectory() as cache:
+        planned = plan_forward(
+            adopted,
+            profiling_options=CORRECTNESS_PROFILING,
+            example_inputs=[torch.randn(3, 32)],
+            runtime=runtime,
+            execution="execution",
+            spill="spill",
+            artifact_store=cache,
+            verbose=False,
+        )
     owned = persistent_state(runtime, adopted)
     if owned is None or owned.owning_plan is None:
         raise AssertionError("planning did not take ownership of model state")

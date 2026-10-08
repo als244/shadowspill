@@ -33,17 +33,8 @@ function(shadowspill_add_pytorch_canary name timeout)
       # whatever still gets past it.
       #
       # PYTHONPATH is the source tree, so a canary runs what is checked out.
-      # A cache root of this test's own. ShadowSpill stores compiled task
-      # manifests under `cache_dir()`, which is **Inductor's** directory --
-      # process-global, shared by every concurrent test and persistent across
-      # runs, and nothing to do with the per-test `artifact_store`. Its key is
-      # the FX graph cache key and the semantic contract digest, both fixed
-      # before Inductor lowers, so two compiles that differ only in a decision
-      # Inductor makes *during* lowering collide on one entry.
-      #
-      # `isolated_cache.py` wraps every command here: it makes a fresh cache
-      # root, points Inductor and Triton at it, and deletes it afterwards, so
-      # whatever a test sees it put there itself during this run.
+      # Isolate compiler calls outside planning. Public planning calls also
+      # supply a temporary artifact store, which owns their compiler caches.
       ENVIRONMENT
         "PYTHONPATH=${PROJECT_SOURCE_DIR}/src:${PROJECT_SOURCE_DIR};SHADOWSPILL_CANARY_TIMEOUT=${timeout};SHADOWSPILL_LIBRARY_DIRECTORY=$<TARGET_FILE_DIR:shadowspill>"
       TIMEOUT ${timeout}
@@ -87,17 +78,8 @@ function(shadowspill_add_public_api_test file name timeout)
     shadowspill_pytorch_public_${name}
     PROPERTIES
       LABELS "cuda;pytorch"
-      # A cache root of this test's own. ShadowSpill stores compiled task
-      # manifests under `cache_dir()`, which is **Inductor's** directory --
-      # process-global, shared by every concurrent test and persistent across
-      # runs, and nothing to do with the per-test `artifact_store`. Its key is
-      # the FX graph cache key and the semantic contract digest, both fixed
-      # before Inductor lowers, so two compiles that differ only in a decision
-      # Inductor makes *during* lowering collide on one entry.
-      #
-      # `isolated_cache.py` wraps every command here: it makes a fresh cache
-      # root, points Inductor and Triton at it, and deletes it afterwards, so
-      # whatever a test sees it put there itself during this run.
+      # Public tests use temporary artifact stores; the wrapper also isolates
+      # direct compiler calls and PyTorch reference work outside planning.
       ENVIRONMENT "PYTHONPATH=${PROJECT_SOURCE_DIR}/src:${PROJECT_SOURCE_DIR};SHADOWSPILL_LIBRARY_DIRECTORY=$<TARGET_FILE_DIR:shadowspill>"
       TIMEOUT ${timeout}
   )
