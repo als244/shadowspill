@@ -180,7 +180,14 @@ def output_allocation_views(
             continue
         allocation = boundary.allocation_for_pointer(address)
         allocation_pointer = int(allocation.pointer or 0)
-        offset_bytes = int(leaf.data_ptr()) - allocation_pointer
+        # Tensor.data_ptr() is zero for an empty view even when it retains
+        # a nonempty storage. Its storage address/offset still describe the
+        # allocation whose lifetime this returned view keeps alive.
+        offset_bytes = (
+            address
+            + int(leaf.storage_offset()) * leaf.element_size()
+            - allocation_pointer
+        )
         if offset_bytes < 0 or offset_bytes > int(allocation.requested_bytes):
             raise CaptureError("compiled output view lies outside its allocator record")
         donated_input_position = input_by_allocation.get(int(allocation.allocation_id))

@@ -376,20 +376,26 @@ def _reconcile_fresh_root(
     observations: _PhysicalObservations,
     builder: _LayoutBuilder,
 ) -> None:
-    nonempty = tuple(view for view in views if view.span_bytes > 0)
+    # An empty view can keep its nonempty allocation alive. Preserve
+    # its compiler-declared extent when profiling observes that storage.
+    backed_views = tuple(
+        view
+        for view in views
+        if view.span_bytes > 0 or view.leaf_index in observations.physical_by_leaf
+    )
     bindings = tuple(
         observations.physical_by_leaf[view.leaf_index]
-        for view in nonempty
+        for view in backed_views
         if view.leaf_index in observations.physical_by_leaf
     )
-    if not nonempty and not bindings:
+    if not backed_views:
         _append_zero_root(root, views, builder)
         return
-    _validate_fresh_bindings(root, nonempty, bindings, observations)
+    _validate_fresh_bindings(root, backed_views, bindings, observations)
     allocation = _resolve_fresh_allocation(
-        root, nonempty, bindings, observations, builder
+        root, backed_views, bindings, observations, builder
     )
-    _validate_fresh_view_offsets(root, nonempty, observations, allocation)
+    _validate_fresh_view_offsets(root, backed_views, observations, allocation)
     builder.roots.append(
         CompiledRootLayout(
             root.root_id,
