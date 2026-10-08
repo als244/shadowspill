@@ -217,6 +217,9 @@ geometry drops that budget rather than promoting a runner-up. The table must con
 
 ## Related
 
+- [Quickstart plots for slides](../../benchmarking/quickstart_timeline.md) exports
+  saved memory/compute/transfer timelines and budget/throughput comparisons as
+  figures or PowerPoint slides, with both exporters' CLI options in one guide.
 - [Quickstart](../../benchmarking/quickstart.md) runs the search that produces
   these figures and shows the tree in context.
 - [Plan report](plan-report.md) and [its field

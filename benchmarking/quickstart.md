@@ -6,6 +6,13 @@ The runner accepts ordinary models and objectives. Text presets are optional
 factories under `workloads/recipes/text`; the runner does not inspect text shapes
 or model families.
 
+To reuse a result in a presentation, see [Timeline plots for slides](quickstart_timeline.md).
+`python -m benchmarking.quickstart_timeline` exports aligned memory,
+compute and transfer plots from saved simulated or traced HTML pages, including
+an optional PowerPoint slide with the report's summary statistics.
+`python -m benchmarking.quickstart_tradeoff` exports the budget/throughput and
+overhead-share comparison; both exporters' options are in the same guide.
+
 ## Any model or objective
 
 Supply a Python factory receiving the selected local `device` and returning a
