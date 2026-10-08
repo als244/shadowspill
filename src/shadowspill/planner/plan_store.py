@@ -254,7 +254,8 @@ class PlanStore:
 
         `keep_resolutions` asks the search for every resolved program's
         best plan and files each beside the answer (`resolution_path`) when
-        the search runs; a hit reads back the answer alone.
+        the search runs; a hit reads those records too. Without it, a hit
+        reads only the selected answer.
         """
 
         chosen = search_options if search_options is not None else SearchOptions()
@@ -278,6 +279,7 @@ class PlanStore:
                 admission,
                 algorithm,
                 chosen,
+                keep_resolutions=keep_resolutions,
             )
             if self.policy.read_enabled
             else None
@@ -463,6 +465,8 @@ class PlanStore:
         admission: AdmissionFacts | None,
         algorithm: SearchAlgorithm,
         search_options: SearchOptions,
+        *,
+        keep_resolutions: bool = False,
     ) -> PlanLookup | _Verdict | None:
         """Read the record for `key` back, trusting what it states.
 
@@ -526,6 +530,13 @@ class PlanStore:
             raise ValueError(
                 f"planned program {path} has inconsistent simulator evidence"
             )
+        retained = (
+            self._read_resolutions(key, program, normalized) if keep_resolutions else ()
+        )
+        if retained is None:
+            # The process may have stopped while writing alternative records.
+            # Treat incomplete retention as a cache miss, never a partial answer.
+            return None
         result = ProgramPlanResult(
             program=program,
             search_options=search_options,
@@ -540,10 +551,83 @@ class PlanStore:
                 value.get("resident_slice"), f"{path}.resident_slice"
             ),
             admission_facts=admission,
+            resolutions=retained,
         )
         certificate = _certificate_from_value(value.get("admission_certificate"), path)
         self._record(key, program.digest, path, "read")
         return PlanLookup(result, True, key, certificate)
+
+    def _read_resolutions(
+        self, key: str, program: ShadowSpillProgram, boundary: dict
+    ) -> tuple[ResolutionPlan, ...] | None:
+        """Restore retained alternatives for consumers that need complete plans."""
+        expected = {**boundary, "schema": _RESOLUTION_SCHEMA}
+        plans = {}
+        directory = digest_directory(self.root, key) / "resolutions"
+        try:
+            labels = json.loads((directory / "manifest.json").read_text())
+        except FileNotFoundError:
+            return None
+        except (OSError, json.JSONDecodeError) as exc:
+            raise ValueError(f"resolution manifest {directory} cannot be read") from exc
+        if (
+            not isinstance(labels, list)
+            or any(
+                not isinstance(label, str)
+                or not label
+                or label in {".", ".."}
+                or Path(label).name != label
+                for label in labels
+            )
+            or len(set(labels)) != len(labels)
+        ):
+            raise ValueError(f"resolution manifest {directory} has invalid labels")
+        for label in labels:
+            path = self.resolution_path(key, label)
+            try:
+                value = json.loads(path.read_text())
+            except FileNotFoundError:
+                return None
+            except (OSError, json.JSONDecodeError) as exc:
+                raise ValueError(f"resolution plan {path} cannot be read") from exc
+            if not isinstance(value, dict):
+                raise ValueError(f"resolution plan {path} has an invalid schema")
+            for field, expected_value in expected.items():
+                if value.get(field) != expected_value:
+                    raise ValueError(
+                        f"resolution plan {path} has stale {field} evidence"
+                    )
+            identity = value.get("resolution")
+            if (
+                not isinstance(identity, dict)
+                or identity.get("label") != path.parent.name
+                or not isinstance(identity.get("selection_id"), str)
+                or not isinstance(identity.get("candidate_id"), str)
+            ):
+                raise ValueError(f"resolution plan {path} has invalid identity")
+            selection_id = identity["selection_id"]
+            if selection_id in plans:
+                raise ValueError(f"resolution plan {path} repeats {selection_id}")
+            selections = tuple(
+                TaskAlternativeChoice.from_value(item, f"{path}.selections[{index}]")
+                for index, item in enumerate(_list(value.get("selections"), str(path)))
+            )
+            schedule = MemorySchedule.from_dict(value.get("schedule"))
+            schedule.validate(program, selections)
+            plans[selection_id] = ResolutionPlan(
+                selection_id,
+                selections,
+                identity["candidate_id"],
+                schedule,
+                _simulation_result_from_value(
+                    value.get("simulation_result"), f"{path}.simulation_result"
+                ),
+                _resident_slice_from_value(
+                    value.get("resident_slice"), f"{path}.resident_slice"
+                ),
+            )
+            self._record(key, program.digest, path, "read", resolution=True)
+        return tuple(plans[key] for key in sorted(plans))
 
     def _write(
         self,
@@ -621,8 +705,7 @@ class PlanStore:
 
         directory = digest_directory(self.root, key) / "resolutions"
         shutil.rmtree(directory, ignore_errors=True)
-        if not result.resolutions:
-            return
+        directory.mkdir(parents=True, exist_ok=True)
         boundary = self._boundary(
             key,
             result.program,
@@ -658,6 +741,11 @@ class PlanStore:
                 path, json.dumps(payload, sort_keys=True, separators=(",", ":"))
             )
             self._record(key, result.program.digest, path, "write", resolution=True)
+        # Published last: readers can distinguish complete retention from an
+        # interrupted write without making partial artifacts look successful.
+        atomic_text(
+            directory / "manifest.json", json.dumps(sorted(resolution_labels(result)))
+        )
 
     def _write_verdict(
         self,
