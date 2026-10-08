@@ -66,7 +66,12 @@ class GraphPairVariant:
         backward = self.pair.backward
         if dtype is not None:
             backward = cast_gradient_outputs(backward, leaves, dtype)
-        backward = materialize_gradient_outputs(backward, leaves)
+        # Activation cotangents also have independent canonical lifetimes.
+        # AOT may reuse one value (for example, a broadcast auxiliary-loss
+        # derivative) for several distinct stage inputs.
+        backward = materialize_gradient_outputs(
+            backward, tuple(sorted(_produced_output_leaves(backward)))
+        )
         return (
             self
             if backward is self.pair.backward

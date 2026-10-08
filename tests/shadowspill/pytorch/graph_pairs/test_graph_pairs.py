@@ -380,3 +380,35 @@ def _digests(stage: DifferentiatedStage) -> tuple[tuple[str, str], ...]:
         )
         for item in stage.graph_pairs.variants
     )
+
+
+def test_activation_cotangents_have_independent_boundary_storage():
+    """One shared derivative must not back separate canonical activation grads."""
+    from torch.fx.experimental.proxy_tensor import make_fx
+
+    from shadowspill.pytorch.capture.aot import capture_graph_pair
+    from shadowspill.pytorch.graph_pairs.artifacts import (
+        GraphPairVariant,
+        parameter_gradient_leaves,
+    )
+
+    def forward(a, b, c):
+        return a + b + c
+
+    values = tuple(torch.randn(4, requires_grad=True) for _ in range(3))
+    pair = capture_graph_pair(
+        make_fx(forward)(*values), values, original_output=forward(*values)
+    )
+    assert parameter_gradient_leaves(pair) == ()
+    prepared = GraphPairVariant("save", 1.0, pair).with_gradient_dtype(None).pair
+    args = tuple(
+        torch.randn(tuple(t.shape), dtype=t.dtype) if isinstance(t, torch.Tensor) else t
+        for t in prepared.backward.example_arguments
+    )
+    outputs = prepared.backward.graph_module(*args)
+    expected = pair.backward.graph_module(*args)
+    torch.testing.assert_close(outputs, expected)
+    assert len({t.untyped_storage().data_ptr() for t in outputs}) == 3
+    assert (
+        len({v.root_id for v in prepared.backward.storage_contract.output_views}) == 3
+    )
