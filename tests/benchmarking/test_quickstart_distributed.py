@@ -60,3 +60,52 @@ def test_text_dp_scaling_is_in_the_recipe_and_preserves_local_metrics(monkeypatc
     loss.backward()
     torch.testing.assert_close(weight.grad, torch.tensor(1.0))
     torch.testing.assert_close(metrics["head_loss"], torch.tensor(4.0))
+
+
+def test_quickstart_releases_resources_after_imported_state(monkeypatch):
+    from benchmarking.quickstart import runner
+
+    events = []
+    tour = object.__new__(runner.Tour)
+    tour.model, tour.runtime = object(), object()
+    tour.experiment = {
+        "cleanup_model": lambda model: events.append(("resources", model))
+    }
+    monkeypatch.setattr(
+        runner,
+        "release_model_state",
+        lambda model, **kw: events.append(("state", model)),
+    )
+    tour._release_model()
+    assert events == [("state", tour.model), ("resources", tour.model)]
+
+
+def test_quickstart_threads_are_configurable_per_rank():
+    from benchmarking.quickstart.options import _parser, search_policy
+
+    args = _parser().parse_args(["--search-workers", "4"])
+    assert search_policy(args).workers == 4
+
+
+def test_symmetric_cli_override_preserves_the_callers_specification(monkeypatch):
+    from benchmarking.quickstart import runner
+    from shadowspill.pytorch import Distributed
+
+    parser = _parser()
+    assert parser.parse_args([]).symmetric_planning is None
+    assert parser.parse_args(["--no-symmetric-planning"]).symmetric_planning is False
+    arguments = parser.parse_args(["--symmetric-planning"])
+    specification = Distributed(None)
+    model, received = object(), []
+    tour = object.__new__(runner.Tour)
+    tour.arguments, tour.runtime, tour.distributed = arguments, object(), specification
+    tour.experiment = {"model_factory": lambda: model}
+    monkeypatch.setattr(runner, "initialize_model", lambda value, **_: value)
+    monkeypatch.setattr(
+        runner,
+        "import_model_state",
+        lambda value, **kw: received.append(kw["distributed"]),
+    )
+    tour._build_model()
+    assert received[0].symmetric_planning is True
+    assert specification.symmetric_planning is False

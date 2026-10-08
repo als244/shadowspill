@@ -58,6 +58,9 @@ def prepared[**P, R](
             bound.shard_optimizer = sharded
             bound.control.agree("prepare/entry", function.__name__)
             bound.control.agree("prepare/shard_optimizer", bound.shard_optimizer)
+            bound.control.agree(
+                "prepare/symmetric_planning", bound.specification.symmetric_planning
+            )
             if (
                 not synchronize_result
                 and not bound.initialized

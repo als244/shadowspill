@@ -1,5 +1,7 @@
 """The search over the forward program, and the layout it certifies."""
 
+from dataclasses import replace
+
 from shadowspill.errors import (
     AdmissionError,
     PlanInfeasibleError,
@@ -57,7 +59,50 @@ def plan_forward_program(
         "forward/task_sequence",
         [[task.task_id, task.phase] for task in program.lowered.program.tasks],
     )
-    return bound.control.run("forward/physical_admission", plan)
+    from shadowspill.pytorch.distributed._selection import choose, record_decision
+    from shadowspill.pytorch.distributed._symmetry import Symmetry, verify
+
+    shared, evidence = verify(
+        Symmetry(
+            program.lowered.program,
+            program.simulation_config,
+            program.admission,
+            program.lowered.initial_residency,
+            program.lowered.final_residency,
+            dynamic_scratch_reserve_bytes(
+                program.measurements_by_profile,
+                minimum_bytes=program.dynamic_scratch_reserve_bytes,
+            ),
+        ),
+        extra=None if search_options is None else search_options.to_dict(),
+    )
+    if shared is not None:
+        program = replace(
+            program,
+            lowered=replace(program.lowered, program=shared.program),
+            simulation_config=shared.config,
+        )
+        selected, _, _, decision = choose(
+            shared.program,
+            lambda fixed, carried: plan(),
+            search_options=search_options,
+            receive=lambda payload, fixed: shared.receive(payload),
+        )
+        decision["planning"] = evidence
+        record_decision(stores.store, decision, plans=(selected,))
+        return selected
+    selected = bound.control.run("forward/physical_admission", plan)
+    record_decision(
+        stores.store,
+        {
+            "version": 1,
+            "members": bound.control.members,
+            "rank": bound.control.rank,
+            "local_program": program.lowered.program.digest,
+            "planning": evidence,
+        },
+    )
+    return selected
 
 
 def _plan_local_forward_program(

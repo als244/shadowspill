@@ -192,6 +192,10 @@ def plan_step_search(
         geometries=tuple(sweep.builds),
         points=tuple(sweep.points),
         search_options=search_options,
-        transfer_bandwidths=transfer_bandwidths,
+        transfer_bandwidths=(
+            None
+            if prepared is not None and prepared.specification.symmetric_planning
+            else transfer_bandwidths
+        ),
         winner_plans=MappingProxyType(sweep.winner_plans()),
     )

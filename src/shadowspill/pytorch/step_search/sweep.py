@@ -175,6 +175,12 @@ class _Sweep:
                     + (f": a task {exhausted.report}" if exhausted.report else "")
                     + "; every budget of every ordering is infeasible"
                 )
+            else:
+                self.ask.prepare_geometry(
+                    tuple(step.problem for step in steps),
+                    self.budgets,
+                    incumbents=self.incumbents,
+                )
             for position, ordering in enumerate(orderings, 1):
                 name = f"{shape} {ordering.label}"
                 if exhausted is not None:
@@ -250,7 +256,7 @@ class _Sweep:
                 phase_seconds=MappingProxyType(
                     {name: duration / 1e9 for name, duration in step.phase_timings_ns}
                 ),
-                transfer_bandwidths=step.problem.transfer_bandwidths,
+                transfer_bandwidths=self.ask.lanes_for(step.problem),
             )
         )
 
@@ -273,6 +279,7 @@ class _Sweep:
         for execution_budget, spill_budget in sorted(self.budgets):
             self.point_index += 1
             started = time.perf_counter()
+            prepared_seconds = None
             status, makespan, summary, failure = "succeeded", None, None, None
             outcomes: tuple[GraphPairOutcome, ...] = ()
             inherited: int | None = None
@@ -285,11 +292,15 @@ class _Sweep:
                 )
             except _EXHAUSTED as error:
                 status, failure = "search_exhausted", str(error)
+                prepared_seconds = getattr(error, "search_seconds", None)
             except _INFEASIBLE as error:
                 status, failure = "infeasible", str(error)
+                prepared_seconds = getattr(error, "search_seconds", None)
             except _REJECTED as error:
                 status, failure = "rejected", str(error)
+                prepared_seconds = getattr(error, "search_seconds", None)
             else:
+                prepared_seconds = answer.search_seconds
                 makespan = answer.makespan_ns / 1e9
                 summary = answer.summary
                 outcomes = answer.outcomes
@@ -320,7 +331,11 @@ class _Sweep:
                     makespan_seconds=makespan,
                     summary=summary,
                     error=failure,
-                    search_seconds=time.perf_counter() - started,
+                    search_seconds=(
+                        time.perf_counter() - started
+                        if prepared_seconds is None
+                        else prepared_seconds
+                    ),
                     graph_pair_selections=outcomes,
                     incumbent_budget_bytes=inherited,
                 )

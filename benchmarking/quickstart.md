@@ -37,12 +37,25 @@ non-text example. Its mapping contains:
 | `metadata` | Optional report metadata |
 | `metric_reducer` | Optional host reducer of completed-step observations |
 | `context` | Optional context factory enclosing search and execution |
+| `cleanup_model` | Optional `cleanup_model(model)` called after imported state is released, including budget rebuilds; releases caller-owned communication resources |
 
 Every candidate must represent the same normalized update. The objective owns
 normalization, including any unit count; the runner only sums its returned
 contributions. A model factory must recreate the same initial values at each
 budget, for example with a local seeded RNG context. The provided factory does
 this. Prepared candidate data should stay on CPU until the runner uses it.
+
+`--search-workers` limits planner CPU threads **per process** (0 means automatic).
+For a distributed sweep, choose a per-rank limit that fits the node's CPU count.
+`--external-headroom-gib` reserves device memory outside the execution slab;
+its default remains 0.5 GiB. Workloads with communication allocations can request
+more. This reserve comes out of each requested physical execution budget, and
+the console reports the resulting slab budgets.
+
+The Python `run(...)` API accepts `search_workers`, `external_headroom_gib`, and
+`plan_store` as well. A stable `artifact_store` and `plan_store` let later
+invocations reuse completed builds/searches while keeping separate output
+directories for their logs and measurements.
 
 Python callers may use the same workflow:
 
@@ -519,6 +532,15 @@ figures and the gate report follows the same convention: positive means the
 step ran slower than predicted.
 
 ## Distributed runs
+
+`--symmetric-planning` verifies matching planning memory requirements and shares
+CPU search work across ranks. All ranks still profile; shared timing estimates
+are conservative, and every selected plan is admitted locally. A mismatch falls
+back to independent searches. `--no-symmetric-planning` disables the optimization;
+omitting both flags preserves the factory's `Distributed` setting. The Python
+runner accepts the same override as `run(..., symmetric_planning=True)`.
+See [verified symmetric planning](../docs/python/api/distributed.md#verified-symmetric-planning)
+for the checks, work assignment, and artifact records.
 
 The distributed path uses the same model-independent planner as `Trainer`. Its
 separate-device qualification is in progress. Launch one process per GPU:
