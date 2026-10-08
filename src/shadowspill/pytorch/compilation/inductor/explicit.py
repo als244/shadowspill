@@ -29,6 +29,7 @@ from shadowspill.task.manifest import ExecutableTaskManifest
 
 from .cache import _fx_graph_cache_key, _load_cached_manifest
 from .compiler import _PINNED_OUTPUT_LAYOUT, _record_compilation_phase
+from .functional import functional_task
 
 
 def _prepare_explicit_inputs(
@@ -63,7 +64,7 @@ def _normalize_explicit_graph(
     try:
         with V.set_fake_mode(fake_mode), tracing(TracingContext(fake_mode)):
             normalized = make_fx(
-                graph_module,
+                functional_task(graph_module, fake_inputs),
                 decomposition_table=select_decomp_table(),
                 tracing_mode="fake",
                 _allow_non_fake_inputs=True,
