@@ -268,7 +268,7 @@ def main():
     parser.add_argument("--outdir", type=Path, default=Path.home() / "storage/shadowspill/qwen_moe_ep8_1007/ep8-bf16")
     parser.add_argument("--stage", choices=("smoke", "search", "measure", "train", "all"), default="all")
     parser.add_argument("--ranks", type=int, default=8)
-    parser.add_argument("--models", nargs="+", default=["qwen30b", "qwen35b"])
+    parser.add_argument("--models", nargs="+", default=["qwen3moe", "qwen35moe"])
     parser.add_argument("--tokens", type=int, nargs="+", default=[8192, 16384, 32768, 65536])
     parser.add_argument("--budgets", type=int, nargs="+", default=[20, 30, 40, 50, 60, 70])
     parser.add_argument("--global-tokens", type=int, default=1 << 22)

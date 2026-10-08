@@ -5,6 +5,7 @@ from __future__ import annotations
 import mlops
 import torch
 import torch.nn as nn
+from mlops.modules import LanguageModelHead
 
 from workloads.common import Packing, RotaryEmbedding, SequenceLengths, packed_metadata
 from workloads.pytorch.llama3 import Llama3Config
@@ -103,7 +104,7 @@ class Llama3(nn.Module):
         )
         self.blocks = nn.ModuleList(Block(config) for _ in range(config.n_layers))
         self.final_norm = RMSNorm(config.d_model)
-        self.lm_head = nn.Linear(config.d_model, config.vocab_size, bias=False)
+        self.lm_head = LanguageModelHead(config.d_model, config.vocab_size)
 
     def hidden(
         self, tokens: torch.Tensor, sequence_lengths: SequenceLengths = None
@@ -119,7 +120,7 @@ class Llama3(nn.Module):
     def forward(
         self, tokens: torch.Tensor, sequence_lengths: SequenceLengths = None
     ) -> torch.Tensor:
-        return self.hidden(tokens, sequence_lengths) @ self.lm_head.weight.T
+        return self.lm_head(self.hidden(tokens, sequence_lengths))
 
     def loss(
         self,
@@ -129,9 +130,8 @@ class Llama3(nn.Module):
         seq_lens: SequenceLengths = None,
         reduction: str = "mean",
     ) -> torch.Tensor:
-        return mlops.head_loss(
+        return self.lm_head.loss(
             self.hidden(tokens, seq_lens),
-            self.lm_head.weight,
             targets,
             reduction=reduction,
         )

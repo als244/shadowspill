@@ -25,7 +25,7 @@ import torch.distributed as dist
 from mlops.dispatch import set_weight_gradient_dtype
 from mlops.optim import AdamW
 from shadowspill.pytorch import Distributed, ProfilingOptions
-from workloads.mlops import Qwen30B, Qwen30BConfig, Qwen35B, Qwen35BConfig
+from workloads.mlops import Qwen3MoE, Qwen3MoEConfig, Qwen35MoE, Qwen35MoEConfig
 
 
 def integers(value):
@@ -34,7 +34,7 @@ def integers(value):
 
 def parse_args():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--model", choices=("qwen30b", "qwen35b"), required=True)
+    parser.add_argument("--model", choices=("qwen3moe", "qwen35moe"), required=True)
     parser.add_argument("--tokens-per-rank", type=int, required=True,
                         help="tokens in one microbatch on each rank")
     parser.add_argument("--global-tokens", type=int, default=1 << 22)
@@ -80,11 +80,11 @@ def factory(args):
         raise ValueError("global tokens must divide into equal rank microbatches")
     if args.tokens_per_rank % args.sequence_length:
         raise ValueError("microbatch tokens must divide into whole sequences")
-    cls, config_type = (Qwen30B, Qwen30BConfig) if args.model == "qwen30b" else (Qwen35B, Qwen35BConfig)
+    cls, config_type = (Qwen3MoE, Qwen3MoEConfig) if args.model == "qwen3moe" else (Qwen35MoE, Qwen35MoEConfig)
     config = replace(config_type(), max_seq_len=args.sequence_length)
     if args.tiny:
         config = replace(
-            config, n_layers=4 if args.model == "qwen35b" else 2,
+            config, n_layers=4 if args.model == "qwen35moe" else 2,
             d_model=256, n_heads=4, n_kv_heads=2, head_dim=64,
             n_experts=16, top_k=2, d_ff_expert=128,
             d_ff_shared=128 if config.d_ff_shared else 0, vocab_size=512,

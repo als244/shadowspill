@@ -19,7 +19,10 @@ import torch.nn as nn
 
 
 def build_on_meta(
-    model: Callable[..., nn.Module], dtype: str | None = None, **arguments: Any
+    model: Callable[..., nn.Module],
+    dtype: str | None = None,
+    lora: dict[str, Any] | None = None,
+    **arguments: Any,
 ) -> nn.Module:
     """``model(**arguments)`` built on ``meta``, declaring its parameters in
     ``dtype`` -- a ``torch`` dtype name such as ``"bfloat16"`` -- or in the
@@ -31,7 +34,12 @@ def build_on_meta(
         torch.set_default_dtype(getattr(torch, dtype))
     torch.set_default_device("meta")
     try:
-        return model(**arguments)
+        result = model(**arguments)
+        if lora is not None:
+            from workloads.lora import configure_lora
+
+            result = configure_lora(result, **lora)
+        return result
     finally:
         torch.set_default_device(previous_device)
         torch.set_default_dtype(previous_dtype)

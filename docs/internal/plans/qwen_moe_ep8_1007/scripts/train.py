@@ -26,7 +26,7 @@ from shadowspill.pytorch import ProfilingOptions
 from shadowspill.training import Distributed, Trainer
 from shadowspill.training.backends import ShadowSpill
 from shadowspill.training.logging import DistributedLogger
-from workloads.mlops import Qwen30B, Qwen30BConfig, Qwen35B, Qwen35BConfig
+from workloads.mlops import Qwen3MoE, Qwen3MoEConfig, Qwen35MoE, Qwen35MoEConfig
 
 
 class Updates:
@@ -94,7 +94,7 @@ def aggregate(records):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--model", choices=("qwen30b", "qwen35b"), required=True)
+    parser.add_argument("--model", choices=("qwen3moe", "qwen35moe"), required=True)
     parser.add_argument("--tokens-per-rank", type=int, required=True)
     parser.add_argument("--execution-gib", type=float, required=True)
     parser.add_argument("--spill-gib", type=float, default=64)
@@ -118,7 +118,7 @@ def main():
                      microbatch=args.tokens_per_rank, rank=rank, world=world)
     example = next(source)
     source.load_state_dict({"step": 0})
-    cls, config_type = (Qwen30B, Qwen30BConfig) if args.model == "qwen30b" else (Qwen35B, Qwen35BConfig)
+    cls, config_type = (Qwen3MoE, Qwen3MoEConfig) if args.model == "qwen3moe" else (Qwen35MoE, Qwen35MoEConfig)
     with ExitStack() as stack:
         stack.callback(dist.destroy_process_group)
         backend = stack.enter_context(ShadowSpill(

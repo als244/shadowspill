@@ -93,6 +93,7 @@ every page once. The shortest routes from here:
 | Physical admission | [Physical admission and offset handling](docs/architecture/physical-admission.md) |
 | Plan and step diagnostics | [Diagnostics guides](docs/python/plan-report.md) |
 | Serialized planning artifacts | [program and annotated-plan JSON](docs/python/planning-json.md) |
+| Example architectures and configuration | [Model catalog](workloads/MODELS.md) |
 | Practical workflows | [Examples](docs/examples/README.md) |
 | Errors and cleanup | [Errors, failures, and cleanup](docs/python/failures.md) |
 | Repository development | [Development guide](docs/development/README.md) |

@@ -27,7 +27,7 @@ def main():
     # Locate only the prefix needed for the short validation experiment.
     prefix = source[:min(len(source), args.tokens * 3)]
     ends = np.flatnonzero(prefix == source_meta["eos_id"])
-    for model in ("qwen30b", "qwen35b"):
+    for model in ("qwen3moe", "qwen35moe"):
         root = args.outdir / model
         if (root / "meta.json").exists():
             print(f"SKIP complete {root}", flush=True)

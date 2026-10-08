@@ -204,7 +204,7 @@ def main():
         )
         from moonep.buffer import get_vmm_granularity
 
-        from workloads.quack import OLMoE
+        from workloads.mlops import OLMoE
 
         group = dist.new_group(
             backend="nccl", device_id=backend.device, timeout=timedelta(seconds=1800)

@@ -291,6 +291,8 @@ These pages live beside the code they describe, outside `docs/`.
   against floors measured that way.
 - [Workloads](../workloads/README.md) — the model and data definitions the
   benchmarks and gates consume.
+- [Example model catalog](../workloads/MODELS.md) — architecture index, dimensions,
+  precision, trainable parameters, LoRA status, EP and runnable configurations.
 
 ## Documentation policy
 

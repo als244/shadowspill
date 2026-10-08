@@ -4,7 +4,7 @@ import pytest
 import torch
 
 from workloads.full_model import build_model, initialize_model, throughput_spec
-from workloads.mlops import Qwen30B, Qwen30BConfig, Qwen35B, Qwen35BConfig
+from workloads.mlops import Qwen3MoE, Qwen3MoEConfig, Qwen35MoE, Qwen35MoEConfig
 
 
 def tiny(config):
@@ -29,7 +29,7 @@ def tiny(config):
 
 
 @pytest.mark.parametrize(
-    "family,count", [("qwen30b", 30_532_122_624), ("qwen35b", 34_660_610_688)]
+    "family,count", [("qwen3moe", 30_532_122_624), ("qwen35moe", 34_660_610_688)]
 )
 def test_published_presets_construct_on_meta(family, count):
     spec = throughput_spec(family, "mlops")
@@ -41,7 +41,7 @@ def test_published_presets_construct_on_meta(family, count):
     assert c.attention_width == 4096
     assert c.d_model == 2048 and c.top_k == 8 and c.norm_epsilon == 1e-6
     assert c.router_aux_loss_coef == 0.001
-    if family == "qwen30b":
+    if family == "qwen3moe":
         assert (c.n_layers, c.n_heads, c.n_kv_heads, c.head_dim) == (48, 32, 4, 128)
         assert (c.n_experts, c.d_ff_expert, c.d_ff_shared, c.vocab_size) == (
             128,
@@ -69,7 +69,7 @@ def test_published_presets_construct_on_meta(family, count):
 
 
 @pytest.mark.parametrize(
-    "cls,config", [(Qwen30B, Qwen30BConfig()), (Qwen35B, Qwen35BConfig())]
+    "cls,config", [(Qwen3MoE, Qwen3MoEConfig()), (Qwen35MoE, Qwen35MoEConfig())]
 )
 def test_meta_initialization_and_packed_boundaries(cls, config):
     c = tiny(config)
@@ -220,7 +220,7 @@ def _copy_reference(model, reference):
 
 
 @pytest.mark.parametrize(
-    "cls,config", [(Qwen30B, Qwen30BConfig()), (Qwen35B, Qwen35BConfig())]
+    "cls,config", [(Qwen3MoE, Qwen3MoEConfig()), (Qwen35MoE, Qwen35MoEConfig())]
 )
 def test_logits_and_all_parameter_gradients_match_transformers(
     cls, config, monkeypatch

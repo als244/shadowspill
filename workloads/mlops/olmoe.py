@@ -5,6 +5,7 @@ from __future__ import annotations
 import mlops
 import torch
 import torch.nn as nn
+from mlops.modules import LanguageModelHead
 
 from workloads.common import (
     Packing,
@@ -15,6 +16,7 @@ from workloads.common import (
 )
 from workloads.pytorch.olmoe import OLMoEConfig
 
+from ._expert_parallel import close_experts, expert_construction, parallel_forward
 from .common import RMSNorm
 
 
@@ -70,9 +72,12 @@ class Attention(nn.Module):
 
 
 class MoE(nn.Module):
-    def __init__(self, config: OLMoEConfig) -> None:
+    def __init__(self, config: OLMoEConfig, expert_factory=None) -> None:
         super().__init__()
         self.config = config
+        self.experts = expert_factory() if expert_factory is not None else None
+        if self.experts is not None:
+            return
         self.router = nn.Linear(config.d_model, config.n_experts, bias=False)
         self.w13_experts = nn.Parameter(
             torch.empty(config.n_experts, config.d_model, 2 * config.d_ff_expert)
@@ -85,6 +90,8 @@ class MoE(nn.Module):
     def reset_parameters(self) -> None:
         """Initialise the parameters this module owns, in place."""
 
+        if self.experts is not None:
+            return
         config = self.config
         with torch.no_grad():
             nn.init.normal_(self.w13_experts, std=config.d_model**-0.5)
@@ -99,27 +106,36 @@ class MoE(nn.Module):
     ):
         # Softmax-then-top-k balances experts over the whole microbatch, so
         # where its sequences begin is no concern of the router's.
-        output, auxiliary, counts, probability_sum = mlops.moe(
-            hidden,
-            residual,
-            self.router.weight.T,
-            self.w13_experts,
-            self.w2_experts,
-            top_k=self.config.top_k,
-            routing_mode="softmax_then_topk",
-        )
+        if self.experts is not None:
+            routed, counts, probability_sum = parallel_forward(self.experts, hidden)
+            rows = hidden.numel() // self.config.d_model
+            frequency = counts.float() / (rows * self.config.top_k)
+            auxiliary = (
+                self.config.n_experts * (frequency * probability_sum / rows).sum()
+            )
+            output = residual + routed
+        else:
+            output, auxiliary, counts, probability_sum = mlops.moe(
+                hidden,
+                residual,
+                self.router.weight.T,
+                self.w13_experts,
+                self.w2_experts,
+                top_k=self.config.top_k,
+                routing_mode="softmax_then_topk",
+            )
         if return_metrics:
             return output, auxiliary, counts, probability_sum
         return output, auxiliary
 
 
 class Block(nn.Module):
-    def __init__(self, config: OLMoEConfig) -> None:
+    def __init__(self, config: OLMoEConfig, expert_factory=None) -> None:
         super().__init__()
         self.attn_norm = RMSNorm(config.d_model)
         self.attn = Attention(config)
         self.ffn_norm = RMSNorm(config.d_model)
-        self.moe = MoE(config)
+        self.moe = MoE(config, expert_factory)
 
     def forward(
         self,
@@ -134,20 +150,69 @@ class Block(nn.Module):
 
 
 class OLMoE(nn.Module):
-    """State-dict-compatible optimized twin of the pure reference."""
+    """Local MLOps experts by default; optionally shard experts over an EP group.
+
+    Supply ``ep_group`` and either ``token_capacity`` or a caller-owned ``buffer``
+    to use QuackMoE. One buffer and publication banks are shared across blocks;
+    model parameters remain distinct. EP hidden activations are BF16, with
+    configurable expert compute/gradient/transport precision. The EP router
+    defaults to FP32. Local construction retains PyTorch-reference state keys.
+    """
 
     SUPPORTS_PACKED = True
 
-    def __init__(self, config: OLMoEConfig) -> None:
+    def __init__(
+        self,
+        config: OLMoEConfig,
+        *,
+        ep_group=None,
+        token_capacity=None,
+        buffer=None,
+        device=None,
+        parameter_device=None,
+        dtype=None,
+        router_dtype=None,
+        compute_precision="bf16",
+        weight_grad_dtype=torch.bfloat16,
+        activation_transport="bf16",
+    ) -> None:
         super().__init__()
         self.config = config
-        self.embed = nn.Embedding(config.vocab_size, config.d_model)
-        self.rotary = RotaryEmbedding(
-            config.head_dim, base=config.rope_base, capacity=config.max_seq_len
+        with expert_construction(
+            config,
+            renormalize_topk=False,
+            ep_group=ep_group,
+            token_capacity=token_capacity,
+            buffer=buffer,
+            device=device,
+            parameter_device=parameter_device,
+            dtype=dtype,
+            router_dtype=router_dtype or torch.float32,
+            compute_precision=compute_precision,
+            weight_grad_dtype=weight_grad_dtype,
+            activation_transport=activation_transport,
+        ) as experts:
+            self.embed = nn.Embedding(config.vocab_size, config.d_model)
+            self.rotary = RotaryEmbedding(
+                config.head_dim, base=config.rope_base, capacity=config.max_seq_len
+            )
+            self.blocks = nn.ModuleList()
+            for _ in range(config.n_layers):
+                self.blocks.append(Block(config, experts))
+            self.final_norm = RMSNorm(config.d_model)
+            self.lm_head = LanguageModelHead(config.d_model, config.vocab_size)
+        self._owns_buffer = ep_group is not None and buffer is None
+
+    def expert_parameters(self):
+        for block in self.blocks:
+            if block.moe.experts is not None:
+                yield from block.moe.experts.expert_parameters()
+
+    def close(self):
+        owns_buffer, self._owns_buffer = self._owns_buffer, False
+        close_experts(
+            (block.moe.experts for block in self.blocks), destroy_buffer=owns_buffer
         )
-        self.blocks = nn.ModuleList(Block(config) for _ in range(config.n_layers))
-        self.final_norm = RMSNorm(config.d_model)
-        self.lm_head = nn.Linear(config.d_model, config.vocab_size, bias=False)
 
     def hidden(
         self,
@@ -186,7 +251,7 @@ class OLMoE(nn.Module):
         self, tokens: torch.Tensor, sequence_lengths: SequenceLengths = None
     ) -> torch.Tensor:
         hidden, _auxiliary = self.hidden(tokens, sequence_lengths)
-        return hidden @ self.lm_head.weight.T
+        return self.lm_head(hidden)
 
     def loss(
         self,
@@ -207,9 +272,7 @@ class OLMoE(nn.Module):
 
         values = self.hidden(tokens, seq_lens, return_metrics=return_metrics)
         hidden, auxiliary = values[:2]
-        objective = mlops.head_loss(
-            hidden, self.lm_head.weight, targets, reduction=reduction
-        )
+        objective = self.lm_head.loss(hidden, targets, reduction=reduction)
         loss = objective + float(aux_coef) * auxiliary_share(
             auxiliary, targets, reduction
         )

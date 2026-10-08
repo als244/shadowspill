@@ -103,7 +103,7 @@ def main():
         # allocator before loading them, just as before constructing resources.
         from mlops.expert_parallel import QuackMoEConfig as MoEConfig
         from mlops.expert_parallel import create_buffer
-        from workloads.quack import OLMoE
+        from workloads.mlops import OLMoE
 
         group = dist.new_group(backend="nccl", device_id=backend.device,
                                timeout=timedelta(seconds=900))
