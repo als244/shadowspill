@@ -148,3 +148,12 @@ Priority correction after user's baseline question: the prior default Llama gate
 2026-10-08 performance-gate-scale comparison complete: all six normal-planner cases passed (72 measured updates plus 12 warmups). Llama full/LoRA: 18.429/13.489s; Qwen: 19.052/15.013s; OLMoE: 4.760/3.877s. All optimizer inventories and physical checks pass; no measured device allocations, pinned registrations, event creates or event growth. User requested no further investigation/optimization of expected LoRA overhead, so this follow-up ends with reporting. No production changes or commits were made for this benchmark follow-up. Final evidence: PERF_SCALE.md, perf-scale-validation.json, per-case graphpairs and full build stores.
 
 2026-10-08: User approved committing and pushing all related code/docs and updating all four machines. Source changes are grouped into three MLOps and three ShadowSpill commits; a separate documentation commit records compact evidence and reproduction scripts. Existing unrelated local files are preserved. See SYNC.md for commit IDs and synchronization status.
+
+## Release completion (2026-10-08)
+
+- [x] Commit and push the approved MLOps and ShadowSpill code, documentation, compact results and reproduction scripts.
+- [x] Fast-forward the existing master checkouts on Chicago, Della, Tübingen and fatnode.
+- [x] Verify editable import locations and pass all 16 CPU full-model LoRA loss/gradient/update checks on every machine.
+- [x] Preserve unrelated machine-local configuration files, old plan drafts and report symlinks; create no extra branches or worktrees.
+
+See SYNC.md for the release and validation scope.

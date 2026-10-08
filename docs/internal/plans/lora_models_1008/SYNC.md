@@ -41,3 +41,18 @@ Synchronization uses ordinary fast-forward pulls of master, followed by import a
 - Benchmarking: 28 earlier full-model performance cases and six matched default-model full/LoRA comparisons, all passing optimizer allocation audits.
 
 See [RESULTS.md](RESULTS.md) and [PERF_SCALE.md](PERF_SCALE.md) for scope, model dimensions, timings and memory measurements. Multi-GPU validation of the consolidated optional-EP constructors and full-model FP8 LoRA remain separate follow-up work.
+
+## Completed synchronization
+
+Both repositories were pushed to origin/master and fast-forwarded on all four machines. MLOps is at 1b8cec6; ShadowSpill source and evidence are at 415a551a. This final synchronization note is a documentation-only follow-up.
+
+| Machine | Editable imports resolve to the intended checkouts | CPU LoRA checks |
+|---|---|---|
+| Chicago | Yes | 16 passed |
+| Della | Yes | 16 passed |
+| Tübingen | Yes | 16 passed |
+| fatnode | Yes | 16 passed |
+
+Each check covers losses, gradients, three parameter updates, frozen-state preservation and state reload across eight implementations, with frozen or LoRA output heads. All ran on CPU in the existing shadowspill environment. Full GPU gates were not repeated during synchronization; their pre-release results are above. Each checkout remains on master with one worktree.
+
+Per-machine logs and machine-readable summaries are stored locally under logs/post-pull-cpu-20261008.{log,json}.
