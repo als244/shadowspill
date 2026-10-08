@@ -28,8 +28,8 @@ from shadowspill.store import STORE_MODES
 IDENTITIES = (
     "mlops_llama3",
     "mlops_qwen35",
-    "mlops_qwen30b",
-    "mlops_qwen35b",
+    "mlops_qwen3moe",
+    "mlops_qwen35moe",
     "mlops_olmoe",
     "pytorch_llama3",
     "pytorch_qwen35",

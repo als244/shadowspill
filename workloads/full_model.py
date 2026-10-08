@@ -78,12 +78,12 @@ def throughput_spec(family: str, implementation: ModelImplementation) -> FullMod
             raise ValueError("pure-PyTorch OLMoE full-model benchmarking is deferred")
         config = OLMoEConfig.throughput()
         tokens = 32_768
-    elif family in {"qwen30b", "qwen35b"}:
+    elif family in {"qwen3moe", "qwen35moe"}:
         if implementation != "mlops":
             raise ValueError("Qwen MoE full-model workloads use MLOps")
-        from workloads.mlops import Qwen30BConfig, Qwen35BConfig
+        from workloads.mlops import Qwen3MoEConfig, Qwen35MoEConfig
 
-        config = (Qwen30BConfig if family == "qwen30b" else Qwen35BConfig)()
+        config = (Qwen3MoEConfig if family == "qwen3moe" else Qwen35MoEConfig)()
         tokens = 8_192
     else:
         raise ValueError(f"unknown full-model family {family!r}")
@@ -139,18 +139,15 @@ def full_model_objective(
         )
         return cast(torch.Tensor, summed / total)
 
-    import mlops
-
     chunk = _head_chunk_size(
         int(callable_model.config.vocab_size),
         manifest.head_scratch_bytes,
     )
-    if manifest.family in {"olmoe", "qwen30b", "qwen35b"}:
+    if manifest.family in {"olmoe", "qwen3moe", "qwen35moe"}:
         hidden, auxiliary = callable_model.hidden(tokens, sequence_lengths)
         return _with_balancing(
-            mlops.head_loss(
+            callable_model.lm_head.loss(
                 hidden,
-                callable_model.lm_head.weight,
                 targets,
                 chunk_size=chunk,
                 reduction="sum",
@@ -162,9 +159,8 @@ def full_model_objective(
             ),
         )
     hidden = callable_model.hidden(tokens, sequence_lengths)
-    summed = mlops.head_loss(
+    summed = callable_model.lm_head.loss(
         hidden,
-        callable_model.lm_head.weight,
         targets,
         chunk_size=chunk,
         reduction="sum",
@@ -241,7 +237,7 @@ def build_model(manifest: FullModelSpec) -> nn.Module:
     if manifest.family == "olmoe":
         model_types["olmoe"] = models.OLMoE
     if manifest.implementation == "mlops":
-        model_types.update(qwen30b=models.Qwen30B, qwen35b=models.Qwen35B)
+        model_types.update(qwen3moe=models.Qwen3MoE, qwen35moe=models.Qwen35MoE)
     try:
         model_type = model_types[manifest.family]
     except KeyError as exc:

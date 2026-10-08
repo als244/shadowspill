@@ -6,20 +6,20 @@ from torch import nn
 
 from workloads.common import RotaryEmbedding, auxiliary_share, packed_metadata
 
+from .._expert_parallel import close_experts, expert_construction
 from .attention import Attention, GatedDeltaNet, RMSNorm
-from .config import Qwen30BConfig, Qwen35BConfig
-from .experts import MoE, parallel_options
-from .initialization import Embedding, Linear
+from .experts import MoE
+from .initialization import Embedding, Head
 
 
 class Block(nn.Module):
-    def __init__(self, config, index, **expert_options):
+    def __init__(self, config, index, expert_factory):
         super().__init__()
         self.kind = config.layer_kind(index)
         self.attn_norm = RMSNorm(config.d_model, config)
         self.mixer = Attention(config) if self.kind == "full" else GatedDeltaNet(config)
         self.ffn_norm = RMSNorm(config.d_model, config)
-        self.moe = MoE(config, **expert_options)
+        self.moe = MoE(config, expert_factory=expert_factory)
 
     def forward(self, hidden, packing, rotary, cumulative, chunk_indices):
         normalized = self.attn_norm(hidden)
@@ -53,6 +53,7 @@ class QwenMoE(nn.Module):
         device=None,
         parameter_device=None,
         dtype=None,
+        router_dtype=None,
         compute_precision="bf16",
         weight_grad_dtype=torch.bfloat16,
         activation_transport="bf16",
@@ -60,94 +61,46 @@ class QwenMoE(nn.Module):
         super().__init__()
         self.config = config
         self.blocks = nn.ModuleList()
-        self._owns_buffer = False
-        self._parallel = ep_group is not None
-        options = None
-        if self._parallel:
-            if (token_capacity is None) == (buffer is None):
-                raise ValueError(
-                    "EP requires either token_capacity or a supplied buffer"
-                )
-            device = torch.device(device or f"cuda:{torch.cuda.current_device()}")
-            if device.type != "cuda":
-                raise ValueError("expert parallelism requires a CUDA device")
-            if device.index is None:
-                device = torch.device("cuda", torch.cuda.current_device())
-            parameter_device = torch.device(parameter_device or device)
-            dtype = dtype or torch.bfloat16
-            if dtype != torch.bfloat16:
-                raise ValueError("QuackMoE's hidden activation dtype must be BF16")
-            options = parallel_options(
-                config,
-                ep_group,
-                dtype=dtype,
-                compute_precision=compute_precision,
-                weight_grad_dtype=weight_grad_dtype,
-                activation_transport=activation_transport,
+        with expert_construction(
+            config,
+            renormalize_topk=True,
+            ep_group=ep_group,
+            token_capacity=token_capacity,
+            buffer=buffer,
+            device=device,
+            parameter_device=parameter_device,
+            dtype=dtype,
+            router_dtype=router_dtype,
+            compute_precision=compute_precision,
+            weight_grad_dtype=weight_grad_dtype,
+            activation_transport=activation_transport,
+        ) as experts:
+            self.embed = Embedding(
+                config.vocab_size, config.d_model, std=config.initializer_range
             )
-            if buffer is None:
-                from mlops.expert_parallel import create_buffer
-
-                buffer = create_buffer(options, token_capacity, ep_group)
-                self._owns_buffer = True
-        elif buffer is not None or token_capacity is not None:
-            raise ValueError("a communication buffer requires an EP process group")
-
-        # Follow the caller's device/default dtype during ordinary construction.
-        dtype = dtype or torch.get_default_dtype()
-        parameter_device = parameter_device or device or torch.get_default_device()
-        previous_dtype = torch.get_default_dtype()
-        try:
-            torch.set_default_dtype(dtype)
-            with torch.device(parameter_device):
-                self.embed = Embedding(
-                    config.vocab_size, config.d_model, std=config.initializer_range
-                )
-                self.rotary = RotaryEmbedding(
-                    config.rotary_width,
-                    base=config.rope_base,
-                    capacity=config.max_seq_len,
-                )
-                for index in range(config.n_layers):
-                    self.blocks.append(
-                        Block(
-                            config,
-                            index,
-                            group=ep_group,
-                            buffer=buffer,
-                            options=options,
-                            device=device,
-                            parameter_device=parameter_device,
-                        )
-                    )
-                self.final_norm = RMSNorm(config.d_model, config)
-                self.lm_head = Linear(
-                    config.d_model, config.vocab_size, std=config.initializer_range
-                )
-        except BaseException:
-            self.close()
-            if self._owns_buffer and buffer is not None:
-                buffer.destroy()
-                self._owns_buffer = False
-            raise
-        finally:
-            torch.set_default_dtype(previous_dtype)
+            self.rotary = RotaryEmbedding(
+                config.rotary_width, base=config.rope_base, capacity=config.max_seq_len
+            )
+            for index in range(config.n_layers):
+                self.blocks.append(Block(config, index, experts))
+            self.final_norm = RMSNorm(config.d_model, config)
+            self.lm_head = Head(
+                config.d_model, config.vocab_size, std=config.initializer_range
+            )
+        # Only plain metadata is retained; runtime handles on the leaf layers
+        # own the communication resources and remain safe to copy for capture.
+        self._owns_buffer = ep_group is not None and buffer is None
 
     def expert_parameters(self):
-        if self._parallel:
-            for block in self.blocks:
+        for block in self.blocks:
+            if block.moe.experts is not None:
                 yield from block.moe.experts.expert_parameters()
 
     def close(self):
-        buffer = None
-        for block in self.blocks:
-            if block.moe.parallel:
-                if self._owns_buffer:
-                    buffer = block.moe.experts.communication_buffer
-                block.moe.experts.close()
-        if buffer is not None:
-            buffer.destroy()
-            self._owns_buffer = False
+        owns_buffer, self._owns_buffer = self._owns_buffer, False
+        close_experts(
+            (block.moe.experts for block in self.blocks), destroy_buffer=owns_buffer
+        )
 
     def hidden(self, tokens, sequence_lengths=None, *, return_metrics=False):
         c = self.config
@@ -185,7 +138,7 @@ class QwenMoE(nn.Module):
 
     def forward(self, tokens, sequence_lengths=None):
         hidden, _ = self.hidden(tokens, sequence_lengths)
-        return hidden @ self.lm_head.weight.T
+        return self.lm_head(hidden)
 
     def loss(
         self,
@@ -200,9 +153,7 @@ class QwenMoE(nn.Module):
     ):
         hidden, auxiliary = self.hidden(tokens, seq_lens)
         kwargs = {} if head_chunk_size is None else {"chunk_size": head_chunk_size}
-        head = mlops.head_loss(
-            hidden, self.lm_head.weight, targets, reduction=reduction, **kwargs
-        )
+        head = self.lm_head.loss(hidden, targets, reduction=reduction, **kwargs)
         coefficient = self.config.router_aux_loss_coef if aux_coef is None else aux_coef
         loss = head + coefficient * auxiliary_share(auxiliary, targets, reduction)
         if not return_metrics:
@@ -213,13 +164,3 @@ class QwenMoE(nn.Module):
             "auxiliary_sum": auxiliary.detach() * trained,
             "trained_tokens": trained,
         }
-
-
-class Qwen30B(QwenMoE):
-    def __init__(self, config=None, **kwargs):
-        super().__init__(config or Qwen30BConfig(), **kwargs)
-
-
-class Qwen35B(QwenMoE):
-    def __init__(self, config=None, **kwargs):
-        super().__init__(config or Qwen35BConfig(), **kwargs)

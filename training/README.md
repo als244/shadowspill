@@ -4,6 +4,8 @@ The installed trainer lives in `shadowspill.training`. It accepts ordinary
 PyTorch models, objectives and data iterables. It does not import `workloads`,
 text data utilities, model catalogs, or qualification policies.
 
+- [Example model catalog](../workloads/MODELS.md): architectures, dimensions,
+  precision, trainable parameters, and expert parallelism.
 - [Generic training API](../docs/python/api/training.md): initialization,
   custom loops, schedules, evaluation, logging and checkpoints.
 - [Generic example](../docs/examples/generic-training.md): regression with
@@ -128,3 +130,25 @@ python -m training.compare <reference run dir> <run dir> [<run dir> ...]
 The comparison reads actual step numbers, losses and document records from the
 saved runs. Model examples and qualification policies remain outside the
 installed generic trainer.
+
+## LoRA examples
+
+The trainer uses ordinary `requires_grad` and has no LoRA-specific execution
+mode. Apply [`workloads.lora.configure_lora`](../workloads/MODELS.md#trainable-parameters-and-lora)
+before creating the trainer. The `build_on_meta` text recipe accepts a `lora`
+configuration dictionary (for example `{"rank": 32, "alpha": 32, "head": "lora"}`)
+so configuration-driven training can make the same selection. Optimizer updates and state are created for trainable parameters; frozen state
+remains available to forward and input-gradient computation.
+
+For example, reuse the Llama training config with rank-32 LoRA and FP32 factors,
+gradients and optimizer state:
+
+```bash
+python -u -m training.train training/configs/llama3_1b.json \
+  'model.lora={"rank":32,"alpha":32,"head":"lora","factor_dtype":"float32"}' \
+  grad_dtype=@torch:float32 optimizer_args.gradient_dtype=@torch:float32 \
+  optimizer_args.opt_state_dtype=@torch:float32 \
+  run_dir=training/runs/llama3_lora
+```
+
+The same `model.lora` override applies to the supplied Qwen3.5 and OLMoE configs.
