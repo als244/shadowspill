@@ -69,8 +69,8 @@ on all three multimodal axes. Existing dense `mlops_qwen35` remains unchanged.
 - [x] Commit/push the approved groups and align all four machines.
 - [x] Isolate the separate DP4 small-model bias failure and correct compiler
       functionalization; pass save/recompute and independent-planning controls.
-- [x] Complete the full suite; prepare the approved compiler correction and
-      evidence commits for publication and rollout.
+- [x] Complete the full suite and publish the compiler correction/evidence;
+      update all four existing checkouts.
 - [ ] GPU correctness, then full-size EP8 quickstart at all requested budgets.
 - [ ] Train both models; report finite losses, parameter updates, memory,
       throughput, simulator error, and artifact paths.

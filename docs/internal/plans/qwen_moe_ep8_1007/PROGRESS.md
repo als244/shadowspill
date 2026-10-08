@@ -251,3 +251,17 @@ path would introduce global barriers between tasks during real execution.
 - Preparing the two approved follow-up commits (groups 5/6) for push and rollout
   to all four existing master checkouts. No branches or worktrees are added.
   The Della EP8 allocation remains pending, with its 10-second watcher active.
+
+### Publication and final repository checks
+
+- Pushed compiler fix `4b0778d7` and evidence `0ce11433`; all four machines reached
+  that revision. Fatnode used a Git bundle because GitHub DNS is unavailable.
+  Its temporary test edits were checked against the incoming committed bytes
+  before fast-forwarding. MLOps remains unchanged at `25972fb`.
+- Once the ignored diagnostic scripts became tracked, the repository CLI guard
+  flagged options forwarded wholesale to the oracle. Made that forwarding
+  explicit in `bias_probe.py`; all 114 repository checks now pass. No production
+  code or GPU execution changed after the successful full suite.
+- Publishing this diagnostic-only follow-up and finalizing the four-machine
+  revision/import verification. Final machine revisions are recorded in the
+  local evidence file `evidence/bias_rollout.json` after publication.

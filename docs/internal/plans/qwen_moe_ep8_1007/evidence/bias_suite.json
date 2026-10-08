@@ -23,5 +23,10 @@
   "static_checks": {
     "ruff": "passed",
     "functional_module_mypy": "passed"
-  }
+  },
+  "repository_checks": {
+    "passed": 114,
+    "includes_newly_tracked_scripts": true
+  },
+  "compiler_source_commit": "4b0778d7"
 }

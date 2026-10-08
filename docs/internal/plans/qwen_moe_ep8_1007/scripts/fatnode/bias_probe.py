@@ -24,7 +24,6 @@ parser.add_argument(
 )
 parser.add_argument("--masters", action="store_true")
 args = parser.parse_args()
-args.stochastic = args.diagnostics = False
 directory = args.out / f"rank-{int(os.environ['RANK']):05d}"
 directory.mkdir(parents=True, exist_ok=True)
 snapshot = case.snapshot
@@ -72,4 +71,17 @@ def checked(actual, expected, **kwargs):
 
 case.snapshot = recorded_snapshot
 torch.testing.assert_close = checked
-case.run(args)
+case.run(
+    argparse.Namespace(
+        out=args.out,
+        precision=args.precision,
+        optimizer=args.optimizer,
+        variant=args.variant,
+        sharded=args.sharded,
+        parameter_metrics=args.parameter_metrics,
+        symmetric_planning=args.symmetric_planning,
+        masters=args.masters,
+        stochastic=False,
+        diagnostics=False,
+    )
+)
