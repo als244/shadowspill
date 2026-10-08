@@ -54,6 +54,14 @@ closed with the task, node, operator, and result involved.
 
 ## Executable storage contract
 
+Before invoking Inductor, direct task compilation functionalizes intermediate
+mutations through PyTorch's compiler dispatcher. Inductor's clone elimination
+and buffer-reuse passes require this functional form. Input updates remain part
+of the task contract and are published by terminal copies. Inputs that share
+storage use a shared base during normalization, preserving writes through
+overlapping views. Opaque mutable operators use PyTorch's automatic
+functionalization. This normalization runs during compilation, not execution.
+
 Inductor has already converted functional ATen semantics into executable
 storage behavior. ShadowSpill's compiler adapter captures a normalized task
 manifest and the callable at that boundary. Private PyTorch
