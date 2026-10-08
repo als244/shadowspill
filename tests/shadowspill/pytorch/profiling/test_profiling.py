@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
@@ -153,7 +154,8 @@ def test_structural_profile_runs_once_and_warm_cache_runs_nothing(
     assert warm.fixed_slab_bytes == 32
 
 
-def test_profile_environment_changes_cache_identity(tmp_path: Path) -> None:
+@pytest.mark.parametrize("field", ["compiler_id", "provider_id"])
+def test_profile_environment_changes_cache_identity(tmp_path: Path, field: str) -> None:
     artifacts = _artifacts()[:1]
     calls = 0
 
@@ -169,14 +171,7 @@ def test_profile_environment_changes_cache_identity(tmp_path: Path) -> None:
         measure=measure,
         cache=cache,
     )
-    changed = ProfileEnvironment(
-        torch_version="2.13.0",
-        provider_version="13.0",
-        device_name="test-device",
-        compute_capability=(12, 0),
-        compiler_id="inductor",
-        provider_id="custom",
-    )
+    changed = replace(_environment(), **{field: "changed"})
     profile_unique_artifacts(
         artifacts,
         environment=changed,

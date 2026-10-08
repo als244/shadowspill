@@ -25,7 +25,11 @@ def profile_environment(
         provider_version=provider_version(),
         device_name=properties.name,
         compute_capability=(properties.major, properties.minor),
-        compiler_id="shadowspill-explicit-task-compiler/v3:torch-inductor",
+        # Functionalizing intermediate mutations changes Inductor's storage
+        # reuse and allocation sizes even when the captured task is unchanged.
+        # Its manifests and profiles cannot reuse the direct-mutation compiler's
+        # cache entries. Artifact schemas remain unchanged.
+        compiler_id="shadowspill-functional-task-compiler/v1:torch-inductor",
         provider_id=provider_id,
         export_bypass_key=export_bypass_key,
     )

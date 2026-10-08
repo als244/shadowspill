@@ -62,6 +62,12 @@ storage use a shared base during normalization, preserving writes through
 overlapping views. Opaque mutable operators use PyTorch's automatic
 functionalization. This normalization runs during compilation, not execution.
 
+The profiling environment identifies this functional task compiler separately
+from the earlier direct-mutation compiler. Their captured graphs can match
+while Inductor's allocation sizes and storage reuse differ, so cached manifests
+and measurements must be rebuilt under the new identity. Artifact schemas stay
+at version 1.
+
 Inductor has already converted functional ATen semantics into executable
 storage behavior. ShadowSpill's compiler adapter captures a normalized task
 manifest and the callable at that boundary. Private PyTorch
