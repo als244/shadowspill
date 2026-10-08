@@ -144,6 +144,12 @@ one per process by CTest rather than in the shared pytest process. These
 *deselected* tests still run. Actual platform/capability skips are listed by
 pytest separately.
 
+Suite planning calls use fresh temporary artifact stores, including the
+fresh-process CTest cases. Tests may reuse artifacts within their own store
+when checking cache behavior, but never use the user's default store. A
+repository check enforces explicit stores on the suite's planning calls.
+Inductor and Triton caches are isolated separately by the CTest launcher.
+
 The suite selects BF16 where supported and FP16 where BF16 compilation is unavailable.
 It probes once in a child process before collection, leaving the allocator in the
 test process uninitialized, and passes the choice to fresh-process CTest cases.

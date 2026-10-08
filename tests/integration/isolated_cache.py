@@ -1,24 +1,9 @@
-"""Run one test with a compiler cache of its own, and take it away afterwards.
+"""Run one test with fresh Inductor and Triton caches, removed afterwards.
 
-ShadowSpill stores compiled task manifests under ``cache_dir()``, which is
-**Inductor's** cache root -- process-global, shared by every concurrent test and
-persistent across runs. Two things follow, and a test should be exposed to
-neither.
-
-**Concurrent tests share it.** Nothing about a test's own `artifact_store`
-changes that, so one test can be served an entry another put there.
-
-**Runs share it too**, which is the worse half. A manifest is keyed by the FX
-graph cache key and the semantic contract digest, both settled *before* Inductor
-lowers -- so a compile that differs only in a decision Inductor makes *during*
-lowering collides on the same key. Whatever was stored first is what later runs
-get, and a test that passes on a quiet machine can fail on a busy one, or the
-reverse, for reasons that are not in the tree.
-
-So each invocation gets a fresh directory and loses it on the way out: whatever
-a test sees, it put there itself, during this run. That costs the compile time a
-warm cache would have saved, which is the price of a test that means the same
-thing every time it runs.
+This covers direct compiler calls and PyTorch work outside ShadowSpill planning.
+The public planning APIs select compiler caches within their artifact store,
+so tests must also pass a test-local temporary store to every planning call.
+Neither layer should read a user's persistent cache or another test's artifacts.
 
     python isolated_cache.py <command> [argument ...]
 """
