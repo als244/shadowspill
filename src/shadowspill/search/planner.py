@@ -1,5 +1,6 @@
 """The rule one point is answered by: the summary, the plan to beat, the search."""
 
+from collections.abc import Sequence
 from dataclasses import dataclass
 from os import PathLike
 
@@ -68,6 +69,8 @@ class _Answer:
     answered_with_incumbent: bool
     #: The plan when this point planned it; `None` when a summary answered.
     plan: AnnotatedProgramPlan | None
+    #: Owner's elapsed search time when this point was prepared in a batch.
+    search_seconds: float | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -87,6 +90,18 @@ class _Planner:
     plan_store_mode: StoreMode
     verbose: bool
     keep_resolutions: bool = False
+
+    def prepare_geometry(
+        self,
+        problems: Sequence[ShadowSpillPlanningProblem],
+        budgets: Sequence[tuple[int, int]],
+        *,
+        incumbents: bool,
+    ) -> None:
+        """Optional batch preparation once all orderings have been profiled."""
+
+    def lanes_for(self, problem: ShadowSpillPlanningProblem) -> TransferBandwidths:
+        return problem.transfer_bandwidths
 
     def plan(
         self,

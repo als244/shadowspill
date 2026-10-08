@@ -59,6 +59,9 @@ accepts a user experiment factory or a supplied text recipe, and the
 [distributed example](docs/examples/generic-training.md#run-a-distributed-example)
 uses ordinary torchrun, explicit device/groups, per-rank startup traces, and
 separate rank plus aggregate W&B runs.
+For equivalent distributed planning problems, opt into
+[verified symmetric planning](docs/python/api/distributed.md#verified-symmetric-planning)
+with `Distributed(group, symmetric_planning=True)` to share CPU search work.
 
 ## Project structure
 

@@ -6,6 +6,7 @@ import hashlib
 import json
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import replace
+from functools import partial
 from typing import Any
 
 from shadowspill.errors import (
@@ -32,6 +33,8 @@ from shadowspill.planner.search.toolkit.resolution import (
 from shadowspill.store import ArtifactStore, atomic_text
 
 from . import current
+from ._control import Control
+from ._plan_exchange import pack, record_plan
 
 type ChoiceKey = tuple[tuple[str, str], ...]
 type LocalPlan = FixedLayoutSelection | AnnotatedProgramPlan
@@ -60,23 +63,8 @@ def _key(selection: Sequence[TaskAlternativeChoice]) -> ChoiceKey:
     return tuple((item.group_id, item.option_id) for item in selection)
 
 
-def choose[R: (FixedLayoutSelection, AnnotatedProgramPlan)](
-    program: ShadowSpillProgram,
-    attempt: Callable[[ShadowSpillProgram, ProgramPlanResult | None], R],
-    *,
-    search_options: SearchOptions | None = None,
-    incumbent: ProgramPlanResult | None = None,
-) -> tuple[R, ChoiceKey, dict[ChoiceKey, R], dict[str, Any]]:
-    """Return a local admitted record and the agreed selection/diagnostic data.
-
-    ``attempt`` receives a fixed program and optional fixed incumbent; it calls
-    the existing planner and physical admission unchanged. Only metadata travels
-    between processes. The score is the slowest local predicted step time.
-    """
-    bound = current()
-    assert bound is not None
-    control = bound.control
-    options = search_options or SearchOptions()
+def _candidate_keys(control, program, options, incumbent):
+    """Agree on the search request and collect each rank's offered resolutions."""
     control.agree("selection/options", options.to_dict())
     control.agree(
         "selection/alternatives",
@@ -94,49 +82,152 @@ def choose[R: (FixedLayoutSelection, AnnotatedProgramPlan)](
     if incumbent is not None:
         proposed.append(_key(incumbent.selections))
     offered = control.exchange("selection/candidates", proposed)
-    candidates = sorted(
+    return sorted(
         {tuple(tuple(pair) for pair in choice) for rank in offered for choice in rank}
     )
+
+
+def _candidate_program(
+    program: ShadowSpillProgram, key: ChoiceKey
+) -> ShadowSpillProgram:
+    return fixed_program(
+        program, tuple(TaskAlternativeChoice(group, option) for group, option in key)
+    )
+
+
+def _attempt_candidate[R: (FixedLayoutSelection, AnnotatedProgramPlan)](
+    key: ChoiceKey,
+    *,
+    program: ShadowSpillProgram,
+    attempt: Callable[[ShadowSpillProgram, ProgramPlanResult | None], R],
+    incumbent: ProgramPlanResult | None,
+) -> R | dict[str, str]:
+    fixed = _candidate_program(program, key)
+    carried = (
+        replace(incumbent, program=fixed, selections=(), resolutions=())
+        if incumbent is not None and _key(incumbent.selections) == key
+        else None
+    )
+    try:
+        return attempt(fixed, carried)
+    except (PlanInfeasibleError, PlanSearchExhaustedError, AdmissionError) as error:
+        return {"error": str(error)}
+
+
+def _shared_candidates[R: (FixedLayoutSelection, AnnotatedProgramPlan)](
+    control: Control,
+    candidates: Sequence[ChoiceKey],
+    run: Callable[[ChoiceKey], R | dict[str, str]],
+    receive: Callable[[ChoiceKey, dict[str, Any]], R],
+) -> tuple[dict[ChoiceKey, R | dict[str, str]], dict[ChoiceKey, int]]:
+    """Search each candidate on one owner, then admit it on every participant."""
+    owners = {
+        key: control.members[index % len(control.members)]
+        for index, key in enumerate(candidates)
+    }
+    held: dict[ChoiceKey, R] = {}
+
+    def search_owned():
+        results = []
+        for key in candidates:
+            if owners[key] != control.rank:
+                continue
+            control.check_failure()
+            record = run(key)
+            if isinstance(record, dict):
+                results.append({"choices": key, **record})
+            else:
+                held[key] = record
+                results.append({"choices": key, "plan": pack(record)})
+        return results
+
+    payloads = control.run("selection/shared_search", search_owned)
+    peers = control.exchange("selection/shared_results", payloads)
+
+    def admit_received():
+        restored = {}
+        for rank, records in zip(control.members, peers, strict=True):
+            for row in records:
+                key = tuple(tuple(pair) for pair in row["choices"])
+                if key not in owners or owners[key] != rank or key in restored:
+                    raise ValueError("invalid shared candidate ownership")
+                if "error" in row:
+                    restored[key] = {"error": row["error"]}
+                elif key in held:
+                    restored[key] = held[key]
+                else:
+                    restored[key] = receive(key, row["plan"])
+        if set(restored) != set(candidates):
+            raise ValueError("shared candidate results are incomplete")
+        return restored
+
+    return control.run("selection/shared_admission", admit_received), owners
+
+
+def _candidate_status(record: LocalPlan | dict[str, str]) -> dict[str, Any]:
+    if isinstance(record, dict):
+        return dict(record)
+    simulation = (
+        record.admission.simulation
+        if isinstance(record, FixedLayoutSelection)
+        else record.simulation
+    )
+    return {
+        "ns": simulation.makespan_ns,
+        "tasks": [[task.task_id, task.phase] for task in record.result.program.tasks],
+    }
+
+
+def choose[R: (FixedLayoutSelection, AnnotatedProgramPlan)](
+    program: ShadowSpillProgram,
+    attempt: Callable[[ShadowSpillProgram, ProgramPlanResult | None], R],
+    *,
+    search_options: SearchOptions | None = None,
+    incumbent: ProgramPlanResult | None = None,
+    receive: Callable[[dict[str, Any], ShadowSpillProgram], R] | None = None,
+) -> tuple[R, ChoiceKey, dict[ChoiceKey, R], dict[str, Any]]:
+    """Choose the lowest worst-rank time among locally admitted candidates.
+
+    ``attempt`` uses the ordinary planner/admission path. A ``receive`` callback
+    enables one-owner search; otherwise every rank searches each candidate.
+    The same task-order agreement and winner selection follow either path.
+    """
+    bound = current()
+    assert bound is not None
+    control = bound.control
+    candidates = _candidate_keys(
+        control, program, search_options or SearchOptions(), incumbent
+    )
+    run = partial(
+        _attempt_candidate, program=program, attempt=attempt, incumbent=incumbent
+    )
+    shared, owners = None, {}
+    if receive is not None:
+        shared, owners = _shared_candidates(
+            control,
+            candidates,
+            run,
+            lambda key, payload: receive(payload, _candidate_program(program, key)),
+        )
     successful: dict[ChoiceKey, R] = {}
     scores: list[tuple[int, ChoiceKey]] = []
     evidence: list[dict[str, Any]] = []
     for index, key in enumerate(candidates):
-        selection = tuple(TaskAlternativeChoice(group, option) for group, option in key)
-        fixed: ShadowSpillProgram = fixed_program(program, selection)
-        carried: ProgramPlanResult | None = None
-        if incumbent is not None and _key(incumbent.selections) == key:
-            carried = replace(incumbent, program=fixed, selections=(), resolutions=())
-
-        def run(
-            candidate_program: ShadowSpillProgram = fixed,
-            candidate_incumbent: ProgramPlanResult | None = carried,
-        ) -> R | dict[str, str]:
-            try:
-                return attempt(candidate_program, candidate_incumbent)
-            except (
-                PlanInfeasibleError,
-                PlanSearchExhaustedError,
-                AdmissionError,
-            ) as error:
-                return {"error": str(error)}
-
-        record = control.run(f"selection/{index}/plan", run)
-        status: dict[str, Any]
-        if isinstance(record, dict):
-            status = dict(record)
-        else:
-            result = record.result
-            simulation = (
-                record.admission.simulation
-                if isinstance(record, FixedLayoutSelection)
-                else record.simulation
-            )
-            status = {
-                "ns": simulation.makespan_ns,
-                "tasks": [[task.task_id, task.phase] for task in result.program.tasks],
+        record = (
+            control.run(f"selection/{index}/plan", partial(run, key))
+            if shared is None
+            else shared[key]
+        )
+        peers = control.exchange(
+            f"selection/{index}/outcome", _candidate_status(record)
+        )
+        evidence.append(
+            {
+                "choices": key,
+                "ranks": peers,
+                **({"searched_by_rank": owners[key]} if owners else {}),
             }
-        peers = control.exchange(f"selection/{index}/outcome", status)
-        evidence.append({"choices": key, "ranks": peers})
+        )
         if any("error" in peer for peer in peers):
             continue
         if any(peer["tasks"] != peers[0]["tasks"] for peer in peers):
@@ -268,9 +359,16 @@ def certify_restored(
     return facts, admission
 
 
-def record_decision(store: ArtifactStore, decisions: Mapping[str, Any]) -> None:
+def record_decision(
+    store: ArtifactStore, decisions: Mapping[str, Any], *, plans=()
+) -> None:
     if not store.plan_policy.write_enabled:
         return
+    if plans:
+        decisions = {
+            **decisions,
+            "shared_plans": [record_plan(store, plan) for plan in plans],
+        }
     encoded = json.dumps(decisions, sort_keys=True, separators=(",", ":"))
     digest = hashlib.sha256(encoded.encode()).hexdigest()
     path = store.planning / "distributed" / digest / "selection.json"

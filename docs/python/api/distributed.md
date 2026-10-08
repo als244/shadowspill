@@ -181,6 +181,47 @@ Named `groups` preserve caller-owned handles during fake-model construction and
 bind explicit functional collective names in compiled artifacts. Restarted
 processes recreate their groups; live process-group handles are not checkpointed.
 
+## Verified symmetric planning
+
+Opt in with `Distributed(group, symmetric_planning=True)`. The default is
+`False`, preserving independent local searches. This option applies to
+`plan_step_search`, `plan_step`/Trainer, and `plan_forward`/Forward.
+
+All ranks still capture and profile their own tasks, including communication.
+After profiling, the fast path verifies matching task/object identities and
+dependencies, sizes, aliasing, mutations, allocation traces, initial/final
+residency, effective capacities, alignment, and scratch reservations. Local
+device ordinals and compiled-code digests may differ; executable code and
+allocator bindings are never shared. Unequal requirements produce a visible
+fallback message and use the existing per-rank search.
+
+For a verified problem, planning uses the maximum measured duration of each
+task profile, minimum fetch/eviction bandwidths, and maximum transfer latencies
+across participants. Original local profiling artifacts remain available.
+
+- A sweep assigns each ordering's complete budget sequence to one rank. Budgets
+  stay sequential, preserving reuse of smaller-budget plans. Different orderings
+  search concurrently after all ranks finish the geometry's GPU profiling.
+  Orderings that lower to the same problem reuse one answer.
+- A standalone training plan distributes resolution candidates among ranks.
+  A forward-only plan has one candidate, searched by one rank.
+- Every received schedule is checked and physically admitted using local facts.
+  The selected task sequence stays common; this adds no execution-time barriers.
+
+The number of independent orderings/candidates limits parallelism. This reduces
+duplicated CPU search; it does not remove capture or profiling on each device.
+Each rank's artifact store records the verification/fallback decision, which
+rank searched each result, and received schedules with retained resolutions under
+`planning/distributed/`. Search reports retain the owning rank's search duration
+and the transfer calibration used by the shared search.
+Cache hits with `keep_resolutions=True` restore retained alternative plans so
+resuming a sweep can distribute the same complete artifacts again.
+
+Quickstart accepts `--symmetric-planning` and `--no-symmetric-planning`, or
+`run(..., symmetric_planning=True)`. Omitting this override preserves the
+factory's `Distributed` setting. Distributed factories and text presets use the
+same option; model code needs no changes.
+
 ## Checkpoints
 
 Use one shared checkpoint directory and the same save/load call on every rank.

@@ -45,11 +45,11 @@ def objective(model, data):
     return (model(x).float() - y.float()).square().sum() / denominator
 
 
-def batch(rank, step, dtype, world):
+def batch(rank, step, dtype, world, *, equal=False):
     generator = torch.Generator().manual_seed(1234 + rank * 101 + step)
     # Unequal batches ensure SUM/global normalization, rather than mean-of-means.
-    rows = 4 + 2 * rank
-    denominator = sum(4 + 2 * other for other in range(world)) * 5
+    rows = 4 if equal else 4 + 2 * rank
+    denominator = sum(4 if equal else 4 + 2 * other for other in range(world)) * 5
     return (
         torch.randn(rows, 7, generator=generator).to(dtype),
         torch.randn(rows, 5, generator=generator).to(dtype),
@@ -209,7 +209,11 @@ def run(args):
                         optimizer=optimizer,
                         optimizer_args=optimizer_args,
                         backend=backend,
-                        distributed=Distributed(group, timeout=300),
+                        distributed=Distributed(
+                            group,
+                            timeout=300,
+                            symmetric_planning=args.symmetric_planning,
+                        ),
                         grad_dtype=torch.float32,
                         master_dtype=torch.float32 if args.masters else None,
                         shard_optimizer=args.sharded,
@@ -218,7 +222,26 @@ def run(args):
                         else None,
                     )
 
-                example = batch(rank, 0, dtype, world)
+                def data(peer, step):
+                    return batch(
+                        peer, step, dtype, world, equal=args.symmetric_planning
+                    )
+
+                def check_symmetry():
+                    if not args.symmetric_planning:
+                        return
+                    decisions = [
+                        json.loads(path.read_text())
+                        for path in (rank_dir / "artifacts").rglob(
+                            "distributed/*/selection.json"
+                        )
+                    ]
+                    assert decisions and all(
+                        row["planning"]["mode"] == "symmetric" for row in decisions
+                    ), decisions
+                    log("symmetric_planning_checked", decisions=len(decisions))
+
+                example = data(rank, 0)
                 # Replica initialization updates the imported model, never its
                 # source. Writing even identical bytes would privatize a mapped
                 # checkpoint and add a full host model copy on every rank.
@@ -230,6 +253,7 @@ def run(args):
                 with make_trainer(source_model) as trainer:
                     log("prepare_start")
                     trainer.prepare(example)
+                    check_symmetry()
                     for name, value in source_model.named_parameters():
                         original, version, pointer = source_values[name]
                         torch.testing.assert_close(value, original, rtol=0, atol=0)
@@ -306,14 +330,14 @@ def run(args):
                         reference_optimizer.zero_grad(set_to_none=True)
                         expected_losses = []
                         for peer in range(world):
-                            x, y, denominator = batch(peer, step, dtype, world)
+                            x, y, denominator = data(peer, step)
                             loss = objective(
                                 reference, (x.float(), y.float(), denominator)
                             )
                             expected_losses.append(float(loss.detach()))
                             loss.backward()
                         reference_optimizer.step()
-                        result = trainer.step(batch(rank, step, dtype, world))
+                        result = trainer.step(data(rank, step))
                         if args.parameter_metrics:
                             assert result.parameter_metrics
                             assert all(
@@ -407,6 +431,7 @@ def run(args):
                     equal_tree(snapshot(restored, weights="master"), expected_fresh)
                     evaluation = restored.evaluate([example])
                     assert math.isfinite(evaluation.mean_loss)
+                    check_symmetry()
                     log("fresh_restore_and_forward_checked", loss=evaluation.mean_loss)
 
                 record = dict(
@@ -419,6 +444,7 @@ def run(args):
                     optimizer=args.optimizer,
                     variant=args.variant,
                     stochastic=args.stochastic,
+                    symmetric_planning=args.symmetric_planning,
                     losses=losses,
                     max_parameter_error=worst_error,
                     checkpoint_policies=["master", "compute"],
@@ -450,6 +476,7 @@ if __name__ == "__main__":
     parser.add_argument("--stochastic", action="store_true")
     parser.add_argument("--diagnostics", action="store_true")
     parser.add_argument("--parameter-metrics", action="store_true")
+    parser.add_argument("--symmetric-planning", action="store_true")
     parser.add_argument(
         "--optimizer", choices=("torch", "mlops", "matrix"), default="torch"
     )

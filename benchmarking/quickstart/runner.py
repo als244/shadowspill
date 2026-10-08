@@ -16,6 +16,7 @@ from typing import Any, cast
 
 import torch
 
+from shadowspill.diagnostics.occupancy import write_run_timelines
 from shadowspill.memory import device, pinned_host, transfer_route
 from shadowspill.planner import StepDataOrdering
 from shadowspill.planner.annotated_plan import AnnotatedProgramPlan
@@ -37,7 +38,6 @@ from shadowspill.pytorch import (
 from shadowspill.runtime.failures import RuntimeExecutionError
 from shadowspill.training._model import initialize_model
 from shadowspill.training.observations import StepObservations
-from shadowspill.diagnostics.occupancy import write_run_timelines
 
 from .options import profiling_policy, search_policy
 from .reporting import (
@@ -67,6 +67,7 @@ class Request:
     device: torch.device
     manual: str | None = None
     remote_spill: tuple[str, int] | None = None
+    external_headroom: int = 512 << 20
 
 
 def open_runtime(
@@ -97,7 +98,9 @@ def open_runtime(
         preparation_timeout=preparation_timeout,
         pools={
             "execution": device(
-                physical_capacity=request.physical_capacity, device=request.device.index
+                physical_capacity=request.physical_capacity,
+                device=request.device.index,
+                external_headroom=request.external_headroom,
             ),
             # The same size either way, so the only thing that differs is where
             # it lives -- which is what makes the two tours comparable.
@@ -268,6 +271,15 @@ class Tour:
         specification = (
             self.distributed(model) if callable(self.distributed) else self.distributed
         )
+        symmetric = getattr(self.arguments, "symmetric_planning", None)
+        if symmetric is not None:
+            if specification is None and symmetric:
+                raise ValueError(
+                    "symmetric_planning requires a Distributed specification"
+                )
+            if specification is not None:
+                specification = copy.copy(specification)
+                specification.symmetric_planning = symmetric
         return import_model_state(
             model,
             runtime=self.runtime,
@@ -537,7 +549,7 @@ class Tour:
             # with every other budget's bar reduction order: the run is a
             # correctness check as well as a measurement.
             marker = time.perf_counter()
-            release_model_state(self.model, runtime=runtime)
+            self._release_model()
             self.model = self._build_model()
             ledger.charge("model construction", marker)
             plan_log.note("model and optimizer state reset for a comparable run")
@@ -729,11 +741,17 @@ class Tour:
                 print(f"  timelines: {index}")
             print()
 
+    def _release_model(self) -> None:
+        release_model_state(self.model, runtime=self.runtime)
+        cleanup = self.experiment.get("cleanup_model")
+        if cleanup is not None:
+            cleanup(self.model)
+
     def close(self) -> None:
         if not self.closed:
             self.closed = True
             self.log_handle.close()
-            release_model_state(self.model, runtime=self.runtime)
+            self._release_model()
 
 
 def print_closing(ledger: Ledger, request: Request) -> None:

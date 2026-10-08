@@ -60,6 +60,7 @@ def resolve_request(parser, arguments):
         device=device,
         manual=manual,
         remote_spill=remote,
+        external_headroom=int(arguments.external_headroom_gib * GIB),
     ), setup
 
 

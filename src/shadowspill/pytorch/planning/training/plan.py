@@ -59,6 +59,35 @@ def plan_training_programs(
         record_decision,
         restore_result,
     )
+    from shadowspill.pytorch.distributed._symmetry import Symmetry, verify
+
+    scratch = dynamic_scratch_reserve_bytes(
+        programs.measurements_by_profile,
+        minimum_bytes=programs.dynamic_scratch_reserve_bytes,
+    )
+    shared, evidence = verify(
+        Symmetry(
+            programs.lowered.program,
+            programs.simulation_config,
+            programs.admission,
+            programs.lowered.initial_residency,
+            programs.lowered.final_residency,
+            scratch,
+        ),
+        extra={
+            "search_options": None
+            if search_options is None
+            else search_options.to_dict(),
+            "keep_resolutions": keep_resolutions,
+        },
+        incumbent=incumbent,
+    )
+    if shared is not None:
+        programs = replace(
+            programs,
+            lowered=replace(programs.lowered, program=shared.program),
+            simulation_config=shared.config,
+        )
 
     def attempt(
         fixed: ShadowSpillProgram, carried: ProgramPlanResult | None
@@ -85,7 +114,13 @@ def plan_training_programs(
         attempt,
         search_options=search_options,
         incumbent=incumbent,
+        receive=(
+            None
+            if shared is None
+            else lambda payload, fixed: shared.subset(fixed).receive(payload)
+        ),
     )
+    decisions["planning"] = evidence
     result = restore_result(
         local,
         programs.lowered.program,
@@ -99,7 +134,11 @@ def plan_training_programs(
         local.facts,
         scratch_reserve_bytes=local.admission.layout.scratch_reserve_bytes,
     )
-    record_decision(stores.store, decisions)
+    record_decision(
+        stores.store,
+        decisions,
+        plans=(successful.values() if shared is not None else ()),
+    )
     return replace(
         local,
         plan=replace(local.plan, result=result, key="", certificate=admission),

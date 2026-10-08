@@ -17,7 +17,7 @@ pytestmark = [pytest.mark.fresh_process, pytest.mark.cuda]
 @pytest.mark.parametrize(
     "arguments",
     [
-        ["--variant", "save", "--parameter-metrics"],
+        ["--variant", "save", "--parameter-metrics", "--symmetric-planning"],
         ["--variant", "recompute", "--no-sharded"],
         ["--variant", "save", "--no-sharded", "--optimizer", "matrix"],
         [
@@ -29,6 +29,7 @@ pytestmark = [pytest.mark.fresh_process, pytest.mark.cuda]
             "--optimizer",
             "mlops",
             "--diagnostics",
+            "--symmetric-planning",
         ],
     ],
 )

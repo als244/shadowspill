@@ -28,6 +28,8 @@ from shadowspill.store import STORE_MODES
 IDENTITIES = (
     "mlops_llama3",
     "mlops_qwen35",
+    "mlops_qwen30b",
+    "mlops_qwen35b",
     "mlops_olmoe",
     "pytorch_llama3",
     "pytorch_qwen35",
@@ -144,6 +146,7 @@ def search_policy(arguments: argparse.Namespace) -> SearchOptions:
     """
 
     return SearchOptions(
+        workers=getattr(arguments, "search_workers", 0),
         generic=GenericPlanningOptions(deterministic=arguments.deterministic),
         algorithm=PressureFit(
             PressureFitOptions(
@@ -296,6 +299,12 @@ def _parser() -> argparse.ArgumentParser:
         ),
     )
     parser.add_argument("--host-headroom-gib", type=float, default=2)
+    parser.add_argument(
+        "--symmetric-planning",
+        action=argparse.BooleanOptionalAction,
+        default=None,
+        help="verify and share distributed CPU search work; fall back on mismatches",
+    )
     parser.add_argument("--preparation-timeout", type=float, default=1800)
     parser.add_argument("--sequence-length", type=int)
     parser.add_argument("--sequences-per-step", type=int)
@@ -323,6 +332,12 @@ def _parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--spill-gib", type=float)
     parser.add_argument(
+        "--external-headroom-gib",
+        type=float,
+        default=0.5,
+        help="device memory reserved outside the execution slab (default: 0.5 GiB)",
+    )
+    parser.add_argument(
         "--remote-spill",
         metavar="HOST:PORT",
         help=(
@@ -339,6 +354,12 @@ def _parser() -> argparse.ArgumentParser:
         " every depth x breadth factor pair (the default), or only the"
         " depth-first walk. The loss stays paired and the backward walk"
         " reversed either way; the search does not toggle those",
+    )
+    parser.add_argument(
+        "--search-workers",
+        type=int,
+        default=0,
+        help="CPU planner threads per process; 0 selects automatically",
     )
     parser.add_argument(
         "--resolution-options",

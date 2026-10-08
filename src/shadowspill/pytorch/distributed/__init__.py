@@ -39,6 +39,11 @@ class Distributed:
     ``groups`` gives stable names to additional process groups used by the model.
     Each model collective must finish before its task completes. Runtime tasks
     and transfers do not enter the preparation control channel.
+
+    ``symmetric_planning=True`` verifies matching planning memory contracts,
+    shares conservative timing estimates and divides CPU search work among
+    participants. Mismatches fall back to independent local searches. Each
+    rank still captures, profiles, and physically admits its own executable.
     """
 
     def __init__(
@@ -55,6 +60,7 @@ class Distributed:
             tuple[Iterable[nn.Parameter | str], dist.ProcessGroup | None]
         ] = (),
         sync_initial_state: bool = True,
+        symmetric_planning: bool = False,
         timeout: float | None = None,
     ) -> None:
         self.group = group
@@ -68,11 +74,14 @@ class Distributed:
             (tuple(parameters), group) for parameters, group in gradient_overrides
         )
         self.sync_initial_state = sync_initial_state
+        self.symmetric_planning = symmetric_planning
         self.timeout = 1800.0 if timeout is None else timeout
         if self.timeout <= 0:
             raise ValueError("distributed preparation timeout must be positive")
         if not isinstance(sync_initial_state, bool):
             raise TypeError("sync_initial_state must be a bool")
+        if not isinstance(symmetric_planning, bool):
+            raise TypeError("symmetric_planning must be a bool")
 
     def _bind(
         self, model: nn.Module, control_group: dist.ProcessGroup, *, namespace: str
