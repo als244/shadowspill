@@ -1,0 +1,221 @@
+{
+  "modules": {
+    "_symmetry": {
+      "file_lines": 247,
+      "imports": [],
+      "functions": [
+        {
+          "name": "receive",
+          "line": 119,
+          "lines": 75
+        },
+        {
+          "name": "verify",
+          "line": 196,
+          "lines": 52
+        },
+        {
+          "name": "requirements",
+          "line": 71,
+          "lines": 36
+        },
+        {
+          "name": "_device",
+          "line": 42,
+          "lines": 10
+        },
+        {
+          "name": "subset",
+          "line": 108,
+          "lines": 10
+        },
+        {
+          "name": "_digest",
+          "line": 54,
+          "lines": 6
+        }
+      ]
+    },
+    "_plan_exchange": {
+      "file_lines": 139,
+      "imports": [
+        "_symmetry"
+      ],
+      "functions": [
+        {
+          "name": "pack",
+          "line": 79,
+          "lines": 39
+        },
+        {
+          "name": "shared_problem",
+          "line": 24,
+          "lines": 35
+        },
+        {
+          "name": "record_plan",
+          "line": 120,
+          "lines": 20
+        },
+        {
+          "name": "received_plan",
+          "line": 61,
+          "lines": 16
+        }
+      ]
+    },
+    "_selection": {
+      "file_lines": 385,
+      "imports": [
+        "_plan_exchange"
+      ],
+      "functions": [
+        {
+          "name": "choose",
+          "line": 181,
+          "lines": 75
+        },
+        {
+          "name": "restore_result",
+          "line": 258,
+          "lines": 69
+        },
+        {
+          "name": "_shared_candidates",
+          "line": 117,
+          "lines": 48
+        },
+        {
+          "name": "certify_restored",
+          "line": 329,
+          "lines": 31
+        },
+        {
+          "name": "record_decision",
+          "line": 362,
+          "lines": 24
+        },
+        {
+          "name": "_candidate_keys",
+          "line": 66,
+          "lines": 22
+        },
+        {
+          "name": "_attempt_candidate",
+          "line": 98,
+          "lines": 17
+        },
+        {
+          "name": "admit_received",
+          "line": 147,
+          "lines": 16
+        },
+        {
+          "name": "search_owned",
+          "line": 130,
+          "lines": 13
+        },
+        {
+          "name": "_candidate_status",
+          "line": 167,
+          "lines": 12
+        },
+        {
+          "name": "fixed_program",
+          "line": 43,
+          "lines": 8
+        },
+        {
+          "name": "fixed_admission",
+          "line": 53,
+          "lines": 7
+        },
+        {
+          "name": "_candidate_program",
+          "line": 90,
+          "lines": 6
+        },
+        {
+          "name": "_key",
+          "line": 62,
+          "lines": 2
+        }
+      ]
+    },
+    "_sweep": {
+      "file_lines": 232,
+      "imports": [
+        "_plan_exchange",
+        "_selection"
+      ],
+      "functions": [
+        {
+          "name": "search_owned",
+          "line": 112,
+          "lines": 47
+        },
+        {
+          "name": "prepare_geometry",
+          "line": 57,
+          "lines": 39
+        },
+        {
+          "name": "receive_result",
+          "line": 188,
+          "lines": 34
+        },
+        {
+          "name": "admit",
+          "line": 160,
+          "lines": 27
+        },
+        {
+          "name": "_verified_requests",
+          "line": 31,
+          "lines": 24
+        },
+        {
+          "name": "_refusal",
+          "line": 224,
+          "lines": 9
+        }
+      ]
+    },
+    "_search": {
+      "file_lines": 190,
+      "imports": [
+        "_plan_exchange",
+        "_selection",
+        "_sweep"
+      ],
+      "functions": [
+        {
+          "name": "plan",
+          "line": 55,
+          "lines": 103
+        },
+        {
+          "name": "answer",
+          "line": 159,
+          "lines": 32
+        },
+        {
+          "name": "attempt",
+          "line": 85,
+          "lines": 19
+        },
+        {
+          "name": "lanes_for",
+          "line": 39,
+          "lines": 9
+        },
+        {
+          "name": "prepare_geometry",
+          "line": 49,
+          "lines": 5
+        }
+      ]
+    }
+  },
+  "dependency_cycle": false
+}

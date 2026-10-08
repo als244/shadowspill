@@ -1,0 +1,28 @@
+{
+  "run": "docs/internal/plans/qwen_moe_ep8_1007/evidence/fatnode/dp4/llama-symmetric-20261008T052534",
+  "all_four_ranks_passed": true,
+  "parameters": 1179699200,
+  "owners": [
+    0,
+    1,
+    2,
+    0,
+    1
+  ],
+  "cpu_tests_passed": 208,
+  "targeted_tests_passed": 33,
+  "replicas_bitwise_equal": true,
+  "changed_parameter_tensors": 111,
+  "predicted_seconds": 3.382486827,
+  "median_step_seconds": 3.9047607330139726,
+  "global_losses": [
+    12.191058218479156,
+    10.844503104686737,
+    10.786018371582031,
+    10.958347499370575,
+    11.09809798002243
+  ],
+  "timeline_files_verified": 12,
+  "container_exit_code": 0,
+  "unresolved_issue": "Separate DP4 toy-model bias discrepancy also occurs with symmetric planning disabled."
+}
