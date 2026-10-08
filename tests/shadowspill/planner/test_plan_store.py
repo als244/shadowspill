@@ -799,10 +799,19 @@ def test_every_resolutions_best_plan_is_kept_beside_the_answer_when_asked(
         assert "admission_certificate" in certified, name
         assert certified["resolution"]["label"] == name
 
-    # a hit reads the answer alone, and leaves the kept records as they are
+    # A hit can restore every retained plan without rerunning the search.
     again = store.resolve(program, **request, keep_resolutions=True)
-    assert again.from_store and again.result.resolutions == ()
+    assert again.from_store
+    assert {p.selection_id: p for p in again.result.resolutions} == by_id
+    assert store.resolve(program, **request).result.resolutions == ()
     assert sorted(
         path.parent.name
         for path in (tmp_path / "kept").rglob("resolutions/*/selection.json")
     ) == ["recompute_0", "recompute_1"]
+
+    # Interrupted retention is rebuilt instead of silently dropping a plan.
+    store.resolution_path(kept.key, "recompute_1").unlink()
+    repaired = store.resolve(program, **request, keep_resolutions=True)
+    assert not repaired.from_store
+    assert {p.selection_id: p for p in repaired.result.resolutions} == by_id
+    assert store.resolution_path(kept.key, "recompute_1").is_file()

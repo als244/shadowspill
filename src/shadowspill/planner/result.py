@@ -92,8 +92,8 @@ class ProgramPlanResult:
     admission_facts: AdmissionFacts | None = None
     placement_facts: AdmissionFacts | None = None
     #: Every resolved program's best plan, when the search was asked to keep
-    #: them; the answer is among them. Empty otherwise, and on a plan read
-    #: back from a store.
+    #: them; the answer is among them. A store restores retained plans when
+    #: requested. Empty otherwise.
     resolutions: tuple[ResolutionPlan, ...] = ()
 
     def to_execution_plan(

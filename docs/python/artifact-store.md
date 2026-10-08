@@ -109,8 +109,9 @@ inputs, so adding one cannot invalidate anything.
 - A search asked to keep its resolutions files each resolved program's best
   plan beside the answer, in the answer's own form less the search
   diagnostics and marked with the share it recomputes and whether it is the
-  answer. They are notes about the answer: nothing reads them back as an
-  input, and a hit reads the answer alone.
+  answer. These are saved results, not inputs defining the search request.
+  A hit reads the answer alone unless `keep_resolutions=True` requests the
+  retained alternatives too.
 
 The distinction is worth keeping deliberately. A field that is hashed is a
 question; a field that is only saved is a note about the answer.
