@@ -272,6 +272,9 @@ These pages live beside the code they describe, outside `docs/`.
 - [Quickstart script](../benchmarking/quickstart.md) — one model end to end:
   geometry search over execution budgets, figures, and a run of the winning
   plan.
+- [Quickstart plots for slides](../benchmarking/quickstart_timeline.md) — export
+  memory/compute/transfer timelines, summary statistics, and budget/throughput
+  comparison slides from saved reports.
 - [program collection](../benchmarking/program_collection/README.md) — the
   harness that builds a corpus of step programs and runs no planner.
 - [Planning evaluation](../benchmarking/planning_eval/README.md) — the
