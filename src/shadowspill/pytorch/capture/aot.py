@@ -916,14 +916,14 @@ def _dense_gradient_layout(value: torch.Tensor) -> bool:
 def materialize_gradient_outputs(
     backward: GraphArtifact, leaf_indices: Sequence[int]
 ) -> GraphArtifact:
-    """Give parameter gradients independent dense writable storage.
+    """Give boundary gradients independent dense writable storage.
 
     Autograd may return a scalar expanded across a weight. The optimizer and
     later accumulation consume a full gradient tensor. Materialize that layout
     inside the backward task, before its allocation profile is measured.
     A fused backward may also return slices of one larger gradient allocation.
-    Each parameter has its own canonical gradient and independent optimizer
-    lifetime, so those slices are materialized inside the measured task too.
+    Each parameter gradient and activation cotangent has its own canonical
+    lifetime, so shared outputs are materialized inside the measured task too.
     Ordinary full-storage dense and transposed-dense gradients need no copy.
     """
     output = next(

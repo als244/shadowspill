@@ -1,4 +1,4 @@
-"""Explicit allocation for parameter-gradient slices at a task boundary."""
+"""Explicit allocation for shared gradients at a task boundary."""
 
 from __future__ import annotations
 
@@ -7,7 +7,7 @@ import torch
 
 @torch.library.custom_op("shadowspill::materialize_gradient", mutates_args=())
 def materialize_gradient(value: torch.Tensor) -> torch.Tensor:
-    """Give one gradient independent storage with its own optimizer lifetime.
+    """Give one gradient independent storage with its own planned lifetime.
 
     Inductor can remove ordinary clones of output slices and return the shared
     allocation again. This operation makes the required allocation explicit;
