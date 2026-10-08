@@ -1,0 +1,21 @@
+{
+  "config": null,
+  "family": "qwen3moe",
+  "implementation": "mlops",
+  "mode": "lora_head",
+  "variant": "recompute",
+  "preset": "smoke",
+  "dtype": "bfloat16",
+  "rank": 4,
+  "record_gc": false,
+  "tokens": 8,
+  "sequence_length": 8,
+  "steps": 3,
+  "warmup": 3,
+  "warmup_seconds": 1.0,
+  "execution_gib": 4,
+  "spill_gib": null,
+  "outdir": "/home/shein/Documents/grad_school/research/shadowspill/docs/internal/plans/lora_models_1008/evidence/full-model-bf16-smoke/mlops-qwen3moe-lora_head-recompute",
+  "resolved_spill_gib": 3,
+  "estimated_persistent_bytes": 268160
+}

@@ -1,0 +1,18 @@
+{
+  "status": "passed",
+  "case": "mlops-qwen3moe-full-save",
+  "source_program": "/home/shein/Documents/grad_school/research/shadowspill/docs/internal/plans/lora_models_1008/evidence/full-model-steady-benchmark/mlops-qwen3moe-full-save/artifacts/v1/planning/programs/50/5059ef6dbcfd7ff1f78fa8d136bd96b278c15d77d240fa8a3c49da8b0fbe172b/program.json",
+  "trainable_parameters": 207723776,
+  "trainable_tensors": 47,
+  "optimizer_input_bytes": {
+    "parameter": 415447552,
+    "gradient": 830895104,
+    "optimizer_state": 1661790584
+  },
+  "expected_bytes": {
+    "parameter": 415447552,
+    "gradient": 830895104,
+    "optimizer_state": 1661790584
+  },
+  "explanation": "BF16 full weights or FP32 LoRA factors, FP32 gradients, two FP32 AdamW moments and one int64 step per trainable tensor. No frozen-weight optimizer state or optimizer gradient inputs."
+}

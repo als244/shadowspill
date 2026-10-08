@@ -1,0 +1,19 @@
+{
+  "config": null,
+  "family": "qwen3moe",
+  "implementation": "mlops",
+  "mode": "lora_head",
+  "variant": "save",
+  "preset": "smoke",
+  "dtype": "float32",
+  "rank": 4,
+  "tokens": 8,
+  "sequence_length": 8,
+  "steps": 3,
+  "warmup": 3,
+  "execution_gib": 4,
+  "spill_gib": null,
+  "outdir": "/home/shein/Documents/grad_school/research/shadowspill/docs/internal/plans/lora_models_1008/evidence/full-model-smoke/mlops-qwen3moe-lora_head-save",
+  "resolved_spill_gib": 3,
+  "estimated_persistent_bytes": 356032
+}

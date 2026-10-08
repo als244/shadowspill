@@ -1,0 +1,16 @@
+{
+  "observed": {
+    "parameter": 13838323712,
+    "gradient": 13838323712,
+    "optimizer_state": 27676648856
+  },
+  "expected": {
+    "parameter": 13838323712,
+    "gradient": 13838323712,
+    "optimizer_state": 27676648856
+  },
+  "status": "passed",
+  "gradient_dtype": "bfloat16",
+  "moment_dtype": "bfloat16",
+  "source_program": "/home/shein/Documents/grad_school/research/shadowspill/docs/internal/plans/lora_models_1008/evidence/performance-gate-scale/olmoe-full-auto/artifacts/v1/planning/programs/a2/a2822d2cad3e0f7058d6f13359127a4fd4a4e51ea26b814d885c0c664c3ea74c/program.json"
+}

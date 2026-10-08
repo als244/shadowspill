@@ -1,0 +1,58 @@
+[
+  {
+    "case": "lora-recompute",
+    "steps": 40,
+    "median_ms": 122.18257848871872,
+    "mean_ms": 122.27203196962364,
+    "min_ms": 121.76836095750332,
+    "max_ms": 123.72321996372193,
+    "p95_ms": 122.83078592736274,
+    "aggregate_tokens_per_second": 16749.537625323752,
+    "max_measured_gc_ms": 0.08145510219037533,
+    "max_warmup_gc_ms": 0.05793210584670305,
+    "measured_generation2": 0,
+    "peak_host_rss_gib": 10.186111450195312
+  },
+  {
+    "case": "lora-save",
+    "steps": 40,
+    "median_ms": 99.5987780042924,
+    "mean_ms": 99.62233255791944,
+    "min_ms": 99.0314829396084,
+    "max_ms": 100.77660495880991,
+    "p95_ms": 99.9241970712319,
+    "aggregate_tokens_per_second": 20557.63951129445,
+    "max_measured_gc_ms": 0.08198001887649298,
+    "max_warmup_gc_ms": 231.8545550806448,
+    "measured_generation2": 0,
+    "peak_host_rss_gib": 10.184089660644531
+  },
+  {
+    "case": "lora_head-recompute",
+    "steps": 40,
+    "median_ms": 125.33119000727311,
+    "mean_ms": 125.4135932511417,
+    "min_ms": 124.8708360362798,
+    "max_ms": 127.65563791617751,
+    "p95_ms": 125.79236400779337,
+    "aggregate_tokens_per_second": 16329.968282615615,
+    "max_measured_gc_ms": 0.06372900679707527,
+    "max_warmup_gc_ms": 0.06904802285134792,
+    "measured_generation2": 0,
+    "peak_host_rss_gib": 10.318462371826172
+  },
+  {
+    "case": "lora_head-save",
+    "steps": 40,
+    "median_ms": 101.39442450599745,
+    "mean_ms": 101.41601249633823,
+    "min_ms": 100.80152901355177,
+    "max_ms": 103.47721294965595,
+    "p95_ms": 101.67404497042298,
+    "aggregate_tokens_per_second": 20194.04973227424,
+    "max_measured_gc_ms": 0.08415302727371454,
+    "max_warmup_gc_ms": 0.06635708268731833,
+    "measured_generation2": 0,
+    "peak_host_rss_gib": 10.32809829711914
+  }
+]

@@ -1,0 +1,18 @@
+{
+  "status": "passed",
+  "case": "lora_head-save",
+  "source_program": "/home/shein/Documents/grad_school/research/shadowspill/docs/internal/plans/lora_models_1008/evidence/llama-1b-timing/lora_head-save/artifacts/v1/planning/programs/1e/1eb75ab504acab625b715fb36b7e146403692db6f7a5f4cf71e6e803282beac7/program.json",
+  "trainable_parameters": 19898368,
+  "trainable_tensors": 170,
+  "optimizer_input_bytes": {
+    "parameter": 79593472,
+    "gradient": 79593472,
+    "optimizer_state": 159188304
+  },
+  "expected_bytes": {
+    "parameter": 79593472,
+    "gradient": 79593472,
+    "optimizer_state": 159188304
+  },
+  "explanation": "BF16 full weights or FP32 LoRA factors, FP32 gradients, two FP32 AdamW moments and one int64 step per trainable tensor. No frozen-weight optimizer state or optimizer gradient inputs."
+}

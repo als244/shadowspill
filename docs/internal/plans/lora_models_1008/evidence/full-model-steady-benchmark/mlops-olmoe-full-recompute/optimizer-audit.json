@@ -1,0 +1,18 @@
+{
+  "status": "passed",
+  "case": "mlops-olmoe-full-recompute",
+  "source_program": "/home/shein/Documents/grad_school/research/shadowspill/docs/internal/plans/lora_models_1008/evidence/full-model-steady-benchmark/mlops-olmoe-full-recompute/artifacts/v1/planning/programs/b6/b6a9c14003a6b392262315e9206f57383175adeb5f2f17868829a41c1ae4bae1/program.json",
+  "trainable_parameters": 207727360,
+  "trainable_tensors": 47,
+  "optimizer_input_bytes": {
+    "parameter": 415454720,
+    "gradient": 830909440,
+    "optimizer_state": 1661819256
+  },
+  "expected_bytes": {
+    "parameter": 415454720,
+    "gradient": 830909440,
+    "optimizer_state": 1661819256
+  },
+  "explanation": "BF16 full weights or FP32 LoRA factors, FP32 gradients, two FP32 AdamW moments and one int64 step per trainable tensor. No frozen-weight optimizer state or optimizer gradient inputs."
+}

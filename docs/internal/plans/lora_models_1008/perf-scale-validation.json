@@ -1,0 +1,69 @@
+{
+  "status": "passed",
+  "cases": [
+    {
+      "case": "llama3-full-auto",
+      "seconds": 18.42938476525,
+      "tokens_per_second": 3556.0601091563885,
+      "spill_peak_gib": 59.03176337108016,
+      "host_peak_gib": 128.46379852294922,
+      "trainable": 8030261248
+    },
+    {
+      "case": "llama3-lora-auto",
+      "seconds": 13.48863842725,
+      "tokens_per_second": 4858.607512794097,
+      "spill_peak_gib": 19.61963990703225,
+      "host_peak_gib": 128.7783203125,
+      "trainable": 83886080
+    },
+    {
+      "case": "qwen35-full-auto",
+      "seconds": 19.0524946285,
+      "tokens_per_second": 3439.759531645103,
+      "spill_peak_gib": 91.41316035017371,
+      "host_peak_gib": 130.12222290039062,
+      "trainable": 8953803264
+    },
+    {
+      "case": "qwen35-lora-auto",
+      "seconds": 15.0129843745,
+      "tokens_per_second": 4365.287964417977,
+      "spill_peak_gib": 39.923244658857584,
+      "host_peak_gib": 130.42326736450195,
+      "trainable": 80265216
+    },
+    {
+      "case": "olmoe-full-auto",
+      "seconds": 4.760243774,
+      "tokens_per_second": 13767.36215862545,
+      "spill_peak_gib": 51.419202353805304,
+      "host_peak_gib": 126.3911247253418,
+      "trainable": 6919161856
+    },
+    {
+      "case": "olmoe-lora-auto",
+      "seconds": 3.8772832025,
+      "tokens_per_second": 16902.556913496443,
+      "spill_peak_gib": 26.94751513376832,
+      "host_peak_gib": 127.29911041259766,
+      "trainable": 243269632
+    }
+  ],
+  "measured_updates": 72,
+  "warmups": 12,
+  "optimizer_audits": 6,
+  "physical_statuses_passed": true,
+  "no_new_device_allocations_or_event_growth_during_measurement": true,
+  "source": {
+    "shadowspill": {
+      "revision": "5f8dc13c2cd2ec8d2f56ae6580f02d471b3f9566",
+      "tracked_diff_sha256": "e0dd7a0f41ab3c17cf2d844d01df9a988111146775980a412541d4a06d658f1d"
+    },
+    "mlops": {
+      "revision": "25972fb139cb2ea893c0da3a187c0b2055679e85",
+      "tracked_diff_sha256": "e30a5ab0297ce08e2460338a13357047017084fb036b5c62d8c15648d52c47cb"
+    }
+  },
+  "production_changes_for_this_followup": false
+}

@@ -1,0 +1,354 @@
+[
+  {
+    "case": "mlops-llama3-lora_head-recompute",
+    "dtype": "float32",
+    "status": "passed",
+    "frozen_exact": true,
+    "steps": 3,
+    "numerical": null,
+    "evidence": "/home/shein/Documents/grad_school/research/shadowspill/docs/internal/plans/lora_models_1008/evidence/full-model-smoke/mlops-llama3-lora_head-recompute/result.json"
+  },
+  {
+    "case": "mlops-llama3-lora_head-save",
+    "dtype": "float32",
+    "status": "passed",
+    "frozen_exact": true,
+    "steps": 3,
+    "numerical": null,
+    "evidence": "/home/shein/Documents/grad_school/research/shadowspill/docs/internal/plans/lora_models_1008/evidence/full-model-smoke/mlops-llama3-lora_head-save/result.json"
+  },
+  {
+    "case": "mlops-olmoe-lora_head-recompute",
+    "dtype": "float32",
+    "status": "passed",
+    "frozen_exact": true,
+    "steps": 3,
+    "numerical": null,
+    "evidence": "/home/shein/Documents/grad_school/research/shadowspill/docs/internal/plans/lora_models_1008/evidence/full-model-smoke/mlops-olmoe-lora_head-recompute/result.json"
+  },
+  {
+    "case": "mlops-olmoe-lora_head-save",
+    "dtype": "float32",
+    "status": "passed",
+    "frozen_exact": true,
+    "steps": 3,
+    "numerical": null,
+    "evidence": "/home/shein/Documents/grad_school/research/shadowspill/docs/internal/plans/lora_models_1008/evidence/full-model-smoke/mlops-olmoe-lora_head-save/result.json"
+  },
+  {
+    "case": "mlops-qwen35-lora_head-recompute",
+    "dtype": "float32",
+    "status": "passed",
+    "frozen_exact": true,
+    "steps": 3,
+    "numerical": null,
+    "evidence": "/home/shein/Documents/grad_school/research/shadowspill/docs/internal/plans/lora_models_1008/evidence/full-model-smoke/mlops-qwen35-lora_head-recompute/result.json"
+  },
+  {
+    "case": "mlops-qwen35-lora_head-save",
+    "dtype": "float32",
+    "status": "passed",
+    "frozen_exact": true,
+    "steps": 3,
+    "numerical": null,
+    "evidence": "/home/shein/Documents/grad_school/research/shadowspill/docs/internal/plans/lora_models_1008/evidence/full-model-smoke/mlops-qwen35-lora_head-save/result.json"
+  },
+  {
+    "case": "mlops-qwen35moe-lora_head-recompute",
+    "dtype": "float32",
+    "status": "passed",
+    "frozen_exact": true,
+    "steps": 3,
+    "numerical": null,
+    "evidence": "/home/shein/Documents/grad_school/research/shadowspill/docs/internal/plans/lora_models_1008/evidence/full-model-smoke/mlops-qwen35moe-lora_head-recompute/result.json"
+  },
+  {
+    "case": "mlops-qwen35moe-lora_head-save",
+    "dtype": "float32",
+    "status": "passed",
+    "frozen_exact": true,
+    "steps": 3,
+    "numerical": null,
+    "evidence": "/home/shein/Documents/grad_school/research/shadowspill/docs/internal/plans/lora_models_1008/evidence/full-model-smoke/mlops-qwen35moe-lora_head-save/result.json"
+  },
+  {
+    "case": "mlops-qwen3moe-lora_head-recompute",
+    "dtype": "float32",
+    "status": "passed",
+    "frozen_exact": true,
+    "steps": 3,
+    "numerical": null,
+    "evidence": "/home/shein/Documents/grad_school/research/shadowspill/docs/internal/plans/lora_models_1008/evidence/full-model-smoke/mlops-qwen3moe-lora_head-recompute/result.json"
+  },
+  {
+    "case": "mlops-qwen3moe-lora_head-save",
+    "dtype": "float32",
+    "status": "passed",
+    "frozen_exact": true,
+    "steps": 3,
+    "numerical": null,
+    "evidence": "/home/shein/Documents/grad_school/research/shadowspill/docs/internal/plans/lora_models_1008/evidence/full-model-smoke/mlops-qwen3moe-lora_head-save/result.json"
+  },
+  {
+    "case": "pytorch-llama3-lora_head-recompute",
+    "dtype": "float32",
+    "status": "passed",
+    "frozen_exact": true,
+    "steps": 3,
+    "numerical": null,
+    "evidence": "/home/shein/Documents/grad_school/research/shadowspill/docs/internal/plans/lora_models_1008/evidence/full-model-smoke/pytorch-llama3-lora_head-recompute/result.json"
+  },
+  {
+    "case": "pytorch-llama3-lora_head-save",
+    "dtype": "float32",
+    "status": "passed",
+    "frozen_exact": true,
+    "steps": 3,
+    "numerical": null,
+    "evidence": "/home/shein/Documents/grad_school/research/shadowspill/docs/internal/plans/lora_models_1008/evidence/full-model-smoke/pytorch-llama3-lora_head-save/result.json"
+  },
+  {
+    "case": "pytorch-olmoe-lora_head-recompute",
+    "dtype": "float32",
+    "status": "passed",
+    "frozen_exact": true,
+    "steps": 3,
+    "numerical": null,
+    "evidence": "/home/shein/Documents/grad_school/research/shadowspill/docs/internal/plans/lora_models_1008/evidence/full-model-smoke/pytorch-olmoe-lora_head-recompute/result.json"
+  },
+  {
+    "case": "pytorch-olmoe-lora_head-save",
+    "dtype": "float32",
+    "status": "passed",
+    "frozen_exact": true,
+    "steps": 3,
+    "numerical": null,
+    "evidence": "/home/shein/Documents/grad_school/research/shadowspill/docs/internal/plans/lora_models_1008/evidence/full-model-smoke/pytorch-olmoe-lora_head-save/result.json"
+  },
+  {
+    "case": "pytorch-qwen35-lora_head-recompute",
+    "dtype": "float32",
+    "status": "passed",
+    "frozen_exact": true,
+    "steps": 3,
+    "numerical": null,
+    "evidence": "/home/shein/Documents/grad_school/research/shadowspill/docs/internal/plans/lora_models_1008/evidence/full-model-smoke/pytorch-qwen35-lora_head-recompute/result.json"
+  },
+  {
+    "case": "pytorch-qwen35-lora_head-save",
+    "dtype": "float32",
+    "status": "passed",
+    "frozen_exact": true,
+    "steps": 3,
+    "numerical": null,
+    "evidence": "/home/shein/Documents/grad_school/research/shadowspill/docs/internal/plans/lora_models_1008/evidence/full-model-smoke/pytorch-qwen35-lora_head-save/result.json"
+  },
+  {
+    "case": "mlops-llama3-lora_head-recompute",
+    "dtype": "bfloat16",
+    "status": "passed",
+    "frozen_exact": true,
+    "steps": 3,
+    "numerical": {
+      "trainable_update_relative_l2_error": 0.00423471862450242,
+      "max_loss_relative_error": 0.00042684130442616577,
+      "max_loss_absolute_error": 0.00189208984375
+    },
+    "evidence": "/home/shein/Documents/grad_school/research/shadowspill/docs/internal/plans/lora_models_1008/evidence/full-model-bf16-smoke/mlops-llama3-lora_head-recompute/result.json"
+  },
+  {
+    "case": "mlops-llama3-lora_head-save",
+    "dtype": "bfloat16",
+    "status": "passed",
+    "frozen_exact": true,
+    "steps": 3,
+    "numerical": {
+      "trainable_update_relative_l2_error": 0.00423471862450242,
+      "max_loss_relative_error": 0.00042684130442616577,
+      "max_loss_absolute_error": 0.00189208984375
+    },
+    "evidence": "/home/shein/Documents/grad_school/research/shadowspill/docs/internal/plans/lora_models_1008/evidence/full-model-bf16-smoke/mlops-llama3-lora_head-save/result.json"
+  },
+  {
+    "case": "mlops-olmoe-lora_head-recompute",
+    "dtype": "bfloat16",
+    "status": "passed",
+    "frozen_exact": true,
+    "steps": 3,
+    "numerical": {
+      "trainable_update_relative_l2_error": 0.004978669807314873,
+      "max_loss_relative_error": 0.0003002417458662082,
+      "max_loss_absolute_error": 0.0014662742614746094
+    },
+    "evidence": "/home/shein/Documents/grad_school/research/shadowspill/docs/internal/plans/lora_models_1008/evidence/full-model-bf16-smoke/mlops-olmoe-lora_head-recompute/result.json"
+  },
+  {
+    "case": "mlops-olmoe-lora_head-save",
+    "dtype": "bfloat16",
+    "status": "passed",
+    "frozen_exact": true,
+    "steps": 3,
+    "numerical": {
+      "trainable_update_relative_l2_error": 0.004978669807314873,
+      "max_loss_relative_error": 0.0003002417458662082,
+      "max_loss_absolute_error": 0.0014662742614746094
+    },
+    "evidence": "/home/shein/Documents/grad_school/research/shadowspill/docs/internal/plans/lora_models_1008/evidence/full-model-bf16-smoke/mlops-olmoe-lora_head-save/result.json"
+  },
+  {
+    "case": "mlops-qwen35-lora_head-recompute",
+    "dtype": "bfloat16",
+    "status": "passed",
+    "frozen_exact": true,
+    "steps": 3,
+    "numerical": {
+      "trainable_update_relative_l2_error": 0.008414636366069317,
+      "max_loss_relative_error": 0.0001954017969388514,
+      "max_loss_absolute_error": 0.000934600830078125
+    },
+    "evidence": "/home/shein/Documents/grad_school/research/shadowspill/docs/internal/plans/lora_models_1008/evidence/full-model-bf16-smoke/mlops-qwen35-lora_head-recompute/result.json"
+  },
+  {
+    "case": "mlops-qwen35-lora_head-save",
+    "dtype": "bfloat16",
+    "status": "passed",
+    "frozen_exact": true,
+    "steps": 3,
+    "numerical": {
+      "trainable_update_relative_l2_error": 0.012104703113436699,
+      "max_loss_relative_error": 0.0003008245586185338,
+      "max_loss_absolute_error": 0.0014376640319824219
+    },
+    "evidence": "/home/shein/Documents/grad_school/research/shadowspill/docs/internal/plans/lora_models_1008/evidence/full-model-bf16-smoke/mlops-qwen35-lora_head-save/result.json"
+  },
+  {
+    "case": "mlops-qwen35moe-lora_head-recompute",
+    "dtype": "bfloat16",
+    "status": "passed",
+    "frozen_exact": true,
+    "steps": 3,
+    "numerical": {
+      "trainable_update_relative_l2_error": 0.003804231993854046,
+      "max_loss_relative_error": 8.162483688013673e-05,
+      "max_loss_absolute_error": 0.00037479400634765625
+    },
+    "evidence": "/home/shein/Documents/grad_school/research/shadowspill/docs/internal/plans/lora_models_1008/evidence/full-model-bf16-smoke/mlops-qwen35moe-lora_head-recompute/result.json"
+  },
+  {
+    "case": "mlops-qwen35moe-lora_head-save",
+    "dtype": "bfloat16",
+    "status": "passed",
+    "frozen_exact": true,
+    "steps": 3,
+    "numerical": {
+      "trainable_update_relative_l2_error": 0.0038349756505340338,
+      "max_loss_relative_error": 6.874763615095485e-05,
+      "max_loss_absolute_error": 0.00031566619873046875
+    },
+    "evidence": "/home/shein/Documents/grad_school/research/shadowspill/docs/internal/plans/lora_models_1008/evidence/full-model-bf16-smoke/mlops-qwen35moe-lora_head-save/result.json"
+  },
+  {
+    "case": "mlops-qwen3moe-lora_head-recompute",
+    "dtype": "bfloat16",
+    "status": "passed",
+    "frozen_exact": true,
+    "steps": 3,
+    "numerical": {
+      "trainable_update_relative_l2_error": 0.005594578571617603,
+      "max_loss_relative_error": 6.446651940612698e-05,
+      "max_loss_absolute_error": 0.00029754638671875
+    },
+    "evidence": "/home/shein/Documents/grad_school/research/shadowspill/docs/internal/plans/lora_models_1008/evidence/full-model-bf16-smoke/mlops-qwen3moe-lora_head-recompute/result.json"
+  },
+  {
+    "case": "mlops-qwen3moe-lora_head-save",
+    "dtype": "bfloat16",
+    "status": "passed",
+    "frozen_exact": true,
+    "steps": 3,
+    "numerical": {
+      "trainable_update_relative_l2_error": 0.005594578571617603,
+      "max_loss_relative_error": 6.446651940612698e-05,
+      "max_loss_absolute_error": 0.00029754638671875
+    },
+    "evidence": "/home/shein/Documents/grad_school/research/shadowspill/docs/internal/plans/lora_models_1008/evidence/full-model-bf16-smoke/mlops-qwen3moe-lora_head-save/result.json"
+  },
+  {
+    "case": "pytorch-llama3-lora_head-recompute",
+    "dtype": "bfloat16",
+    "status": "passed",
+    "frozen_exact": true,
+    "steps": 3,
+    "numerical": {
+      "trainable_update_relative_l2_error": 0.004409457556903362,
+      "max_loss_relative_error": 0.0006533162230291762,
+      "max_loss_absolute_error": 0.0028939247131347656
+    },
+    "evidence": "/home/shein/Documents/grad_school/research/shadowspill/docs/internal/plans/lora_models_1008/evidence/full-model-bf16-smoke/pytorch-llama3-lora_head-recompute/result.json"
+  },
+  {
+    "case": "pytorch-llama3-lora_head-save",
+    "dtype": "bfloat16",
+    "status": "passed",
+    "frozen_exact": true,
+    "steps": 3,
+    "numerical": {
+      "trainable_update_relative_l2_error": 0.0038409018889069557,
+      "max_loss_relative_error": 0.00025857069825606876,
+      "max_loss_absolute_error": 0.0011453628540039062
+    },
+    "evidence": "/home/shein/Documents/grad_school/research/shadowspill/docs/internal/plans/lora_models_1008/evidence/full-model-bf16-smoke/pytorch-llama3-lora_head-save/result.json"
+  },
+  {
+    "case": "pytorch-olmoe-lora_head-recompute",
+    "dtype": "bfloat16",
+    "status": "passed",
+    "frozen_exact": true,
+    "steps": 3,
+    "numerical": {
+      "trainable_update_relative_l2_error": 0.005851111840456724,
+      "max_loss_relative_error": 0.0005087023031648466,
+      "max_loss_absolute_error": 0.0024785995483398438
+    },
+    "evidence": "/home/shein/Documents/grad_school/research/shadowspill/docs/internal/plans/lora_models_1008/evidence/full-model-bf16-smoke/pytorch-olmoe-lora_head-recompute/result.json"
+  },
+  {
+    "case": "pytorch-olmoe-lora_head-save",
+    "dtype": "bfloat16",
+    "status": "passed",
+    "frozen_exact": true,
+    "steps": 3,
+    "numerical": {
+      "trainable_update_relative_l2_error": 0.0056518130004405975,
+      "max_loss_relative_error": 0.0004751346059764006,
+      "max_loss_absolute_error": 0.002315044403076172
+    },
+    "evidence": "/home/shein/Documents/grad_school/research/shadowspill/docs/internal/plans/lora_models_1008/evidence/full-model-bf16-smoke/pytorch-olmoe-lora_head-save/result.json"
+  },
+  {
+    "case": "pytorch-qwen35-lora_head-recompute",
+    "dtype": "bfloat16",
+    "status": "passed",
+    "frozen_exact": true,
+    "steps": 3,
+    "numerical": {
+      "trainable_update_relative_l2_error": 0.012100831605494022,
+      "max_loss_relative_error": 0.0003679959212872949,
+      "max_loss_absolute_error": 0.0017628669738769531
+    },
+    "evidence": "/home/shein/Documents/grad_school/research/shadowspill/docs/internal/plans/lora_models_1008/evidence/full-model-bf16-smoke/pytorch-qwen35-lora_head-recompute/result.json"
+  },
+  {
+    "case": "pytorch-qwen35-lora_head-save",
+    "dtype": "bfloat16",
+    "status": "passed",
+    "frozen_exact": true,
+    "steps": 3,
+    "numerical": {
+      "trainable_update_relative_l2_error": 0.009821649640798569,
+      "max_loss_relative_error": 0.00021754962875854405,
+      "max_loss_absolute_error": 0.0010395050048828125
+    },
+    "evidence": "/home/shein/Documents/grad_school/research/shadowspill/docs/internal/plans/lora_models_1008/evidence/full-model-bf16-smoke/pytorch-qwen35-lora_head-save/result.json"
+  }
+]

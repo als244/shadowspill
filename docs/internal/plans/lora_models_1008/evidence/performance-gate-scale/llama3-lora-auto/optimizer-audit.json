@@ -1,0 +1,16 @@
+{
+  "observed": {
+    "parameter": 335544320,
+    "gradient": 167772160,
+    "optimizer_state": 335547904
+  },
+  "expected": {
+    "parameter": 335544320,
+    "gradient": 167772160,
+    "optimizer_state": 335547904
+  },
+  "status": "passed",
+  "gradient_dtype": "bfloat16",
+  "moment_dtype": "bfloat16",
+  "source_program": "/home/shein/Documents/grad_school/research/shadowspill/docs/internal/plans/lora_models_1008/evidence/performance-gate-scale/llama3-lora-auto/artifacts/v1/planning/programs/f7/f7d0dd92ac88ce9f502c69c3c72306dd878ade94a2900c0fd88f07d61c630843/program.json"
+}

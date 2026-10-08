@@ -1,0 +1,16 @@
+{
+  "family": "llama3",
+  "implementation": "mlops",
+  "mode": "lora",
+  "variant": "save",
+  "preset": "benchmark",
+  "dtype": "bfloat16",
+  "rank": 32,
+  "tokens": 2048,
+  "sequence_length": 512,
+  "steps": 10,
+  "warmup": 5,
+  "warmup_seconds": 1.0,
+  "execution_gib": 12,
+  "outdir": "training/runs/lora_memory_example"
+}

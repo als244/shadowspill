@@ -1,0 +1,16 @@
+{
+  "observed": {
+    "parameter": 17907606528,
+    "gradient": 17907606528,
+    "optimizer_state": 35815216088
+  },
+  "expected": {
+    "parameter": 17907606528,
+    "gradient": 17907606528,
+    "optimizer_state": 35815216088
+  },
+  "status": "passed",
+  "gradient_dtype": "bfloat16",
+  "moment_dtype": "bfloat16",
+  "source_program": "/home/shein/Documents/grad_school/research/shadowspill/docs/internal/plans/lora_models_1008/evidence/performance-gate-scale/qwen35-full-auto/artifacts/v1/planning/programs/ef/ef245452618575a09beaf0e12d358e58f0b745348e129a0d1c344719e4c954f5/program.json"
+}

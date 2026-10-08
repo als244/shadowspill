@@ -1,0 +1,20 @@
+{
+  "config": null,
+  "family": "qwen35moe",
+  "implementation": "mlops",
+  "mode": "full",
+  "variant": "save",
+  "preset": "benchmark",
+  "dtype": "bfloat16",
+  "rank": 32,
+  "tokens": 2048,
+  "sequence_length": 512,
+  "steps": 10,
+  "warmup": 5,
+  "warmup_seconds": 1.0,
+  "execution_gib": 12.0,
+  "spill_gib": null,
+  "outdir": "/home/shein/Documents/grad_school/research/shadowspill/docs/internal/plans/lora_models_1008/evidence/full-model-steady-benchmark/mlops-qwen35moe-full-save",
+  "resolved_spill_gib": 6,
+  "estimated_persistent_bytes": 2983179904
+}

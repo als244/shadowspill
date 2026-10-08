@@ -1,0 +1,432 @@
+{
+  "status": "passed",
+  "config": {
+    "config": null,
+    "family": "olmoe",
+    "mode": "lora",
+    "variant": "auto",
+    "rank": 32,
+    "factor_dtype": "float32",
+    "execution_gib": 16,
+    "spill_gib": 112,
+    "groups": 3,
+    "steps_per_group": 4,
+    "warmup": 2,
+    "seed": 20260811,
+    "outdir": "/home/shein/Documents/grad_school/research/shadowspill/docs/internal/plans/lora_models_1008/evidence/performance-gate-scale/olmoe-lora-auto",
+    "manifest": {
+      "family": "olmoe",
+      "implementation": "mlops",
+      "sequence_length": 1024,
+      "sequences_per_microbatch": 32,
+      "accumulation_count": 2,
+      "model_config": {
+        "n_layers": 16,
+        "d_model": 2048,
+        "n_heads": 16,
+        "n_kv_heads": 16,
+        "head_dim": 128,
+        "n_experts": 64,
+        "top_k": 8,
+        "d_ff_expert": 1024,
+        "vocab_size": 50304,
+        "rope_base": 10000.0,
+        "max_seq_len": 131072
+      },
+      "head_scratch_bytes": 536870912,
+      "model_dtype": "bfloat16",
+      "master_dtype": "none",
+      "grad_dtype": "bfloat16",
+      "opt_state_dtype": "bfloat16",
+      "device_physical_capacity_bytes": 17179869184,
+      "spill_budget_bytes": 120259084288,
+      "regression_tokens_per_second": 13907.1,
+      "remote_regression_tokens_per_second": 1934.2,
+      "predecessor_tokens_per_second": 15654.904932252315,
+      "external_headroom_bytes": 536870912,
+      "reject_overbudget": false,
+      "tokens_per_microbatch": 32768,
+      "tokens_per_step": 65536,
+      "dtypes": {
+        "model_dtype": "bfloat16",
+        "master_dtype": "none",
+        "grad_dtype": "bfloat16",
+        "opt_state_dtype": "bfloat16"
+      }
+    },
+    "head": "frozen",
+    "device_name": "NVIDIA GeForce RTX 5090"
+  },
+  "parameters": 7162431488,
+  "trainable": 243269632,
+  "preparation_seconds": 102.03551354701631,
+  "median_step_seconds": 3.8772832025,
+  "tokens_per_second": 16902.556913496443,
+  "predicted_step_seconds": 3.985409152,
+  "peak_host_rss_preparation_bytes": 136686379008,
+  "peak_host_rss_execution_bytes": 136686379008,
+  "pools_after_preparation": {
+    "execution": {
+      "pool_id": 0,
+      "kind": 0,
+      "capacity_bytes": 16120807424,
+      "requested_allocated_bytes": 33554564,
+      "peak_requested_allocated_bytes": 11129431330,
+      "allocated_bytes": 15610830476,
+      "peak_allocated_bytes": 15610830476,
+      "free_bytes": 509976948,
+      "free_prefix_bytes": 0,
+      "largest_free_range_bytes": 509976824,
+      "external_fragmentation_bytes": 124,
+      "live_allocations": 2,
+      "blocked_allocators": 0,
+      "memory_lease_record_capacity": 5402,
+      "memory_lease_record_in_use": 2,
+      "memory_lease_record_peak_in_use": 118,
+      "memory_lease_record_growth_rejections": 0,
+      "lease_use_record_capacity": 5400,
+      "lease_use_record_in_use": 0,
+      "lease_use_record_peak_in_use": 74,
+      "lease_use_record_growth_rejections": 0
+    },
+    "spill": {
+      "pool_id": 1,
+      "kind": 1,
+      "capacity_bytes": 120259084288,
+      "requested_allocated_bytes": 0,
+      "peak_requested_allocated_bytes": 0,
+      "allocated_bytes": 15919748740,
+      "peak_allocated_bytes": 20024919684,
+      "free_bytes": 104339335548,
+      "free_prefix_bytes": 0,
+      "largest_free_range_bytes": 104339335548,
+      "external_fragmentation_bytes": 0,
+      "live_allocations": 0,
+      "blocked_allocators": 0,
+      "memory_lease_record_capacity": 6354,
+      "memory_lease_record_in_use": 954,
+      "memory_lease_record_peak_in_use": 983,
+      "memory_lease_record_growth_rejections": 0,
+      "lease_use_record_capacity": 5400,
+      "lease_use_record_in_use": 0,
+      "lease_use_record_peak_in_use": 0,
+      "lease_use_record_growth_rejections": 0
+    }
+  },
+  "pools_after_execution": {
+    "execution": {
+      "pool_id": 0,
+      "kind": 0,
+      "capacity_bytes": 16120807424,
+      "requested_allocated_bytes": 33554564,
+      "peak_requested_allocated_bytes": 77485237400,
+      "allocated_bytes": 15610830476,
+      "peak_allocated_bytes": 15610830540,
+      "free_bytes": 509976948,
+      "free_prefix_bytes": 0,
+      "largest_free_range_bytes": 509976824,
+      "external_fragmentation_bytes": 124,
+      "live_allocations": 2,
+      "blocked_allocators": 0,
+      "memory_lease_record_capacity": 5402,
+      "memory_lease_record_in_use": 2,
+      "memory_lease_record_peak_in_use": 1421,
+      "memory_lease_record_growth_rejections": 0,
+      "lease_use_record_capacity": 5400,
+      "lease_use_record_in_use": 0,
+      "lease_use_record_peak_in_use": 929,
+      "lease_use_record_growth_rejections": 0
+    },
+    "spill": {
+      "pool_id": 1,
+      "kind": 1,
+      "capacity_bytes": 120259084288,
+      "requested_allocated_bytes": 0,
+      "peak_requested_allocated_bytes": 0,
+      "allocated_bytes": 15919748740,
+      "peak_allocated_bytes": 28934674052,
+      "free_bytes": 104339335548,
+      "free_prefix_bytes": 0,
+      "largest_free_range_bytes": 104339335548,
+      "external_fragmentation_bytes": 0,
+      "live_allocations": 0,
+      "blocked_allocators": 0,
+      "memory_lease_record_capacity": 6354,
+      "memory_lease_record_in_use": 954,
+      "memory_lease_record_peak_in_use": 1096,
+      "memory_lease_record_growth_rejections": 0,
+      "lease_use_record_capacity": 5400,
+      "lease_use_record_in_use": 0,
+      "lease_use_record_peak_in_use": 0,
+      "lease_use_record_growth_rejections": 0
+    }
+  },
+  "measurements": {
+    "group_seconds": [
+      15.504184568,
+      15.50913281,
+      15.515599363
+    ],
+    "host_group_seconds": [
+      15.504645699984394,
+      15.509562092018314,
+      15.515994712011889
+    ],
+    "group_tokens_per_second": [
+      16907.951453380814,
+      16902.556913496443,
+      16895.512307770332
+    ],
+    "cycle_seconds": [
+      3.879337402,
+      3.875156005,
+      3.874098388,
+      3.875592773,
+      3.881883544,
+      3.872469482,
+      3.876381835,
+      3.878397949,
+      3.883664306,
+      3.879386962,
+      3.878886474,
+      3.873661621
+    ],
+    "entry_delay_seconds": [
+      0.058325408,
+      0.057680065,
+      0.057743263,
+      0.057501472,
+      0.05802256,
+      0.058804126,
+      0.064581184,
+      0.063990337,
+      0.064336288,
+      0.057606945,
+      0.057684223,
+      0.057437183
+    ],
+    "selected_spans": [
+      3.818612548,
+      3.815120361,
+      3.813988037,
+      3.815706054,
+      3.821109863,
+      3.81088916,
+      3.80901831,
+      3.811672363,
+      3.816955566,
+      3.819415039,
+      3.818829101,
+      3.813830078
+    ],
+    "dispatch_seconds": [
+      3.6081281719962135,
+      3.8753580530174077,
+      3.874119853018783,
+      3.870529178995639,
+      3.603900735033676,
+      3.8786744580138475,
+      3.876536837895401,
+      3.8787372009828687,
+      3.6115763769485056,
+      3.8804669480305165,
+      3.8785784379579127,
+      3.8737702950602397
+    ],
+    "prior_invocation_drain_seconds": [
+      4.821e-06,
+      0.271234833,
+      0.271057077,
+      0.271054407,
+      2.927e-06,
+      0.27800113,
+      0.271821038,
+      0.271664839,
+      2.873e-06,
+      0.272088397,
+      0.271015577,
+      0.271339748
+    ],
+    "measured_objectives": [
+      [
+        5.57841157913208,
+        5.5754780769348145
+      ],
+      [
+        5.571040153503418,
+        5.568164348602295
+      ],
+      [
+        5.561306953430176,
+        5.558444023132324
+      ],
+      [
+        5.551737308502197,
+        5.548919677734375
+      ],
+      [
+        5.541954040527344,
+        5.539122104644775
+      ],
+      [
+        5.532023906707764,
+        5.5292649269104
+      ],
+      [
+        5.521667003631592,
+        5.518938064575195
+      ],
+      [
+        5.5108184814453125,
+        5.5082502365112305
+      ],
+      [
+        5.499661922454834,
+        5.497048377990723
+      ],
+      [
+        5.487978935241699,
+        5.485544204711914
+      ],
+      [
+        5.475852966308594,
+        5.473477840423584
+      ],
+      [
+        5.4633378982543945,
+        5.461100101470947
+      ]
+    ]
+  },
+  "losses": [
+    11.153889656066895,
+    11.139204502105713,
+    11.1197509765625,
+    11.100656986236572,
+    11.08107614517212,
+    11.061288833618164,
+    11.040605068206787,
+    11.019068717956543,
+    10.996710300445557,
+    10.973523139953613,
+    10.949330806732178,
+    10.924437999725342
+  ],
+  "calibration": {
+    "generation": 4,
+    "pool_names": [
+      "execution",
+      "spill"
+    ],
+    "profiles": [
+      {
+        "source": "execution",
+        "destination": "execution",
+        "source_pool_id": 0,
+        "destination_pool_id": 0,
+        "generation": 4,
+        "latency_nanoseconds": 0,
+        "bandwidth_bytes_per_second": 18446744073709551615,
+        "solo_bandwidth_bytes_per_second": 0,
+        "concurrent_bandwidth_bytes_per_second": 0,
+        "solo_measurement_nanoseconds": 0,
+        "concurrent_measurement_nanoseconds": 0,
+        "calibrated_timestamp_nanoseconds": 0,
+        "small_copy_bytes": 0,
+        "large_copy_bytes": 0,
+        "measured_copies": 0,
+        "available": true,
+        "calibrated": true,
+        "provenance": "initialization",
+        "calibration_mode": "identity",
+        "concurrent_route_count": 0
+      },
+      {
+        "source": "execution",
+        "destination": "spill",
+        "source_pool_id": 0,
+        "destination_pool_id": 1,
+        "generation": 4,
+        "latency_nanoseconds": 4006,
+        "bandwidth_bytes_per_second": 25964978991,
+        "solo_bandwidth_bytes_per_second": 55765934399,
+        "concurrent_bandwidth_bytes_per_second": 25964978991,
+        "solo_measurement_nanoseconds": 77017759,
+        "concurrent_measurement_nanoseconds": 165413856,
+        "calibrated_timestamp_nanoseconds": 916719679606131,
+        "small_copy_bytes": 4096,
+        "large_copy_bytes": 268435456,
+        "measured_copies": 16,
+        "available": true,
+        "calibrated": true,
+        "provenance": "recalibration",
+        "calibration_mode": "bidirectional_concurrent",
+        "concurrent_route_count": 2
+      },
+      {
+        "source": "spill",
+        "destination": "execution",
+        "source_pool_id": 1,
+        "destination_pool_id": 0,
+        "generation": 4,
+        "latency_nanoseconds": 4220,
+        "bandwidth_bytes_per_second": 25682598717,
+        "solo_bandwidth_bytes_per_second": 39367704353,
+        "concurrent_bandwidth_bytes_per_second": 25682598717,
+        "solo_measurement_nanoseconds": 109098749,
+        "concurrent_measurement_nanoseconds": 167232582,
+        "calibrated_timestamp_nanoseconds": 916719679606161,
+        "small_copy_bytes": 4096,
+        "large_copy_bytes": 268435456,
+        "measured_copies": 16,
+        "available": true,
+        "calibrated": true,
+        "provenance": "recalibration",
+        "calibration_mode": "bidirectional_concurrent",
+        "concurrent_route_count": 2
+      },
+      {
+        "source": "spill",
+        "destination": "spill",
+        "source_pool_id": 1,
+        "destination_pool_id": 1,
+        "generation": 4,
+        "latency_nanoseconds": 0,
+        "bandwidth_bytes_per_second": 18446744073709551615,
+        "solo_bandwidth_bytes_per_second": 0,
+        "concurrent_bandwidth_bytes_per_second": 0,
+        "solo_measurement_nanoseconds": 0,
+        "concurrent_measurement_nanoseconds": 0,
+        "calibrated_timestamp_nanoseconds": 0,
+        "small_copy_bytes": 0,
+        "large_copy_bytes": 0,
+        "measured_copies": 0,
+        "available": true,
+        "calibrated": true,
+        "provenance": "initialization",
+        "calibration_mode": "identity",
+        "concurrent_route_count": 0
+      }
+    ],
+    "digest": "ece8fc8d315af26c352c1f76aef01c7da67ca878e367b45a6f757a01538c8811"
+  },
+  "runtime_delta": {
+    "device_allocations": 0,
+    "pinned_host_registrations": 0,
+    "event_driver_creates": 0,
+    "event_growth_rejections": 0,
+    "allocation_callbacks": 122184,
+    "free_callbacks": 119544,
+    "fetch_transfers": 18792,
+    "evict_transfers": 11952,
+    "bytes_fetched": 941601394224,
+    "bytes_evicted": 332440553472
+  },
+  "calibration_attempts": 4,
+  "physical_statuses": [
+    "0",
+    "0",
+    "0",
+    "0"
+  ]
+}

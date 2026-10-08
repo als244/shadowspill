@@ -1,0 +1,16 @@
+{
+  "observed": {
+    "parameter": 321060864,
+    "gradient": 160530432,
+    "optimizer_state": 321064064
+  },
+  "expected": {
+    "parameter": 321060864,
+    "gradient": 160530432,
+    "optimizer_state": 321064064
+  },
+  "status": "passed",
+  "gradient_dtype": "bfloat16",
+  "moment_dtype": "bfloat16",
+  "source_program": "/home/shein/Documents/grad_school/research/shadowspill/docs/internal/plans/lora_models_1008/evidence/performance-gate-scale/qwen35-lora-auto/artifacts/v1/planning/programs/19/1983eb5ae853d261e88418bfedd02f58324725235824abc0dd07fda02c8283db/program.json"
+}

@@ -1,0 +1,21 @@
+{
+  "config": null,
+  "family": "llama3",
+  "implementation": "mlops",
+  "mode": "lora",
+  "variant": "save",
+  "preset": "1b",
+  "dtype": "bfloat16",
+  "rank": 32,
+  "record_gc": true,
+  "tokens": 2048,
+  "sequence_length": 512,
+  "steps": 40,
+  "warmup": 10,
+  "warmup_seconds": 2.0,
+  "execution_gib": 16.0,
+  "spill_gib": null,
+  "outdir": "/home/shein/Documents/grad_school/research/shadowspill/docs/internal/plans/lora_models_1008/evidence/llama-1b-timing/lora-save",
+  "resolved_spill_gib": 6,
+  "estimated_persistent_bytes": 2611056640
+}

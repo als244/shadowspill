@@ -1,0 +1,6 @@
+First qualification run summary (recorded from the console before rerun):
+1 failed, 1237 passed, 1 skipped, 38 deselected in 533.88s.
+Failure: tests/repository/test_naming.py::test_production_naming_boundaries
+Diagnostic: src/shadowspill/task/layout.py:379: old secondary-pool role: backing
+Resolution: replaced the word in the new comment with allocation; no code behavior changed. The focused naming test passed.
+The subsequent complete rerun uses the same run name; qualification.log and the gates directory now contain the rerun.

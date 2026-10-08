@@ -1,0 +1,506 @@
+[
+  {
+    "status": "passed",
+    "case": "mlops-llama3-full-recompute",
+    "source_program": "/home/shein/Documents/grad_school/research/shadowspill/docs/internal/plans/lora_models_1008/evidence/full-model-steady-benchmark/mlops-llama3-full-recompute/artifacts/v1/planning/programs/ad/adc6025ba06ce7ae5b6d0ec83191848c7fdcf2b4f7a8cbda8a36194cd1abdf97/program.json",
+    "trainable_parameters": 77863680,
+    "trainable_tensors": 39,
+    "optimizer_input_bytes": {
+      "parameter": 155727360,
+      "gradient": 311454720,
+      "optimizer_state": 622909752
+    },
+    "expected_bytes": {
+      "parameter": 155727360,
+      "gradient": 311454720,
+      "optimizer_state": 622909752
+    },
+    "explanation": "BF16 full weights or FP32 LoRA factors, FP32 gradients, two FP32 AdamW moments and one int64 step per trainable tensor. No frozen-weight optimizer state or optimizer gradient inputs."
+  },
+  {
+    "status": "passed",
+    "case": "mlops-llama3-full-save",
+    "source_program": "/home/shein/Documents/grad_school/research/shadowspill/docs/internal/plans/lora_models_1008/evidence/full-model-steady-benchmark/mlops-llama3-full-save/artifacts/v1/planning/programs/b5/b5def6603162c0cfa46bca9267f8d7320b2ce28d4d640c8bd92db21fdd4e8093/program.json",
+    "trainable_parameters": 77863680,
+    "trainable_tensors": 39,
+    "optimizer_input_bytes": {
+      "parameter": 155727360,
+      "gradient": 311454720,
+      "optimizer_state": 622909752
+    },
+    "expected_bytes": {
+      "parameter": 155727360,
+      "gradient": 311454720,
+      "optimizer_state": 622909752
+    },
+    "explanation": "BF16 full weights or FP32 LoRA factors, FP32 gradients, two FP32 AdamW moments and one int64 step per trainable tensor. No frozen-weight optimizer state or optimizer gradient inputs."
+  },
+  {
+    "status": "passed",
+    "case": "mlops-llama3-lora-recompute",
+    "source_program": "/home/shein/Documents/grad_school/research/shadowspill/docs/internal/plans/lora_models_1008/evidence/full-model-steady-benchmark/mlops-llama3-lora-recompute/artifacts/v1/planning/programs/95/9513cb835ede1ec083dd6cb6a06b48adda927f483906c0d1d38da128d6764305/program.json",
+    "trainable_parameters": 1835008,
+    "trainable_tensors": 56,
+    "optimizer_input_bytes": {
+      "parameter": 7340032,
+      "gradient": 7340032,
+      "optimizer_state": 14680512
+    },
+    "expected_bytes": {
+      "parameter": 7340032,
+      "gradient": 7340032,
+      "optimizer_state": 14680512
+    },
+    "explanation": "BF16 full weights or FP32 LoRA factors, FP32 gradients, two FP32 AdamW moments and one int64 step per trainable tensor. No frozen-weight optimizer state or optimizer gradient inputs."
+  },
+  {
+    "status": "passed",
+    "case": "mlops-llama3-lora-save",
+    "source_program": "/home/shein/Documents/grad_school/research/shadowspill/docs/internal/plans/lora_models_1008/evidence/full-model-steady-benchmark/mlops-llama3-lora-save/artifacts/v1/planning/programs/13/13db6e92b32829de66a41987ca66bf65959149f7b23f3d507247ccf72cfc5079/program.json",
+    "trainable_parameters": 1835008,
+    "trainable_tensors": 56,
+    "optimizer_input_bytes": {
+      "parameter": 7340032,
+      "gradient": 7340032,
+      "optimizer_state": 14680512
+    },
+    "expected_bytes": {
+      "parameter": 7340032,
+      "gradient": 7340032,
+      "optimizer_state": 14680512
+    },
+    "explanation": "BF16 full weights or FP32 LoRA factors, FP32 gradients, two FP32 AdamW moments and one int64 step per trainable tensor. No frozen-weight optimizer state or optimizer gradient inputs."
+  },
+  {
+    "status": "passed",
+    "case": "mlops-olmoe-full-recompute",
+    "source_program": "/home/shein/Documents/grad_school/research/shadowspill/docs/internal/plans/lora_models_1008/evidence/full-model-steady-benchmark/mlops-olmoe-full-recompute/artifacts/v1/planning/programs/b6/b6a9c14003a6b392262315e9206f57383175adeb5f2f17868829a41c1ae4bae1/program.json",
+    "trainable_parameters": 207727360,
+    "trainable_tensors": 47,
+    "optimizer_input_bytes": {
+      "parameter": 415454720,
+      "gradient": 830909440,
+      "optimizer_state": 1661819256
+    },
+    "expected_bytes": {
+      "parameter": 415454720,
+      "gradient": 830909440,
+      "optimizer_state": 1661819256
+    },
+    "explanation": "BF16 full weights or FP32 LoRA factors, FP32 gradients, two FP32 AdamW moments and one int64 step per trainable tensor. No frozen-weight optimizer state or optimizer gradient inputs."
+  },
+  {
+    "status": "passed",
+    "case": "mlops-olmoe-full-save",
+    "source_program": "/home/shein/Documents/grad_school/research/shadowspill/docs/internal/plans/lora_models_1008/evidence/full-model-steady-benchmark/mlops-olmoe-full-save/artifacts/v1/planning/programs/56/56974636f6a2c1efa142bb4ca2ca8d41f37dc92a330a176418a03415b6be4719/program.json",
+    "trainable_parameters": 207727360,
+    "trainable_tensors": 47,
+    "optimizer_input_bytes": {
+      "parameter": 415454720,
+      "gradient": 830909440,
+      "optimizer_state": 1661819256
+    },
+    "expected_bytes": {
+      "parameter": 415454720,
+      "gradient": 830909440,
+      "optimizer_state": 1661819256
+    },
+    "explanation": "BF16 full weights or FP32 LoRA factors, FP32 gradients, two FP32 AdamW moments and one int64 step per trainable tensor. No frozen-weight optimizer state or optimizer gradient inputs."
+  },
+  {
+    "status": "passed",
+    "case": "mlops-olmoe-lora-recompute",
+    "source_program": "/home/shein/Documents/grad_school/research/shadowspill/docs/internal/plans/lora_models_1008/evidence/full-model-steady-benchmark/mlops-olmoe-lora-recompute/artifacts/v1/planning/programs/b5/b5120a4efbd9f11f86c89e18f15555afed45ffb08bd7f165db773118277cbb9d/program.json",
+    "trainable_parameters": 13238272,
+    "trainable_tensors": 48,
+    "optimizer_input_bytes": {
+      "parameter": 52953088,
+      "gradient": 52953088,
+      "optimizer_state": 105906560
+    },
+    "expected_bytes": {
+      "parameter": 52953088,
+      "gradient": 52953088,
+      "optimizer_state": 105906560
+    },
+    "explanation": "BF16 full weights or FP32 LoRA factors, FP32 gradients, two FP32 AdamW moments and one int64 step per trainable tensor. No frozen-weight optimizer state or optimizer gradient inputs."
+  },
+  {
+    "status": "passed",
+    "case": "mlops-olmoe-lora-save",
+    "source_program": "/home/shein/Documents/grad_school/research/shadowspill/docs/internal/plans/lora_models_1008/evidence/full-model-steady-benchmark/mlops-olmoe-lora-save/artifacts/v1/planning/programs/c1/c16a3290707e54a8b0e6a6b9940ae058f0e9c7559a9e9d7be35d04e64ba7ad4b/program.json",
+    "trainable_parameters": 13238272,
+    "trainable_tensors": 48,
+    "optimizer_input_bytes": {
+      "parameter": 52953088,
+      "gradient": 52953088,
+      "optimizer_state": 105906560
+    },
+    "expected_bytes": {
+      "parameter": 52953088,
+      "gradient": 52953088,
+      "optimizer_state": 105906560
+    },
+    "explanation": "BF16 full weights or FP32 LoRA factors, FP32 gradients, two FP32 AdamW moments and one int64 step per trainable tensor. No frozen-weight optimizer state or optimizer gradient inputs."
+  },
+  {
+    "status": "passed",
+    "case": "mlops-qwen35-full-recompute",
+    "source_program": "/home/shein/Documents/grad_school/research/shadowspill/docs/internal/plans/lora_models_1008/evidence/full-model-steady-benchmark/mlops-qwen35-full-recompute/artifacts/v1/planning/programs/f2/f274f2b4182df0f64ea9c958a960481bcfc48976d3afb499dde99859e7db4941/program.json",
+    "trainable_parameters": 78503024,
+    "trainable_tensors": 50,
+    "optimizer_input_bytes": {
+      "parameter": 157006048,
+      "gradient": 314012096,
+      "optimizer_state": 628024592
+    },
+    "expected_bytes": {
+      "parameter": 157006048,
+      "gradient": 314012096,
+      "optimizer_state": 628024592
+    },
+    "explanation": "BF16 full weights or FP32 LoRA factors, FP32 gradients, two FP32 AdamW moments and one int64 step per trainable tensor. No frozen-weight optimizer state or optimizer gradient inputs."
+  },
+  {
+    "status": "passed",
+    "case": "mlops-qwen35-full-save",
+    "source_program": "/home/shein/Documents/grad_school/research/shadowspill/docs/internal/plans/lora_models_1008/evidence/full-model-steady-benchmark/mlops-qwen35-full-save/artifacts/v1/planning/programs/59/59a5a9bf2f4dcf3da86648968222a2c3d7d2d2ab081f65c7513c890850e3b63a/program.json",
+    "trainable_parameters": 78503024,
+    "trainable_tensors": 50,
+    "optimizer_input_bytes": {
+      "parameter": 157006048,
+      "gradient": 314012096,
+      "optimizer_state": 628024592
+    },
+    "expected_bytes": {
+      "parameter": 157006048,
+      "gradient": 314012096,
+      "optimizer_state": 628024592
+    },
+    "explanation": "BF16 full weights or FP32 LoRA factors, FP32 gradients, two FP32 AdamW moments and one int64 step per trainable tensor. No frozen-weight optimizer state or optimizer gradient inputs."
+  },
+  {
+    "status": "passed",
+    "case": "mlops-qwen35-lora-recompute",
+    "source_program": "/home/shein/Documents/grad_school/research/shadowspill/docs/internal/plans/lora_models_1008/evidence/full-model-steady-benchmark/mlops-qwen35-lora-recompute/artifacts/v1/planning/programs/f1/f1a606c69bd130bd15f182a6b6ceb8ed4a8c1c7232eecebd98fb46ee9f27babf/program.json",
+    "trainable_parameters": 1787392,
+    "trainable_tensors": 50,
+    "optimizer_input_bytes": {
+      "parameter": 7149568,
+      "gradient": 7149568,
+      "optimizer_state": 14299536
+    },
+    "expected_bytes": {
+      "parameter": 7149568,
+      "gradient": 7149568,
+      "optimizer_state": 14299536
+    },
+    "explanation": "BF16 full weights or FP32 LoRA factors, FP32 gradients, two FP32 AdamW moments and one int64 step per trainable tensor. No frozen-weight optimizer state or optimizer gradient inputs."
+  },
+  {
+    "status": "passed",
+    "case": "mlops-qwen35-lora-save",
+    "source_program": "/home/shein/Documents/grad_school/research/shadowspill/docs/internal/plans/lora_models_1008/evidence/full-model-steady-benchmark/mlops-qwen35-lora-save/artifacts/v1/planning/programs/1b/1b550103f7052baf4b749d9fa545af70c4d3d08c0b0620f735d2b3b9ad8420d3/program.json",
+    "trainable_parameters": 1787392,
+    "trainable_tensors": 50,
+    "optimizer_input_bytes": {
+      "parameter": 7149568,
+      "gradient": 7149568,
+      "optimizer_state": 14299536
+    },
+    "expected_bytes": {
+      "parameter": 7149568,
+      "gradient": 7149568,
+      "optimizer_state": 14299536
+    },
+    "explanation": "BF16 full weights or FP32 LoRA factors, FP32 gradients, two FP32 AdamW moments and one int64 step per trainable tensor. No frozen-weight optimizer state or optimizer gradient inputs."
+  },
+  {
+    "status": "passed",
+    "case": "mlops-qwen35moe-full-recompute",
+    "source_program": "/home/shein/Documents/grad_school/research/shadowspill/docs/internal/plans/lora_models_1008/evidence/full-model-steady-benchmark/mlops-qwen35moe-full-recompute/artifacts/v1/planning/programs/92/92c4426ab0e3dcb6dc415075dd089c8e2a8acb29547d71235a766bd5e9601cc7/program.json",
+    "trainable_parameters": 213084272,
+    "trainable_tensors": 62,
+    "optimizer_input_bytes": {
+      "parameter": 426168640,
+      "gradient": 852337088,
+      "optimizer_state": 1704674672
+    },
+    "expected_bytes": {
+      "parameter": 426168640,
+      "gradient": 852337088,
+      "optimizer_state": 1704674672
+    },
+    "explanation": "BF16 full weights or FP32 LoRA factors, FP32 gradients, two FP32 AdamW moments and one int64 step per trainable tensor. No frozen-weight optimizer state or optimizer gradient inputs."
+  },
+  {
+    "status": "passed",
+    "case": "mlops-qwen35moe-full-save",
+    "source_program": "/home/shein/Documents/grad_school/research/shadowspill/docs/internal/plans/lora_models_1008/evidence/full-model-steady-benchmark/mlops-qwen35moe-full-save/artifacts/v1/planning/programs/94/94340d0d9abd443839656c1e8ab45909734704d2d6cafd894a877a1f5cbabb50/program.json",
+    "trainable_parameters": 213084272,
+    "trainable_tensors": 62,
+    "optimizer_input_bytes": {
+      "parameter": 426168640,
+      "gradient": 852337088,
+      "optimizer_state": 1704674672
+    },
+    "expected_bytes": {
+      "parameter": 426168640,
+      "gradient": 852337088,
+      "optimizer_state": 1704674672
+    },
+    "explanation": "BF16 full weights or FP32 LoRA factors, FP32 gradients, two FP32 AdamW moments and one int64 step per trainable tensor. No frozen-weight optimizer state or optimizer gradient inputs."
+  },
+  {
+    "status": "passed",
+    "case": "mlops-qwen35moe-lora-recompute",
+    "source_program": "/home/shein/Documents/grad_school/research/shadowspill/docs/internal/plans/lora_models_1008/evidence/full-model-steady-benchmark/mlops-qwen35moe-lora-recompute/artifacts/v1/planning/programs/37/376567d06d56bab30dae2e7481afa4a4aad75cf2443ae3760ada95099d8819e3/program.json",
+    "trainable_parameters": 13190656,
+    "trainable_tensors": 42,
+    "optimizer_input_bytes": {
+      "parameter": 52762624,
+      "gradient": 52762624,
+      "optimizer_state": 105525584
+    },
+    "expected_bytes": {
+      "parameter": 52762624,
+      "gradient": 52762624,
+      "optimizer_state": 105525584
+    },
+    "explanation": "BF16 full weights or FP32 LoRA factors, FP32 gradients, two FP32 AdamW moments and one int64 step per trainable tensor. No frozen-weight optimizer state or optimizer gradient inputs."
+  },
+  {
+    "status": "passed",
+    "case": "mlops-qwen35moe-lora-save",
+    "source_program": "/home/shein/Documents/grad_school/research/shadowspill/docs/internal/plans/lora_models_1008/evidence/full-model-steady-benchmark/mlops-qwen35moe-lora-save/artifacts/v1/planning/programs/8e/8e1855a0301ff59f3b066f4477b89f58f1d2207fc005bf658fed7c9e8210d39f/program.json",
+    "trainable_parameters": 13190656,
+    "trainable_tensors": 42,
+    "optimizer_input_bytes": {
+      "parameter": 52762624,
+      "gradient": 52762624,
+      "optimizer_state": 105525584
+    },
+    "expected_bytes": {
+      "parameter": 52762624,
+      "gradient": 52762624,
+      "optimizer_state": 105525584
+    },
+    "explanation": "BF16 full weights or FP32 LoRA factors, FP32 gradients, two FP32 AdamW moments and one int64 step per trainable tensor. No frozen-weight optimizer state or optimizer gradient inputs."
+  },
+  {
+    "status": "passed",
+    "case": "mlops-qwen3moe-full-recompute",
+    "source_program": "/home/shein/Documents/grad_school/research/shadowspill/docs/internal/plans/lora_models_1008/evidence/full-model-steady-benchmark/mlops-qwen3moe-full-recompute/artifacts/v1/planning/programs/d1/d14ec2ea8b116bb1a85b9ee52814e5679e3d2426337bff85bc8f6baee1bcd05c/program.json",
+    "trainable_parameters": 207723776,
+    "trainable_tensors": 47,
+    "optimizer_input_bytes": {
+      "parameter": 415447552,
+      "gradient": 830895104,
+      "optimizer_state": 1661790584
+    },
+    "expected_bytes": {
+      "parameter": 415447552,
+      "gradient": 830895104,
+      "optimizer_state": 1661790584
+    },
+    "explanation": "BF16 full weights or FP32 LoRA factors, FP32 gradients, two FP32 AdamW moments and one int64 step per trainable tensor. No frozen-weight optimizer state or optimizer gradient inputs."
+  },
+  {
+    "status": "passed",
+    "case": "mlops-qwen3moe-full-save",
+    "source_program": "/home/shein/Documents/grad_school/research/shadowspill/docs/internal/plans/lora_models_1008/evidence/full-model-steady-benchmark/mlops-qwen3moe-full-save/artifacts/v1/planning/programs/50/5059ef6dbcfd7ff1f78fa8d136bd96b278c15d77d240fa8a3c49da8b0fbe172b/program.json",
+    "trainable_parameters": 207723776,
+    "trainable_tensors": 47,
+    "optimizer_input_bytes": {
+      "parameter": 415447552,
+      "gradient": 830895104,
+      "optimizer_state": 1661790584
+    },
+    "expected_bytes": {
+      "parameter": 415447552,
+      "gradient": 830895104,
+      "optimizer_state": 1661790584
+    },
+    "explanation": "BF16 full weights or FP32 LoRA factors, FP32 gradients, two FP32 AdamW moments and one int64 step per trainable tensor. No frozen-weight optimizer state or optimizer gradient inputs."
+  },
+  {
+    "status": "passed",
+    "case": "mlops-qwen3moe-lora-recompute",
+    "source_program": "/home/shein/Documents/grad_school/research/shadowspill/docs/internal/plans/lora_models_1008/evidence/full-model-steady-benchmark/mlops-qwen3moe-lora-recompute/artifacts/v1/planning/programs/05/05f43c21dc600fe8cef90d5729331689004667fd9a333b40b7258221e60a7451/program.json",
+    "trainable_parameters": 13238272,
+    "trainable_tensors": 48,
+    "optimizer_input_bytes": {
+      "parameter": 52953088,
+      "gradient": 52953088,
+      "optimizer_state": 105906560
+    },
+    "expected_bytes": {
+      "parameter": 52953088,
+      "gradient": 52953088,
+      "optimizer_state": 105906560
+    },
+    "explanation": "BF16 full weights or FP32 LoRA factors, FP32 gradients, two FP32 AdamW moments and one int64 step per trainable tensor. No frozen-weight optimizer state or optimizer gradient inputs."
+  },
+  {
+    "status": "passed",
+    "case": "mlops-qwen3moe-lora-save",
+    "source_program": "/home/shein/Documents/grad_school/research/shadowspill/docs/internal/plans/lora_models_1008/evidence/full-model-steady-benchmark/mlops-qwen3moe-lora-save/artifacts/v1/planning/programs/a7/a7099e522bb42eb8c4e882b22f97f22681ec677c7d0f7d02114ab6a88beedabd/program.json",
+    "trainable_parameters": 13238272,
+    "trainable_tensors": 48,
+    "optimizer_input_bytes": {
+      "parameter": 52953088,
+      "gradient": 52953088,
+      "optimizer_state": 105906560
+    },
+    "expected_bytes": {
+      "parameter": 52953088,
+      "gradient": 52953088,
+      "optimizer_state": 105906560
+    },
+    "explanation": "BF16 full weights or FP32 LoRA factors, FP32 gradients, two FP32 AdamW moments and one int64 step per trainable tensor. No frozen-weight optimizer state or optimizer gradient inputs."
+  },
+  {
+    "status": "passed",
+    "case": "mlops-llama3-full-recompute",
+    "source_program": "/home/shein/Documents/grad_school/research/shadowspill/docs/internal/plans/lora_models_1008/evidence/llama-1b/mlops-llama3-full-recompute/artifacts/v1/planning/programs/fb/fb39ec19d4219061595c17289bb358c317f5ac8eb131d68955bff2c0f3b12ccd/program.json",
+    "trainable_parameters": 1179699200,
+    "trainable_tensors": 111,
+    "optimizer_input_bytes": {
+      "parameter": 2359398400,
+      "gradient": 4718796800,
+      "optimizer_state": 9437594488
+    },
+    "expected_bytes": {
+      "parameter": 2359398400,
+      "gradient": 4718796800,
+      "optimizer_state": 9437594488
+    },
+    "explanation": "BF16 full weights or FP32 LoRA factors, FP32 gradients, two FP32 AdamW moments and one int64 step per trainable tensor. No frozen-weight optimizer state or optimizer gradient inputs."
+  },
+  {
+    "status": "passed",
+    "case": "mlops-llama3-full-save",
+    "source_program": "/home/shein/Documents/grad_school/research/shadowspill/docs/internal/plans/lora_models_1008/evidence/llama-1b/mlops-llama3-full-save/artifacts/v1/planning/programs/71/71a362b5e89242d198adf3b232a226f99fc6e041e31b964b94cc734fca8848b8/program.json",
+    "trainable_parameters": 1179699200,
+    "trainable_tensors": 111,
+    "optimizer_input_bytes": {
+      "parameter": 2359398400,
+      "gradient": 4718796800,
+      "optimizer_state": 9437594488
+    },
+    "expected_bytes": {
+      "parameter": 2359398400,
+      "gradient": 4718796800,
+      "optimizer_state": 9437594488
+    },
+    "explanation": "BF16 full weights or FP32 LoRA factors, FP32 gradients, two FP32 AdamW moments and one int64 step per trainable tensor. No frozen-weight optimizer state or optimizer gradient inputs."
+  },
+  {
+    "status": "passed",
+    "case": "mlops-llama3-lora-recompute",
+    "source_program": "/home/shein/Documents/grad_school/research/shadowspill/docs/internal/plans/lora_models_1008/evidence/llama-1b/mlops-llama3-lora-recompute/artifacts/v1/planning/programs/f5/f5509b5fb5024bc24279f32308324a0b2e8f2fc98788eee40aa80ca0cf8cdf8d/program.json",
+    "trainable_parameters": 15728640,
+    "trainable_tensors": 168,
+    "optimizer_input_bytes": {
+      "parameter": 62914560,
+      "gradient": 62914560,
+      "optimizer_state": 125830464
+    },
+    "expected_bytes": {
+      "parameter": 62914560,
+      "gradient": 62914560,
+      "optimizer_state": 125830464
+    },
+    "explanation": "BF16 full weights or FP32 LoRA factors, FP32 gradients, two FP32 AdamW moments and one int64 step per trainable tensor. No frozen-weight optimizer state or optimizer gradient inputs."
+  },
+  {
+    "status": "passed",
+    "case": "mlops-llama3-lora-save",
+    "source_program": "/home/shein/Documents/grad_school/research/shadowspill/docs/internal/plans/lora_models_1008/evidence/llama-1b/mlops-llama3-lora-save/artifacts/v1/planning/programs/5a/5a891177dbe536af2b8e8a999fa7a8418764f6c09ecfd87f329a61120012634f/program.json",
+    "trainable_parameters": 15728640,
+    "trainable_tensors": 168,
+    "optimizer_input_bytes": {
+      "parameter": 62914560,
+      "gradient": 62914560,
+      "optimizer_state": 125830464
+    },
+    "expected_bytes": {
+      "parameter": 62914560,
+      "gradient": 62914560,
+      "optimizer_state": 125830464
+    },
+    "explanation": "BF16 full weights or FP32 LoRA factors, FP32 gradients, two FP32 AdamW moments and one int64 step per trainable tensor. No frozen-weight optimizer state or optimizer gradient inputs."
+  },
+  {
+    "status": "passed",
+    "case": "lora-recompute",
+    "source_program": "/home/shein/Documents/grad_school/research/shadowspill/docs/internal/plans/lora_models_1008/evidence/llama-1b-timing/lora-recompute/artifacts/v1/planning/programs/04/0499301a7bdbe6ca5046f12a016aa94a4ff2854d591e543fd9800f9b3f226fb3/program.json",
+    "trainable_parameters": 15728640,
+    "trainable_tensors": 168,
+    "optimizer_input_bytes": {
+      "parameter": 62914560,
+      "gradient": 62914560,
+      "optimizer_state": 125830464
+    },
+    "expected_bytes": {
+      "parameter": 62914560,
+      "gradient": 62914560,
+      "optimizer_state": 125830464
+    },
+    "explanation": "BF16 full weights or FP32 LoRA factors, FP32 gradients, two FP32 AdamW moments and one int64 step per trainable tensor. No frozen-weight optimizer state or optimizer gradient inputs."
+  },
+  {
+    "status": "passed",
+    "case": "lora-save",
+    "source_program": "/home/shein/Documents/grad_school/research/shadowspill/docs/internal/plans/lora_models_1008/evidence/llama-1b-timing/lora-save/artifacts/v1/planning/programs/ee/ee35904293d488ffa9c8f284ea87fed32de8a862da7c1caf46f4e9e1d0259e8d/program.json",
+    "trainable_parameters": 15728640,
+    "trainable_tensors": 168,
+    "optimizer_input_bytes": {
+      "parameter": 62914560,
+      "gradient": 62914560,
+      "optimizer_state": 125830464
+    },
+    "expected_bytes": {
+      "parameter": 62914560,
+      "gradient": 62914560,
+      "optimizer_state": 125830464
+    },
+    "explanation": "BF16 full weights or FP32 LoRA factors, FP32 gradients, two FP32 AdamW moments and one int64 step per trainable tensor. No frozen-weight optimizer state or optimizer gradient inputs."
+  },
+  {
+    "status": "passed",
+    "case": "lora_head-recompute",
+    "source_program": "/home/shein/Documents/grad_school/research/shadowspill/docs/internal/plans/lora_models_1008/evidence/llama-1b-timing/lora_head-recompute/artifacts/v1/planning/programs/a8/a8092633bbefce88df633c7f7b6b07ae54878b01e86c585a313a9a24c5135d1f/program.json",
+    "trainable_parameters": 19898368,
+    "trainable_tensors": 170,
+    "optimizer_input_bytes": {
+      "parameter": 79593472,
+      "gradient": 79593472,
+      "optimizer_state": 159188304
+    },
+    "expected_bytes": {
+      "parameter": 79593472,
+      "gradient": 79593472,
+      "optimizer_state": 159188304
+    },
+    "explanation": "BF16 full weights or FP32 LoRA factors, FP32 gradients, two FP32 AdamW moments and one int64 step per trainable tensor. No frozen-weight optimizer state or optimizer gradient inputs."
+  },
+  {
+    "status": "passed",
+    "case": "lora_head-save",
+    "source_program": "/home/shein/Documents/grad_school/research/shadowspill/docs/internal/plans/lora_models_1008/evidence/llama-1b-timing/lora_head-save/artifacts/v1/planning/programs/1e/1eb75ab504acab625b715fb36b7e146403692db6f7a5f4cf71e6e803282beac7/program.json",
+    "trainable_parameters": 19898368,
+    "trainable_tensors": 170,
+    "optimizer_input_bytes": {
+      "parameter": 79593472,
+      "gradient": 79593472,
+      "optimizer_state": 159188304
+    },
+    "expected_bytes": {
+      "parameter": 79593472,
+      "gradient": 79593472,
+      "optimizer_state": 159188304
+    },
+    "explanation": "BF16 full weights or FP32 LoRA factors, FP32 gradients, two FP32 AdamW moments and one int64 step per trainable tensor. No frozen-weight optimizer state or optimizer gradient inputs."
+  }
+]

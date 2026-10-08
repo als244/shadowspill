@@ -1,0 +1,1274 @@
+
+
+**************************** START OF SUITE GATE *****************************
+
+[07:48:01] suite: /home/shein/miniconda3/envs/shadowspill/bin/python -u -m pytest tests -p no:cacheprovider
+[07:48:01] host: load 0.23 1.04 1.53; gpu tenants none
+....................................Test project /home/shein/Documents/grad_school/research/shadowspill/build/cp312-cp312-linux_x86_64
+      Start  1: shadowspill_build_canary
+ 1/20 Test  #1: shadowspill_build_canary .................   Passed    0.00 sec
+      Start  2: shadowspill_backend_contract_canary
+ 2/20 Test  #2: shadowspill_backend_contract_canary ......   Passed    0.00 sec
+      Start  3: shadowspill_stream_ordering_canary
+ 3/20 Test  #3: shadowspill_stream_ordering_canary .......   Passed    0.01 sec
+      Start  5: shadowspill_simulator_canary
+ 4/20 Test  #5: shadowspill_simulator_canary .............   Passed    0.00 sec
+      Start  6: shadowspill_pressurefit_canary
+ 5/20 Test  #6: shadowspill_pressurefit_canary ...........   Passed    0.00 sec
+      Start  7: shadowspill_runtime_canary
+ 6/20 Test  #7: shadowspill_runtime_canary ...............   Passed    0.53 sec
+      Start  8: shadowspill_runtime_plan_canary
+ 7/20 Test  #8: shadowspill_runtime_plan_canary ..........   Passed    0.20 sec
+      Start  9: shadowspill_memory_pool_canary
+ 8/20 Test  #9: shadowspill_memory_pool_canary ...........   Passed    0.00 sec
+      Start 10: shadowspill_fixed_layout_canary
+ 9/20 Test #10: shadowspill_fixed_layout_canary ..........   Passed    0.60 sec
+      Start 11: shadowspill_admission_replay_canary
+10/20 Test #11: shadowspill_admission_replay_canary ......   Passed    0.00 sec
+      Start 12: shadowspill_runtime_abandon_canary
+11/20 Test #12: shadowspill_runtime_abandon_canary .......   Passed    0.00 sec
+      Start 13: shadowspill_runtime_blocking_canary
+12/20 Test #13: shadowspill_runtime_blocking_canary ......   Passed    0.01 sec
+      Start 14: shadowspill_runtime_calibration_canary
+13/20 Test #14: shadowspill_runtime_calibration_canary ...   Passed    0.00 sec
+      Start 15: shadowspill_runtime_completion_canary
+14/20 Test #15: shadowspill_runtime_completion_canary ....   Passed    0.55 sec
+      Start 16: shadowspill_runtime_failure_canary
+15/20 Test #16: shadowspill_runtime_failure_canary .......   Passed    0.00 sec
+      Start 17: shadowspill_runtime_telemetry_canary
+16/20 Test #17: shadowspill_runtime_telemetry_canary .....   Passed    0.51 sec
+      Start 18: shadowspill_runtime_transitions_canary
+17/20 Test #18: shadowspill_runtime_transitions_canary ...   Passed    1.75 sec
+      Start 19: shadowspill_transfer_queue_canary
+18/20 Test #19: shadowspill_transfer_queue_canary ........   Passed    0.00 sec
+      Start 23: shadowspill_pytorch_adapter_canary
+19/20 Test #23: shadowspill_pytorch_adapter_canary .......   Passed    0.19 sec
+      Start 24: shadowspill_numa_canary
+20/20 Test #24: shadowspill_numa_canary ..................   Passed    0.00 sec
+
+100% tests passed, 0 tests failed out of 20
+
+Total Test time (real) =   4.36 sec
+.Test project /home/shein/Documents/grad_school/research/shadowspill/build/cp312-cp312-linux_x86_64
+      Start  4: shadowspill_stream_ordering_canary_cuda
+ 1/51 Test  #4: shadowspill_stream_ordering_canary_cuda ...................................................................   Passed    0.54 sec
+      Start 22: shadowspill_cuda_backend_canary
+ 2/51 Test #22: shadowspill_cuda_backend_canary ...........................................................................   Passed    0.50 sec
+      Start 25: shadowspill_pytorch_allocator_canary
+ 3/51 Test #25: shadowspill_pytorch_allocator_canary ......................................................................   Passed    3.60 sec
+      Start 26: shadowspill_pytorch_runtime_close_canary
+ 4/51 Test #26: shadowspill_pytorch_runtime_close_canary ..................................................................   Passed    2.58 sec
+      Start 27: shadowspill_pytorch_overlap_canary
+ 5/51 Test #27: shadowspill_pytorch_overlap_canary ........................................................................   Passed    3.60 sec
+      Start 28: shadowspill_pytorch_physical_failure_canary
+ 6/51 Test #28: shadowspill_pytorch_physical_failure_canary ...............................................................   Passed    2.53 sec
+      Start 29: shadowspill_pytorch_physical_report_only_canary
+ 7/51 Test #29: shadowspill_pytorch_physical_report_only_canary ...........................................................   Passed    6.99 sec
+      Start 30: shadowspill_pytorch_allocator_oom_canary
+ 8/51 Test #30: shadowspill_pytorch_allocator_oom_canary ..................................................................   Passed    2.53 sec
+      Start 31: shadowspill_pytorch_allocation_contract_failure_canary
+ 9/51 Test #31: shadowspill_pytorch_allocation_contract_failure_canary ....................................................   Passed    2.52 sec
+      Start 32: shadowspill_pytorch_invalid_access_canary
+10/51 Test #32: shadowspill_pytorch_invalid_access_canary .................................................................   Passed    3.05 sec
+      Start 33: shadowspill_pytorch_planning_failure_canary
+11/51 Test #33: shadowspill_pytorch_planning_failure_canary ...............................................................   Passed    6.63 sec
+      Start 34: shadowspill_pytorch_profiler_canary
+12/51 Test #34: shadowspill_pytorch_profiler_canary .......................................................................   Passed    5.14 sec
+      Start 35: shadowspill_pytorch_forward_canary
+13/51 Test #35: shadowspill_pytorch_forward_canary ........................................................................   Passed    6.58 sec
+      Start 36: shadowspill_pytorch_state_import_export_canary
+14/51 Test #36: shadowspill_pytorch_state_import_export_canary ............................................................   Passed    6.57 sec
+      Start 37: shadowspill_pytorch_mutation_canary
+15/51 Test #37: shadowspill_pytorch_mutation_canary .......................................................................   Passed    6.45 sec
+      Start 38: shadowspill_pytorch_training_canary
+16/51 Test #38: shadowspill_pytorch_training_canary .......................................................................   Passed    8.79 sec
+      Start 39: shadowspill_pytorch_step_archive_canary
+17/51 Test #39: shadowspill_pytorch_step_archive_canary ...................................................................   Passed   11.34 sec
+      Start 40: shadowspill_pytorch_public_test_public_forward_executes_reloads_and_restores
+18/51 Test #40: shadowspill_pytorch_public_test_public_forward_executes_reloads_and_restores ..............................   Passed    6.73 sec
+      Start 41: shadowspill_pytorch_public_test_public_forward_sets_a_model_buffer_each_call
+19/51 Test #41: shadowspill_pytorch_public_test_public_forward_sets_a_model_buffer_each_call ..............................   Passed    6.68 sec
+      Start 42: shadowspill_pytorch_public_test_public_training_accumulates_replays_and_restores
+20/51 Test #42: shadowspill_pytorch_public_test_public_training_accumulates_replays_and_restores ..........................   Passed    9.74 sec
+      Start 43: shadowspill_pytorch_public_test_public_training_breadth_first_matches_the_eager_reference
+21/51 Test #43: shadowspill_pytorch_public_test_public_training_breadth_first_matches_the_eager_reference .................   Passed    9.76 sec
+      Start 44: shadowspill_pytorch_public_test_parameter_metrics_depth_first
+22/51 Test #44: shadowspill_pytorch_public_test_parameter_metrics_depth_first .............................................   Passed    9.98 sec
+      Start 45: shadowspill_pytorch_public_test_parameter_metrics_breadth_first
+23/51 Test #45: shadowspill_pytorch_public_test_parameter_metrics_breadth_first ...........................................   Passed   10.02 sec
+      Start 46: shadowspill_pytorch_public_test_public_training_declared_adamw_state_replays
+24/51 Test #46: shadowspill_pytorch_public_test_public_training_declared_adamw_state_replays ..............................   Passed   10.48 sec
+      Start 47: shadowspill_pytorch_public_test_public_training_fills_declared_state_in_the_spill_pool
+25/51 Test #47: shadowspill_pytorch_public_test_public_training_fills_declared_state_in_the_spill_pool ....................   Passed    7.63 sec
+      Start 48: shadowspill_pytorch_public_test_public_training_refuses_state_with_no_value_before_its_first_step
+26/51 Test #48: shadowspill_pytorch_public_test_public_training_refuses_state_with_no_value_before_its_first_step .........   Passed    4.80 sec
+      Start 49: shadowspill_pytorch_public_test_public_training_owns_the_model_state_it_imported
+27/51 Test #49: shadowspill_pytorch_public_test_public_training_owns_the_model_state_it_imported ..........................   Passed    7.41 sec
+      Start 50: shadowspill_pytorch_public_test_public_training_saves_straight_from_the_pool
+28/51 Test #50: shadowspill_pytorch_public_test_public_training_saves_straight_from_the_pool ..............................   Passed    8.26 sec
+      Start 51: shadowspill_pytorch_public_test_public_training_steps_masters_of_its_weights
+29/51 Test #51: shadowspill_pytorch_public_test_public_training_steps_masters_of_its_weights ..............................   Passed   10.65 sec
+      Start 52: shadowspill_pytorch_public_test_public_training_steps_masters_beside_weights_that_have_none
+30/51 Test #52: shadowspill_pytorch_public_test_public_training_steps_masters_beside_weights_that_have_none ...............   Passed   13.53 sec
+      Start 53: shadowspill_pytorch_public_test_public_training_keeps_masters_gradients_and_moments_at_their_own_dtypes
+31/51 Test #53: shadowspill_pytorch_public_test_public_training_keeps_masters_gradients_and_moments_at_their_own_dtypes ...   Passed   20.72 sec
+      Start 54: shadowspill_pytorch_public_test_public_training_checkpoints_masters_in_place_of_their_weights
+32/51 Test #54: shadowspill_pytorch_public_test_public_training_checkpoints_masters_in_place_of_their_weights .............   Passed    8.08 sec
+      Start 55: shadowspill_pytorch_public_test_public_training_profiles_bounded_opaque_optimizer
+33/51 Test #55: shadowspill_pytorch_public_test_public_training_profiles_bounded_opaque_optimizer .........................   Passed    7.13 sec
+      Start 56: shadowspill_pytorch_public_test_public_training_partitions_device_only_optimizer_and_replays
+34/51 Test #56: shadowspill_pytorch_public_test_public_training_partitions_device_only_optimizer_and_replays ..............   Passed    8.88 sec
+      Start 57: shadowspill_pytorch_public_test_public_training_follows_a_learning_rate_schedule
+35/51 Test #57: shadowspill_pytorch_public_test_public_training_follows_a_learning_rate_schedule ..........................   Passed    7.68 sec
+      Start 58: shadowspill_pytorch_public_test_public_training_sets_a_model_buffer_each_step
+36/51 Test #58: shadowspill_pytorch_public_test_public_training_sets_a_model_buffer_each_step .............................   Passed    7.95 sec
+      Start 59: shadowspill_pytorch_public_test_public_training_keeps_no_output_the_caller_dropped
+37/51 Test #59: shadowspill_pytorch_public_test_public_training_keeps_no_output_the_caller_dropped ........................   Passed    7.06 sec
+      Start 60: shadowspill_pytorch_public_test_a_forward_planned_after_training_sees_every_update
+38/51 Test #60: shadowspill_pytorch_public_test_a_forward_planned_after_training_sees_every_update ........................   Passed    8.38 sec
+      Start 61: shadowspill_pytorch_public_test_a_training_step_planned_after_a_forward_shares_its_model
+39/51 Test #61: shadowspill_pytorch_public_test_a_training_step_planned_after_a_forward_shares_its_model ..................   Passed    8.24 sec
+      Start 62: shadowspill_pytorch_public_test_state_a_plan_imported_for_itself_is_not_shared
+40/51 Test #62: shadowspill_pytorch_public_test_state_a_plan_imported_for_itself_is_not_shared ............................   Passed    8.11 sec
+      Start 63: shadowspill_pytorch_public_test_a_plan_keeps_no_host_copy_of_what_its_forwards_saved
+41/51 Test #63: shadowspill_pytorch_public_test_a_plan_keeps_no_host_copy_of_what_its_forwards_saved ......................   Passed    7.67 sec
+      Start 64: shadowspill_pytorch_public_test_planning_fails_when_the_spill_pool_has_no_room_for_saved_values
+42/51 Test #64: shadowspill_pytorch_public_test_planning_fails_when_the_spill_pool_has_no_room_for_saved_values ...........   Passed    7.18 sec
+      Start 65: shadowspill_pytorch_public_test_a_forward_is_planned_beside_a_step_holding_more_than_it_reserves
+43/51 Test #65: shadowspill_pytorch_public_test_a_forward_is_planned_beside_a_step_holding_more_than_it_reserves ..........   Passed    8.80 sec
+      Start 66: shadowspill_pytorch_public_test_a_forward_shares_the_slab_of_the_step_it_evaluates
+44/51 Test #66: shadowspill_pytorch_public_test_a_forward_shares_the_slab_of_the_step_it_evaluates ........................   Passed   10.06 sec
+      Start 67: shadowspill_pytorch_public_test_shadowspill_generic_candidates_shared_forward_and_checkpoint
+45/51 Test #67: shadowspill_pytorch_public_test_shadowspill_generic_candidates_shared_forward_and_checkpoint ..............   Passed   16.79 sec
+      Start 68: shadowspill_pytorch_public_test_generic_quickstart_search_run_plot
+46/51 Test #68: shadowspill_pytorch_public_test_generic_quickstart_search_run_plot ........................................   Passed   13.27 sec
+      Start 69: shadowspill_pytorch_public_test_distributed_training_matches_combined_reference
+47/51 Test #69: shadowspill_pytorch_public_test_distributed_training_matches_combined_reference ...........................   Passed    0.98 sec
+      Start 70: shadowspill_pytorch_public_test_mutable_buffer_survives_diagnostics_and_repeated_training
+48/51 Test #70: shadowspill_pytorch_public_test_mutable_buffer_survives_diagnostics_and_repeated_training .................   Passed    8.64 sec
+      Start 71: shadowspill_pytorch_public_test_planned_representation_save
+49/51 Test #71: shadowspill_pytorch_public_test_planned_representation_save ...............................................   Passed    7.01 sec
+      Start 72: shadowspill_pytorch_public_test_planned_representation_recompute
+50/51 Test #72: shadowspill_pytorch_public_test_planned_representation_recompute ..........................................   Passed    7.00 sec
+      Start 73: shadowspill_pytorch_public_test_planned_packed_parameter_gradients
+51/51 Test #73: shadowspill_pytorch_public_test_planned_packed_parameter_gradients ........................................   Passed    6.96 sec
+
+100% tests passed, 0 tests failed out of 51
+
+Label Time Summary:
+cuda       = 382.18 sec*proc (51 tests)
+pytorch    = 381.15 sec*proc (49 tests)
+
+Total Test time (real) = 382.20 sec
+.s................................. [  5%]
+........................................................................ [ 11%]
+........................................................................ [ 17%]
+........................................................................ [ 23%]
+........................................................................ [ 29%]
+........................................................................ [ 34%]
+........................................................................ [ 40%]
+........................................................................ [ 46%]
+........................................................................ [ 52%]
+........................................................................ [ 58%]
+........................................................................ [ 63%]
+........................................................................ [ 69%]
+........................................................................ [ 75%]
+........................................................................ [ 81%]
+........................................................................ [ 87%]
+........................................................................ [ 92%]
+........................................................................ [ 98%]
+...............                                                          [100%]
+=============================== warnings summary ===============================
+../../../../miniconda3/envs/shadowspill/lib/python3.12/site-packages/torch/jit/_script.py:365: 14 warnings
+  /home/shein/miniconda3/envs/shadowspill/lib/python3.12/site-packages/torch/jit/_script.py:365: DeprecationWarning: `torch.jit.script_method` is deprecated. Please switch to `torch.compile` or `torch.export`.
+    warnings.warn(
+
+tests/shadowspill/pytorch/capture/test_gradient_accumulation.py::test_rewritten_backward_adds_into_the_gradient_it_is_given
+  /home/shein/miniconda3/envs/shadowspill/lib/python3.12/site-packages/torch/autograd/graph.py:979: UserWarning: Attempting to run cuBLAS, but there was no current CUDA context! Attempting to set the primary context... (Triggered internally at /__w/pytorch/pytorch/aten/src/ATen/cuda/CublasHandlePool.cpp:408.)
+    return Variable._execution_engine.run_backward(  # Calls into the C++ engine to run the backward pass
+
+tests/shadowspill/pytorch/state/test_representations.py::test_export_archive_preserves_fake_component_views_and_reloads
+  /home/shein/miniconda3/envs/shadowspill/lib/python3.12/copyreg.py:99: FutureWarning: `isinstance(treespec, LeafSpec)` is deprecated, use `isinstance(treespec, TreeSpec) and treespec.is_leaf()` instead.
+    return cls.__new__(cls, *args)
+
+tests/workloads/test_full_model_cases.py::test_a_mixture_objective_reports_the_heads_share_as_its_metric
+  /home/shein/miniconda3/envs/shadowspill/lib/python3.12/site-packages/torch/utils/_device.py:122: UserWarning: Converting a tensor with requires_grad=True to a scalar may lead to unexpected behavior.
+  Consider using tensor.detach() first. (Triggered internally at /__w/pytorch/pytorch/torch/csrc/autograd/generated/python_variable_methods.cpp:822.)
+    return func(*args, **kwargs)
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+1238 passed, 1 skipped, 38 deselected, 17 warnings in 510.21s (0:08:30)
+[07:56:36] suite: passed in 8.6 min, log qualification/results/gates_lora_models_1008/suite.log
+
+******************** END OF SUITE GATE [passed, 8.6 min] *********************
+
+
+
+
+************************** START OF NUMERICAL GATE ***************************
+
+[07:56:36] numerical: /home/shein/miniconda3/envs/shadowspill/bin/python -u -m qualification.numerical.matrix --output-dir qualification/results/numerical_lora_models_1008
+[07:56:36] host: load 1.28 1.55 1.62; gpu tenants none
+MATRIX START
+  UTC: 2026-10-08T11:56:37+00:00
+  OUTPUT: /home/shein/Documents/grad_school/research/shadowspill/qualification/results/numerical_lora_models_1008
+  REFERENCES: /mnt/storage/research/shadowspill/qualification/fp8_representation_1006_refreshed/references
+  CASES: pytorch_llama3, mlops_llama3, pytorch_qwen35, mlops_qwen35, mlops_olmoe
+  EMPTY CACHES: False
+  SEED: 20260811
+
+CASE START [1/5] pytorch_llama3
+  MODEL: pytorch/llama3
+  DEVICE BUDGET: 10.000 GiB (10737418240 bytes)
+  EXTERNAL HEADROOM: 512 MiB (reserved for pool sizing)
+  REJECT OVERBUDGET: False
+  DTYPES: model=bfloat16, masters=none, gradients=bfloat16, optimizer state=bfloat16
+  MODEL CONFIG: {}
+  REFERENCE: /mnt/storage/research/shadowspill/qualification/fp8_representation_1006_refreshed/references/llama3/pytorch/reference.pt (reusing canonical)
+  LOG: /home/shein/Documents/grad_school/research/shadowspill/qualification/results/numerical_lora_models_1008/pytorch_llama3.log
+  START: 2026-10-08T11:56:37+00:00
+[1/5] | PHASE: planned parity, checkpoint replay, and physical budgets
+[1/5] | DTYPES: model=bfloat16, masters=none, gradients=bfloat16, optimizer state=bfloat16
+[1/5] | [shadowspill.plan +   0.000s] validation: started
+[1/5] | [shadowspill.plan +   0.001s] validation: finished in 0.001s
+[1/5] | [shadowspill.plan +   0.001s] runtime_binding: started
+[1/5] | [shadowspill.plan +   0.001s] runtime_binding: finished in 0.000s
+[1/5] | [shadowspill.plan +   0.001s] capture_lowering: started
+[1/5] | [shadowspill.plan +   0.028s]   objective_export: started
+[1/5] | [shadowspill.plan +   6.962s]   objective_export: finished in 6.934s
+[1/5] | [shadowspill.plan +   6.962s]   export_archival: started
+[1/5] | /home/shein/miniconda3/envs/shadowspill/lib/python3.12/copyreg.py:99: FutureWarning: `isinstance(treespec, LeafSpec)` is deprecated, use `isinstance(treespec, TreeSpec) and treespec.is_leaf()` instead.
+[1/5] |   return cls.__new__(cls, *args)
+[1/5] | /home/shein/miniconda3/envs/shadowspill/lib/python3.12/copyreg.py:99: FutureWarning: `isinstance(treespec, LeafSpec)` is deprecated, use `isinstance(treespec, TreeSpec) and treespec.is_leaf()` instead.
+[1/5] |   return cls.__new__(cls, *args)
+[1/5] | [shadowspill.plan +   8.364s]   export_archival: finished in 1.402s
+[1/5] | [shadowspill.plan +   8.366s]   stage_partition_aot: started
+[1/5] | [shadowspill.plan +  10.798s]   stage_partition_aot: finished in 2.433s
+[1/5] | [shadowspill.plan +  10.798s]   storage_layout_lowering: started
+[1/5] | [shadowspill.plan +  10.800s]   storage_layout_lowering: finished in 0.002s
+[1/5] | [shadowspill.plan +  10.800s] capture_lowering: finished in 10.799s
+[1/5] | [shadowspill.plan +  10.800s] model_materialization: started
+[1/5] | [shadowspill.plan +  10.807s] model_materialization: finished in 0.008s
+[1/5] | [shadowspill.plan +  10.807s] optimizer_capture: started
+[1/5] | [shadowspill.plan +  10.809s]   optimizer_state_install: started
+[1/5] | [shadowspill.plan +  11.407s]   optimizer_state_install: finished in 0.598s
+[1/5] | [shadowspill.plan +  11.407s]   optimizer_discovery: started
+[1/5] | [shadowspill.plan +  11.425s]   optimizer_discovery: finished in 0.018s
+[1/5] | [shadowspill.plan +  11.460s]   optimizer_trace: started
+[1/5] | [shadowspill.plan +  14.602s]   optimizer_trace: finished in 3.142s
+[1/5] | [shadowspill.plan +  14.775s] optimizer_capture: finished in 3.968s
+[1/5] | [shadowspill.plan +  14.775s] optimizer_state_import: started
+[1/5] | [shadowspill.plan +  14.775s] optimizer_state_import: finished in 0.000s
+[1/5] | [shadowspill.plan +  14.775s] model_placeholder_restoration: started
+[1/5] | [shadowspill.plan +  14.778s] model_placeholder_restoration: finished in 0.003s
+[1/5] | [shadowspill.plan +  14.778s] saved_value_resolution: started
+[1/5] | [shadowspill.plan +  14.778s] saved_value_resolution: finished in 0.000s
+[1/5] | [shadowspill.plan +  14.778s] structural artifact inventory: graph=30, optimizer=3, unique=33, profile_variants=33, optimizer_tasks=14
+[1/5] | [shadowspill.plan +  14.778s] compiler_manifest: started
+[1/5] | [shadowspill.plan +  14.778s]   compiled manifest 1/33 cache-miss: 0180e86eb8c8
+[1/5] | [shadowspill.plan +  14.778s]   compiled manifest 2/33 cache-miss: 01ad96f89eb9
+[1/5] | [shadowspill.plan +  14.778s]   compiled manifest 3/33 cache-miss: 0a1a59aaea63
+[1/5] | [shadowspill.plan +  14.778s]   compiled manifest 4/33 cache-miss: 0a3ca297db36
+[1/5] | [shadowspill.plan +  14.778s]   compiled manifest 5/33 cache-miss: 1a7391bd51cc
+[1/5] | [shadowspill.plan +  14.778s]   compiled manifest 6/33 cache-miss: 1da1543473cb
+[1/5] | [shadowspill.plan +  14.778s]   compiled manifest 7/33 cache-miss: 1e8bb099e467
+[1/5] | [shadowspill.plan +  14.778s]   compiled manifest 8/33 cache-miss: 1f8a85e348c3
+[1/5] | [shadowspill.plan +  14.778s]   compiled manifest 9/33 cache-miss: 2248096135ab
+[1/5] | [shadowspill.plan +  14.778s]   compiled manifest 10/33 cache-miss: 2535fe99d857
+[1/5] | [shadowspill.plan +  14.779s]   compiled manifest 11/33 cache-miss: 49282a2ee3a9
+[1/5] | [shadowspill.plan +  14.779s]   compiled manifest 12/33 cache-miss: 5d387f00a531
+[1/5] | [shadowspill.plan +  14.779s]   compiled manifest 13/33 cache-miss: 600f321654c4
+[1/5] | [shadowspill.plan +  14.779s]   compiled manifest 14/33 cache-miss: 62450873c461
+[1/5] | [shadowspill.plan +  14.779s]   compiled manifest 15/33 cache-miss: 66a2c3a3b460
+[1/5] | [shadowspill.plan +  14.779s]   compiled manifest 16/33 cache-miss: 6df2d32cedbd
+[1/5] | [shadowspill.plan +  14.779s]   compiled manifest 17/33 cache-miss: 71cdb7f775e6
+[1/5] | [shadowspill.plan +  14.779s]   compiled manifest 18/33 cache-miss: 739f6f862edd
+[1/5] | [shadowspill.plan +  14.779s]   compiled manifest 19/33 cache-miss: 84c15f27a362
+[1/5] | [shadowspill.plan +  14.779s]   compiled manifest 20/33 cache-miss: 85848a486eeb
+[1/5] | [shadowspill.plan +  14.779s]   compiled manifest 21/33 cache-miss: 885dc55319a4
+[1/5] | [shadowspill.plan +  14.779s]   compiled manifest 22/33 cache-miss: 8e73973a0516
+[1/5] | [shadowspill.plan +  14.779s]   compiled manifest 23/33 cache-miss: a48398479b15
+[1/5] | [shadowspill.plan +  14.779s]   compiled manifest 24/33 cache-miss: b44775f997af
+[1/5] | [shadowspill.plan +  14.779s]   compiled manifest 25/33 cache-miss: b458875aa9ec
+[1/5] | [shadowspill.plan +  14.779s]   compiled manifest 26/33 cache-miss: c66f55815319
+[1/5] | [shadowspill.plan +  14.779s]   compiled manifest 27/33 cache-miss: d2a9ff17f0b2
+[1/5] | [shadowspill.plan +  14.779s]   compiled manifest 28/33 cache-miss: d6e334301f14
+[1/5] | [shadowspill.plan +  14.779s]   compiled manifest 29/33 cache-miss: ddab9202e1d7
+[1/5] | [shadowspill.plan +  14.779s]   compiled manifest 30/33 cache-miss: e2d922cf2868
+[1/5] | [shadowspill.plan +  14.779s]   compiled manifest 31/33 cache-miss: e79558ea7d0f
+[1/5] | [shadowspill.plan +  14.779s]   compiled manifest 32/33 cache-miss: efcaa9da88c0
+[1/5] | [shadowspill.plan +  14.779s]   compiled manifest 33/33 cache-miss: f43f20297c4b
+[1/5] | [shadowspill.plan +  30.301s]   compiled manifest cache: hits=0, misses=33
+[1/5] | [shadowspill.plan +  30.301s] compiler_manifest: finished in 15.523s
+[1/5] | [shadowspill.plan +  30.301s] structural_profiling: started
+[1/5] | [shadowspill.plan +  30.302s]   structural profile 1/33 measuring: 02160eedb54f
+[1/5] | [shadowspill.plan +  31.672s]   structural profile 2/33 measuring: 11c39fe96594
+[1/5] | [shadowspill.plan +  32.560s]   structural profile 3/33 measuring: 18d35ffc3e77
+[1/5] | [shadowspill.plan +  33.191s]   structural profile 4/33 measuring: 20d27e6eb3e5
+[1/5] | [shadowspill.plan +  33.930s]   structural profile 5/33 measuring: 251b15189792
+[1/5] | [shadowspill.plan +  34.476s]   structural profile 6/33 measuring: 286fe640f4a2
+[1/5] | [shadowspill.plan +  35.475s]   structural profile 7/33 measuring: 2ea142e2eabf
+[1/5] | [shadowspill.plan +  35.547s]   structural profile 8/33 measuring: 30ee08a460f3
+[1/5] | [shadowspill.plan +  35.590s]   structural profile 9/33 measuring: 313e010c3dc2
+[1/5] | [shadowspill.plan +  35.611s]   structural profile 10/33 measuring: 36491b9a94db
+[1/5] | [shadowspill.plan +  36.104s]   structural profile 11/33 measuring: 4266dafdffc7
+[1/5] | [shadowspill.plan +  36.732s]   structural profile 12/33 measuring: 483deece266a
+[1/5] | [shadowspill.plan +  36.777s]   structural profile 13/33 measuring: 5a210fd33935
+[1/5] | [shadowspill.plan +  37.485s]   structural profile 14/33 measuring: 5e76547b2984
+[1/5] | [shadowspill.plan +  37.745s]   structural profile 15/33 measuring: 68ffbb5fda52
+[1/5] | [shadowspill.plan +  38.486s]   structural profile 16/33 measuring: 6ee2ce4ead79
+[1/5] | [shadowspill.plan +  39.225s]   structural profile 17/33 measuring: 6f6b584f4590
+[1/5] | [shadowspill.plan +  39.293s]   structural profile 18/33 measuring: 7271c5ca852b
+[1/5] | [shadowspill.plan +  39.315s]   structural profile 19/33 measuring: 7c25e97055dc
+[1/5] | [shadowspill.plan +  39.474s]   structural profile 20/33 measuring: 7c713d9b4adb
+[1/5] | [shadowspill.plan +  40.218s]   structural profile 21/33 measuring: 82a01da93d55
+[1/5] | [shadowspill.plan +  40.262s]   structural profile 22/33 measuring: 8bca78e22eb3
+[1/5] | [shadowspill.plan +  40.336s]   structural profile 23/33 measuring: 8f88d9aaa3a3
+[1/5] | [shadowspill.plan +  40.396s]   structural profile 24/33 measuring: 9dca2576a9e9
+[1/5] | [shadowspill.plan +  40.545s]   structural profile 25/33 measuring: a9d49a8d4545
+[1/5] | [shadowspill.plan +  40.787s]   structural profile 26/33 measuring: aa13d7559885
+[1/5] | [shadowspill.plan +  40.849s]   structural profile 27/33 measuring: aee335969dcb
+[1/5] | [shadowspill.plan +  40.924s]   structural profile 28/33 measuring: b19b1c6e44db
+[1/5] | [shadowspill.plan +  41.393s]   structural profile 29/33 measuring: be1204801ba6
+[1/5] | [shadowspill.plan +  41.920s]   structural profile 30/33 measuring: d222da487d20
+[1/5] | [shadowspill.plan +  41.940s]   structural profile 31/33 measuring: d9e8d525af43
+[1/5] | [shadowspill.plan +  41.984s]   structural profile 32/33 measuring: dc0b842c758b
+[1/5] | [shadowspill.plan +  42.135s]   structural profile 33/33 measuring: dc78f26d745f
+[1/5] | [shadowspill.plan +  42.375s] structural_profiling: finished in 12.075s
+[1/5] | [shadowspill.plan +  42.375s] saved-value snapshots: peak 23.86 MiB (25018756 bytes), live 0 B in the spill pool
+[1/5] | [shadowspill.plan +  42.375s] program_lowering: started
+[1/5] | [shadowspill.plan +  42.431s]   step ShadowSpillProgram inventory: tasks=127, objects=1771, aliases=1151, task_alternative_groups=28, largest_workspace=1050673152 (profile_000010)
+[1/5] | [shadowspill.plan +  42.431s] program_lowering: finished in 0.055s
+[1/5] | [shadowspill.plan +  42.431s] admission_facts: started
+[1/5] | [shadowspill.plan +  42.438s] admission_facts: finished in 0.007s
+[1/5] | [shadowspill.plan +  42.438s] feasibility_preflight: started
+[1/5] | [shadowspill.plan +  42.458s] feasibility_preflight: finished in 0.020s
+[1/5] | [shadowspill.plan +  42.458s] search: started
+[1/5] | [shadowspill.plan +  42.466s]   PressureFit resolutions: groups=28, selections=5
+[1/5] | [shadowspill.plan +  42.468s]   PressureFit compiled problem 1/5: tasks=71, aliases=1151, elapsed=0.002s
+[1/5] | [shadowspill.plan +  42.471s]   PressureFit compiled problem 2/5: tasks=71, aliases=1151, elapsed=0.004s
+[1/5] | [shadowspill.plan +  42.473s]   PressureFit compiled problem 3/5: tasks=71, aliases=1151, elapsed=0.007s
+[1/5] | [shadowspill.plan +  42.475s]   PressureFit compiled problem 4/5: tasks=71, aliases=1151, elapsed=0.009s
+[1/5] | [shadowspill.plan +  42.477s]   PressureFit compiled problem 5/5: tasks=71, aliases=1151, elapsed=0.011s
+[1/5] | [shadowspill.plan +  42.513s]   PressureFit compiled problems and candidates finished: valid=5/5, candidates=80, workers=auto, elapsed=0.047s
+[1/5] | [shadowspill.plan +  42.555s]   fixed layout accepted the search's capacity 9279897600: fixed_slice=7906719240, dynamic_reserve=8, scratch_reserve=0, slack=1637419504
+[1/5] | [shadowspill.plan +  42.555s] search: finished in 0.097s
+[1/5] | [shadowspill.plan +  42.556s] compilation: started
+[1/5] | [shadowspill.plan +  42.556s]   selected entrypoint 1/19 warmed: 0180e86eb8c8
+[1/5] | [shadowspill.plan +  42.556s]   selected entrypoint 2/19 warmed: 1e8bb099e467
+[1/5] | [shadowspill.plan +  42.556s]   selected entrypoint 3/19 warmed: 2248096135ab
+[1/5] | [shadowspill.plan +  42.556s]   selected entrypoint 4/19 warmed: 5d387f00a531
+[1/5] | [shadowspill.plan +  42.556s]   selected entrypoint 5/19 warmed: 62450873c461
+[1/5] | [shadowspill.plan +  42.556s]   selected entrypoint 6/19 warmed: 6df2d32cedbd
+[1/5] | [shadowspill.plan +  42.556s]   selected entrypoint 7/19 warmed: 71cdb7f775e6
+[1/5] | [shadowspill.plan +  42.556s]   selected entrypoint 8/19 warmed: 739f6f862edd
+[1/5] | [shadowspill.plan +  42.556s]   selected entrypoint 9/19 warmed: 84c15f27a362
+[1/5] | [shadowspill.plan +  42.556s]   selected entrypoint 10/19 warmed: 85848a486eeb
+[1/5] | [shadowspill.plan +  42.556s]   selected entrypoint 11/19 warmed: 885dc55319a4
+[1/5] | [shadowspill.plan +  42.556s]   selected entrypoint 12/19 warmed: 8e73973a0516
+[1/5] | [shadowspill.plan +  42.556s]   selected entrypoint 13/19 warmed: a48398479b15
+[1/5] | [shadowspill.plan +  42.556s]   selected entrypoint 14/19 warmed: c66f55815319
+[1/5] | [shadowspill.plan +  42.556s]   selected entrypoint 15/19 warmed: d2a9ff17f0b2
+[1/5] | [shadowspill.plan +  42.556s]   selected entrypoint 16/19 warmed: d6e334301f14
+[1/5] | [shadowspill.plan +  42.556s]   selected entrypoint 17/19 warmed: ddab9202e1d7
+[1/5] | [shadowspill.plan +  42.556s]   selected entrypoint 18/19 warmed: e79558ea7d0f
+[1/5] | [shadowspill.plan +  42.556s]   selected entrypoint 19/19 warmed: f43f20297c4b
+[1/5] | [shadowspill.plan +  42.690s] compilation: finished in 0.134s
+[1/5] | [shadowspill.plan +  42.690s] spill_admission: started
+[1/5] | [shadowspill.plan +  42.690s] spill_admission: finished in 0.000s
+[1/5] | [shadowspill.plan +  42.690s] slab_admission: started
+[1/5] | [shadowspill.plan +  42.710s] slab_admission: finished in 0.020s
+[1/5] | [shadowspill.plan +  42.715s] plan_adoption: started
+[1/5] | [shadowspill.plan +  42.740s] plan_adoption: finished in 0.025s
+[1/5] | [shadowspill.plan +  42.740s] physical_sealing: started
+[1/5] | [shadowspill.plan +  42.743s] physical_sealing: finished in 0.003s
+[1/5] | [shadowspill.plan +  42.743s] callable_construction: started
+[1/5] | [shadowspill.plan +  43.060s] callable_construction: finished in 0.317s
+[1/5] | [shadowspill.plan +  43.060s] diagnostic_inventory: started
+[1/5] | [shadowspill.plan +  43.085s] diagnostic_inventory: finished in 0.025s
+[1/5] | planned pytorch/llama3: total=43.160s lowering_aot=10.799s optimizer_capture=3.968s saved_value_resolution=0.000s compiled_entrypoint_construction=15.341s profiling=11.535s search=0.097s other=1.420s
+[1/5] | simulator predicts pytorch/llama3: 0.4537 s/step, 352.66 tokens/s (planned with: fetch 24.0 GB/s, evict 24.0 GB/s; measured solo: fetch 39.8 GB/s, evict 52.3 GB/s; concurrent: fetch 23.8 GB/s, evict 24.1 GB/s); unconstrained throughput 0.0362 s/step, 4417.04 tokens/s
+[1/5] | shadowspill pytorch/llama3 step 1/5: 0.334s
+[1/5] | shadowspill pytorch/llama3 step 2/5: 0.334s
+[1/5] | shadowspill pytorch/llama3 step 3/5: 0.333s
+[1/5] | shadowspill pytorch/llama3 step 4/5: 0.335s
+[1/5] | shadowspill pytorch/llama3 step 5/5: 0.337s
+[1/5] | shadowspill pytorch/llama3 replay 1/2: 0.334s
+[1/5] | shadowspill pytorch/llama3 replay 2/2: 0.332s
+[1/5] | shadowspill pytorch/llama3 final state captured and digested: 3.988s
+[1/5] | shadowspill pytorch/llama3 callable and runtime closed: 0.992s
+[1/5] | shadowspill pytorch/llama3 reference loaded from /mnt/storage/research/shadowspill/qualification/fp8_representation_1006_refreshed/references/llama3/pytorch/reference.pt: 23.420s
+[1/5] | shadowspill pytorch/llama3 comparing model and optimizer state against the reference, tensor by tensor
+[1/5] | shadowspill pytorch/llama3 compared 337 tensors: 29.074s
+[1/5] | shadowspill pytorch/llama3 comparing the checkpoint-replayed state against the uninterrupted run, tensor by tensor
+[1/5] | shadowspill pytorch/llama3 compared 338 replayed tensors: 29.585s
+[1/5] | shadowspill pytorch/llama3 assembling the case artifact: diagnostics, plan records, and the state digests
+[1/5] | shadowspill pytorch/llama3 wrote pytorch_llama3.json, 0 failure(s): 7.143s
+CASE PASS [1/5] pytorch_llama3
+  ARTIFACT: /home/shein/Documents/grad_school/research/shadowspill/qualification/results/numerical_lora_models_1008/pytorch_llama3.json
+  START: 2026-10-08T11:56:37+00:00
+  STOP: 2026-10-08T11:59:19+00:00
+  DURATION: 162.008 seconds
+
+CASE START [2/5] mlops_llama3
+  MODEL: mlops/llama3
+  DEVICE BUDGET: 10.000 GiB (10737418240 bytes)
+  EXTERNAL HEADROOM: 512 MiB (reserved for pool sizing)
+  REJECT OVERBUDGET: False
+  DTYPES: model=bfloat16, masters=none, gradients=bfloat16, optimizer state=bfloat16
+  MODEL CONFIG: {}
+  REFERENCE: /mnt/storage/research/shadowspill/qualification/fp8_representation_1006_refreshed/references/llama3/mlops/reference.pt (reusing canonical)
+  LOG: /home/shein/Documents/grad_school/research/shadowspill/qualification/results/numerical_lora_models_1008/mlops_llama3.log
+  START: 2026-10-08T11:59:19+00:00
+[2/5] | PHASE: planned parity, checkpoint replay, and physical budgets
+[2/5] | DTYPES: model=bfloat16, masters=none, gradients=bfloat16, optimizer state=bfloat16
+[2/5] | [shadowspill.plan +   0.000s] validation: started
+[2/5] | [shadowspill.plan +   0.001s] validation: finished in 0.001s
+[2/5] | [shadowspill.plan +   0.001s] runtime_binding: started
+[2/5] | [shadowspill.plan +   0.001s] runtime_binding: finished in 0.000s
+[2/5] | [shadowspill.plan +   0.001s] capture_lowering: started
+[2/5] | [shadowspill.plan +   0.030s]   objective_export: started
+[2/5] | [shadowspill.plan +   5.704s]   objective_export: finished in 5.675s
+[2/5] | [shadowspill.plan +   5.704s]   export_archival: started
+[2/5] | /home/shein/miniconda3/envs/shadowspill/lib/python3.12/copyreg.py:99: FutureWarning: `isinstance(treespec, LeafSpec)` is deprecated, use `isinstance(treespec, TreeSpec) and treespec.is_leaf()` instead.
+[2/5] |   return cls.__new__(cls, *args)
+[2/5] | /home/shein/miniconda3/envs/shadowspill/lib/python3.12/copyreg.py:99: FutureWarning: `isinstance(treespec, LeafSpec)` is deprecated, use `isinstance(treespec, TreeSpec) and treespec.is_leaf()` instead.
+[2/5] |   return cls.__new__(cls, *args)
+[2/5] | [shadowspill.plan +   5.939s]   export_archival: finished in 0.235s
+[2/5] | [shadowspill.plan +   5.941s]   stage_partition_aot: started
+[2/5] | [shadowspill.plan +   7.312s]   stage_partition_aot: finished in 1.372s
+[2/5] | [shadowspill.plan +   7.312s]   storage_layout_lowering: started
+[2/5] | [shadowspill.plan +   7.314s]   storage_layout_lowering: finished in 0.001s
+[2/5] | [shadowspill.plan +   7.314s] capture_lowering: finished in 7.313s
+[2/5] | [shadowspill.plan +   7.314s] model_materialization: started
+[2/5] | [shadowspill.plan +   7.321s] model_materialization: finished in 0.007s
+[2/5] | [shadowspill.plan +   7.321s] optimizer_capture: started
+[2/5] | [shadowspill.plan +   7.323s]   optimizer_state_install: started
+[2/5] | [shadowspill.plan +   7.931s]   optimizer_state_install: finished in 0.608s
+[2/5] | [shadowspill.plan +   7.932s]   optimizer_discovery: started
+[2/5] | [shadowspill.plan +   7.950s]   optimizer_discovery: finished in 0.018s
+[2/5] | [shadowspill.plan +   7.984s]   optimizer_trace: started
+[2/5] | [shadowspill.plan +  11.062s]   optimizer_trace: finished in 3.078s
+[2/5] | [shadowspill.plan +  11.236s] optimizer_capture: finished in 3.915s
+[2/5] | [shadowspill.plan +  11.236s] optimizer_state_import: started
+[2/5] | [shadowspill.plan +  11.236s] optimizer_state_import: finished in 0.000s
+[2/5] | [shadowspill.plan +  11.236s] model_placeholder_restoration: started
+[2/5] | [shadowspill.plan +  11.239s] model_placeholder_restoration: finished in 0.002s
+[2/5] | [shadowspill.plan +  11.239s] saved_value_resolution: started
+[2/5] | [shadowspill.plan +  11.239s] saved_value_resolution: finished in 0.000s
+[2/5] | [shadowspill.plan +  11.239s] structural artifact inventory: graph=30, optimizer=3, unique=33, profile_variants=33, optimizer_tasks=14
+[2/5] | [shadowspill.plan +  11.239s] compiler_manifest: started
+[2/5] | [shadowspill.plan +  11.239s]   compiled manifest 1/33 cache-miss: 002d934da888
+[2/5] | [shadowspill.plan +  11.239s]   compiled manifest 2/33 cache-miss: 01cc28a6a621
+[2/5] | [shadowspill.plan +  11.239s]   compiled manifest 3/33 cache-miss: 0433add01ed2
+[2/5] | [shadowspill.plan +  11.239s]   compiled manifest 4/33 cache-miss: 0a3c8abe823a
+[2/5] | [shadowspill.plan +  11.239s]   compiled manifest 5/33 cache-miss: 13048f7976c8
+[2/5] | [shadowspill.plan +  11.239s]   compiled manifest 6/33 cache-miss: 2570075c6a86
+[2/5] | [shadowspill.plan +  11.239s]   compiled manifest 7/33 cache-miss: 273bcbf275be
+[2/5] | [shadowspill.plan +  11.239s]   compiled manifest 8/33 cache-miss: 2c62f50e6afc
+[2/5] | [shadowspill.plan +  11.239s]   compiled manifest 9/33 cache-miss: 30b908981d9d
+[2/5] | [shadowspill.plan +  11.239s]   compiled manifest 10/33 cache-miss: 350e997d0553
+[2/5] | [shadowspill.plan +  11.239s]   compiled manifest 11/33 cache-miss: 3fd479a26b62
+[2/5] | [shadowspill.plan +  11.239s]   compiled manifest 12/33 cache-miss: 50593f614fe6
+[2/5] | [shadowspill.plan +  11.239s]   compiled manifest 13/33 cache-miss: 55eeedcf3ceb
+[2/5] | [shadowspill.plan +  11.239s]   compiled manifest 14/33 cache-miss: 71cdb7f775e6
+[2/5] | [shadowspill.plan +  11.239s]   compiled manifest 15/33 cache-miss: 749865095e40
+[2/5] | [shadowspill.plan +  11.239s]   compiled manifest 16/33 cache-miss: 7b931ed241d9
+[2/5] | [shadowspill.plan +  11.239s]   compiled manifest 17/33 cache-miss: 7e5f50aace40
+[2/5] | [shadowspill.plan +  11.239s]   compiled manifest 18/33 cache-miss: 7f6e86d1cd91
+[2/5] | [shadowspill.plan +  11.239s]   compiled manifest 19/33 cache-miss: 84c15f27a362
+[2/5] | [shadowspill.plan +  11.239s]   compiled manifest 20/33 cache-miss: 899cf7a05605
+[2/5] | [shadowspill.plan +  11.239s]   compiled manifest 21/33 cache-miss: 8abcf954a040
+[2/5] | [shadowspill.plan +  11.239s]   compiled manifest 22/33 cache-miss: 96a3eb60d5fd
+[2/5] | [shadowspill.plan +  11.239s]   compiled manifest 23/33 cache-miss: a2e6d7d63429
+[2/5] | [shadowspill.plan +  11.239s]   compiled manifest 24/33 cache-miss: aa1c2eed63a2
+[2/5] | [shadowspill.plan +  11.240s]   compiled manifest 25/33 cache-miss: b9c0348b844a
+[2/5] | [shadowspill.plan +  11.240s]   compiled manifest 26/33 cache-miss: ca6005ffb78e
+[2/5] | [shadowspill.plan +  11.240s]   compiled manifest 27/33 cache-miss: dc64bf8a78f1
+[2/5] | [shadowspill.plan +  11.240s]   compiled manifest 28/33 cache-miss: e05d3b322907
+[2/5] | [shadowspill.plan +  11.240s]   compiled manifest 29/33 cache-miss: e526d6896c41
+[2/5] | [shadowspill.plan +  11.240s]   compiled manifest 30/33 cache-miss: e79558ea7d0f
+[2/5] | [shadowspill.plan +  11.240s]   compiled manifest 31/33 cache-miss: eb39990bc970
+[2/5] | [shadowspill.plan +  11.240s]   compiled manifest 32/33 cache-miss: ee76596a870b
+[2/5] | [shadowspill.plan +  11.240s]   compiled manifest 33/33 cache-miss: f0df4bceee66
+[2/5] | [shadowspill.plan +  16.719s]   compiled manifest cache: hits=0, misses=33
+[2/5] | [shadowspill.plan +  16.719s] compiler_manifest: finished in 5.480s
+[2/5] | [shadowspill.plan +  16.719s] structural_profiling: started
+[2/5] | [shadowspill.plan +  16.720s]   structural profile 1/33 measuring: 15270ac8afc8
+[2/5] | [shadowspill.plan +  17.064s]   structural profile 2/33 measuring: 202e70a66e78
+[2/5] | [shadowspill.plan +  17.811s]   structural profile 3/33 measuring: 28b7c5e9725c
+[2/5] | [shadowspill.plan +  17.833s]   structural profile 4/33 measuring: 2a38fb209fa8
+[2/5] | [shadowspill.plan +  17.930s]   structural profile 5/33 measuring: 2cfbdf5cc015
+[2/5] | [shadowspill.plan +  18.370s]   structural profile 6/33 measuring: 2d679830c67e
+[2/5] | [shadowspill.plan +  18.425s]   structural profile 7/33 measuring: 3400f9031786
+[2/5] | [shadowspill.plan +  18.460s]   structural profile 8/33 measuring: 3e11c00cfee8
+[2/5] | [shadowspill.plan +  18.586s]   structural profile 9/33 measuring: 4761628d75fe
+[2/5] | [shadowspill.plan +  18.975s]   structural profile 10/33 measuring: 4b3f8970365c
+[2/5] | [shadowspill.plan +  19.163s]   structural profile 11/33 measuring: 5253aa945a09
+[2/5] | [shadowspill.plan +  19.278s]   structural profile 12/33 measuring: 5cf3f1ee5ace
+[2/5] | [shadowspill.plan +  20.348s]   structural profile 13/33 measuring: 639a64efe151
+[2/5] | [shadowspill.plan +  20.958s]   structural profile 14/33 measuring: 639ff1eddd8b
+[2/5] | [shadowspill.plan +  20.981s]   structural profile 15/33 measuring: 64a685e90213
+[2/5] | [shadowspill.plan +  21.114s]   structural profile 16/33 measuring: 68748651e844
+[2/5] | [shadowspill.plan +  21.723s]   structural profile 17/33 measuring: 714412edb464
+[2/5] | [shadowspill.plan +  21.818s]   structural profile 18/33 measuring: 7c25e97055dc
+[2/5] | [shadowspill.plan +  21.980s]   structural profile 19/33 measuring: 7ceea074fac2
+[2/5] | [shadowspill.plan +  22.094s]   structural profile 20/33 measuring: 82deae25529a
+[2/5] | [shadowspill.plan +  22.191s]   structural profile 21/33 measuring: 91e32716f695
+[2/5] | [shadowspill.plan +  22.289s]   structural profile 22/33 measuring: 925b1b71d5ca
+[2/5] | [shadowspill.plan +  22.678s]   structural profile 23/33 measuring: 9dca2576a9e9
+[2/5] | [shadowspill.plan +  22.827s]   structural profile 24/33 measuring: 9ebabcc9eb40
+[2/5] | [shadowspill.plan +  23.650s]   structural profile 25/33 measuring: a0d9a52df3dc
+[2/5] | [shadowspill.plan +  23.763s]   structural profile 26/33 measuring: a24f930546e4
+[2/5] | [shadowspill.plan +  23.904s]   structural profile 27/33 measuring: a3d1dde15b93
+[2/5] | [shadowspill.plan +  23.940s]   structural profile 28/33 measuring: a5c0e7c7da9a
+[2/5] | [shadowspill.plan +  24.007s]   structural profile 29/33 measuring: c9676a63d6a8
+[2/5] | [shadowspill.plan +  24.030s]   structural profile 30/33 measuring: cb17dc689331
+[2/5] | [shadowspill.plan +  24.148s]   structural profile 31/33 measuring: dc0b842c758b
+[2/5] | [shadowspill.plan +  24.300s]   structural profile 32/33 measuring: e6339dab2558
+[2/5] | [shadowspill.plan +  24.993s]   structural profile 33/33 measuring: eaa7ccd6b8b3
+[2/5] | [shadowspill.plan +  25.686s] structural_profiling: finished in 8.967s
+[2/5] | [shadowspill.plan +  25.686s] saved-value snapshots: peak 501.75 MiB (526123008 bytes), live 0 B in the spill pool
+[2/5] | [shadowspill.plan +  25.686s] program_lowering: started
+[2/5] | [shadowspill.plan +  25.733s]   step ShadowSpillProgram inventory: tasks=127, objects=1481, aliases=793, task_alternative_groups=28, largest_workspace=1100710280 (profile_000017)
+[2/5] | [shadowspill.plan +  25.733s] program_lowering: finished in 0.046s
+[2/5] | [shadowspill.plan +  25.733s] admission_facts: started
+[2/5] | [shadowspill.plan +  25.738s] admission_facts: finished in 0.005s
+[2/5] | [shadowspill.plan +  25.738s] feasibility_preflight: started
+[2/5] | [shadowspill.plan +  25.754s] feasibility_preflight: finished in 0.016s
+[2/5] | [shadowspill.plan +  25.754s] search: started
+[2/5] | [shadowspill.plan +  25.760s]   PressureFit resolutions: groups=28, selections=5
+[2/5] | [shadowspill.plan +  25.762s]   PressureFit compiled problem 1/5: tasks=71, aliases=793, elapsed=0.002s
+[2/5] | [shadowspill.plan +  25.764s]   PressureFit compiled problem 2/5: tasks=71, aliases=793, elapsed=0.004s
+[2/5] | [shadowspill.plan +  25.766s]   PressureFit compiled problem 3/5: tasks=71, aliases=793, elapsed=0.006s
+[2/5] | [shadowspill.plan +  25.768s]   PressureFit compiled problem 4/5: tasks=71, aliases=793, elapsed=0.008s
+[2/5] | [shadowspill.plan +  25.770s]   PressureFit compiled problem 5/5: tasks=71, aliases=793, elapsed=0.009s
+[2/5] | [shadowspill.plan +  25.803s]   PressureFit compiled problems and candidates finished: valid=5/5, candidates=80, workers=auto, elapsed=0.042s
+[2/5] | [shadowspill.plan +  25.836s]   fixed layout accepted the search's capacity 9267020168: fixed_slice=7093936392, dynamic_reserve=8, scratch_reserve=0, slack=2450202352
+[2/5] | [shadowspill.plan +  25.836s] search: finished in 0.082s
+[2/5] | [shadowspill.plan +  25.836s] compilation: started
+[2/5] | [shadowspill.plan +  25.836s]   selected entrypoint 1/15 warmed: 01cc28a6a621
+[2/5] | [shadowspill.plan +  25.836s]   selected entrypoint 2/15 warmed: 0433add01ed2
+[2/5] | [shadowspill.plan +  25.837s]   selected entrypoint 3/15 warmed: 13048f7976c8
+[2/5] | [shadowspill.plan +  25.837s]   selected entrypoint 4/15 warmed: 273bcbf275be
+[2/5] | [shadowspill.plan +  25.837s]   selected entrypoint 5/15 warmed: 2c62f50e6afc
+[2/5] | [shadowspill.plan +  25.837s]   selected entrypoint 6/15 warmed: 30b908981d9d
+[2/5] | [shadowspill.plan +  25.837s]   selected entrypoint 7/15 warmed: 350e997d0553
+[2/5] | [shadowspill.plan +  25.837s]   selected entrypoint 8/15 warmed: 50593f614fe6
+[2/5] | [shadowspill.plan +  25.837s]   selected entrypoint 9/15 warmed: 71cdb7f775e6
+[2/5] | [shadowspill.plan +  25.837s]   selected entrypoint 10/15 warmed: 7e5f50aace40
+[2/5] | [shadowspill.plan +  25.837s]   selected entrypoint 11/15 warmed: 84c15f27a362
+[2/5] | [shadowspill.plan +  25.837s]   selected entrypoint 12/15 warmed: a2e6d7d63429
+[2/5] | [shadowspill.plan +  25.837s]   selected entrypoint 13/15 warmed: b9c0348b844a
+[2/5] | [shadowspill.plan +  25.837s]   selected entrypoint 14/15 warmed: e05d3b322907
+[2/5] | [shadowspill.plan +  25.837s]   selected entrypoint 15/15 warmed: e79558ea7d0f
+[2/5] | [shadowspill.plan +  25.916s] compilation: finished in 0.080s
+[2/5] | [shadowspill.plan +  25.916s] spill_admission: started
+[2/5] | [shadowspill.plan +  25.916s] spill_admission: finished in 0.000s
+[2/5] | [shadowspill.plan +  25.916s] slab_admission: started
+[2/5] | [shadowspill.plan +  25.929s] slab_admission: finished in 0.013s
+[2/5] | [shadowspill.plan +  25.933s] plan_adoption: started
+[2/5] | [shadowspill.plan +  25.959s] plan_adoption: finished in 0.025s
+[2/5] | [shadowspill.plan +  25.959s] physical_sealing: started
+[2/5] | [shadowspill.plan +  25.962s] physical_sealing: finished in 0.003s
+[2/5] | [shadowspill.plan +  25.962s] callable_construction: started
+[2/5] | [shadowspill.plan +  25.984s] callable_construction: finished in 0.022s
+[2/5] | [shadowspill.plan +  25.984s] diagnostic_inventory: started
+[2/5] | [shadowspill.plan +  26.005s] diagnostic_inventory: finished in 0.021s
+[2/5] | planned mlops/llama3: total=26.052s lowering_aot=7.313s optimizer_capture=3.915s saved_value_resolution=0.000s compiled_entrypoint_construction=5.286s profiling=8.433s search=0.082s other=1.024s
+[2/5] | simulator predicts mlops/llama3: 0.4995 s/step, 320.32 tokens/s (planned with: fetch 22.0 GB/s, evict 22.0 GB/s; measured solo: fetch 34.2 GB/s, evict 53.5 GB/s; concurrent: fetch 21.8 GB/s, evict 22.0 GB/s); unconstrained throughput 0.0478 s/step, 3349.38 tokens/s
+[2/5] | shadowspill mlops/llama3 step 1/5: 0.543s
+[2/5] | shadowspill mlops/llama3 step 2/5: 0.335s
+[2/5] | shadowspill mlops/llama3 step 3/5: 0.334s
+[2/5] | shadowspill mlops/llama3 step 4/5: 0.336s
+[2/5] | shadowspill mlops/llama3 step 5/5: 0.337s
+[2/5] | shadowspill mlops/llama3 replay 1/2: 0.339s
+[2/5] | shadowspill mlops/llama3 replay 2/2: 0.332s
+[2/5] | shadowspill mlops/llama3 final state captured and digested: 4.032s
+[2/5] | shadowspill mlops/llama3 callable and runtime closed: 0.805s
+[2/5] | shadowspill mlops/llama3 reference loaded from /mnt/storage/research/shadowspill/qualification/fp8_representation_1006_refreshed/references/llama3/mlops/reference.pt: 26.795s
+[2/5] | shadowspill mlops/llama3 comparing model and optimizer state against the reference, tensor by tensor
+[2/5] | shadowspill mlops/llama3 compared 337 tensors: 28.100s
+[2/5] | shadowspill mlops/llama3 comparing the checkpoint-replayed state against the uninterrupted run, tensor by tensor
+[2/5] | shadowspill mlops/llama3 compared 338 replayed tensors: 28.489s
+[2/5] | shadowspill mlops/llama3 assembling the case artifact: diagnostics, plan records, and the state digests
+[2/5] | shadowspill mlops/llama3 wrote mlops_llama3.json, 0 failure(s): 7.076s
+CASE PASS [2/5] mlops_llama3
+  ARTIFACT: /home/shein/Documents/grad_school/research/shadowspill/qualification/results/numerical_lora_models_1008/mlops_llama3.json
+  START: 2026-10-08T11:59:19+00:00
+  STOP: 2026-10-08T12:01:45+00:00
+  DURATION: 145.578 seconds
+
+CASE START [3/5] pytorch_qwen35
+  MODEL: pytorch/qwen35
+  DEVICE BUDGET: 10.000 GiB (10737418240 bytes)
+  EXTERNAL HEADROOM: 512 MiB (reserved for pool sizing)
+  REJECT OVERBUDGET: False
+  DTYPES: model=bfloat16, masters=none, gradients=bfloat16, optimizer state=bfloat16
+  MODEL CONFIG: {}
+  REFERENCE: /mnt/storage/research/shadowspill/qualification/fp8_representation_1006_refreshed/references/qwen35/pytorch/reference.pt (reusing canonical)
+  LOG: /home/shein/Documents/grad_school/research/shadowspill/qualification/results/numerical_lora_models_1008/pytorch_qwen35.log
+  START: 2026-10-08T12:01:45+00:00
+[3/5] | PHASE: planned parity, checkpoint replay, and physical budgets
+[3/5] | DTYPES: model=bfloat16, masters=none, gradients=bfloat16, optimizer state=bfloat16
+[3/5] | [shadowspill.plan +   0.000s] validation: started
+[3/5] | [shadowspill.plan +   0.001s] validation: finished in 0.001s
+[3/5] | [shadowspill.plan +   0.001s] runtime_binding: started
+[3/5] | [shadowspill.plan +   0.001s] runtime_binding: finished in 0.000s
+[3/5] | [shadowspill.plan +   0.001s] capture_lowering: started
+[3/5] | [shadowspill.plan +   0.027s]   objective_export: started
+[3/5] | [shadowspill.plan +   9.057s]   objective_export: finished in 9.030s
+[3/5] | [shadowspill.plan +   9.057s]   export_archival: started
+[3/5] | /home/shein/miniconda3/envs/shadowspill/lib/python3.12/copyreg.py:99: FutureWarning: `isinstance(treespec, LeafSpec)` is deprecated, use `isinstance(treespec, TreeSpec) and treespec.is_leaf()` instead.
+[3/5] |   return cls.__new__(cls, *args)
+[3/5] | /home/shein/miniconda3/envs/shadowspill/lib/python3.12/copyreg.py:99: FutureWarning: `isinstance(treespec, LeafSpec)` is deprecated, use `isinstance(treespec, TreeSpec) and treespec.is_leaf()` instead.
+[3/5] |   return cls.__new__(cls, *args)
+[3/5] | [shadowspill.plan +  10.890s]   export_archival: finished in 1.833s
+[3/5] | [shadowspill.plan +  10.892s]   stage_partition_aot: started
+[3/5] | [shadowspill.plan +  17.170s]   stage_partition_aot: finished in 6.279s
+[3/5] | [shadowspill.plan +  17.170s]   storage_layout_lowering: started
+[3/5] | [shadowspill.plan +  17.172s]   storage_layout_lowering: finished in 0.001s
+[3/5] | [shadowspill.plan +  17.172s] capture_lowering: finished in 17.171s
+[3/5] | [shadowspill.plan +  17.172s] model_materialization: started
+[3/5] | [shadowspill.plan +  17.179s] model_materialization: finished in 0.007s
+[3/5] | [shadowspill.plan +  17.179s] optimizer_capture: started
+[3/5] | [shadowspill.plan +  17.181s]   optimizer_state_install: started
+[3/5] | [shadowspill.plan +  17.702s]   optimizer_state_install: finished in 0.521s
+[3/5] | [shadowspill.plan +  17.702s]   optimizer_discovery: started
+[3/5] | [shadowspill.plan +  17.717s]   optimizer_discovery: finished in 0.016s
+[3/5] | [shadowspill.plan +  17.749s]   optimizer_trace: started
+[3/5] | [shadowspill.plan +  20.455s]   optimizer_trace: finished in 2.706s
+[3/5] | [shadowspill.plan +  20.608s] optimizer_capture: finished in 3.429s
+[3/5] | [shadowspill.plan +  20.608s] optimizer_state_import: started
+[3/5] | [shadowspill.plan +  20.608s] optimizer_state_import: finished in 0.000s
+[3/5] | [shadowspill.plan +  20.608s] model_placeholder_restoration: started
+[3/5] | [shadowspill.plan +  20.610s] model_placeholder_restoration: finished in 0.002s
+[3/5] | [shadowspill.plan +  20.610s] saved_value_resolution: started
+[3/5] | [shadowspill.plan +  20.610s] saved_value_resolution: finished in 0.000s
+[3/5] | [shadowspill.plan +  20.610s] structural artifact inventory: graph=42, optimizer=4, unique=46, profile_variants=46, optimizer_tasks=10
+[3/5] | [shadowspill.plan +  20.610s] compiler_manifest: started
+[3/5] | [shadowspill.plan +  20.610s]   compiled manifest 1/46 cache-miss: 1420c259e5f9
+[3/5] | [shadowspill.plan +  20.610s]   compiled manifest 2/46 cache-miss: 172cd7c3461d
+[3/5] | [shadowspill.plan +  20.610s]   compiled manifest 3/46 cache-miss: 174a0a4241f8
+[3/5] | [shadowspill.plan +  20.610s]   compiled manifest 4/46 cache-miss: 17db6de5b5a8
+[3/5] | [shadowspill.plan +  20.611s]   compiled manifest 5/46 cache-miss: 1df908708d7c
+[3/5] | [shadowspill.plan +  20.611s]   compiled manifest 6/46 cache-miss: 2665e0c8ed78
+[3/5] | [shadowspill.plan +  20.611s]   compiled manifest 7/46 cache-miss: 2810edb38fab
+[3/5] | [shadowspill.plan +  20.611s]   compiled manifest 8/46 cache-miss: 37932c25c6d4
+[3/5] | [shadowspill.plan +  20.611s]   compiled manifest 9/46 cache-miss: 3921ea487891
+[3/5] | [shadowspill.plan +  20.611s]   compiled manifest 10/46 cache-miss: 4740ac42fe15
+[3/5] | [shadowspill.plan +  20.611s]   compiled manifest 11/46 cache-miss: 4951665efbda
+[3/5] | [shadowspill.plan +  20.611s]   compiled manifest 12/46 cache-miss: 4aed6223ef26
+[3/5] | [shadowspill.plan +  20.611s]   compiled manifest 13/46 cache-miss: 4b5c0b44c2c6
+[3/5] | [shadowspill.plan +  20.611s]   compiled manifest 14/46 cache-miss: 4e19db3da112
+[3/5] | [shadowspill.plan +  20.611s]   compiled manifest 15/46 cache-miss: 4f640789747d
+[3/5] | [shadowspill.plan +  20.611s]   compiled manifest 16/46 cache-miss: 5062636289f5
+[3/5] | [shadowspill.plan +  20.611s]   compiled manifest 17/46 cache-miss: 57b2f0632d83
+[3/5] | [shadowspill.plan +  20.611s]   compiled manifest 18/46 cache-miss: 5c96a1f13656
+[3/5] | [shadowspill.plan +  20.611s]   compiled manifest 19/46 cache-miss: 5cfd10167d22
+[3/5] | [shadowspill.plan +  20.611s]   compiled manifest 20/46 cache-miss: 66d3b978de50
+[3/5] | [shadowspill.plan +  20.611s]   compiled manifest 21/46 cache-miss: 68e154007e68
+[3/5] | [shadowspill.plan +  20.611s]   compiled manifest 22/46 cache-miss: 6c6f3459bebd
+[3/5] | [shadowspill.plan +  20.611s]   compiled manifest 23/46 cache-miss: 72b9f7ed810f
+[3/5] | [shadowspill.plan +  20.611s]   compiled manifest 24/46 cache-miss: 756c41d32270
+[3/5] | [shadowspill.plan +  20.611s]   compiled manifest 25/46 cache-miss: 76875bcc8d92
+[3/5] | [shadowspill.plan +  20.611s]   compiled manifest 26/46 cache-miss: 7b1fbe869097
+[3/5] | [shadowspill.plan +  20.611s]   compiled manifest 27/46 cache-miss: 7c1606a18071
+[3/5] | [shadowspill.plan +  20.611s]   compiled manifest 28/46 cache-miss: 7ce93b661f10
+[3/5] | [shadowspill.plan +  20.611s]   compiled manifest 29/46 cache-miss: 7d92e912e230
+[3/5] | [shadowspill.plan +  20.611s]   compiled manifest 30/46 cache-miss: 8e362e07761c
+[3/5] | [shadowspill.plan +  20.611s]   compiled manifest 31/46 cache-miss: 95a2131181ba
+[3/5] | [shadowspill.plan +  20.611s]   compiled manifest 32/46 cache-miss: 971dc81c374a
+[3/5] | [shadowspill.plan +  20.611s]   compiled manifest 33/46 cache-miss: 9a75c48da3c3
+[3/5] | [shadowspill.plan +  20.611s]   compiled manifest 34/46 cache-miss: 9aa0d1cca0ad
+[3/5] | [shadowspill.plan +  20.611s]   compiled manifest 35/46 cache-miss: a08ee41df451
+[3/5] | [shadowspill.plan +  20.611s]   compiled manifest 36/46 cache-miss: a17673e4669f
+[3/5] | [shadowspill.plan +  20.611s]   compiled manifest 37/46 cache-miss: b677542c1fd4
+[3/5] | [shadowspill.plan +  20.611s]   compiled manifest 38/46 cache-miss: bb39d759ea8f
+[3/5] | [shadowspill.plan +  20.611s]   compiled manifest 39/46 cache-miss: be04af1542c6
+[3/5] | [shadowspill.plan +  20.611s]   compiled manifest 40/46 cache-miss: bf22127c35f3
+[3/5] | [shadowspill.plan +  20.611s]   compiled manifest 41/46 cache-miss: d750075c1706
+[3/5] | [shadowspill.plan +  20.611s]   compiled manifest 42/46 cache-miss: e6a7eee194ab
+[3/5] | [shadowspill.plan +  20.611s]   compiled manifest 43/46 cache-miss: e9bf0bbf0723
+[3/5] | [shadowspill.plan +  20.612s]   compiled manifest 44/46 cache-miss: f12726a00ad8
+[3/5] | [shadowspill.plan +  20.612s]   compiled manifest 45/46 cache-miss: fa775084e30c
+[3/5] | [shadowspill.plan +  20.612s]   compiled manifest 46/46 cache-miss: fdc75cc4c095
+[3/5] | [shadowspill.plan +  95.734s]   compiled manifest cache: hits=0, misses=46
+[3/5] | [shadowspill.plan +  95.734s] compiler_manifest: finished in 75.124s
+[3/5] | [shadowspill.plan +  95.734s] structural_profiling: started
+[3/5] | [shadowspill.plan +  95.736s]   structural profile 1/46 measuring: 045df4b699c9
+[3/5] | [shadowspill.plan +  95.860s]   structural profile 2/46 measuring: 06e8726c9b0a
+[3/5] | [shadowspill.plan +  99.564s]   structural profile 3/46 measuring: 10d1f017adb4
+[3/5] | [shadowspill.plan +  99.883s]   structural profile 4/46 measuring: 1c1fdda2912a
+[3/5] | [shadowspill.plan + 101.078s]   structural profile 5/46 measuring: 204f2f61c3f9
+[3/5] | [shadowspill.plan + 104.228s]   structural profile 6/46 measuring: 23fc81831b48
+[3/5] | [shadowspill.plan + 105.574s]   structural profile 7/46 measuring: 334548c251c5
+[3/5] | [shadowspill.plan + 107.562s]   structural profile 8/46 measuring: 339b64857f3f
+[3/5] | [shadowspill.plan + 108.490s]   structural profile 9/46 measuring: 35fbc0f9868d
+[3/5] | [shadowspill.plan + 111.295s]   structural profile 10/46 measuring: 4371c95c99af
+[3/5] | [shadowspill.plan + 111.372s]   structural profile 11/46 measuring: 46e5935db412
+[3/5] | [shadowspill.plan + 115.228s]   structural profile 12/46 measuring: 509ecf8be97c
+[3/5] | [shadowspill.plan + 118.331s]   structural profile 13/46 measuring: 518aaac1be9c
+[3/5] | [shadowspill.plan + 118.405s]   structural profile 14/46 measuring: 5d0207407764
+[3/5] | [shadowspill.plan + 119.266s]   structural profile 15/46 measuring: 61cec4893899
+[3/5] | [shadowspill.plan + 120.132s]   structural profile 16/46 measuring: 64acd3f58f84
+[3/5] | [shadowspill.plan + 121.894s]   structural profile 17/46 measuring: 687afc8079c5
+[3/5] | [shadowspill.plan + 122.118s]   structural profile 18/46 measuring: 696177ed3f68
+[3/5] | [shadowspill.plan + 123.442s]   structural profile 19/46 measuring: 6f0581edf840
+[3/5] | [shadowspill.plan + 123.553s]   structural profile 20/46 measuring: 7460a845197e
+[3/5] | [shadowspill.plan + 124.640s]   structural profile 21/46 measuring: 77f376bbb935
+[3/5] | [shadowspill.plan + 125.418s]   structural profile 22/46 measuring: 7b41e8671cf9
+[3/5] | [shadowspill.plan + 125.761s]   structural profile 23/46 measuring: 7fb5533b2a26
+[3/5] | [shadowspill.plan + 126.972s]   structural profile 24/46 measuring: 8063108525a5
+[3/5] | [shadowspill.plan + 126.993s]   structural profile 25/46 measuring: a24c36905be0
+[3/5] | [shadowspill.plan + 129.625s]   structural profile 26/46 measuring: a7a642c31219
+[3/5] | [shadowspill.plan + 130.209s]   structural profile 27/46 measuring: ac8ab608a76a
+[3/5] | [shadowspill.plan + 130.321s]   structural profile 28/46 measuring: ad6f780622fb
+[3/5] | [shadowspill.plan + 133.320s]   structural profile 29/46 measuring: b134a33161b0
+[3/5] | [shadowspill.plan + 133.629s]   structural profile 30/46 measuring: b3e80d260c82
+[3/5] | [shadowspill.plan + 133.649s]   structural profile 31/46 measuring: b67bd648b3a4
+[3/5] | [shadowspill.plan + 133.670s]   structural profile 32/46 measuring: b7e1a744490b
+[3/5] | [shadowspill.plan + 133.690s]   structural profile 33/46 measuring: c133b2a12964
+[3/5] | [shadowspill.plan + 133.904s]   structural profile 34/46 measuring: c1b6d2413db7
+[3/5] | [shadowspill.plan + 133.967s]   structural profile 35/46 measuring: c1cde718edfa
+[3/5] | [shadowspill.plan + 134.029s]   structural profile 36/46 measuring: cb12d51804ab
+[3/5] | [shadowspill.plan + 134.134s]   structural profile 37/46 measuring: d05a3be6516b
+[3/5] | [shadowspill.plan + 134.973s]   structural profile 38/46 measuring: d066f8cf4e69
+[3/5] | [shadowspill.plan + 136.385s]   structural profile 39/46 measuring: db69070b8f16
+[3/5] | [shadowspill.plan + 136.447s]   structural profile 40/46 measuring: e1fdbf0bbeed
+[3/5] | [shadowspill.plan + 138.773s]   structural profile 41/46 measuring: e2a26fe35549
+[3/5] | [shadowspill.plan + 138.993s]   structural profile 42/46 measuring: e3c59362568b
+[3/5] | [shadowspill.plan + 139.575s]   structural profile 43/46 measuring: eca3c43d4d23
+[3/5] | [shadowspill.plan + 140.654s]   structural profile 44/46 measuring: efbfd157b466
+[3/5] | [shadowspill.plan + 140.697s]   structural profile 45/46 measuring: f44e01304a1b
+[3/5] | [shadowspill.plan + 141.772s]   structural profile 46/46 measuring: fe074f9972ba
+[3/5] | [shadowspill.plan + 141.833s] structural_profiling: finished in 46.098s
+[3/5] | [shadowspill.plan + 141.833s] saved-value snapshots: peak 45.75 MiB (47972740 bytes), live 0 B in the spill pool
+[3/5] | [shadowspill.plan + 141.833s] program_lowering: started
+[3/5] | [shadowspill.plan + 141.939s]   step ShadowSpillProgram inventory: tasks=91, objects=1461, aliases=945, task_alternative_groups=20, largest_workspace=1525678080 (profile_000014)
+[3/5] | [shadowspill.plan + 141.939s] program_lowering: finished in 0.106s
+[3/5] | [shadowspill.plan + 141.939s] admission_facts: started
+[3/5] | [shadowspill.plan + 142.071s] admission_facts: finished in 0.132s
+[3/5] | [shadowspill.plan + 142.071s] feasibility_preflight: started
+[3/5] | [shadowspill.plan + 142.285s] feasibility_preflight: finished in 0.214s
+[3/5] | [shadowspill.plan + 142.285s] search: started
+[3/5] | [shadowspill.plan + 142.404s]   PressureFit resolutions: groups=20, selections=5
+[3/5] | [shadowspill.plan + 142.423s]   PressureFit compiled problem 1/5: tasks=51, aliases=945, elapsed=0.019s
+[3/5] | [shadowspill.plan + 142.441s]   PressureFit compiled problem 2/5: tasks=51, aliases=945, elapsed=0.037s
+[3/5] | [shadowspill.plan + 142.457s]   PressureFit compiled problem 3/5: tasks=51, aliases=945, elapsed=0.053s
+[3/5] | [shadowspill.plan + 142.473s]   PressureFit compiled problem 4/5: tasks=51, aliases=945, elapsed=0.070s
+[3/5] | [shadowspill.plan + 142.488s]   PressureFit compiled problem 5/5: tasks=51, aliases=945, elapsed=0.084s
+[3/5] | [shadowspill.plan + 142.560s]   PressureFit compiled problems and candidates finished: valid=5/5, candidates=80, workers=auto, elapsed=0.156s
+[3/5] | [shadowspill.plan + 143.246s]   fixed layout accepted the search's capacity 9161408512: fixed_slice=6512123912, dynamic_reserve=8, scratch_reserve=0, slack=3032014832
+[3/5] | [shadowspill.plan + 143.246s] search: finished in 0.961s
+[3/5] | [shadowspill.plan + 143.247s] compilation: started
+[3/5] | [shadowspill.plan + 143.247s]   selected entrypoint 1/20 warmed: 1420c259e5f9
+[3/5] | [shadowspill.plan + 143.247s]   selected entrypoint 2/20 warmed: 1df908708d7c
+[3/5] | [shadowspill.plan + 143.247s]   selected entrypoint 3/20 warmed: 2665e0c8ed78
+[3/5] | [shadowspill.plan + 143.247s]   selected entrypoint 4/20 warmed: 3921ea487891
+[3/5] | [shadowspill.plan + 143.247s]   selected entrypoint 5/20 warmed: 4740ac42fe15
+[3/5] | [shadowspill.plan + 143.247s]   selected entrypoint 6/20 warmed: 4951665efbda
+[3/5] | [shadowspill.plan + 143.247s]   selected entrypoint 7/20 warmed: 4aed6223ef26
+[3/5] | [shadowspill.plan + 143.247s]   selected entrypoint 8/20 warmed: 4b5c0b44c2c6
+[3/5] | [shadowspill.plan + 143.247s]   selected entrypoint 9/20 warmed: 4e19db3da112
+[3/5] | [shadowspill.plan + 143.247s]   selected entrypoint 10/20 warmed: 4f640789747d
+[3/5] | [shadowspill.plan + 143.247s]   selected entrypoint 11/20 warmed: 5062636289f5
+[3/5] | [shadowspill.plan + 143.247s]   selected entrypoint 12/20 warmed: 5c96a1f13656
+[3/5] | [shadowspill.plan + 143.247s]   selected entrypoint 13/20 warmed: 7d92e912e230
+[3/5] | [shadowspill.plan + 143.247s]   selected entrypoint 14/20 warmed: 8e362e07761c
+[3/5] | [shadowspill.plan + 143.247s]   selected entrypoint 15/20 warmed: 9a75c48da3c3
+[3/5] | [shadowspill.plan + 143.247s]   selected entrypoint 16/20 warmed: 9aa0d1cca0ad
+[3/5] | [shadowspill.plan + 143.247s]   selected entrypoint 17/20 warmed: a08ee41df451
+[3/5] | [shadowspill.plan + 143.247s]   selected entrypoint 18/20 warmed: a17673e4669f
+[3/5] | [shadowspill.plan + 143.247s]   selected entrypoint 19/20 warmed: b677542c1fd4
+[3/5] | [shadowspill.plan + 143.247s]   selected entrypoint 20/20 warmed: d750075c1706
+[3/5] | [shadowspill.plan + 143.501s] compilation: finished in 0.255s
+[3/5] | [shadowspill.plan + 143.501s] spill_admission: started
+[3/5] | [shadowspill.plan + 143.501s] spill_admission: finished in 0.000s
+[3/5] | [shadowspill.plan + 143.501s] slab_admission: started
+[3/5] | [shadowspill.plan + 143.845s] slab_admission: finished in 0.344s
+[3/5] | [shadowspill.plan + 143.850s] plan_adoption: started
+[3/5] | [shadowspill.plan + 143.871s] plan_adoption: finished in 0.021s
+[3/5] | [shadowspill.plan + 143.871s] physical_sealing: started
+[3/5] | [shadowspill.plan + 143.876s] physical_sealing: finished in 0.006s
+[3/5] | [shadowspill.plan + 143.876s] callable_construction: started
+[3/5] | [shadowspill.plan + 144.442s] callable_construction: finished in 0.566s
+[3/5] | [shadowspill.plan + 144.442s] diagnostic_inventory: started
+[3/5] | [shadowspill.plan + 145.124s] diagnostic_inventory: finished in 0.682s
+[3/5] | planned pytorch/qwen35: total=145.227s lowering_aot=17.171s optimizer_capture=3.429s saved_value_resolution=0.000s compiled_entrypoint_construction=74.873s profiling=44.702s search=0.961s other=4.091s
+[3/5] | simulator predicts pytorch/qwen35: 0.5312 s/step, 301.22 tokens/s (planned with: fetch 21.5 GB/s, evict 22.0 GB/s; measured solo: fetch 33.4 GB/s, evict 54.9 GB/s; concurrent: fetch 21.7 GB/s, evict 22.0 GB/s); unconstrained throughput 0.2935 s/step, 545.13 tokens/s
+[3/5] | shadowspill pytorch/qwen35 step 1/5: 0.626s
+[3/5] | shadowspill pytorch/qwen35 step 2/5: 0.632s
+[3/5] | shadowspill pytorch/qwen35 step 3/5: 1.054s
+[3/5] | shadowspill pytorch/qwen35 step 4/5: 0.629s
+[3/5] | shadowspill pytorch/qwen35 step 5/5: 0.626s
+[3/5] | shadowspill pytorch/qwen35 replay 1/2: 0.988s
+[3/5] | shadowspill pytorch/qwen35 replay 2/2: 0.619s
+[3/5] | shadowspill pytorch/qwen35 final state captured and digested: 4.953s
+[3/5] | shadowspill pytorch/qwen35 callable and runtime closed: 0.810s
+[3/5] | shadowspill pytorch/qwen35 reference loaded from /mnt/storage/research/shadowspill/qualification/fp8_representation_1006_refreshed/references/qwen35/pytorch/reference.pt: 16.220s
+[3/5] | shadowspill pytorch/qwen35 comparing model and optimizer state against the reference, tensor by tensor
+[3/5] | shadowspill pytorch/qwen35 compared 295 tensors: 24.034s
+[3/5] | shadowspill pytorch/qwen35 comparing the checkpoint-replayed state against the uninterrupted run, tensor by tensor
+[3/5] | shadowspill pytorch/qwen35 compared 296 replayed tensors: 23.971s
+[3/5] | shadowspill pytorch/qwen35 assembling the case artifact: diagnostics, plan records, and the state digests
+[3/5] | shadowspill pytorch/qwen35 wrote pytorch_qwen35.json, 0 failure(s): 6.716s
+CASE PASS [3/5] pytorch_qwen35
+  ARTIFACT: /home/shein/Documents/grad_school/research/shadowspill/qualification/results/numerical_lora_models_1008/pytorch_qwen35.json
+  START: 2026-10-08T12:01:45+00:00
+  STOP: 2026-10-08T12:05:55+00:00
+  DURATION: 249.851 seconds
+
+CASE START [4/5] mlops_qwen35
+  MODEL: mlops/qwen35
+  DEVICE BUDGET: 10.000 GiB (10737418240 bytes)
+  EXTERNAL HEADROOM: 512 MiB (reserved for pool sizing)
+  REJECT OVERBUDGET: False
+  DTYPES: model=bfloat16, masters=none, gradients=bfloat16, optimizer state=bfloat16
+  MODEL CONFIG: {}
+  REFERENCE: /mnt/storage/research/shadowspill/qualification/fp8_representation_1006_refreshed/references/qwen35/mlops/reference.pt (reusing canonical)
+  LOG: /home/shein/Documents/grad_school/research/shadowspill/qualification/results/numerical_lora_models_1008/mlops_qwen35.log
+  START: 2026-10-08T12:05:55+00:00
+[4/5] | PHASE: planned parity, checkpoint replay, and physical budgets
+[4/5] | DTYPES: model=bfloat16, masters=none, gradients=bfloat16, optimizer state=bfloat16
+[4/5] | [shadowspill.plan +   0.000s] validation: started
+[4/5] | [shadowspill.plan +   0.001s] validation: finished in 0.001s
+[4/5] | [shadowspill.plan +   0.001s] runtime_binding: started
+[4/5] | [shadowspill.plan +   0.001s] runtime_binding: finished in 0.000s
+[4/5] | [shadowspill.plan +   0.001s] capture_lowering: started
+[4/5] | [shadowspill.plan +   0.026s]   objective_export: started
+[4/5] | [shadowspill.plan +   5.843s]   objective_export: finished in 5.817s
+[4/5] | [shadowspill.plan +   5.843s]   export_archival: started
+[4/5] | /home/shein/miniconda3/envs/shadowspill/lib/python3.12/copyreg.py:99: FutureWarning: `isinstance(treespec, LeafSpec)` is deprecated, use `isinstance(treespec, TreeSpec) and treespec.is_leaf()` instead.
+[4/5] |   return cls.__new__(cls, *args)
+[4/5] | /home/shein/miniconda3/envs/shadowspill/lib/python3.12/copyreg.py:99: FutureWarning: `isinstance(treespec, LeafSpec)` is deprecated, use `isinstance(treespec, TreeSpec) and treespec.is_leaf()` instead.
+[4/5] |   return cls.__new__(cls, *args)
+[4/5] | [shadowspill.plan +   6.223s]   export_archival: finished in 0.380s
+[4/5] | [shadowspill.plan +   6.225s]   stage_partition_aot: started
+[4/5] | [shadowspill.plan +   8.390s]   stage_partition_aot: finished in 2.166s
+[4/5] | [shadowspill.plan +   8.390s]   storage_layout_lowering: started
+[4/5] | [shadowspill.plan +   8.392s]   storage_layout_lowering: finished in 0.001s
+[4/5] | [shadowspill.plan +   8.392s] capture_lowering: finished in 8.391s
+[4/5] | [shadowspill.plan +   8.392s] model_materialization: started
+[4/5] | [shadowspill.plan +   8.398s] model_materialization: finished in 0.007s
+[4/5] | [shadowspill.plan +   8.398s] optimizer_capture: started
+[4/5] | [shadowspill.plan +   8.400s]   optimizer_state_install: started
+[4/5] | [shadowspill.plan +   8.910s]   optimizer_state_install: finished in 0.510s
+[4/5] | [shadowspill.plan +   8.910s]   optimizer_discovery: started
+[4/5] | [shadowspill.plan +   8.926s]   optimizer_discovery: finished in 0.016s
+[4/5] | [shadowspill.plan +   8.958s]   optimizer_trace: started
+[4/5] | [shadowspill.plan +  11.489s]   optimizer_trace: finished in 2.531s
+[4/5] | [shadowspill.plan +  11.639s] optimizer_capture: finished in 3.241s
+[4/5] | [shadowspill.plan +  11.639s] optimizer_state_import: started
+[4/5] | [shadowspill.plan +  11.639s] optimizer_state_import: finished in 0.000s
+[4/5] | [shadowspill.plan +  11.639s] model_placeholder_restoration: started
+[4/5] | [shadowspill.plan +  11.642s] model_placeholder_restoration: finished in 0.002s
+[4/5] | [shadowspill.plan +  11.642s] saved_value_resolution: started
+[4/5] | [shadowspill.plan +  11.642s] saved_value_resolution: finished in 0.000s
+[4/5] | [shadowspill.plan +  11.642s] structural artifact inventory: graph=42, optimizer=4, unique=46, profile_variants=46, optimizer_tasks=10
+[4/5] | [shadowspill.plan +  11.642s] compiler_manifest: started
+[4/5] | [shadowspill.plan +  11.642s]   compiled manifest 1/46 cache-miss: 0740dc65b01f
+[4/5] | [shadowspill.plan +  11.642s]   compiled manifest 2/46 cache-miss: 0ce83f062742
+[4/5] | [shadowspill.plan +  11.642s]   compiled manifest 3/46 cache-miss: 0fcc581acfff
+[4/5] | [shadowspill.plan +  11.642s]   compiled manifest 4/46 cache-miss: 1ab065ba6bea
+[4/5] | [shadowspill.plan +  11.642s]   compiled manifest 5/46 cache-miss: 1ba0df555b2b
+[4/5] | [shadowspill.plan +  11.642s]   compiled manifest 6/46 cache-miss: 1df908708d7c
+[4/5] | [shadowspill.plan +  11.642s]   compiled manifest 7/46 cache-miss: 1e1edad17d50
+[4/5] | [shadowspill.plan +  11.642s]   compiled manifest 8/46 cache-miss: 1e8a72568d1c
+[4/5] | [shadowspill.plan +  11.642s]   compiled manifest 9/46 cache-miss: 1f8ebc0af289
+[4/5] | [shadowspill.plan +  11.642s]   compiled manifest 10/46 cache-miss: 27241ad6bb9a
+[4/5] | [shadowspill.plan +  11.642s]   compiled manifest 11/46 cache-miss: 2812af0bc965
+[4/5] | [shadowspill.plan +  11.642s]   compiled manifest 12/46 cache-miss: 313c37f7bdba
+[4/5] | [shadowspill.plan +  11.642s]   compiled manifest 13/46 cache-miss: 431a78898277
+[4/5] | [shadowspill.plan +  11.642s]   compiled manifest 14/46 cache-miss: 508f148f5ba7
+[4/5] | [shadowspill.plan +  11.642s]   compiled manifest 15/46 cache-miss: 5266f12e71bc
+[4/5] | [shadowspill.plan +  11.642s]   compiled manifest 16/46 cache-miss: 5373426c7140
+[4/5] | [shadowspill.plan +  11.642s]   compiled manifest 17/46 cache-miss: 5bc210ae1c38
+[4/5] | [shadowspill.plan +  11.642s]   compiled manifest 18/46 cache-miss: 5d27f5559d19
+[4/5] | [shadowspill.plan +  11.642s]   compiled manifest 19/46 cache-miss: 6354a88dfc5d
+[4/5] | [shadowspill.plan +  11.642s]   compiled manifest 20/46 cache-miss: 69e8061ad68d
+[4/5] | [shadowspill.plan +  11.642s]   compiled manifest 21/46 cache-miss: 77789411cc1a
+[4/5] | [shadowspill.plan +  11.642s]   compiled manifest 22/46 cache-miss: 7e1db62c9cb7
+[4/5] | [shadowspill.plan +  11.642s]   compiled manifest 23/46 cache-miss: 81d2bb3da11f
+[4/5] | [shadowspill.plan +  11.642s]   compiled manifest 24/46 cache-miss: 8a184eb7830f
+[4/5] | [shadowspill.plan +  11.642s]   compiled manifest 25/46 cache-miss: 8b0ad59a7637
+[4/5] | [shadowspill.plan +  11.642s]   compiled manifest 26/46 cache-miss: 8d880a6bde53
+[4/5] | [shadowspill.plan +  11.643s]   compiled manifest 27/46 cache-miss: 8e362e07761c
+[4/5] | [shadowspill.plan +  11.643s]   compiled manifest 28/46 cache-miss: 910bf5d937ae
+[4/5] | [shadowspill.plan +  11.643s]   compiled manifest 29/46 cache-miss: 91937e7e1938
+[4/5] | [shadowspill.plan +  11.643s]   compiled manifest 30/46 cache-miss: 9a75c48da3c3
+[4/5] | [shadowspill.plan +  11.643s]   compiled manifest 31/46 cache-miss: a2e8da8b3bd1
+[4/5] | [shadowspill.plan +  11.643s]   compiled manifest 32/46 cache-miss: a31f80e5be00
+[4/5] | [shadowspill.plan +  11.643s]   compiled manifest 33/46 cache-miss: a72f6746a154
+[4/5] | [shadowspill.plan +  11.643s]   compiled manifest 34/46 cache-miss: ac62b9594828
+[4/5] | [shadowspill.plan +  11.643s]   compiled manifest 35/46 cache-miss: ae66d4e98dcf
+[4/5] | [shadowspill.plan +  11.643s]   compiled manifest 36/46 cache-miss: b19404db336f
+[4/5] | [shadowspill.plan +  11.643s]   compiled manifest 37/46 cache-miss: b6df9fdf0cf2
+[4/5] | [shadowspill.plan +  11.643s]   compiled manifest 38/46 cache-miss: c0564cce5cf5
+[4/5] | [shadowspill.plan +  11.643s]   compiled manifest 39/46 cache-miss: c8371ebf7029
+[4/5] | [shadowspill.plan +  11.643s]   compiled manifest 40/46 cache-miss: d28a6b8c1b87
+[4/5] | [shadowspill.plan +  11.643s]   compiled manifest 41/46 cache-miss: d53d5c2fbaf9
+[4/5] | [shadowspill.plan +  11.643s]   compiled manifest 42/46 cache-miss: d750075c1706
+[4/5] | [shadowspill.plan +  11.643s]   compiled manifest 43/46 cache-miss: e9dedc56e495
+[4/5] | [shadowspill.plan +  11.643s]   compiled manifest 44/46 cache-miss: f15c414d535e
+[4/5] | [shadowspill.plan +  11.643s]   compiled manifest 45/46 cache-miss: f36293ee6ad5
+[4/5] | [shadowspill.plan +  11.643s]   compiled manifest 46/46 cache-miss: f52c86811778
+[4/5] | [shadowspill.plan +  22.699s]   compiled manifest cache: hits=0, misses=46
+[4/5] | [shadowspill.plan +  22.699s] compiler_manifest: finished in 11.057s
+[4/5] | [shadowspill.plan +  22.699s] structural_profiling: started
+[4/5] | [shadowspill.plan +  22.700s]   structural profile 1/46 measuring: 08240d443404
+[4/5] | [shadowspill.plan +  22.753s]   structural profile 2/46 measuring: 10d1f017adb4
+[4/5] | [shadowspill.plan +  23.075s]   structural profile 3/46 measuring: 130997e3246f
+[4/5] | [shadowspill.plan +  23.451s]   structural profile 4/46 measuring: 1366a82b5197
+[4/5] | [shadowspill.plan +  23.693s]   structural profile 5/46 measuring: 16292beed961
+[4/5] | [shadowspill.plan +  24.892s]   structural profile 6/46 measuring: 2c72b68b5634
+[4/5] | [shadowspill.plan +  25.032s]   structural profile 7/46 measuring: 319083c52bfe
+[4/5] | [shadowspill.plan +  25.468s]   structural profile 8/46 measuring: 3687ef676ede
+[4/5] | [shadowspill.plan +  25.632s]   structural profile 9/46 measuring: 3a3c643e6239
+[4/5] | [shadowspill.plan +  74.435s]   structural profile 10/46 measuring: 424781fe82c1
+[4/5] | [shadowspill.plan +  75.059s]   structural profile 11/46 measuring: 4a9c3e64baee
+[4/5] | [shadowspill.plan +  75.592s]   structural profile 12/46 measuring: 4af37ef8973d
+[4/5] | [shadowspill.plan +  75.777s]   structural profile 13/46 measuring: 4de02fde2186
+[4/5] | [shadowspill.plan +  75.888s]   structural profile 14/46 measuring: 5022084a1fb2
+[4/5] | [shadowspill.plan +  75.938s]   structural profile 15/46 measuring: 538e03da2d08
+[4/5] | [shadowspill.plan +  76.226s]   structural profile 16/46 measuring: 56c5d391c90e
+[4/5] | [shadowspill.plan +  76.250s]   structural profile 17/46 measuring: 578e468586f7
+[4/5] | [shadowspill.plan +  76.463s]   structural profile 18/46 measuring: 5fd97ed69a27
+[4/5] | [shadowspill.plan +  76.500s]   structural profile 19/46 measuring: 65c9a6b18597
+[4/5] | [shadowspill.plan +  76.639s]   structural profile 20/46 measuring: 6691e5f3f2d4
+[4/5] | [shadowspill.plan +  76.676s]   structural profile 21/46 measuring: 687afc8079c5
+[4/5] | [shadowspill.plan +  76.844s]   structural profile 22/46 measuring: 6d5a6649700d
+[4/5] | [shadowspill.plan +  77.081s]   structural profile 23/46 measuring: 79f93f17b17b
+[4/5] | [shadowspill.plan +  77.415s]   structural profile 24/46 measuring: 7b4a1be5bbd7
+[4/5] | [shadowspill.plan +  77.574s]   structural profile 25/46 measuring: 8f943ac49e85
+[4/5] | [shadowspill.plan +  78.782s]   structural profile 26/46 measuring: 934897d5b3ed
+[4/5] | [shadowspill.plan +  78.926s]   structural profile 27/46 measuring: 9c3c70499e56
+[4/5] | [shadowspill.plan +  80.132s]   structural profile 28/46 measuring: a1359f0adc09
+[4/5] | [shadowspill.plan +  80.634s]   structural profile 29/46 measuring: ac4e3516a696
+[4/5] | [shadowspill.plan +  81.491s]   structural profile 30/46 measuring: aed541998522
+[4/5] | [shadowspill.plan +  81.986s]   structural profile 31/46 measuring: aed59a149a50
+[4/5] | [shadowspill.plan +  83.148s]   structural profile 32/46 measuring: b29b09eabe5a
+[4/5] | [shadowspill.plan +  83.336s]   structural profile 33/46 measuring: c133b2a12964
+[4/5] | [shadowspill.plan +  83.551s]   structural profile 34/46 measuring: c22722352be9
+[4/5] | [shadowspill.plan +  83.711s]   structural profile 35/46 measuring: c35405ee13ba
+[4/5] | [shadowspill.plan +  83.730s]   structural profile 36/46 measuring: c55382070d23
+[4/5] | [shadowspill.plan +  83.868s]   structural profile 37/46 measuring: c843671c7bfa
+[4/5] | [shadowspill.plan +  83.892s]   structural profile 38/46 measuring: c8903ea4c0d0
+[4/5] | [shadowspill.plan +  84.388s]   structural profile 39/46 measuring: def2be493e17
+[4/5] | [shadowspill.plan +  84.412s]   structural profile 40/46 measuring: e32a9d94c470
+[4/5] | [shadowspill.plan +  84.449s]   structural profile 41/46 measuring: e9b305b01c6e
+[4/5] | [shadowspill.plan +  85.440s]   structural profile 42/46 measuring: e9cfecbca9a1
+[4/5] | [shadowspill.plan +  85.478s]   structural profile 43/46 measuring: efbfd157b466
+[4/5] | [shadowspill.plan +  85.521s]   structural profile 44/46 measuring: f351fd7a6172
+[4/5] | [shadowspill.plan +  86.004s]   structural profile 45/46 measuring: f438de15d61e
+[4/5] | [shadowspill.plan +  86.477s]   structural profile 46/46 measuring: f6b75976f621
+[4/5] | [shadowspill.plan +  86.961s] structural_profiling: finished in 64.263s
+[4/5] | [shadowspill.plan +  86.961s] saved-value snapshots: peak 728.06 MiB (763428864 bytes), live 0 B in the spill pool
+[4/5] | [shadowspill.plan +  86.961s] program_lowering: started
+[4/5] | [shadowspill.plan +  87.003s]   step ShadowSpillProgram inventory: tasks=91, objects=1199, aliases=667, task_alternative_groups=20, largest_workspace=1621623176 (profile_000023)
+[4/5] | [shadowspill.plan +  87.003s] program_lowering: finished in 0.041s
+[4/5] | [shadowspill.plan +  87.003s] admission_facts: started
+[4/5] | [shadowspill.plan +  87.009s] admission_facts: finished in 0.007s
+[4/5] | [shadowspill.plan +  87.009s] feasibility_preflight: started
+[4/5] | [shadowspill.plan +  87.027s] feasibility_preflight: finished in 0.017s
+[4/5] | [shadowspill.plan +  87.027s] search: started
+[4/5] | [shadowspill.plan +  87.034s]   PressureFit resolutions: groups=20, selections=5
+[4/5] | [shadowspill.plan +  87.036s]   PressureFit compiled problem 1/5: tasks=51, aliases=667, elapsed=0.002s
+[4/5] | [shadowspill.plan +  87.038s]   PressureFit compiled problem 2/5: tasks=51, aliases=667, elapsed=0.004s
+[4/5] | [shadowspill.plan +  87.040s]   PressureFit compiled problem 3/5: tasks=51, aliases=667, elapsed=0.006s
+[4/5] | [shadowspill.plan +  87.042s]   PressureFit compiled problem 4/5: tasks=51, aliases=667, elapsed=0.008s
+[4/5] | [shadowspill.plan +  87.044s]   PressureFit compiled problem 5/5: tasks=51, aliases=667, elapsed=0.010s
+[4/5] | [shadowspill.plan +  87.064s]   PressureFit compiled problems and candidates finished: valid=5/5, candidates=80, workers=auto, elapsed=0.030s
+[4/5] | [shadowspill.plan +  87.098s]   fixed layout accepted the search's capacity 9137815272: fixed_slice=6186552072, dynamic_reserve=8, scratch_reserve=2097152, slack=3355488848
+[4/5] | [shadowspill.plan +  87.098s] search: finished in 0.071s
+[4/5] | [shadowspill.plan +  87.099s] compilation: started
+[4/5] | [shadowspill.plan +  87.099s]   selected entrypoint 1/20 warmed: 0740dc65b01f
+[4/5] | [shadowspill.plan +  87.099s]   selected entrypoint 2/20 warmed: 1ab065ba6bea
+[4/5] | [shadowspill.plan +  87.099s]   selected entrypoint 3/20 warmed: 1df908708d7c
+[4/5] | [shadowspill.plan +  87.099s]   selected entrypoint 4/20 warmed: 1f8ebc0af289
+[4/5] | [shadowspill.plan +  87.099s]   selected entrypoint 5/20 warmed: 313c37f7bdba
+[4/5] | [shadowspill.plan +  87.099s]   selected entrypoint 6/20 warmed: 5373426c7140
+[4/5] | [shadowspill.plan +  87.099s]   selected entrypoint 7/20 warmed: 69e8061ad68d
+[4/5] | [shadowspill.plan +  87.099s]   selected entrypoint 8/20 warmed: 7e1db62c9cb7
+[4/5] | [shadowspill.plan +  87.099s]   selected entrypoint 9/20 warmed: 81d2bb3da11f
+[4/5] | [shadowspill.plan +  87.099s]   selected entrypoint 10/20 warmed: 8e362e07761c
+[4/5] | [shadowspill.plan +  87.099s]   selected entrypoint 11/20 warmed: 9a75c48da3c3
+[4/5] | [shadowspill.plan +  87.099s]   selected entrypoint 12/20 warmed: a2e8da8b3bd1
+[4/5] | [shadowspill.plan +  87.099s]   selected entrypoint 13/20 warmed: a31f80e5be00
+[4/5] | [shadowspill.plan +  87.099s]   selected entrypoint 14/20 warmed: a72f6746a154
+[4/5] | [shadowspill.plan +  87.099s]   selected entrypoint 15/20 warmed: ac62b9594828
+[4/5] | [shadowspill.plan +  87.099s]   selected entrypoint 16/20 warmed: c0564cce5cf5
+[4/5] | [shadowspill.plan +  87.099s]   selected entrypoint 17/20 warmed: c8371ebf7029
+[4/5] | [shadowspill.plan +  87.099s]   selected entrypoint 18/20 warmed: d28a6b8c1b87
+[4/5] | [shadowspill.plan +  87.099s]   selected entrypoint 19/20 warmed: d750075c1706
+[4/5] | [shadowspill.plan +  87.099s]   selected entrypoint 20/20 warmed: f36293ee6ad5
+[4/5] | [shadowspill.plan +  87.250s] compilation: finished in 0.152s
+[4/5] | [shadowspill.plan +  87.251s] spill_admission: started
+[4/5] | [shadowspill.plan +  87.251s] spill_admission: finished in 0.000s
+[4/5] | [shadowspill.plan +  87.251s] slab_admission: started
+[4/5] | [shadowspill.plan +  87.268s] slab_admission: finished in 0.017s
+[4/5] | [shadowspill.plan +  87.272s] plan_adoption: started
+[4/5] | [shadowspill.plan +  87.293s] plan_adoption: finished in 0.021s
+[4/5] | [shadowspill.plan +  87.293s] physical_sealing: started
+[4/5] | [shadowspill.plan +  87.296s] physical_sealing: finished in 0.003s
+[4/5] | [shadowspill.plan +  87.296s] callable_construction: started
+[4/5] | [shadowspill.plan +  87.317s] callable_construction: finished in 0.021s
+[4/5] | [shadowspill.plan +  87.317s] diagnostic_inventory: started
+[4/5] | [shadowspill.plan +  87.344s] diagnostic_inventory: finished in 0.027s
+[4/5] | planned mlops/qwen35: total=87.392s lowering_aot=8.391s optimizer_capture=3.241s saved_value_resolution=0.000s compiled_entrypoint_construction=10.808s profiling=63.486s search=0.071s other=1.396s
+[4/5] | simulator predicts mlops/qwen35: 0.4095 s/step, 390.75 tokens/s (planned with: fetch 25.5 GB/s, evict 26.0 GB/s; measured solo: fetch 39.0 GB/s, evict 55.1 GB/s; concurrent: fetch 25.6 GB/s, evict 26.0 GB/s); unconstrained throughput 0.0632 s/step, 2529.89 tokens/s
+[4/5] | shadowspill mlops/qwen35 step 1/5: 0.302s
+[4/5] | shadowspill mlops/qwen35 step 2/5: 0.301s
+[4/5] | shadowspill mlops/qwen35 step 3/5: 0.302s
+[4/5] | shadowspill mlops/qwen35 step 4/5: 0.554s
+[4/5] | shadowspill mlops/qwen35 step 5/5: 0.303s
+[4/5] | shadowspill mlops/qwen35 replay 1/2: 0.302s
+[4/5] | shadowspill mlops/qwen35 replay 2/2: 0.300s
+[4/5] | shadowspill mlops/qwen35 final state captured and digested: 4.958s
+[4/5] | /home/shein/Documents/grad_school/research/shadowspill/src/shadowspill/pytorch/callables.py:1023: RuntimeWarning: closing this callable reclaimed 0 allocation(s) that its own scopes made and nothing released, detaching 8 storage(s) first:
+[4/5] |   offset=97514496 bytes=24 workspace from plan 1 task 3, occupied by Tensor(3,) referenced from tuple[2]
+[4/5] |   offset=97514752 bytes=24 workspace from plan 1 task 3, occupied by Tensor(3,) referenced from tuple[2]
+[4/5] |   offset=97515776 bytes=24 workspace from plan 1 task 43, occupied by Tensor(3,) referenced from tuple[2]
+[4/5] |   offset=97516032 bytes=32 workspace from plan 1 task 3, occupied by Tensor(4,) referenced from tuple[2]
+[4/5] |   offset=97516288 bytes=32 workspace from plan 1 task 43, occupied by Tensor(4,) referenced from tuple[2]
+[4/5] |   offset=97606400 bytes=32 workspace from plan 1 task 43, occupied by Tensor(4,) referenced from tuple[2]
+[4/5] |   offset=97606656 bytes=32 workspace from plan 1 task 3, occupied by Tensor(4,) referenced from tuple[2]
+[4/5] |   offset=97606912 bytes=24 workspace from plan 1 task 43, occupied by Tensor(3,) referenced from tuple[2]
+[4/5] |   operation()
+[4/5] | shadowspill mlops/qwen35 callable and runtime closed: 1.366s
+[4/5] | shadowspill mlops/qwen35 reference loaded from /mnt/storage/research/shadowspill/qualification/fp8_representation_1006_refreshed/references/qwen35/mlops/reference.pt: 19.660s
+[4/5] | shadowspill mlops/qwen35 comparing model and optimizer state against the reference, tensor by tensor
+[4/5] | shadowspill mlops/qwen35 compared 295 tensors: 24.251s
+[4/5] | shadowspill mlops/qwen35 comparing the checkpoint-replayed state against the uninterrupted run, tensor by tensor
+[4/5] | shadowspill mlops/qwen35 compared 296 replayed tensors: 24.229s
+[4/5] | shadowspill mlops/qwen35 assembling the case artifact: diagnostics, plan records, and the state digests
+[4/5] | shadowspill mlops/qwen35 wrote mlops_qwen35.json, 0 failure(s): 6.746s
+CASE PASS [4/5] mlops_qwen35
+  ARTIFACT: /home/shein/Documents/grad_school/research/shadowspill/qualification/results/numerical_lora_models_1008/mlops_qwen35.json
+  START: 2026-10-08T12:05:55+00:00
+  STOP: 2026-10-08T12:09:08+00:00
+  DURATION: 193.057 seconds
+
+CASE START [5/5] mlops_olmoe
+  MODEL: mlops/olmoe
+  DEVICE BUDGET: 8.000 GiB (8589934592 bytes)
+  EXTERNAL HEADROOM: 512 MiB (reserved for pool sizing)
+  REJECT OVERBUDGET: False
+  DTYPES: model=bfloat16, masters=none, gradients=bfloat16, optimizer state=bfloat16
+  MODEL CONFIG: {}
+  REFERENCE: /mnt/storage/research/shadowspill/qualification/fp8_representation_1006_refreshed/references/olmoe/mlops/reference.pt (reusing canonical)
+  LOG: /home/shein/Documents/grad_school/research/shadowspill/qualification/results/numerical_lora_models_1008/mlops_olmoe.log
+  START: 2026-10-08T12:09:08+00:00
+[5/5] | PHASE: planned parity, checkpoint replay, and physical budgets
+[5/5] | DTYPES: model=bfloat16, masters=none, gradients=bfloat16, optimizer state=bfloat16
+[5/5] | [shadowspill.plan +   0.000s] validation: started
+[5/5] | [shadowspill.plan +   0.001s] validation: finished in 0.001s
+[5/5] | [shadowspill.plan +   0.001s] runtime_binding: started
+[5/5] | [shadowspill.plan +   0.001s] runtime_binding: finished in 0.000s
+[5/5] | [shadowspill.plan +   0.001s] capture_lowering: started
+[5/5] | [shadowspill.plan +   0.045s]   objective_export: started
+[5/5] | [shadowspill.plan +   8.757s]   objective_export: finished in 8.711s
+[5/5] | [shadowspill.plan +   8.757s]   export_archival: started
+[5/5] | /home/shein/miniconda3/envs/shadowspill/lib/python3.12/copyreg.py:99: FutureWarning: `isinstance(treespec, LeafSpec)` is deprecated, use `isinstance(treespec, TreeSpec) and treespec.is_leaf()` instead.
+[5/5] |   return cls.__new__(cls, *args)
+[5/5] | /home/shein/miniconda3/envs/shadowspill/lib/python3.12/copyreg.py:99: FutureWarning: `isinstance(treespec, LeafSpec)` is deprecated, use `isinstance(treespec, TreeSpec) and treespec.is_leaf()` instead.
+[5/5] |   return cls.__new__(cls, *args)
+[5/5] | [shadowspill.plan +   9.302s]   export_archival: finished in 0.546s
+[5/5] | [shadowspill.plan +   9.304s]   stage_partition_aot: started
+[5/5] | [shadowspill.plan +  11.609s]   stage_partition_aot: finished in 2.305s
+[5/5] | [shadowspill.plan +  11.609s]   storage_layout_lowering: started
+[5/5] | [shadowspill.plan +  11.611s]   storage_layout_lowering: finished in 0.002s
+[5/5] | [shadowspill.plan +  11.611s] capture_lowering: finished in 11.610s
+[5/5] | [shadowspill.plan +  11.611s] model_materialization: started
+[5/5] | [shadowspill.plan +  11.626s] model_materialization: finished in 0.014s
+[5/5] | [shadowspill.plan +  11.626s] optimizer_capture: started
+[5/5] | [shadowspill.plan +  11.628s]   optimizer_state_install: started
+[5/5] | [shadowspill.plan +  12.154s]   optimizer_state_install: finished in 0.525s
+[5/5] | [shadowspill.plan +  12.154s]   optimizer_discovery: started
+[5/5] | [shadowspill.plan +  12.182s]   optimizer_discovery: finished in 0.028s
+[5/5] | [shadowspill.plan +  12.237s]   optimizer_trace: started
+[5/5] | [shadowspill.plan +  17.128s]   optimizer_trace: finished in 4.891s
+[5/5] | [shadowspill.plan +  17.399s] optimizer_capture: finished in 5.773s
+[5/5] | [shadowspill.plan +  17.399s] optimizer_state_import: started
+[5/5] | [shadowspill.plan +  17.399s] optimizer_state_import: finished in 0.000s
+[5/5] | [shadowspill.plan +  17.399s] model_placeholder_restoration: started
+[5/5] | [shadowspill.plan +  17.403s] model_placeholder_restoration: finished in 0.004s
+[5/5] | [shadowspill.plan +  17.403s] saved_value_resolution: started
+[5/5] | [shadowspill.plan +  17.403s] saved_value_resolution: finished in 0.000s
+[5/5] | [shadowspill.plan +  17.403s] structural artifact inventory: graph=38, optimizer=3, unique=41, profile_variants=41, optimizer_tasks=18
+[5/5] | [shadowspill.plan +  17.403s] compiler_manifest: started
+[5/5] | [shadowspill.plan +  17.403s]   compiled manifest 1/41 cache-miss: 0accac72909b
+[5/5] | [shadowspill.plan +  17.403s]   compiled manifest 2/41 cache-miss: 183fb37fb3a8
+[5/5] | [shadowspill.plan +  17.403s]   compiled manifest 3/41 cache-miss: 1b6d62a807b2
+[5/5] | [shadowspill.plan +  17.403s]   compiled manifest 4/41 cache-miss: 225be34f0e09
+[5/5] | [shadowspill.plan +  17.403s]   compiled manifest 5/41 cache-miss: 2364432a12c5
+[5/5] | [shadowspill.plan +  17.403s]   compiled manifest 6/41 cache-miss: 2dfcdc54f3ac
+[5/5] | [shadowspill.plan +  17.403s]   compiled manifest 7/41 cache-miss: 3f12d9bf598e
+[5/5] | [shadowspill.plan +  17.403s]   compiled manifest 8/41 cache-miss: 456052bc6914
+[5/5] | [shadowspill.plan +  17.403s]   compiled manifest 9/41 cache-miss: 4d809c48600e
+[5/5] | [shadowspill.plan +  17.403s]   compiled manifest 10/41 cache-miss: 5184564497ce
+[5/5] | [shadowspill.plan +  17.403s]   compiled manifest 11/41 cache-miss: 58860eb600b0
+[5/5] | [shadowspill.plan +  17.403s]   compiled manifest 12/41 cache-miss: 5bab078ee8bc
+[5/5] | [shadowspill.plan +  17.403s]   compiled manifest 13/41 cache-miss: 5c6bae73cc3c
+[5/5] | [shadowspill.plan +  17.404s]   compiled manifest 14/41 cache-miss: 6ed5a5f59400
+[5/5] | [shadowspill.plan +  17.404s]   compiled manifest 15/41 cache-miss: 6f770d865c54
+[5/5] | [shadowspill.plan +  17.404s]   compiled manifest 16/41 cache-miss: 723888ac7436
+[5/5] | [shadowspill.plan +  17.404s]   compiled manifest 17/41 cache-miss: 8267d1364a9e
+[5/5] | [shadowspill.plan +  17.404s]   compiled manifest 18/41 cache-miss: 8996826b4653
+[5/5] | [shadowspill.plan +  17.404s]   compiled manifest 19/41 cache-miss: 932745ce457f
+[5/5] | [shadowspill.plan +  17.404s]   compiled manifest 20/41 cache-miss: 93564b4c699f
+[5/5] | [shadowspill.plan +  17.404s]   compiled manifest 21/41 cache-miss: 94ae266f7127
+[5/5] | [shadowspill.plan +  17.404s]   compiled manifest 22/41 cache-miss: 98edb7a9c414
+[5/5] | [shadowspill.plan +  17.404s]   compiled manifest 23/41 cache-miss: 9c60a40f5084
+[5/5] | [shadowspill.plan +  17.404s]   compiled manifest 24/41 cache-miss: a33f65b5ec58
+[5/5] | [shadowspill.plan +  17.404s]   compiled manifest 25/41 cache-miss: a6412aa24fd5
+[5/5] | [shadowspill.plan +  17.404s]   compiled manifest 26/41 cache-miss: a6a259fa01d4
+[5/5] | [shadowspill.plan +  17.404s]   compiled manifest 27/41 cache-miss: a6eeb76764ff
+[5/5] | [shadowspill.plan +  17.404s]   compiled manifest 28/41 cache-miss: ad09e615fe2e
+[5/5] | [shadowspill.plan +  17.404s]   compiled manifest 29/41 cache-miss: b060353d0592
+[5/5] | [shadowspill.plan +  17.404s]   compiled manifest 30/41 cache-miss: b809fa049cc1
+[5/5] | [shadowspill.plan +  17.404s]   compiled manifest 31/41 cache-miss: bb43df163cdc
+[5/5] | [shadowspill.plan +  17.404s]   compiled manifest 32/41 cache-miss: c007bc3c7250
+[5/5] | [shadowspill.plan +  17.404s]   compiled manifest 33/41 cache-miss: c0445d0ac163
+[5/5] | [shadowspill.plan +  17.404s]   compiled manifest 34/41 cache-miss: c42845567c5d
+[5/5] | [shadowspill.plan +  17.404s]   compiled manifest 35/41 cache-miss: db3bc3ec21f4
+[5/5] | [shadowspill.plan +  17.404s]   compiled manifest 36/41 cache-miss: dea81afda51f
+[5/5] | [shadowspill.plan +  17.404s]   compiled manifest 37/41 cache-miss: ecb451b68415
+[5/5] | [shadowspill.plan +  17.404s]   compiled manifest 38/41 cache-miss: f0d2b662ac7b
+[5/5] | [shadowspill.plan +  17.404s]   compiled manifest 39/41 cache-miss: f1a32e8c1ae5
+[5/5] | [shadowspill.plan +  17.404s]   compiled manifest 40/41 cache-miss: f49990e7fd8b
+[5/5] | [shadowspill.plan +  17.404s]   compiled manifest 41/41 cache-miss: f512c02e823e
+[5/5] | [shadowspill.plan +  25.219s]   compiled manifest cache: hits=0, misses=41
+[5/5] | [shadowspill.plan +  25.219s] compiler_manifest: finished in 7.816s
+[5/5] | [shadowspill.plan +  25.219s] structural_profiling: started
+[5/5] | [shadowspill.plan +  25.220s]   structural profile 1/41 measuring: 00842d1e9fc0
+[5/5] | [shadowspill.plan +  25.769s]   structural profile 2/41 measuring: 0ca6c47b6402
+[5/5] | [shadowspill.plan +  25.919s]   structural profile 3/41 measuring: 0f753ef31008
+[5/5] | [shadowspill.plan +  25.951s]   structural profile 4/41 measuring: 150b2be803c9
+[5/5] | [shadowspill.plan +  25.987s]   structural profile 5/41 measuring: 186e60b35616
+[5/5] | [shadowspill.plan +  27.454s]   structural profile 6/41 measuring: 1b01f67bf803
+[5/5] | [shadowspill.plan +  27.708s]   structural profile 7/41 measuring: 2684baa70ca9
+[5/5] | [shadowspill.plan +  28.357s]   structural profile 8/41 measuring: 2797f4219305
+[5/5] | [shadowspill.plan +  28.386s]   structural profile 9/41 measuring: 2d630225b03b
+[5/5] | [shadowspill.plan +  28.934s]   structural profile 10/41 measuring: 3820c8f18f6a
+[5/5] | [shadowspill.plan +  28.989s]   structural profile 11/41 measuring: 386224dc9cc5
+[5/5] | [shadowspill.plan +  29.516s]   structural profile 12/41 measuring: 3d0be5697788
+[5/5] | [shadowspill.plan +  29.678s]   structural profile 13/41 measuring: 4312967a0c55
+[5/5] | [shadowspill.plan +  30.179s]   structural profile 14/41 measuring: 464b02233f11
+[5/5] | [shadowspill.plan +  30.207s]   structural profile 15/41 measuring: 4cd456f6ceb8
+[5/5] | [shadowspill.plan +  30.695s]   structural profile 16/41 measuring: 66f6e8178b74
+[5/5] | [shadowspill.plan +  30.709s]   structural profile 17/41 measuring: 698bb13f714a
+[5/5] | [shadowspill.plan +  30.870s]   structural profile 18/41 measuring: 7417e3914b30
+[5/5] | [shadowspill.plan +  31.384s]   structural profile 19/41 measuring: 7c75d1c2d03b
+[5/5] | [shadowspill.plan +  31.426s]   structural profile 20/41 measuring: 80a95f648ef6
+[5/5] | [shadowspill.plan +  31.926s]   structural profile 21/41 measuring: 82513d93e60b
+[5/5] | [shadowspill.plan +  32.162s]   structural profile 22/41 measuring: 84bce2f95ee6
+[5/5] | [shadowspill.plan +  32.173s]   structural profile 23/41 measuring: 85391305dafb
+[5/5] | [shadowspill.plan +  32.206s]   structural profile 24/41 measuring: 8a9376639edd
+[5/5] | [shadowspill.plan +  32.241s]   structural profile 25/41 measuring: a6218e31f846
+[5/5] | [shadowspill.plan +  32.392s]   structural profile 26/41 measuring: a6941c045931
+[5/5] | [shadowspill.plan +  32.554s]   structural profile 27/41 measuring: ab19228083a1
+[5/5] | [shadowspill.plan +  32.567s]   structural profile 28/41 measuring: b122242d4f3e
+[5/5] | [shadowspill.plan +  32.715s]   structural profile 29/41 measuring: ba945635ecd5
+[5/5] | [shadowspill.plan +  32.776s]   structural profile 30/41 measuring: c10e382ee8f4
+[5/5] | [shadowspill.plan +  32.819s]   structural profile 31/41 measuring: d6bf5943ce05
+[5/5] | [shadowspill.plan +  32.968s]   structural profile 32/41 measuring: d7962f54aa66
+[5/5] | [shadowspill.plan +  33.456s]   structural profile 33/41 measuring: d7f0da7318fe
+[5/5] | [shadowspill.plan +  33.648s]   structural profile 34/41 measuring: e612bbbd4988
+[5/5] | [shadowspill.plan +  33.679s]   structural profile 35/41 measuring: ea006134a2a7
+[5/5] | [shadowspill.plan +  33.721s]   structural profile 36/41 measuring: edc3c8c6f76d
+[5/5] | [shadowspill.plan +  33.762s]   structural profile 37/41 measuring: f3a7cffec128
+[5/5] | [shadowspill.plan +  33.997s]   structural profile 38/41 measuring: f6bbf2b8ba56
+[5/5] | [shadowspill.plan +  34.179s]   structural profile 39/41 measuring: f8234ff0c0c5
+[5/5] | [shadowspill.plan +  34.208s]   structural profile 40/41 measuring: fdf1cfd7e596
+[5/5] | [shadowspill.plan +  34.696s]   structural profile 41/41 measuring: ffb6c9f24b57
+[5/5] | [shadowspill.plan +  34.724s] structural_profiling: finished in 9.505s
+[5/5] | [shadowspill.plan +  34.724s] saved-value snapshots: peak 98.62 MiB (103415808 bytes), live 0 B in the spill pool
+[5/5] | [shadowspill.plan +  34.724s] program_lowering: started
+[5/5] | [shadowspill.plan +  34.823s]   step ShadowSpillProgram inventory: tasks=163, objects=2439, aliases=1399, task_alternative_groups=36, largest_workspace=225755528 (profile_000019)
+[5/5] | [shadowspill.plan +  34.823s] program_lowering: finished in 0.099s
+[5/5] | [shadowspill.plan +  34.823s] admission_facts: started
+[5/5] | [shadowspill.plan +  35.106s] admission_facts: finished in 0.283s
+[5/5] | [shadowspill.plan +  35.106s] feasibility_preflight: started
+[5/5] | [shadowspill.plan +  35.149s] feasibility_preflight: finished in 0.043s
+[5/5] | [shadowspill.plan +  35.149s] search: started
+[5/5] | [shadowspill.plan +  35.169s]   PressureFit resolutions: groups=36, selections=5
+[5/5] | [shadowspill.plan +  35.174s]   PressureFit compiled problem 1/5: tasks=91, aliases=1399, elapsed=0.005s
+[5/5] | [shadowspill.plan +  35.178s]   PressureFit compiled problem 2/5: tasks=91, aliases=1399, elapsed=0.009s
+[5/5] | [shadowspill.plan +  35.183s]   PressureFit compiled problem 3/5: tasks=91, aliases=1399, elapsed=0.013s
+[5/5] | [shadowspill.plan +  35.187s]   PressureFit compiled problem 4/5: tasks=91, aliases=1399, elapsed=0.018s
+[5/5] | [shadowspill.plan +  35.191s]   PressureFit compiled problem 5/5: tasks=91, aliases=1399, elapsed=0.022s
+[5/5] | [shadowspill.plan +  35.247s]   PressureFit compiled problems and candidates finished: valid=5/5, candidates=80, workers=auto, elapsed=0.077s
+[5/5] | [shadowspill.plan +  35.326s]   fixed layout accepted the search's capacity 7085539720: fixed_slice=4580108552, dynamic_reserve=8, scratch_reserve=0, slack=2816546544
+[5/5] | [shadowspill.plan +  35.326s] search: finished in 0.177s
+[5/5] | [shadowspill.plan +  35.327s] compilation: started
+[5/5] | [shadowspill.plan +  35.327s]   selected entrypoint 1/17 warmed: 225be34f0e09
+[5/5] | [shadowspill.plan +  35.327s]   selected entrypoint 2/17 warmed: 456052bc6914
+[5/5] | [shadowspill.plan +  35.327s]   selected entrypoint 3/17 warmed: 5184564497ce
+[5/5] | [shadowspill.plan +  35.327s]   selected entrypoint 4/17 warmed: 5c6bae73cc3c
+[5/5] | [shadowspill.plan +  35.327s]   selected entrypoint 5/17 warmed: 6ed5a5f59400
+[5/5] | [shadowspill.plan +  35.327s]   selected entrypoint 6/17 warmed: 6f770d865c54
+[5/5] | [shadowspill.plan +  35.327s]   selected entrypoint 7/17 warmed: 723888ac7436
+[5/5] | [shadowspill.plan +  35.327s]   selected entrypoint 8/17 warmed: 98edb7a9c414
+[5/5] | [shadowspill.plan +  35.327s]   selected entrypoint 9/17 warmed: a33f65b5ec58
+[5/5] | [shadowspill.plan +  35.327s]   selected entrypoint 10/17 warmed: a6412aa24fd5
+[5/5] | [shadowspill.plan +  35.327s]   selected entrypoint 11/17 warmed: a6eeb76764ff
+[5/5] | [shadowspill.plan +  35.327s]   selected entrypoint 12/17 warmed: ad09e615fe2e
+[5/5] | [shadowspill.plan +  35.327s]   selected entrypoint 13/17 warmed: b809fa049cc1
+[5/5] | [shadowspill.plan +  35.327s]   selected entrypoint 14/17 warmed: bb43df163cdc
+[5/5] | [shadowspill.plan +  35.327s]   selected entrypoint 15/17 warmed: dea81afda51f
+[5/5] | [shadowspill.plan +  35.327s]   selected entrypoint 16/17 warmed: f0d2b662ac7b
+[5/5] | [shadowspill.plan +  35.327s]   selected entrypoint 17/17 warmed: f1a32e8c1ae5
+[5/5] | [shadowspill.plan +  35.362s] compilation: finished in 0.035s
+[5/5] | [shadowspill.plan +  35.362s] spill_admission: started
+[5/5] | [shadowspill.plan +  35.362s] spill_admission: finished in 0.000s
+[5/5] | [shadowspill.plan +  35.362s] slab_admission: started
+[5/5] | [shadowspill.plan +  35.412s] slab_admission: finished in 0.049s
+[5/5] | [shadowspill.plan +  35.418s] plan_adoption: started
+[5/5] | [shadowspill.plan +  35.473s] plan_adoption: finished in 0.054s
+[5/5] | [shadowspill.plan +  35.473s] physical_sealing: started
+[5/5] | [shadowspill.plan +  35.478s] physical_sealing: finished in 0.005s
+[5/5] | [shadowspill.plan +  35.478s] callable_construction: started
+[5/5] | [shadowspill.plan +  35.524s] callable_construction: finished in 0.045s
+[5/5] | [shadowspill.plan +  35.524s] diagnostic_inventory: started
+[5/5] | [shadowspill.plan +  35.579s] diagnostic_inventory: finished in 0.055s
+[5/5] | planned mlops/olmoe: total=35.647s lowering_aot=11.610s optimizer_capture=5.773s saved_value_resolution=0.000s compiled_entrypoint_construction=7.593s profiling=9.096s search=0.177s other=1.398s
+[5/5] | simulator predicts mlops/olmoe: 0.3492 s/step, 458.18 tokens/s (planned with: fetch 25.5 GB/s, evict 26.0 GB/s; measured solo: fetch 33.7 GB/s, evict 44.9 GB/s; concurrent: fetch 25.6 GB/s, evict 25.9 GB/s); unconstrained throughput 0.0889 s/step, 1799.25 tokens/s
+[5/5] | shadowspill mlops/olmoe step 1/5: 0.324s
+[5/5] | shadowspill mlops/olmoe step 2/5: 0.324s
+[5/5] | shadowspill mlops/olmoe step 3/5: 0.322s
+[5/5] | shadowspill mlops/olmoe step 4/5: 0.324s
+[5/5] | shadowspill mlops/olmoe step 5/5: 0.559s
+[5/5] | shadowspill mlops/olmoe replay 1/2: 0.322s
+[5/5] | shadowspill mlops/olmoe replay 2/2: 0.320s
+[5/5] | shadowspill mlops/olmoe final state captured and digested: 5.172s
+[5/5] | shadowspill mlops/olmoe callable and runtime closed: 0.822s
+[5/5] | shadowspill mlops/olmoe reference loaded from /mnt/storage/research/shadowspill/qualification/fp8_representation_1006_refreshed/references/olmoe/mlops/reference.pt: 32.883s
+[5/5] | shadowspill mlops/olmoe comparing model and optimizer state against the reference, tensor by tensor
+[5/5] | shadowspill mlops/olmoe compared 541 tensors: 23.211s
+[5/5] | shadowspill mlops/olmoe comparing the checkpoint-replayed state against the uninterrupted run, tensor by tensor
+[5/5] | shadowspill mlops/olmoe compared 542 replayed tensors: 23.364s
+[5/5] | shadowspill mlops/olmoe assembling the case artifact: diagnostics, plan records, and the state digests
+[5/5] | shadowspill mlops/olmoe wrote mlops_olmoe.json, 0 failure(s): 7.000s
+CASE PASS [5/5] mlops_olmoe
+  ARTIFACT: /home/shein/Documents/grad_school/research/shadowspill/qualification/results/numerical_lora_models_1008/mlops_olmoe.json
+  START: 2026-10-08T12:09:08+00:00
+  STOP: 2026-10-08T12:11:41+00:00
+  DURATION: 153.195 seconds
+
+MATRIX PASS
+  CASES PASSED: 5/5
+  SUMMARY: /home/shein/Documents/grad_school/research/shadowspill/qualification/results/numerical_lora_models_1008/summary.json
+  STOP: 2026-10-08T12:11:41+00:00
+  DURATION: 903.767 seconds
+[08:11:41] numerical: passed in 15.1 min, log qualification/results/gates_lora_models_1008/numerical.log
+
+****************** END OF NUMERICAL GATE [passed, 15.1 min] ******************
+
+
+
+gates lora_models_1008
+  suite      PASS          8.6 min  qualification/results/gates_lora_models_1008/suite.log
+    1238 passed, 1 skipped
+  numerical  PASS         15.1 min  qualification/results/gates_lora_models_1008/numerical.log
+    5/5 cells passed

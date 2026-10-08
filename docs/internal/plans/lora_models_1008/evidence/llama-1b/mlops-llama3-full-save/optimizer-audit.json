@@ -1,0 +1,18 @@
+{
+  "status": "passed",
+  "case": "mlops-llama3-full-save",
+  "source_program": "/home/shein/Documents/grad_school/research/shadowspill/docs/internal/plans/lora_models_1008/evidence/llama-1b/mlops-llama3-full-save/artifacts/v1/planning/programs/71/71a362b5e89242d198adf3b232a226f99fc6e041e31b964b94cc734fca8848b8/program.json",
+  "trainable_parameters": 1179699200,
+  "trainable_tensors": 111,
+  "optimizer_input_bytes": {
+    "parameter": 2359398400,
+    "gradient": 4718796800,
+    "optimizer_state": 9437594488
+  },
+  "expected_bytes": {
+    "parameter": 2359398400,
+    "gradient": 4718796800,
+    "optimizer_state": 9437594488
+  },
+  "explanation": "BF16 full weights or FP32 LoRA factors, FP32 gradients, two FP32 AdamW moments and one int64 step per trainable tensor. No frozen-weight optimizer state or optimizer gradient inputs."
+}
