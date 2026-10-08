@@ -20,10 +20,15 @@ parser.add_argument(
         "sweep-whole",
         "capture-control",
         "llama",
+        "bias",
+        "alias",
+        "compiler",
+        "suite",
     ),
 )
 parser.add_argument("--world-size", type=int, choices=(2, 4), default=2)
 parser.add_argument("--no-symmetric-planning", action="store_true")
+parser.add_argument("--probe-args", nargs=argparse.REMAINDER, default=[])
 args = parser.parse_args()
 root = Path.home() / "shadowspill"
 plan = root / "docs/internal/plans/qwen_moe_ep8_1007"
@@ -66,6 +71,13 @@ for minor in selected:
     command += ["--device", f"/dev/nvidia{minor}"]
 for device in ("/dev/nvidiactl", "/dev/nvidia-uvm"):
     command += ["--device", device]
+for path in (
+    "/usr/bin/git",
+    "/usr/lib/git-core",
+    "/usr/share/git-core",
+    "/usr/bin/nvidia-smi",
+):
+    command += ["--volume", f"{path}:{path}:ro"]
 for name in (
     "libnvidia-ml.so.1",
     "libcuda.so.1",
@@ -106,13 +118,42 @@ command += [
     str(env / "bin/python"),
     "-u",
     "-m",
-    "torch.distributed.run",
-    "--nnodes=1",
-    f"--nproc-per-node={args.world_size}",
-    "--master-addr=127.0.0.1",
-    f"--master-port={port}",
 ]
-if args.mode == "llama":
+if args.mode == "suite":
+    command += ["qualification.gates", "suite", "--run", "bias_functionalization_1008"]
+elif args.mode == "compiler":
+    command += [
+        "pytest",
+        "-o",
+        "addopts=",
+        "-q",
+        "tests/shadowspill/pytorch/compilation",
+    ]
+else:
+    command += [
+        "torch.distributed.run",
+        "--nnodes=1",
+        f"--nproc-per-node={args.world_size}",
+        "--master-addr=127.0.0.1",
+        f"--master-port={port}",
+    ]
+if args.mode in ("suite", "compiler"):
+    pass
+elif args.mode in ("bias", "alias"):
+    output = validation_root / (
+        args.mode + "-" + datetime.now(UTC).strftime("%Y%m%dT%H%M%S")
+    )
+    command += [
+        str(
+            plan
+            / "scripts/fatnode"
+            / ("bias_probe.py" if args.mode == "bias" else "alias_repro.py")
+        ),
+        "--out",
+        str(output),
+        *args.probe_args,
+    ]
+elif args.mode == "llama":
     label = "llama-symmetric" if not args.no_symmetric_planning else "llama-independent"
     output = validation_root / (
         label + "-" + datetime.now(UTC).strftime("%Y%m%dT%H%M%S")
@@ -186,7 +227,7 @@ try:
         command,
         timeout=180
         if args.mode == "health"
-        else (5400 if args.mode == "llama" else 900),
+        else (5400 if args.mode in ("llama", "suite") else 900),
     ).returncode
 except subprocess.TimeoutExpired:
     subprocess.run(

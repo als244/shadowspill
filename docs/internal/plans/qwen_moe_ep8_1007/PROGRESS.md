@@ -207,3 +207,47 @@ path would introduce global barriers between tasks during real execution.
   fatnode, Tubingen, and Chicago, then investigating the small-model bias issue.
 - Publishing the validated snapshot first. The investigation will start from
   that shared revision; no extra branches or worktrees are being created.
+
+- Published commits `cb739bab`, `40ab9403`, `9f6d65f2`, and `8dc458c9`.
+  All four ShadowSpill checkouts reached `8dc458c9`; MLOps is `25972fb` on all
+  machines. `evidence/rollout.json` records the paths and full revisions.
+  Fatnode's GitHub DNS failed, so identical commits were fetched via a bundle
+  from Della. Its local test copy was verified byte-for-byte before updating.
+- Chicago's editable MLOps installation pointed at a directory the user had
+  moved under `old_research`. Reinstalled that editable binding at its current
+  location; imports now work. No source or dependency versions changed.
+- Reproduced the DP4 failure with detailed snapshots and without metric logging.
+  Found an intermediate alias overwritten by Inductor scratch reuse. Our direct
+  compiler normalization had omitted functionalization. A standalone tensor
+  reproducer confirms the issue without the runtime pool or communication.
+- Added generic functional normalization, including opaque mutable operators
+  and shared bases for aliased inputs. The original DP4 oracle now passes with
+  max parameter error 2.98e-8. CPU regression probes pass; broader GPU compiler
+  and gate validation is underway. Details and prototype limitations are in
+  `DP4_BIAS.md`.
+
+- All 34 compiler tests pass on the GPU container. DP4 recompute and the
+  independent-planning control also pass on all ranks, including checkpoint
+  replay/restoration; maximum parameter errors are 2.98e-8 and 3.73e-8.
+  Per-rank summaries are saved in `evidence/bias_validation.json`.
+- The full suite initially failed collection because the minimal container
+  lacked Git. Mounted Git tools read-only and reran the unchanged suite; CPU
+  canaries and the initial GPU canaries pass, with the rest still running.
+- Chicago's MLOps directory is now back at `research/mlops`. Rebound its editable
+  installation to that existing checkout and verified imports again. Its source
+  remains at `25972fb`; no dependencies or repository content changed.
+
+### Compiler validation complete
+
+- `qualification.gates suite --run bias_functionalization_1008` passed on
+  fatnode: 1,167 passed, one skipped, 38 fresh-process tests deselected from the
+  outer pytest run; all 20 CPU and 51 GPU CTest canaries pass. Duration 22 minutes.
+  The suite includes four distributed oracle configurations, represented
+  parameters under save/recompute, and packed-parameter gradients.
+- Production change is one 96-line compiler helper and its normalization call.
+  Its longest routine is 40 lines including nested functions and documentation.
+  Optimizer/distributed math and runtime code are unchanged. The new regression
+  tests and lowering documentation are included with the compiler fix.
+- Preparing the two approved follow-up commits (groups 5/6) for push and rollout
+  to all four existing master checkouts. No branches or worktrees are added.
+  The Della EP8 allocation remains pending, with its 10-second watcher active.

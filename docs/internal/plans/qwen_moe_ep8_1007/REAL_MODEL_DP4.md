@@ -112,15 +112,19 @@ python3 docs/internal/plans/qwen_moe_ep8_1007/scripts/fatnode/container.py llama
 These create fresh timestamped output directories and use the preserved,
 verified original inputs. They do not overwrite old runs or source data.
 
-## Separate unresolved small-model failure
+## Separate small-model failure and subsequent correction
 
 The earlier four-rank, two-linear-layer test failed on a nine-element bias
 after its first update, with and without symmetric planning. Maximum errors
-were 3.3568 and 1.7034, respectively, far beyond rounding. This remains a real
-unresolved failure; its cause has not been established. The earlier two-rank
+were 3.3568 and 1.7034, respectively, far beyond rounding. The earlier two-rank
 version passed. Both four-rank failing cases use the ordinary torch AdamW
 path with parameter metrics; Llama uses MLOps AdamW and FP32 masters.
 
-Logs: `logs/fatnode/dp4/{auto,auto-control}.log`. Do not generalize the successful
-Llama result to that configuration or mark the small-model failure resolved.
-This test required no new production code changes. No commits were made.
+Logs: `logs/fatnode/dp4/{auto,auto-control}.log`. The Llama validation itself
+required no production changes and did not resolve that failure.
+
+The subsequent October 8 investigation isolated missing functionalization in
+direct task compilation. Inductor overwrote an updated bias through scratch
+reuse of an intermediate alias. A generic compiler correction passes the
+original DP4 oracle, save/recompute, and independent-planning controls. See
+[DP4_BIAS.md](DP4_BIAS.md) for the reproduction, precise cause, and validation.

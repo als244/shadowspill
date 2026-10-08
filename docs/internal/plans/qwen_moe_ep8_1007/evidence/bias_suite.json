@@ -1,0 +1,27 @@
+{
+  "host": "fatnode",
+  "gate": "suite",
+  "run": "bias_functionalization_1008",
+  "passed": true,
+  "pytest": {
+    "passed": 1167,
+    "skipped": 1,
+    "deselected": 38,
+    "seconds": 1312.79
+  },
+  "ctest": {
+    "cpu_passed": 20,
+    "cuda_passed": 51
+  },
+  "compiler_directory": {
+    "passed": 34
+  },
+  "command": "python -u -m qualification.gates suite --run bias_functionalization_1008",
+  "console_log": "logs/fatnode/suite-functionalized-rerun.log",
+  "qualification_log": "qualification/results/gates_bias_functionalization_1008/suite.log",
+  "dp4_results": "evidence/bias_validation.json",
+  "static_checks": {
+    "ruff": "passed",
+    "functional_module_mypy": "passed"
+  }
+}

@@ -2,8 +2,9 @@
 
 The user approved committing and pushing this batch on October 8, 2026, then
 updating Della, fatnode, Tubingen, and Chicago. The groups below keep the
-independently reviewed pieces separate. Full Qwen EP8 validation and the
-small-model DP4 bias investigation remain outstanding.
+independently reviewed pieces separate. These groups were published as
+`cb739bab`, `40ab9403`, `9f6d65f2`, and `8dc458c9`, respectively. Full Qwen EP8
+validation remains pending the allocation.
 
 1. **Planner cache retention:** restore every requested resolution on cache hits;
    reject incomplete retention through a completion manifest. Includes tests and
@@ -30,10 +31,20 @@ push or create any branches/worktrees. MLOps has no changes in this batch.
 
 ## Known validation limits
 
-- The separate DP4 toy-model bias discrepancy reproduces with symmetric planning
-  disabled. It remains an open issue, with its evidence preserved.
+- The separate DP4 toy-model bias discrepancy reproduced with symmetric planning
+  disabled. Its subsequent compiler diagnosis and correction are in `DP4_BIAS.md`.
 - Real DP4 Llama training and a fresh independent-search control both passed
   finite-state, parameter-update, and within-run replica checks. This is not a
-  claim that the unresolved toy case or Qwen EP8 training passed.
+  claim that Qwen EP8 training passed.
 - See `SYMMETRIC_PLANNING.md`, `REAL_MODEL_DP4.md`, and `PROGRESS.md` for exact
   validation and the post-refactor rerun.
+
+## Follow-up compiler correction
+
+Keep the production functionalization module, its compiler integration,
+regression tests, and lowering documentation in one fix commit. A separate
+experiment-record commit contains the bias reproductions, healthy-device test
+launcher updates, evidence summaries, and updated agenda. Publish after the
+compiler checks, DP4 controls, and suite pass. No MLOps changes are required.
+These are groups 5 and 6 in the script; select `--groups 5 6` to preview only
+the follow-up rather than the already-published original batch.

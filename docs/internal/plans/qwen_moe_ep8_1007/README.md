@@ -66,9 +66,11 @@ on all three multimodal axes. Existing dense `mlops_qwen35` remains unchanged.
       routines and remove the planner/sweep circular import.
 - [x] Rerun targeted and broader CPU regression after that cleanup.
 - [x] Finish the post-refactor real-model DP4 rerun.
-- [x] Prepare explicit commit groups/script without committing or pushing.
-- [ ] Investigate the separate DP4 small-model bias failure, reproduced with
-      symmetric planning disabled; do not mark it resolved by the Llama run.
+- [x] Commit/push the approved groups and align all four machines.
+- [x] Isolate the separate DP4 small-model bias failure and correct compiler
+      functionalization; pass save/recompute and independent-planning controls.
+- [x] Complete the full suite; prepare the approved compiler correction and
+      evidence commits for publication and rollout.
 - [ ] GPU correctness, then full-size EP8 quickstart at all requested budgets.
 - [ ] Train both models; report finite losses, parameter updates, memory,
       throughput, simulator error, and artifact paths.
@@ -142,7 +144,9 @@ loss at small dimensions. Full-size meta parameter counts match exactly:
 pending.** Generic symmetric planning has passed real DP2 checks and complete
 Llama 1.18B training on four fatnode GPUs. See [symmetric planning evidence](SYMMETRIC_PLANNING.md)
 and [the real-model DP4 comparison](REAL_MODEL_DP4.md), including its numerical
-limits and the separate unresolved small-model failure.
+limits. The separate small-model failure is explained and corrected in
+[DP4_BIAS.md](DP4_BIAS.md). The full suite passes: 1,167 tests, plus all
+20 CPU and 51 GPU CTest canaries; one test is skipped.
 
 Slurm rejected `--mem=0`; job 15199147 uses the established exclusive node
 request: 8 GPUs, 96 CPUs, 960 GiB, one hour. Watcher runs on the head node in

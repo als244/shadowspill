@@ -1,0 +1,22 @@
+{
+  "della": {
+    "shadowspill": "8dc458c9dacd06db4388d2bc7443ab8a75d33d80",
+    "root": "/home/as1669/shadowspill",
+    "mlops": "25972fb139cb2ea893c0da3a187c0b2055679e85"
+  },
+  "fatnode": {
+    "shadowspill": "8dc458c9dacd06db4388d2bc7443ab8a75d33d80",
+    "root": "~/shadowspill",
+    "mlops": "25972fb139cb2ea893c0da3a187c0b2055679e85"
+  },
+  "tubingen": {
+    "shadowspill": "8dc458c9dacd06db4388d2bc7443ab8a75d33d80",
+    "root": "~/Documents/shadowspill",
+    "mlops": "25972fb139cb2ea893c0da3a187c0b2055679e85"
+  },
+  "chicago": {
+    "shadowspill": "8dc458c9dacd06db4388d2bc7443ab8a75d33d80",
+    "root": "~/Documents/grad_school/research/shadowspill",
+    "mlops": "25972fb139cb2ea893c0da3a187c0b2055679e85"
+  }
+}

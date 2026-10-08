@@ -95,15 +95,47 @@ GROUPS = [
             )
         ],
     ),
+    (
+        "compiler: functionalize task mutations before Inductor lowering",
+        [
+            "src/shadowspill/pytorch/compilation/inductor/explicit.py",
+            "src/shadowspill/pytorch/compilation/inductor/functional.py",
+            "tests/shadowspill/pytorch/compilation/test_functionalization.py",
+            "docs/architecture/lowering.md",
+        ],
+    ),
+    (
+        "docs: record DP4 bias diagnosis and compiler validation",
+        [
+            f"{PLAN}/{name}"
+            for name in (
+                "README.md",
+                "PROGRESS.md",
+                "REAL_MODEL_DP4.md",
+                "COMMIT_PLAN.md",
+                "DP4_BIAS.md",
+                "evidence/rollout.json",
+                "evidence/bias_validation.json",
+                "evidence/bias_suite.json",
+                "scripts/commit_changes.py",
+                "scripts/fatnode/container.py",
+                "scripts/fatnode/bias_probe.py",
+                "scripts/fatnode/alias_repro.py",
+                "scripts/fatnode/check_bias_fix.sh",
+            )
+        ],
+    ),
 ]
 
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--execute", action="store_true")
-    parser.add_argument("--groups", type=int, nargs="+", choices=range(1, 5))
+    parser.add_argument(
+        "--groups", type=int, nargs="+", choices=range(1, len(GROUPS) + 1)
+    )
     args = parser.parse_args()
-    selected = args.groups or range(1, 5)
+    selected = args.groups or range(1, len(GROUPS) + 1)
     if args.execute:
         branch = subprocess.check_output(
             ["git", "branch", "--show-current"], cwd=ROOT, text=True

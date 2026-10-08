@@ -1,0 +1,296 @@
+{
+  "bias-20261008T055612": [
+    {
+      "passed": true,
+      "rank": 0,
+      "world": 4,
+      "precision": "fp32",
+      "masters": false,
+      "shard_optimizer": true,
+      "optimizer": "torch",
+      "variant": "save",
+      "stochastic": false,
+      "symmetric_planning": true,
+      "losses": [
+        0.19401849806308746,
+        0.3089772164821625,
+        0.17238865792751312
+      ],
+      "max_parameter_error": 2.9802322387695312e-08,
+      "checkpoint_policies": [
+        "master",
+        "compute"
+      ],
+      "fresh_meta_restore": true,
+      "forward_evaluation": true
+    },
+    {
+      "passed": true,
+      "rank": 1,
+      "world": 4,
+      "precision": "fp32",
+      "masters": false,
+      "shard_optimizer": true,
+      "optimizer": "torch",
+      "variant": "save",
+      "stochastic": false,
+      "symmetric_planning": true,
+      "losses": [
+        0.2708437144756317,
+        0.4452216625213623,
+        0.2425283044576645
+      ],
+      "max_parameter_error": 2.9802322387695312e-08,
+      "checkpoint_policies": [
+        "master",
+        "compute"
+      ],
+      "fresh_meta_restore": true,
+      "forward_evaluation": true
+    },
+    {
+      "passed": true,
+      "rank": 2,
+      "world": 4,
+      "precision": "fp32",
+      "masters": false,
+      "shard_optimizer": true,
+      "optimizer": "torch",
+      "variant": "save",
+      "stochastic": false,
+      "symmetric_planning": true,
+      "losses": [
+        0.37162908911705017,
+        0.18783415853977203,
+        0.27495622634887695
+      ],
+      "max_parameter_error": 2.9802322387695312e-08,
+      "checkpoint_policies": [
+        "master",
+        "compute"
+      ],
+      "fresh_meta_restore": true,
+      "forward_evaluation": true
+    },
+    {
+      "passed": true,
+      "rank": 3,
+      "world": 4,
+      "precision": "fp32",
+      "masters": false,
+      "shard_optimizer": true,
+      "optimizer": "torch",
+      "variant": "save",
+      "stochastic": false,
+      "symmetric_planning": true,
+      "losses": [
+        0.3082598149776459,
+        0.3558447062969208,
+        0.17204691469669342
+      ],
+      "max_parameter_error": 2.9802322387695312e-08,
+      "checkpoint_policies": [
+        "master",
+        "compute"
+      ],
+      "fresh_meta_restore": true,
+      "forward_evaluation": true
+    }
+  ],
+  "bias-20261008T060558": [
+    {
+      "passed": true,
+      "rank": 0,
+      "world": 4,
+      "precision": "fp32",
+      "masters": false,
+      "shard_optimizer": true,
+      "optimizer": "torch",
+      "variant": "recompute",
+      "stochastic": false,
+      "symmetric_planning": true,
+      "losses": [
+        0.19401849806308746,
+        0.3089772164821625,
+        0.17238865792751312
+      ],
+      "max_parameter_error": 2.9802322387695312e-08,
+      "checkpoint_policies": [
+        "master",
+        "compute"
+      ],
+      "fresh_meta_restore": true,
+      "forward_evaluation": true
+    },
+    {
+      "passed": true,
+      "rank": 1,
+      "world": 4,
+      "precision": "fp32",
+      "masters": false,
+      "shard_optimizer": true,
+      "optimizer": "torch",
+      "variant": "recompute",
+      "stochastic": false,
+      "symmetric_planning": true,
+      "losses": [
+        0.2708437144756317,
+        0.4452216625213623,
+        0.2425283044576645
+      ],
+      "max_parameter_error": 2.9802322387695312e-08,
+      "checkpoint_policies": [
+        "master",
+        "compute"
+      ],
+      "fresh_meta_restore": true,
+      "forward_evaluation": true
+    },
+    {
+      "passed": true,
+      "rank": 2,
+      "world": 4,
+      "precision": "fp32",
+      "masters": false,
+      "shard_optimizer": true,
+      "optimizer": "torch",
+      "variant": "recompute",
+      "stochastic": false,
+      "symmetric_planning": true,
+      "losses": [
+        0.37162908911705017,
+        0.18783415853977203,
+        0.27495622634887695
+      ],
+      "max_parameter_error": 2.9802322387695312e-08,
+      "checkpoint_policies": [
+        "master",
+        "compute"
+      ],
+      "fresh_meta_restore": true,
+      "forward_evaluation": true
+    },
+    {
+      "passed": true,
+      "rank": 3,
+      "world": 4,
+      "precision": "fp32",
+      "masters": false,
+      "shard_optimizer": true,
+      "optimizer": "torch",
+      "variant": "recompute",
+      "stochastic": false,
+      "symmetric_planning": true,
+      "losses": [
+        0.3082598149776459,
+        0.3558447062969208,
+        0.17204691469669342
+      ],
+      "max_parameter_error": 2.9802322387695312e-08,
+      "checkpoint_policies": [
+        "master",
+        "compute"
+      ],
+      "fresh_meta_restore": true,
+      "forward_evaluation": true
+    }
+  ],
+  "bias-20261008T060642": [
+    {
+      "passed": true,
+      "rank": 0,
+      "world": 4,
+      "precision": "fp32",
+      "masters": false,
+      "shard_optimizer": true,
+      "optimizer": "torch",
+      "variant": "save",
+      "stochastic": false,
+      "symmetric_planning": false,
+      "losses": [
+        0.1108677089214325,
+        0.17838941514492035,
+        0.09921452403068542
+      ],
+      "max_parameter_error": 3.725290298461914e-08,
+      "checkpoint_policies": [
+        "master",
+        "compute"
+      ],
+      "fresh_meta_restore": true,
+      "forward_evaluation": true
+    },
+    {
+      "passed": true,
+      "rank": 1,
+      "world": 4,
+      "precision": "fp32",
+      "masters": false,
+      "shard_optimizer": true,
+      "optimizer": "torch",
+      "variant": "save",
+      "stochastic": false,
+      "symmetric_planning": false,
+      "losses": [
+        0.21159596741199493,
+        0.3851197361946106,
+        0.16634584963321686
+      ],
+      "max_parameter_error": 3.725290298461914e-08,
+      "checkpoint_policies": [
+        "master",
+        "compute"
+      ],
+      "fresh_meta_restore": true,
+      "forward_evaluation": true
+    },
+    {
+      "passed": true,
+      "rank": 2,
+      "world": 4,
+      "precision": "fp32",
+      "masters": false,
+      "shard_optimizer": true,
+      "optimizer": "torch",
+      "variant": "save",
+      "stochastic": false,
+      "symmetric_planning": false,
+      "losses": [
+        0.22765468060970306,
+        0.3235509991645813,
+        0.266051322221756
+      ],
+      "max_parameter_error": 3.725290298461914e-08,
+      "checkpoint_policies": [
+        "master",
+        "compute"
+      ],
+      "fresh_meta_restore": true,
+      "forward_evaluation": true
+    },
+    {
+      "passed": true,
+      "rank": 3,
+      "world": 4,
+      "precision": "fp32",
+      "masters": false,
+      "shard_optimizer": true,
+      "optimizer": "torch",
+      "variant": "save",
+      "stochastic": false,
+      "symmetric_planning": false,
+      "losses": [
+        0.37651726603507996,
+        0.41315093636512756,
+        0.5046924948692322
+      ],
+      "max_parameter_error": 3.725290298461914e-08,
+      "checkpoint_policies": [
+        "master",
+        "compute"
+      ],
+      "fresh_meta_restore": true,
+      "forward_evaluation": true
+    }
+  ]
+}
