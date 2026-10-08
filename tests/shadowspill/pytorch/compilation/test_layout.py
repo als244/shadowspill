@@ -266,3 +266,25 @@ def test_physical_observation_cannot_split_one_semantic_root() -> None:
                 ),
             ),
         )
+
+
+def test_empty_output_view_retains_its_nonempty_backing_allocation() -> None:
+    def function(value):
+        return torch.sin(value)[2:2]
+
+    value = torch.randn(8)
+    contract = capture_task_storage_contract(make_fx(function)(value), (value,))
+    assert contract.output_views[0].span_bytes == 0
+    layout = reconcile_compiled_task_layout(
+        contract,
+        _measurement(
+            TaskAllocationEvent(
+                0, TaskAllocationOperation.ALLOCATE, 32, 256, (0,), (8,)
+            )
+        ),
+        root_allocations=(ExecutableRootAllocation(0, 32),),
+    )
+    assert layout.roots[0].requested_bytes == 32
+    assert layout.roots[0].charged_bytes == 256
+    assert layout.output_views[0].offset_bytes == 8
+    assert layout.output_views[0].allocation_ordinal == 0

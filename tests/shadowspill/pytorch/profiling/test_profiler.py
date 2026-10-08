@@ -302,8 +302,8 @@ def test_output_allocation_lookup_is_exact() -> None:
 
     tensor = torch.empty(4, device="cuda")
     assert output_allocation_views(
-        _boundary(_Lookup()), (tensor, tensor.view(2, 2))
-    ) == ({91: ((0, 0), (1, 0))}, ())
+        _boundary(_Lookup()), (tensor, tensor.view(2, 2), tensor[2:2])
+    ) == ({91: ((0, 0), (1, 0), (2, 8))}, ())
 
     class _Missing:
         @staticmethod
