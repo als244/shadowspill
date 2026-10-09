@@ -78,44 +78,39 @@ are outside timed execution.
 
 ## What a group measures
 
-A group is timed as a whole, not as four timed steps. The clock starts before
-the first step is submitted, all four are submitted back to back, the group
-then waits for the runtime to go idle, and the clock stops. So the line
+The gate submits four steps back to back, then waits for the runtime to go idle.
+Each step records a device-clock cycle from its origin to the next step's
+origin. An explicit end marker closes the last cycle after terminal work
+finishes. Consecutive cycles include the gaps between steps, opening fetches,
+and required terminal writeback.
+
+The group line
 
 ```text
 mlops_llama3 group 1: 18.710652s/step, 3502.60 tokens/s
 ```
 
-reports `elapsed / 4` and `tokens_per_step * 4 / elapsed`, where `elapsed` is
-that whole wall-clock span. Neither number is a median or an average of
-per-step timings, and nothing between the steps is excluded: a gap between one
-step and the next is inside the measurement, because it would be inside a real
-training loop too.
+reports the **average** of its four cycle durations, and total group tokens
+divided by their sum. The saved `group_seconds` uses that sum;
+`host_group_seconds` independently records the host wall-clock span.
+Group-boundary reporting and collection happen after those measurements.
 
-Timing the group rather than each step is deliberate. A step returns before
-its work finishes, so a per-call duration measures dispatch, not execution.
-Those per-call durations are recorded separately as `dispatch_seconds`, which
-is how far ahead of the device the frontend ran, not throughput.
+The cell's headline `median_step_seconds` is the **median of all twelve
+individual cycle durations** across the three groups. Throughput is tokens per
+step divided by that median. Equal group averages can therefore conceal
+different individual timings; inspect the saved `cycle_seconds` to compare
+warmup or drift.
 
-In practice the frontend runs very little ahead, because every invocation
-after the first begins by waiting for the previous one's plan to go idle: a
-plan assumes its initial objects are resident when it starts, and the
-invocation before it ends by writing them back. That wait is recorded per step
-as `prior_invocation_drain_seconds`, beside `dispatch_seconds`. It is measured
-on every step rather than only on a traced one, because the first invocation
-has nothing to wait for and a trace taken on a warm first step is the one step
-that never pays it.
+A callable can return while terminal work is still queued. Its host call
+duration, saved as `dispatch_seconds`, therefore does not measure the full
+step. Before the next invocation starts, the callable drains the preceding
+plan's required work; `prior_invocation_drain_seconds` records that wait.
+The cycle already includes this work, so it must not be added a second time.
 
-Waiting for idle at the end of each group makes the figure slightly
-conservative. The last step's terminal writeback is charged to the group,
-whereas a loop that kept going would overlap it with the next step. That is
-the same assumption the simulator makes when it charges the terminal tail, so
-the measured and predicted numbers describe the same regime.
-
-The cell's headline figures come from the median across groups, not across
-steps: `median_group_seconds` is the median of the three group spans, and
-`median_step_seconds` is that divided by four. A stall inside one group raises
-that group's span and cannot be averaged away by the steps around it.
+The traced warm step is outside these twelve samples. There is no deliberate
+cooling pause or additional warmup between groups. The gate does not assert
+that clocks or timings have reached a steady state; use the raw samples to
+assess that separately.
 
 ## Hardware, precision and budgets
 

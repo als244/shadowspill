@@ -443,8 +443,14 @@ class Tour:
             # The objective supplies each microbatch's normalized contribution;
             # no data-unit or replica-group normalization is inferred here.
             # Host collection happens after completion, never inside a task.
-            training.synchronize()
-            observed = StepObservations.collect(result.objectives, result.metrics)
+            try:
+                training.synchronize()
+                observed = StepObservations.collect(result.objectives, result.metrics)
+                diagnostics_handle = result.diagnostics
+            finally:
+                # Observations own their host copies. Release device outputs
+                # before user reducers or reporting can raise an exception.
+                del result
             record = {
                 "step": step,
                 "objective_loss": sum(observed.losses),
@@ -452,21 +458,23 @@ class Tour:
             }
             reducer = self.experiment.get("metric_reducer")
             if reducer is not None:
-                record.update(reducer(observed))
+                record.update(
+                    (name, float(value)) for name, value in reducer(observed).items()
+                )
             losses[step] = float(record["loss"])
             with (self.paths.root / "step_metrics.jsonl").open("a") as output:
                 output.write(json.dumps({"budget_bytes": budget, **record}) + "\n")
             hosts[step] = time.perf_counter() - started
             report_cycles()
-            return result
+            return diagnostics_handle
 
         training.prepare_runtime_trace()
         if arguments.steps > 1:
             print(rule("Steps"))
             for step in range(1, arguments.steps):
-                result = run_step(step, traced=False)
+                run_step(step, traced=False)
         print(rule("Traced step versus simulation"))
-        result = run_step(arguments.steps, traced=True)
+        diagnostics_handle = run_step(arguments.steps, traced=True)
         # Close the last step's cycle where a next step would begin, so
         # its time reads like every other step's, then resolve the trace
         # with that cycle in it.
@@ -507,12 +515,8 @@ class Tour:
             f"   ({len(measured)} untraced"
             f" step{'' if len(measured) == 1 else 's'} after the first)\n"
         )
-        assert result.diagnostics is not None
-        diagnostics = result.diagnostics.result()
-        # The final StepResult's public outputs are caller-owned device
-        # tensors; the runtime refuses to close while they are alive.
-        del result
-        gc.collect()
+        assert diagnostics_handle is not None
+        diagnostics = diagnostics_handle.result()
         return _Steps(
             diagnostics=diagnostics,
             walls=tuple(walls),
