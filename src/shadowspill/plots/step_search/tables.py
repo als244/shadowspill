@@ -75,8 +75,32 @@ def raw_data(root: Path, report: StepSearchReport, series: Series) -> tuple[Path
                 None if summary is None else summary.task_alternative_group_count,
                 None if summary is None else summary.transfer_bytes_fetched,
                 None if summary is None else summary.transfer_bytes_evicted,
-                None if summary is None else summary.fetch_bandwidth_bytes_per_second,
-                None if summary is None else summary.evict_bandwidth_bytes_per_second,
+                None if summary is None else summary.fetch_busy_ns,
+                None if summary is None else summary.evict_busy_ns,
+                None
+                if summary is None or not step
+                else summary.fetch_busy_ns / 1e9 / step,
+                None
+                if summary is None or not step
+                else summary.evict_busy_ns / 1e9 / step,
+                None
+                if summary is None
+                else summary.fetch_blended_bandwidth_bytes_per_second,
+                None
+                if summary is None
+                else summary.evict_blended_bandwidth_bytes_per_second,
+                None
+                if summary is None
+                else summary.fetch_solo_bandwidth_bytes_per_second,
+                None
+                if summary is None
+                else summary.fetch_concurrent_bandwidth_bytes_per_second,
+                None
+                if summary is None
+                else summary.evict_solo_bandwidth_bytes_per_second,
+                None
+                if summary is None
+                else summary.evict_concurrent_bandwidth_bytes_per_second,
             ]
         )
     ladder = [
@@ -97,6 +121,8 @@ def raw_data(root: Path, report: StepSearchReport, series: Series) -> tuple[Path
             outcome.candidate_count,
             outcome.fetched_bytes,
             outcome.evicted_bytes,
+            outcome.fetch_busy_ns,
+            outcome.evict_busy_ns,
         ]
         for key, item_points in series
         for item in item_points
@@ -125,8 +151,16 @@ def raw_data(root: Path, report: StepSearchReport, series: Series) -> tuple[Path
                 "task_alternative_group_count",
                 "transfer_bytes_fetched",
                 "transfer_bytes_evicted",
-                "fetch_bandwidth_bytes_per_second",
-                "evict_bandwidth_bytes_per_second",
+                "fetch_busy_ns",
+                "evict_busy_ns",
+                "fetch_utilization",
+                "evict_utilization",
+                "fetch_blended_bandwidth_bytes_per_second",
+                "evict_blended_bandwidth_bytes_per_second",
+                "fetch_solo_bandwidth_bytes_per_second",
+                "fetch_concurrent_bandwidth_bytes_per_second",
+                "evict_solo_bandwidth_bytes_per_second",
+                "evict_concurrent_bandwidth_bytes_per_second",
             ),
             points,
         ),
@@ -152,6 +186,8 @@ def raw_data(root: Path, report: StepSearchReport, series: Series) -> tuple[Path
                     "candidate_count",
                     "fetched_bytes",
                     "evicted_bytes",
+                    "fetch_busy_ns",
+                    "evict_busy_ns",
                 ),
                 ladder,
             ),

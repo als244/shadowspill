@@ -141,8 +141,10 @@ def _config(capacity: int) -> SimulationConfig:
         "cuda_0",
         device_capacity_bytes=capacity,
         spill_capacity_bytes=80,
-        fetch_bandwidth_bytes_per_second=1_000_000_000,
-        evict_bandwidth_bytes_per_second=1_000_000_000,
+        fetch_solo_bandwidth_bytes_per_second=1_000_000_000,
+        fetch_concurrent_bandwidth_bytes_per_second=(1_000_000_000),
+        evict_solo_bandwidth_bytes_per_second=1_000_000_000,
+        evict_concurrent_bandwidth_bytes_per_second=(1_000_000_000),
     )
 
 

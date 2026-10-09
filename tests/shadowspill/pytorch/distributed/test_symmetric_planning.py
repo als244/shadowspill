@@ -116,8 +116,10 @@ def problem(rank=0):
             device,
             device_capacity_bytes=192,
             spill_capacity_bytes=1024,
-            fetch_bandwidth_bytes_per_second=1_000_000_000 // (rank + 1),
-            evict_bandwidth_bytes_per_second=1_000_000_000,
+            fetch_solo_bandwidth_bytes_per_second=1_000_000_000 // (rank + 1),
+            fetch_concurrent_bandwidth_bytes_per_second=(1_000_000_000 // (rank + 1)),
+            evict_solo_bandwidth_bytes_per_second=1_000_000_000,
+            evict_concurrent_bandwidth_bytes_per_second=(1_000_000_000),
         ),
         admission_facts=facts,
         source_execution_budget_bytes=288,
@@ -293,7 +295,9 @@ def distributed_worker(rank, root, failure):
                 30,
                 50,
             ]
-            assert selected.transfer_bandwidths.fetch_bytes_per_second == 500_000_000
+            assert (
+                selected.transfer_bandwidths.fetch_solo_bytes_per_second == 500_000_000
+            )
             assert (
                 selected.fixed_layout.required_bytes
                 <= selected.effective_facts.pool_capacity_bytes

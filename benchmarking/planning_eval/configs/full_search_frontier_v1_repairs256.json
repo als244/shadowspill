@@ -8,8 +8,10 @@
   "max_worker_restarts_per_program": 64,
   "plan_store_mode": "refresh",
   "transfer_bandwidths": {
-    "fetch_bytes_per_second": 25443740177,
-    "evict_bytes_per_second": 25222719387,
+    "fetch_solo_bytes_per_second": 25443740177,
+    "fetch_concurrent_bytes_per_second": 25443740177,
+    "evict_solo_bytes_per_second": 25222719387,
+    "evict_concurrent_bytes_per_second": 25222719387,
     "provenance": "median bidirectional-concurrent runtime-init calibration across the 168 full-model Program corpus; frozen globally for cross-Program frontier comparison"
   },
   "grids": [

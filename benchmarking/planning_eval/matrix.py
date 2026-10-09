@@ -129,7 +129,7 @@ def expand_frontier_points(
     *,
     transfer_baseline: TransferBandwidthBaseline,
 ) -> tuple[FrontierPointRequest, ...]:
-    """Bind axes to one globally frozen concurrent transfer calibration."""
+    """Scale all four rates of one frozen solo/concurrent calibration."""
 
     return tuple(
         FrontierPointRequest(
@@ -137,13 +137,25 @@ def expand_frontier_points(
             program_digest=program.digest,
             role=program.role,
             transfer_bandwidths=TransferBandwidths(
-                fetch_bytes_per_second=_scale(
-                    transfer_baseline.fetch_bytes_per_second,
+                fetch_solo_bytes_per_second=_scale(
+                    transfer_baseline.fetch_solo_bytes_per_second,
                     axes.bandwidth_scale,
                 ),
-                evict_bytes_per_second=_scale(
-                    transfer_baseline.evict_bytes_per_second,
+                fetch_concurrent_bytes_per_second=(
+                    _scale(
+                        transfer_baseline.fetch_concurrent_bytes_per_second,
+                        axes.bandwidth_scale,
+                    )
+                ),
+                evict_solo_bytes_per_second=_scale(
+                    transfer_baseline.evict_solo_bytes_per_second,
                     axes.bandwidth_scale,
+                ),
+                evict_concurrent_bytes_per_second=(
+                    _scale(
+                        transfer_baseline.evict_concurrent_bytes_per_second,
+                        axes.bandwidth_scale,
+                    )
                 ),
                 scale_numerator=axes.bandwidth_scale.numerator,
                 scale_denominator=axes.bandwidth_scale.denominator,

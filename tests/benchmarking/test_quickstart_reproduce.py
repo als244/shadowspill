@@ -73,8 +73,10 @@ def _run(tmp_path: Path) -> Path:
     )
     (run / "request.json").write_text(json.dumps(record))
     bandwidths = TransferBandwidths(
-        fetch_bytes_per_second=25_500_000_000,
-        evict_bytes_per_second=26_000_000_000,
+        fetch_solo_bytes_per_second=25_500_000_000,
+        fetch_concurrent_bytes_per_second=(25_500_000_000),
+        evict_solo_bytes_per_second=26_000_000_000,
+        evict_concurrent_bytes_per_second=(26_000_000_000),
     )
     StepSearchReport(
         metadata={"units_per_step": 64 * 1024, "unit_label": "tokens"},
@@ -129,7 +131,7 @@ def test_reproduce_reads_the_request_and_pins_the_calibration(
     assert arguments.artifact_store == tmp_path / "store"
     assert arguments.build_store is None
     assert arguments.resolution_options == ("0", "1/2", "1")
-    assert arguments.transfer_bandwidths.fetch_bytes_per_second == 25_500_000_000
+    assert arguments.transfer_bandwidths.fetch_solo_bytes_per_second == 25_500_000_000
     assert arguments.export_bypass_key == "rev-1"
     assert arguments.model_dtype == "float16"
     assert arguments.master_dtype == "float32"

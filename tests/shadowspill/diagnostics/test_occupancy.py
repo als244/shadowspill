@@ -289,8 +289,10 @@ def _selection(option: str = "save") -> dict:
             "devices": [
                 {
                     "device_id": "d",
-                    "fetch_bandwidth_bytes_per_second": 10_000_000_000,
-                    "evict_bandwidth_bytes_per_second": 20_000_000_000,
+                    "fetch_solo_bandwidth_bytes_per_second": 10_000_000_000,
+                    "fetch_concurrent_bandwidth_bytes_per_second": (10_000_000_000),
+                    "evict_solo_bandwidth_bytes_per_second": 20_000_000_000,
+                    "evict_concurrent_bandwidth_bytes_per_second": (20_000_000_000),
                     "fetch_latency_ns": 4000,
                     "evict_latency_ns": 5000,
                 }
@@ -945,16 +947,17 @@ def test_the_summary_reads_the_step_off_the_same_spans() -> None:
     assert summary["tokens_per_second"] == 100.0
     assert summary["idle_percent"] == 50.0
     assert summary["recompute_percent"] == 0.0
-    # 3 s of fetch (0-1 twice, 5-6) and 1 s of evict on the lanes
-    assert summary["fetch_utilization_percent"] == 30.0
+    # 2 s of fetch busy time (0-1 duplicated in this fixture, 5-6) and 1 s evict
+    assert summary["fetch_utilization_percent"] == 20.0
     assert summary["evict_utilization_percent"] == 10.0
     assert round(summary["fetch_gib"] * 1024) == 172
     assert (
-        summary["assumed_fetch_gbps"] == 10.0 and summary["assumed_evict_gbps"] == 20.0
+        summary["assumed_fetch_solo_gbps"] == 10.0
+        and summary["assumed_evict_solo_gbps"] == 20.0
     )
     assert summary["assumed_fetch_latency_us"] == 4.0
-    # 172 MiB over 3 s of fetch lane time, 64 MiB over 1 s of evict
-    assert round(summary["fetch_gbps"], 3) == round(172 * MIB / 3e9, 3)
+    # 172 MiB over 2 s of fetch lane time, 64 MiB over 1 s of evict
+    assert round(summary["fetch_gbps"], 3) == round(172 * MIB / 2e9, 3)
     assert round(summary["evict_gbps"], 3) == round(64 * MIB / 1e9, 3)
     assert round(summary["evict_gib"] * 1024) == 64
     assert round(summary["spill_peak_gib"] * 1024) == 164
@@ -985,3 +988,28 @@ def test_the_traced_page_shows_the_execution_pool_on_the_device_clock() -> None:
     assert len(page["compute"]) == 4 and page["compute"][0][4] == 0
     simulated = page_data(attribute(_selection(), _program()))
     assert simulated["pools"][0]["note"] == ""
+
+
+def test_blended_rates_follow_plan_overlap_on_both_clocks():
+    from dataclasses import replace
+
+    from benchmarking.quickstart_timeline import summary_cards
+
+    planned = attribute(_selection(), _program())
+    summary = summarize(planned)
+    assert summary["assumed_fetch_gbps"] == summary["fetch_gbps"]
+    # A slower measured lane must not overwrite the plan's assumed blend.
+    measured = replace(
+        planned,
+        view="traced",
+        transfers=tuple(
+            replace(t, start_ns=2 * t.start_ns, end_ns=2 * t.end_ns)
+            for t in planned.transfers
+        ),
+    )
+    actual = summarize(measured)
+    assert actual["fetch_gbps"] == summary["fetch_gbps"] / 2
+    assert actual["assumed_fetch_gbps"] == summary["fetch_gbps"]
+    cards = dict(summary_cards(actual))
+    assert "planned blend" in next(k for k in cards if k.startswith("Fetch rate"))
+    assert "assumed_fetch_gbps" in SUMMARY_COLUMNS

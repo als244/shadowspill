@@ -20,7 +20,7 @@ The model includes:
 - independent fetch and evict **lanes** -- one serial byte-moving resource per
   route. A simulated lane stands for the runtime's queue and
   [lane](lanes.md) taken together: copies on one route are ordered and do not
-  overlap each other, and the two routes proceed independently. It is not the
+  overlap each other, and the two routes can overlap. Their payload rates depend on whether the reverse lane is also moving bytes. It is not the
   runtime's lane *contract*, which the simulator has no model of and does not
   need -- what it prices is occupancy, not transport. A copy that is eligible
   while the lane carries another records a `lane-busy` stall, so queueing is
@@ -65,6 +65,36 @@ loss instead of the simulation hiding it.
 Each `TransferInterval` names the action kind that issued it beside its
 direction, so write-backs are distinguishable from evictions on the evict
 lane.
+
+## Solo and concurrent bandwidth
+
+Each device names four positive integer rates in bytes per second: fetch solo,
+fetch concurrent, evict solo, and evict concurrent. A pair of equal rates gives
+the fixed-rate model. The simulator charges each copy's latency once, then
+integrates its remaining bytes at the applicable rate. A queued copy, a copy
+waiting for its source, and a copy still in startup latency do not contend.
+Reverse lanes on different logical devices do not affect each other.
+
+For example, a 100-byte fetch starts at 2 bytes/ns. An evict starts 25 ns later,
+when 50 fetch bytes remain. If the concurrent fetch rate is 1 byte/ns and the
+evict stays active, fetch finishes at 75 ns. If the evict finishes earlier,
+the remaining fetch bytes immediately return to the solo rate. Both directions
+are updated at starts, payload starts, and completions; overlap is a result of
+the simulation, not an average fraction supplied by the caller.
+
+The C implementation preserves billionths of a byte across rate changes and
+rounds only completion times up to integer nanoseconds. Overflow-safe integer
+arithmetic keeps replay deterministic. The independent Python oracle uses
+unbounded integers and updates progress at every event.
+
+Runtime calibration already measures both rates for pinned host, network, and
+SSD routes. Planning coarsens both measurements independently and includes all
+four in configuration, plan keys, reusable artifacts, and distributed symmetric
+planning (which takes each rate's minimum across ranks). Without a reverse
+calibration, the concurrent input equals the measured solo rate. This model does
+not add compute/transfer contention, cross-device contention, or SSD cache-state
+prediction. Search heuristics use the faster rate as a lower bound until a
+concrete schedule can be scored with the event simulation.
 
 ## Trigger-time capacity
 

@@ -3,8 +3,8 @@
 Two families, written as PNG files into a directory. The first follows each
 budget's winning geometry: throughput and raw step time; recomputation and
 stall overheads, raw and as shares of the simulated step; and fetch/evict
-traffic, raw and as simulated lane utilization (bytes over assumed bandwidth
-over step time).
+traffic, raw and as simulated lane utilization (busy time from transfer
+intervals over step time).
 
 The second draws every geometry as its own line, in one colour per geometry
 held across the family, so a budget can be read as a choice between them

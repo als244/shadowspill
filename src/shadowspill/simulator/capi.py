@@ -15,8 +15,10 @@ NO_INDEX = (1 << 32) - 1
 class CDevice(ctypes.Structure):
     _fields_ = [
         ("capacity_bytes", ctypes.c_uint64),
-        ("fetch_bandwidth_bytes_per_second", ctypes.c_uint64),
-        ("evict_bandwidth_bytes_per_second", ctypes.c_uint64),
+        ("fetch_solo_bandwidth_bytes_per_second", ctypes.c_uint64),
+        ("fetch_concurrent_bandwidth_bytes_per_second", ctypes.c_uint64),
+        ("evict_solo_bandwidth_bytes_per_second", ctypes.c_uint64),
+        ("evict_concurrent_bandwidth_bytes_per_second", ctypes.c_uint64),
         ("fetch_latency_ns", ctypes.c_uint64),
         ("evict_latency_ns", ctypes.c_uint64),
     ]

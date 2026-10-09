@@ -536,8 +536,8 @@ def summary_cards(summary):
         ("Evict lane busy", number("evict_utilization_percent", ".1f", "%")),
         ("Fetched", number("fetch_gib", ".1f", " GiB")),
         ("Evicted", number("evict_gib", ".1f", " GiB")),
-        ("Fetch rate / assumed", rate("fetch")),
-        ("Evict rate / assumed", rate("evict")),
+        ("Fetch rate / planned blend", rate("fetch")),
+        ("Evict rate / planned blend", rate("evict")),
     ]
 
 

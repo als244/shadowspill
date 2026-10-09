@@ -17,8 +17,10 @@ int main(void) {
     const uint64_t problem_alias_size[] = {32U};
     const ShadowSpillSimulationDevice problem_device = {
         .capacity_bytes = 64U,
-        .fetch_bandwidth_bytes_per_second = 1U,
-        .evict_bandwidth_bytes_per_second = 1U,
+        .fetch_solo_bandwidth_bytes_per_second = 1U,
+        .fetch_concurrent_bandwidth_bytes_per_second = 1U,
+        .evict_solo_bandwidth_bytes_per_second = 1U,
+        .evict_concurrent_bandwidth_bytes_per_second = 1U,
     };
     const uint32_t problem_alias_device[] = {0U};
     const uint8_t problem_retain_spill[] = {1U};

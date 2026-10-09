@@ -63,7 +63,11 @@
 
   document.getElementById("plan").textContent = DATA.plan || "";
   document.getElementById("sub").textContent = DATA.clock + " · step of " + fmtS(DATA.end_seconds)
-    + (DATA.summary && DATA.summary.assumed_fetch_gbps != null ? " · planned against fetch " + DATA.summary.assumed_fetch_gbps.toFixed(1) + " GB/s, evict " + DATA.summary.assumed_evict_gbps.toFixed(1) + " GB/s" + (DATA.summary.assumed_fetch_latency_us != null ? ", latency " + DATA.summary.assumed_fetch_latency_us.toFixed(0) + " us" : "") : "")
+    + (DATA.summary && DATA.summary.assumed_fetch_solo_gbps != null
+      ? " · planned solo/concurrent: fetch " + DATA.summary.assumed_fetch_solo_gbps.toFixed(1)
+        + "/" + DATA.summary.assumed_fetch_concurrent_gbps.toFixed(1) + " GB/s, evict "
+        + DATA.summary.assumed_evict_solo_gbps.toFixed(1) + "/"
+        + DATA.summary.assumed_evict_concurrent_gbps.toFixed(1) + " GB/s" : "")
     + (DATA.untimed_transfers ? " · " + DATA.untimed_transfers + " transfers the trace could not time, off the lanes" : "")
     + " · drag across a span to zoom to it, shift-drag to pan, scroll to zoom, fit resets, one zoom for every panel · dashed red: capacity, dotted amber: peak";
 
@@ -190,7 +194,9 @@
   // --- the summary cards ---------------------------------------------------------------
   if (DATA.summary) {
     const S = DATA.summary;
-    const rate = (achieved, assumed) => (achieved == null ? "n/a" : achieved.toFixed(1) + " GB/s") + (assumed == null ? "" : " (" + assumed.toFixed(1) + " assumed)");
+    const rate = (achieved, assumed) =>
+      (achieved == null ? "n/a" : achieved.toFixed(1)) + " / "
+      + (assumed == null ? "n/a" : assumed.toFixed(1)) + " GB/s";
     const cards = [
       ["overall time", fmtS(S.seconds)],
       ["tokens/s", S.tokens_per_second == null ? "n/a" : Math.round(S.tokens_per_second).toLocaleString()],
@@ -202,14 +208,17 @@
       ["evict lane util", S.evict_utilization_percent.toFixed(1) + "%"],
       ["fetched", fmtGiB(S.fetch_gib)],
       ["evicted", fmtGiB(S.evict_gib)],
-      ["fetch rate", rate(S.fetch_gbps, S.assumed_fetch_gbps)],
-      ["evict rate", rate(S.evict_gbps, S.assumed_evict_gbps)],
+      ["fetch rate / planned blend", rate(S.fetch_gbps, S.assumed_fetch_gbps)],
+      ["evict rate / planned blend", rate(S.evict_gbps, S.assumed_evict_gbps)],
     ];
     const root = document.createElement("div"); root.className = "panel";
     const h2 = document.createElement("h2"); h2.textContent = "Summary"; h2.style.fontSize = "16px"; h2.style.margin = "0 0 8px"; root.append(h2);
     const row = document.createElement("div"); row.className = "cards";
     cards.forEach(([k, v]) => { const c = document.createElement("div"); c.className = "card"; const kk = document.createElement("div"); kk.className = "k"; kk.textContent = k; const vv = document.createElement("div"); vv.className = "v"; vv.textContent = v; c.append(kk, vv); row.append(c); });
-    root.append(row); document.getElementById("panels").prepend(root);
+    root.append(row);
+    const explanation = document.createElement("p"); explanation.className = "meta";
+    explanation.textContent = "Lane utilization is busy time / step time. Blended rates are bytes / busy time, including startup latency; the planned blend uses the simulation's overlap. Trace values omit any untimed transfers.";
+    root.append(explanation); document.getElementById("panels").prepend(root);
   }
 
   // --- the lanes: fetch, compute, evict -------------------------------------------

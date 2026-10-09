@@ -25,8 +25,12 @@ def _summary(step: float) -> PlanSummary:
         flexible_group_count=4,
         transfer_bytes_fetched=int(4e9),
         transfer_bytes_evicted=int(3e9),
-        fetch_bandwidth_bytes_per_second=int(20e9),
-        evict_bandwidth_bytes_per_second=int(20e9),
+        fetch_busy_ns=int(0.3e9),
+        evict_busy_ns=int(0.2e9),
+        fetch_solo_bandwidth_bytes_per_second=int(20e9),
+        fetch_concurrent_bandwidth_bytes_per_second=(int(20e9)),
+        evict_solo_bandwidth_bytes_per_second=int(20e9),
+        evict_concurrent_bandwidth_bytes_per_second=(int(20e9)),
         planning_phase_seconds=MappingProxyType({}),
     )
 
@@ -196,4 +200,24 @@ def test_missing_transfer_times_preserve_throughput_and_replot(
     assert all(
         path.stat().st_size > 0
         for path in plot_step_run(restored, tmp_path / "replotted", units_per_step=8192)
+    )
+
+
+def test_lane_csv_exports_actual_busy_time_and_blended_rate(tmp_path):
+    import csv
+
+    point = _point(8 << 30, 64 << 30, 6.0)
+    report = StepSearchReport(
+        metadata={"units_per_step": 32 * 1024, "unit_label": "tokens"},
+        budgets=((8 << 30, 64 << 30),),
+        geometries=(),
+        points=(point,),
+    )
+    written = plot_step_search(report, tmp_path)
+    assert any(p.name == "blended_bandwidth.png" for p in written)
+    with (tmp_path / "raw_data/points.csv").open() as f:
+        row = next(csv.DictReader(f))
+    assert float(row["fetch_utilization"]) == pytest.approx(0.3 / 6)
+    assert float(row["fetch_blended_bandwidth_bytes_per_second"]) == pytest.approx(
+        4e9 / 0.3
     )

@@ -273,8 +273,16 @@ def planned_transfer_bandwidths(
     """
 
     return TransferBandwidths(
-        quantized_bandwidth(fetch.bandwidth_bytes_per_second),
-        quantized_bandwidth(evict.bandwidth_bytes_per_second),
+        quantized_bandwidth(fetch.solo_bandwidth_bytes_per_second),
+        quantized_bandwidth(
+            fetch.concurrent_bandwidth_bytes_per_second
+            or fetch.solo_bandwidth_bytes_per_second
+        ),
+        quantized_bandwidth(evict.solo_bandwidth_bytes_per_second),
+        quantized_bandwidth(
+            evict.concurrent_bandwidth_bytes_per_second
+            or evict.solo_bandwidth_bytes_per_second
+        ),
         fetch_latency_ns=quantized_latency(fetch.latency_nanoseconds),
         evict_latency_ns=quantized_latency(evict.latency_nanoseconds),
     )
@@ -332,8 +340,14 @@ def build_simulation_config(
             fixed_slab_bytes=fixed_execution_bytes(memory, profiles),
         ),
         spill_capacity_bytes=memory.spill_budget,
-        fetch_bandwidth_bytes_per_second=planned.fetch_bytes_per_second,
-        evict_bandwidth_bytes_per_second=planned.evict_bytes_per_second,
+        fetch_solo_bandwidth_bytes_per_second=planned.fetch_solo_bytes_per_second,
+        fetch_concurrent_bandwidth_bytes_per_second=(
+            planned.fetch_concurrent_bytes_per_second
+        ),
+        evict_solo_bandwidth_bytes_per_second=planned.evict_solo_bytes_per_second,
+        evict_concurrent_bandwidth_bytes_per_second=(
+            planned.evict_concurrent_bytes_per_second
+        ),
         # Both latencies are always named above; an override that names only
         # bandwidths is what leaves them None.
         fetch_latency_ns=(

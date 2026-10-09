@@ -181,8 +181,10 @@ def test_compiled_after_task_release_to_fetch_matches_python_oracle() -> None:
         "cuda_0",
         device_capacity_bytes=64,
         spill_capacity_bytes=128,
-        fetch_bandwidth_bytes_per_second=1,
-        evict_bandwidth_bytes_per_second=1,
+        fetch_solo_bandwidth_bytes_per_second=1,
+        fetch_concurrent_bandwidth_bytes_per_second=(1),
+        evict_solo_bandwidth_bytes_per_second=1,
+        evict_concurrent_bandwidth_bytes_per_second=(1),
     )
     template = index_simulation_template(program, (), config)
     facts = AdmissionFacts(
@@ -298,8 +300,10 @@ def test_compiled_admission_places_workspace_across_fragmented_ranges() -> None:
         "cuda_0",
         device_capacity_bytes=128,
         spill_capacity_bytes=1,
-        fetch_bandwidth_bytes_per_second=1,
-        evict_bandwidth_bytes_per_second=1,
+        fetch_solo_bandwidth_bytes_per_second=1,
+        fetch_concurrent_bandwidth_bytes_per_second=(1),
+        evict_solo_bandwidth_bytes_per_second=1,
+        evict_concurrent_bandwidth_bytes_per_second=(1),
     )
     template = index_simulation_template(program, (), config)
 
@@ -368,8 +372,10 @@ def test_compiled_admission_sizes_reuse_results_independently_of_events() -> Non
         "cuda_0",
         device_capacity_bytes=24,
         spill_capacity_bytes=1,
-        fetch_bandwidth_bytes_per_second=1,
-        evict_bandwidth_bytes_per_second=1,
+        fetch_solo_bandwidth_bytes_per_second=1,
+        fetch_concurrent_bandwidth_bytes_per_second=(1),
+        evict_solo_bandwidth_bytes_per_second=1,
+        evict_concurrent_bandwidth_bytes_per_second=(1),
     )
     facts = AdmissionFacts(
         "cuda_0",
@@ -447,8 +453,10 @@ def test_compiled_admission_preserves_profiled_task_allocation_order() -> None:
         "cuda_0",
         device_capacity_bytes=20,
         spill_capacity_bytes=1,
-        fetch_bandwidth_bytes_per_second=1,
-        evict_bandwidth_bytes_per_second=1,
+        fetch_solo_bandwidth_bytes_per_second=1,
+        fetch_concurrent_bandwidth_bytes_per_second=(1),
+        evict_solo_bandwidth_bytes_per_second=1,
+        evict_concurrent_bandwidth_bytes_per_second=(1),
     )
     template = index_simulation_template(program, (), config)
     ordered = TaskAdmissionSpec(
@@ -598,8 +606,10 @@ def test_search_repairs_fragmented_fetch_at_its_trigger_boundary() -> None:
         "cuda_0",
         device_capacity_bytes=160,
         spill_capacity_bytes=1_000,
-        fetch_bandwidth_bytes_per_second=1_000_000,
-        evict_bandwidth_bytes_per_second=1_000_000,
+        fetch_solo_bandwidth_bytes_per_second=1_000_000,
+        fetch_concurrent_bandwidth_bytes_per_second=(1_000_000),
+        evict_solo_bandwidth_bytes_per_second=1_000_000,
+        evict_concurrent_bandwidth_bytes_per_second=(1_000_000),
     )
     facts = AdmissionFacts(
         "cuda_0",

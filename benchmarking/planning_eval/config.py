@@ -80,14 +80,24 @@ class FrontierGrid:
 
 @dataclass(frozen=True, slots=True)
 class TransferBandwidthBaseline:
-    """One global concurrent transfer pair shared by every ShadowSpillProgram."""
+    """One solo/concurrent calibration shared by every ShadowSpillProgram."""
 
-    fetch_bytes_per_second: int
-    evict_bytes_per_second: int
+    fetch_solo_bytes_per_second: int
+    fetch_concurrent_bytes_per_second: int
+    evict_solo_bytes_per_second: int
+    evict_concurrent_bytes_per_second: int
     provenance: str
 
     def __post_init__(self) -> None:
-        if self.fetch_bytes_per_second <= 0 or self.evict_bytes_per_second <= 0:
+        if any(
+            rate <= 0
+            for rate in (
+                self.fetch_solo_bytes_per_second,
+                self.fetch_concurrent_bytes_per_second,
+                self.evict_solo_bytes_per_second,
+                self.evict_concurrent_bytes_per_second,
+            )
+        ):
             raise ValueError("base transfer bandwidths must be positive")
         if not self.provenance.strip():
             raise ValueError("transfer bandwidth provenance must be non-empty")
@@ -99,8 +109,14 @@ class TransferBandwidthBaseline:
 
     def to_dict(self) -> dict[str, object]:
         return {
-            "fetch_bytes_per_second": self.fetch_bytes_per_second,
-            "evict_bytes_per_second": self.evict_bytes_per_second,
+            "fetch_solo_bytes_per_second": self.fetch_solo_bytes_per_second,
+            "fetch_concurrent_bytes_per_second": (
+                self.fetch_concurrent_bytes_per_second
+            ),
+            "evict_solo_bytes_per_second": self.evict_solo_bytes_per_second,
+            "evict_concurrent_bytes_per_second": (
+                self.evict_concurrent_bytes_per_second
+            ),
             "provenance": self.provenance,
         }
 
@@ -315,15 +331,35 @@ def _transfer_bandwidths(
     data = _object(value, path)
     _keys(
         data,
-        {"fetch_bytes_per_second", "evict_bytes_per_second", "provenance"},
+        {
+            "fetch_solo_bytes_per_second",
+            "fetch_concurrent_bytes_per_second",
+            "evict_solo_bytes_per_second",
+            "evict_concurrent_bytes_per_second",
+            "provenance",
+        },
         path,
     )
     return TransferBandwidthBaseline(
-        fetch_bytes_per_second=_integer(
-            data.get("fetch_bytes_per_second"), f"{path}.fetch_bytes_per_second"
+        fetch_solo_bytes_per_second=_integer(
+            data.get("fetch_solo_bytes_per_second"),
+            f"{path}.fetch_solo_bytes_per_second",
         ),
-        evict_bytes_per_second=_integer(
-            data.get("evict_bytes_per_second"), f"{path}.evict_bytes_per_second"
+        fetch_concurrent_bytes_per_second=(
+            _integer(
+                data.get("fetch_concurrent_bytes_per_second"),
+                f"{path}.fetch_concurrent_bytes_per_second",
+            )
+        ),
+        evict_solo_bytes_per_second=_integer(
+            data.get("evict_solo_bytes_per_second"),
+            f"{path}.evict_solo_bytes_per_second",
+        ),
+        evict_concurrent_bytes_per_second=(
+            _integer(
+                data.get("evict_concurrent_bytes_per_second"),
+                f"{path}.evict_concurrent_bytes_per_second",
+            )
         ),
         provenance=_string(data.get("provenance"), f"{path}.provenance"),
     )

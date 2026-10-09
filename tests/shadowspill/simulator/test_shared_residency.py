@@ -59,8 +59,10 @@ def _config() -> SimulationConfig:
         "device_0",
         device_capacity_bytes=96,
         spill_capacity_bytes=64,
-        fetch_bandwidth_bytes_per_second=1_000_000,
-        evict_bandwidth_bytes_per_second=1_000_000,
+        fetch_solo_bandwidth_bytes_per_second=1_000_000,
+        fetch_concurrent_bandwidth_bytes_per_second=(1_000_000),
+        evict_solo_bandwidth_bytes_per_second=1_000_000,
+        evict_concurrent_bandwidth_bytes_per_second=(1_000_000),
     )
 
 
@@ -104,15 +106,19 @@ def test_shared_footprint_must_fit_physical_execution_and_spill_budgets() -> Non
         "device_0",
         device_capacity_bytes=63,
         spill_capacity_bytes=64,
-        fetch_bandwidth_bytes_per_second=1,
-        evict_bandwidth_bytes_per_second=1,
+        fetch_solo_bandwidth_bytes_per_second=1,
+        fetch_concurrent_bandwidth_bytes_per_second=(1),
+        evict_solo_bandwidth_bytes_per_second=1,
+        evict_concurrent_bandwidth_bytes_per_second=(1),
     )
     too_small_spill = SimulationConfig.single_device(
         "device_0",
         device_capacity_bytes=64,
         spill_capacity_bytes=63,
-        fetch_bandwidth_bytes_per_second=1,
-        evict_bandwidth_bytes_per_second=1,
+        fetch_solo_bandwidth_bytes_per_second=1,
+        fetch_concurrent_bandwidth_bytes_per_second=(1),
+        evict_solo_bandwidth_bytes_per_second=1,
+        evict_concurrent_bandwidth_bytes_per_second=(1),
     )
     schedule = MemorySchedule((), ())
 

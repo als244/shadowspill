@@ -330,13 +330,17 @@ ShadowSpillStatus shadowspill_problem_finalize_alias_facts(
         if (device >= program->device_count ||
             transfer_duration_ns(
                 program->alias_size_bytes[alias],
-                program->devices[device].fetch_bandwidth_bytes_per_second,
+                (program->devices[device].fetch_solo_bandwidth_bytes_per_second > program->devices[device].fetch_concurrent_bandwidth_bytes_per_second
+                    ? program->devices[device].fetch_solo_bandwidth_bytes_per_second
+                    : program->devices[device].fetch_concurrent_bandwidth_bytes_per_second),
                 program->devices[device].fetch_latency_ns,
                 &prepared->fetch_runtime_ns[alias]
             ) != 0 ||
             transfer_duration_ns(
                 program->alias_size_bytes[alias],
-                program->devices[device].evict_bandwidth_bytes_per_second,
+                (program->devices[device].evict_solo_bandwidth_bytes_per_second > program->devices[device].evict_concurrent_bandwidth_bytes_per_second
+                    ? program->devices[device].evict_solo_bandwidth_bytes_per_second
+                    : program->devices[device].evict_concurrent_bandwidth_bytes_per_second),
                 program->devices[device].evict_latency_ns,
                 &prepared->evict_runtime_ns[alias]
             ) != 0) {

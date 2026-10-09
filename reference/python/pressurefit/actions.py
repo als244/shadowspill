@@ -84,10 +84,16 @@ def _transfer_runtime_ns(
     device_id = facts.alias_devices[alias]
     device = next(item for item in config.devices if item.device_id == device_id)
     size = facts.alias_sizes[alias]
-    return (
-        device.fetch_latency_ns
-        + (size * 1_000_000_000 + device.fetch_bandwidth_bytes_per_second - 1)
-        // device.fetch_bandwidth_bytes_per_second
+    return device.fetch_latency_ns + (
+        size * 1_000_000_000
+        + max(
+            device.fetch_solo_bandwidth_bytes_per_second,
+            device.fetch_concurrent_bandwidth_bytes_per_second,
+        )
+        - 1
+    ) // max(
+        device.fetch_solo_bandwidth_bytes_per_second,
+        device.fetch_concurrent_bandwidth_bytes_per_second,
     )
 
 

@@ -47,6 +47,11 @@ typedef struct ShadowSpillTransferState {
     uint64_t ready_ns;
     uint64_t start_ns;
     uint64_t end_ns;
+    uint64_t payload_start_ns;
+    uint64_t remaining_bytes;
+    uint64_t remaining_fraction; /* billionths of a byte */
+    uint64_t progress_ns;
+    uint64_t rate_bytes_per_second;
 } ShadowSpillTransferState;
 
 typedef struct ShadowSpillSimulationWork {
@@ -85,6 +90,17 @@ typedef struct ShadowSpillSimulationWork {
     uint32_t submission_deferred;
     uint32_t pending_transfers;
 } ShadowSpillSimulationWork;
+
+void shadowspill_start_transfer_timing(
+    const ShadowSpillSimulationProgram *program,
+    ShadowSpillTransferState *transfer,
+    uint64_t now
+);
+
+void shadowspill_refresh_transfer_rates(
+    const ShadowSpillSimulationProgram *program,
+    ShadowSpillSimulationWork *work
+);
 
 int shadowspill_add_overflow_u64(
     uint64_t left,

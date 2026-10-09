@@ -54,13 +54,18 @@ for record in largest[:10]:
     )
 
 timelines = step.timelines
-assumed = report.summary.fetch_bandwidth_bytes_per_second
+summary = report.summary
+planned_rates = {
+    "fetch": (summary.fetch_solo_bandwidth_bytes_per_second,
+              summary.fetch_concurrent_bandwidth_bytes_per_second),
+    "evict": (summary.evict_solo_bandwidth_bytes_per_second,
+              summary.evict_concurrent_bandwidth_bytes_per_second),
+}
 for lane in (timelines.fetch, timelines.evict):
     print(
         lane.summary.direction,
         "effective", lane.summary.effective_bandwidth_bytes_per_second,
-        "assumed", assumed if lane.summary.direction == "fetch"
-        else report.summary.evict_bandwidth_bytes_per_second,
+        "planned solo/concurrent", planned_rates[lane.summary.direction],
         "largest drift", lane.summary.largest_start_delta_seconds,
         "at", lane.summary.largest_start_delta_transfer_id,
     )

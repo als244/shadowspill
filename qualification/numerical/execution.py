@@ -205,8 +205,11 @@ def _announce_prediction(
         f"simulator predicts {case_name}: "
         f"{predicted_seconds:.4f} s/step{rate(predicted_seconds)} "
         f"(planned with: fetch "
-        f"{planned.fetch_bandwidth_bytes_per_second / 1e9:.1f} GB/s, evict "
-        f"{planned.evict_bandwidth_bytes_per_second / 1e9:.1f} GB/s"
+        f"{planned.fetch_solo_bandwidth_bytes_per_second / 1e9:.1f}/"
+        f"{planned.fetch_concurrent_bandwidth_bytes_per_second / 1e9:.1f} GB/s, evict "
+        f"{planned.evict_solo_bandwidth_bytes_per_second / 1e9:.1f}/"
+        f"{planned.evict_concurrent_bandwidth_bytes_per_second / 1e9:.1f} GB/s"
+        " solo/concurrent"
         f"{measured})"
         f"; unconstrained throughput "
         f"{unconstrained_seconds:.4f} s/step{rate(unconstrained_seconds)}",

@@ -61,8 +61,10 @@ def _config() -> SimulationConfig:
         "device_0",
         device_capacity_bytes=96,
         spill_capacity_bytes=64,
-        fetch_bandwidth_bytes_per_second=1_000_000,
-        evict_bandwidth_bytes_per_second=1_000_000,
+        fetch_solo_bandwidth_bytes_per_second=1_000_000,
+        fetch_concurrent_bandwidth_bytes_per_second=(1_000_000),
+        evict_solo_bandwidth_bytes_per_second=1_000_000,
+        evict_concurrent_bandwidth_bytes_per_second=(1_000_000),
     )
 
 

@@ -16,6 +16,7 @@ add_library(
   src/simulator/memory.c
   src/simulator/simulator.c
   src/simulator/tasks.c
+  src/simulator/transfer_timing.c
   src/simulator/transfers.c
   src/simulator/validation.c
 

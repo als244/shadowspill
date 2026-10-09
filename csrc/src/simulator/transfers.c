@@ -2,66 +2,6 @@
 
 #include "internal.h"
 
-static uint64_t multiply_divide_ceil_bounded(
-    uint64_t multiplicand,
-    uint32_t multiplier,
-    uint64_t divisor
-) {
-    uint64_t quotient = 0U;
-    uint64_t remainder = 0U;
-    uint32_t mask = 1U << 31U;
-    while (mask != 0U) {
-        quotient *= 2U;
-        if (remainder >= divisor - remainder) {
-            remainder -= divisor - remainder;
-            quotient += 1U;
-        } else {
-            remainder *= 2U;
-        }
-        if ((multiplier & mask) != 0U) {
-            if (remainder >= divisor - multiplicand) {
-                remainder -= divisor - multiplicand;
-                quotient += 1U;
-            } else {
-                remainder += multiplicand;
-            }
-        }
-        mask >>= 1U;
-    }
-    return quotient + (remainder != 0U ? 1U : 0U);
-}
-
-static uint64_t transfer_runtime_ns(
-    const ShadowSpillSimulationProgram *program,
-    uint32_t alias,
-    uint8_t direction
-) {
-    uint32_t device = program->alias_device[alias];
-    const ShadowSpillSimulationDevice *config = &program->devices[device];
-    uint64_t bandwidth = direction == SHADOWSPILL_TRANSFER_FETCH
-        ? config->fetch_bandwidth_bytes_per_second
-        : config->evict_bandwidth_bytes_per_second;
-    uint64_t latency = direction == SHADOWSPILL_TRANSFER_FETCH
-        ? config->fetch_latency_ns
-        : config->evict_latency_ns;
-    uint64_t size = program->alias_size_bytes[alias];
-    uint64_t quotient = size / bandwidth;
-    uint64_t remainder = size % bandwidth;
-    uint64_t seconds_ns = quotient > UINT64_MAX / 1000000000U
-        ? UINT64_MAX
-        : quotient * 1000000000U;
-    uint64_t partial = multiply_divide_ceil_bounded(
-        remainder, 1000000000U, bandwidth
-    );
-    uint64_t runtime = 0U;
-    if (seconds_ns == UINT64_MAX || shadowspill_add_overflow_u64(
-            seconds_ns, partial, &runtime
-        ) || shadowspill_add_overflow_u64(runtime, latency, &runtime)) {
-        return UINT64_MAX;
-    }
-    return runtime;
-}
-
 static int try_start_direction(
     const ShadowSpillSimulationProgram *program,
     ShadowSpillSimulationWork *work,
@@ -118,13 +58,7 @@ static int try_start_direction(
             }
         }
         transfer->state = SHADOWSPILL_TRANSFER_ACTIVE;
-        transfer->start_ns = work->now_ns;
-        uint64_t runtime = transfer_runtime_ns(program, alias, direction);
-        if (shadowspill_add_overflow_u64(
-                work->now_ns, runtime, &transfer->end_ns
-            )) {
-            transfer->end_ns = UINT64_MAX;
-        }
+        shadowspill_start_transfer_timing(program, transfer, work->now_ns);
         *active = (int32_t)index;
         *cursor = index + 1U;
         shadowspill_update_peaks(program, work);

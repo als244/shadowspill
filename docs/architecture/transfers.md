@@ -40,7 +40,9 @@ figures beside them. The simultaneous pass issues the two directions' copies
 alternately rather than one direction's batch and then the other's, because a
 lane whose `copy` enqueues work per chunk makes issuing a batch cost real time:
 drained in turn, the first direction's measurement window would contain the
-second's dispatch and report a rate that low by however long that took. Planning consumes that immutable profile and never
+second's dispatch and report a rate that low by however long that took. Planning consumes both solo and concurrent rates from that immutable profile.
+The simulator switches rates during partial overlaps; the effective field
+is retained for runtime telemetry. Planning never
 benchmarks a route itself; see the [runtime C API](../c/runtime.md).
 
 The runtime initializes non-addressable source ranges before timing, so SSD

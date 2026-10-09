@@ -35,7 +35,9 @@ def test_distributed_outputs_and_reproduction_keep_stores_per_rank(
             budgets=((2 << 30, 1 << 30),),
             geometries=(),
             points=(),
-            transfer_bandwidths=TransferBandwidths(25_000_000_000, 26_000_000_000),
+            transfer_bandwidths=TransferBandwidths(
+                25_000_000_000, 25_000_000_000, 26_000_000_000, 26_000_000_000
+            ),
         ).save(paths.root / "search.json")
     monkeypatch.setenv("RANK", "1")
     monkeypatch.setattr(

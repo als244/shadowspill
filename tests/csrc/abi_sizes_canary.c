@@ -12,6 +12,7 @@
 
 #include <shadowspill/pytorch_adapter.h>
 #include <shadowspill/runtime.h>
+#include <shadowspill/simulator.h>
 
 #define REPORT(name) printf("%s %zu\n", #name, sizeof(name))
 #define REPORT_VALUE(name) \
@@ -27,6 +28,7 @@ int main(void) {
     REPORT(ShadowSpillRuntimeStatistics);
     REPORT(ShadowSpillAllocationEvent);
     REPORT(ShadowSpillTraceConfig);
+    REPORT(ShadowSpillSimulationDevice);
     REPORT(ShadowSpillTransferRouteKey);
     REPORT(ShadowSpillTransferCalibrationConfig);
     REPORT(ShadowSpillTransferProfile);

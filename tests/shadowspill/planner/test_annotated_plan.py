@@ -67,8 +67,10 @@ def _pressurefit_program() -> ShadowSpillPlanningProblem:
             "cuda_0",
             device_capacity_bytes=96,
             spill_capacity_bytes=1_024,
-            fetch_bandwidth_bytes_per_second=1_000_000,
-            evict_bandwidth_bytes_per_second=2_000_000,
+            fetch_solo_bandwidth_bytes_per_second=1_000_000,
+            fetch_concurrent_bandwidth_bytes_per_second=(1_000_000),
+            evict_solo_bandwidth_bytes_per_second=2_000_000,
+            evict_concurrent_bandwidth_bytes_per_second=(2_000_000),
         ),
         admission_facts=AdmissionFacts(
             "cuda_0",
@@ -94,6 +96,8 @@ def test_annotated_program_plan_separates_budgets_and_bandwidths(
     assert restored.digest == source.digest
     transfer_bandwidths = TransferBandwidths(
         1_000_000,
+        1_000_000,
+        2_000_000,
         2_000_000,
         provenance="test calibration",
     )
@@ -205,7 +209,9 @@ def test_corpus_round_trip_keeps_plan_axes_separate(tmp_path: Path) -> None:
     loaded_case, loaded_program = load_step_program(saved.directory)
     selected = plan_program(
         loaded_program.problem,
-        transfer_bandwidths=TransferBandwidths(1_000_000, 2_000_000),
+        transfer_bandwidths=TransferBandwidths(
+            1_000_000, 1_000_000, 2_000_000, 2_000_000
+        ),
         artifact_store=tmp_path / "store",
         verbose=False,
     )
@@ -239,4 +245,6 @@ def test_corpus_round_trip_keeps_plan_axes_separate(tmp_path: Path) -> None:
     assert repeated_directory != selection_directory
     assert selection_directory.parent == repeated_directory.parent
     assert "execution-224_spill-1024" in str(selection_directory)
-    assert "fetch-1000000_evict-2000000" in str(selection_directory)
+    assert (
+        "fetch-1000000_fetch-concurrent-1000000_evict-2000000_evict-concurrent-2000000"
+    ) in str(selection_directory)

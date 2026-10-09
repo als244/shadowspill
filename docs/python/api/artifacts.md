@@ -110,8 +110,10 @@ annotated = plan_program(
     execution_budget=16 << 30,
     spill_budget=96 << 30,
     transfer_bandwidths=TransferBandwidths(
-        fetch_bytes_per_second=28_000_000_000,
-        evict_bytes_per_second=28_000_000_000,
+        fetch_solo_bytes_per_second=28_000_000_000,
+        fetch_concurrent_bytes_per_second=28_000_000_000,
+        evict_solo_bytes_per_second=28_000_000_000,
+        evict_concurrent_bytes_per_second=28_000_000_000,
     ),
     artifact_store=artifact_store,
 )
@@ -148,8 +150,9 @@ dynamic reserves, causal reuse edges, and capacity-refinement contract.
 ## Small value objects
 
 `MemoryBudgets` records the physical `execution_bytes` and `spill_bytes` one
-plan was made for. `TransferBandwidths` records `fetch_bytes_per_second` and
-`evict_bytes_per_second`, an optional rational scaling factor
+plan was made for. `TransferBandwidths` records `fetch_solo_bytes_per_second`,
+`fetch_concurrent_bytes_per_second`, `evict_solo_bytes_per_second`, and
+`evict_concurrent_bytes_per_second`, an optional rational scaling factor
 (`scale_numerator`, `scale_denominator`), optional `fetch_latency_ns` and
 `evict_latency_ns`, and a `calibration_digest` and `provenance` naming where
 the measurement came from. The latencies are optional so a record written

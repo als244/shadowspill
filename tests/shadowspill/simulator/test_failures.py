@@ -251,6 +251,8 @@ def test_configuration_must_cover_program_devices_exactly() -> None:
                 1024,
                 1_000_000_000,
                 1_000_000_000,
+                1_000_000_000,
+                1_000_000_000,
             ),
         ),
         spill_capacity_bytes=1024,
@@ -268,19 +270,19 @@ def test_configuration_must_cover_program_devices_exactly() -> None:
 @pytest.mark.parametrize(
     "config",
     [
-        lambda: DeviceSimulationConfig("", 1, 1, 1),
-        lambda: DeviceSimulationConfig("cuda_0", -1, 1, 1),
-        lambda: DeviceSimulationConfig("cuda_0", 1, 0, 1),
+        lambda: DeviceSimulationConfig("", 1, 1, 1, 1, 1),
+        lambda: DeviceSimulationConfig("cuda_0", -1, 1, 1, 1, 1),
+        lambda: DeviceSimulationConfig("cuda_0", 1, 0, 0, 1, 1),
         lambda: SimulationConfig((), 1),
         lambda: SimulationConfig(
             (
-                DeviceSimulationConfig("cuda_0", 1, 1, 1),
-                DeviceSimulationConfig("cuda_0", 1, 1, 1),
+                DeviceSimulationConfig("cuda_0", 1, 1, 1, 1, 1),
+                DeviceSimulationConfig("cuda_0", 1, 1, 1, 1, 1),
             ),
             1,
         ),
         lambda: SimulationConfig(
-            (DeviceSimulationConfig("cuda_0", 1, 1, 1),),
+            (DeviceSimulationConfig("cuda_0", 1, 1, 1, 1, 1),),
             -1,
         ),
         lambda: SimulationConfig((object(),), 1),

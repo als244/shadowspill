@@ -91,8 +91,10 @@ def config(capacity: int = 122) -> SimulationConfig:
         "cuda_0",
         device_capacity_bytes=capacity,
         spill_capacity_bytes=1_000,
-        fetch_bandwidth_bytes_per_second=61_000_000,
-        evict_bandwidth_bytes_per_second=61_000_000,
+        fetch_solo_bandwidth_bytes_per_second=61_000_000,
+        fetch_concurrent_bandwidth_bytes_per_second=(61_000_000),
+        evict_solo_bandwidth_bytes_per_second=61_000_000,
+        evict_concurrent_bandwidth_bytes_per_second=(61_000_000),
     )
 
 
@@ -351,8 +353,10 @@ def training_chain_config(capacity: int) -> SimulationConfig:
         "cuda_0",
         device_capacity_bytes=capacity,
         spill_capacity_bytes=10_000,
-        fetch_bandwidth_bytes_per_second=8_000_000,
-        evict_bandwidth_bytes_per_second=8_000_000,
+        fetch_solo_bandwidth_bytes_per_second=8_000_000,
+        fetch_concurrent_bandwidth_bytes_per_second=(8_000_000),
+        evict_solo_bandwidth_bytes_per_second=8_000_000,
+        evict_concurrent_bandwidth_bytes_per_second=(8_000_000),
     )
 
 
@@ -367,8 +371,10 @@ def representative_result() -> ProgramPlanResult:
             DeviceSimulationConfig(
                 device_id="cuda_0",
                 capacity_bytes=1 << 20,
-                fetch_bandwidth_bytes_per_second=1 << 30,
-                evict_bandwidth_bytes_per_second=1 << 30,
+                fetch_solo_bandwidth_bytes_per_second=1 << 30,
+                fetch_concurrent_bandwidth_bytes_per_second=(1 << 30),
+                evict_solo_bandwidth_bytes_per_second=1 << 30,
+                evict_concurrent_bandwidth_bytes_per_second=(1 << 30),
                 fetch_latency_ns=0,
                 evict_latency_ns=0,
             ),

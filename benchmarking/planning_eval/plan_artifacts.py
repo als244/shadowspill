@@ -59,8 +59,10 @@ def save_annotated_plan(
         output_root.expanduser().resolve()
         / f"execution-{budgets.execution_bytes}_spill-{budgets.spill_bytes}"
         / (
-            f"fetch-{bandwidths.fetch_bytes_per_second}_"
-            f"evict-{bandwidths.evict_bytes_per_second}"
+            f"fetch-{bandwidths.fetch_solo_bytes_per_second}_"
+            f"fetch-concurrent-{bandwidths.fetch_concurrent_bytes_per_second}_"
+            f"evict-{bandwidths.evict_solo_bytes_per_second}_"
+            f"evict-concurrent-{bandwidths.evict_concurrent_bytes_per_second}"
         )
         / plan.digest
         / f"artifact-{artifact_digest}"

@@ -65,7 +65,7 @@ def _budget_list(value: str) -> list[float]:
 
 
 def _transfer_bandwidths(value: str) -> TransferBandwidths:
-    """``FETCH,EVICT[,FETCH_US,EVICT_US]``, or a search.json to pin to."""
+    """Four solo/concurrent rates, optional latencies, or a saved search.json."""
 
     path = Path(value)
     if path.suffix == ".json":
@@ -77,19 +77,22 @@ def _transfer_bandwidths(value: str) -> TransferBandwidths:
             raise argparse.ArgumentTypeError(f"{value} records no transfer calibration")
         return recorded
     parts = [item.strip() for item in value.split(",")]
-    if len(parts) not in (2, 4):
+    if len(parts) not in (2, 4, 6):
         raise argparse.ArgumentTypeError(
-            "expected FETCH,EVICT in GB/s, optionally followed by the fetch and"
-            " evict latencies in microseconds, or the path of a search.json"
+            "expected four rates (fetch solo/concurrent, evict solo/concurrent)"
+            " in GB/s,"
+            " optionally two latencies in microseconds; two rates set fixed"
+            " fetch/evict; or use search.json"
         )
     try:
-        fetch, evict = (int(float(item) * 1e9) for item in parts[:2])
-        latencies = tuple(int(float(item) * 1e3) for item in parts[2:])
+        rates = tuple(int(float(item) * 1e9) for item in parts[:4])
+        if len(parts) == 2:
+            rates = (rates[0], rates[0], rates[1], rates[1])
+        latencies = tuple(int(float(item) * 1e3) for item in parts[4:])
     except ValueError as error:
         raise argparse.ArgumentTypeError(f"{value}: {error}") from error
     return TransferBandwidths(
-        fetch,
-        evict,
+        *rates,
         provenance=f"quickstart --transfer-bandwidths {value}",
         fetch_latency_ns=latencies[0] if latencies else None,
         evict_latency_ns=latencies[1] if latencies else None,
@@ -377,8 +380,9 @@ def _parser() -> argparse.ArgumentParser:
         type=_transfer_bandwidths,
         default=None,
         help="plan against this calibration instead of the one the runtime"
-        " measures at start: FETCH,EVICT in GB/s, optionally followed by the"
-        " fetch and evict latencies in microseconds, or the path of another"
+        " measures at start: FETCH_SOLO,FETCH_CONCURRENT,EVICT_SOLO,EVICT_CONCURRENT"
+        " in GB/s, optionally followed by two latencies in microseconds. A pair"
+        " sets fixed fetch/evict rates. Or give the path of another"
         " run's search.json to pin to what that run planned against. The run"
         " phase plans against the same lanes as the search either way",
     )

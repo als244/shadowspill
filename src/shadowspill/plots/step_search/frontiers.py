@@ -40,8 +40,10 @@ class FrontierLine:
     """
 
     label: str
-    fetch_bytes_per_second: int
-    evict_bytes_per_second: int
+    fetch_solo_bytes_per_second: int
+    fetch_concurrent_bytes_per_second: int
+    evict_solo_bytes_per_second: int
+    evict_concurrent_bytes_per_second: int
     tokens_per_second: Mapping[float, float | None]
 
     def at(self, budget_gib: float) -> float | None:

@@ -48,8 +48,10 @@ for execution_budget, spill_budget, bandwidth in points:
         execution_budget=execution_budget,
         spill_budget=spill_budget,
         transfer_bandwidths=TransferBandwidths(
-            fetch_bytes_per_second=bandwidth,
-            evict_bytes_per_second=bandwidth,
+            fetch_solo_bytes_per_second=bandwidth,
+            fetch_concurrent_bytes_per_second=bandwidth,
+            evict_solo_bytes_per_second=bandwidth,
+            evict_concurrent_bytes_per_second=bandwidth,
             provenance="explicit sweep",
         ),
         artifact_store=artifact_store,

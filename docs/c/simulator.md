@@ -9,7 +9,13 @@ standalone evaluator for an already selected schedule.
 `ShadowSpillSimulationProgram` contains indexed arrays for:
 
 - one `ShadowSpillSimulationDevice` per device, holding its capacity and its
-  per-direction bandwidth and latency;
+  `fetch_solo_bandwidth_bytes_per_second`,
+  `fetch_concurrent_bandwidth_bytes_per_second`,
+  `evict_solo_bandwidth_bytes_per_second`,
+  `evict_concurrent_bandwidth_bytes_per_second`, and per-direction latency;
+  all four rates must be positive. Startup latency is charged once and does
+  not contend. Payload progress switches rates when the reverse lane becomes
+  active or finishes. See [timing semantics](../architecture/simulation.md#solo-and-concurrent-bandwidth);
 - aliases, sizes, versions, and retained spill copies;
 - task resource, duration, workspace, dependencies, inputs, outputs, and
   mutations;

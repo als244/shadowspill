@@ -398,6 +398,8 @@ def plan_one_calibration(parsed: argparse.Namespace, raw_data: Path) -> Path:
     latencies = parsed.latency_us
     bandwidths = TransferBandwidths(
         int(fetch * 1_000_000_000),
+        int(fetch * 1_000_000_000),
+        int(evict * 1_000_000_000),
         int(evict * 1_000_000_000),
         provenance=f"bandwidth_frontier {fetch:g}/{evict:g} GB/s",
         fetch_latency_ns=int(latencies[0] * 1000) if latencies else None,
@@ -512,15 +514,25 @@ def _rows(raw_data: Path) -> list[dict[str, Any]]:
             rows.append(
                 {
                     "label": path.stem.removeprefix("search_"),
-                    "fetch_bytes_per_second": (
+                    "fetch_solo_bytes_per_second": (
                         None
                         if calibration is None
-                        else calibration.fetch_bytes_per_second
+                        else calibration.fetch_solo_bytes_per_second
                     ),
-                    "evict_bytes_per_second": (
+                    "fetch_concurrent_bytes_per_second": (
                         None
                         if calibration is None
-                        else calibration.evict_bytes_per_second
+                        else calibration.fetch_concurrent_bytes_per_second
+                    ),
+                    "evict_solo_bytes_per_second": (
+                        None
+                        if calibration is None
+                        else calibration.evict_solo_bytes_per_second
+                    ),
+                    "evict_concurrent_bytes_per_second": (
+                        None
+                        if calibration is None
+                        else calibration.evict_concurrent_bytes_per_second
                     ),
                     "fetch_latency_ns": (
                         None if calibration is None else calibration.fetch_latency_ns
@@ -760,8 +772,10 @@ def draw(raw_data: Path, output: Path, title: str | None) -> tuple[Path, ...]:
             lines.append(
                 FrontierLine(
                     label=legend_for(fetch, evict),
-                    fetch_bytes_per_second=int(fetch * 1_000_000_000),
-                    evict_bytes_per_second=int(evict * 1_000_000_000),
+                    fetch_solo_bytes_per_second=int(fetch * 1_000_000_000),
+                    fetch_concurrent_bytes_per_second=(int(fetch * 1_000_000_000)),
+                    evict_solo_bytes_per_second=int(evict * 1_000_000_000),
+                    evict_concurrent_bytes_per_second=(int(evict * 1_000_000_000)),
                     tokens_per_second=best,
                 )
             )
