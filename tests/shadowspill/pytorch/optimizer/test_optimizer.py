@@ -257,6 +257,32 @@ def test_optimizer_checkpoint_restore_preserves_tensor_objects() -> None:
             )
 
 
+def test_optimizer_checkpoint_keeps_unserialized_group_fields() -> None:
+    class WithDerivedField(torch.optim.SGD):
+        def state_dict(self):
+            result = super().state_dict()
+            for group in result["param_groups"]:
+                group.pop("derived", None)
+            return result
+
+    parameter = torch.nn.Parameter(torch.ones(2))
+    optimizer = WithDerivedField([parameter], lr=0.125)
+    derived = torch.tensor(7, dtype=torch.int64)
+    optimizer.param_groups[0]["derived"] = derived
+    checkpoint = copy.deepcopy(optimizer.state_dict())
+    optimizer.param_groups[0]["lr"] = 0.5
+    # Unlike the omitted derived field, an ordinary serialized field missing
+    # from the checkpoint is removed.
+    optimizer.param_groups[0]["temporary_setting"] = True
+    restored = restore_optimizer_checkpoint_structure(
+        {"weight": parameter}, optimizer, checkpoint
+    )
+    assert not restored
+    assert optimizer.param_groups[0]["derived"] is derived
+    assert optimizer.param_groups[0]["lr"] == 0.125
+    assert "temporary_setting" not in optimizer.param_groups[0]
+
+
 def test_optimizer_checkpoint_restore_rejects_incompatible_tensor() -> None:
     parameter, optimizer = _initialized(torch.optim.AdamW)
     checkpoint = copy.deepcopy(optimizer.state_dict())
@@ -655,3 +681,45 @@ def test_masters_need_an_update_that_can_be_traced() -> None:
             _DataDependentOptimizer([master]),
             compute_copies={"parameter": parameter},
         )
+
+
+def test_stochastic_optimizer_tasks_share_structure_with_distinct_salts():
+    """Per-parameter randomness is data, not a compilation/profile key."""
+    mlops = pytest.importorskip("mlops")
+    parameters = {
+        f"layer_{index}.weight": torch.nn.Parameter(
+            torch.ones(16, dtype=torch.bfloat16)
+        )
+        for index in range(3)
+    }
+    for parameter in parameters.values():
+        parameter.grad = torch.ones_like(parameter)
+    optimizer = mlops.optim.AdamW(
+        list(parameters.values()), opt_state_rounding="stochastic",
+        parameter_rounding="stochastic",
+    )
+    _install_declared_state(parameters, optimizer)
+    captured = capture_optimizer(
+        parameters, optimizer,
+        parameter_stage_owners={
+            name: (index,) for index, name in enumerate(parameters)
+        },
+    )
+    assert len(captured.update_tasks) == 3
+    digests = {task.artifact.compatibility_digest for task in captured.update_tasks}
+    assert len(digests) == 1
+    salts = [b for b in captured.bindings if ".rounding_salts." in b.name]
+    assert len(salts) == 3
+    assert all(
+        b.role is OptimizerTensorRole.HYPERPARAMETER
+        and not b.mutable and not b.spillable
+        and b.tensor.device.type == "cpu" and b.tensor.dtype == torch.int64
+        for b in salts
+    )
+    # Each occurrence binds its own salt even though it reuses the code/profile.
+    occurrences = [
+        tuple(name for name in task.binding_names if ".rounding_salts." in name)
+        for task in captured.update_tasks
+    ]
+    assert all(len(names) == 1 for names in occurrences)
+    assert len(set(occurrences)) == 3

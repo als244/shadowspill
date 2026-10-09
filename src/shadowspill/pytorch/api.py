@@ -38,6 +38,8 @@ from shadowspill.step import StepDataOrdering, StepProgram
 from shadowspill.store import ArtifactStore, StoreMode
 from shadowspill.task.profiling import ProfilingOptions
 
+from ._rng import preserve_rng
+from .accelerator import accelerator_device
 from .distributed import Distributed
 from .distributed._preparation import prepared
 
@@ -263,6 +265,7 @@ def plan_forward(
             export_bypass_key=export_bypass_key,
         )
         with (
+            preserve_rng(accelerator_device(memory.execution_device)),
             FrameworkArtifacts(cache).activate(),
             host_views_while_planning(runtime, model),
         ):
@@ -509,6 +512,7 @@ def plan_step(
             export_bypass_key=export_bypass_key,
         )
         with (
+            preserve_rng(accelerator_device(memory.execution_device)),
             FrameworkArtifacts(cache).activate(),
             host_views_while_planning(runtime, model),
         ):
@@ -643,6 +647,7 @@ def build_step_programs(
             export_bypass_key=export_bypass_key,
         )
         with (
+            preserve_rng(accelerator_device(memory.execution_device)),
             FrameworkArtifacts(cache).activate(),
             host_views_while_planning(runtime, model),
         ):

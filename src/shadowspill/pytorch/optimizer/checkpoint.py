@@ -56,8 +56,9 @@ def restore_optimizer_checkpoint_structure(
     parameter_by_saved_id: dict[object, torch.Tensor] = {}
     restored_groups: list[dict[str, object]] = []
     tensors: list[OptimizerCheckpointTensor] = []
-    for group_index, (current_group, saved_group_value) in enumerate(
-        zip(optimizer.param_groups, groups, strict=True)
+    serialized_groups = optimizer.state_dict()["param_groups"]
+    for group_index, (current_group, serialized_group, saved_group_value) in enumerate(
+        zip(optimizer.param_groups, serialized_groups, groups, strict=True)
     ):
         if not isinstance(saved_group_value, Mapping):
             raise TypeError("optimizer parameter group must be a mapping")
@@ -85,7 +86,13 @@ def restore_optimizer_checkpoint_structure(
         )
         if not isinstance(restored, dict):
             raise AssertionError("optimizer group restore changed container type")
-        restored_groups.append(restored)
+        # Optimizers may omit derived, read-only group fields from checkpoints.
+        # Keep those existing objects: compiled tasks may bind their identities.
+        restored_groups.append({
+            **{key: value for key, value in current_values.items()
+               if key not in serialized_group},
+            **restored,
+        })
 
     restored_state: list[tuple[torch.Tensor, object]] = []
     for saved_id, saved_value in saved_state.items():

@@ -202,3 +202,90 @@ def test_mutable_buffer_survives_diagnostics_and_repeated_training(tmp_path):
             assert state["counter"].item() == step
             for name, value in reference.state_dict().items():
                 torch.testing.assert_close(state[name], value, rtol=2e-4, atol=2e-5)
+
+
+class RandomNetwork(Network):
+    def forward(self, features, offset):
+        return super().forward(features, offset) + 0.125 * torch.rand_like(offset)
+
+
+def test_first_stochastic_update_is_independent_of_preparation_and_diagnostics(
+    tmp_path,
+):
+    """Fresh/cached profiles and extra warmups must not change real random draws."""
+    from dataclasses import replace
+    from fractions import Fraction
+
+    from mlops.optim import AdamW
+
+    from shadowspill.planner import SearchOptions
+    from shadowspill.planner.search.algorithms.pressurefit import (
+        PressureFit,
+        PressureFitOptions,
+    )
+    from tests.precision import low_precision_dtype
+
+    dtype = low_precision_dtype()
+    torch.manual_seed(1009)
+    source = RandomNetwork().to(dtype=dtype)
+    batch = {
+        "image": torch.randn(4, 6, dtype=dtype),
+        "context": {"offset": torch.randn(4, 3, dtype=dtype)},
+        "target": torch.randn(4, 3, dtype=dtype),
+    }
+    results = []
+    with ShadowSpill(
+        device="cuda:0", execution_gib=2, spill_gib=1,
+        artifact_store=tmp_path / "artifacts", partition="whole",
+        search_options=SearchOptions(
+            algorithm=PressureFit(
+                PressureFitOptions(resolution_options=(Fraction(0),))
+            )
+        ),
+    ) as backend:
+        for ordinal, (profile_warmup, diagnostic_warmup) in enumerate(
+            ((1, None), (7, 2), (1, None))
+        ):
+            backend.profiling_options = replace(
+                CORRECTNESS_PROFILING, warmup_iterations=profile_warmup
+            )
+            with Trainer(
+                copy.deepcopy(source), objective=objective, optimizer=AdamW,
+                optimizer_args={
+                    "lr": 0.001, "gradient_dtype": "parameter",
+                    "opt_state_dtype": dtype, "parameter_rounding": "stochastic",
+                    "opt_state_rounding": "stochastic",
+                },
+                backend=backend,
+            ) as trainer:
+                torch.manual_seed(1709)
+                cpu_rng = torch.get_rng_state()
+                device_rng = torch.cuda.get_rng_state(backend.device)
+                trainer.prepare(batch)
+                assert torch.equal(torch.get_rng_state(), cpu_rng)
+                assert torch.equal(torch.cuda.get_rng_state(backend.device), device_rng)
+                if diagnostic_warmup is not None:
+                    trainer.diagnose(
+                        batch, directory=tmp_path / f"diagnostic-{ordinal}",
+                        warmup=diagnostic_warmup,
+                    )
+                    assert torch.equal(torch.get_rng_state(), cpu_rng)
+                    assert torch.equal(
+                        torch.cuda.get_rng_state(backend.device), device_rng
+                    )
+                first = trainer.step(batch)
+                state = trainer._execution.call.state_dict()
+                leaves, structure = torch.utils._pytree.tree_flatten(state)
+                results.append((first.loss, leaves, structure))
+    expected_loss, expected_leaves, expected_structure = results[0]
+    for loss, leaves, structure in results[1:]:
+        assert loss == expected_loss
+        assert structure == expected_structure
+        for actual, expected in zip(leaves, expected_leaves, strict=True):
+            if isinstance(actual, torch.Tensor):
+                assert torch.equal(
+                    actual.reshape(-1).view(torch.uint8),
+                    expected.reshape(-1).view(torch.uint8),
+                )
+            else:
+                assert actual == expected

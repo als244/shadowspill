@@ -1368,3 +1368,16 @@ and existing unrelated threads' default memory policies are not replaced. Pool
 mapping policies apply regardless of which thread faults the pages. Custom or
 remote pool implementations own their storage placement. The training
 `ShadowSpill` backend exposes the same `numa_binding` argument.
+
+## Random state during preparation
+
+`plan_step`, `plan_forward` and `build_step_programs` preserve the default
+PyTorch CPU and selected-device accelerator random generators around capture,
+compilation, task warmup and profiling. Python's default random generator and
+NumPy's module-level generator (when loaded) are restored too, including on
+failed preparation. Profile cache hits and additional warmup repetitions do
+not advance the real training stream. Model initialization still consumes
+random numbers normally.
+
+Explicit `torch.Generator` instances and custom operators with private RNG state
+remain caller-owned; they are not discovered or reset automatically.

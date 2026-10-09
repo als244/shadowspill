@@ -213,6 +213,11 @@ upcasts them to restore any configured masters, without recovering precision
 that was not saved. Distributed checkpoints keep only each owner's saved master
 shard. Compute and master copies are never both checkpointed for one parameter.
 
+Optimizer group fields omitted by the optimizer's own `state_dict()` are
+reconstructed or retained as derived execution metadata. They are not additional
+checkpoint state. Restoration retains their existing tensor objects so compiled
+input bindings remain valid; saved fields still follow the checkpoint values.
+
 The update casts and writes in the graph it captures, so an optimizer whose
 update cannot be traced is refused masters, and gradients kept at another
 dtype than its parameters, rather than run eagerly without them.

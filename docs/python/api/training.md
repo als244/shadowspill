@@ -78,6 +78,18 @@ initialization, capture, profiling, planning and admission as needed by the
 backend. It returns the trainer and does not increment its update count.
 Representative input shapes and structures must match subsequent calls.
 
+### Preparation and diagnostic random state
+
+`Trainer.prepare()` and `Forward.prepare()` preserve default random streams
+after model initialization, including representative microbatch construction.
+Initialization retains its ordinary random-number consumption. Startup
+`Trainer.diagnose()` restores the same streams after its zero-LR warmup and
+traced steps, and restores mutable model buffers. With an optimizer advertising
+`zero_lr_preserves_state`, diagnostics leave parameters, moments and step
+counters unchanged; the first real update uses the same random stream with
+or without diagnostics. See [frontend RNG boundaries](frontend.md#random-state-during-preparation)
+for explicit-generator and custom-operator limitations.
+
 Already-initialized state is retained. A meta model requires `initialize=fn` or
 a checkpoint. `reset_parameters` is an explicit supplied initializer; no reset
 occurs merely because a runner is prepared. Meta materialization preserves tied
@@ -102,11 +114,6 @@ Enter `ShadowSpill` before allocating accelerator state or constructing model
 resources on the device. CPU models may be constructed earlier. The backend
 owns the imported model state; use `trainer.model` after preparation. Close
 runners before the backend. The contexts in the example enforce that order.
-
-Fresh meta initialization currently materializes ordinary CPU storage before
-importing state into the pinned spill pool. Budget for that staging copy;
-`prepare(initialize=...)` does not initialize directly into the pool or stream a
-large model in bounded chunks.
 
 ## Data sources
 
