@@ -34,7 +34,6 @@ needed; see [expert parallelism](MODELS.md#expert-parallelism).
 | [recipes/](recipes/) | Caller-side model/data/objective composition |
 | [full_model.py](full_model.py) | Reproducible full-model specifications and construction |
 | [precision.py](precision.py) | Explicit precision settings used by supplied workloads |
-| [huggingface_test/](huggingface_test/README.md) | Integration probes for additional external models |
 
 Model definitions describe computation. Recipes choose data, objectives,
 initialization, and run policy. Reusable training and forward execution live in
