@@ -21,6 +21,7 @@ from shadowspill.pytorch.materialization import (
     MaterializedForwardState,
     TrainingMaterializedState,
 )
+from shadowspill.pytorch.state.checkpoint import PoolCheckpoint
 from shadowspill.pytorch.state.serialization import (
     decode_tensor_state,
     encode_tensor_state,
@@ -742,31 +743,25 @@ class PlannedTrainStep:
     ) -> None:
         """Write the checkpoint :meth:`state_dict` returns to ``path``, from the pool.
 
-        The state is written from where it is in the spill pool rather than
-        copied out of it first: where the pool is one this process can
-        address, saving costs no host copy of the state, which on a large
-        model is otherwise the largest transient a checkpoint asks for. The
-        state stays where it is, and the callable goes on training. Resume
+        Objects are streamed into mapped checkpoint ranges without building
+        a full CPU snapshot. Each range is flushed and dropped before the next
+        object, including for non-addressable pools. Live state stays in its
+        pool, and the callable goes on training. Resume
         with ``load_state_dict(torch.load(path, mmap=True))``. A weight with a
         master copy is written once, as its master by default. With
         ``weights="compute"``, save compute values and upcast them on restore.
         """
 
         self._require_open("save a checkpoint from")
-        with self._executor.optimizer_state.state_dict_in_place() as (
-            optimizer,
-            masters,
-        ):
-            payload = self._checkpoint_payload(
-                self._state.state_dict(in_place=True),
-                optimizer,
-                masters,
-                weights=weights,
-            )
-            payload["model"] = encode_tensor_state(
-                cast(Mapping[str, Any], payload["model"])
-            )
-            torch.save(payload, path)
+        writer = PoolCheckpoint(self._state.bridge)
+        optimizer, masters = self._executor.optimizer_state.checkpoint_state(writer)
+        payload = self._checkpoint_payload(
+            self._state.checkpoint_state(writer), optimizer, masters, weights=weights
+        )
+        payload["model"] = encode_tensor_state(
+            cast(Mapping[str, Any], payload["model"])
+        )
+        writer.save(payload, path)
 
     def _checkpoint_payload(
         self,
@@ -817,7 +812,7 @@ class PlannedTrainStep:
         ):
             raise TypeError("training checkpoint model/optimizer must be mappings")
         model_state = decode_tensor_state(
-            model_state, self._state.state_dict(in_place=True)
+            model_state, self._state.model_state_templates()
         )
         if isinstance(step, bool) or not isinstance(step, int) or step < 0:
             raise TypeError("training checkpoint step must be non-negative")
@@ -860,8 +855,12 @@ class PlannedTrainStep:
             }
         if set(masters) != set(state.master_names):
             raise ValueError("checkpoint master parameter inventory differs")
+        weight_names = _weight_names(self._state.model)
         self._state.load_model_state(
-            _as_weights(model_state, masters, self._state.model)
+            model_state,
+            cast_names=frozenset(
+                alias for name in masters for alias in weight_names[name]
+            ),
         )
         state.load(optimizer_state, masters)
         self._step = step
@@ -1058,27 +1057,6 @@ def _with_masters(
             for alias in names[name]:
                 result[alias] = value
     return result
-
-
-def _as_weights(
-    model: Mapping[str, Any],
-    masters: Mapping[str, torch.Tensor],
-    module: nn.Module,
-) -> dict[str, Any]:
-    """A checkpoint's model entries with each master cast to its weights' dtype."""
-
-    if not masters:
-        return dict(model)
-    names = _weight_names(module)
-    dtypes = {
-        name: value.dtype for name, value in module.state_dict(keep_vars=True).items()
-    }
-    restored = dict(model)
-    for name in masters:
-        for alias in names[name]:
-            if alias in restored:
-                restored[alias] = restored[alias].to(dtypes[alias])
-    return restored
 
 
 __all__ = ["PlannedForward", "PlannedTrainStep"]

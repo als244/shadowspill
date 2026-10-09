@@ -95,9 +95,9 @@ class SpillPool:
     #: claim otherwise -- a pool that said it was addressable when it is not
     #: would fault rather than fail.
     #:
-    #: False costs a host copy of any state the framework holds: the runtime
-    #: copies it in when a plan adopts it and back out when the plan is done,
-    #: through the kind's ``write`` and ``read``.
+    #: Non-addressable pools use the kind's ``write`` and ``read`` interfaces.
+    #: Frontends can keep metadata-only representatives and stage individual
+    #: objects for initialization or explicit readback, without a full host copy.
     addressable: ClassVar[bool] = True
 
     def __post_init__(self) -> None:

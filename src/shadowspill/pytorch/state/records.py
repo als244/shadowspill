@@ -30,6 +30,9 @@ class PersistentStorage:
     anchor: torch.Tensor
     views: tuple[TensorView, ...]
     frontend_storage_is_separate: bool
+    # Metadata-only CPU storages retain shape/alias identity and reject value
+    # access. Their authoritative bytes exist solely in the runtime pool.
+    unbacked: bool = False
 
     @property
     def storage_identity(self) -> int:

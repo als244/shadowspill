@@ -24,6 +24,7 @@ from shadowspill.pytorch.optimizer import (
     training_parameters_with_gradients,
 )
 from shadowspill.pytorch.representations import is_wrapper
+from shadowspill.pytorch.state.initialization import empty_host_tensor
 from shadowspill.pytorch.state.optimizer import (
     adopt_optimizer_state_for_plan,
     declare_varying_hyperparams,
@@ -269,7 +270,7 @@ def _master_copies(
     if master_dtype is None:
         return {}
     return {
-        name: nn.Parameter(torch.empty(tuple(parameter.shape), dtype=master_dtype))
+        name: nn.Parameter(empty_host_tensor(parameter.shape, dtype=master_dtype))
         for name, parameter in model.named_parameters()
         if parameter.requires_grad
         and name in receives_gradient

@@ -773,11 +773,21 @@ tensor exists.
 `runtime.frontend` is the frontend it was opened with, and is the only route
 from a runtime to a framework.
 
+Pools can use pinned host, remote or [SSD storage](ssd.md). Runtime owns
+calibration, independently of the frontend and pool kind.
+`calibrate_transfer_capabilities()` accepts route selection, small/large probe
+sizes and warmup/measured counts; its [arguments](frontend.md#runtime) apply to
+the neutral runtime as well. It measures solo and concurrent traffic, then
+atomically publishes `transfer_capabilities` while locally idle. Planning
+consumes this snapshot rather than recalibrating. The current simulator uses
+fixed effective rates, not a dynamic solo/concurrent bandwidth model.
+
 ### `shadowspill.runtime.timing`
 
-The runtime times its own transfers with backend events. `Marker` offers the
-same events to a caller timing anything else on the same stream, so one step's
-timeline has one clock rather than two.
+The runtime records lane-reported transfer instants on a common trace axis.
+Lanes can use backend events or host-clock instants converted through the
+runtime's anchor. `Marker` offers backend events to callers timing work on a
+device stream, on that same axis.
 
 A marker is where an instant on a stream is recorded. Take one, record it before
 and after whatever you want to measure, and ask the later one

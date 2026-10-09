@@ -53,6 +53,7 @@ def materialize_representative_inputs(
     device_ordinal: int,
     probe_index: int = 0,
     allocation_check: Callable[[str], None] | None = None,
+    read_reference: Callable[[torch.Tensor], torch.Tensor] | None = None,
 ) -> RepresentativeInputSet:
     """Materialize exact state/user values and deterministic anonymous values."""
 
@@ -70,6 +71,7 @@ def materialize_representative_inputs(
             device_ordinal=device_ordinal,
             probe_index=probe_index,
             allocation_check=allocation_check,
+            read_reference=read_reference,
         ):
             arguments[position] = target
             summaries[position] = summary
@@ -110,6 +112,7 @@ def _materialize_alias_group(
     device_ordinal: int,
     probe_index: int,
     allocation_check: Callable[[str], None] | None,
+    read_reference: Callable[[torch.Tensor], torch.Tensor] | None,
 ) -> tuple[tuple[int, torch.Tensor, RepresentativeInputSummary], ...]:
     examples = tuple(artifact.example_arguments[position] for position in positions)
     if any(not isinstance(value, torch.Tensor) for value in examples):
@@ -149,6 +152,7 @@ def _materialize_alias_group(
             structural_contract_key=artifact.compatibility_digest,
             position=position,
             probe_index=probe_index,
+            read_reference=read_reference,
         )
         target.requires_grad_(bool(example.requires_grad))
         values.append(
@@ -228,6 +232,7 @@ def _populate_value(
     structural_contract_key: str,
     position: int,
     probe_index: int,
+    read_reference: Callable[[torch.Tensor], torch.Tensor] | None = None,
 ) -> str:
     reference = provenance.representative_value
     if reference is not None:
@@ -239,6 +244,8 @@ def _populate_value(
             provenance=provenance,
         )
         try:
+            if read_reference is not None:
+                reference = read_reference(reference)
             _write_reference(target, reference)
         except BaseException as exc:
             raise _value_error(

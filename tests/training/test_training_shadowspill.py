@@ -14,12 +14,19 @@ from shadowspill.training import Forward, Trainer
 
 def test_search_and_forward_share_imported_state_and_build_store(monkeypatch, tmp_path):
     imported, released, searches, plans, forwards = [], [], [], [], []
-    runtime = SimpleNamespace(close=lambda: None)
+
+    class RuntimeStub:
+        def close(self):
+            pass
+
+    runtime = RuntimeStub()
     monkeypatch.setattr(module, "resolve_device", lambda _: torch.device("cuda:0"))
     monkeypatch.setattr(module, "Runtime", lambda **_: runtime)
 
     def import_model(model, **kwargs):
         result = copy.deepcopy(model)
+        if initialize := kwargs.get("initialize"):
+            initialize(result)
         imported.append(result)
         return result
 

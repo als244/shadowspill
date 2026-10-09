@@ -268,6 +268,7 @@ def test_mutable_buffer_is_functional_with_logical_weight_gradients():
 
 
 def test_nested_representation_copy_uses_physical_storage_roots():
+    from shadowspill.libraries import resolve_library
     from shadowspill.pytorch.state.model_copy import copy_model_with_runtime_storages
     from shadowspill.pytorch.state.records import PersistentStorage
 
@@ -292,17 +293,18 @@ def test_nested_representation_copy_uses_physical_storage_roots():
         PersistentStorage(i, i, 0, owner.numel(), 0, owner, views, True)
         for i, (owner, views) in enumerate(roots)
     )
+    torch.ops.load_library(str(resolve_library("libshadowspill_pytorch.so")))
     copied, _ = copy_model_with_runtime_storages(net, storages, addressable=False)
     assert copied.weight is copied.tied
     assert copied.weight.payload.scale is copied.scale_alias
     assert copied.empty is not net.empty
     assert copied.empty.shape == net.empty.shape
     assert isinstance(copied.weight.payload, ScaledWeight)
-    assert (
+    assert copied.weight.payload.payload.shape == net.weight.payload.payload.shape
+    assert all(item.unbacked for item in storages)
+    with pytest.raises(RuntimeError, match="non-addressable ShadowSpill pool"):
         copied.weight.payload.payload.data_ptr()
-        != net.weight.payload.payload.data_ptr()
-    )
-    torch.testing.assert_close(copied.weight.dense(), net.weight.dense())
+    assert torch.isfinite(net.weight.dense()).all()
 
 
 def test_optimizer_publishes_all_components_from_dense_master():

@@ -85,6 +85,19 @@ parameter identities and shared-storage views. Mixing meta and initialized
 state is rejected. An initializer can build nonpersistent buffers before a
 checkpoint is applied; the checkpoint then supplies the saved state.
 
+With the ShadowSpill backend, meta initialization runs **after** pool allocation:
+pinned-host weights are filled directly in their pool, and non-addressable
+pools stage only the roots used by one initialization operation. No full CPU
+model is allocated first. The same applies to Forward and quickstart. Callbacks
+must write the provided tensors in place and should initialize them individually.
+
+`ShadowSpill(execution_gib=..., spill_pool=...)` accepts a configured spill pool,
+including [SSD storage](ssd.md). `spill_gib`, when supplied with a pool, limits
+the planner within its capacity; otherwise capacity is the limit. The existing
+`spill_gib=...` form constructs pinned host memory. `calibrate=False` permits
+explicit calibration through `backend.runtime.calibrate_transfer_capabilities`,
+for example with smaller probes on an SSD.
+
 Enter `ShadowSpill` before allocating accelerator state or constructing model
 resources on the device. CPU models may be constructed earlier. The backend
 owns the imported model state; use `trainer.model` after preparation. Close

@@ -192,6 +192,7 @@ def pooled(monkeypatch: pytest.MonkeyPatch) -> _PooledState:
 
     monkeypatch.setattr(replacement_module, "read_spill_tensor", read)
     monkeypatch.setattr(replacement_module, "write_spill_tensor", write)
+    monkeypatch.setattr(replacement_module, "spill_view", lambda *_: None)
     return state
 
 

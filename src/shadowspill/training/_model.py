@@ -18,13 +18,13 @@ from shadowspill.pytorch.state.serialization import decode_tensor_state
 from ._types import Initializer, OptimizerConstructor, ParameterGroups
 
 
-def initialize_model(
+def validate_initialization(
     model: nn.Module,
     *,
-    initialize: Initializer | None = None,
-    state: Mapping[str, Any] | None = None,
-    missing_parameters: Collection[str] = (),
-) -> nn.Module:
+    initialize: Initializer | None,
+    state: Mapping[str, Any] | None,
+) -> bool:
+    """Check initialization inputs before allocating any parameter payload."""
     values = (*model.parameters(), *model.buffers())
     meta = [value.is_meta for value in values]
     if any(meta):
@@ -40,6 +40,17 @@ def initialize_model(
                     + ", ".join(sorted(missing_buffers))
                     + "; supply initialize= for values omitted by the checkpoint"
                 )
+    return any(meta)
+
+
+def initialize_model(
+    model: nn.Module,
+    *,
+    initialize: Initializer | None = None,
+    state: Mapping[str, Any] | None = None,
+    missing_parameters: Collection[str] = (),
+) -> nn.Module:
+    if validate_initialization(model, initialize=initialize, state=state):
         # Keep tied parameter identities. No reset runs unless explicitly supplied.
         materialize_meta_state(model)
     if initialize is not None:

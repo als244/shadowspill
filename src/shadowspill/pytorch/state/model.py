@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+from collections.abc import Callable
 from typing import cast
 
 import torch
@@ -17,12 +18,14 @@ from shadowspill.runtime import (
 )
 from shadowspill.runtime.objects import require_state_operation_allowed
 
+from .initialization import empty_host_metadata, pool_values
 from .model_copy import copy_model_with_runtime_storages
 from .storage import (
     NamedTensor,
     export_tensors,
     import_state_from_file,
     import_tensors,
+    import_then_fill,
     own_persistent_state,
     persistent_state,
     read_state,
@@ -40,6 +43,7 @@ def import_model_state[ModelT: nn.Module](
     pool: str,
     release_source: bool = True,
     distributed: Distributed | None = None,
+    initialize: Callable[[nn.Module], None] | None = None,
 ) -> ModelT:
     """Return a model copy whose registered state resides in ``pool``.
 
@@ -75,7 +79,9 @@ def import_model_state[ModelT: nn.Module](
                 f"{' and more' if len(materialized) > 4 else ''}. "
                 "Construct the whole model under torch.device('meta')."
             )
-        return _materialize_meta_model(model, runtime=runtime, pool=pool)
+        return _materialize_meta_model(
+            model, runtime=runtime, pool=pool, initialize=initialize
+        )
     selected = _require_pool(runtime, pool)
     storages = register_tensor_storages(
         _model_tensors(model),
@@ -96,6 +102,13 @@ def import_model_state[ModelT: nn.Module](
     except BaseException:
         unregister_tensor_storages(storages, runtime=runtime)
         raise
+    if initialize is not None:
+        try:
+            with torch.no_grad(), pool_values(runtime):
+                initialize(imported)
+        except BaseException:
+            release_persistent_tensors(imported, runtime=runtime)
+            raise
     return cast(ModelT, imported)
 
 
@@ -129,31 +142,17 @@ def _materialize_meta_model[ModelT: nn.Module](
     *,
     runtime: Runtime,
     pool: str,
+    initialize: Callable[[nn.Module], None] | None = None,
 ) -> ModelT:
-    """Let a meta model initialize itself, then import what it built.
+    """Allocate model state in its pool, then run ordinary initializers.
 
-    The model is rebound in place rather than copied: a meta model holds no
-    values, so there is nothing to copy and nothing to release. Every tensor
-    is built in ordinary host memory, written by ``reset_parameters``, and
-    imported once all of them are -- which is the same way state arrives from
-    anywhere else, and the reason there is no second path to maintain.
-
-    The peak is the model in host memory, briefly, on top of the pool it is
-    imported into. An earlier version avoided that by allocating each tensor
-    in the pool and letting ``reset_parameters`` write there, so nothing was
-    ever copied; it was abandoned because it is only possible for a pool whose
-    memory this process can address, and one path that always works is worth
-    more than two paths that sometimes do. Where the peak matters, build the
-    values once and import from a checkpoint instead, which streams.
-
-    Initialization runs to completion before anything is imported. Doing it
-    module by module would hold the peak down, but ``reset_parameters`` on a
-    parent is allowed to touch the state of the modules it owns, and a module
-    imported before that happened would leave the pool holding values the
-    model no longer has.
+    Parents may initialize their children's tensors: each write reaches the
+    authoritative pool, including when a later initializer revisits a tensor.
+    Host-addressable pools need no staging payload. Other pools stage only the
+    roots touched by one tensor operation rather than an entire model.
     """
 
-    offenders = _modules_without_reset(model)
+    offenders = _modules_without_reset(model) if initialize is None else ()
     if offenders:
         raise RuntimeError(
             "these modules own state but do not implement reset_parameters, so "
@@ -163,20 +162,32 @@ def _materialize_meta_model[ModelT: nn.Module](
         )
     # Fails here rather than after a whole model has been built.
     _require_pool(runtime, pool)
-    materialize_meta_state(model)
-    for module in model.modules():
-        reset = getattr(module, "reset_parameters", None)
-        if callable(reset):
-            reset()
-    # Tied weights are one storage under several names, and the import groups
-    # by storage, so a tie stays one object here exactly as it does for a model
-    # whose values came from anywhere else.
-    import_tensors(
+    materialize_meta_state(model, allocate=empty_host_metadata)
+    named = _model_tensors(model)
+
+    def fill() -> None:
+        with torch.no_grad():
+            if initialize is not None:
+                initialize(model)
+            else:
+                for module in model.modules():
+                    reset = getattr(module, "reset_parameters", None)
+                    if callable(reset):
+                        reset()
+        if tuple((item.name, id(item.tensor)) for item in _model_tensors(model)) != (
+            tuple((item.name, id(item.tensor)) for item in named)
+        ):
+            raise RuntimeError(
+                "initializer replaced registered state; initialize the "
+                "supplied tensors in place instead"
+            )
+
+    import_then_fill(
         model,
-        _model_tensors(model),
+        named,
+        fill,
         runtime=runtime,
         pool=pool,
-        release_source=True,
     )
     return model
 
@@ -205,6 +216,7 @@ def import_model_state_from_file(
 
     if persistent_state(runtime, model) is not None:
         raise RuntimeError("model state is already owned by this Runtime")
+    materialize_meta_state(model, allocate=empty_host_metadata)
     import_state_from_file(
         model, _model_tensors(model), path, runtime=runtime, pool=pool
     )

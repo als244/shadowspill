@@ -10,7 +10,7 @@ from torch import nn
 
 from shadowspill.pytorch.distributed import Distributed
 
-from ._model import initialize_model, model_mode
+from ._model import initialize_model, model_mode, validate_initialization
 from ._types import Backend, ForwardExecution, Initializer
 
 
@@ -61,9 +61,19 @@ class Forward:
 
             path = Path(checkpoint)
             path = path / "state.pt" if path.is_dir() else path
-            state = torch.load(path, map_location="cpu", weights_only=True)
+            state = torch.load(path, map_location="cpu", weights_only=True, mmap=True)
             state = state.get("model", state)
-        self.model = initialize_model(self.model, initialize=initialize, state=state)
+
+        validate_initialization(self.model, initialize=initialize, state=state)
+
+        def fill(model: nn.Module) -> None:
+            initialize_model(model, initialize=initialize, state=state)
+
+        prepare_model = getattr(self.backend, "initialize_model", None)
+        if prepare_model is None:
+            fill(self.model)
+        else:
+            self.model = prepare_model(self.model, fill)
         modes = {name: m.training for name, m in self.model.named_modules()}
         with model_mode(self.model, self.training):
             self._execution = self.backend.prepare_forward(

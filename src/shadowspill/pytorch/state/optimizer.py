@@ -17,6 +17,7 @@ from shadowspill.pytorch.optimizer.starts import (
 )
 from shadowspill.runtime import Runtime
 
+from .initialization import empty_host_tensor
 from .storage import (
     NamedTensor,
     export_tensors,
@@ -263,7 +264,7 @@ def install_declared_optimizer_state(
         parameter = named[entry.parameter_name]
         entries = optimizer.state.setdefault(parameter, {})
         held = entries.get(entry.entry_name)
-        value = torch.empty(entry.shape, dtype=entry.dtype, device="cpu")
+        value = empty_host_tensor(entry.shape, dtype=entry.dtype)
         entries[entry.entry_name] = value
         created.append((entry.start, value, parameter, held, entry.parameter_name))
 

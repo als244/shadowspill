@@ -7,6 +7,8 @@ points, and the callables planning returns.
 
 ## Memory pool configuration
 
+For temporary SSD storage and bounded host staging, see [SSD pools](ssd.md).
+
 `shadowspill.memory` holds the values that describe a machine to ShadowSpill.
 They are frozen dataclasses; `device()`, `pinned_host()` and
 `transfer_route()` are keyword-only constructors for them, and
@@ -28,6 +30,7 @@ They are frozen dataclasses; `device()`, `pinned_host()` and
 | `capacity` | `int` | Bytes the pool takes at construction and holds for its life. |
 | `kind` | `int` | The pool-kind value the runtime looks its memory up by. |
 | `kind_name` | `str` | What the pool registry reports for it. |
+| `addressable` | `bool` | Whether CPU setup code can directly access the pool payload. `False` for remote and SSD pools; their tensor metadata retains no complete host payload. |
 | `library` | `Path \| None` | The shared object supplying this kind, or `None` for one the runtime implements. Loaded once per distinct path, before the runtime is created, and kept open for its life. |
 | `configuration()` | `ctypes.Structure \| None` | What this pool's kind is told about *this* pool, forwarded untouched and read by nothing in between. |
 
@@ -57,6 +60,10 @@ It needs `libshadowspill_network.so`, which a build without it does not
 produce; asking for a remote pool without one raises where the pool is
 configured.
 
+`SSDPool`, built by `shadowspill.ssd.ssd()`, configures temporary direct-I/O
+storage and bounded host staging. See [SSD spill storage](ssd.md) for its
+capacity, directory, chunk-size and queue-depth arguments.
+
 `TransferRoute` is one directed relationship between two named pools, built
 by `transfer_route()`:
 
@@ -66,7 +73,7 @@ by `transfer_route()`:
 | `destination` | `str` | required | Name of the pool copied into. Must differ from `source`. |
 
 Direction is immutable: a route is never handed a copy direction later. The
-backend behind it is resolved from the endpoint pools when the runtime is
+lane behind it is resolved from the endpoint pools' kinds when the runtime is
 constructed.
 
 External memory is process-attributable device memory outside ShadowSpill's
@@ -175,6 +182,12 @@ It atomically publishes the new matrix, which it also returns. This runtime must
 be locally idle, but ShadowSpill performs no cross-process barrier: callers may
 coordinate several processes and calibrate concurrently to measure contended
 links.
+
+Runtime owns this measurement for every lane, including SSD. It initializes
+non-addressable probe sources, measures solo and concurrent directions, and
+publishes fixed effective rates for planning. Smaller probes reduce setup I/O
+but may change the estimate; they do not change lane chunk sizes. See
+[calibration](../../architecture/transfers.md#calibration).
 
 `Runtime.close()` verifies that no planning, callable, persistent imported
 state, public object reference, or caller-owned device output remains, then
@@ -338,6 +351,7 @@ import_model_state(
     pool,
     release_source=True,
     distributed=None,
+    initialize=None,
 )
 ```
 
@@ -358,6 +372,7 @@ import_optimizer_state(
 | `runtime` | `Runtime` | required | The runtime that will own the resulting objects. |
 | `pool` | `str` | required | Name of the pool in `runtime.pools` the state lives in, normally the spill pool. |
 | `release_source` | `bool` | `True` | ShadowSpill retains no reference to the input; Python frees it when the caller drops theirs. Pass `False` only when the original must stay usable on its own. |
+| `initialize` (model only) | `Callable[[nn.Module], None] \| None` | `None` | Run an initializer after pool allocation; it must write the supplied state in place. Meta models otherwise use `reset_parameters()`. |
 
 `import_model_state()` returns a model whose registered tensors point at
 runtime-owned pool leases; `import_optimizer_state()` returns the same
@@ -366,16 +381,17 @@ optimizer object, rebound.
 `import_model_state()` takes a model in either of two states, and what it
 returns follows from which.
 
-A model **on `meta`** has structure but no storage, so there is nothing to
-copy: every tensor is built in ordinary memory, `reset_parameters()` writes the
-values, the whole of it is imported once every module has initialized, and the
-same module is returned, rebound. The transient is the model, until the import
-releases it; where that is what decides whether the model fits, fill from a
-checkpoint instead, which maps the file rather than reading it. The model must
-satisfy the
-contract in [importing state](../../architecture/state-import.md) -- constructible
-on meta, dtype fixed at construction, and `reset_parameters()` on every module
-that owns state -- and is refused, naming the offenders, if it does not.
+A model **on `meta`** is allocated in the destination pool before initialization.
+The same module is returned. `initialize(model)` can supply an in-place
+initializer; otherwise every module owning state must implement
+`reset_parameters()`. The model must be constructible on meta and declare its
+final dtypes at construction.
+
+Addressable pools are initialized directly. Other pools stage only the storage
+roots used by the current tensor operation, write changes back, and retain only
+CPU metadata between operations. Initializers should process individual tensors
+and avoid retaining a full model's worth of scratch. See the
+[initialization contract](../../architecture/state-import.md).
 
 A model **already materialized** is copied into the pool as it stands, and a
 copied module hierarchy is returned with distinct Python identities but the
@@ -414,9 +430,9 @@ than returning a copy, so the caller keeps the object it has, and both return
 `None`.
 
 They fill pool state without building the checkpoint in ordinary host memory
-first. The file is mapped rather than read, so its pages are reclaimable cache,
-and the import happens before the copy, so the values land in pool memory
-directly. The checkpoint must name every tensor the target enumerates and agree
+first. The file is mapped rather than read, so its pages are reclaimable cache.
+The target is allocated in the pool first; non-addressable pools use bounded
+per-operation staging when copying values in. The checkpoint must name every tensor the target enumerates and agree
 with each on dtype and shape; raw bytes cannot be converted, so a disagreement
 is refused rather than reinterpreted, and extra names in the file are ignored.
 One file per call: a checkpoint sharded across several files is refused. The
@@ -532,9 +548,9 @@ entries into the spill pool before they hold anything, and writes each one's
 start there -- the value the optimizer's own first step gives it, read from how
 that step makes the entry (see [the
 optimizer](../../architecture/optimizer.md#started-where-the-optimizer-starts-it)).
-Where the pool is one this process cannot address, the entries are filled first
-and imported after, which costs nothing extra: such a pool keeps a host copy of
-its state for as long as it holds it.
+For non-addressable pools, initialization stages only the roots used by the
+current operation. Large CPU payloads are released after setup; small scalar
+control values can remain available to Python during optimizer discovery.
 
 The optimizer planning is given is the reference for whose state that is. If
 *its* state was already imported, planning adopts it as it stands and it
@@ -1294,13 +1310,14 @@ in place, so the snapshot is normally the only copy of the state outside the
 pool; an object whose pool copy is not current is read into a buffer first and
 costs two until the snapshot is built.
 
-`save(path, weights="master")` writes that checkpoint to a file without the snapshot: the model's
-and the optimizer's state are viewed where they are in the spill pool and
-written from there, so saving costs no host copy of the state, however large,
-and the callable goes on training on the same state. Resume with
-`load_state_dict(torch.load(path, mmap=True))`. A pool this process cannot
-address is read out as `state_dict()` reads it. `weights="compute"` selects the
-compute-only representation for this direct save as well.
+`save(path, weights="master")` writes the checkpoint without constructing that
+snapshot. Tensor geometry is serialized first; pool objects are then read into
+mapped file ranges one at a time, flushed, and released from resident file
+pages. The finished file is published atomically. This works for addressable
+and non-addressable pools and leaves live state in its pool. `weights="compute"`
+selects the compute-only representation. Resume with
+`load_state_dict(torch.load(path, mmap=True, weights_only=True))`; model and
+optimizer values are restored a parameter at a time.
 
 ## Exceptions
 

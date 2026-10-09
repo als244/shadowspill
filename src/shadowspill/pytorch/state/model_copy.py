@@ -10,7 +10,7 @@ import torch
 import torch.nn as nn
 
 from shadowspill.pytorch.distributed import borrowed_group_memo
-from shadowspill.pytorch.representations import map_tensor
+from shadowspill.pytorch.representations import map_tensor, storage_view
 
 from .records import PersistentStorage, TensorView
 
@@ -23,19 +23,15 @@ def copy_model_with_runtime_storages(
 ) -> tuple[nn.Module, tuple[PersistentStorage, ...]]:
     """Copy a module hierarchy without copying registered tensor payloads.
 
-    The copy's tensors view the pool the values were just imported into, so
-    the payload exists once. That is possible only where this process can
-    address the pool; where it cannot, the copy is given host memory of its
-    own and the storages stay separate, which means the runtime copies them in
-    when a plan adopts them and back out when it is done. Everything else --
-    which tensors view which storage, and the deep copy around them -- is the
-    same either way, so the two differ in one line.
+    Addressable pools supply CPU views of their leases. Other pools supply
+    guarded metadata-only owners; explicit reads fetch values on demand.
+    Both preserve ties and views without retaining a second host payload.
     """
 
     memo: dict[int, object] = borrowed_group_memo()
     imported: list[PersistentStorage] = []
     for storage in storages:
-        owner = _runtime_owner(storage) if addressable else _separate_owner(storage)
+        owner = _runtime_owner(storage) if addressable else _unbacked_owner(storage)
         views: list[TensorView] = []
         for source_view in storage.views:
             source = source_view.tensor
@@ -52,7 +48,8 @@ def copy_model_with_runtime_storages(
             )
         storage.anchor = owner
         storage.views = tuple(views)
-        storage.frontend_storage_is_separate = not addressable
+        storage.frontend_storage_is_separate = False
+        storage.unbacked = not addressable
         imported.append(storage)
 
     def empty_leaf(value: torch.Tensor) -> torch.Tensor:
@@ -72,15 +69,13 @@ def copy_model_with_runtime_storages(
     return copied, tuple(imported)
 
 
-def _separate_owner(storage: PersistentStorage) -> torch.Tensor:
-    """Host memory of the copy's own, holding what was just imported.
-
-    The anchor still names the source model's storage here, and the bytes in
-    it are exactly what was written into the pool a moment ago, so a clone is
-    both the right values and the right size without reading the pool back.
-    """
-
-    return storage.anchor.clone()
+def _unbacked_owner(storage: PersistentStorage) -> torch.Tensor:
+    return cast(
+        torch.Tensor,
+        torch.ops.shadowspill._make_unbacked_cpu_storage(
+            torch.empty(0, dtype=torch.uint8), storage.size_bytes
+        ),
+    )
 
 
 def _runtime_owner(storage: PersistentStorage) -> torch.Tensor:
@@ -102,11 +97,8 @@ def _runtime_owner(storage: PersistentStorage) -> torch.Tensor:
 
 def _runtime_view(owner: torch.Tensor, view: TensorView) -> torch.Tensor:
     source = view.tensor
-    result = torch.empty(0, dtype=source.dtype, device="cpu").set_(
-        owner.untyped_storage(),
-        view.storage_offset,
-        view.shape,
-        view.stride,
+    result = storage_view(
+        owner, source.dtype, view.shape, view.stride, view.storage_offset
     )
     if isinstance(source, nn.Parameter):
         parameter = nn.Parameter(result, requires_grad=view.requires_grad)

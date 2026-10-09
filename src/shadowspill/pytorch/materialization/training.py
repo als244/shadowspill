@@ -37,6 +37,7 @@ from shadowspill.pytorch.spill import (
     spill_view,
     write_spill_tensor,
 )
+from shadowspill.pytorch.state.checkpoint import PoolCheckpoint
 from shadowspill.pytorch.state.storage import (
     adopt_persistent_tensor,
     persistent_state,
@@ -340,6 +341,27 @@ class TrainingMaterializedState(MaterializedState):
             raise RuntimeError(f"unsupported model state entries: {sorted(missing)}")
         return result
 
+    def checkpoint_state(
+        self, writer: PoolCheckpoint
+    ) -> OrderedDict[str, torch.Tensor]:
+        """Checkpoint geometry with deferred readers for its pool objects."""
+        owners = {
+            item.alias_group_id: writer.alias(item.alias_group_id, item.size_bytes)
+            for item in self.layout.program.alias_groups
+            if item.alias_group_id in self._model_aliases
+        }
+        with writer.mode:
+            return self._state_from_owners(owners)
+
+    def model_state_templates(self) -> OrderedDict[str, torch.Tensor]:
+        """Consistent CPU wrappers over existing pool metadata, without reads.
+
+        Live components may currently point at device placeholders while their
+        outer Python wrapper retains its construction device. Rebuild from the
+        original CPU owners before inspecting the representation for restore.
+        """
+        return self._state_from_owners(self._planning_cpu_owners)
+
     def _model_alias_views(self) -> dict[str, torch.Tensor]:
         """Each model alias viewed where it is in the spill pool, and copied out
         only where it cannot be viewed."""
@@ -355,27 +377,16 @@ class TrainingMaterializedState(MaterializedState):
             owners.update(self._read_model_aliases(aliases=missing))
         return owners
 
-    def load_model_state(self, state: Mapping[str, torch.Tensor]) -> None:
+    def load_model_state(
+        self,
+        state: Mapping[str, torch.Tensor],
+        *,
+        cast_names: frozenset[str] = frozenset(),
+    ) -> None:
         expected = set(self._state_names)
         if set(state) != expected:
             raise RuntimeError("model state_dict keys differ")
-        owners = self._model_alias_views()
-        destinations = self._state_from_owners(owners)
-        with torch.no_grad():
-            for name, destination in destinations.items():
-                source = state[name]
-                if not isinstance(source, torch.Tensor):
-                    raise TypeError(f"model state entry {name!r} must be a tensor")
-                if (
-                    source.shape != destination.shape
-                    or source.dtype != destination.dtype
-                ):
-                    raise RuntimeError(
-                        f"model state entry {name!r} has incompatible geometry"
-                    )
-                destination.copy_(source.detach().to(device="cpu"))
-        for alias_id, owner in owners.items():
-            write_spill_tensor(self.bridge.objects, alias_id, owner)
+        self.write_model_entries(state, cast_names=cast_names)
 
     def restore_cpu_and_unregister(self) -> None:
         if self._closed:

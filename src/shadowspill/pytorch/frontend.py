@@ -29,6 +29,8 @@ REQUIRED_STORAGE_OPERATIONS: Final = (
     "_import_cpu_storages",
     "_export_cpu_storages",
     "_make_runtime_cpu_storage",
+    "_make_unbacked_cpu_storage",
+    "_release_cpu_storages",
     "_acquire_storages",
     "_before_task_storages",
     "_dematerialize_storages",

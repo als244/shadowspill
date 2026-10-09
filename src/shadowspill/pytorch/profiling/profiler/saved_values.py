@@ -12,6 +12,7 @@ from shadowspill.errors import CaptureError
 from shadowspill.pytorch.capture.artifacts import AotGraphPair
 from shadowspill.pytorch.distributed._profiling import any_needed, phase
 from shadowspill.pytorch.profiling.geometry import distinct_locations
+from shadowspill.pytorch.state.initialization import empty_host_tensor
 
 if TYPE_CHECKING:
     from . import TaskProfiler
@@ -123,11 +124,10 @@ def _snapshot(
             raise CaptureError("paired forward saved value is not a tensor")
         sources.append(value.detach())
     copies = tuple(
-        torch.empty_strided(
+        empty_host_tensor(
             tuple(source.shape),
-            tuple(source.stride()),
+            stride=tuple(source.stride()),
             dtype=source.dtype,
-            device="cpu",
         )
         for source in sources
     )

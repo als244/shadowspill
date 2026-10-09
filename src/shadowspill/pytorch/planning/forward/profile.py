@@ -13,6 +13,7 @@ from shadowspill.pytorch.profiling import (
     validate_compiled_profile,
 )
 from shadowspill.pytorch.profiling.profiler import TaskProfiler
+from shadowspill.runtime import Runtime
 from shadowspill.runtime.bootstrap import (
     existing_execution_reserve,
     validate_dynamic_execution_reservation,
@@ -31,6 +32,7 @@ from .programs import _verify_manifest_identity
 def profile_forward_tasks(
     captured: ForwardCaptureArtifacts,
     *,
+    runtime: Runtime,
     plan_id: int,
     allocation_probe_seeds: int = 1,
     allocation_probe_repetitions: int = 2,
@@ -44,6 +46,7 @@ def profile_forward_tasks(
     profiling_options = profiling_options or ProfilingOptions()
     profiler = TaskProfiler(
         captured.installed.library,
+        runtime=runtime,
         runtime_handle=captured.installed.runtime_handle,
         plan_id=plan_id,
         device_ordinal=captured.device_ordinal,

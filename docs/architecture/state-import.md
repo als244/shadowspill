@@ -13,63 +13,39 @@ copy of something that was only ever meant to live in the pool. For state that
 is large relative to the memory available, that transient is what decides
 whether the model can be loaded at all, and it is paid on every run.
 
-Two answers are possible, and only one of them works everywhere.
-
-The first is to never allocate the state anywhere else: give it pool storage
-before it has values and let it write its values there. That costs no transient
-at all. It also requires the pool to hand out an address for someone else to
-write through, which a pool whose memory is not in this process cannot do.
-
-The second is to build the values, import them, and release what built them.
-That costs a transient the size of the state while the import runs, and it
-works for every kind of pool, because the only thing crossing the pool's edge
-is a call the kind implements.
-
-**The second is what happens.** Keeping both would mean two ways for state to
-enter a pool, differing by a property of the pool that the caller does not
-choose and cannot see; the cheaper one would be the one that silently stopped
-applying. Where the transient is what decides whether the state fits, import
-from a checkpoint instead — the row below that maps the file rather than
-reading it, and pays reclaimable page cache rather than anonymous memory.
-
-Optimizer state that planning creates is different, because planning allocates
-it and writes each entry's start into it: it takes the checkpoint's order --
-imported before it holds values, then filled in the pool -- and the other order
-only for a pool that cannot be written through, which keeps a host copy of its
-state regardless. See [the
-optimizer](optimizer.md#created-in-the-pool-then-filled).
+ShadowSpill allocates state in its destination pool before running its
+initializer. Constructing on `meta` therefore avoids a complete temporary host
+model. Addressable pools expose their bytes directly. Non-addressable pools
+(such as SSD and remote memory) stage only the storage roots used by the current
+initialization operation, write mutations back, and keep metadata-only tensors
+between operations. The model's initialization code is unchanged.
 
 ## Three paths in
 
-All three end with the same thing — a `PersistentState` the runtime owns —
-and differ only in where the values come from.
-
-| path | values come from | transient while importing |
+| Path | Values come from | Host payload outside the pool |
 |---|---|---|
-| **construct, then import** | the model initialising itself | the state, until the import releases it |
-| **import a live model** | a model already built | a full copy while the import runs |
-| **import from a checkpoint** | a file, mapped rather than read | reclaimable page cache |
+| **Meta model, then initialize** | `reset_parameters()` or an explicit `initialize(model)` callback | Initializer scratch; non-addressable pools also stage roots touched by one operation |
+| **Import an existing model** | Already initialized registered tensors | The caller's source until its references are dropped |
+| **Import a checkpoint** | A memory-mapped file | Reclaimable file pages, plus per-operation staging for non-addressable pools |
 
-The first is the one to use when the caller owns the model's definition. The
-second exists for state a caller already has and did not build for this
-purpose. The third is the one that stays cheap at any size, and it orders
-itself deliberately: it imports the target *first* and then writes the file's
-values through, so for a pool this process can address the values land in the
-pool rather than being copied into it, and the mapped file stays reclaimable
-rather than becoming anonymous memory.
+A meta model is materialized in place and returned as the same module. An
+already initialized model is copied into a distinct module hierarchy, preserving
+ties, views and values; assign the returned model back to the input variable if
+the source is no longer needed. Checkpoint import fills the supplied model in
+place. No full CPU payload is retained for a non-addressable pool: attempting to
+read such a tensor directly raises an error explaining that its bytes belong
+to the pool.
 
-A model built on `meta` is rebound in place and handed back as the same
-object, because it held no values to copy. A model that was already
-materialised is copied into a new module, so the caller keeps the return value
-rather than the model it passed; that copy's tensors view the pool where the
-pool is one this process can address, and hold memory of their own where it is
-not. Filling from a checkpoint rebinds the model it was given, so there is
-nothing to reassign.
+`import_model_state(model, runtime=runtime, pool="spill", initialize=fn)` accepts
+an optional in-place initializer. With a meta model and no callback, each module
+that owns state must implement `reset_parameters()`. Trainer and Forward retain
+their explicit `prepare(..., initialize=fn)` contract and execute that callback
+after the ShadowSpill backend has allocated pool state. Quickstart uses the same
+import path. Optimizer moments and optional master parameters are also declared
+without payloads and initialized after pool allocation.
 
-The entry points are `import_model_state()` and
-`import_model_state_from_file()`, with optimizer counterparts; their arguments
-and return values are in [the frontend
-API](../python/api/frontend.md#persistent-state).
+The entry points and return values are in the
+[frontend API](../python/api/frontend.md#persistent-state).
 
 ## The contract
 
@@ -124,9 +100,9 @@ that build on `meta` for the same reason.
 2. **Dtype fixed at construction.** Parameters and buffers are created in the
    dtype they will be used in. A cast afterwards allocates, and a cast is
    exactly what defeats any scheme that placed the state carefully.
-3. **`reset_parameters()` initialises in place.** Every module that owns state
-   directly implements it, writing through the storage it already has rather
-   than assigning a new tensor.
+3. **Initialization writes in place.** Each state-owning module implements
+   `reset_parameters()`, or the caller supplies an initializer for the whole
+   model. It writes existing tensors instead of replacing them or their storage.
 
 The rule behind all three: **`__init__` declares shape and dtype;
 `reset_parameters` produces values.** A module that fuses allocation and
@@ -171,26 +147,36 @@ class RotaryTables(nn.Module):
             self.sine.copy_(angles.sin())
 ```
 
-### What the contract still promises
+### Temporary memory bounds
 
-A module's own initialisation adds **no transient proportional to the state's
-size**. A module may use bounded scratch to compute a value it then copies in,
-as above; what is excluded is any allocation that scales with parameter count,
-because that is the term that decides whether the state fits at all.
+Host-addressable pools require no second parameter allocation. An initializer
+may still allocate its own scratch. For a non-addressable pool, extra CPU
+payload is bounded by the storage roots touched by one tensor operation plus
+that operation's scratch. Staging buffers are reused across operations and
+released at the end of setup. This is a largest-operation bound, not a promise
+of constant bytes independent of tensor dimensions.
 
-What it no longer promises is that constructing costs nothing at all: the
-values a module writes are in ordinary memory until the import moves them, so
-constructing a whole model holds a whole model, briefly. The contract is what
-keeps that from being *two* whole models, and it is what makes filling from a
-mapped checkpoint possible, which is the path that avoids the transient
-outright.
+Initialize tensors individually. Passing every parameter to one bulk operation,
+or retaining clones of every parameter, defeats that bound. A partial view may
+stage its entire underlying storage to preserve the untouched bytes. Library
+initializers must support the device on which their setup operations run; the
+pool mechanism does not implement library-specific quantization.
+
+Explicit `read_model_state()` and `export_model_state()` intentionally return
+ordinary host values and can require a full model copy. Use `release_model_state()`
+to discard pool state without reading it out. `PlannedTrainStep.save()` writes
+pool objects incrementally into a standard `torch.load`-compatible checkpoint,
+flushing mapped ranges as it goes. Restoring model and optimizer values also
+processes one parameter's storage at a time. Distributed checkpoint restoration
+may additionally need communication buffers for rebuilding replicated weights.
 
 ## What is refused
 
 The contract is enforced rather than assumed, because every way of breaking
 it produces a plausible-looking wrong answer rather than an error.
 
-- A model whose modules own state without a `reset_parameters` is refused,
+- A meta model without an explicit initializer whose modules own state without
+  a `reset_parameters` is refused,
   naming them. Materialising it would leave whatever the pool memory
   contained, which reads as values.
 - A model that mixes `meta` and materialised tensors is refused: which of its

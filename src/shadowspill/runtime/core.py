@@ -99,8 +99,9 @@ class Runtime:
     before any device allocation the framework makes, then pass it to every
     ``plan_step`` or ``plan_forward`` call.
 
-    The current backend supports one device pool plus any number of pinned-host
-    pools. Pools and directed routes have explicit identities; each admitted
+    The current backend supports one device pool plus configured spill pools
+    (pinned host, remote memory or SSD). Pools and directed routes have explicit
+    identities; each admitted
     callable independently selects its execution/spill pool pair and matching
     routes.
 
@@ -327,7 +328,7 @@ class Runtime:
             if self._persistent_state_count != 0:
                 raise RuntimeConfigurationError(
                     "cannot close Runtime while persistent frontend state remains; "
-                    "export it with release_runtime=True first"
+                    "export it with release_runtime=True or release model state first"
                 )
             if self._active_object_references != 0:
                 raise RuntimeConfigurationError(

@@ -72,7 +72,10 @@ def prepared[**P, R](
             if isinstance(result, nn.Module):
                 runtime._distributed_models[result] = bound
                 if synchronize_result or not bound.initialized:
-                    bound.synchronize_initial(result)
+                    from shadowspill.pytorch.state.initialization import pool_values
+
+                    with pool_values(runtime):
+                        bound.synchronize_initial(result)
                     if bound.specification.sync_initial_state:
                         from shadowspill.pytorch.state.storage import (
                             refresh_persistent_state,

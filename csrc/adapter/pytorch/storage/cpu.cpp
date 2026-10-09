@@ -10,6 +10,35 @@
 
 namespace {
 
+constexpr const char* unbacked_message =
+    "This tensor's values are owned by a non-addressable ShadowSpill pool. "
+    "Run an admitted plan or read/export its state before accessing CPU values.";
+
+at::Tensor make_unbacked_cpu_storage(const at::Tensor& dispatch, int64_t bytes) {
+  TORCH_CHECK(dispatch.device().is_cpu(), "storage dispatch must be CPU");
+  TORCH_CHECK(bytes >= 0, "storage size must be nonnegative");
+  c10::Storage storage(
+      c10::Storage::use_byte_size_t(), static_cast<size_t>(bytes),
+      c10::DataPtr(nullptr, c10::Device(c10::DeviceType::CPU)), nullptr, false);
+  at::Tensor result = at::empty({0}, at::TensorOptions().dtype(at::kByte));
+  result.set_(storage, 0, {bytes}, {1});
+  storage.unsafeGetStorageImpl()->release_data_and_set_meta_custom_data_ptr_error_msg_(
+      unbacked_message);
+  return result;
+}
+
+void release_cpu_storages(at::TensorList tensors) {
+  for (const at::Tensor& tensor : tensors)
+    TORCH_CHECK(tensor.device().is_cpu(), "storage release requires CPU tensors");
+  for (const at::Tensor& tensor : tensors) {
+    auto* storage = tensor.storage().unsafeGetStorageImpl();
+    c10::DataPtr prior = storage->set_data_ptr(
+        c10::DataPtr(nullptr, c10::Device(c10::DeviceType::CPU)));
+    storage->release_data_and_set_meta_custom_data_ptr_error_msg_(unbacked_message);
+    prior.clear();
+  }
+}
+
 void import_cpu_storages(
     at::TensorList tensors,
     at::IntArrayRef pool_ids,
@@ -46,8 +75,11 @@ void import_cpu_storages(
         status == SHADOWSPILL_STATUS_OK,
         "CPU storage import does not name a current runtime lease: ",
         shadowspill_status_string(status));
-    current_addresses.push_back(static_cast<uint64_t>(reinterpret_cast<uintptr_t>(
-        tensor.storage().data_ptr().get())));
+    auto* storage = tensor.storage().unsafeGetStorageImpl();
+    const bool unbacked =
+        storage->get_extra_meta().custom_data_ptr_error_msg_ == unbacked_message;
+    current_addresses.push_back(unbacked ? 0 :
+        static_cast<uint64_t>(reinterpret_cast<uintptr_t>(storage->data_ptr().get())));
   }
   for (const auto index : c10::irange(count)) {
     if (current_addresses[index] ==
@@ -55,6 +87,7 @@ void import_cpu_storages(
       continue;
     }
     c10::Storage storage = tensors[index].storage();
+    storage.unsafeGetStorageImpl()->clear_data_ptr_access_error_msg_();
     c10::DataPtr prior = storage.set_data_ptr(c10::DataPtr(
         reinterpret_cast<void*>(
             static_cast<uintptr_t>(target_addresses[index])),
@@ -120,6 +153,7 @@ void export_cpu_storages(
     c10::DataPtr replacement = source.set_data_ptr(c10::DataPtr(
         nullptr, c10::Device(c10::DeviceType::CPU)));
     c10::Storage destination = tensors[index].storage();
+    destination.unsafeGetStorageImpl()->clear_data_ptr_access_error_msg_();
     c10::DataPtr prior = destination.set_data_ptr(std::move(replacement));
     prior.clear();
   }
@@ -128,6 +162,8 @@ void export_cpu_storages(
 }  // namespace
 
 TORCH_LIBRARY_FRAGMENT(shadowspill, library) {
+  library.def("_make_unbacked_cpu_storage(Tensor dispatch, int bytes) -> Tensor");
+  library.def("_release_cpu_storages(Tensor(a!)[] tensors) -> ()");
   library.def(
       "_import_cpu_storages(Tensor(a!)[] tensors, int[] pool_ids, "
       "int[] addresses, int[] object_ids, int[] sizes) -> ()");
@@ -139,6 +175,8 @@ TORCH_LIBRARY_FRAGMENT(shadowspill, library) {
 }
 
 TORCH_LIBRARY_IMPL(shadowspill, CPU, library) {
+  library.impl("_make_unbacked_cpu_storage", TORCH_FN(make_unbacked_cpu_storage));
+  library.impl("_release_cpu_storages", TORCH_FN(release_cpu_storages));
   library.impl("_import_cpu_storages", TORCH_FN(import_cpu_storages));
   library.impl("_export_cpu_storages", TORCH_FN(export_cpu_storages));
   library.impl(
