@@ -98,6 +98,9 @@ step time, tokens/s, peak execution and spill memory, idle and recompute
 percentages, fetch/evict lane utilization, fetched/evicted GiB, and transfer
 rates. Rate cells show **result / assumed** in GB/s. These are read directly
 from the selected page, including when measured and simulated statistics differ.
+The slide labels are **Peak spill**, **Stalled**, and **Optimizer Update**.
+Recomputation uses lime green (`#84CC16`), distinct from brown backward tasks.
+These display labels do not change the source report's accounting definitions.
 
 ## Interpretation
 

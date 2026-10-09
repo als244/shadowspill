@@ -31,7 +31,7 @@ COLORS = dict(
     forward="#D65A22",
     backward="#75452E",
     optimizer="#151F2B",
-    recompute="#BE286F",
+    recompute="#84CC16",
     idle="#FCE9E7",
     ink="#15263D",
     muted="#62738A",
@@ -344,8 +344,8 @@ def render(data, source, args):
             ("forward", "Forward"),
             ("backward", "Backward"),
             ("recompute", "Recompute"),
-            ("optimizer", "Update"),
-            ("idle", "Internal idle"),
+            ("optimizer", "Optimizer Update"),
+            ("idle", "Stalled"),
         )
         if k in used
     ]
@@ -529,8 +529,8 @@ def summary_cards(summary):
         ("Step time", number("seconds", ".2f", " s")),
         ("Tokens/s", number("tokens_per_second", ",.0f")),
         ("Peak GPU memory", number("execution_peak_gib", ".2f", " GiB")),
-        ("Peak host spill", number("spill_peak_gib", ".2f", " GiB")),
-        ("Idle", number("idle_percent", ".1f", "%")),
+        ("Peak spill", number("spill_peak_gib", ".2f", " GiB")),
+        ("Stalled", number("idle_percent", ".1f", "%")),
         ("Recompute", number("recompute_percent", ".1f", "%")),
         ("Fetch lane busy", number("fetch_utilization_percent", ".1f", "%")),
         ("Evict lane busy", number("evict_utilization_percent", ".1f", "%")),
