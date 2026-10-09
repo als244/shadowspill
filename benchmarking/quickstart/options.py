@@ -340,7 +340,8 @@ def _parser() -> argparse.ArgumentParser:
         default=0.5,
         help="device memory reserved outside the execution slab (default: 0.5 GiB)",
     )
-    parser.add_argument(
+    storage = parser.add_mutually_exclusive_group()
+    storage.add_argument(
         "--remote-spill",
         metavar="HOST:PORT",
         help=(
@@ -348,6 +349,62 @@ def _parser() -> argparse.ArgumentParser:
             "host memory. The pool is the same size either way -- --spill-gib "
             "still sets it -- so the only thing that differs is where it lives"
         ),
+    )
+    storage.add_argument(
+        "--ssd-spill",
+        type=Path,
+        metavar="DIRECTORY",
+        help="temporary direct-I/O SSD pool in an existing directory; "
+        "--spill-gib sets capacity",
+    )
+    parser.add_argument(
+        "--ssd-staging-mib",
+        type=int,
+        default=256,
+        help="maximum pinned host staging for SSD I/O (default: 256 MiB)",
+    )
+    parser.add_argument(
+        "--ssd-chunk-mib",
+        type=int,
+        default=2,
+        help="SSD I/O chunk size (default: 2 MiB)",
+    )
+    parser.add_argument(
+        "--ssd-queue-depth",
+        type=int,
+        default=16,
+        help="in-flight SSD chunks per direction (default: 16)",
+    )
+    parser.add_argument(
+        "--lora",
+        action="store_true",
+        help="train LoRA factors in the selected text preset; freeze its base weights",
+    )
+    parser.add_argument("--lora-rank", type=int, default=32)
+    parser.add_argument("--lora-alpha", type=float, default=32.0)
+    parser.add_argument(
+        "--lora-dtype",
+        choices=_DTYPE_NAMES,
+        default="float32",
+        help="trainable LoRA factor dtype, independent of --model-dtype",
+    )
+    parser.add_argument(
+        "--lora-target",
+        action="append",
+        default=None,
+        metavar="MODULE_GLOB",
+        help="repeat to replace the preset's default LoRA targets",
+    )
+    parser.add_argument(
+        "--lora-head", choices=("frozen", "lora", "full"), default="frozen"
+    )
+    parser.add_argument("--lora-shared-experts", action="store_true")
+    parser.add_argument(
+        "--trainable-base",
+        action="append",
+        default=[],
+        metavar="PARAMETER_GLOB",
+        help="with --lora, also fully train matching base parameters; repeatable",
     )
     parser.add_argument(
         "--orderings",
@@ -588,6 +645,20 @@ def parse_arguments() -> tuple[argparse.ArgumentParser, argparse.Namespace]:
         parser.error(
             "host headroom must be nonnegative and preparation timeout positive"
         )
+    if arguments.factory is not None and arguments.lora:
+        parser.error(
+            "--lora applies to text presets; configure LoRA in your "
+            "--factory model_factory"
+        )
+    if arguments.lora_rank <= 0 or arguments.lora_alpha <= 0:
+        parser.error("LoRA rank and alpha must be positive")
+    if not arguments.lora and (
+        arguments.trainable_base
+        or arguments.lora_target
+        or arguments.lora_head != "frozen"
+        or arguments.lora_shared_experts
+    ):
+        parser.error("LoRA targeting options require --lora")
     if arguments.steps < 1:
         parser.error("--steps must be at least 1")
     try:

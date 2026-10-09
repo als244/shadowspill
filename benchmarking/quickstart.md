@@ -618,3 +618,56 @@ Timeline HTML, timeline `summary.csv`, and slide exports show the same planned
 blend. A measured page compares its achieved rate against that simulated blend;
 its trace never replaces the assumed rate. Solo/concurrent calibration remains
 visible separately. A lane with no transfers has no defined blended rate.
+
+## LoRA and SSD spill from the CLI
+
+Text presets accept `--lora`. The recipe converts the model before initialization,
+then calls the same generic search and training APIs. Base weights are frozen;
+the default targets cover attention/mixer, dense MLP and routed experts. The head,
+embeddings, router, normalization, and shared experts remain frozen by default.
+
+| Flag | Default | Meaning |
+| --- | --- | --- |
+| `--lora` | off | Train LoRA factors instead of all base weights. |
+| `--lora-rank`, `--lora-alpha` | 32, 32 | Factor rank and scaling numerator. |
+| `--lora-dtype` | `float32` | Factor storage/compute dtype; `--model-dtype` still controls the base. |
+| `--lora-target MODULE_GLOB` | preset targets | Repeat to replace the default target selection. |
+| `--lora-head frozen\|lora\|full` | `frozen` | Head trainability. |
+| `--lora-shared-experts` | off | Add LoRA to shared experts. |
+| `--trainable-base PARAMETER_GLOB` | none | Repeat to fully train selected base parameters alongside LoRA. |
+
+`--grad-dtype`, `--master-dtype` and optimizer dtype/rounding flags retain their
+usual meanings. The request and search metadata record the chosen trainability.
+A custom `--factory` configures its own model; preset LoRA flags are rejected
+there so they cannot be silently ignored.
+
+`--ssd-spill DIRECTORY` selects an ordinary temporary SSD pool instead of pinned
+host memory. The directory must already exist on the intended local SSD;
+`--spill-gib` sets disk capacity, not a pinned-host allocation. Host staging is
+bounded independently by `--ssd-staging-mib` (256 by default), with
+`--ssd-chunk-mib` (2) and `--ssd-queue-depth` (16 per direction). Runtime owns
+initialization, calibration and cleanup. Pool files are temporary, not
+checkpoints. `--ssd-spill` and `--remote-spill` are mutually exclusive.
+
+```bash
+mkdir -p ~/shadowspill_ssd
+python -u -m benchmarking.quickstart mlops_llama3 \
+  --lora --lora-rank 32 --lora-alpha 32 --lora-dtype bfloat16 \
+  --grad-dtype float32 --ssd-spill ~/shadowspill_ssd --spill-gib 32 \
+  --ssd-staging-mib 256 --ssd-chunk-mib 2 --ssd-queue-depth 16 \
+  --sequence-length 1024 --sequences-per-step 8 \
+  --min-tokens-per-microbatch 1024 --max-tokens-per-microbatch 8192 \
+  --search-budget-gib 8,12,16 --run-budget-gib 8,16 \
+  --resolution-options 1 --resolution-plans --steps 5 --plots
+```
+
+`--resolution-options 1` requests recomputation for flexible graph-pair groups;
+it does not forbid activation writes. Checkpoint inputs can still spill when the
+selected schedule needs that space. Initialization writes the frozen weights to
+the pool once, using bounded host materialization; unchanged weights do not need
+optimizer writeback. Use an SSD with sufficient free capacity for `--spill-gib`.
+
+The Python runner also accepts `spill_pool=shadowspill.ssd.ssd(...)` (or a remote
+pool), with capacity matching `spill_gib`. LoRA remains ordinary model construction
+inside the experiment factory. Both CLI choices are saved in `request.json` and
+reused by `--reproduce`.
