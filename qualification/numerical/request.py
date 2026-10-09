@@ -123,7 +123,7 @@ class PlannedRequest:
     export_bypass_key: str | None = None
     detailed_artifacts: bool = False
     #: Where this case spills to. ``None`` means the pinned-host pool every
-    #: local case uses; the remote gate supplies a pool on another machine.
+    #: local case uses; other gates supply SSD or remote storage.
     #: It is carried here rather than read from the environment because it is
     #: a property of the case, and a case's evidence should say what it ran on.
     spill_pool: SpillPool | None = None

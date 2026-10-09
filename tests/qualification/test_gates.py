@@ -72,6 +72,8 @@ def _gate_of(command: tuple[str, ...]) -> str:
     joined = " ".join(command)
     if "pytest" in joined:
         return "suite"
+    if "--spill-pool ssd" in joined:
+        return "numerical_ssd"
     # `remote_perf` before `remote`: neither substring matches the other's
     # command, but naming the longer one first keeps that true if either is
     # ever renamed.
@@ -103,6 +105,22 @@ def test_the_remote_gate_is_available_but_not_in_the_default_run() -> None:
 
     assert "remote" in ALL_GATES
     assert "remote" not in GATE_ORDER
+
+
+def test_ssd_is_opt_in_and_reuses_the_numerical_matrix() -> None:
+    assert "numerical_ssd" in ALL_GATES
+    assert "numerical_ssd" not in GATE_ORDER
+    command = _commands(
+        "numerical_ssd",
+        "test",
+        keep_going=True,
+        options=("--ssd-directory", "/local/ssd", "--ssd-staging-mib", "128"),
+    )
+    assert command[3] == "qualification.numerical.matrix"
+    assert "qualification/results/numerical_ssd_test" in command
+    assert command[-2:] == ("--spill-pool", "ssd")
+    assert "--keep-going" in command
+    assert "/local/ssd" in command
 
 
 def test_the_remote_throughput_gate_is_available_but_not_in_the_default_run() -> None:

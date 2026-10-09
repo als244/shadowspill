@@ -20,6 +20,7 @@ import torch
 from shadowspill.memory import device, pinned_host, transfer_route
 from shadowspill.planner import GenericPlanningOptions, SearchOptions
 from shadowspill.pytorch import Runtime, plan_step
+from shadowspill.ssd import SSDPool
 from workloads.common.training import LEARNING_RATE
 
 from ..model_state import import_case_model, release_case_model
@@ -91,13 +92,15 @@ def _open_runtime(request: PlannedRequest) -> Runtime:
     """The two pools and the two routes every numerical case is planned on.
 
     The spill pool is the case's if it named one and a pinned-host pool
-    otherwise. That single substitution is the whole of what the remote gate
+    otherwise. That single substitution is the whole of what the storage gate
     changes: same programs, same references, same tolerances, same routes --
     only the memory the spill pool is made of, which is exactly the variable
     under test.
     """
 
-    return Runtime(
+    ssd_spill = isinstance(request.spill_pool, SSDPool)
+    runtime = Runtime(
+        calibrate=not ssd_spill,
         pools={
             "execution": device(
                 physical_capacity=request.device_budget,
@@ -111,6 +114,19 @@ def _open_runtime(request: PlannedRequest) -> Runtime:
             "evict": transfer_route(source="execution", destination="spill"),
         },
     )
+    if ssd_spill:
+        # Correctness needs actual measured SSD rates, not a sustained-write
+        # stress test. The normal calibration initializes every read probe.
+        try:
+            runtime.calibrate_transfer_capabilities(
+                large_copy_bytes=16 << 20,
+                warmup_copies=1,
+                measured_copies=3,
+            )
+        except BaseException:
+            runtime.close()
+            raise
+    return runtime
 
 
 def _checked_case(request: PlannedRequest) -> tuple[Any, str]:

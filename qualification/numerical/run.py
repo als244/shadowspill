@@ -23,6 +23,7 @@ from .planned import planned_worker
 from .reference_arm import reference_worker
 from .references import DEFAULT_REFERENCE_DIRECTORY
 from .request import CaseRequest, PlannedRequest
+from .spill import add_spill_arguments, configured_spill, spill_arguments
 
 
 def json_argument(value: str, *, description: str) -> Any:
@@ -62,25 +63,6 @@ def main() -> int:
     print(dtype_description(case), flush=True)
     _dispatch(parser, arguments, case, checkpoint_step, profiling_metadata)
     return 0
-
-
-def _remote_spill(parser: argparse.ArgumentParser, value: str | None) -> Any:
-    """The pool named by ``--remote-spill``, or ``None`` for pinned host.
-
-    Parsed here rather than in the matrix so that a case run by hand behaves
-    exactly as one the matrix spawned -- which is the whole reason the option
-    travels as a string.
-    """
-
-    if value is None:
-        return None
-    host, _, rest = value.partition(":")
-    port, _, size = rest.partition(":")
-    if not host or not port.isdigit() or not size.isdigit():
-        parser.error(f"--remote-spill must read HOST:PORT:BYTES, not {value!r}")
-    from shadowspill.network import remote
-
-    return remote(capacity=int(size), host=host, port=int(port))
 
 
 def _parser() -> argparse.ArgumentParser:
@@ -189,15 +171,7 @@ def _parser() -> argparse.ArgumentParser:
         metavar="NAME=JSON",
         help="repeatable custom-factory option",
     )
-    parser.add_argument(
-        "--remote-spill",
-        metavar="HOST:PORT:BYTES",
-        help=(
-            "spill to a memory daemon on another machine instead of to pinned "
-            "host memory. Everything else about the case is unchanged, which "
-            "is what makes the comparison mean something"
-        ),
-    )
+    add_spill_arguments(parser)
     return parser
 
 
@@ -275,6 +249,9 @@ def _dispatch(
 
     family = case.family
     model_implementation = case.model_implementation
+    spill = (
+        None if arguments.mode == "_reference" else configured_spill(parser, arguments)
+    )
     if arguments.mode == "run":
         if len(arguments.paths) != 1:
             parser.error("run requires one result directory")
@@ -308,6 +285,7 @@ def _dispatch(
             reference_directory=arguments.reference_dir,
             regenerate_reference=arguments.regenerate_reference,
             detailed_artifacts=arguments.detailed_artifacts,
+            spill_options=spill_arguments(spill),
         )
     elif arguments.mode == "_reference":
         if len(arguments.paths) != 1:
@@ -338,7 +316,7 @@ def _dispatch(
                 plan_store_mode=arguments.plan_store_mode,
                 export_bypass_key=arguments.export_bypass_key,
                 detailed_artifacts=arguments.detailed_artifacts,
-                spill_pool=_remote_spill(parser, arguments.remote_spill),
+                spill_pool=spill,
             )
         )
 
