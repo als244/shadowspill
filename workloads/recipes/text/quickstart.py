@@ -150,7 +150,8 @@ class Precision:
             (
                 "opt state rounding",
                 self.opt_state_rounding or "default",
-                "how it rounds the state it stores; its default is to nearest",
+                "ShadowSpill defaults to stochastic for BF16 AdamW moments;"
+                " nearest otherwise",
             ),
         )
 

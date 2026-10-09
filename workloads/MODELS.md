@@ -208,7 +208,7 @@ use FP32 even when stored weights and activations use BF16 or FP16.
 | Accumulated gradients | Trainer `grad_dtype` | `--grad-dtype` | Parameter dtype; or a floating dtype |
 | Optimizer moments | `mlops.optim.AdamW(opt_state_dtype=...)` / `optimizer_args.opt_state_dtype` | `--opt-state-dtype` | MLOps: `bfloat16`; also `float16`, `float32`, or `parameter` |
 | Parameter rounding | Optimizer `parameter_rounding` | `--parameter-rounding` | `nearest` or `stochastic` |
-| Moment rounding | Optimizer `opt_state_rounding` | `--opt-state-rounding` | `nearest` or `stochastic` |
+| Moment rounding | Optimizer `opt_state_rounding` | `--opt-state-rounding` | `nearest` or `stochastic`; ShadowSpill defaults to stochastic for BF16 AdamW moments, nearest otherwise |
 
 Ordinary constructors follow PyTorch's default dtype unless a dtype is supplied
 or the module is converted. The text recipe's `build_on_meta(..., dtype=...)`

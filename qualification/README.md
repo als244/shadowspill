@@ -209,6 +209,11 @@ case cannot be served anything an earlier run or another case left behind. Use
 plan records, and per-task runtime traces. Use `--regenerate-reference` only when intentionally
 replacing the canonical compiled references and input sidecars.
 
+The numerical gate explicitly uses nearest rounding for AdamW moments, keeping
+its existing references valid. Quickstart, Trainer, and performance workloads
+select stochastic rounding for BF16 moments by default; FP16 and FP32 moments
+keep nearest rounding. MLOps's standalone default remains nearest.
+
 Run the full-model matrix:
 
 ```bash

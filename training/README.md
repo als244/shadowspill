@@ -62,6 +62,14 @@ For stock `torch.optim.AdamW`, use FP32 masters when FP16 compute weights need
 FP32 moments. Set `master_dtype=@torch:float32`. This consumes more storage.
 No dtype changes are inferred from the selected model or machine in this recipe.
 
+When Trainer constructs MLOps AdamW, it selects stochastic rounding for BF16
+moments by default. FP16 and FP32 moments and parameter rounding retain the
+optimizer's nearest-rounding default. Set
+`optimizer_args.opt_state_rounding=nearest` to override this, or supply rounding
+in an optimizer partial or parameter group. MLOps used directly and
+`torch.optim.AdamW` keep their own defaults. Numerical qualification explicitly
+uses nearest rounding so existing references remain valid.
+
 Initialized models retain their values. Meta models need an explicit initializer
 or checkpoint; this recipe supplies `reset_parameters` with its configured seed.
 An initializer can rebuild nonpersistent buffers before saved state is restored.
