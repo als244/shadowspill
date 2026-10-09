@@ -12,6 +12,13 @@ with `torch.compile` in Inductor fullgraph mode and with no part of ShadowSpill
 involved: no planner, no runtime, no pools. It is not an eager run. What the
 gate asserts is that planning a step does not change what that step computes.
 
+The opt-in [`numerical_ssd` gate](../README.md#ssd-numerical-qualification)
+runs this same matrix against an SSD spill pool, preserving references, model
+and dtype defaults, tolerances, and checkpoint replay. Select
+`--spill-pool ssd --ssd-directory /local/ssd` for a direct numerical run.
+SSD staging, chunk size and queue depth are configurable; the reference arm
+continues to use ordinary PyTorch memory.
+
 Pure PyTorch is the default and formal numerical authority. The optional
 external implementation is selected explicitly:
 

@@ -38,6 +38,9 @@ whatever order the command line names them in; each finishes before the next
 begins, because the measured ones are timed and overlapping them would
 corrupt both.
 
+**`numerical_ssd` is opt-in** and runs the same numerical matrix against a local
+SSD spill pool. See [SSD numerical qualification](#ssd-numerical-qualification).
+
 **`remote` and `remote_perf` are not in the default run**, because each needs
 a memory daemon reachable over RDMA. `remote` is the numerical matrix with the
 spill pool on a peer, and `remote_perf` the performance matrix the same way,
@@ -213,6 +216,66 @@ The numerical gate explicitly uses nearest rounding for AdamW moments, keeping
 its existing references valid. Quickstart, Trainer, and performance workloads
 select stochastic rounding for BF16 moments by default; FP16 and FP32 moments
 keep nearest rounding. MLOps's standalone default remains nearest.
+
+### SSD numerical qualification
+
+`numerical_ssd` uses the **same five cases, model/data/dtype defaults, compiled
+reference files, tolerances, checkpoint replay, transfer-pressure checks and
+physical-budget checks** as `numerical`. Only the planned arm's spill pool changes
+from pinned host to SSD. Its capacity remains 32 GiB. Activation eviction and
+fetching remain available to the ordinary planner. This gate runs full training,
+not a LoRA-only or read-only test; model initialization and updates write to SSD.
+
+Choose an existing directory on the local SSD with at least 32 GiB free:
+
+```bash
+mkdir -p ~/shadowspill_ssd
+SHADOWSPILL_SSD_DIRECTORY=~/shadowspill_ssd \
+  python -m qualification.gates numerical_ssd --run ssd_check --keep-going
+```
+
+The usual `suite numerical performance` default is unchanged. The SSD gate
+writes logs to `qualification/results/gates_<run>/numerical_ssd.log` and per-case
+results, artifacts and a summary to `qualification/results/numerical_ssd_<run>/`.
+Each result records the selected pool configuration. References use the ordinary
+numerical gate's canonical directory and need no SSD-specific regeneration.
+
+For explicit settings, put the matrix arguments in the existing gate config:
+
+```json
+{
+  "numerical_ssd": [
+    "--ssd-directory", "/path/on/local/ssd",
+    "--ssd-staging-mib", "256",
+    "--ssd-chunk-mib", "2",
+    "--ssd-queue-depth", "16"
+  ]
+}
+```
+
+Run it with `python -m qualification.gates numerical_ssd --config <config.json>`.
+All numerical matrix options, including `--models`, `--implementations`, dtype
+overrides and `--detailed-artifacts`, work in this section. The directory flag
+takes precedence over `SHADOWSPILL_SSD_DIRECTORY`; a missing directory is an
+error. Staging is a separate host-memory cap, not an additional model copy.
+SSD calibration uses initialized 16 MiB probes with one warmup and three samples
+per measurement, avoiding the normal large write-calibration workload. It uses
+the same Runtime calibration and fixed-rate simulator as the host gate; modeling
+rate changes between solo and concurrent transfers is a separate improvement.
+
+The matrix also runs directly, without another wrapper module:
+
+```bash
+python -m qualification.numerical.matrix --spill-pool ssd \
+  --ssd-directory ~/shadowspill_ssd \
+  --output-dir qualification/results/numerical_ssd_manual --keep-going
+```
+
+Each case creates a temporary direct-I/O file; normal Runtime close or process
+exit removes it. Result artifacts and reference checkpoints are separate and
+persist. See the [SSD API](../docs/python/api/ssd.md) for pool and staging details.
+
+### Full-model performance qualification
 
 Run the full-model matrix:
 

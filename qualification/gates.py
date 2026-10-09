@@ -8,7 +8,8 @@ throughput has not regressed and the simulator still predicts it. Running them
 by hand means three commands, three output directories to name consistently,
 and remembering the order.
 
-Two more run only when asked for, because both need a memory daemon on a peer:
+``numerical_ssd`` runs the numerical matrix with a local SSD spill pool; it is
+opt-in and requires an SSD directory. Two more need a memory daemon on a peer:
 ``remote`` asks the numerical question with the spill pool on another machine,
 and ``remote_perf`` asks the throughput one. Both skip cleanly without a peer.
 
@@ -42,7 +43,14 @@ from typing import Any
 #: same cells as `performance` over an interconnect about eight times slower
 #: than pinned host memory.
 GATE_ORDER = ("suite", "numerical", "performance")
-ALL_GATES = ("suite", "numerical", "performance", "remote", "remote_perf")
+ALL_GATES = (
+    "suite",
+    "numerical",
+    "numerical_ssd",
+    "performance",
+    "remote",
+    "remote_perf",
+)
 
 _RESULTS = Path("qualification/results")
 
@@ -148,6 +156,7 @@ def _commands(
     # wrong answer rather than an error, and one nobody would question.
     matrices = {
         "numerical": ("qualification.numerical.matrix", "--output-dir"),
+        "numerical_ssd": ("qualification.numerical.matrix", "--output-dir"),
         "performance": ("qualification.performance.matrix", "--output-directory"),
         "remote": ("qualification.remote.matrix", "--output-dir"),
         "remote_perf": (
@@ -169,6 +178,8 @@ def _commands(
     if keep_going:
         command.append("--keep-going")
     command += options
+    if name == "numerical_ssd":
+        command += ["--spill-pool", "ssd"]
     return tuple(command)
 
 
@@ -442,8 +453,8 @@ def _summary(line: str, outcomes: Sequence[GateOutcome], run: str) -> str:
         # of its own should say nothing, not print another gate's.
         if outcome.name == "suite":
             rows.extend(_suite_report(outcome.log))
-        elif outcome.name == "numerical":
-            rows.extend(_numerical_report(_RESULTS / f"numerical_{run}"))
+        elif outcome.name in ("numerical", "numerical_ssd"):
+            rows.extend(_numerical_report(_RESULTS / f"{outcome.name}_{run}"))
         elif outcome.name == "performance":
             rows.extend(_performance_report(_RESULTS / f"performance_{run}"))
         elif outcome.name == "remote":
@@ -583,9 +594,9 @@ def main() -> int:
         default=None,
         help=(
             "which gates to run, in any order on the command line; they always "
-            "run suite, numerical, performance, remote. Default: the first "
-            "three. `remote` needs a memory daemon named by "
-            "SHADOWSPILL_NETWORK_PEER and skips cleanly without one"
+            "follow the listed order. Default: suite, numerical, performance. "
+            "numerical_ssd requires an SSD directory; remote gates need "
+            "SHADOWSPILL_NETWORK_PEER and skip cleanly without one"
         ),
     )
     parser.add_argument(
@@ -615,8 +626,7 @@ def main() -> int:
         type=Path,
         default=None,
         help=(
-            "JSON file with a section per gate -- suite, numerical, "
-            "performance -- each holding that gate's own command-line "
+            "JSON file with a section per gate, each holding that gate's command-line "
             "arguments, forwarded verbatim. Options belong here rather than "
             "on this wrapper, which would otherwise have to mirror every "
             "matrix's command line"

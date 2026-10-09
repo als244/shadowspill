@@ -25,6 +25,7 @@ from .measures import (
 from .metrics import state_digest
 from .references import reference_inputs_path
 from .request import REFERENCE_EXECUTION, PlannedRequest
+from .spill import spill_description
 from .tolerances import (
     LOSS_ABSOLUTE_TOLERANCE,
     LOSS_RELATIVE_TOLERANCE,
@@ -51,6 +52,7 @@ def qualification_artifact(
         flush=True,
     )
     qualification_result: dict[str, Any] = {
+        "spill_pool": spill_description(request.spill_pool),
         **_case_identity(request, run, comparison),
         **_timings(run, comparison),
         **_agreement(run, comparison),

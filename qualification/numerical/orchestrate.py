@@ -52,6 +52,7 @@ def orchestrate(
     master_dtype: str | None = None,
     grad_dtype: str | None = None,
     opt_state_dtype: str | None = None,
+    spill_options: list[str] | None = None,
 ) -> None:
     result_directory.mkdir(parents=True, exist_ok=True)
     prefix = f"{model_implementation}_{family}"
@@ -108,7 +109,7 @@ def orchestrate(
             check=True,
             env=environment,
         )
-    planned_options: list[str] = []
+    planned_options = list(spill_options or ())
     planned_options.append(
         "--reject-overbudget" if reject_overbudget else "--no-reject-overbudget"
     )

@@ -26,6 +26,7 @@ from qualification.precision import (
     dtype_description,
     dtype_overrides,
 )
+from shadowspill.memory import SpillPool
 from shadowspill.schema import artifact_schema
 
 from ..matrix_logging import MatrixConsole, format_bytes, utc_now
@@ -33,6 +34,12 @@ from .references import (
     DEFAULT_REFERENCE_DIRECTORY,
     canonical_reference_path,
     reference_artifact_exists,
+)
+from .spill import (
+    add_spill_arguments,
+    configured_spill,
+    spill_arguments,
+    spill_description,
 )
 
 _FAMILIES: Final = tuple(DEFAULT_DEVICE_BUDGETS)
@@ -111,11 +118,7 @@ class _CaseOptions:
     empty_caches: bool
     cache_directory: Path | None
     detailed_artifacts: bool
-    #: ``host:port:bytes`` when the spill pool lives on another machine, and
-    #: ``None`` for the pinned-host pool every local case uses. It travels as a
-    #: string because a case runs in a subprocess: the matrix cannot hand it a
-    #: Python object, and the subprocess should be runnable by hand.
-    remote_spill: str | None = None
+    spill_pool: SpillPool | None = None
     external_headroom_mib: int | None = None
     reject_overbudget: bool = False
     model_dtype: str | None = None
@@ -190,8 +193,7 @@ def _case_commands(
     )
     if options.external_headroom_mib is not None:
         planned.extend(("--external-headroom-mib", str(options.external_headroom_mib)))
-    if options.remote_spill is not None:
-        planned.extend(("--remote-spill", options.remote_spill))
+    planned.extend(spill_arguments(options.spill_pool))
     commands.append(planned)
     return commands
 
@@ -425,6 +427,7 @@ def _parser() -> argparse.ArgumentParser:
     )
     add_dtype_arguments(parser)
     add_memory_budget_arguments(parser)
+    add_spill_arguments(parser)
     parser.add_argument("--seed", type=int, default=20_260_811)
     parser.add_argument(
         "--optimizer-ordering",
@@ -553,25 +556,25 @@ def _summary(
 
 
 def main() -> int:
-    """The numerical matrix as the gate runs it: spilling to pinned host."""
+    """The numerical matrix, with pinned-host storage unless explicitly changed."""
 
     return main_with_spill(None)
 
 
 def main_with_spill(
-    spill: object | None, default_models: Sequence[str] | None = None
+    spill: SpillPool | None, default_models: Sequence[str] | None = None
 ) -> int:
     """The matrix, spilling wherever `spill` says.
 
-    One entry point for both gates rather than two matrices. The remote gate
-    differs from the numerical one in exactly one argument, and writing it as
-    a second matrix would be two things to keep in step for no gain -- the
-    references, the tolerances, the comparison and the reporting are all the
-    same question.
+    Host, SSD and remote gates share cases, references, tolerances and verdicts.
     """
 
     parser = _parser()
     arguments = parser.parse_args()
+    selected_spill = configured_spill(parser, arguments)
+    if spill is not None and selected_spill is not None:
+        parser.error("this gate already supplies its spill pool")
+    selected_spill = spill or selected_spill
     budgets = numerical_defaults(arguments)
     overrides = _budgets(parser, arguments)
     options = _CaseOptions(
@@ -591,9 +594,7 @@ def main_with_spill(
         empty_caches=arguments.empty_caches,
         cache_directory=arguments.cache_dir,
         detailed_artifacts=arguments.detailed_artifacts,
-        remote_spill=(
-            None if spill is None else f"{spill.host}:{spill.port}:{spill.capacity}"
-        ),
+        spill_pool=selected_spill,
     )
     output_directory = arguments.output_dir.expanduser().resolve()
     output_directory.mkdir(parents=True, exist_ok=True)
@@ -626,6 +627,8 @@ def main_with_spill(
                 f"UTC: {utc_now()}",
                 f"OUTPUT: {output_directory}",
                 f"REFERENCES: {options.reference_directory}",
+                "SPILL: "
+                + json.dumps(spill_description(selected_spill), sort_keys=True),
                 "CASES: "
                 + ", ".join(
                     f"{implementation}_{family}"
@@ -680,6 +683,7 @@ def main_with_spill(
                 break
 
         summary = _summary(results, selected_cases, empty_caches=options.empty_caches)
+        summary["spill_pool"] = spill_description(selected_spill)
         summary_path = output_directory / "summary.json"
         summary_path.write_text(json.dumps(summary, indent=2, sort_keys=True) + "\n")
         console.emit()
