@@ -173,6 +173,9 @@ shadowspill_add_public_api_test(
 shadowspill_add_public_api_test(
   test_06_generic_quickstart.py test_generic_quickstart_search_run_plot 300
 )
+shadowspill_add_public_api_test(
+  test_06_generic_quickstart.py test_generic_quickstart_reducer_failure_releases_outputs 300
+)
 
 shadowspill_add_public_api_test(
   test_07_distributed_training.py test_distributed_training_matches_combined_reference 1200

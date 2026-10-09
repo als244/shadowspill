@@ -34,6 +34,11 @@ def experiment(*, device):
         "objective": objective,
         "optimizer": lambda params: torch.optim.SGD(params, lr=0.02),
         "hyperparams": {"lr": 0.02},
+        # Real reducers naturally return CPU scalar tensors after collection.
+        "metric_reducer": lambda observed: {
+            "loss": sum(value["residual"] for value in observed.metrics),
+            "residual": sum(value["residual"] for value in observed.metrics),
+        },
         "candidates": {
             name: tuple(
                 (features[i : i + n].clone(), target[i : i + n].clone())
@@ -76,4 +81,42 @@ def test_generic_quickstart_search_run_plot(tmp_path):
 
     assert sys.stdout is stdout
     assert (output / "timelines" / "index.html").is_file()
-    assert len((output / "step_metrics.jsonl").read_text().splitlines()) == 6
+    records = [
+        json.loads(line)
+        for line in (output / "step_metrics.jsonl").read_text().splitlines()
+    ]
+    assert len(records) == 6
+    assert all(isinstance(row["residual"], float) for row in records)
+    for row in records:
+        assert row["loss"] == row["residual"]
+        assert row["loss"] == pytest.approx(row["objective_loss"])
+
+
+def test_generic_quickstart_reducer_failure_releases_outputs(tmp_path):
+    calls = 0
+
+    def failing_experiment(*, device):
+        setup = experiment(device=device)
+        setup["candidates"] = {"four_images": setup["candidates"]["four_images"]}
+
+        def reduce(observed):
+            nonlocal calls
+            calls += 1
+            if calls == 2:
+                raise ValueError("intentional reducer failure")
+            return {"residual": sum(value["residual"] for value in observed.metrics)}
+
+        setup["metric_reducer"] = reduce
+        return setup
+
+    with pytest.raises(ValueError, match="intentional reducer failure"):
+        run(
+            failing_experiment,
+            search_budget_gib=[2],
+            spill_gib=1,
+            steps=3,
+            output_dir=tmp_path / "failed_quickstart",
+            device="cuda:0",
+            profiling_options=CORRECTNESS_PROFILING,
+        )
+    assert calls == 2

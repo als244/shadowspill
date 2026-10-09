@@ -42,9 +42,15 @@ non-text example. Its mapping contains:
 | `plan_options` | Additional shared planning settings, such as partition, masters or gradient dtype |
 | `units_per_step`, `unit_label` | Optional throughput units; default `1`, `updates` |
 | `metadata` | Optional report metadata |
-| `metric_reducer` | Optional host reducer of completed-step observations |
+| `metric_reducer` | Optional host reducer of completed-step observations, returning a mapping of names to numeric scalars (Python numbers or scalar CPU tensors) |
 | `context` | Optional context factory enclosing search and execution |
 | `cleanup_model` | Optional `cleanup_model(model)` called after imported state is released, including budget rebuilds; releases caller-owned communication resources |
+
+Returned objective metrics are copied to owned host storage after the step completes.
+Quickstart releases the device outputs before calling the reducer or writing logs.
+Reducer scalars are converted to ordinary numbers for `step_metrics.jsonl`; a
+`loss` entry changes the displayed loss, while `objective_loss` retains the
+sum of differentiated microbatch objectives.
 
 Every candidate must represent the same normalized update. The objective owns
 normalization, including any unit count; the runner only sums its returned
