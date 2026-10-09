@@ -104,9 +104,6 @@ def plan_training_programs(
             incumbent=carried,
             keep_resolutions=False,
         )
-        # The certificate belongs to the fixed local cache entry. The restored
-        # original-program result below has a separate distributed decision.
-        stores.plans.certify(result.plan, result.admission)
         return result
 
     local, key, successful, decisions = choose(
@@ -204,6 +201,7 @@ def _plan_local_training_program(
                 ),
                 scratch_reserve_bytes=scratch_reserve,
                 progress=timer.progress,
+                certify=stores.plans.certify,
                 certify_resolution=(
                     stores.plans.certify_resolution if keep_resolutions else None
                 ),

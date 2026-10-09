@@ -157,6 +157,7 @@ def _plan_local_forward_program(
                 ),
                 scratch_reserve_bytes=scratch_reserve,
                 progress=timer.progress,
+                certify=stores.plans.certify,
             )
         except PlanInfeasibleError as error:
             raise public_infeasible_plan_error(error) from error
