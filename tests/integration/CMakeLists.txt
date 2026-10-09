@@ -194,3 +194,11 @@ shadowspill_add_public_api_test(
 shadowspill_add_public_api_test(
   test_08_tensor_representations.py test_planned_packed_parameter_gradients 300
 )
+
+
+shadowspill_add_public_api_test(
+  test_05_generic_training.py test_first_stochastic_update_is_independent_of_preparation_and_diagnostics 300
+)
+shadowspill_add_public_api_test(
+  test_00_public_forward.py test_public_forward_profiling_preserves_random_streams 300
+)

@@ -15,6 +15,7 @@ from typing import Any, Literal, Self, TextIO, cast
 import torch
 from torch import nn
 
+from shadowspill.pytorch._rng import preserve_rng
 from shadowspill.pytorch.distributed import Distributed
 
 from . import _checkpoint
@@ -207,14 +208,16 @@ class Trainer:
             if selected not in candidates:
                 raise ValueError(f"checkpoint candidate {selected!r} was not supplied")
             candidates = {selected: candidates[selected]}
-        examples = {
-            name: make_microbatches(fn, example_data) for name, fn in candidates.items()
-        }
-        modes = {name: m.training for name, m in self.model.named_modules()}
-        with model_mode(self.model, True):
-            self._execution, self.selected_candidate = self.backend.prepare_step(
-                self.model, self._spec, examples
-            )
+        with preserve_rng(self.backend.device):
+            examples = {
+                name: make_microbatches(fn, example_data)
+                for name, fn in candidates.items()
+            }
+            modes = {name: m.training for name, m in self.model.named_modules()}
+            with model_mode(self.model, True):
+                self._execution, self.selected_candidate = self.backend.prepare_step(
+                    self.model, self._spec, examples
+                )
         self.model = self._execution.model
         for name, module in self.model.named_modules():
             module.training = modes[name]

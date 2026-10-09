@@ -4,6 +4,7 @@ import pytest
 import torch
 import torch.nn as nn
 
+from qualification.profiling import CORRECTNESS_PROFILING
 from shadowspill.errors import (
     InputGuardError,
 )
@@ -14,7 +15,6 @@ from shadowspill.pytorch import (
     plan_forward,
 )
 from shadowspill.runtime.configuration import adapter_path
-from qualification.profiling import CORRECTNESS_PROFILING
 
 from ..runtime_test_support import public_test_runtime
 
@@ -184,3 +184,36 @@ def test_public_forward_sets_a_model_buffer_each_call(tmp_path: object) -> None:
     planned.close()
     export_model_state(model, runtime=runtime, release_runtime=True)
     assert model.scale.item() == 3.0
+
+
+@pytest.mark.cuda
+@pytest.mark.fresh_process
+def test_public_forward_profiling_preserves_random_streams(tmp_path):
+    class RandomForward(nn.Module):
+        def __init__(self):
+            super().__init__()
+            self.linear = nn.Linear(16, 16)
+
+        def forward(self, value):
+            return self.linear(value) + torch.rand_like(value)
+
+    torch.manual_seed(1009)
+    model = RandomForward()
+    inputs = torch.ones(3, 16)
+    runtime = public_test_runtime()
+    torch.cuda.init()
+    cpu_rng = torch.get_rng_state()
+    device_rng = torch.cuda.get_rng_state()
+    planned = plan_forward(
+        model, example_inputs=(inputs,), runtime=runtime,
+        execution="execution", spill="spill", artifact_store=tmp_path,
+        profiling_options=CORRECTNESS_PROFILING,
+    )
+    assert torch.equal(torch.get_rng_state(), cpu_rng)
+    assert torch.equal(torch.cuda.get_rng_state(), device_rng)
+    first = planned((inputs,)).cpu()
+    assert not torch.equal(torch.cuda.get_rng_state(), device_rng)
+    torch.cuda.set_rng_state(device_rng)
+    second = planned((inputs,)).cpu()
+    assert torch.equal(first, second)
+    planned.close()

@@ -8,6 +8,7 @@ from typing import Any, Self
 
 from torch import nn
 
+from shadowspill.pytorch._rng import preserve_rng
 from shadowspill.pytorch.distributed import Distributed
 
 from ._model import initialize_model, model_mode, validate_initialization
@@ -75,7 +76,7 @@ class Forward:
         else:
             self.model = prepare_model(self.model, fill)
         modes = {name: m.training for name, m in self.model.named_modules()}
-        with model_mode(self.model, self.training):
+        with preserve_rng(self.backend.device), model_mode(self.model, self.training):
             self._execution = self.backend.prepare_forward(
                 self.model,
                 self.forward_fn,

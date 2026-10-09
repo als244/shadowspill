@@ -4,43 +4,19 @@ from __future__ import annotations
 
 import json
 import os
-import random
 import shutil
-import sys
 import tempfile
-from collections.abc import Callable, Mapping
+from collections.abc import Mapping
 from pathlib import Path
-from typing import Any, Literal, cast
+from typing import Any, Literal
 
 import torch
 
+from shadowspill.pytorch._rng import restore_rng as restore_rng
+from shadowspill.pytorch._rng import rng_state as rng_state
 from shadowspill.pytorch.distributed import BoundDistributed
 
 from ._types import StepExecution
-
-
-def rng_state(device: torch.device) -> dict[str, Any]:
-    state: dict[str, Any] = {
-        "python": random.getstate(),
-        "torch": torch.get_rng_state(),
-    }
-    numpy = sys.modules.get("numpy")
-    if numpy is not None:
-        state["numpy"] = numpy.random.get_state()
-    if device.type == "cuda" and cast(Callable[[], bool], torch.cuda.is_initialized)():
-        state["accelerator"] = torch.cuda.get_rng_state(device)
-    return state
-
-
-def restore_rng(state: Mapping[str, Any], device: torch.device) -> None:
-    random.setstate(state["python"])
-    torch.set_rng_state(state["torch"])
-    if "numpy" in state:
-        import numpy
-
-        numpy.random.set_state(state["numpy"])
-    if "accelerator" in state:
-        torch.cuda.set_rng_state(state["accelerator"], device)
 
 
 def save(
