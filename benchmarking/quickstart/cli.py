@@ -33,7 +33,7 @@ def resolve_request(parser, arguments):
         from workloads.recipes.text.quickstart import recipe
 
         setup, defaults, manual = recipe(parser, arguments)
-        label = arguments.model
+        label = arguments.model + ("_lora" if arguments.lora else "")
     requested = arguments.search_budget_gib
     run = arguments.run_budget_gib
     if not requested and not run:
@@ -45,12 +45,27 @@ def resolve_request(parser, arguments):
     spill = arguments.spill_gib or defaults.get("spill_gib", 16)
     if spill <= 0 or any(value <= 0 for value in requested):
         parser.error("execution and spill budgets must be positive")
-    remote = None
+    pool = None
     if arguments.remote_spill is not None:
         host, colon, port = arguments.remote_spill.rpartition(":")
         if not host or not colon or not port.isdigit():
             parser.error("--remote-spill must be HOST:PORT")
-        remote = (host, int(port))
+        from shadowspill.network import remote
+
+        pool = remote(capacity=int(spill * GIB), host=host, port=int(port))
+    elif arguments.ssd_spill is not None:
+        from shadowspill.ssd import ssd
+
+        try:
+            pool = ssd(
+                capacity=int(spill * GIB),
+                directory=arguments.ssd_spill,
+                staging_bytes=arguments.ssd_staging_mib << 20,
+                chunk_bytes=arguments.ssd_chunk_mib << 20,
+                queue_depth=arguments.ssd_queue_depth,
+            )
+        except (TypeError, ValueError) as error:
+            parser.error(str(error))
     return Request(
         label=label,
         search_budgets=[int(value * GIB) for value in requested],
@@ -59,7 +74,7 @@ def resolve_request(parser, arguments):
         spill_budget=int(spill * GIB),
         device=device,
         manual=manual,
-        remote_spill=remote,
+        spill=pool,
         external_headroom=int(arguments.external_headroom_gib * GIB),
     ), setup
 

@@ -225,8 +225,25 @@ def recipe(parser, arguments):
                 torch.manual_seed(arguments.seed)
                 reset_parameters(model)
 
+        def model_factory():
+            model = build_model(manifest)
+            if arguments.lora:
+                from workloads.lora import configure_lora
+
+                model = configure_lora(
+                    model,
+                    rank=arguments.lora_rank,
+                    alpha=arguments.lora_alpha,
+                    factor_dtype=arguments.lora_dtype,
+                    targets=arguments.lora_target,
+                    head=arguments.lora_head,
+                    shared_experts=arguments.lora_shared_experts,
+                    trainable_base=arguments.trainable_base,
+                )
+            return model
+
         experiment = {
-            "model_factory": functools.partial(build_model, manifest),
+            "model_factory": model_factory,
             "initialize": initialize,
             "objective": (
                 functools.partial(_distributed_objective, manifest, world_size)
@@ -241,6 +258,22 @@ def recipe(parser, arguments):
             "units_per_step": length * sequences,
             "unit_label": "tokens",
             "metadata": {
+                "trainable": {
+                    "mode": "lora" if arguments.lora else "full",
+                    **(
+                        {
+                            "rank": arguments.lora_rank,
+                            "alpha": arguments.lora_alpha,
+                            "factor_dtype": arguments.lora_dtype,
+                            "targets": arguments.lora_target,
+                            "head": arguments.lora_head,
+                            "shared_experts": arguments.lora_shared_experts,
+                            "trainable_base": arguments.trainable_base,
+                        }
+                        if arguments.lora
+                        else {}
+                    ),
+                },
                 "world_size": world_size,
                 "rank": rank,
                 "units_scope": "per_rank",

@@ -29,6 +29,7 @@ class _Parser:
 def _arguments(**overrides: object) -> argparse.Namespace:
     named: dict[str, object] = dict(
         model="mlops_llama3",
+        lora=False,
         distributed=False,
         host_headroom_gib=2,
         preparation_timeout=1800,

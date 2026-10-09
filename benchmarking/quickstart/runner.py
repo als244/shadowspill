@@ -17,7 +17,7 @@ from typing import Any, cast
 import torch
 
 from shadowspill.diagnostics.occupancy import write_run_timelines
-from shadowspill.memory import device, pinned_host, transfer_route
+from shadowspill.memory import SpillPool, device, pinned_host, transfer_route
 from shadowspill.planner import StepDataOrdering
 from shadowspill.planner.annotated_plan import AnnotatedProgramPlan
 from shadowspill.planner.program_inputs import TransferBandwidths
@@ -66,7 +66,7 @@ class Request:
     spill_budget: int
     device: torch.device
     manual: str | None = None
-    remote_spill: tuple[str, int] | None = None
+    spill: SpillPool | None = None
     external_headroom: int = 512 << 20
 
 
@@ -82,16 +82,10 @@ def open_runtime(
 
     marker = time.perf_counter()
     capacity = request.spill_budget
-    if request.remote_spill is None:
-        spill: Any = pinned_host(capacity=capacity)
-    else:
-        # Imported here: a local tour should not load the network library to
-        # decide it does not need it.
-        from shadowspill.network import remote
-
-        host, port = request.remote_spill
-        spill = remote(capacity=capacity, host=host, port=port)
-        print(f"spilling to {host}:{port}, {capacity >> 30} GiB")
+    spill = (
+        request.spill if request.spill is not None else pinned_host(capacity=capacity)
+    )
+    print(f"spill pool: {spill.kind_name}, {capacity >> 30} GiB", flush=True)
     runtime = Runtime(
         control_group=control_group,
         host_headroom_bytes=int(host_headroom_gib * _GIB),
@@ -774,17 +768,18 @@ def print_closing(ledger: Ledger, request: Request) -> None:
     ceiling = host_memory_ceiling()
     capacity = request.spill_budget
     print(rule("Where the host memory went"))
-    # A remote arena is the peer's memory, not this host's, so it is named
-    # rather than counted here -- the heading above says where the host's
-    # memory went, and those gibibytes did not go there.
-    if request.remote_spill is None:
+    spill = request.spill
+    kind = "pinned" if spill is None else spill.kind_name
+    if kind == "pinned_host" or spill is None:
         print(f"  spill arena (pinned)  {gib(capacity):>12}   counted below")
-    else:
-        host, port = request.remote_spill
+    elif kind == "ssd":
         print(
-            f"  spill arena (remote)  {gib(capacity):>12}   on {host}:{port},"
-            " not counted below"
+            f"  spill arena (SSD)     {gib(capacity):>12}"
+            "   disk capacity, not host memory"
         )
+        print(f"  host staging limit    {gib(spill.staging_bytes):>12}")
+    else:
+        print(f"  spill arena ({kind})  {gib(capacity):>12}   not local host memory")
     print(f"  peak resident         {gib(peak):>12}")
     print(f"  resident at exit      {gib(resident):>12}")
     if ceiling is not None:

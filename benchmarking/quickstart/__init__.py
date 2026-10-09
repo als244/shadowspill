@@ -14,6 +14,7 @@ def run(
     *,
     search_budget_gib,
     spill_gib,
+    spill_pool=None,
     run_budget_gib=None,
     steps=5,
     output_dir=None,
@@ -32,6 +33,9 @@ def run(
     preparation_timeout=1800,
 ):
     """Benchmark a user experiment; factory(device=...) supplies its arguments.
+
+    spill_pool optionally supplies a configured SSD or remote pool; its capacity
+    must match spill_gib. The default is pinned host memory.
 
     Required factory keys: model_factory (or an initialized model), objective,
     optimizer, candidates. Optional keys: initialize, hyperparams, plan_options,
@@ -92,12 +96,15 @@ def run(
             setattr(
                 arguments, "profile_" + item.name, getattr(profiling_options, item.name)
             )
+    if spill_pool is not None and spill_pool.capacity != int(spill_gib * (1 << 30)):
+        raise ValueError("spill_pool.capacity must equal spill_gib")
     request = Request(
         label=getattr(factory, "__name__", "experiment"),
         search_budgets=[int(v * (1 << 30)) for v in search_budget_gib],
         run_budgets=[int(v * (1 << 30)) for v in arguments.run_budget_gib],
         physical_capacity=int(max(search_budget_gib) * (1 << 30)),
         spill_budget=int(spill_gib * (1 << 30)),
+        spill=spill_pool,
         device=resolve_device(device),
         external_headroom=int(external_headroom_gib * (1 << 30)),
     )
