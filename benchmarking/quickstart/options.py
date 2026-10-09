@@ -480,7 +480,8 @@ def _parser() -> argparse.ArgumentParser:
         "--opt-state-rounding",
         choices=_ROUNDINGS,
         default=None,
-        help="how the optimizer rounds the state it stores, the same two ways",
+        help="how the optimizer rounds the state it stores: nearest or stochastic."
+        " ShadowSpill defaults to stochastic for BF16 AdamW moments, nearest otherwise",
     )
     parser.add_argument(
         "--round-accumulation-once",

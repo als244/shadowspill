@@ -178,7 +178,7 @@ arithmetic:
 | `--grad-dtype` | The dtype gradients are created and summed at over a step's microbatches. Naming one also asks the mlops kernels for weight gradients at it and has the optimizer read gradients at it, the two settings the harness lists beside it, because a step that names one and sets neither silently rounds the sum back to bf16 | the weights' dtype |
 | `--opt-state-dtype` | The dtype the optimizer keeps its state at, AdamW's moments: `bfloat16`, `float16`, `float32`, or `parameter` for the dtype of what it steps | the optimizer's own default |
 | `--parameter-rounding` | How the optimizer rounds the weights it steps: `nearest`, or `stochastic`, which keeps small updates in expectation | the optimizer's own default, nearest |
-| `--opt-state-rounding` | How it rounds the state it stores, the same two ways | the optimizer's own default, nearest |
+| `--opt-state-rounding` | How it rounds the state it stores: `nearest` or `stochastic` | ShadowSpill: stochastic for BF16 AdamW moments, nearest otherwise |
 | `--round-accumulation-once` | `plan_step`'s: a matrix multiply adds its product into running gradients kept narrower than it sums at -- bf16 -- as it writes them, avoiding a separate product buffer and addition. BLAS controls rounding; a single rounding is not guaranteed. Off, the narrow-dtype addition stays separate | off |
 
 Every one of these is part of the plan's identity in the store and of the

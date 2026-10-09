@@ -69,7 +69,8 @@ class NumericalCase:
 
     @property
     def optimizer(self) -> Any:
-        return self.dtypes.optimizer()
+        # Keep the numerical gate's established arithmetic and references.
+        return self.dtypes.optimizer(opt_state_rounding="nearest")
 
 
 def build_case(

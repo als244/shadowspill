@@ -63,6 +63,14 @@ A live optimizer instance belongs to the low-level `plan_step` API. The trainer
 constructs its optimizer after state import, preserving group assignments and
 scheduled tuple values. Unscheduled group-specific constants remain unchanged.
 
+For MLOps AdamW, Trainer defaults BF16 moment storage to stochastic rounding;
+FP16/FP32 moments and parameter storage retain nearest rounding. Set
+`optimizer_args={"opt_state_rounding": "nearest"}` to override this. Explicit
+rounding in a partial or parameter group also wins. With
+`opt_state_dtype="parameter"`, mixed-dtype groups are split only where rounding
+differs, preserving parameter order and the other group settings. Other
+optimizers and caller-owned optimizers passed to `plan_step` keep their settings.
+
 ## Preparation and initialization
 
 `trainer.prepare(example_data, initialize=None, checkpoint=None)` performs

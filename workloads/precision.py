@@ -72,12 +72,17 @@ class TrainingDtypes:
             ),
         }
 
-    def optimizer(self) -> Any:
+    def optimizer(self, *, opt_state_rounding: str | None = None) -> Any:
         import mlops
 
+        if opt_state_rounding is None:
+            opt_state_rounding = (
+                "stochastic" if self.opt_state_dtype == "bfloat16" else "nearest"
+            )
         return partial(
             mlops.optim.AdamW,
             opt_state_dtype=getattr(torch, self.opt_state_dtype),
+            opt_state_rounding=opt_state_rounding,
             gradient_dtype=getattr(
                 torch,
                 self.model_dtype if self.master_dtype == "none" else self.master_dtype,
