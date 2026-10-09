@@ -105,7 +105,7 @@ These display labels do not change the source report's accounting definitions.
 ## Interpretation
 
 - Memory is the report's tensor leases plus task workspace envelopes, not
-  every physical CUDA allocation. Exact event-accounted peaks may differ
+  every physical device allocation. Exact event-accounted peaks may differ
   slightly from the rounded, sampled stack.
 - Workspace and control temporaries are included in **Activations** to simplify
   the presentation legend. No bytes are removed.

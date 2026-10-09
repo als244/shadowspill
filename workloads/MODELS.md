@@ -44,9 +44,7 @@ constructor arguments. An experiment factory supplies groups and resources;
 a text quickstart name alone does not enable EP.
 
 For a non-text example, see the [regression recipe](recipes/regression.py) and
-[generic training walkthrough](../docs/examples/generic-training.md). The
-[Hugging Face probes](huggingface_test/README.md) are separate integration
-experiments, not additional maintained model presets.
+[generic training walkthrough](../docs/examples/generic-training.md).
 
 ## Preset dimensions and parameter counts
 
