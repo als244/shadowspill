@@ -1,8 +1,14 @@
 from __future__ import annotations
 
+import json
 from dataclasses import replace
+from pathlib import Path
+from types import SimpleNamespace
+
+import pytest
 
 from shadowspill.ir import MemorySchedule, ShadowSpillProgram, TaskProfile, TaskSpec
+from shadowspill.pipeline.common import PlanningTimer
 from shadowspill.planner import (
     AdmissionFacts,
     CandidateDiagnostic,
@@ -14,7 +20,11 @@ from shadowspill.planner import (
 )
 from shadowspill.planner.plan_store import PlanLookup
 from shadowspill.pytorch.planning.admission import resolve_fixed_layout_selection
+from shadowspill.pytorch.planning.forward.plan import plan_forward_program
+from shadowspill.pytorch.planning.stores import open_planning_stores
+from shadowspill.pytorch.planning.training.plan import plan_training_programs
 from shadowspill.simulator import SimulationConfig, simulate
+from shadowspill.store import ArtifactStore
 from tests.shadowspill.planner._examples import COMPUTE, DEVICE
 
 
@@ -161,3 +171,42 @@ def test_refinement_rejects_invalid_effective_capacity() -> None:
         assert "invalid effective object capacity" in str(error)
     else:
         raise AssertionError("invalid effective capacity was accepted")
+
+
+@pytest.mark.parametrize("mode", ["training", "forward"])
+def test_pytorch_plan_archives_its_certificate_and_reuses_it(
+    tmp_path: Path, mode: str
+) -> None:
+    config = _config(1 << 20)
+    artifacts = SimpleNamespace(
+        lowered=SimpleNamespace(
+            program=_selection(config).result.program,
+            initial_residency=(),
+            final_residency=(),
+        ),
+        simulation_config=config,
+        admission=_topology(1 << 20),
+        measurements_by_profile={},
+        dynamic_scratch_reserve_bytes=0,
+    )
+    stores = open_planning_stores(ArtifactStore.resolve(tmp_path))
+    planner = plan_training_programs if mode == "training" else plan_forward_program
+
+    first = planner(
+        artifacts,  # type: ignore[arg-type]
+        stores=stores,
+        search_options=None,
+        timer=PlanningTimer(verbose=False),
+    )
+    saved = json.loads(stores.plans.path(first.plan.key).read_text())
+    assert saved["admission_certificate"]["layout"] == first.admission.layout.to_dict()
+
+    second = planner(
+        artifacts,  # type: ignore[arg-type]
+        stores=stores,
+        search_options=None,
+        timer=PlanningTimer(verbose=False),
+    )
+    assert second.from_store
+    assert second.plan.certificate == first.admission
+    assert second.admission == first.admission
