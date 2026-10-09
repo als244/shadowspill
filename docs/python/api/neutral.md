@@ -734,6 +734,17 @@ shortfall is reported as a `CapacityViolation` alongside the `device-capacity`
 stall that records the wait: the stall says when and for how long, the
 violation says by how much.
 
+### Transfer timing configuration
+
+`DeviceSimulationConfig` and `SimulationConfig.single_device()` require four
+positive integer rates: `fetch_solo_bandwidth_bytes_per_second`,
+`fetch_concurrent_bandwidth_bytes_per_second`,
+`evict_solo_bandwidth_bytes_per_second`, and
+`evict_concurrent_bandwidth_bytes_per_second`. `fetch_latency_ns` and
+`evict_latency_ns` default to zero. Set solo and concurrent equal to request
+constant rates. Partial overlaps are integrated over the transfer's remaining
+bytes; see [simulation](../../architecture/simulation.md#solo-and-concurrent-bandwidth).
+
 ## `shadowspill.runtime`
 
 One runtime in this process, framework-neutral: it bootstraps over a frontend's

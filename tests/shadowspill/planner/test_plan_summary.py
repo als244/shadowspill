@@ -31,8 +31,8 @@ def test_summary_parts_identify_to_the_simulated_step() -> None:
     assert summary.spill_peak_bytes == result.simulation.spill_peak_bytes
     assert summary.transfer_bytes_fetched == fetched
     assert summary.transfer_bytes_evicted == evicted
-    assert summary.fetch_bandwidth_bytes_per_second == 1 << 30
-    assert summary.evict_bandwidth_bytes_per_second == 1 << 30
+    assert summary.fetch_solo_bandwidth_bytes_per_second == 1 << 30
+    assert summary.evict_solo_bandwidth_bytes_per_second == 1 << 30
     assert dict(summary.selected_candidate) == {
         "residency_strategy": summary.selected_candidate["residency_strategy"],
         "fetch_rule": summary.selected_candidate["fetch_rule"],

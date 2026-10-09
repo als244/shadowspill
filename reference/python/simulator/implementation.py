@@ -68,6 +68,10 @@ class _ActiveTransfer:
     pending: _PendingTransfer
     start_ns: int
     end_ns: int
+    payload_start_ns: int
+    remaining: int
+    progress_ns: int
+    rate: int = 0
 
 
 @dataclass(slots=True)
@@ -492,22 +496,50 @@ class _Simulator:
             changed = True
         return changed
 
-    def _transfer_runtime_ns(
-        self,
-        state: _AliasState,
-        direction: TransferDirection,
-    ) -> int:
-        config = self.device_config[state.device_id]
-        if direction is TransferDirection.FETCH:
-            bandwidth = config.fetch_bandwidth_bytes_per_second
-            latency = config.fetch_latency_ns
-        else:
-            bandwidth = config.evict_bandwidth_bytes_per_second
-            latency = config.evict_latency_ns
-        transfer = (
-            state.size_bytes * _NANOSECONDS_PER_SECOND + bandwidth - 1
-        ) // bandwidth
-        return latency + transfer
+    def _refresh_transfer_rates(self) -> None:
+        for device_id, config in self.device_config.items():
+            fetch = self.active_fetch.get(device_id)
+            evict = self.active_evict.get(device_id)
+            for active in (fetch, evict):
+                if active is not None:
+                    active.remaining = max(
+                        0,
+                        active.remaining
+                        - (self.now_ns - active.progress_ns) * active.rate,
+                    )
+                    active.progress_ns = self.now_ns
+            fetching = (
+                fetch is not None
+                and fetch.remaining > 0
+                and fetch.payload_start_ns <= self.now_ns
+            )
+            evicting = (
+                evict is not None
+                and evict.remaining > 0
+                and evict.payload_start_ns <= self.now_ns
+            )
+            for active, moving, rate in (
+                (
+                    fetch,
+                    fetching,
+                    config.fetch_concurrent_bandwidth_bytes_per_second
+                    if evicting
+                    else config.fetch_solo_bandwidth_bytes_per_second,
+                ),
+                (
+                    evict,
+                    evicting,
+                    config.evict_concurrent_bandwidth_bytes_per_second
+                    if fetching
+                    else config.evict_solo_bandwidth_bytes_per_second,
+                ),
+            ):
+                if active is not None:
+                    active.rate = rate if moving else 0
+                    if moving:
+                        active.end_ns = (
+                            self.now_ns + (active.remaining + rate - 1) // rate
+                        )
 
     def _enqueue_transfer(
         self,
@@ -805,11 +837,20 @@ class _Simulator:
             if not state.spill_allocated:
                 raise AssertionError("queued EVICT has no trigger-time reservation")
         queue.popleft()
-        runtime = self._transfer_runtime_ns(state, direction)
+        config = self.device_config[device_id]
+        latency = (
+            config.fetch_latency_ns
+            if direction is TransferDirection.FETCH
+            else config.evict_latency_ns
+        )
+        payload_start = self.now_ns + latency
         active_table[device_id] = _ActiveTransfer(
             pending=pending,
             start_ns=self.now_ns,
-            end_ns=self.now_ns + runtime,
+            end_ns=payload_start + state.size_bytes * _NANOSECONDS_PER_SECOND,
+            payload_start_ns=payload_start,
+            remaining=state.size_bytes * _NANOSECONDS_PER_SECOND,
+            progress_ns=self.now_ns,
         )
         self._snapshot()
         return True
@@ -881,8 +922,12 @@ class _Simulator:
 
     def _next_event_time(self) -> int | None:
         ends = [active.end_ns for active in self.active_tasks.values()]
-        ends.extend(active.end_ns for active in self.active_fetch.values())
-        ends.extend(active.end_ns for active in self.active_evict.values())
+        for active in (*self.active_fetch.values(), *self.active_evict.values()):
+            ends.append(
+                active.payload_start_ns
+                if active.payload_start_ns > self.now_ns
+                else active.end_ns
+            )
         return min(ends) if ends else None
 
     def _complete_events(self) -> None:
@@ -1071,6 +1116,7 @@ class _Simulator:
                 # The last action went through on a retry, with nothing
                 # left to wait for.
                 break
+            self._refresh_transfer_rates()
             next_time = self._next_event_time()
             if next_time is None:
                 self._deadlock()

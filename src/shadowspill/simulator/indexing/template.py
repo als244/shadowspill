@@ -215,8 +215,10 @@ def index_simulation_template(
             *(
                 CDevice(
                     configured[device_id].capacity_bytes - shared.for_device(device_id),
-                    configured[device_id].fetch_bandwidth_bytes_per_second,
-                    configured[device_id].evict_bandwidth_bytes_per_second,
+                    configured[device_id].fetch_solo_bandwidth_bytes_per_second,
+                    configured[device_id].fetch_concurrent_bandwidth_bytes_per_second,
+                    configured[device_id].evict_solo_bandwidth_bytes_per_second,
+                    configured[device_id].evict_concurrent_bandwidth_bytes_per_second,
                     configured[device_id].fetch_latency_ns,
                     configured[device_id].evict_latency_ns,
                 )

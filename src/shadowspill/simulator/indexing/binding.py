@@ -290,10 +290,24 @@ def _admission_arrays(
                         device_id, int(template.program.devices[index].capacity_bytes)
                     ),
                     int(
-                        template.program.devices[index].fetch_bandwidth_bytes_per_second
+                        template.program.devices[
+                            index
+                        ].fetch_solo_bandwidth_bytes_per_second
                     ),
                     int(
-                        template.program.devices[index].evict_bandwidth_bytes_per_second
+                        template.program.devices[
+                            index
+                        ].fetch_concurrent_bandwidth_bytes_per_second
+                    ),
+                    int(
+                        template.program.devices[
+                            index
+                        ].evict_solo_bandwidth_bytes_per_second
+                    ),
+                    int(
+                        template.program.devices[
+                            index
+                        ].evict_concurrent_bandwidth_bytes_per_second
                     ),
                     int(template.program.devices[index].fetch_latency_ns),
                     int(template.program.devices[index].evict_latency_ns),

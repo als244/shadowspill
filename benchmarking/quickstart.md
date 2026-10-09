@@ -163,7 +163,7 @@ What the search plans:
 |---|---|---|
 | `--orderings` | Which microbatch orderings the search tries per geometry: `factors` lowers every `depth x breadth` factor pair of the accumulation count into its own program and plans each under every budget, so the winner at a budget may be any walk of any geometry; `depth-first` tries only the plain walk, one microbatch start to finish before the next. The loss stays paired and the backward walk reversed either way. The run phase plans the winner's ordering | `factors` |
 | `--resolution-options` | The shares of flexible groups to recompute, as `quarters`, `eighths`, `halves`, or a comma-separated list of exact fractions such as `0,1/2,7/8,1`. More shares plan more programs per point, so the search wall grows with the count and the finer rungs may or may not be worth it for a given model. The options are part of every plan's identity in the store, and the runs plan the same options the search did | `quarters` |
-| `--transfer-bandwidths` | Plan the search against this calibration instead of the one the runtime measures at start: `FETCH,EVICT` in GB/s, optionally followed by the fetch and evict latencies in microseconds (`26,26,8,4`), or the path of another run's `search.json` to pin to what that run planned against, latencies included. Two runs are comparable only when they plan against the same lanes, and a fresh calibration differs run to run on one machine. The run phase plans against the same lanes as the search either way, pinned or calibrated once at start, so each budget asks the store the search's question | calibrated |
+| `--transfer-bandwidths` | Plan the search against this calibration instead of the one the runtime measures at start: `FETCH_SOLO,FETCH_CONCURRENT,EVICT_SOLO,EVICT_CONCURRENT` in GB/s, optionally followed by fetch/evict latency in microseconds (`40,26,56,26,8,4`); a two-number form gives fixed fetch/evict rates, or the path of another run's `search.json` to pin to what that run planned against, latencies included. Two runs are comparable only when they plan against the same lanes, and a fresh calibration differs run to run on one machine. The run phase plans against the same lanes as the search either way, pinned or calibrated once at start, so each budget asks the store the search's question | calibrated |
 | `--deterministic` / `--no-deterministic` | Make the **search** reproduce exactly at any worker count: a candidate's placement gate consults only its own placed plans rather than the shared best-placed record, so every graph-pair selection reports the plan it actually found rather than showing up only if it was measured before a better plan existed. Costs wall time, because the shared bound is what lets a candidate skip measuring a plan that cannot win. It does not reach the per-budget replan a run does before executing, which has no such option | on |
 | `--incumbents` / `--no-incumbents` | Hand each budget the best plan found at a smaller budget of the same program as the plan to beat, so no program plans worse with more memory: the search plans budgets ascending, and a point that did not beat the plan it was handed answers with it and says which budget it came from (`plan from 6 GiB` in the table, `incumbent_budget_bytes` in `search.json`). The run phase is handed the search's winning plan as its plan to beat, so it executes that plan or better even when its facts differ from the search's. `--no-incumbents` searches every point alone, for comparing the two | on |
 
@@ -527,7 +527,7 @@ for a run made before the pages existed.
 | terminal writeback | Transfers that return spill-final objects to the spill pool after the last task; the simulated step includes them. |
 | task window | From the first task's compute start through the last task's end. It excludes the step's boundary regions by construction. |
 | entry delay | Invocation origin to the first computation, including its scheduled fetches and measured frontend preparation. |
-| lane utilization | Simulated transfer bytes over the assumed lane bandwidth over the simulated step: the share of the step each transfer lane spends busy. |
+| lane utilization | Simulated lane-busy time divided by step time, including startup latency. Fetch and evict are independent percentages, each bounded by 100%. |
 | infeasible / search_exhausted | A geometry the planner proved cannot fit the budget, or whose bounded candidate search ended without a feasible schedule. A geometry whose build exhausts the device reports every one of its budgets infeasible too, since profiling runs real kernels and the largest microbatch can run out of memory before any plan exists. Reported in the table, never raised. |
 | rejected | A point the planner refused, before or during its search; `error` carries its reason. The sweep goes on with the next point. |
 | artifact store | The on-disk store of build and planning artifacts, keyed by content digests — see [reusable planning](../docs/examples/reusable-planning.md). |
@@ -596,3 +596,25 @@ run(
 Run all participants with the same sweep. `--reproduce runs/llama_dp` selects the
 current launcher's rank report and reuses its calibration and rank-specific
 stores. No global task barriers are added to the measured runtime sequence.
+
+### Overriding transfer calibration
+
+Calibration normally supplies separate solo and concurrent rates automatically.
+To override them, use `--transfer-bandwidths 40,26,56,26` (GB/s, in fetch solo,
+fetch concurrent, evict solo, evict concurrent order). Two optional trailing
+numbers set fetch/evict startup latency in microseconds: `40,26,56,26,4,4`.
+The short form `26,26` gives fixed fetch and evict rates. A saved `search.json`
+also supplies all four rates and both latencies. These values participate in
+plan identity; this remains the development v1 schema.
+
+Winner and geometry lane utilization uses simulated transfer intervals. Resolution
+plots use each retained resolution's simulation (`--resolution-plans`); missing
+lane timing stays unknown rather than being estimated from a fixed bandwidth.
+Blended bandwidth is total bytes divided by lane-busy time, including startup
+latency. It depends on each schedule's actual solo/concurrent overlap, not an
+arithmetic average of calibration rates. `transfers/blended_bandwidth.png` and
+`raw_data/points.csv` expose those rates alongside busy times and utilization.
+Timeline HTML, timeline `summary.csv`, and slide exports show the same planned
+blend. A measured page compares its achieved rate against that simulated blend;
+its trace never replaces the assumed rate. Solo/concurrent calibration remains
+visible separately. A lane with no transfers has no defined blended rate.

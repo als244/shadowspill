@@ -292,9 +292,15 @@ def _transfer_runtime_ns(
     device_id = facts.alias_devices[alias]
     device = next(item for item in config.devices if item.device_id == device_id)
     bandwidth = (
-        device.fetch_bandwidth_bytes_per_second
+        max(
+            device.fetch_solo_bandwidth_bytes_per_second,
+            device.fetch_concurrent_bandwidth_bytes_per_second,
+        )
         if to_device
-        else device.evict_bandwidth_bytes_per_second
+        else max(
+            device.evict_solo_bandwidth_bytes_per_second,
+            device.evict_concurrent_bandwidth_bytes_per_second,
+        )
     )
     latency = device.fetch_latency_ns if to_device else device.evict_latency_ns
     size = facts.alias_sizes[alias]

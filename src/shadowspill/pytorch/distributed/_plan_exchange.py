@@ -50,8 +50,10 @@ def shared_problem(
         return problem, transfer, None, evidence
     device = shared.config.devices[0]
     transfer = TransferBandwidths(
-        device.fetch_bandwidth_bytes_per_second,
-        device.evict_bandwidth_bytes_per_second,
+        device.fetch_solo_bandwidth_bytes_per_second,
+        device.fetch_concurrent_bandwidth_bytes_per_second,
+        device.evict_solo_bandwidth_bytes_per_second,
+        device.evict_concurrent_bandwidth_bytes_per_second,
         fetch_latency_ns=device.fetch_latency_ns,
         evict_latency_ns=device.evict_latency_ns,
     )

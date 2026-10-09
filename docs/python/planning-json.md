@@ -265,7 +265,8 @@ shadowspill.annotated_program_plan/v1
 `memory_budgets` contains `execution_bytes` and `spill_bytes`.
 `transfer_bandwidths` contains:
 
-- `fetch_bytes_per_second` and `evict_bytes_per_second`;
+- `fetch_solo_bytes_per_second`, `fetch_concurrent_bytes_per_second`,
+  `evict_solo_bytes_per_second`, and `evict_concurrent_bytes_per_second`;
 - `fetch_latency_ns` and `evict_latency_ns`, the per-transfer latencies the
   same calibration measured, or `null` in an override that names only
   bandwidths, where the program's own latency applies;

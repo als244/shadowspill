@@ -8,13 +8,13 @@ from fractions import Fraction
 import pytest
 from torch import OutOfMemoryError
 
+from qualification.profiling import CORRECTNESS_PROFILING
 from shadowspill.planner import SearchOptions, StepDataOrdering
 from shadowspill.planner.program_inputs import TransferBandwidths
 from shadowspill.planner.search.algorithms.pressurefit import PressureFit
 from shadowspill.planner.search.algorithms.pressurefit.options import PressureFitOptions
 from shadowspill.pytorch import StepSearchPoint, StepSearchReport
 from shadowspill.schema import artifact_schema
-from qualification.profiling import CORRECTNESS_PROFILING
 from workloads.recipes.text.geometry import search_geometries
 
 
@@ -283,7 +283,9 @@ def test_a_point_the_planner_refuses_is_recorded_and_the_sweep_goes_on(
     from shadowspill.search import planner as planner_module
 
     class Problem:
-        transfer_bandwidths = TransferBandwidths(1_000, 2_000, provenance="stub")
+        transfer_bandwidths = TransferBandwidths(
+            1_000, 1_000, 2_000, 2_000, provenance="stub"
+        )
 
     class Step:
         problem = Problem()
@@ -327,7 +329,9 @@ def test_the_resolution_options_reach_every_point(
     from shadowspill.search import planner as planner_module
 
     class Problem:
-        transfer_bandwidths = TransferBandwidths(1_000, 2_000, provenance="stub")
+        transfer_bandwidths = TransferBandwidths(
+            1_000, 1_000, 2_000, 2_000, provenance="stub"
+        )
 
     class Step:
         problem = Problem()
@@ -376,7 +380,7 @@ def test_the_resolution_options_reach_every_point(
     assert report.geometries[0].transfer_bandwidths == Problem.transfer_bandwidths
     serialized = report.to_dict()
     recorded = serialized["geometries"][0]["transfer_bandwidths"]
-    assert recorded["fetch_bytes_per_second"] == 1_000
+    assert recorded["fetch_solo_bytes_per_second"] == 1_000
     assert report.transfer_bandwidths is None
     assert serialized["transfer_bandwidths"] is None
 
@@ -390,14 +394,18 @@ def test_a_pinned_calibration_reaches_every_point_and_the_report(
     from shadowspill.search import planner as planner_module
 
     class Problem:
-        transfer_bandwidths = TransferBandwidths(1_000, 2_000, provenance="stub")
+        transfer_bandwidths = TransferBandwidths(
+            1_000, 1_000, 2_000, 2_000, provenance="stub"
+        )
 
     class Step:
         problem = Problem()
         digest = "d0"
         phase_timings_ns = (("total", 1),)
 
-    pinned = TransferBandwidths(26_000_000_000, 26_000_000_000, provenance="pin")
+    pinned = TransferBandwidths(
+        26_000_000_000, 26_000_000_000, 26_000_000_000, 26_000_000_000, provenance="pin"
+    )
     seen: list[object] = []
     plan_stores: list[object] = []
 
@@ -499,7 +507,9 @@ def test_each_budget_is_handed_the_best_plan_below_it(
     from shadowspill.search import planner as planner_module
 
     class Problem:
-        transfer_bandwidths = TransferBandwidths(1_000, 2_000, provenance="stub")
+        transfer_bandwidths = TransferBandwidths(
+            1_000, 1_000, 2_000, 2_000, provenance="stub"
+        )
 
     class Step:
         problem = Problem()
@@ -617,8 +627,12 @@ def test_the_planned_lanes_are_the_override_else_the_first_calibration() -> None
 
     from shadowspill.pytorch import StepSearchGeometryBuild
 
-    calibrated = TransferBandwidths(25_600_000_000, 25_900_000_000)
-    pinned = TransferBandwidths(25_500_000_000, 26_000_000_000)
+    calibrated = TransferBandwidths(
+        25_600_000_000, 25_600_000_000, 25_900_000_000, 25_900_000_000
+    )
+    pinned = TransferBandwidths(
+        25_500_000_000, 25_500_000_000, 26_000_000_000, 26_000_000_000
+    )
     builds = (
         StepSearchGeometryBuild("12", 1, StepDataOrdering.depth_first(1), "d0", 2.0),
         StepSearchGeometryBuild(
@@ -651,7 +665,9 @@ def test_points_answer_from_summaries_and_only_winners_read_plans(
     from shadowspill.search import planner as planner_module
 
     class Problem:
-        transfer_bandwidths = TransferBandwidths(1_000, 2_000, provenance="stub")
+        transfer_bandwidths = TransferBandwidths(
+            1_000, 1_000, 2_000, 2_000, provenance="stub"
+        )
 
     class Step:
         problem = Problem()

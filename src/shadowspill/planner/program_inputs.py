@@ -34,8 +34,10 @@ class TransferBandwidths:
     override naming only bandwidths should do.
     """
 
-    fetch_bytes_per_second: int
-    evict_bytes_per_second: int
+    fetch_solo_bytes_per_second: int
+    fetch_concurrent_bytes_per_second: int
+    evict_solo_bytes_per_second: int
+    evict_concurrent_bytes_per_second: int
     scale_numerator: int = 1
     scale_denominator: int = 1
     calibration_digest: str | None = None
@@ -44,7 +46,15 @@ class TransferBandwidths:
     evict_latency_ns: int | None = None
 
     def __post_init__(self) -> None:
-        if self.fetch_bytes_per_second <= 0 or self.evict_bytes_per_second <= 0:
+        if any(
+            rate <= 0
+            for rate in (
+                self.fetch_solo_bytes_per_second,
+                self.fetch_concurrent_bytes_per_second,
+                self.evict_solo_bytes_per_second,
+                self.evict_concurrent_bytes_per_second,
+            )
+        ):
             raise ValueError("transfer bandwidths must be positive")
         for latency in (self.fetch_latency_ns, self.evict_latency_ns):
             if latency is not None and latency < 0:
@@ -61,9 +71,15 @@ class TransferBandwidths:
     def to_dict(self) -> dict[str, object]:
         return {
             "calibration_digest": self.calibration_digest,
-            "evict_bytes_per_second": self.evict_bytes_per_second,
+            "evict_solo_bytes_per_second": self.evict_solo_bytes_per_second,
+            "evict_concurrent_bytes_per_second": (
+                self.evict_concurrent_bytes_per_second
+            ),
             "evict_latency_ns": self.evict_latency_ns,
-            "fetch_bytes_per_second": self.fetch_bytes_per_second,
+            "fetch_solo_bytes_per_second": self.fetch_solo_bytes_per_second,
+            "fetch_concurrent_bytes_per_second": (
+                self.fetch_concurrent_bytes_per_second
+            ),
             "fetch_latency_ns": self.fetch_latency_ns,
             "provenance": self.provenance,
             "scale_denominator": self.scale_denominator,
@@ -76,13 +92,25 @@ class TransferBandwidths:
     ) -> TransferBandwidths:
         data = _mapping(value, path)
         return cls(
-            fetch_bytes_per_second=_integer(
-                data.get("fetch_bytes_per_second"),
-                f"{path}.fetch_bytes_per_second",
+            fetch_solo_bytes_per_second=_integer(
+                data.get("fetch_solo_bytes_per_second"),
+                f"{path}.fetch_solo_bytes_per_second",
             ),
-            evict_bytes_per_second=_integer(
-                data.get("evict_bytes_per_second"),
-                f"{path}.evict_bytes_per_second",
+            fetch_concurrent_bytes_per_second=(
+                _integer(
+                    data.get("fetch_concurrent_bytes_per_second"),
+                    f"{path}.fetch_concurrent_bytes_per_second",
+                )
+            ),
+            evict_solo_bytes_per_second=_integer(
+                data.get("evict_solo_bytes_per_second"),
+                f"{path}.evict_solo_bytes_per_second",
+            ),
+            evict_concurrent_bytes_per_second=(
+                _integer(
+                    data.get("evict_concurrent_bytes_per_second"),
+                    f"{path}.evict_concurrent_bytes_per_second",
+                )
             ),
             scale_numerator=_integer(
                 data.get("scale_numerator"), f"{path}.scale_numerator"
@@ -198,8 +226,10 @@ class ShadowSpillPlanningProblem:
     def transfer_bandwidths(self) -> TransferBandwidths:
         device = self.simulation_config.devices[0]
         return TransferBandwidths(
-            device.fetch_bandwidth_bytes_per_second,
-            device.evict_bandwidth_bytes_per_second,
+            device.fetch_solo_bandwidth_bytes_per_second,
+            device.fetch_concurrent_bandwidth_bytes_per_second,
+            device.evict_solo_bandwidth_bytes_per_second,
+            device.evict_concurrent_bandwidth_bytes_per_second,
             fetch_latency_ns=device.fetch_latency_ns,
             evict_latency_ns=device.evict_latency_ns,
         )
@@ -260,11 +290,17 @@ class ShadowSpillPlanningProblem:
                 replace(
                     source_device,
                     capacity_bytes=object_capacity + shared_execution,
-                    fetch_bandwidth_bytes_per_second=(
-                        selected_transfer.fetch_bytes_per_second
+                    fetch_solo_bandwidth_bytes_per_second=(
+                        selected_transfer.fetch_solo_bytes_per_second
                     ),
-                    evict_bandwidth_bytes_per_second=(
-                        selected_transfer.evict_bytes_per_second
+                    fetch_concurrent_bandwidth_bytes_per_second=(
+                        selected_transfer.fetch_concurrent_bytes_per_second
+                    ),
+                    evict_solo_bandwidth_bytes_per_second=(
+                        selected_transfer.evict_solo_bytes_per_second
+                    ),
+                    evict_concurrent_bandwidth_bytes_per_second=(
+                        selected_transfer.evict_concurrent_bytes_per_second
                     ),
                     fetch_latency_ns=(
                         source_device.fetch_latency_ns

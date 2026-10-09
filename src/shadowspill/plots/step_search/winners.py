@@ -137,21 +137,37 @@ def winner_figures(
             },
         ),
         line_figure(
+            tree.transfers / "blended_bandwidth.png",
+            "Planned Blended Transfer Bandwidth",
+            "GB/s (Bytes / Busy Time, Including Latency)",
+            budgets,
+            {
+                "Fetch": [
+                    None
+                    if x.fetch_blended_bandwidth_bytes_per_second is None
+                    else x.fetch_blended_bandwidth_bytes_per_second / 1e9
+                    for x in summaries
+                ],
+                "Evict": [
+                    None
+                    if x.evict_blended_bandwidth_bytes_per_second is None
+                    else x.evict_blended_bandwidth_bytes_per_second / 1e9
+                    for x in summaries
+                ],
+            },
+        ),
+        line_figure(
             tree.transfers / "lane_utilization.png",
             "Simulated Lane Utilization",
             "Share of Lane-Seconds",
             budgets,
             {
                 "Fetch Lane": [
-                    item.transfer_bytes_fetched
-                    / item.fetch_bandwidth_bytes_per_second
-                    / step
+                    item.fetch_busy_ns / 1e9 / step
                     for item, step in zip(summaries, steps, strict=True)
                 ],
                 "Evict Lane": [
-                    item.transfer_bytes_evicted
-                    / item.evict_bandwidth_bytes_per_second
-                    / step
+                    item.evict_busy_ns / 1e9 / step
                     for item, step in zip(summaries, steps, strict=True)
                 ],
             },

@@ -21,12 +21,20 @@ uint64_t shadowspill_next_event_time(
     for (uint32_t device = 0; device < program->device_count; ++device) {
         if (work->active_fetch[device] >= 0) {
             uint32_t index = (uint32_t)work->active_fetch[device];
+            uint64_t payload_start = work->transfers[index].payload_start_ns;
+            if (payload_start > work->now_ns && payload_start < next) {
+                next = payload_start;
+            }
             if (work->transfers[index].end_ns < next) {
                 next = work->transfers[index].end_ns;
             }
         }
         if (work->active_evict[device] >= 0) {
             uint32_t index = (uint32_t)work->active_evict[device];
+            uint64_t payload_start = work->transfers[index].payload_start_ns;
+            if (payload_start > work->now_ns && payload_start < next) {
+                next = payload_start;
+            }
             if (work->transfers[index].end_ns < next) {
                 next = work->transfers[index].end_ns;
             }

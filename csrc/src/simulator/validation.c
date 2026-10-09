@@ -112,8 +112,10 @@ int shadowspill_validate_program(
         return 0;
     }
     for (uint32_t index = 0; index < program->device_count; ++index) {
-        if (program->devices[index].fetch_bandwidth_bytes_per_second == 0U ||
-            program->devices[index].evict_bandwidth_bytes_per_second == 0U) {
+        if (program->devices[index].fetch_solo_bandwidth_bytes_per_second == 0U ||
+            program->devices[index].evict_solo_bandwidth_bytes_per_second == 0U ||
+            program->devices[index].fetch_concurrent_bandwidth_bytes_per_second == 0U ||
+            program->devices[index].evict_concurrent_bandwidth_bytes_per_second == 0U) {
             return 0;
         }
     }

@@ -18,6 +18,7 @@ import pytest
 
 from shadowspill.runtime import abi
 from shadowspill.schema import ARTIFACT_VERSION
+from shadowspill.simulator.capi import CDevice
 from shadowspill.status import ABI_VERSION, Status
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -33,6 +34,7 @@ _MIRRORS = {
     "ShadowSpillRuntimeStatistics": abi.RuntimeStatistics,
     "ShadowSpillAllocationEvent": abi.AllocationEvent,
     "ShadowSpillTraceConfig": abi.TraceConfig,
+    "ShadowSpillSimulationDevice": CDevice,
     "ShadowSpillTransferRouteKey": abi.TransferRouteKey,
     "ShadowSpillTransferCalibrationConfig": abi.TransferCalibrationConfig,
     "ShadowSpillTransferProfile": abi.TransferProfile,

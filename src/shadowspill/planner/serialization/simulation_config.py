@@ -40,13 +40,25 @@ def _simulation_config_from_value(
                     item.get("capacity_bytes"),
                     f"{path}.devices[{index}].capacity_bytes",
                 ),
-                fetch_bandwidth_bytes_per_second=_integer(
-                    item.get("fetch_bandwidth_bytes_per_second"),
-                    f"{path}.devices[{index}].fetch_bandwidth_bytes_per_second",
+                fetch_solo_bandwidth_bytes_per_second=_integer(
+                    item.get("fetch_solo_bandwidth_bytes_per_second"),
+                    f"{path}.devices[{index}].fetch_solo_bandwidth_bytes_per_second",
                 ),
-                evict_bandwidth_bytes_per_second=_integer(
-                    item.get("evict_bandwidth_bytes_per_second"),
-                    f"{path}.devices[{index}].evict_bandwidth_bytes_per_second",
+                fetch_concurrent_bandwidth_bytes_per_second=(
+                    _integer(
+                        item.get("fetch_concurrent_bandwidth_bytes_per_second"),
+                        f"{path}.devices[{index}].fetch_concurrent_bandwidth_bytes_per_second",
+                    )
+                ),
+                evict_solo_bandwidth_bytes_per_second=_integer(
+                    item.get("evict_solo_bandwidth_bytes_per_second"),
+                    f"{path}.devices[{index}].evict_solo_bandwidth_bytes_per_second",
+                ),
+                evict_concurrent_bandwidth_bytes_per_second=(
+                    _integer(
+                        item.get("evict_concurrent_bandwidth_bytes_per_second"),
+                        f"{path}.devices[{index}].evict_concurrent_bandwidth_bytes_per_second",
+                    )
                 ),
                 fetch_latency_ns=_integer(
                     item.get("fetch_latency_ns"),

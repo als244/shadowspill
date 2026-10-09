@@ -1078,13 +1078,26 @@ def attribute(
     assumed = {
         key: float(device[key])
         for key in (
-            "fetch_bandwidth_bytes_per_second",
-            "evict_bandwidth_bytes_per_second",
+            "fetch_solo_bandwidth_bytes_per_second",
+            "fetch_concurrent_bandwidth_bytes_per_second",
+            "evict_solo_bandwidth_bytes_per_second",
+            "evict_concurrent_bandwidth_bytes_per_second",
             "fetch_latency_ns",
             "evict_latency_ns",
         )
         if device.get(key) is not None
     }
+    # The planned blend always comes from the simulation, even on a measured
+    # page. Never price the trace with its own achieved rate.
+    for direction in ("fetch", "evict"):
+        copies = [
+            t for t in simulation["transfer_intervals"] if t["direction"] == direction
+        ]
+        busy = _busy_ns((t["start_ns"], t["end_ns"]) for t in copies)
+        if busy:
+            assumed[direction + "_blended_bandwidth_bytes_per_second"] = (
+                sum(t["bytes"] for t in copies) * 1e9 / busy
+            )
     return PlanOccupancy(
         "traced" if diagnostics is not None else "simulated",
         spill,
@@ -1222,6 +1235,15 @@ def _floor(
 # --- the summary --------------------------------------------------------------
 
 
+def _busy_ns(intervals) -> int:
+    """Union of one lane's intervals; batched trace events can overlap."""
+    total = end = 0
+    for start, stop in sorted(intervals):
+        total += max(0, stop - max(start, end))
+        end = max(end, stop)
+    return total
+
+
 def summarize(
     result: PlanOccupancy, *, tokens_per_step: int | None = None
 ) -> dict[str, float | None]:
@@ -1242,17 +1264,13 @@ def summarize(
         + [span.end_ns for span in tasks]
         + [span.end_ns for span in result.transfers]
     )
-    start_ns = min(
-        [span.start_ns for span in tasks]
-        + [span.start_ns for span in result.transfers],
-        default=0,
-    )
-    span_ns = max(end_ns - start_ns, 1)
+    # Both clocks start at the step origin, before opening transfers.
+    span_ns = max(end_ns, 1)
     compute_ns = sum(span.end_ns - span.start_ns for span in tasks)
     recompute_ns = result.facts.recompute_overhead_ns
     lane_ns = {
-        direction: sum(
-            span.end_ns - span.start_ns
+        direction: _busy_ns(
+            (span.start_ns, span.end_ns)
             for span in result.transfers
             if span.direction == direction
         )
@@ -1287,10 +1305,22 @@ def summarize(
             None if lane_ns["evict"] == 0 else lane_bytes["evict"] / lane_ns["evict"]
         ),
         "assumed_fetch_gbps": _gbps(
-            result.assumed.get("fetch_bandwidth_bytes_per_second")
+            result.assumed.get("fetch_blended_bandwidth_bytes_per_second")
         ),
         "assumed_evict_gbps": _gbps(
-            result.assumed.get("evict_bandwidth_bytes_per_second")
+            result.assumed.get("evict_blended_bandwidth_bytes_per_second")
+        ),
+        "assumed_fetch_solo_gbps": _gbps(
+            result.assumed.get("fetch_solo_bandwidth_bytes_per_second")
+        ),
+        "assumed_fetch_concurrent_gbps": _gbps(
+            result.assumed.get("fetch_concurrent_bandwidth_bytes_per_second")
+        ),
+        "assumed_evict_solo_gbps": _gbps(
+            result.assumed.get("evict_solo_bandwidth_bytes_per_second")
+        ),
+        "assumed_evict_concurrent_gbps": _gbps(
+            result.assumed.get("evict_concurrent_bandwidth_bytes_per_second")
         ),
         "assumed_fetch_latency_us": _us(result.assumed.get("fetch_latency_ns")),
         "assumed_evict_latency_us": _us(result.assumed.get("evict_latency_ns")),
@@ -1805,6 +1835,10 @@ SUMMARY_COLUMNS = (
     "evict_gbps",
     "assumed_fetch_gbps",
     "assumed_evict_gbps",
+    "assumed_fetch_solo_gbps",
+    "assumed_fetch_concurrent_gbps",
+    "assumed_evict_solo_gbps",
+    "assumed_evict_concurrent_gbps",
     "untimed_transfers",
     "interpolated_leases",
     "pool_capacity_gib",
@@ -1906,6 +1940,14 @@ def _summary_rows(
                 "evict_gbps": summary["evict_gbps"],
                 "assumed_fetch_gbps": summary["assumed_fetch_gbps"],
                 "assumed_evict_gbps": summary["assumed_evict_gbps"],
+                "assumed_fetch_solo_gbps": summary["assumed_fetch_solo_gbps"],
+                "assumed_fetch_concurrent_gbps": summary[
+                    "assumed_fetch_concurrent_gbps"
+                ],
+                "assumed_evict_solo_gbps": summary["assumed_evict_solo_gbps"],
+                "assumed_evict_concurrent_gbps": summary[
+                    "assumed_evict_concurrent_gbps"
+                ],
                 "untimed_transfers": view.untimed_transfers,
                 "interpolated_leases": view.interpolated_leases,
                 "pool_capacity_gib": (

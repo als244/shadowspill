@@ -49,14 +49,19 @@ class PlanSummary:
     #: whenever a plan came from the store.
     transfer_bytes_fetched: int = 0
     transfer_bytes_evicted: int = 0
+    #: Lane occupancy from the simulated intervals, including startup latency.
+    fetch_busy_ns: int = 0
+    evict_busy_ns: int = 0
     #: The most the spill pool ever holds while the step runs, as the
     #: simulation of this plan reached it. Beside the spill budget it says
     #: whether that budget bound the plan or merely bounded it: a peak well
     #: under the budget means a larger pool would have changed nothing, and a
     #: peak against it means the plan was shaped by the pool's size.
     spill_peak_bytes: int = 0
-    fetch_bandwidth_bytes_per_second: int = 0
-    evict_bandwidth_bytes_per_second: int = 0
+    fetch_solo_bandwidth_bytes_per_second: int = 0
+    fetch_concurrent_bandwidth_bytes_per_second: int = 0
+    evict_solo_bandwidth_bytes_per_second: int = 0
+    evict_concurrent_bandwidth_bytes_per_second: int = 0
     fetch_latency_ns: int = 0
     evict_latency_ns: int = 0
     #: Wall time each frontend planning phase spent, in seconds, in phase
@@ -73,6 +78,24 @@ class PlanSummary:
     selected_candidate: Mapping[str, object] = field(
         default_factory=lambda: MappingProxyType({})
     )
+
+    @property
+    def fetch_blended_bandwidth_bytes_per_second(self) -> float | None:
+        """Bytes / simulated fetch busy time, including startup latency."""
+        return (
+            self.transfer_bytes_fetched * 1e9 / self.fetch_busy_ns
+            if self.fetch_busy_ns
+            else None
+        )
+
+    @property
+    def evict_blended_bandwidth_bytes_per_second(self) -> float | None:
+        """Bytes / simulated evict busy time, including startup latency."""
+        return (
+            self.transfer_bytes_evicted * 1e9 / self.evict_busy_ns
+            if self.evict_busy_ns
+            else None
+        )
 
     @property
     def recomputing_group_fraction(self) -> float:
@@ -93,9 +116,27 @@ class PlanSummary:
             "recomputing_group_fraction": self.recomputing_group_fraction,
             "transfer_bytes_fetched": self.transfer_bytes_fetched,
             "transfer_bytes_evicted": self.transfer_bytes_evicted,
+            "fetch_blended_bandwidth_bytes_per_second": (
+                self.fetch_blended_bandwidth_bytes_per_second
+            ),
+            "evict_blended_bandwidth_bytes_per_second": (
+                self.evict_blended_bandwidth_bytes_per_second
+            ),
+            "fetch_busy_ns": self.fetch_busy_ns,
+            "evict_busy_ns": self.evict_busy_ns,
             "spill_peak_bytes": self.spill_peak_bytes,
-            "fetch_bandwidth_bytes_per_second": (self.fetch_bandwidth_bytes_per_second),
-            "evict_bandwidth_bytes_per_second": (self.evict_bandwidth_bytes_per_second),
+            "fetch_solo_bandwidth_bytes_per_second": (
+                self.fetch_solo_bandwidth_bytes_per_second
+            ),
+            "fetch_concurrent_bandwidth_bytes_per_second": (
+                self.fetch_concurrent_bandwidth_bytes_per_second
+            ),
+            "evict_solo_bandwidth_bytes_per_second": (
+                self.evict_solo_bandwidth_bytes_per_second
+            ),
+            "evict_concurrent_bandwidth_bytes_per_second": (
+                self.evict_concurrent_bandwidth_bytes_per_second
+            ),
             "fetch_latency_ns": self.fetch_latency_ns,
             "evict_latency_ns": self.evict_latency_ns,
             "planning_phase_seconds": dict(self.planning_phase_seconds),
@@ -141,12 +182,24 @@ class PlanSummary:
             flexible_group_count=count("flexible_group_count"),
             transfer_bytes_fetched=count("transfer_bytes_fetched"),
             transfer_bytes_evicted=count("transfer_bytes_evicted"),
+            fetch_busy_ns=count("fetch_busy_ns"),
+            evict_busy_ns=count("evict_busy_ns"),
             # Absent from anything written before the peak was recorded, and
             # zero reads as "not known" the same way it reads as "nothing
             # spilled", which no real step does.
             spill_peak_bytes=count("spill_peak_bytes"),
-            fetch_bandwidth_bytes_per_second=count("fetch_bandwidth_bytes_per_second"),
-            evict_bandwidth_bytes_per_second=count("evict_bandwidth_bytes_per_second"),
+            fetch_solo_bandwidth_bytes_per_second=count(
+                "fetch_solo_bandwidth_bytes_per_second"
+            ),
+            fetch_concurrent_bandwidth_bytes_per_second=(
+                count("fetch_concurrent_bandwidth_bytes_per_second")
+            ),
+            evict_solo_bandwidth_bytes_per_second=count(
+                "evict_solo_bandwidth_bytes_per_second"
+            ),
+            evict_concurrent_bandwidth_bytes_per_second=(
+                count("evict_concurrent_bandwidth_bytes_per_second")
+            ),
             fetch_latency_ns=count("fetch_latency_ns"),
             evict_latency_ns=count("evict_latency_ns"),
             planning_phase_seconds=MappingProxyType(
@@ -172,11 +225,15 @@ def summarize_selected_plan(
     makespan_ns = result.simulation.makespan_ns
     fetched = 0
     evicted = 0
+    fetch_busy = 0
+    evict_busy = 0
     for interval in result.simulation.transfer_intervals:
         if interval.direction.value == "fetch":
             fetched += interval.bytes
+            fetch_busy += interval.end_ns - interval.start_ns
         else:
             evicted += interval.bytes
+            evict_busy += interval.end_ns - interval.start_ns
     device = result.simulation_config.devices[0]
     selected: dict[str, object] = {}
     for problem in result.diagnostics.resolved_programs:
@@ -217,9 +274,17 @@ def summarize_selected_plan(
         flexible_group_count=CostedAlternatives.from_program(program).flexible_count,
         transfer_bytes_fetched=fetched,
         transfer_bytes_evicted=evicted,
+        fetch_busy_ns=fetch_busy,
+        evict_busy_ns=evict_busy,
         spill_peak_bytes=result.simulation.spill_peak_bytes,
-        fetch_bandwidth_bytes_per_second=device.fetch_bandwidth_bytes_per_second,
-        evict_bandwidth_bytes_per_second=device.evict_bandwidth_bytes_per_second,
+        fetch_solo_bandwidth_bytes_per_second=device.fetch_solo_bandwidth_bytes_per_second,
+        fetch_concurrent_bandwidth_bytes_per_second=(
+            device.fetch_concurrent_bandwidth_bytes_per_second
+        ),
+        evict_solo_bandwidth_bytes_per_second=device.evict_solo_bandwidth_bytes_per_second,
+        evict_concurrent_bandwidth_bytes_per_second=(
+            device.evict_concurrent_bandwidth_bytes_per_second
+        ),
         fetch_latency_ns=device.fetch_latency_ns,
         evict_latency_ns=device.evict_latency_ns,
         planning_phase_seconds=MappingProxyType(

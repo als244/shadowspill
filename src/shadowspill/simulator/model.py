@@ -25,8 +25,10 @@ class DeviceSimulationConfig:
 
     device_id: str
     capacity_bytes: int
-    fetch_bandwidth_bytes_per_second: int
-    evict_bandwidth_bytes_per_second: int
+    fetch_solo_bandwidth_bytes_per_second: int
+    fetch_concurrent_bandwidth_bytes_per_second: int
+    evict_solo_bandwidth_bytes_per_second: int
+    evict_concurrent_bandwidth_bytes_per_second: int
     fetch_latency_ns: int = 0
     evict_latency_ns: int = 0
 
@@ -34,14 +36,10 @@ class DeviceSimulationConfig:
         if not self.device_id or self.device_id.strip() != self.device_id:
             raise ValueError("device_id must be a non-empty normalized string")
         _require_non_negative(self.capacity_bytes, "capacity_bytes")
-        _require_positive(
-            self.fetch_bandwidth_bytes_per_second,
-            "fetch_bandwidth_bytes_per_second",
-        )
-        _require_positive(
-            self.evict_bandwidth_bytes_per_second,
-            "evict_bandwidth_bytes_per_second",
-        )
+        for direction in ("fetch", "evict"):
+            for mode in ("solo", "concurrent"):
+                name = f"{direction}_{mode}_bandwidth_bytes_per_second"
+                _require_positive(getattr(self, name), name)
         _require_non_negative(self.fetch_latency_ns, "fetch_latency_ns")
         _require_non_negative(self.evict_latency_ns, "evict_latency_ns")
 
@@ -72,8 +70,10 @@ class SimulationConfig:
         *,
         device_capacity_bytes: int,
         spill_capacity_bytes: int,
-        fetch_bandwidth_bytes_per_second: int,
-        evict_bandwidth_bytes_per_second: int,
+        fetch_solo_bandwidth_bytes_per_second: int,
+        fetch_concurrent_bandwidth_bytes_per_second: int,
+        evict_solo_bandwidth_bytes_per_second: int,
+        evict_concurrent_bandwidth_bytes_per_second: int,
         fetch_latency_ns: int = 0,
         evict_latency_ns: int = 0,
     ) -> SimulationConfig:
@@ -82,8 +82,18 @@ class SimulationConfig:
                 DeviceSimulationConfig(
                     device_id=device_id,
                     capacity_bytes=device_capacity_bytes,
-                    fetch_bandwidth_bytes_per_second=(fetch_bandwidth_bytes_per_second),
-                    evict_bandwidth_bytes_per_second=(evict_bandwidth_bytes_per_second),
+                    fetch_solo_bandwidth_bytes_per_second=(
+                        fetch_solo_bandwidth_bytes_per_second
+                    ),
+                    fetch_concurrent_bandwidth_bytes_per_second=(
+                        fetch_concurrent_bandwidth_bytes_per_second
+                    ),
+                    evict_solo_bandwidth_bytes_per_second=(
+                        evict_solo_bandwidth_bytes_per_second
+                    ),
+                    evict_concurrent_bandwidth_bytes_per_second=(
+                        evict_concurrent_bandwidth_bytes_per_second
+                    ),
                     fetch_latency_ns=fetch_latency_ns,
                     evict_latency_ns=evict_latency_ns,
                 ),

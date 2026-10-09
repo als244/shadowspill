@@ -68,16 +68,8 @@ def transfer_bars(
         for item in points:
             summary = item.summary
             if share:
-                fetch = (
-                    summary.transfer_bytes_fetched
-                    / summary.fetch_bandwidth_bytes_per_second
-                    / item.step_seconds
-                )
-                evict = (
-                    summary.transfer_bytes_evicted
-                    / summary.evict_bandwidth_bytes_per_second
-                    / item.step_seconds
-                )
+                fetch = summary.fetch_busy_ns / 1e9 / item.step_seconds
+                evict = summary.evict_busy_ns / 1e9 / item.step_seconds
             else:
                 fetch = summary.transfer_bytes_fetched / GIB
                 evict = summary.transfer_bytes_evicted / GIB
@@ -189,7 +181,14 @@ def selection_transfers(
             outcome.recompute_groups
             for item in points
             for outcome in item.graph_pair_selections
-            if outcome.fetched_bytes or outcome.evicted_bytes
+            if (outcome.fetched_bytes or outcome.evicted_bytes)
+            and (
+                not share
+                or (
+                    outcome.fetch_busy_ns is not None
+                    and outcome.evict_busy_ns is not None
+                )
+            )
         }
     )
     if not levels:
@@ -221,18 +220,11 @@ def selection_transfers(
             offset = levels.index(outcome.recompute_groups)
             colour = shades(offset / max(len(levels) - 1, 1))
             centre = centres[(item.budget_gib, offset)]
-            summary = item.summary
             if share:
-                fetch = (
-                    outcome.fetched_bytes
-                    / summary.fetch_bandwidth_bytes_per_second
-                    / makespan
-                )
-                evict = (
-                    outcome.evicted_bytes
-                    / summary.evict_bandwidth_bytes_per_second
-                    / makespan
-                )
+                if outcome.fetch_busy_ns is None or outcome.evict_busy_ns is None:
+                    continue
+                fetch = outcome.fetch_busy_ns / 1e9 / makespan
+                evict = outcome.evict_busy_ns / 1e9 / makespan
             else:
                 fetch = outcome.fetched_bytes / GIB
                 evict = outcome.evicted_bytes / GIB
@@ -255,7 +247,10 @@ def selection_transfers(
         + f": {microbatch} x {accumulation}"
     )
     axes.set_xlabel("Execution Budget (GiB)")
-    axes.set_ylabel("Share of Lane-Seconds" if share else "GiB per Step", labelpad=26)
+    axes.set_ylabel(
+        "Share of Lane-Seconds" if share else "GiB per Step",
+        labelpad=26,
+    )
     drawn_budgets = sorted(ticks)
     axes.set_xticks([ticks[budget] for budget in drawn_budgets])
     axes.set_xticklabels([budget_label(budget) for budget in drawn_budgets])

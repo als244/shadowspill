@@ -113,8 +113,10 @@ def test_fixed_layout_reuses_completed_eviction_without_changing_makespan() -> N
         "cuda_0",
         device_capacity_bytes=64,
         spill_capacity_bytes=128,
-        fetch_bandwidth_bytes_per_second=64_000_000_000,
-        evict_bandwidth_bytes_per_second=64_000_000_000,
+        fetch_solo_bandwidth_bytes_per_second=64_000_000_000,
+        fetch_concurrent_bandwidth_bytes_per_second=(64_000_000_000),
+        evict_solo_bandwidth_bytes_per_second=64_000_000_000,
+        evict_concurrent_bandwidth_bytes_per_second=(64_000_000_000),
     )
     facts = AdmissionFacts(
         "cuda_0",
@@ -174,8 +176,10 @@ def test_fixed_layout_gives_resident_leases_static_homes_after_the_assignment() 
         "cuda_0",
         device_capacity_bytes=80,
         spill_capacity_bytes=128,
-        fetch_bandwidth_bytes_per_second=64_000_000_000,
-        evict_bandwidth_bytes_per_second=64_000_000_000,
+        fetch_solo_bandwidth_bytes_per_second=64_000_000_000,
+        fetch_concurrent_bandwidth_bytes_per_second=(64_000_000_000),
+        evict_solo_bandwidth_bytes_per_second=64_000_000_000,
+        evict_concurrent_bandwidth_bytes_per_second=(64_000_000_000),
     )
     facts = AdmissionFacts(
         "cuda_0",
@@ -213,8 +217,10 @@ def test_fixed_layout_maps_same_task_allocator_reuse_to_one_lease() -> None:
         "cuda_0",
         device_capacity_bytes=32,
         spill_capacity_bytes=0,
-        fetch_bandwidth_bytes_per_second=1,
-        evict_bandwidth_bytes_per_second=1,
+        fetch_solo_bandwidth_bytes_per_second=1,
+        fetch_concurrent_bandwidth_bytes_per_second=(1),
+        evict_solo_bandwidth_bytes_per_second=1,
+        evict_concurrent_bandwidth_bytes_per_second=(1),
     )
     facts = AdmissionFacts(
         "cuda_0",
@@ -282,8 +288,10 @@ def test_fixed_layout_keeps_caller_owned_output_outside_reusable_slice() -> None
         "cuda_0",
         device_capacity_bytes=8,
         spill_capacity_bytes=0,
-        fetch_bandwidth_bytes_per_second=1,
-        evict_bandwidth_bytes_per_second=1,
+        fetch_solo_bandwidth_bytes_per_second=1,
+        fetch_concurrent_bandwidth_bytes_per_second=(1),
+        evict_solo_bandwidth_bytes_per_second=1,
+        evict_concurrent_bandwidth_bytes_per_second=(1),
     )
     facts = AdmissionFacts(
         "cuda_0",
@@ -387,8 +395,10 @@ def test_fixed_layout_keeps_only_final_fetched_output_lease_dynamic() -> None:
         "cuda_0",
         device_capacity_bytes=16,
         spill_capacity_bytes=16,
-        fetch_bandwidth_bytes_per_second=1_000_000_000,
-        evict_bandwidth_bytes_per_second=1_000_000_000,
+        fetch_solo_bandwidth_bytes_per_second=1_000_000_000,
+        fetch_concurrent_bandwidth_bytes_per_second=(1_000_000_000),
+        evict_solo_bandwidth_bytes_per_second=1_000_000_000,
+        evict_concurrent_bandwidth_bytes_per_second=(1_000_000_000),
     )
     facts = AdmissionFacts(
         "cuda_0",
@@ -506,8 +516,10 @@ def test_fixed_layout_projects_eviction_reuse_to_indexed_runtime_ids() -> None:
         "cuda_0",
         device_capacity_bytes=64,
         spill_capacity_bytes=128,
-        fetch_bandwidth_bytes_per_second=64_000_000_000,
-        evict_bandwidth_bytes_per_second=64_000_000_000,
+        fetch_solo_bandwidth_bytes_per_second=64_000_000_000,
+        fetch_concurrent_bandwidth_bytes_per_second=(64_000_000_000),
+        evict_solo_bandwidth_bytes_per_second=64_000_000_000,
+        evict_concurrent_bandwidth_bytes_per_second=(64_000_000_000),
     )
     facts = AdmissionFacts(
         "cuda_0",

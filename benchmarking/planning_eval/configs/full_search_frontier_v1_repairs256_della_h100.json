@@ -8,8 +8,10 @@
   "max_worker_restarts_per_program": 64,
   "plan_store_mode": "refresh",
   "transfer_bandwidths": {
-    "fetch_bytes_per_second": 51826499510,
-    "evict_bytes_per_second": 49953192514,
+    "fetch_solo_bytes_per_second": 51826499510,
+    "fetch_concurrent_bytes_per_second": 51826499510,
+    "evict_solo_bytes_per_second": 49953192514,
+    "evict_concurrent_bytes_per_second": 49953192514,
     "provenance": "median bidirectional-concurrent runtime-init calibration across the 168 full-model Program corpus collected on della H100 (PCIe gen5); frozen globally for cross-Program frontier comparison"
   },
   "grids": [

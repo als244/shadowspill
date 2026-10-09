@@ -164,8 +164,10 @@ def print_search(
     lanes = report.planned_lanes
     if lanes is not None:
         print(
-            f"  planned against fetch {gb_s(lanes.fetch_bytes_per_second)},"
-            f" evict {gb_s(lanes.evict_bytes_per_second)}"
+            f"  planned against fetch {gb_s(lanes.fetch_solo_bytes_per_second)}/"
+            f"{gb_s(lanes.fetch_concurrent_bytes_per_second)} solo/concurrent,"
+            f" evict {gb_s(lanes.evict_solo_bytes_per_second)}/"
+            f"{gb_s(lanes.evict_concurrent_bytes_per_second)} solo/concurrent"
             + (
                 " (pinned)"
                 if report.transfer_bandwidths is not None
@@ -292,22 +294,25 @@ def print_breakdown(
     # carries: a measured rate is coarsened before it reaches the simulator, so
     # it is not the profile's own figure. The profile holds what was measured.
     fetch, evict = report.fetch_profile, report.evict_profile
-    for name, planned_rate, planned_latency_ns, profile in (
+    for name, solo_rate, concurrent_rate, planned_latency_ns, profile in (
         (
             "fetch",
-            summary.fetch_bandwidth_bytes_per_second,
+            summary.fetch_solo_bandwidth_bytes_per_second,
+            summary.fetch_concurrent_bandwidth_bytes_per_second,
             summary.fetch_latency_ns,
             fetch,
         ),
         (
             "evict",
-            summary.evict_bandwidth_bytes_per_second,
+            summary.evict_solo_bandwidth_bytes_per_second,
+            summary.evict_concurrent_bandwidth_bytes_per_second,
             summary.evict_latency_ns,
             evict,
         ),
     ):
         print(
-            f"  {name} lane         {gb_s(planned_rate)} assumed,"
+            f"  {name} lane         {gb_s(solo_rate)} solo,"
+            f" {gb_s(concurrent_rate)} concurrent assumed,"
             f" latency {planned_latency_ns / 1e3:.0f} us"
             f"   (measured {gb_s(profile.bandwidth_bytes_per_second)} effective,"
             f" {gb_s(profile.solo_bandwidth_bytes_per_second)} solo,"

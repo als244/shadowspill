@@ -400,8 +400,10 @@ def test_training_lowering_accepts_arbitrary_graph_pairs() -> None:
         "cuda_0",
         device_capacity_bytes=1 << 20,
         spill_capacity_bytes=1 << 20,
-        fetch_bandwidth_bytes_per_second=10 << 30,
-        evict_bandwidth_bytes_per_second=10 << 30,
+        fetch_solo_bandwidth_bytes_per_second=10 << 30,
+        fetch_concurrent_bandwidth_bytes_per_second=(10 << 30),
+        evict_solo_bandwidth_bytes_per_second=10 << 30,
+        evict_concurrent_bandwidth_bytes_per_second=(10 << 30),
     )
     planned = pressurefit(
         lowered.program,

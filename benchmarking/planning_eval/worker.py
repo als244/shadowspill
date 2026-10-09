@@ -386,13 +386,13 @@ def _print_point_start(
     print(f"  SPILL BUDGET: {spill_budget / (1 << 30):.3f} GiB ({spill_budget} bytes)")
     print(
         "  FETCH BANDWIDTH: "
-        f"{transfers.fetch_bytes_per_second / 1e9:.6f} GB/s "
-        f"({transfers.fetch_bytes_per_second} B/s)"
+        f"{transfers.fetch_solo_bytes_per_second / 1e9:.6f} GB/s "
+        f"({transfers.fetch_solo_bytes_per_second} B/s)"
     )
     print(
         "  EVICT BANDWIDTH: "
-        f"{transfers.evict_bytes_per_second / 1e9:.6f} GB/s "
-        f"({transfers.evict_bytes_per_second} B/s)"
+        f"{transfers.evict_solo_bytes_per_second / 1e9:.6f} GB/s "
+        f"({transfers.evict_solo_bytes_per_second} B/s)"
     )
     print(f"  PROGRAM ROLE: {request.role}")
     print(f"  PROGRAM DIGEST: {request.program_digest}")

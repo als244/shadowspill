@@ -22,7 +22,14 @@ from typing import TYPE_CHECKING
 
 from shadowspill.ir import ShadowSpillProgram
 
-from .json import _integer, _mapping, _number, _optional_number, _string
+from .json import (
+    _integer,
+    _mapping,
+    _number,
+    _optional_integer,
+    _optional_number,
+    _string,
+)
 
 if TYPE_CHECKING:
     from shadowspill.planner.result import ProgramPlanResult
@@ -125,6 +132,8 @@ class GraphPairOutcome:
     #: were recorded.
     fetched_bytes: int
     evicted_bytes: int
+    fetch_busy_ns: int | None = None
+    evict_busy_ns: int | None = None
 
     @property
     def recomputation_overhead_seconds(self) -> float:
@@ -157,6 +166,8 @@ class GraphPairOutcome:
             "candidate_count": self.candidate_count,
             "fetched_bytes": self.fetched_bytes,
             "evicted_bytes": self.evicted_bytes,
+            "fetch_busy_ns": self.fetch_busy_ns,
+            "evict_busy_ns": self.evict_busy_ns,
         }
 
     @classmethod
@@ -166,6 +177,12 @@ class GraphPairOutcome:
         record = _mapping(value, path)
         return cls(
             selection_id=_string(record["selection_id"], f"{path}.selection_id"),
+            fetch_busy_ns=_optional_integer(
+                record.get("fetch_busy_ns"), f"{path}.fetch_busy_ns"
+            ),
+            evict_busy_ns=_optional_integer(
+                record.get("evict_busy_ns"), f"{path}.evict_busy_ns"
+            ),
             recompute_groups=_integer(
                 record["recompute_groups"], f"{path}.recompute_groups"
             ),
@@ -201,10 +218,23 @@ def graph_pair_outcomes(result: ProgramPlanResult) -> tuple[GraphPairOutcome, ..
     how many groups recompute."""
 
     costs = AlternativeCosts.from_program(result.program)
+    simulations = {plan.selection_id: plan.simulation for plan in result.resolutions}
+    simulations[result.diagnostics.selected_selection_id] = result.simulation
     outcomes = []
     for problem in result.diagnostics.resolved_programs:
         chosen = {item.group_id: item.option_id for item in problem.choices}
         statuses = [item.status for item in problem.candidate_evaluations]
+        simulation = simulations.get(problem.selection_id)
+        lane_ns = {
+            direction: None
+            if simulation is None
+            else sum(
+                t.end_ns - t.start_ns
+                for t in simulation.transfer_intervals
+                if t.direction.value == direction
+            )
+            for direction in ("fetch", "evict")
+        }
         outcomes.append(
             GraphPairOutcome(
                 selection_id=problem.selection_id,
@@ -219,6 +249,8 @@ def graph_pair_outcomes(result: ProgramPlanResult) -> tuple[GraphPairOutcome, ..
                 unconstrained_seconds=costs.floor_ns / 1e9,
                 valid_candidate_count=sum(1 for item in statuses if item == "valid"),
                 candidate_count=len(statuses),
+                fetch_busy_ns=lane_ns["fetch"],
+                evict_busy_ns=lane_ns["evict"],
                 fetched_bytes=problem.fetched_bytes,
                 evicted_bytes=problem.evicted_bytes,
             )

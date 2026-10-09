@@ -78,8 +78,10 @@ class Symmetry:
         machine = _simulation_config_to_dict(self.config)
         for device in machine["devices"]:
             for name in (
-                "fetch_bandwidth_bytes_per_second",
-                "evict_bandwidth_bytes_per_second",
+                "fetch_solo_bandwidth_bytes_per_second",
+                "fetch_concurrent_bandwidth_bytes_per_second",
+                "evict_solo_bandwidth_bytes_per_second",
+                "evict_concurrent_bandwidth_bytes_per_second",
                 "fetch_latency_ns",
                 "evict_latency_ns",
             ):
@@ -230,8 +232,10 @@ def verify(
     )
     cost = {}
     for key in (
-        "fetch_bandwidth_bytes_per_second",
-        "evict_bandwidth_bytes_per_second",
+        "fetch_solo_bandwidth_bytes_per_second",
+        "fetch_concurrent_bandwidth_bytes_per_second",
+        "evict_solo_bandwidth_bytes_per_second",
+        "evict_concurrent_bandwidth_bytes_per_second",
         "fetch_latency_ns",
         "evict_latency_ns",
     ):

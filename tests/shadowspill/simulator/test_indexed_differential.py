@@ -172,8 +172,10 @@ def test_large_integer_transfer_runtime_does_not_overflow() -> None:
         "cuda_0",
         device_capacity_bytes=size,
         spill_capacity_bytes=size,
-        fetch_bandwidth_bytes_per_second=bandwidth,
-        evict_bandwidth_bytes_per_second=bandwidth,
+        fetch_solo_bandwidth_bytes_per_second=bandwidth,
+        fetch_concurrent_bandwidth_bytes_per_second=(bandwidth),
+        evict_solo_bandwidth_bytes_per_second=bandwidth,
+        evict_concurrent_bandwidth_bytes_per_second=(bandwidth),
     )
 
     expected = simulate_python(program, schedule, config=config)

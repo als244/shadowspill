@@ -908,9 +908,11 @@ def _request_summary(program: ShadowSpillProgram, config: SimulationConfig) -> s
     device = config.devices[0]
     return (
         f"program {program.digest[:12]}, capacity {device.capacity_bytes} B,"
-        f" fetch {device.fetch_bandwidth_bytes_per_second} B/s"
+        f" fetch {device.fetch_solo_bandwidth_bytes_per_second}/"
+        f"{device.fetch_concurrent_bandwidth_bytes_per_second} B/s solo/concurrent"
         f" at {device.fetch_latency_ns} ns,"
-        f" evict {device.evict_bandwidth_bytes_per_second} B/s"
+        f" evict {device.evict_solo_bandwidth_bytes_per_second}/"
+        f"{device.evict_concurrent_bandwidth_bytes_per_second} B/s solo/concurrent"
         f" at {device.evict_latency_ns} ns,"
         f" spill {config.spill_capacity_bytes} B"
     )

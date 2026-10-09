@@ -265,8 +265,10 @@ def test_a_caller_reporting_the_lanes_gets_the_coarsened_planning_input() -> Non
     )
 
     # Half-gigabyte granularity, so 25.6 is not reported as 26.
-    assert planned.fetch_bytes_per_second == 25_500_000_000
-    assert planned.evict_bytes_per_second == 26_000_000_000
+    assert planned.fetch_solo_bytes_per_second == 36_500_000_000
+    assert planned.fetch_concurrent_bytes_per_second == 25_500_000_000
+    assert planned.evict_solo_bytes_per_second == 56_500_000_000
+    assert planned.evict_concurrent_bytes_per_second == 26_000_000_000
     # Five-microsecond granularity above it, one microsecond below.
     assert planned.fetch_latency_ns == 10_000
     assert planned.evict_latency_ns == 4_000
@@ -318,11 +320,13 @@ def test_pinned_lanes_price_the_simulation_and_keep_the_calibrated_latency() -> 
         0,
         profiles,
         execution_device_id="cuda_0",
-        transfer_bandwidths=TransferBandwidths(24_000_000_000, 23_000_000_000),
+        transfer_bandwidths=TransferBandwidths(
+            24_000_000_000, 24_000_000_000, 23_000_000_000, 23_000_000_000
+        ),
     ).devices[0]
 
-    assert pinned.fetch_bandwidth_bytes_per_second == 24_000_000_000
-    assert pinned.evict_bandwidth_bytes_per_second == 23_000_000_000
+    assert pinned.fetch_solo_bandwidth_bytes_per_second == 24_000_000_000
+    assert pinned.evict_solo_bandwidth_bytes_per_second == 23_000_000_000
     assert pinned.fetch_latency_ns == calibrated.fetch_latency_ns
     assert pinned.evict_latency_ns == calibrated.evict_latency_ns
     assert pinned.capacity_bytes == calibrated.capacity_bytes
@@ -333,6 +337,8 @@ def test_pinned_lanes_price_the_simulation_and_keep_the_calibrated_latency() -> 
         execution_device_id="cuda_0",
         transfer_bandwidths=TransferBandwidths(
             24_000_000_000,
+            24_000_000_000,
+            23_000_000_000,
             23_000_000_000,
             fetch_latency_ns=7_000,
             evict_latency_ns=3_000,

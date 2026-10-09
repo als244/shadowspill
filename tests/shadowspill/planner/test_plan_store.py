@@ -574,7 +574,10 @@ def test_a_refused_miss_names_the_request_it_could_not_answer(tmp_path: Path) ->
     message = str(refused.value)
     assert f"program {program.digest[:12]}" in message
     assert f"capacity {device.capacity_bytes} B" in message
-    assert f"fetch {device.fetch_bandwidth_bytes_per_second} B/s" in message
+    assert (
+        f"fetch {device.fetch_solo_bandwidth_bytes_per_second}/"
+        f"{device.fetch_concurrent_bandwidth_bytes_per_second} B/s solo/concurrent"
+    ) in message
     assert "'require'" in message
 
 

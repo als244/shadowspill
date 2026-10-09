@@ -344,8 +344,10 @@ def test_resolution_options_change_no_rung_and_a_superset_is_never_worse() -> No
         "cuda_0",
         device_capacity_bytes=260,
         spill_capacity_bytes=10_000,
-        fetch_bandwidth_bytes_per_second=8_000_000,
-        evict_bandwidth_bytes_per_second=8_000_000,
+        fetch_solo_bandwidth_bytes_per_second=8_000_000,
+        fetch_concurrent_bandwidth_bytes_per_second=(8_000_000),
+        evict_solo_bandwidth_bytes_per_second=8_000_000,
+        evict_concurrent_bandwidth_bytes_per_second=(8_000_000),
     )
     options = GenericPlanningOptions(
         deterministic=True, minimum_object_bytes_evict_eligible=0

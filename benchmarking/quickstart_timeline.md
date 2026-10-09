@@ -96,7 +96,7 @@ not require Drive credentials or automatically overwrite an online deck.
 Simulated/traced slides show all twelve summary statistics from the HTML:
 step time, tokens/s, peak execution and spill memory, idle and recompute
 percentages, fetch/evict lane utilization, fetched/evicted GiB, and transfer
-rates. Rate cells show **result / assumed** in GB/s. These are read directly
+rates. Rate cells show **result / planned blend** in GB/s. These are read directly
 from the selected page, including when measured and simulated statistics differ.
 The slide labels are **Peak spill**, **Stalled**, and **Optimizer Update**.
 Recomputation uses lime green (`#84CC16`), distinct from brown backward tasks.
@@ -219,3 +219,17 @@ gradient illustration. Omit it for an unmodified quickstart report's peak.
   largest selected budgets. The divider is not a data/reference line.
 - The script exports files locally. Import the PPTX slide into Google Slides,
   or insert the PNG in an existing slide; it does not overwrite an online deck.
+
+
+### Transfer rates and lane utilization
+
+The simulated and measured timeline slides use the HTML page's summary data.
+“Rate / planned blend” compares bytes per lane-busy second against the same
+quantity from the chosen simulation. The simulated blend incorporates partial
+overlap of fetch and evict, plus each transfer's startup latency. It is not the
+arithmetic mean of the solo and concurrent calibration rates. Lane utilization
+is busy time divided by total step time; overlapping trace intervals on the same
+lane are counted once. No transfers means an undefined rate (`n/a`), not zero
+bandwidth. `timelines/summary.csv` exports `assumed_fetch_gbps` and
+`assumed_evict_gbps` as the planned blends, plus the underlying solo/concurrent
+calibration and both lane-utilization percentages.

@@ -26,8 +26,10 @@ _CSV_FIELDS = (
     "spill_budget_bytes",
     "bandwidth_scale_numerator",
     "bandwidth_scale_denominator",
-    "fetch_bytes_per_second",
-    "evict_bytes_per_second",
+    "fetch_solo_bytes_per_second",
+    "fetch_concurrent_bytes_per_second",
+    "evict_solo_bytes_per_second",
+    "evict_concurrent_bytes_per_second",
     "makespan_ns",
     "tokens_per_second",
     "total_selection_wall_time_ns",
@@ -110,7 +112,15 @@ def write_frontier_summary(
     statuses = Counter(str(item.get("status", "invalid")) for item in points)
     transfer_pairs = sorted(
         {
-            (_bandwidth(request, "fetch"), _bandwidth(request, "evict"))
+            tuple(
+                _bandwidth(request, name)
+                for name in (
+                    "fetch_solo",
+                    "fetch_concurrent",
+                    "evict_solo",
+                    "evict_concurrent",
+                )
+            )
             for request in requests
         }
     )
@@ -127,10 +137,12 @@ def write_frontier_summary(
         "status_counts": dict(sorted(statuses.items())),
         "observed_transfer_bandwidth_combinations": [
             {
-                "fetch_bytes_per_second": fetch,
-                "evict_bytes_per_second": evict,
+                "fetch_solo_bytes_per_second": fetch,
+                "fetch_concurrent_bytes_per_second": fetch_concurrent,
+                "evict_solo_bytes_per_second": evict,
+                "evict_concurrent_bytes_per_second": evict_concurrent,
             }
-            for fetch, evict in transfer_pairs
+            for fetch, fetch_concurrent, evict, evict_concurrent in transfer_pairs
         ],
         "case_failures": dict(sorted((case_failures or {}).items())),
         "artifacts": {
@@ -197,8 +209,14 @@ def _csv_row(
         "spill_budget_bytes": budgets.get("spill_bytes"),
         "bandwidth_scale_numerator": bandwidth.get("scale_numerator"),
         "bandwidth_scale_denominator": bandwidth.get("scale_denominator"),
-        "fetch_bytes_per_second": bandwidth.get("fetch_bytes_per_second"),
-        "evict_bytes_per_second": bandwidth.get("evict_bytes_per_second"),
+        "fetch_solo_bytes_per_second": bandwidth.get("fetch_solo_bytes_per_second"),
+        "fetch_concurrent_bytes_per_second": (
+            bandwidth.get("fetch_concurrent_bytes_per_second")
+        ),
+        "evict_solo_bytes_per_second": bandwidth.get("evict_solo_bytes_per_second"),
+        "evict_concurrent_bytes_per_second": (
+            bandwidth.get("evict_concurrent_bytes_per_second")
+        ),
         "makespan_ns": simulation.get("makespan_ns"),
         "tokens_per_second": throughput.get("tokens_per_second"),
         "total_selection_wall_time_ns": timing.get("total_selection_wall_time_ns"),

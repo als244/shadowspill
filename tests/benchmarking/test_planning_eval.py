@@ -77,8 +77,8 @@ def test_full_frontier_has_2520_points_and_three_global_bandwidths() -> None:
     assert len(points) == 15
     assert {
         (
-            item.transfer_bandwidths.fetch_bytes_per_second,
-            item.transfer_bandwidths.evict_bytes_per_second,
+            item.transfer_bandwidths.fetch_solo_bytes_per_second,
+            item.transfer_bandwidths.evict_solo_bytes_per_second,
         )
         for item in points
     } == {
@@ -129,7 +129,7 @@ def test_corpus_discovery_and_point_crash_recovery(tmp_path: Path) -> None:
         max_point_attempts=2,
         max_worker_restarts_per_program=4,
         plan_store_mode="refresh",
-        transfer_bandwidths=TransferBandwidthBaseline(100, 80, "test"),
+        transfer_bandwidths=TransferBandwidthBaseline(100, 100, 80, 80, "test"),
         grids=(
             FrontierGrid(
                 "main",
@@ -214,7 +214,7 @@ def test_resume_preserves_but_does_not_charge_an_interrupted_attempt(
         max_point_attempts=1,
         max_worker_restarts_per_program=1,
         plan_store_mode="refresh",
-        transfer_bandwidths=TransferBandwidthBaseline(100, 80, "test"),
+        transfer_bandwidths=TransferBandwidthBaseline(100, 100, 80, 80, "test"),
         grids=(
             FrontierGrid(
                 "main",
@@ -281,7 +281,7 @@ def test_timeout_recovery_writes_summarizable_canonical_evidence(
         max_point_attempts=1,
         max_worker_restarts_per_program=2,
         plan_store_mode="refresh",
-        transfer_bandwidths=TransferBandwidthBaseline(100, 80, "test"),
+        transfer_bandwidths=TransferBandwidthBaseline(100, 100, 80, 80, "test"),
         grids=(
             FrontierGrid(
                 "main",
@@ -338,7 +338,12 @@ def test_timeout_recovery_writes_summarizable_canonical_evidence(
     )
     assert summary["status_counts"] == {"error": 1}
     assert summary["observed_transfer_bandwidth_combinations"] == [
-        {"fetch_bytes_per_second": 50, "evict_bytes_per_second": 40}
+        {
+            "fetch_solo_bytes_per_second": 50,
+            "fetch_concurrent_bytes_per_second": (50),
+            "evict_solo_bytes_per_second": 40,
+            "evict_concurrent_bytes_per_second": (40),
+        }
     ]
 
     # Incomplete historical point shapes are rejected rather than rebuilt from

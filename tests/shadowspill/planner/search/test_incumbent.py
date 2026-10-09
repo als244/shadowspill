@@ -264,8 +264,10 @@ def test_a_plan_for_a_resolution_that_is_not_searched_is_not_carried() -> None:
         "cuda_0",
         device_capacity_bytes=260,
         spill_capacity_bytes=10_000,
-        fetch_bandwidth_bytes_per_second=8_000_000,
-        evict_bandwidth_bytes_per_second=8_000_000,
+        fetch_solo_bandwidth_bytes_per_second=8_000_000,
+        fetch_concurrent_bandwidth_bytes_per_second=(8_000_000),
+        evict_solo_bandwidth_bytes_per_second=8_000_000,
+        evict_concurrent_bandwidth_bytes_per_second=(8_000_000),
     )
     eighths = PressureFit(
         PressureFitOptions(resolution_options=tuple(f"{n}/8" for n in range(9)))
