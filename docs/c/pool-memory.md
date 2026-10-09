@@ -42,6 +42,10 @@ offset. Whether that yields something this machine can read is the kind's
 business; see [what the runtime never does with a pool
 address](../architecture/memory-pools.md#nothing-reads-through-a-pool-address).
 
+For example, the [SSD extension](ssd.md) returns an address token over an
+unlinked file. The range allocator uses its offsets normally; callers access
+payload through `read`/`write` or an SSD/device lane, never by dereferencing it.
+
 ## Crossing the pool's edge
 
 ```c

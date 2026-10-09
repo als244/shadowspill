@@ -97,7 +97,10 @@ int  (*timing)(const ShadowSpillLane *lane, ShadowSpillLaneTiming *timing);
   whatever it kept the moment it answers, and the runtime will not ask again —
   which is why there is no release entry beside it.
 
-`synchronize` and `destroy` are what they say. `timing` is with the statistics
+`synchronize` drains accepted work. `destroy` releases lane resources and stops
+its workers; it must also work during abandon, without waiting for an unfinished
+GPU producer or calling `synchronize` again. Submitted OS I/O must stop using
+staging memory before that memory is released. `timing` is with the statistics
 it fills, under [what a lane has moved](#what-a-lane-has-moved).
 
 An event is a `ShadowSpillBackendEvent`, one opaque word, and never the
@@ -245,7 +248,8 @@ A lane may use both clocks, and the pinned-host lane does: its `issued_at` is a
 converted host instant and its other two come off the stream. That costs it a
 clock read per transfer where a third timing event would have cost more. The
 remote lane reads all three on the host clock — before posting the first chunk's
-verb, and when the last chunk's completion is reaped.
+verb, and when the last chunk's completion is reaped. The [SSD lane](ssd.md)
+also uses the host clock, covering the disk and device staging path.
 
 `chunks` is a transport's own granularity, not a unit shared between lanes: one
 enqueued copy is one chunk on the pinned-host lane, while a remote transfer

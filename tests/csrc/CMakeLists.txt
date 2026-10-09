@@ -2,6 +2,20 @@ add_executable(shadowspill_build_canary build_canary.c)
 target_link_libraries(shadowspill_build_canary PRIVATE shadowspill_build_options)
 add_test(NAME shadowspill_build_canary COMMAND shadowspill_build_canary)
 
+if(TARGET shadowspill_ssd)
+  add_executable(shadowspill_ssd_canary ssd_canary.c)
+  target_include_directories(shadowspill_ssd_canary PRIVATE ${PROJECT_SOURCE_DIR}/csrc/include)
+  target_link_libraries(shadowspill_ssd_canary PRIVATE ${CMAKE_DL_LIBS} shadowspill_build_options)
+  add_test(NAME shadowspill_ssd_canary COMMAND shadowspill_ssd_canary
+    $<TARGET_FILE:shadowspill_ssd> $<TARGET_FILE:shadowspill_backend_mock> ${PROJECT_BINARY_DIR})
+  set_tests_properties(shadowspill_ssd_canary PROPERTIES TIMEOUT 30 LABELS "ssd")
+  if(TARGET shadowspill_backend_cuda)
+    add_test(NAME shadowspill_ssd_canary_cuda COMMAND shadowspill_ssd_canary
+      $<TARGET_FILE:shadowspill_ssd> $<TARGET_FILE:shadowspill_backend_cuda> ${PROJECT_BINARY_DIR})
+    set_tests_properties(shadowspill_ssd_canary_cuda PROPERTIES TIMEOUT 30 LABELS "ssd;cuda")
+  endif()
+endif()
+
 if(TARGET shadowspill_pytorch)
   add_executable(shadowspill_abi_sizes_canary abi_sizes_canary.c)
   target_include_directories(

@@ -32,6 +32,13 @@ def spill_pool(capacity: int) -> Any:
     """A spill pool of `capacity` bytes, on this machine or on a peer."""
 
     peer = os.environ.get("SHADOWSPILL_TEST_SPILL_PEER", "").strip()
+    directory = os.environ.get("SHADOWSPILL_TEST_SSD_DIRECTORY", "").strip()
+    if directory:
+        if peer:
+            raise ValueError("select one test spill location: SSD or remote peer")
+        from shadowspill.ssd import ssd
+
+        return ssd(capacity=capacity, directory=directory)
     if not peer:
         return pinned_host(capacity=capacity)
     host, separator, port = peer.rpartition(":")

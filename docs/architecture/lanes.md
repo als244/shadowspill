@@ -17,10 +17,11 @@ The three are easy to conflate:
 | | what it is | what it never does |
 |---|---|---|
 | **queue** | the ordering in front of a lane: the actions a route has been given, and those in flight on it | touch a backend |
-| **lane** | what moves the bytes and reports completion | write to the route's stream |
+| **lane** | what moves the bytes and reports completion | enqueue device work from an independent I/O thread |
 | **route's stream** | where the events that order a transfer against compute are recorded | carry bytes, for a lane that moves them elsewhere |
 
-The route's stream has **exactly one writer, the runtime**. Completion tracking,
+The route's stream has **exactly one writer: the runtime calling thread,
+including lane methods it invokes**. Completion tracking,
 retirement and readiness publication all depend on that, so it is the invariant
 a lane is written around rather than a detail of the current implementation.
 
@@ -116,16 +117,17 @@ only costs observability.** A lane that reports neither moves bytes exactly as
 well as one that reports both; its transfers are recorded untimed, which the
 trace and every reader already handle.
 
-A `ShadowSpillLaneTransfer` carries two instants, bytes and chunks. The instants
+A `ShadowSpillLaneTransfer` carries three instants (issued, started and finished),
+bytes and chunks. The instants
 are nanoseconds from the trace's origin, the axis the rest of a step is placed
 on, and `SHADOWSPILL_LANE_NO_TIME` where a lane has nothing to say — which is
 better than a time that means nothing. A lane whose bytes move on a stream reads
 them off timing events it recorded around the copy. A lane whose bytes move
-elsewhere has only its own clock, and **nothing anchors that clock to this
-origin**: the origin is a device event, and no host instant is recorded beside
-it. Such a lane reports the bytes and the chunks, which need no anchor, and the
-ratio between them is the number worth having anyway — it says whether a slow
-transfer was one long wait or many short ones.
+elsewhere converts `CLOCK_MONOTONIC` instants with
+`shadowspill_lane_origin_instant()`. The runtime samples the host/device anchor
+when the trace origin is recorded on an idle stream. Missing instants remain
+unknown; they are not replaced with zero. See the
+[C timing contract](../c/lanes.md#what-one-transfer-did).
 
 ### Why `wait` may ask to be retried
 
@@ -166,7 +168,7 @@ A lane is given a backend and the route's stream at create, and may copy,
 record and query on it. The constraint is **single-writer ordering**: one
 thread's worth of work, in one order, on that stream.
 
-Both lanes use it, and neither is a second writer, because every call into the
+All shipped lanes use it without adding a second writer, because every call into the
 lane's table arrives on the thread that called it — the worker for a planned
 transfer, the caller for calibration. The built-in lane's copies and completion
 event go there because they belong in the same order; it is acting as the
@@ -235,6 +237,25 @@ when the library is loaded, so everything that depends on what the hardware can
 actually do belongs here, where there is a failure path and an unwind. A lane
 that cannot come up fails create, and the runtime unwinds rather than starting
 with a route that cannot move a byte.
+
+Normal close drains work before destroying lanes. Abandon skips those device
+completion waits, so `destroy` must stop its own worker even when a producer
+dependency will never complete; it must not call `synchronize` again. Submitted
+OS I/O must be canceled or retired before freeing the memory it references.
+
+## SSD staging
+
+The SSD extension in `csrc/ssd/` implements both directions through bounded
+pinned-host rings. Fetch reads a chunk from SSD, then copies it to the device.
+Evict copies from the device, then writes the chunk to SSD. Disk reads themselves
+wait for the producer dependency, not just the later device copy. Each slot is
+reused only after its consumer finishes: H2D for fetch, disk I/O for evict.
+
+The disk worker makes no GPU calls. Stream value waits and host-visible counters
+connect disk completion to ordinary backend events. Fetch completion includes
+H2D; evict completion includes the SSD write. Errors latch the ordinary runtime
+failure before releasing pending waits. Configuration and cleanup are in the
+[SSD extension guide](../c/ssd.md).
 
 ## What the contract does not reach
 

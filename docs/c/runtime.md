@@ -71,9 +71,9 @@ buffers, and first-failure state.
   transfer matrix: the complete row-major N-by-N grid, so `capacity` must be
   at least N*N, with the generation and count it was consistent at.
 
-`shadowspill_runtime_abandon()` closes without waiting for anything: no drain,
-no lane synchronization, and no cleanup that could block on a lock the worker
-holds. It is for a process that is already exiting, where waiting prevents the
+`shadowspill_runtime_abandon()` skips the normal work-completion waits: no
+drain or lane synchronization. It is for a process that is already exiting,
+where waiting for an unfinished GPU producer prevents the
 exit rather than delaying it, and where everything a drain protects is
 reclaimed at process exit anyway. It still stops the worker and releases every
 route, event pool, and memory pool, which is what unregisters pinned host
@@ -95,6 +95,12 @@ generation, its `ShadowSpillTransferCalibrationMode`, timestamp, and its
 initialization or from a later recalibration. An identity cell is available at
 zero latency and needs no copy. Planning consumes the immutable
 matrix; it does not benchmark routes itself.
+
+Calibration also applies to [SSD lanes](ssd.md): probe sources in
+non-addressable pools are initialized before reads are timed. Probe sizes
+change setup I/O and can change the estimate; they do not configure production
+chunk sizes. The simulator currently uses fixed effective rates throughout a
+step, while retaining solo/concurrent measurements for diagnostics.
 
 ## Allocation API
 

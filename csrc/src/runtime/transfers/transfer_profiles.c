@@ -180,6 +180,34 @@ static int reserve_probe_ranges(
     return status;
 }
 
+/* An allocated range may still be unwritten storage. Initialize
+   non-addressable sources through their ordinary pool interface before timing
+   reads; otherwise a filesystem can satisfy the probe with synthesized zeros.
+   Bound host memory independently of the probe/model size. */
+static int initialize_probe_source(ShadowSpillMemoryPool *source,
+                                   uint64_t offset, uint64_t bytes) {
+    if (source->memory.write == NULL) return 0;
+    const uint64_t chunk_bytes = 1U << 20U;
+    const uint64_t scratch_bytes = bytes < chunk_bytes ? bytes : chunk_bytes;
+    unsigned char *scratch = malloc((size_t)scratch_bytes);
+    if (scratch == NULL) return -1;
+    uint64_t random = 0x9e3779b97f4a7c15ULL;
+    for (uint64_t i = 0; i < scratch_bytes; ++i) {
+        random ^= random << 13U;
+        random ^= random >> 7U;
+        random ^= random << 17U;
+        scratch[i] = (unsigned char)random;
+    }
+    int status = 0;
+    for (uint64_t moved = 0; moved < bytes && status == 0;) {
+        const uint64_t count = bytes - moved < scratch_bytes ? bytes - moved : scratch_bytes;
+        status = source->memory.write(source->memory_state, offset + moved, scratch, count);
+        moved += count;
+    }
+    free(scratch);
+    return status;
+}
+
 static void release_probe_ranges(
     ShadowSpillMemoryPool *source,
     ShadowSpillMemoryPool *destination,
@@ -347,9 +375,9 @@ static int calibrate_route(
     void *destination_pointer = shadowspill_memory_pool_pointer(
         destination, destination_offset
     );
-    int status = 0;
+    int status = initialize_probe_source(source, source_offset, config->large_copy_bytes);
     uint64_t ignored = 0U;
-    for (uint32_t warmup = 0U; warmup < config->warmup_copies; ++warmup) {
+    for (uint32_t warmup = 0U; status == 0 && warmup < config->warmup_copies; ++warmup) {
         if (route->operations->copy(
                 route->lane, destination_pointer, source_pointer,
                 config->large_copy_bytes, &ignored
@@ -480,6 +508,10 @@ static int prepare_probe(
             destination, destination_offset
         ),
     };
+    if (initialize_probe_source(source, source_offset, bytes) != 0) {
+        release_probe_ranges(source, destination, bytes, source_offset, destination_offset);
+        return -1;
+    }
     return 0;
 }
 

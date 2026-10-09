@@ -75,14 +75,15 @@ on which it is.
 
 ## Libraries and responsibilities
 
-The shipped libraries are four kinds of shared object with one direction of
+The shipped libraries are separate shared objects with one direction of
 dependency, and a Python package above them:
 
 | Library | Holds | Knows about |
 |---|---|---|
 | `libshadowspill.so` | the neutral C library: IR digests, the simulator, physical admission, the search that ships, and the runtime with its [memory pools](memory-pools.md), [lanes](lanes.md), [transfers](transfers.md), [events](events.md), task boundaries, tracing, and the profiler ranges and timing markers a caller measures with. Its planner header names no search; the shipped one has a header of its own beside it | three contracts it declares and none of which it links: the backend, the lane, and a pool's memory |
 | `libshadowspill_backend_<provider>.so` | one provider's implementation of the [backend contract](backends.md): device allocation, host registration, streams, copies, events, profiler | its driver and nothing of ShadowSpill's |
-| `libshadowspill_network.so` | an extension library: pool kinds, and later lanes, whose memory is not on this machine. It exports one symbol, a descriptor of what it offers, and the far side of a remote pool is a separate program, `shadowspill_memory_daemon`, that links no ShadowSpill library at all | the runtime's contracts, and nothing of the runtime's internals |
+| `libshadowspill_network.so` | an extension library: remote pools and RDMA lanes. It exports a descriptor of what it offers; the far side is `shadowspill_memory_daemon`, which links no ShadowSpill library | the runtime's public contracts and ibverbs |
+| `libshadowspill_ssd.so` | an extension library: temporary direct-I/O storage and SSD/device lanes with bounded host staging | the runtime's public contracts, Linux AIO and file I/O |
 | `libshadowspill_pytorch.so` | the [PyTorch adapter](adapter.md): the pluggable allocator, objects and storage views, the task boundary, and the dlopen of the backend and of any extension library | PyTorch and the neutral runtime |
 | `shadowspill` (Python) | two halves along one line. `shadowspill.pytorch` captures, lowers, compiles and profiles a step, and holds the planned callables. Everything else -- the IR, the step, one task's shape, the store, profiling records, the planner, the search, the simulator, the pipeline, the runtime and the diagnostics -- names no framework and imports none | the frontend half knows PyTorch and the adapter's C API; the neutral half knows only the neutral library |
 
