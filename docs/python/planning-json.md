@@ -269,7 +269,8 @@ shadowspill.annotated_program_plan/v1
   `evict_solo_bytes_per_second`, and `evict_concurrent_bytes_per_second`;
 - `fetch_latency_ns` and `evict_latency_ns`, the per-transfer latencies the
   same calibration measured, or `null` in an override that names only
-  bandwidths, where the program's own latency applies;
+  bandwidths, which retains the program's recorded latency. These values are
+  metadata and do not affect simulated transfer timing;
 - `scale_numerator` and `scale_denominator` for an exact rational benchmark
   scaling factor;
 - optional `calibration_digest` and `provenance`.

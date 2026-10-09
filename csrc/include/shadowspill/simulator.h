@@ -60,6 +60,7 @@ typedef struct ShadowSpillSimulationDevice {
     uint64_t fetch_concurrent_bandwidth_bytes_per_second;
     uint64_t evict_solo_bandwidth_bytes_per_second;
     uint64_t evict_concurrent_bandwidth_bytes_per_second;
+    /* Calibration metadata; neither latency contributes to transfer timing. */
     uint64_t fetch_latency_ns;
     uint64_t evict_latency_ns;
 } ShadowSpillSimulationDevice;

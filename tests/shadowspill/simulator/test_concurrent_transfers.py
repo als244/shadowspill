@@ -138,23 +138,11 @@ def replay(copies, *, rates=(2 * G, G, 2 * G, G), latencies=(0, 0)):
         ),
     ],
 )
-def test_solo_full_partial_queued_and_independent_lanes(copies, expected):
-    assert replay(copies) == expected
-
-
-def test_latency_does_not_contend_or_repeat_after_rate_changes():
-    assert replay(
-        [("fetch", 100, 0, "d"), ("evict", 100, 0, "d")], latencies=(20, 0)
-    ) == {
-        "a0": (0, 100),
-        "a1": (0, 80),
-    }
-    assert replay(
-        [("fetch", 100, 0, "d"), ("evict", 40, 0, "d")], latencies=(20, 0)
-    ) == {
-        "a0": (0, 70),
-        "a1": (0, 20),
-    }
+@pytest.mark.parametrize("latencies", [(0, 0), (200_000, 300_000), (MAX, MAX)])
+def test_solo_full_partial_queued_and_independent_lanes(copies, expected, latencies):
+    # Metadata, even at the ABI limit, must not delay either lane or change
+    # the overlap intervals that choose between solo and concurrent rates.
+    assert replay(copies, latencies=latencies) == expected
 
 
 def test_sub_byte_progress_is_not_discarded_at_overlap_boundaries():

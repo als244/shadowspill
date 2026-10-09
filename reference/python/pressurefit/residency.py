@@ -302,9 +302,8 @@ def _transfer_runtime_ns(
             device.evict_concurrent_bandwidth_bytes_per_second,
         )
     )
-    latency = device.fetch_latency_ns if to_device else device.evict_latency_ns
     size = facts.alias_sizes[alias]
-    return latency + (size * 1_000_000_000 + bandwidth - 1) // bandwidth
+    return (size * 1_000_000_000 + bandwidth - 1) // bandwidth
 
 
 def _writeback_required(facts: PlanningFacts, cut: Cut) -> bool:

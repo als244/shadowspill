@@ -94,10 +94,10 @@ def test_entry_and_terminal_copies_are_priced_once(location: MemoryLocation) -> 
             len(fetches) == 1
         )  # both views share this copy; zero-byte input needs none
         assert fetches[0].trigger_task_id == "start"
-        assert result.simulation.makespan_ns == 1250  # fetch + update + writeback
+        assert result.simulation.makespan_ns == 1200  # fetch + update + writeback
     else:
         assert fetches == []
-        assert result.simulation.makespan_ns == 1125  # update + writeback
+        assert result.simulation.makespan_ns == 1100  # update + writeback
     assert sum(item.bytes for item in result.simulation.transfer_intervals) == (
         200 if location is MemoryLocation.SPILL else 100
     )

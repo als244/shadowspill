@@ -149,7 +149,8 @@ are read against one time axis.
   utilisation, the share of the span the lane is busy, the bytes each lane
   moved over the step, and the rate that comes to, beside the bandwidth the
   plan was priced at; the page's subtitle names the assumed fetch and evict
-  bandwidths and latency. A simulated page achieves what it assumed by
+  bandwidths and recorded latency. Latency is metadata and is excluded from
+  simulated transfer timing. A simulated page achieves what it assumed by
   construction; a traced page shows what the device did against it. The
   line under the title names the step: for a run's pages the model, the
   geometry (sequences per microbatch, microbatches, ordering), the tokens

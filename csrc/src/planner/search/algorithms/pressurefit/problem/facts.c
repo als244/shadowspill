@@ -13,7 +13,6 @@ int shadowspill_problem_add_u64(uint64_t left, uint64_t right, uint64_t *result)
 static int transfer_duration_ns(
     uint64_t numerator,
     uint64_t denominator,
-    uint64_t latency_ns,
     uint64_t *result
 ) {
     const uint64_t scale = UINT64_C(1000000000);
@@ -53,11 +52,8 @@ static int transfer_duration_ns(
         ++quotient;
     }
     uint64_t duration = whole * scale;
-    if (shadowspill_problem_add_u64(duration, quotient, &duration) != 0 ||
-        shadowspill_problem_add_u64(duration, latency_ns, result) != 0) {
-        return -1;
-    }
-    return 0;
+    /* Keep heuristic transfer costs consistent with bandwidth-only simulation. */
+    return shadowspill_problem_add_u64(duration, quotient, result);
 }
 
 int shadowspill_problem_program_problem_valid(
@@ -333,7 +329,6 @@ ShadowSpillStatus shadowspill_problem_finalize_alias_facts(
                 (program->devices[device].fetch_solo_bandwidth_bytes_per_second > program->devices[device].fetch_concurrent_bandwidth_bytes_per_second
                     ? program->devices[device].fetch_solo_bandwidth_bytes_per_second
                     : program->devices[device].fetch_concurrent_bandwidth_bytes_per_second),
-                program->devices[device].fetch_latency_ns,
                 &prepared->fetch_runtime_ns[alias]
             ) != 0 ||
             transfer_duration_ns(
@@ -341,7 +336,6 @@ ShadowSpillStatus shadowspill_problem_finalize_alias_facts(
                 (program->devices[device].evict_solo_bandwidth_bytes_per_second > program->devices[device].evict_concurrent_bandwidth_bytes_per_second
                     ? program->devices[device].evict_solo_bandwidth_bytes_per_second
                     : program->devices[device].evict_concurrent_bandwidth_bytes_per_second),
-                program->devices[device].evict_latency_ns,
                 &prepared->evict_runtime_ns[alias]
             ) != 0) {
             return SHADOWSPILL_STATUS_INVALID_ARGUMENT;

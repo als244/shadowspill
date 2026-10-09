@@ -837,13 +837,8 @@ class _Simulator:
             if not state.spill_allocated:
                 raise AssertionError("queued EVICT has no trigger-time reservation")
         queue.popleft()
-        config = self.device_config[device_id]
-        latency = (
-            config.fetch_latency_ns
-            if direction is TransferDirection.FETCH
-            else config.evict_latency_ns
-        )
-        payload_start = self.now_ns + latency
+        # Calibration latency is retained in the config, but not charged.
+        payload_start = self.now_ns
         active_table[device_id] = _ActiveTransfer(
             pending=pending,
             start_ns=self.now_ns,

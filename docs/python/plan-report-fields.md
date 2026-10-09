@@ -120,8 +120,8 @@ plus `recomputation_overhead_seconds` plus `idle_seconds` plus
 | `spill_peak_bytes` | The most the spill pool ever holds while the step runs, as this plan's simulation reached it. Beside the spill budget it says whether the budget shaped the plan or merely bounded it. |
 | `transfer_bytes_fetched`, `transfer_bytes_evicted` | Traffic the simulation ran, summed from its transfer intervals. |
 | `fetch_solo_bandwidth_bytes_per_second`, `fetch_concurrent_bandwidth_bytes_per_second`, `evict_solo_bandwidth_bytes_per_second`, `evict_concurrent_bandwidth_bytes_per_second` | Coarsened per-direction rates used by the simulator. Payload uses the solo rate while the opposite lane is idle, and the concurrent rate while both move bytes. Raw measurements remain on the transfer profiles. |
-| `fetch_busy_ns`, `evict_busy_ns` | Sum of simulated transfer durations on each lane, including startup latency. Utilization uses these intervals, not bytes divided by a fixed bandwidth. |
-| `fetch_latency_ns`, `evict_latency_ns` | The per-transfer latency each lane was priced with, coarsened the same way. Recorded beside the bandwidths because a plan read back from the store was priced against the calibration of whatever process searched it, which coarsening a profile today would not reproduce. |
+| `fetch_busy_ns`, `evict_busy_ns` | Sum of simulated transfer durations on each lane, excluding per-transfer latency. Utilization uses these intervals, not bytes divided by a fixed bandwidth. |
+| `fetch_latency_ns`, `evict_latency_ns` | Coarsened calibration latency retained with the plan for diagnostics and provenance. The simulator does not use these values for transfer timing. |
 | `planning_phase_seconds` | Each planning phase's wall time in phase order, ending with `total`. A view over the report's `phase_timings_ns`, which stays the stored record. |
 | `selected_candidate` | The candidate whose plan was selected: residency strategy, fetch rule, coalescing, repairs at best, the fastest plan it could not place (`best_unplaced_makespan_ns`, `unplaced_plans`) and `placement_gap`, the answer over that plan (`None` when every measured plan fit). When the search answered with the plan it was handed, `incumbent` with that plan's outcome instead. |
 
@@ -681,7 +681,7 @@ Measured performance for one directed pool-pair route.
 ### Blended transfer bandwidth
 
 `PlanSummary.fetch_busy_ns` and `evict_busy_ns` sum the simulated lane intervals,
-including startup latency. The derived `fetch_blended_bandwidth_bytes_per_second`
+excluding per-transfer latency. The derived `fetch_blended_bandwidth_bytes_per_second`
 and `evict_blended_bandwidth_bytes_per_second` properties divide total traffic by
 these busy times; they are `None` for an unused lane. The blend is schedule-specific,
 while the four solo/concurrent rate fields remain the simulator's calibrated

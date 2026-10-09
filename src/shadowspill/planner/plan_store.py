@@ -910,10 +910,10 @@ def _request_summary(program: ShadowSpillProgram, config: SimulationConfig) -> s
         f"program {program.digest[:12]}, capacity {device.capacity_bytes} B,"
         f" fetch {device.fetch_solo_bandwidth_bytes_per_second}/"
         f"{device.fetch_concurrent_bandwidth_bytes_per_second} B/s solo/concurrent"
-        f" at {device.fetch_latency_ns} ns,"
+        f" latency {device.fetch_latency_ns} ns (metadata only),"
         f" evict {device.evict_solo_bandwidth_bytes_per_second}/"
         f"{device.evict_concurrent_bandwidth_bytes_per_second} B/s solo/concurrent"
-        f" at {device.evict_latency_ns} ns,"
+        f" latency {device.evict_latency_ns} ns (metadata only),"
         f" spill {config.spill_capacity_bytes} B"
     )
 
