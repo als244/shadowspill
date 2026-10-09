@@ -188,5 +188,9 @@ shadowspill_add_public_api_test(
   test_08_tensor_representations.py test_planned_representation_recompute 300
 )
 shadowspill_add_public_api_test(
+  ../state/test_pool_initialization.py
+  test_meta_initialization_and_checkpoint_import_preserve_values_and_ties 180
+)
+shadowspill_add_public_api_test(
   test_08_tensor_representations.py test_planned_packed_parameter_gradients 300
 )

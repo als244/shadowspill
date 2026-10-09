@@ -36,7 +36,7 @@ from shadowspill.pytorch import (
     release_model_state,
 )
 from shadowspill.runtime.failures import RuntimeExecutionError
-from shadowspill.training._model import initialize_model
+from shadowspill.training._model import initialize_model, validate_initialization
 from shadowspill.training.observations import StepObservations
 
 from .options import profiling_policy, search_policy
@@ -267,7 +267,9 @@ class Tour:
             if factory is not None
             else copy.deepcopy(self.experiment["model"])
         )
-        model = initialize_model(model, initialize=self.experiment.get("initialize"))
+        validate_initialization(
+            model, initialize=self.experiment.get("initialize"), state=None
+        )
         specification = (
             self.distributed(model) if callable(self.distributed) else self.distributed
         )
@@ -286,6 +288,9 @@ class Tour:
             pool="spill",
             release_source=True,
             distributed=specification,
+            initialize=lambda target: initialize_model(
+                target, initialize=self.experiment.get("initialize")
+            ),
         )
 
     @property

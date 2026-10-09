@@ -4,8 +4,7 @@ writes it through the spill pool, and how the plan lets it go."""
 from __future__ import annotations
 
 import copy
-from collections.abc import Iterator, Mapping, Sequence
-from contextlib import contextmanager
+from collections.abc import Mapping
 from typing import Any, cast
 
 import torch
@@ -25,6 +24,7 @@ from shadowspill.pytorch.spill import (
     spill_view,
     write_spill_tensor,
 )
+from shadowspill.pytorch.state.checkpoint import PoolCheckpoint
 from shadowspill.pytorch.state.optimizer import release_optimizer_state_from_plan
 from shadowspill.runtime.plan import (
     RuntimeBridge,
@@ -105,30 +105,33 @@ class OptimizerState:
         finally:
             self.restore_spill_only(exposed)
 
-    @contextmanager
-    def state_dict_in_place(
+    def checkpoint_state(
         self,
-    ) -> Iterator[tuple[dict[str, object], dict[str, torch.Tensor]]]:
-        """The optimizer's state_dict and masters over their bytes where they
-        are in the pool.
-
-        What :meth:`state_dict` returns, with nothing copied where the pool is
-        one this process can address: the entries view the pool, so they are
-        valid only while the block runs, and the live state points back at its
-        placeholders when it ends.
-        """
-
-        exposed = self.expose_cpu(in_place=True)
-        try:
-            yield (
-                self.optimizer.state_dict(),
-                {
-                    name: self.optimizer_parameters[name].detach()
-                    for name in self.master_names
-                },
+        writer: PoolCheckpoint,
+    ) -> tuple[dict[str, object], dict[str, torch.Tensor]]:
+        """Describe state without exposing all its pool payloads on the host."""
+        bindings = self.current_bindings()
+        aliases = {
+            id(bindings[item.name].tensor): self._bridge.objects.alias_for_object(
+                item.object_id
             )
-        finally:
-            self.restore_spill_only(exposed)
+            for item in self._objects
+            if item.name in bindings
+        }
+
+        def describe(value: Any) -> Any:
+            if not isinstance(value, torch.Tensor):
+                return value
+            alias = aliases.get(id(value))
+            if alias is None:
+                return writer.value(value)
+            owner = writer.alias(alias, self._size_by_alias[alias])
+            return writer.view(owner, value)
+
+        return tree_map(describe, self.optimizer.state_dict()), {
+            name: describe(self.optimizer_parameters[name])
+            for name in self.master_names
+        }
 
     def load(
         self,
@@ -146,65 +149,54 @@ class OptimizerState:
         missing = sorted(set(self.master_names) - set(given))
         if missing:
             raise RuntimeError(f"checkpoint lacks the values of masters {missing}")
-        exposed = self.expose_cpu()
-        try:
-            planned = tuple(
-                item for item in self._objects if item.name not in self.master_names
-            )
-            tensors = {
-                item.name: item
-                for item in restore_optimizer_checkpoint_structure(
-                    self.optimizer_parameters,
-                    self.optimizer,
-                    value,
-                    required=tuple(item.name for item in planned),
+        self._bridge.wait_runtime_idle()
+        planned = tuple(
+            item for item in self._objects if item.name not in self.master_names
+        )
+        restored = restore_optimizer_checkpoint_structure(
+            self.optimizer_parameters,
+            self.optimizer,
+            value,
+            required=tuple(item.name for item in planned),
+        )
+        objects = {item.name: item for item in self._objects}
+        for entry in restored:
+            item = objects.get(entry.name)
+            if item is None:
+                if entry.destination.device.type != "cpu":
+                    raise RuntimeError(
+                        f"optimizer checkpoint tensor {entry.name!r} has no pool object"
+                    )
+                entry.destination.copy_(entry.source.detach().to(device="cpu"))
+            else:
+                self._write_tensor(item.object_id, entry.destination, entry.source)
+        current = self.current_bindings()
+        for item in self._objects:
+            if item.name in self.master_names:
+                self._write_tensor(
+                    item.object_id, current[item.name].tensor, given[item.name]
                 )
-            }
-            current = self.current_bindings()
-            self._write_restored_tensors(planned, current, tensors)
-            for item in self._objects:
-                if item.name not in self.master_names:
-                    continue
-                master = current[item.name].tensor
-                with torch.no_grad():
-                    master.copy_(given[item.name].detach().to(device="cpu"))
-                write_spill_tensor(
-                    self._bridge.objects,
-                    self._bridge.objects.alias_for_object(item.object_id),
-                    master,
-                )
-        finally:
-            self.restore_spill_only(exposed)
 
-    def _write_restored_tensors(
-        self,
-        planned: Sequence[Any],
-        current: Mapping[str, Any],
-        tensors: Mapping[str, Any],
+    def _write_tensor(
+        self, object_id: str, template: torch.Tensor, source: torch.Tensor
     ) -> None:
-        """Copy a checkpoint into existing spill-backed optimizer aliases."""
-
-        for name, restored in tensors.items():
-            destination = restored.destination
-            source = restored.source.detach()
-            if destination.device.type != "cpu":
-                raise RuntimeError(
-                    f"optimizer checkpoint destination {name!r} is not CPU exposed"
-                )
-            destination.copy_(source.to(device="cpu"))
-        written: set[str] = set()
-        for item in planned:
-            restored = tensors.get(item.name)
-            actual = current.get(item.name)
-            if restored is None or actual is None:
-                raise RuntimeError(
-                    f"optimizer checkpoint lacks planned tensor {item.name!r}"
-                )
-            alias_id = self._bridge.objects.alias_for_object(item.object_id)
-            if alias_id in written:
-                continue
-            write_spill_tensor(self._bridge.objects, alias_id, actual.tensor)
-            written.add(alias_id)
+        """Restore one alias at a time, including dtype conversion for masters."""
+        alias = self._bridge.objects.alias_for_object(object_id)
+        owner = spill_view(self._bridge.objects, alias)
+        if owner is None:
+            owner = self._copied_alias_buffer(alias)
+        destination = self._view(
+            owner,
+            TensorLayout(
+                tuple(template.shape),
+                tuple(template.stride()),
+                int(template.storage_offset()),
+                template.dtype,
+            ),
+        )
+        with torch.no_grad():
+            destination.copy_(source.detach().to(device="cpu"))
+        write_spill_tensor(self._bridge.objects, alias, owner)
 
     def release(self) -> None:
         """Drop optimizer state with the plan that owns its spill storage.

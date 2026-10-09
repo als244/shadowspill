@@ -11,7 +11,7 @@ from shadowspill.runtime.objects import (
     retain_persistent_state,
 )
 
-from .records import PersistentState
+from .records import PersistentState, PersistentStorage
 
 
 class PersistentStateRegistry:
@@ -21,10 +21,12 @@ class PersistentStateRegistry:
         self.runtime = runtime
         self._lock = threading.RLock()
         self._states: dict[int, PersistentState] = {}
-        #: Pool memory handed to a caller that no state owns yet, by the
-        #: identity of the storage presenting it. An import consults this to
-        #: adopt what is already in the pool instead of copying the pool into
-        #: itself under a second name, so no caller has to say so.
+        self._storages: dict[int, PersistentStorage] = {}
+
+    def storage(self, identity: int) -> PersistentStorage | None:
+        """Find the authoritative object behind a frontend storage view."""
+        with self._lock:
+            return self._storages.get(identity)
 
     def get(self, target: object) -> PersistentState | None:
         with self._lock:
@@ -47,6 +49,9 @@ class PersistentStateRegistry:
                 self.runtime, allow_in_progress_plan=allow_in_progress_plan
             )
             self._states[key] = state
+            self._storages.update(
+                (item.storage_identity, item) for item in state.storages
+            )
 
     def remove(self, target: object) -> PersistentState:
         with self._lock:
@@ -54,6 +59,8 @@ class PersistentStateRegistry:
             if state is None or state.target is not target:
                 raise RuntimeError("state is not persistent in this Runtime")
             release_persistent_state(self.runtime)
+            for item in state.storages:
+                self._storages.pop(item.storage_identity, None)
             return state
 
     def values(self) -> tuple[PersistentState, ...]:

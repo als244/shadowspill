@@ -93,9 +93,11 @@ class ProfileExecutableStore:
         *,
         device_ordinal: int,
         allocation_check: Callable[[str], None] | None = None,
+        read_reference: Callable[[torch.Tensor], torch.Tensor] | None = None,
     ) -> None:
         self._device_ordinal = device_ordinal
         self._allocation_check = allocation_check
+        self._read_reference = read_reference
         self._items: dict[str, ProfileExecutable] = {}
         self._warmed: set[str] = set()
         self._compilation_wall_time_ns = 0
@@ -322,6 +324,7 @@ class ProfileExecutableStore:
             device_ordinal=self._device_ordinal,
             probe_index=probe_index,
             allocation_check=self._allocation_check,
+            read_reference=self._read_reference,
         )
         arguments = tuple(
             value.detach() if isinstance(value, torch.Tensor) else value

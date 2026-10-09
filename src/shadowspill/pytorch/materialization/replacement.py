@@ -9,8 +9,8 @@ from typing import Any
 
 import torch
 
-from shadowspill.pytorch.representations import map_tensor
-from shadowspill.pytorch.spill import read_spill_tensor, write_spill_tensor
+from shadowspill.pytorch.representations import map_tensor, storage_view
+from shadowspill.pytorch.spill import read_spill_tensor, spill_view, write_spill_tensor
 from shadowspill.runtime.plan import RuntimeBridge
 
 
@@ -53,7 +53,12 @@ class MaterializedState:
 
         raise NotImplementedError
 
-    def write_model_entries(self, values: Mapping[str, torch.Tensor]) -> None:
+    def write_model_entries(
+        self,
+        values: Mapping[str, torch.Tensor],
+        *,
+        cast_names: frozenset[str] = frozenset(),
+    ) -> None:
         """Write the named state entries into the pool, leaving the rest as
         they are: how a value set between invocations reaches state the plan
         owns.
@@ -73,34 +78,41 @@ class MaterializedState:
                 f"no persistent model state entries named {unknown}; a buffer "
                 "registered with persistent=False is not state a call can set"
             )
-        targets = [
-            item for item in self._registrations() if item.binding.name in values
-        ]
-        missing = sorted(set(values) - {item.binding.name for item in targets})
+        aliases_by_name: dict[str, set[str]] = {}
+        for item in self._registrations():
+            aliases_by_name.setdefault(item.binding.name, set()).add(
+                self.bridge.objects.alias_for_object(item.binding.object_id)
+            )
+        missing = sorted(set(values) - set(aliases_by_name))
         if missing:
             raise RuntimeError(f"unsupported model state entries: {missing}")
-        aliases = {
-            self.bridge.objects.alias_for_object(item.binding.object_id)
-            for item in targets
-        }
-        owners = self._read_model_aliases(aliases=aliases)
-        destinations = self._state_from_owners(owners, names=set(values))
-        for name, destination in destinations.items():
-            if name not in values:
-                continue
-            source = values[name]
+        templates = self.model.state_dict(keep_vars=True)
+        for name, source in values.items():
+            destination = templates[name]
             if not isinstance(source, torch.Tensor):
                 raise TypeError(f"model state entry {name!r} must be a tensor")
-            if (
-                tuple(source.shape) != tuple(destination.shape)
-                or source.dtype != destination.dtype
+            if tuple(source.shape) != tuple(destination.shape) or (
+                source.dtype != destination.dtype and name not in cast_names
             ):
                 raise RuntimeError(
                     f"model state entry {name!r} has incompatible geometry"
                 )
-            destination.copy_(source.detach().to(device="cpu"))
-        for alias_id, owner in owners.items():
-            write_spill_tensor(self.bridge.objects, alias_id, owner)
+        self.bridge.wait_runtime_idle()
+        # A logical parameter may have several physical components. Stage only
+        # those roots; later aliases read back any preceding partial updates.
+        for name, source in values.items():
+            owners = {}
+            for alias_id in aliases_by_name[name]:
+                owner = spill_view(self.bridge.objects, alias_id)
+                if owner is None:
+                    owner = self._read_model_aliases(aliases={alias_id})[alias_id]
+                owners[alias_id] = owner
+            destination = self._state_from_owners(owners, names={name})[name]
+            with torch.no_grad():
+                destination.copy_(source.detach().to(device="cpu"))
+            for alias_id, owner in owners.items():
+                write_spill_tensor(self.bridge.objects, alias_id, owner)
+            del destination, owners, owner
 
     def _state_from_owners(
         self, owners: Mapping[str, torch.Tensor], *, names: set[str] | None = None
@@ -146,11 +158,8 @@ class MaterializedState:
 
     @staticmethod
     def _cpu_view(owner: torch.Tensor, tensor: torch.Tensor) -> torch.Tensor:
-        return torch.empty(0, dtype=tensor.dtype, device="cpu").set_(
-            owner.untyped_storage(),
-            tensor.storage_offset(),
-            tuple(tensor.shape),
-            tuple(tensor.stride()),
+        return storage_view(
+            owner, tensor.dtype, tensor.shape, tensor.stride(), tensor.storage_offset()
         )
 
 

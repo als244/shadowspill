@@ -19,7 +19,12 @@ from shadowspill.pytorch.distributed import Distributed
 
 from . import _checkpoint
 from ._inputs import ScaledObjective, candidate_functions, make_microbatches
-from ._model import OptimizerFactory, initialize_model, model_mode
+from ._model import (
+    OptimizerFactory,
+    initialize_model,
+    model_mode,
+    validate_initialization,
+)
 from ._types import (
     Backend,
     Initializer,
@@ -172,16 +177,29 @@ class Trainer:
             )
 
             omitted = master_aliases(state, self._distributed)
-        self.model = initialize_model(
+        validate_initialization(
             self.model,
             initialize=initialize,
             state=None if state is None else state["model"],
-            missing_parameters=omitted,
         )
-        if state is not None and self._distributed is not None:
-            restore_compute_weights(
-                dict(self.model.named_parameters()), state["masters"], self._distributed
+
+        def fill(model: nn.Module) -> None:
+            initialize_model(
+                model,
+                initialize=initialize,
+                state=None if state is None else state["model"],
+                missing_parameters=omitted,
             )
+            if state is not None and self._distributed is not None:
+                restore_compute_weights(
+                    dict(model.named_parameters()), state["masters"], self._distributed
+                )
+
+        prepare_model = getattr(self.backend, "initialize_model", None)
+        if prepare_model is None:
+            fill(self.model)
+        else:
+            self.model = prepare_model(self.model, fill)
 
         candidates = self.candidates
         if loop is not None:

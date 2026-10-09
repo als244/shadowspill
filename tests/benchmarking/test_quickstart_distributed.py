@@ -3,6 +3,8 @@ from __future__ import annotations
 import json
 from types import SimpleNamespace
 
+import torch
+
 from benchmarking.quickstart.options import _parser, _reproduced_arguments
 from benchmarking.quickstart.storage import prepare_run_root
 from shadowspill.planner.program_inputs import TransferBandwidths
@@ -96,7 +98,7 @@ def test_symmetric_cli_override_preserves_the_callers_specification(monkeypatch)
     assert parser.parse_args(["--no-symmetric-planning"]).symmetric_planning is False
     arguments = parser.parse_args(["--symmetric-planning"])
     specification = Distributed(None)
-    model, received = object(), []
+    model, received = torch.nn.Module(), []
     tour = object.__new__(runner.Tour)
     tour.arguments, tour.runtime, tour.distributed = arguments, object(), specification
     tour.experiment = {"model_factory": lambda: model}

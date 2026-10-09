@@ -54,25 +54,17 @@ the optimizer the caller already passes.
 
 ### Created in the pool, then filled
 
-Every declared entry lives in the spill pool for the run, and is put there
-before it holds anything: planning allocates each entry and imports it into the
-spill pool as the plan's own state -- memory nothing has written to is not
-committed, so this costs the pool and nothing else -- and only then writes its
-start there, where it will live. The host never
-holds the state beside the pool, and for an ordinary adaptive optimizer, several
-times the model, that is what decides whether a large model fits. It is the
-order [a checkpoint import](state-import.md#three-paths-in) takes, through the
-same import. There is no size below which an entry is treated differently -- a
-step counter an optimizer keeps as a scalar tensor is imported like any other
-entry, and reads from the host as it would anywhere else. An entry an optimizer
-keeps as a plain Python number is not a tensor, so it is not declared and
-nothing is built for it.
+Every declared entry is allocated in the spill pool before its start value is
+written. No full CPU moment or master tensor bank is allocated beside the pool.
+For addressable pools, initialization writes directly into the pool. For
+non-addressable pools it stages the roots touched by one operation and publishes
+the result through the pool's write API. The same mechanism initializes models;
+see [state import](state-import.md#three-paths-in).
 
-A pool on another machine cannot hand out memory for a caller to write, so
-there the order reverses: the entries are filled on the host and imported
-after. That costs nothing extra, because such a pool keeps a host copy of its
-state for as long as it holds it; the two orders differ only where that copy
-would otherwise have been temporary.
+A few bytes of CPU control state can remain for scalar counters used by Python
+during discovery. Tensor shapes, strides, dtypes and aliases remain available
+without retaining large payloads. Ordinary Python scalar state requires no pool
+allocation.
 
 ### Started where the optimizer starts it
 

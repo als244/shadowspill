@@ -76,6 +76,7 @@ def profile_training_tasks(
     profiling_options = profiling_options or ProfilingOptions()
     profiler = TaskProfiler(
         captured.installed.library,
+        runtime=state.runtime,
         runtime_handle=captured.installed.runtime_handle,
         plan_id=plan_id,
         device_ordinal=captured.device_ordinal,

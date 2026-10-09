@@ -22,6 +22,7 @@ from shadowspill.pytorch.optimizer import OpaqueOptimizerArtifact
 from shadowspill.pytorch.state.storage import (
     NamedTensor,
     import_then_fill,
+    read_tensor_value,
     release_persistent_tensors,
 )
 from shadowspill.runtime import Runtime
@@ -73,6 +74,7 @@ class TaskProfiler:
         allocation_probe_seeds: int = 1,
         allocation_probe_repetitions: int = 2,
         saved_value_pool: SavedValuePool | None = None,
+        runtime: Runtime | None = None,
     ) -> None:
         self.options = profiling_options or ProfilingOptions()
         prepared = distributed_preparation()
@@ -102,6 +104,11 @@ class TaskProfiler:
             device_ordinal=device_ordinal,
             allocation_check=lambda operation: raise_if_allocator_failed(
                 library, operation
+            ),
+            read_reference=(
+                (lambda tensor: read_tensor_value(runtime, tensor))
+                if runtime is not None
+                else None
             ),
         )
         self.probe_seeds = allocation_probe_seeds

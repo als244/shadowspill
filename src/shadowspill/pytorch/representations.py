@@ -8,7 +8,7 @@ on the logical tensor. This module does not interpret a representation's math.
 from __future__ import annotations
 
 import copy
-from collections.abc import Callable, Iterator
+from collections.abc import Callable, Iterator, Sequence
 from typing import Any, cast
 
 import torch
@@ -50,6 +50,27 @@ def detached_representation(tensor: torch.Tensor) -> torch.Tensor:
     model's tensor objects cannot move these references onto another device.
     """
     return map_tensor(tensor, lambda value: value.detach()).detach()
+
+
+def storage_view(
+    owner: torch.Tensor,
+    dtype: torch.dtype,
+    shape: Sequence[int],
+    stride: Sequence[int],
+    offset: int | torch.SymInt = 0,
+) -> torch.Tensor:
+    """View a byte owner using metadata only, including inaccessible pool state.
+
+    ``set_(storage)`` inspects the data pointer. Ordinary view operations do
+    not, so they also work when the bytes reside outside CPU-addressable memory.
+    A root can contain mixed-dtype views and an incomplete final element.
+    """
+    itemsize = dtype.itemsize
+    return (
+        owner[: owner.numel() // itemsize * itemsize]
+        .view(dtype)
+        .as_strided(shape, stride, offset)
+    )
 
 
 def map_tensor(
@@ -120,8 +141,12 @@ def empty_representation(
     return map_tensor(value, allocate, memo=memo)
 
 
-def materialize_meta_state(model: nn.Module) -> None:
-    """Allocate empty CPU state while retaining parameter ties and physical views."""
+def materialize_meta_state(
+    model: nn.Module,
+    *,
+    allocate: Callable[[int], torch.Tensor] | None = None,
+) -> None:
+    """Supply CPU owners for meta state, preserving ties and physical views."""
     owners: dict[int, torch.Tensor] = {}
     memo: dict[int, Any] = {}
     like = torch.empty(0, device="cpu")
@@ -129,6 +154,11 @@ def materialize_meta_state(model: nn.Module) -> None:
         for registry in (module._parameters, module._buffers):
             for name, value in registry.items():
                 if value is not None and value.is_meta:
+                    if allocate is not None:
+                        for _, component in tensor_components(value):
+                            storage = component.untyped_storage()
+                            if storage._cdata not in owners:
+                                owners[storage._cdata] = allocate(storage.nbytes())
                     cast(dict[str, torch.Tensor | None], registry)[name] = (
                         empty_representation(value, like, owners=owners, memo=memo)
                     )

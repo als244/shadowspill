@@ -35,15 +35,19 @@ branch anywhere asking what kind of memory a pool has**, and the two kinds the
 runtime implements are registered exactly as a kind from a loaded library is,
 so one lookup resolves both.
 
-Three kinds exist today. The runtime implements the first two; the third comes
-from a library the runtime does not load and does not link, and is reached by
-the same lookup as the others.
+Four kinds ship today. The runtime implements the first two; remote and SSD
+come from extension libraries registered by the caller. The runtime does not
+load or link those libraries; the same lookup reaches all four.
 
 | kind | `acquire` | `release` |
 |---|---|---|
 | device | the backend's `allocate_device` | `free_device` |
 | pinned host | an anonymous private mapping the pool makes itself, page-aligned and untouched by the C allocator, which the backend then registers with `register_host_memory` so the provider can copy from it asynchronously | unregisters, then unmaps, in that order |
 | remote | a peer allocates and registers the region; what comes back is an address in *its* space | the peer frees it |
+| SSD | a preallocated, unlinked direct-I/O file and a non-dereferenceable address token | closes the file and releases the token and bounded state-I/O scratch |
+
+SSD setup, staging limits and lifecycle are described in the
+[C extension guide](../c/ssd.md) and [Python API](../python/api/ssd.md).
 
 Frees and unregistrations carry the byte count, so the backend keeps no size
 table.
@@ -95,12 +99,17 @@ the caller, so the host is never asked for the whole of it beside the pool about
 to hold it. That is the import a checkpoint takes, and the reason there is no
 second mechanism here to describe.
 
-Filling through the import rests on the pool handing out memory for someone
-else to write, which a pool on another machine cannot do. There the same import
-runs the other way round -- filled on the host, then imported -- and costs
-nothing extra, because such a pool keeps a host copy of its state for as long
-as it holds it. Every kind of pool is reached the same way; only which comes
-first differs.
+Addressable pools are filled in place. For non-addressable pools, such as
+remote memory and SSD, the PyTorch adapter keeps checked tensor metadata and
+stages the storage roots touched by each initialization operation. Writes are
+published through the pool's `write` entry, then scratch is reused. It does not
+retain a complete host copy. An initializer that touches every parameter at
+once can still need large scratch; in-place, per-module initialization bounds
+that cost by the tensors used together.
+
+Explicit exports produce CPU copies when the caller asks for them. Releasing
+imported state does not export it. Checkpoint save streams objects into a
+separate file; the temporary SSD pool itself is not a checkpoint.
 
 Everything else a plan owns is created in a pool and never leaves it.
 Gradients, activations and workspaces are runtime objects created in a pool,
@@ -123,7 +132,9 @@ numbers named for those roles would belong to the plan, not here.
 
 Runtime construction precedes workload-state construction: the runtime first
 creates every configured pool and calibrates each route using ranges from
-those actual pools, then workload state is constructed and imported. That
+those actual pools, then workload state is allocated in those pools and
+initialized, or imported from existing values. Metadata-only model construction
+may precede import. That
 keeps a large spill pool's physical pages, and the DMA mapping a pinned one
 takes, independent of earlier anonymous model allocations, and gives planning a
 transfer profile measured on the memory the step will use.

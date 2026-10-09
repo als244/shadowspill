@@ -77,6 +77,7 @@ def build_forward(
     )
     profiled = profile_forward_tasks(
         captured,
+        runtime=memory.runtime,
         plan_id=memory.plan_id,
         allocation_probe_seeds=allocation_probe_seeds,
         allocation_probe_repetitions=allocation_probe_repetitions,

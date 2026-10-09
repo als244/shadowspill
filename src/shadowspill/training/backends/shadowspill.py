@@ -11,8 +11,8 @@ from typing import Any, Literal, Self
 import torch
 from torch import nn
 
+from shadowspill.memory import SpillPool, pinned_host, transfer_route
 from shadowspill.memory import device as device_pool
-from shadowspill.memory import pinned_host, transfer_route
 from shadowspill.planner import SearchOptions, StepDataOrdering
 from shadowspill.pytorch import (
     Runtime,
@@ -41,7 +41,8 @@ class ShadowSpill:
         self,
         *,
         execution_gib: float,
-        spill_gib: float,
+        spill_gib: float | None = None,
+        spill_pool: SpillPool | None = None,
         device: str | int | torch.device | None = "auto",
         artifact_store: str | Path | None = None,
         search_options: SearchOptions | None = None,
@@ -55,9 +56,19 @@ class ShadowSpill:
         control_group: Any = None,
         host_headroom_gib: float = 2.0,
         preparation_timeout: float = 1800.0,
+        calibrate: bool = True,
     ) -> None:
         self.device = resolve_device(device)
-        self.budget = (int(execution_gib * GIB), int(spill_gib * GIB))
+        if spill_pool is None:
+            if spill_gib is None:
+                raise ValueError("supply spill_gib or spill_pool")
+            spill_pool = pinned_host(capacity=int(spill_gib * GIB))
+        spill_bytes = spill_pool.capacity if spill_gib is None else int(spill_gib * GIB)
+        if not 0 < spill_bytes <= spill_pool.capacity:
+            raise ValueError("spill_gib must be positive and fit spill_pool.capacity")
+        self.spill_pool = spill_pool
+        self.budget = (int(execution_gib * GIB), spill_bytes)
+        self.calibrate = calibrate
         self.artifact_store = artifact_store
         self.search_options = search_options
         self.profiling_options = profiling_options
@@ -86,6 +97,7 @@ class ShadowSpill:
             control_group=self.control_group,
             host_headroom_bytes=self.host_headroom_bytes,
             preparation_timeout=self.preparation_timeout,
+            calibrate=self.calibrate,
             pools={
                 "execution": device_pool(
                     physical_capacity=self.budget[0],
@@ -93,7 +105,7 @@ class ShadowSpill:
                     external_headroom=self.external_headroom_bytes,
                     reject_overbudget=self.reject_overbudget,
                 ),
-                "spill": pinned_host(capacity=self.budget[1]),
+                "spill": self.spill_pool,
             },
             routes={
                 "fetch": transfer_route(source="spill", destination="execution"),
@@ -120,19 +132,41 @@ class ShadowSpill:
         return bound
 
     def _import(
-        self, model: nn.Module, distributed: Distributed | None = None
+        self,
+        model: nn.Module,
+        distributed: Distributed | None = None,
+        *,
+        initialize: Callable[[nn.Module], None] | None = None,
     ) -> nn.Module:
         if self.runtime is None:
             raise RuntimeError("enter the ShadowSpill context before preparing runners")
         imported = self._models.get(model)
         if imported is None:
             imported = import_model_state(
-                model, runtime=self.runtime, pool="spill", distributed=distributed
+                model,
+                runtime=self.runtime,
+                pool="spill",
+                distributed=distributed,
+                initialize=initialize,
             )
             self._models[model] = imported
             self._models[imported] = imported
             self._owned_models.append(imported)
         return imported
+
+    def initialize_model(
+        self, model: nn.Module, initialize: Callable[[nn.Module], None]
+    ) -> nn.Module:
+        """Run setup on pool-owned state, before capture or profiling."""
+        if model in self._models:
+            # Shared evaluation runners already use the imported model.
+            from shadowspill.pytorch.state.initialization import pool_values
+
+            assert self.runtime is not None
+            with pool_values(self.runtime):
+                initialize(self._models[model])
+            return self._models[model]
+        return self._import(model, initialize=initialize)
 
     def _planning_args(self) -> dict[str, Any]:
         return dict(

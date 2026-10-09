@@ -11,7 +11,11 @@ from typing import Any
 
 import torch
 
-from shadowspill.pytorch.representations import map_tensor, tensor_components
+from shadowspill.pytorch.representations import (
+    map_tensor,
+    storage_view,
+    tensor_components,
+)
 from shadowspill.runtime import (
     MemoryPool,
     Runtime,
@@ -50,6 +54,7 @@ def import_tensors(
     release_source: bool,
     owning_plan: int | None = None,
     _allow_in_progress_plan: bool = False,
+    _initialize: bool = True,
 ) -> PersistentState:
     """Copy unique CPU storages into authoritative runtime-pool objects.
 
@@ -73,6 +78,7 @@ def import_tensors(
             runtime=runtime,
             pool=pool,
             _allow_in_progress_plan=_allow_in_progress_plan,
+            _initialize=_initialize,
         )
     )
     try:
@@ -91,15 +97,21 @@ def import_tensors(
             )
             for item in separate:
                 item.frontend_storage_is_separate = False
-        # A pool this process cannot address keeps its storages separate, and
-        # `release_source` goes unhonoured: releasing the frontend's copy would
-        # leave the framework holding an address that faults on the first read.
-        # Nothing further is needed for that to be correct -- a separate
-        # storage is already copied into its object when a plan adopts it and
-        # back out when the plan is done, and both of those go through the
-        # kind's `write` and `read`. It costs a host copy of whatever state the
-        # framework holds, which is the price of the framework being able to
-        # see values that live on another machine.
+        elif release_source and separate:
+            # Scalar optimizer counters can participate in Python control flow
+            # during discovery. Their few bytes remain ordinary CPU values.
+            payloads = [
+                item
+                for item in separate
+                if item.size_bytes > 64 or any(view.shape for view in item.views)
+            ]
+            if payloads:
+                torch.ops.shadowspill._release_cpu_storages(
+                    [item.anchor for item in payloads]
+                )
+            for item in payloads:
+                item.frontend_storage_is_separate = False
+                item.unbacked = True
         state = PersistentState(
             target=target,
             pool=pool,
@@ -170,22 +182,11 @@ def import_then_fill(
     owning_plan: int | None = None,
     _allow_in_progress_plan: bool = False,
 ) -> PersistentState:
-    """Import ``tensors`` into ``pool``, then let ``fill`` write their values.
+    """Allocate pool state first, then initialize through ordinary tensor ops.
 
-    Importing first is what makes this cheap: the target's storages become
-    the pool, so ``fill`` writes straight into it and the values never occupy
-    ordinary host memory. The storages need hold nothing yet, and then they
-    occupy none either: memory that was allocated and never written is not
-    committed, so reading it into the pool adds nothing to the host but the
-    pool.
-
-    That ordering depends on the import being able to hand the storages a
-    pool address. Where it cannot, the storages stay the target's own and
-    ``fill`` would write into them rather than into the pool, leaving the pool
-    holding what the target happened to contain at import. So the order is
-    reversed: fill first, import after, which copies once and is correct
-    either way -- and costs nothing extra, because such a pool keeps a host
-    copy of its state regardless.
+    Addressable pools are written directly. Other pools stage only the roots
+    touched by the current operation and publish its mutations immediately.
+    No uninitialized source bytes are copied into the pool.
 
     ``fill`` has to write into the tensors it is given. One it points at new
     storage instead would take its values with it and leave the pool holding
@@ -203,31 +204,38 @@ def import_then_fill(
             release_source=True,
             owning_plan=owning_plan,
             _allow_in_progress_plan=_allow_in_progress_plan,
+            _initialize=False,
         )
 
-    selected = _validate_pool(
-        runtime, pool, allow_in_progress_plan=_allow_in_progress_plan
-    )
-    if not selected.addressable:
-        fill()
-        return adopt()
     state = adopt()
-    fill()
-    leases = {item.pool_pointer for item in state.storages}
-    moved = [
-        item.name
-        for item in named
-        for _, tensor in tensor_components(item.tensor)
-        if tensor.untyped_storage().nbytes()
-        and int(tensor.untyped_storage().data_ptr()) not in leases
-    ]
-    if moved:
-        raise RuntimeConfigurationError(
-            f"filling {', '.join(moved[:4])}{' and more' if len(moved) > 4 else ''} "
-            "gave it new storage rather than writing into the storage it was "
-            "given, so its values never reached the pool; write in place "
-            "(copy_, fill_, zero_)"
-        )
+    from .initialization import pool_values
+
+    try:
+        with pool_values(runtime):
+            fill()
+        leases = {item.storage_identity for item in state.storages}
+        moved = [
+            item.name
+            for item in named
+            for _, tensor in tensor_components(item.tensor)
+            if tensor.untyped_storage().nbytes()
+            and int(tensor.untyped_storage()._cdata) not in leases
+        ]
+        if moved:
+            raise RuntimeConfigurationError(
+                f"filling {', '.join(moved[:4])}"
+                f"{' and more' if len(moved) > 4 else ''} "
+                "gave it new storage rather than writing into the storage it was "
+                "given, so its values never reached the pool; write in place "
+                "(copy_, fill_, zero_)"
+            )
+        refresh_persistent_state(runtime, target)
+    except BaseException:
+        for item in state.storages:
+            for view in item.views:
+                view.tensor.data = torch.empty(0, dtype=view.tensor.dtype)
+        release_persistent_tensors(target, runtime=runtime)
+        raise
     return state
 
 
@@ -259,6 +267,7 @@ def register_tensor_storages(
     runtime: Runtime,
     pool: str,
     _allow_in_progress_plan: bool = False,
+    _initialize: bool = True,
 ) -> tuple[PersistentStorage, ...]:
     """Copy unique source storages into newly registered runtime objects.
 
@@ -294,7 +303,9 @@ def register_tensor_storages(
                     pool_id=selected_pool.pool_id,
                     retain_spill_copy=True,
                     initially_resident=True,
-                    source_address=int(anchor.untyped_storage().data_ptr()),
+                    source_address=(
+                        int(anchor.untyped_storage().data_ptr()) if _initialize else 0
+                    ),
                 ),
                 f"import persistent object {object_id}",
             )
@@ -447,6 +458,7 @@ def export_tensors(
         )
     for item in state.storages:
         item.frontend_storage_is_separate = True
+        item.unbacked = False
     _restore_tensor_views(state)
     if release_runtime:
         for item in state.storages:
@@ -520,10 +532,18 @@ def read_state(
     return result
 
 
-def _storage_bytes(item: PersistentStorage, *, runtime: Runtime) -> torch.Tensor:
+def _storage_bytes(
+    item: PersistentStorage,
+    *,
+    runtime: Runtime,
+    owner: torch.Tensor | None = None,
+) -> torch.Tensor:
     """Return one root's bytes, copied out of the pool."""
 
-    owner = torch.empty(item.size_bytes, dtype=torch.uint8, device="cpu")
+    if owner is None:
+        owner = torch.empty(item.size_bytes, dtype=torch.uint8, device="cpu")
+    if owner.dtype is not torch.uint8 or owner.numel() < item.size_bytes:
+        raise ValueError("state read buffer is smaller than the stored object")
     _require_status(
         runtime_library().shadowspill_read_object(
             runtime._runtime_handle,
@@ -535,6 +555,22 @@ def _storage_bytes(item: PersistentStorage, *, runtime: Runtime) -> torch.Tensor
         f"read persistent object {item.current_object_id}",
     )
     return owner
+
+
+def read_tensor_value(runtime: Runtime, tensor: torch.Tensor) -> torch.Tensor:
+    """Read an inaccessible persistent view for one setup operation.
+
+    The returned value owns only this storage's bytes. Callers must release it
+    after copying; keeping it in graph metadata would retain the host payload.
+    Ordinary CPU tensors and addressable pool views need no copy.
+    """
+    item = registry_for(runtime).storage(int(tensor.untyped_storage()._cdata))
+    if item is None or not item.unbacked:
+        return tensor
+    owner = _storage_bytes(item, runtime=runtime)
+    return storage_view(
+        owner, tensor.dtype, tensor.shape, tensor.stride(), tensor.storage_offset()
+    )
 
 
 def persistent_state(runtime: Runtime, target: object) -> PersistentState | None:
@@ -724,7 +760,12 @@ def _storage_roots(
         storage_identity = int(storage._cdata)
         entry = grouped.get(storage_identity)
         if entry is None:
-            anchor = torch.empty(0, dtype=torch.uint8, device="cpu").set_(storage)
+            # Unlike set_(storage), these operations do not inspect data_ptr.
+            anchor = (
+                tensor.as_strided((0,), (1,), 0)
+                .view(torch.uint8)
+                .as_strided((storage.nbytes(),), (1,), 0)
+            )
             entry = (anchor, [])
             grouped[storage_identity] = entry
         entry[1].append(
@@ -742,11 +783,12 @@ def _storage_roots(
 def _restore_tensor_views(state: PersistentState) -> None:
     for storage in state.storages:
         for view in storage.views:
-            replacement = torch.empty(0, dtype=view.tensor.dtype, device="cpu").set_(
-                storage.anchor.untyped_storage(),
-                view.storage_offset,
+            replacement = storage_view(
+                storage.anchor,
+                view.tensor.dtype,
                 view.shape,
                 view.stride,
+                view.storage_offset,
             )
             replacement.requires_grad_(view.requires_grad)
             view.tensor.data = replacement

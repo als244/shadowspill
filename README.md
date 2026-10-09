@@ -49,6 +49,11 @@ with ShadowSpill(execution_gib=2, spill_gib=2) as backend:
         trainer.fit(data, steps=5, run_dir="runs/example")
 ```
 
+For large models, construct under `torch.device("meta")` and call
+`trainer.prepare(data[0], initialize=your_initializer)`. ShadowSpill allocates
+state in its spill pool before running the initializer, avoiding a full temporary
+CPU model. [SSD spill pools](docs/python/api/ssd.md) use bounded host staging.
+
 Use `trainer.step(data)` in a custom loop, or `Forward` for inference.
 The [training API](docs/python/api/training.md) covers microbatches, schedules,
 evaluation, checkpointing and alternate PyTorch execution. The lower-level

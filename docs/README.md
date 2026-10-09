@@ -6,7 +6,7 @@ A fixed-shape PyTorch forward or training step normally needs every value it
 touches resident at once, and that total is what decides whether the step runs
 at all. ShadowSpill makes the total a budget instead of a limit. It captures
 the step once, measures its compiled tasks, then decides for every value
-whether to keep it on the device, spill it to host memory and fetch it back, or
+whether to keep it on the device, move it to spill storage and fetch it back, or
 throw it away and recompute it — and when each of those should happen, so the
 copies overlap the compute that does not need them yet. It proves the answer
 fits the declared pools down to the byte offset, and hands back an ordinary
@@ -186,6 +186,8 @@ and the contract behind it.
 - [Frontend and lifecycle API](python/api/frontend.md) — `shadowspill.memory`
   and `shadowspill.pytorch`: the runtime, planning calls, planned callables,
   and state lifecycle.
+- [SSD spill storage](python/api/ssd.md) — temporary direct-I/O pools, bounded
+  host staging and initialization without a complete host model.
 - [Reusable planning artifacts](python/api/artifacts.md) — the immutable,
   content-addressed values planning is composed from.
 - [Diagnostics API](python/api/diagnostics.md) — the planning and step
@@ -200,8 +202,8 @@ and the contract behind it.
 
 ## C
 
-The C library `libshadowspill` (simulator, planner, and runtime) and the two
-pieces compiled separately: the backends and the PyTorch adapter. The
+The C library `libshadowspill` (simulator, planner, and runtime), plus separately
+compiled backends, pool/lane extensions, and the PyTorch adapter. The
 [C API guide](c/README.md) indexes this section and covers ABI use, ownership
 rules, and platforms.
 
@@ -213,6 +215,8 @@ rules, and platforms.
   transport implements, and how the runtime finds one.
 - [Pool memory contract](c/pool-memory.md) — where a pool's memory comes from:
   the pair a kind of memory implements, and how the runtime finds it.
+- [SSD pool and lanes](c/ssd.md) — direct-I/O storage, extension registration,
+  bounded host staging, synchronization and lifecycle.
 - [Planner C API](c/planner.md) — the planning problem in indexed form and the
   certification a schedule passes whichever search found it, through to fixed
   placement. Names no search.
@@ -285,6 +289,8 @@ These pages live beside the code they describe, outside `docs/`.
   gate in order and reports what each found.
 - [Numerical qualification](../qualification/numerical/README.md) — planned
   steps checked against PyTorch alone, compiled fullgraph without ShadowSpill.
+- [SSD numerical qualification](../qualification/README.md#ssd-numerical-qualification)
+  — the same cases and references using the SSD pool; opt-in.
 - [Full-model performance qualification](../qualification/performance/README.md)
   — throughput floors and simulator error on the large models.
 - [Remote qualification](../qualification/remote/README.md) — the numerical

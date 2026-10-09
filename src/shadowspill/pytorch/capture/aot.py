@@ -746,12 +746,10 @@ def _saved_input_view_provenance(
     # The occurrence-local reference is intentionally a real CPU tensor, so
     # construct its metadata-only view below Python dispatch.
     with torch._C._DisableTorchDispatch():
-        result = torch.empty(0, dtype=reference.dtype, device=reference.device)
-        result.set_(
-            reference.untyped_storage(),
-            view.offset_bytes // itemsize,
+        result = reference.as_strided(
             view.shape,
             view.stride,
+            view.offset_bytes // itemsize,
         )
     return TaskInputProvenance(
         source.role,
