@@ -98,11 +98,10 @@ void shadowspill_start_transfer_timing(
     ShadowSpillTransferState *transfer,
     uint64_t now
 ) {
-    const ShadowSpillSimulationDevice *device = &program->devices[transfer->device];
-    uint64_t latency = transfer->direction == SHADOWSPILL_TRANSFER_FETCH
-        ? device->fetch_latency_ns : device->evict_latency_ns;
+    /* Calibrated latency remains metadata; transfer timing uses bandwidth only.
+     * Source readiness, FIFO queueing and capacity waits still apply. */
     transfer->start_ns = now;
-    transfer->payload_start_ns = saturated_add(now, latency);
+    transfer->payload_start_ns = now;
     transfer->remaining_bytes = program->alias_size_bytes[transfer->alias];
     transfer->remaining_fraction = 0U;
     transfer->progress_ns = now;

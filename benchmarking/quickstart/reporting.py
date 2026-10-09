@@ -313,7 +313,7 @@ def print_breakdown(
         print(
             f"  {name} lane         {gb_s(solo_rate)} solo,"
             f" {gb_s(concurrent_rate)} concurrent assumed,"
-            f" latency {planned_latency_ns / 1e3:.0f} us"
+            f" latency {planned_latency_ns / 1e3:.0f} us (metadata only)"
             f"   (measured {gb_s(profile.bandwidth_bytes_per_second)} effective,"
             f" {gb_s(profile.solo_bandwidth_bytes_per_second)} solo,"
             f" latency {profile.latency_nanoseconds / 1e3:.1f} us)"

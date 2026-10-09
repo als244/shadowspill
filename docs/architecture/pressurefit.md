@@ -69,7 +69,8 @@ not contribute physical pressure or transfer actions.
 ### Machine facts
 
 For each execution device $d$, `SimulationConfig` supplies logical planning
-capacity $C_d$, fetch and evict bandwidth, and route latency. It also supplies
+capacity $C_d$ and fetch/evict bandwidths. Route latency is retained as
+calibration metadata and excluded from transfer-duration estimates. It also supplies
 the spill-pool capacity. The runtime calibrates transfer behavior; PressureFit
 only consumes the resulting values.
 

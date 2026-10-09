@@ -217,7 +217,7 @@
     cards.forEach(([k, v]) => { const c = document.createElement("div"); c.className = "card"; const kk = document.createElement("div"); kk.className = "k"; kk.textContent = k; const vv = document.createElement("div"); vv.className = "v"; vv.textContent = v; c.append(kk, vv); row.append(c); });
     root.append(row);
     const explanation = document.createElement("p"); explanation.className = "meta";
-    explanation.textContent = "Lane utilization is busy time / step time. Blended rates are bytes / busy time, including startup latency; the planned blend uses the simulation's overlap. Trace values omit any untimed transfers.";
+    explanation.textContent = "Lane utilization is busy time / step time. Blended rates are bytes / busy time. The planned blend uses simulated overlap and excludes per-transfer latency; trace rates use measured intervals. Trace values omit any untimed transfers.";
     root.append(explanation); document.getElementById("panels").prepend(root);
   }
 

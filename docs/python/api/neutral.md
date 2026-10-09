@@ -741,8 +741,9 @@ positive integer rates: `fetch_solo_bandwidth_bytes_per_second`,
 `fetch_concurrent_bandwidth_bytes_per_second`,
 `evict_solo_bandwidth_bytes_per_second`, and
 `evict_concurrent_bandwidth_bytes_per_second`. `fetch_latency_ns` and
-`evict_latency_ns` default to zero. Set solo and concurrent equal to request
-constant rates. Partial overlaps are integrated over the transfer's remaining
+`evict_latency_ns` default to zero and remain calibration metadata; the
+simulator ignores both when calculating transfer timing. Set solo and concurrent
+equal to request constant rates. Partial overlaps are integrated over the transfer's remaining
 bytes; see [simulation](../../architecture/simulation.md#solo-and-concurrent-bandwidth).
 
 ## `shadowspill.runtime`

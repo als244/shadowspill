@@ -735,7 +735,7 @@ Beyond the shared and store arguments:
 |---|---|---|---|
 | `example_inputs` | `Sequence[Any]` | required | One fixed example sequence, whose geometry fixes the callable's input signature. A leaf may be wrapped with `shared_input()`. |
 | `shared_outputs` | sequence of `SharedOutput` | `()` | Output leaves retained as runtime objects rather than copied out. |
-| `transfer_bandwidths` | `TransferBandwidths` \| `None` | `None` | Rates to price every copy at instead of the calibration the runtime measured, as `plan_program()` takes them. A calibration moves from run to run on one machine and the plan is keyed by what it was priced against, so a plan that has to be the one an earlier search chose is planned against the lanes that search planned against. Rates naming no latency keep the calibrated one. |
+| `transfer_bandwidths` | `TransferBandwidths` \| `None` | `None` | Rates to price every copy at instead of the calibration the runtime measured, as `plan_program()` takes them. A calibration moves from run to run on one machine and the plan is keyed by what it was priced against, so a plan that has to be the one an earlier search chose is planned against the lanes that search planned against. Rates naming no latency retain the calibrated metadata. The simulator ignores latency when timing transfers. |
 
 ```text
 shared_output(*path, retain_in) -> SharedOutput

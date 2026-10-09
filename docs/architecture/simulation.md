@@ -25,7 +25,7 @@ The model includes:
   need -- what it prices is occupancy, not transport. A copy that is eligible
   while the lane carries another records a `lane-busy` stall, so queueing is
   told apart from the waits a plan arranges for itself;
-- route latency and calibrated directional bandwidth;
+- calibrated solo and concurrent directional bandwidth;
 - object residency and task input readiness;
 - physical allocation deltas and reuse dependencies.
 
@@ -70,16 +70,19 @@ lane.
 
 Each device names four positive integer rates in bytes per second: fetch solo,
 fetch concurrent, evict solo, and evict concurrent. A pair of equal rates gives
-the fixed-rate model. The simulator charges each copy's latency once, then
-integrates its remaining bytes at the applicable rate. A queued copy, a copy
-waiting for its source, and a copy still in startup latency do not contend.
-Reverse lanes on different logical devices do not affect each other.
+the fixed-rate model. The simulator integrates remaining bytes at the applicable
+rate without adding per-transfer latency. Latency remains in calibration,
+configuration, and saved metadata, but neither simulation nor the planner's
+transfer-duration estimates use it. This applies to every route, including
+opening fetches and terminal writebacks. Queueing, source-readiness, and memory
+waits still apply. Queued or source-blocked copies do not contend. Reverse lanes
+on different logical devices do not affect each other.
 
 For example, a 100-byte fetch starts at 2 bytes/ns. An evict starts 25 ns later,
 when 50 fetch bytes remain. If the concurrent fetch rate is 1 byte/ns and the
 evict stays active, fetch finishes at 75 ns. If the evict finishes earlier,
 the remaining fetch bytes immediately return to the solo rate. Both directions
-are updated at starts, payload starts, and completions; overlap is a result of
+are updated at starts and completions; overlap is a result of
 the simulation, not an average fraction supplied by the caller.
 
 The C implementation preserves billionths of a byte across rate changes and

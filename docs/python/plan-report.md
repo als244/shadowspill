@@ -56,11 +56,13 @@ because no layout of them fit. The
 The bandwidths are worth one note: they are the calibrated transfer
 capabilities coarsened by their own magnitude, so two slightly different
 calibrations of the same machine reuse one stored plan. A bandwidth at or above
-half a gigabyte a second rounds to the nearest half, a slower one to the
-nearest tenth. A latency rounds to the nearest five microseconds, to the
-microsecond below five, and to coarser steps as it grows: fifty microseconds
+5 GB/s rounds to the nearest 0.5 GB/s; from 0.5 to below 5 GB/s, to the
+nearest 0.25 GB/s; below 0.5 GB/s, to the nearest 0.1 GB/s. These are decimal
+GB/s, and values below one quantum stay exact. A latency rounds to the nearest
+five microseconds, to the microsecond below five, and to coarser steps as it grows: fifty microseconds
 above a hundred, a hundred above five hundred, two hundred and fifty above a
-millisecond, a millisecond above ten. The raw calibration stays on
+millisecond, a millisecond above ten. Latency remains metadata and does not
+contribute to simulated transfer timing. The raw calibration stays on
 `report.transfer_capabilities`.
 
 ## Read the report from the outside in
@@ -112,8 +114,9 @@ print(report.transfer_capabilities)
 `fetch_profile` is the measured spill-to-execution direction;
 `evict_profile` is execution-to-spill. Runtime initialization measures each
 direction alone and during simultaneous bidirectional traffic. Planning uses
-the conservative concurrent-direction rates and route latency retained in
-`transfer_capabilities`.
+the solo rate while the opposite lane is idle and the concurrent rate while
+both move bytes. Latency retained in `transfer_capabilities` is metadata;
+the simulator adds no per-transfer latency.
 
 The predicted device peak is the simulator's admitted physical peak, not just
 the sum of logical objects. `fixed_slab_bytes` is process-persistent

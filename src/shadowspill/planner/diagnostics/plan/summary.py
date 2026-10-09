@@ -39,17 +39,13 @@ class PlanSummary:
     #: so this is the denominator a recomputation count is against; the rest
     #: are forced, by structure or by their options keeping the same bytes.
     flexible_group_count: int
-    #: Scheduled transfer traffic, summed from the simulation's transfer
-    #: intervals, and the per-direction calibration the simulator planned
-    #: against, from the result's simulation config: the coarsened rate and
-    #: per-transfer latency each lane was priced with, which is what a reader
-    #: comparing a plan against a measurement needs. Measured calibration
-    #: lives on the report's transfer profiles; a result does not know it, and
-    #: coarsening a profile here would answer for the wrong calibration
-    #: whenever a plan came from the store.
+    #: Scheduled traffic and coarsened calibration from this plan's config.
+    #: Rates affect simulated timing; latency is retained only as metadata.
+    #: Raw measurements live on the report's transfer profiles. Coarsening
+    #: those here would use the wrong calibration for a stored plan.
     transfer_bytes_fetched: int = 0
     transfer_bytes_evicted: int = 0
-    #: Lane occupancy from the simulated intervals, including startup latency.
+    #: Lane occupancy from simulated intervals; no per-transfer latency charge.
     fetch_busy_ns: int = 0
     evict_busy_ns: int = 0
     #: The most the spill pool ever holds while the step runs, as the
@@ -81,7 +77,7 @@ class PlanSummary:
 
     @property
     def fetch_blended_bandwidth_bytes_per_second(self) -> float | None:
-        """Bytes / simulated fetch busy time, including startup latency."""
+        """Bytes / simulated fetch busy time, excluding per-transfer latency."""
         return (
             self.transfer_bytes_fetched * 1e9 / self.fetch_busy_ns
             if self.fetch_busy_ns
@@ -90,7 +86,7 @@ class PlanSummary:
 
     @property
     def evict_blended_bandwidth_bytes_per_second(self) -> float | None:
-        """Bytes / simulated evict busy time, including startup latency."""
+        """Bytes / simulated evict busy time, excluding per-transfer latency."""
         return (
             self.transfer_bytes_evicted * 1e9 / self.evict_busy_ns
             if self.evict_busy_ns

@@ -158,4 +158,4 @@ plan was made for. `TransferBandwidths` records `fetch_solo_bytes_per_second`,
 the measurement came from. The latencies are optional so a record written
 without them still reads, and so an override that names only bandwidths leaves
 a program's own latencies in place. Both participate in annotated-plan
-identity.
+identity as calibration metadata; simulated transfer timing ignores them.

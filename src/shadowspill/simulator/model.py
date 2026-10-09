@@ -21,7 +21,7 @@ def _require_positive(value: int, name: str) -> None:
 
 @dataclass(frozen=True, slots=True)
 class DeviceSimulationConfig:
-    """Capacity and transfer calibration for one logical device."""
+    """Capacity and rates; latency is retained as metadata, not a timing cost."""
 
     device_id: str
     capacity_bytes: int
