@@ -1,7 +1,7 @@
 # The C tree
 
 `csrc/` builds one library, `libshadowspill`, plus the pieces that are
-genuinely pluggable: the device backends, the network extension, the daemon
+pluggable: the device backends, the network and SSD extensions, the daemon
 that holds the far side of it, and the PyTorch adapter.
 
 ```text
@@ -56,8 +56,9 @@ csrc/
 │       ├── telemetry/        the trace rings, the profiler, the statistics
 │       └── worker/           one action handled, dispatched, completed
 ├── backends/              dlopened device backends: mock and provider
-├── network/               pool kinds, and later lanes, whose memory is on
+├── network/               remote pool and RDMA lanes, whose memory is on
 │   └── src/               another machine; loaded the way a backend is
+├── ssd/                   temporary direct-I/O pool and staged fetch/evict lanes
 ├── daemon/                the far side: a process that holds registered
 │   └── src/               memory and answers two questions about it
 └── adapter/pytorch/       narrow allocator/storage bridge into PyTorch
@@ -82,9 +83,8 @@ separate because it links libtorch, which planning-only callers must not be
 made to carry. Both keep their own ABI version, being genuinely compiled
 elsewhere.
 
-`network/` is separate for the first of those reasons and not the second. It
-implements contracts the runtime declares -- a pool's memory today, a lane
-later -- and exports one symbol, a descriptor read by whatever loads it.
+`network/` implements the runtime's pool-memory and lane contracts and exports
+one symbol, a descriptor read by whatever loads it.
 **`libshadowspill` does not link it and does not load it**: the dlopen happens
 one layer up, where a backend's already does, so the library that plans and
 executes a step still links libc and nothing else. Nothing in `src/runtime/`
@@ -92,9 +92,14 @@ may include `network/internal.h`, and nothing does.
 
 `daemon/` links ibverbs and **not `libshadowspill`**, which is the point: the
 far side of a remote pool is not a second ShadowSpill but a process that owns a
-registered region. It is built only where verbs headers are found, while
-`network/` is built unconditionally -- the local side is a TCP client until
-there is a lane. See [its README](daemon/README.md) for the protocol.
+registered region. Both it and `network/` build only where verbs headers and
+libraries are available. See [its README](daemon/README.md) for the protocol.
+
+`ssd/` uses the same extension contract. On Linux it builds a temporary file
+pool plus direct-I/O lanes, with bounded pinned staging and Linux AIO syscalls;
+it needs no `libaio` or GPU SDK. Its disk worker never invokes a GPU API.
+The public configuration is `include/shadowspill/ssd.h`; see the
+[SSD C API](../docs/c/ssd.md) for registration, ownership and synchronization.
 
 `src/common/platform.h` holds what the library asks of the operating system
 that POSIX and Windows spell differently: a monotonic clock, a thread yield, a

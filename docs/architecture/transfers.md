@@ -26,7 +26,8 @@ What matters here is what a route holds: a queue, a stream, and the lane
 resolved from its two pools' kinds at create. The worker dispatches every
 transfer through that lane and makes no backend call of its own. The route's
 stream is where the events that order a transfer against compute are recorded,
-and the runtime is its only writer.
+and the runtime calling thread, including lane methods it invokes, is its only
+writer. Independent I/O workers never enqueue device work there.
 
 ## Calibration
 
@@ -41,6 +42,16 @@ lane whose `copy` enqueues work per chunk makes issuing a batch cost real time:
 drained in turn, the first direction's measurement window would contain the
 second's dispatch and report a rate that low by however long that took. Planning consumes that immutable profile and never
 benchmarks a route itself; see the [runtime C API](../c/runtime.md).
+
+The runtime initializes non-addressable source ranges before timing, so SSD
+reads measure initialized data rather than unwritten extents. A lane owns no
+separate calibration policy. Probe sizes and repetition counts are configurable
+through the C and Python runtime APIs; smaller probes reduce setup writes but
+may change the measured rate. They do not change production transfer sizes.
+
+The simulator currently uses those fixed effective rates throughout a step.
+Solo measurements remain diagnostic; it does not switch rates dynamically when
+the opposite lane becomes idle.
 
 ## Dispatch
 

@@ -16,6 +16,7 @@ the inventory and the reference index.
 | Backend | [`backend.h`](../../csrc/include/shadowspill/backend.h) | [Backends](backends.md) | The driver-level call table a provider shared object implements, the two symbols it exports, and what a new provider directory has to build |
 | Lane | [`runtime/lane.h`](../../csrc/include/shadowspill/runtime/lane.h), [`runtime/lane_base.h`](../../csrc/include/shadowspill/runtime/lane_base.h) | [Lane contract](lanes.md) | What moves bytes between two pools: the table a transport implements, the struct it embeds, the obligation it is under, and how a route resolves one from its two pools' kinds |
 | Pool memory | [`runtime/pool_memory.h`](../../csrc/include/shadowspill/runtime/pool_memory.h) | [Pool memory contract](pool-memory.md) | Where a pool's region comes from: the acquire/release pair a kind of memory implements, and why nothing reads through the address it returns |
+| SSD extension | [`ssd.h`](../../csrc/include/shadowspill/ssd.h), [`runtime/library.h`](../../csrc/include/shadowspill/runtime/library.h) | [SSD pool and lanes](ssd.md) | Extension registration, temporary direct-I/O storage, bounded host staging, stream ordering, cleanup and calibration |
 | Planner | [`planner.h`](../../csrc/include/shadowspill/planner.h) | [Planner API](planner.md) | The planning question in indexed form and the certification a schedule passes whichever search found it: exact schedule admission, the admission operations a schedule implies, the lease lifetimes those resolve to, and fixed-offset placement |
 | PressureFit | [`pressurefit/pressurefit.h`](../../csrc/include/shadowspill/pressurefit/pressurefit.h) | [PressureFit API](pressurefit.md) | The search that ships: its options and the three policy axes, its result and per-candidate diagnostics, its preflight, and the shared placed-plan record |
 | Simulator | [`simulator.h`](../../csrc/include/shadowspill/simulator.h) | [Simulator API](simulator.md) | The one call that times an already selected schedule, and the intervals, peaks, stalls and capacity shortfalls it reports |
@@ -130,3 +131,8 @@ device-provider SDK. Provider code is confined to `csrc/backends/` and the
 PyTorch adapter, which stay separate libraries for that reason. See the
 [C tree guide](../../csrc/README.md) for source layout and build
 dependencies.
+
+Pool/lane extensions compile separately against the runtime's public contracts
+and share `SHADOWSPILL_ABI_VERSION`. The Linux-only SSD extension uses direct
+I/O and AIO syscalls without a GPU SDK; the network extension requires ibverbs.
+Their platform requirements are separate from those of the neutral core.

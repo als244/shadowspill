@@ -72,7 +72,7 @@ return. So a handler that blocks does not delay the exit; it prevents it. The
 process stays alive with every thread parked, and a parent waiting on it waits
 forever.
 
-**So the exit path never waits.** The adapter registers its handler with
+**So the exit path skips normal work-completion waits.** The adapter registers its handler with
 `on_exit` rather than `atexit`, which hands it the exit status, and the handler
 abandons the runtime instead of closing it. Abandoning skips three things that
 can block:
@@ -87,8 +87,11 @@ can block:
 what the runtime owns: every route's lane and stream, both event pools, the
 transfer profiles, and every memory pool -- each pool giving its region back
 through its own kind's `release`, whatever that kind requires. Nothing is
-leaked that a running program would have kept. The distinction is not what gets released; it is that
-nothing is waited for.
+leaked that a running program would have kept. Lane destructors stop their own
+workers without waiting for an unfinished GPU producer. A transport must still
+cancel or retire submitted OS I/O before releasing the memory it references;
+resource release is not a hard timeout guarantee against a failed driver or
+filesystem.
 
 **What it reports.** The handler writes one line to stderr naming the exit
 status, how many actions and retirements were outstanding, and whether a

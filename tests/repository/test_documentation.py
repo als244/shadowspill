@@ -72,6 +72,7 @@ _PUBLIC_C_REFERENCES = {
 }
 
 _REQUIRED_SIGNATURES = {
+    "src/shadowspill/ssd.py:ssd",
     "src/shadowspill/pytorch/api.py:build_step_programs",
     "src/shadowspill/pytorch/step_search/__init__.py:plan_step_search",
     "src/shadowspill/pytorch/api.py:plan_forward",
