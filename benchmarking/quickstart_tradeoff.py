@@ -405,7 +405,7 @@ def render_figure(rows, reference, unit_label, args):
     for key, color, label, style in (
         ("effective_compute_pct", "backward", "Effective compute", "-"),
         ("recompute_pct", "recompute", "Recompute", "-"),
-        ("idle_pct", "red", "Idle", ":"),
+        ("idle_pct", "red", "Stalled", ":"),
     ):
         ax = share_top if key == "effective_compute_pct" else share_low
         values = [r[key] for r in rows]
@@ -461,7 +461,7 @@ def render_figure(rows, reference, unit_label, args):
     fig.text(
         0.574,
         0.90,
-        "Simulated step share · idle includes final writeback",
+        "Simulated step share · stalled includes final writeback",
         color=COLORS["muted"],
         fontsize=9.5,
         va="top",
