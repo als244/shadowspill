@@ -35,6 +35,8 @@ from shadowspill.pytorch.planning.common import (
     validate_cpu_model,
 )
 from shadowspill.pytorch.representations import detached_representation
+from shadowspill.pytorch.state.initialization import pool_values
+from shadowspill.runtime import Runtime
 from shadowspill.runtime.plan import PlanMemory
 
 from ...guards import InputSignature, capture_input_signature
@@ -104,6 +106,7 @@ def capture_forward_graph(
             timer=timer,
             shared_outputs=shared_outputs,
             pool_names=tuple(memory.runtime.pools),
+            runtime=memory.runtime,
         )
     return ForwardCaptureArtifacts(
         signature,
@@ -189,6 +192,7 @@ def _capture_partitioned_forward(
     timer: PlanningTimer,
     shared_outputs: Sequence[SharedOutput],
     pool_names: tuple[str, ...],
+    runtime: Runtime,
 ) -> tuple[
     nn.Module,
     ExportCapture,
@@ -226,7 +230,7 @@ def _capture_partitioned_forward(
             detached_representation(value) if isinstance(value, torch.Tensor) else value
             for value in flat_runtime_arguments(capture, model, cpu_inputs)
         )
-        with fake_mode, torch.no_grad():
+        with pool_values(runtime), fake_mode, torch.no_grad():
             partitioned = partition_export(
                 capture,
                 fake_model,

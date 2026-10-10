@@ -35,6 +35,7 @@ from shadowspill.pytorch.planning.common import (
     estimate_spill_reservation,
     validate_cpu_model,
 )
+from shadowspill.pytorch.state.initialization import pool_values
 from shadowspill.runtime.plan import PlanMemory
 
 from ...contracts import (
@@ -105,18 +106,19 @@ def capture_training_graphs(
             stores=stores,
             timer=timer,
         )
-        partitioned = _partition_training_graphs(
-            model,
-            captures,
-            cpu_inputs,
-            fake_mode=fake_mode,
-            partition=partition,
-            stores=stores,
-            timer=timer,
-            retention=retention,
-            grad_dtype=grad_dtype,
-            round_accumulation_once=round_accumulation_once,
-        )
+        with pool_values(memory.runtime):
+            partitioned = _partition_training_graphs(
+                model,
+                captures,
+                cpu_inputs,
+                fake_mode=fake_mode,
+                partition=partition,
+                stores=stores,
+                timer=timer,
+                retention=retention,
+                grad_dtype=grad_dtype,
+                round_accumulation_once=round_accumulation_once,
+            )
         with timer.measure("storage_layout_lowering"):
             layout = lower_training_storage_layout(
                 fake_model, captures, device_ordinal=device_ordinal

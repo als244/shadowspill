@@ -345,10 +345,22 @@ class _TrainingTaskEmitter:
         dependencies: tuple[str, ...],
         metadata_digest: str | None,
     ) -> TaskSpec:
+        contract = self.profiles.contract(item.pair.backward)
+        roots = {view.leaf_index: view.root_id for view in contract.output_views}
+        retained = {roots[slot.leaf_index] for slot in item.contributions}
+        # A backward can return gradients that the surrounding program does not
+        # consume. Their allocations still exist during the call: charge them
+        # as workspace, unless another retained output shares the same root.
+        discarded = tuple(
+            view.leaf_index
+            for view in contract.output_views
+            if view.root_id not in retained
+        )
         transient_leaves = tuple(
             dict.fromkeys(
                 (
                     *self.profiles.replacement_output_leaves(item.pair.backward),
+                    *discarded,
                     *(
                         slot.leaf_index
                         for slot in item.contributions
@@ -357,7 +369,7 @@ class _TrainingTaskEmitter:
                 )
             )
         )
-        mutation_bytes = self.profiles.additional_workspace_for_outputs(
+        transient_bytes = self.profiles.additional_workspace_for_outputs(
             item.pair.backward,
             transient_leaves,
             metadata_digest,
@@ -372,7 +384,7 @@ class _TrainingTaskEmitter:
             ResourceSpec(self.device_id, ResourceKind.COMPUTE),
             self.profiles.profile_id(
                 item.pair.backward,
-                mutation_bytes,
+                transient_bytes,
                 metadata_digest=metadata_digest,
             ),
             dependencies=dependencies,

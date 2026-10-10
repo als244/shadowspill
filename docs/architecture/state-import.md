@@ -59,6 +59,13 @@ shared storage, views and tied parameter identities. It rebuilds the logical
 wrapper for capture and state reads; the wrapper's nominal dtype does not
 determine its storage size. Nested representations use the same traversal.
 
+Setup-time operations also walk those components. Reading or converting a
+wrapper backed by an SSD/remote pool stages its physical roots; mutating it
+writes those roots back before staging is reused. Returned views refer to pool
+metadata, not temporary staging storage. Authentic control-value derivation
+during planning uses the same bounded access, so it does not require copying
+the whole model into host memory.
+
 All physical state must be named by that protocol. Its metadata must be
 serializable, data-free configuration. Allocations hidden in a library or a
 communication handle remain external memory. The layer's logical backward

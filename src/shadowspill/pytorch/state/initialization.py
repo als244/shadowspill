@@ -3,7 +3,8 @@
 Addressable pool tensors already work with ordinary PyTorch operations. For
 other pools this mode stages only the roots touched by the current operation,
 publishes mutations, and returns metadata views instead of retaining payloads.
-It is used during initialization, never in compiled training tasks.
+It is used during initialization and authentic control-value derivation at
+plan time, never in compiled training tasks.
 """
 
 from __future__ import annotations
@@ -15,7 +16,12 @@ import torch
 from torch.utils._python_dispatch import TorchDispatchMode
 from torch.utils._pytree import tree_leaves, tree_map
 
-from shadowspill.pytorch.representations import storage_view
+from shadowspill.pytorch.representations import (
+    is_wrapper,
+    map_tensor,
+    storage_view,
+    tensor_components,
+)
 from shadowspill.runtime import Runtime
 from shadowspill.runtime.abi import runtime_library
 
@@ -56,7 +62,7 @@ def empty_host_tensor(
 
 
 class pool_values(TorchDispatchMode):  # type: ignore[no-untyped-call]
-    """Temporarily make pool values available to a model's ordinary initializer.
+    """Temporarily make pool values available to setup-time PyTorch operations.
 
     Peak payload is the union of storage roots used by one operation, plus
     scratch that operation allocates. Initializers should operate on individual
@@ -109,6 +115,8 @@ class pool_values(TorchDispatchMode):  # type: ignore[no-untyped-call]
         originals: dict[tuple[Any, ...], torch.Tensor] = {}
 
         def read(value: Any) -> Any:
+            if isinstance(value, torch.Tensor) and is_wrapper(value):
+                return map_tensor(value, read)
             if not isinstance(value, torch.Tensor) or value.device.type != "cpu":
                 return value
             identity = int(value.untyped_storage()._cdata)
@@ -135,9 +143,10 @@ class pool_values(TorchDispatchMode):  # type: ignore[no-untyped-call]
                 continue
             value = args[index] if index < len(args) else kwargs.get(argument.name)
             mutated.update(
-                int(tensor.untyped_storage()._cdata)
+                int(component.untyped_storage()._cdata)
                 for tensor in tree_leaves(value)
                 if isinstance(tensor, torch.Tensor)
+                for _, component in tensor_components(tensor)
             )
         for identity in mutated & staged.keys():
             item, owner = staged[identity]
@@ -156,6 +165,8 @@ class pool_values(TorchDispatchMode):  # type: ignore[no-untyped-call]
         }
 
         def restore(value: Any) -> Any:
+            if isinstance(value, torch.Tensor) and is_wrapper(value):
+                return map_tensor(value, restore)
             if not isinstance(value, torch.Tensor):
                 return value
             item = by_staging.get(int(value.untyped_storage()._cdata))
