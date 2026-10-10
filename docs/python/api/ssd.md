@@ -129,7 +129,15 @@ Evict uses D2H copies into those slots, then direct SSD writes. Disk reads wait
 for their producer dependency too: ordering only the later H2D copy would allow
 a stale disk read. A slot becomes reusable after its previous consumer finishes.
 
-I/O workers never invoke GPU APIs. Device-visible counters bridge disk completion
+Read-ahead spans object boundaries. Available slots can start the next queued
+object's SSD reads while earlier H2D copies are pending. Queue depth bounds the
+whole lane's staging ring, without allocating an extra buffer per object. A
+separate readiness stream honors source dependencies independently of H2D
+progress; data copies and their completion events retain route order.
+
+I/O workers actively poll while transfers are pending and sleep when idle.
+This trades CPU time (up to one thread per active lane) for lower handoff
+latency. I/O workers never invoke GPU APIs. Device-visible counters bridge disk completion
 and stream waits without making an I/O worker wait behind its own GPU work.
 Fetch completion includes H2D completion; evict completion includes the SSD
 write. Errors propagate through the ordinary runtime failure path and unblock
@@ -157,9 +165,9 @@ LoRA, emphasize initialized direct-read measurements and actual step traces.
 Do not infer bandwidth from unwritten file extents, which may return zeros
 without reading the drive.
 
-The existing simulator uses fixed effective rates from concurrent calibration,
-with solo measurements retained for diagnostics. It does not dynamically switch
-rates when only one lane is busy. Smaller probe sizes reduce calibration writes
+The simulator prices solo and overlapping portions using their respective
+calibrated bandwidths. Request latency remains diagnostic metadata and does
+not add simulated transfer time. Smaller probe sizes reduce calibration writes
 and can affect the estimate; they do not change production transfers.
 
 A Chicago RTX 5090 / Samsung 990 PRO validation measured about 7.09 GB/s for

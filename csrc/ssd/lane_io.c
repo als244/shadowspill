@@ -135,8 +135,15 @@ static int collect(SSDLane *lane) {
 }
 
 static void pause_io(void) {
-    const struct timespec delay = {.tv_nsec = 20000L};
-    (void)nanosleep(&delay, NULL);
+    /* Active work polls completion words without a scheduler wake-up delay.
+       Idle lanes sleep on changed; they do not consume a core without work. */
+#if defined(__x86_64__) || defined(__i386__)
+    __asm__ volatile("pause" ::: "memory");
+#elif defined(__aarch64__)
+    __asm__ volatile("yield" ::: "memory");
+#else
+    atomic_signal_fence(memory_order_seq_cst);
+#endif
 }
 
 static int process(SSDLane *lane, SSDWork *work) {
@@ -174,8 +181,73 @@ static int process(SSDLane *lane, SSDWork *work) {
     return 0;
 }
 
+/* Read ahead across object boundaries. The global chunk number identifies
+   both a ring slot and the monotonically published I/O/device acknowledgments.
+   A slot is not reused until the HtoD stream acknowledges its previous owner.
+   Per-object source dependencies are opened on the separate readiness stream. */
+static void *fetch_io_thread(SSDLane *lane) {
+    uint64_t next_work = 0U, index = 0U, posted = 0U, completed = 0U;
+    (void)pthread_setname_np(pthread_self(), "ssd.fetch");
+    for (;;) {
+        pthread_mutex_lock(&lane->lock);
+        while (lane->retired == lane->accepted && !ssd_stopped(lane))
+            pthread_cond_wait(&lane->changed, &lane->lock);
+        const uint64_t accepted = lane->accepted;
+        pthread_mutex_unlock(&lane->lock);
+        if (ssd_stopped(lane)) return NULL;
+
+        while (next_work < accepted && posted - completed < lane->depth) {
+            pthread_mutex_lock(&lane->lock);
+            SSDWork work = lane->work[next_work % SSD_WORK_SLOTS];
+            pthread_mutex_unlock(&lane->lock);
+            if (ssd_word(lane, SSD_GATE) < work.sequence) break;
+            if (work.chunks == 0U && work.trace != NULL && work.trace->started == 0U)
+                work.trace->started = ssd_now();
+            if (index < work.chunks) {
+                const int status = post(lane, &work, index);
+                if (status < 0) goto fail;
+                if (status == 0) break;
+                ++index;
+                ++posted;
+            }
+            if (index == work.chunks) {
+                ++next_work;
+                index = 0U;
+            }
+        }
+
+        if (collect(lane) != 0) goto fail;
+        const uint64_t before = completed;
+        while (completed < posted && lane->landed[completed % lane->depth]) {
+            lane->landed[completed % lane->depth] = 0U;
+            ++completed;
+        }
+        if (completed != before) ssd_report(lane, SSD_IO, completed);
+
+        pthread_mutex_lock(&lane->lock);
+        while (lane->retired < accepted) {
+            SSDWork *work = &lane->work[lane->retired % SSD_WORK_SLOTS];
+            const uint64_t end = work->first_chunk + work->chunks;
+            /* next_work also distinguishes posted zero-byte objects. */
+            if (lane->retired >= next_work || completed < end ||
+                (work->trace != NULL && ssd_word(lane, SSD_DEVICE) < end)) break;
+            if (work->trace != NULL) work->trace->finished = ssd_now();
+            ssd_report(lane, SSD_DONE, work->sequence);
+            ++lane->retired;
+            pthread_cond_broadcast(&lane->changed);
+        }
+        pthread_mutex_unlock(&lane->lock);
+        pause_io();
+    }
+fail:
+    if (!atomic_load_explicit(&lane->stopping, memory_order_acquire))
+        ssd_lane_fail(lane);
+    return NULL;
+}
+
 void *ssd_io_thread(void *argument) {
     SSDLane *lane = argument;
+    if (!lane->writing) return fetch_io_thread(lane);
     (void)pthread_setname_np(pthread_self(), lane->writing ? "ssd.evict" : "ssd.fetch");
     for (;;) {
         pthread_mutex_lock(&lane->lock);

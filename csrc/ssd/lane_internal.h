@@ -23,6 +23,9 @@ typedef struct SSDLane {
     ShadowSpillLane base;
     SSDRegion *region;
     int writing;
+    /* Source readiness must not queue behind preceding fetch copies. */
+    ShadowSpillBackendStream readiness_stream;
+    int readiness_created;
     void *ring, *edges;
     uint64_t ring_bytes, reserved_bytes;
     uint32_t depth;
