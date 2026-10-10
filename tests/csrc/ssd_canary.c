@@ -123,6 +123,21 @@ int main(int argc, char **argv) {
     CHECK(backend.synchronize_stream(backend.state, stream[0]) == 0);
     CHECK(memcmp(expected, actual, (size_t)capacity) == 0);
 
+    /* Queue past the work-ring capacity, including empty and partial-sector
+       reads. Completion must retire in FIFO order while slots are reused. */
+    for (unsigned iteration = 0; iteration < 301; ++iteration) {
+        const uint64_t offset = (uint64_t)iteration * 673 % 65536;
+        const uint64_t bytes = iteration % 3 == 0 ? 0 : (
+            iteration % 3 == 1 ? 1 : 65537);
+        CHECK(fetch->copy(lanes[0], (char *)device + offset,
+                          (char *)base + offset, bytes, &handle) == 0);
+    }
+    CHECK(fetch->synchronize(lanes[0]) == 0);
+    CHECK(backend.copy_device_to_host(backend.state, actual, device,
+                                     capacity, stream[0]) == 0);
+    CHECK(backend.synchronize_stream(backend.state, stream[0]) == 0);
+    CHECK(memcmp(expected, actual, (size_t)capacity) == 0);
+
     /* Cross sector/chunk edges and repeatedly recycle both work and staging
        rings. Adjacent one-byte objects must survive the sector read/modify/write. */
     for (unsigned iteration = 0; iteration < 301; ++iteration) {
@@ -155,6 +170,34 @@ int main(int argc, char **argv) {
     ShadowSpillBackendStream producer;
     ShadowSpillBackendEvent dependency;
     CHECK(backend.allocate_signals(backend.state, 1, &gate, &gate_host) == 0);
+
+    /* Two small objects must occupy both slots while H2D is held. The third
+       must wait for slot consumption, even after those disk reads complete.
+       This checks read-ahead across objects and protects against slot reuse
+       based on disk completion alone. */
+    const uint64_t chunks_before = atomic_load(&lanes[0]->chunks);
+    CHECK(backend.wait_value(backend.state, stream[0], gate, 0, 1) == 0);
+    for (unsigned i = 0; i < 3; ++i) {
+        const uint64_t offset = (uint64_t)i * 32768;
+        CHECK(fetch->copy(lanes[0], (char *)device + offset,
+                          (char *)base + offset, 32768, &handle) == 0);
+    }
+    unsigned polls = 0;
+    const struct timespec poll_delay = {.tv_nsec = 1000000L};
+    while (atomic_load(&lanes[0]->chunks) < chunks_before + 2 && polls++ < 2000)
+        nanosleep(&poll_delay, NULL);
+    CHECK(atomic_load(&lanes[0]->chunks) == chunks_before + 2);
+    for (unsigned i = 0; i < 20; ++i) nanosleep(&poll_delay, NULL);
+    CHECK(atomic_load(&lanes[0]->chunks) == chunks_before + 2);
+    atomic_store_explicit((_Atomic uint64_t *)gate_host, 1, memory_order_release);
+    CHECK(fetch->synchronize(lanes[0]) == 0);
+    CHECK(atomic_load(&lanes[0]->chunks) == chunks_before + 3);
+    CHECK(backend.copy_device_to_host(backend.state, actual, device,
+                                     3 * 32768, stream[0]) == 0);
+    CHECK(backend.synchronize_stream(backend.state, stream[0]) == 0);
+    CHECK(memcmp(expected, actual, 3 * 32768) == 0);
+    atomic_store_explicit((_Atomic uint64_t *)gate_host, 0, memory_order_release);
+
     CHECK(backend.create_stream(backend.state, &producer) == 0);
     CHECK(backend.create_event(backend.state, &dependency, 0) == 0);
     CHECK(backend.wait_value(backend.state, producer, gate, 0, 1) == 0);

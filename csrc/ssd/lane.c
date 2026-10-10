@@ -21,6 +21,12 @@ void ssd_lane_fail(SSDLane *lane) {
 
 static int lane_wait(ShadowSpillLane *base, ShadowSpillBackendEvent event) {
     shadowspill_lane_counted(&base->waits, 1U);
+    SSDLane *lane = (SSDLane *)base;
+    if (!lane->writing && base->backend->wait_event(base->backend->state,
+            lane->readiness_stream, event) != 0) {
+        ssd_lane_fail(lane);
+        return -1;
+    }
     if (base->backend->wait_event(base->backend->state, base->stream, event) != 0) {
         ssd_lane_fail((SSDLane *)base);
         return -1;
@@ -36,8 +42,9 @@ static int in_range(ShadowSpillLaneRange range, const void *pointer, uint64_t by
 static int enqueue(SSDLane *lane, const SSDWork *work) {
     const ShadowSpillBackend *backend = lane->base.backend;
     const ShadowSpillBackendStream stream = lane->base.stream;
-    if (backend->write_value(backend->state, stream, lane->signals,
-                            SSD_GATE, work->sequence) != 0) return -1;
+    if (backend->write_value(backend->state,
+                            lane->writing ? stream : lane->readiness_stream,
+                            lane->signals, SSD_GATE, work->sequence) != 0) return -1;
     for (uint64_t index = 0; index < work->chunks; ++index) {
         const SSDPiece piece = ssd_piece(lane, work, index);
         const uint64_t number = work->first_chunk + index;
@@ -183,6 +190,8 @@ static void lane_destroy(ShadowSpillLane *base) {
         ssd_report(lane, SSD_DONE, lane->accepted);
     }
     const ShadowSpillBackend *backend = base->backend;
+    if (lane->readiness_created)
+        (void)backend->destroy_stream(backend->state, lane->readiness_stream);
     if (lane->signals != 0U) (void)backend->free_signals(backend->state, lane->signals);
     if (lane->registered)
         (void)backend->unregister_host_memory(backend->state, lane->ring, lane->ring_bytes);
@@ -233,6 +242,11 @@ static int lane_create(const ShadowSpillLane *base, void *configuration,
     lane->registered = 1;
     if (backend->allocate_signals(backend->state, SSD_SIGNALS, &lane->signals, &lane->words) != 0 ||
         ssd_io_create(lane) != 0) goto fail;
+    if (!lane->writing) {
+        if (backend->create_stream(backend->state, &lane->readiness_stream) != 0)
+            goto fail;
+        lane->readiness_created = 1;
+    }
     if (pthread_create(&lane->thread, NULL, ssd_io_thread, lane) != 0) goto fail;
     lane->thread_started = 1;
     *result = &lane->base;

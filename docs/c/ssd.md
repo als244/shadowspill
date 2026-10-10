@@ -98,9 +98,20 @@ D2H copies with SSD writes. A producer dependency gates the disk read itself,
 preventing stale reads before an earlier write finishes. A slot is reusable
 only after its consumer completes: H2D for fetch, disk write for evict.
 
-The runtime calling thread enqueues GPU operations on the route stream. The
-I/O worker never calls the GPU backend; it uses host-visible counters to
-publish disk progress and release stream waits. The event given to `signal`
+Fetch read-ahead spans queued objects: any free ring slot can hold the next
+object's chunk once its source dependency is ready. The configured queue depth
+bounds slots across the lane, not separately for each object. A separate
+readiness stream tracks those dependencies so disk reads do not wait behind
+previous objects' H2D copies. Device copies and completion events remain ordered
+on the route stream. Neither extra whole-object staging nor another ring is
+allocated.
+
+The runtime calling thread enqueues all GPU operations, including readiness
+events. The I/O worker never calls the GPU backend; it uses host-visible
+counters to publish disk progress and release stream waits. Workers actively
+poll while work is pending, avoiding scheduler sleep delays between chunks;
+they sleep on a condition variable when idle. Each active lane can use one
+CPU thread. The event given to `signal`
 covers the entire transfer. An I/O error latches runtime failure before
 releasing pending waits, so failed work cannot silently pass as successful.
 
@@ -116,8 +127,9 @@ Runtime owns calibration through these same lanes and actual pool ranges.
 It initializes non-addressable probe sources before measurement; unwritten
 file extents can otherwise report unrealistic read rates. Runtime measures
 solo and simultaneous fetch/evict traffic, then publishes effective rates for
-the planner. The simulator currently uses fixed effective rates; it does not
-switch between solo and concurrent rates during a step.
+the planner. The simulator uses solo bandwidth while only one direction is
+active and concurrent bandwidth during overlap. Calibrated request latency is
+retained as metadata but is not added to simulated transfer time.
 
 Probe sizes and iteration counts are caller-configurable. Smaller probes
 reduce setup writes but can change the bandwidth estimate, especially for
