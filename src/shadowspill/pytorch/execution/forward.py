@@ -301,25 +301,22 @@ class _ExecutingStage(nn.Module):
                 raise RuntimeError("task tensor output became static")
             alias_id = self._bridge.objects.alias_for_object(slot.object_id)
             replacement = slot.leaf_index in replacement_leaves
-            if replacement and alias_id not in produced:
-                adopted.append(
-                    PublishedStorage(
-                        tensor,
-                        alias_id,
-                        self._publication_ordinals.get(alias_id, -1),
-                    )
-                )
-                replacement_aliases.add(alias_id)
+            if (
+                replacement or alias_id not in self._input_aliases
+            ) and alias_id not in produced:
                 produced.add(alias_id)
-            elif alias_id not in self._input_aliases and alias_id not in produced:
-                adopted.append(
-                    PublishedStorage(
-                        tensor,
-                        alias_id,
-                        self._publication_ordinals.get(alias_id, -1),
+                # CPU/control results keep ordinary Python bindings. Only aliases
+                # with admitted device storage enter CUDA storage publication.
+                if self._bridge.objects.requires_storage(alias_id):
+                    adopted.append(
+                        PublishedStorage(
+                            tensor,
+                            alias_id,
+                            self._publication_ordinals[alias_id],
+                        )
                     )
-                )
-                produced.add(alias_id)
+                    if replacement:
+                        replacement_aliases.add(alias_id)
             bindings.append((alias_id, tensor))
         replacements = tuple(
             self._state.replacement_storage_views(alias_id)

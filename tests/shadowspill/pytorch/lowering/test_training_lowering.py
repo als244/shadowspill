@@ -213,6 +213,7 @@ def _lowered(
     model_factory: type[nn.Module] = _Model,
     data_ordering: StepDataOrdering | None = None,
     parameter_metrics=None,
+    input_requires_grad: bool = False,
 ) -> LoweredTrainingProgram:
     real_model = model_factory()
     optimizer = torch.optim.SGD(real_model.parameters(), lr=0.1, foreach=False)
@@ -226,7 +227,10 @@ def _lowered(
     mode = FakeTensorMode(allow_non_fake_inputs=True)
     model = fake_device_model(real_model, mode)
     examples = tuple(
-        [torch.randn(4 + position, 3), torch.randn(4 + position, 2)]
+        [
+            torch.randn(4 + position, 3, requires_grad=input_requires_grad),
+            torch.randn(4 + position, 2),
+        ]
         for position in range(microbatches)
     )
     with mode:
@@ -1126,3 +1130,25 @@ def test_an_update_over_masters_owns_them_and_writes_the_weights(
         )
         assert {master, item.gradient_object_id} <= read
         assert {master, item.parameter_object_id} <= written
+
+
+def test_unconsumed_input_gradient_is_backward_workspace():
+    # The objective differentiates its input, but plan_step returns parameter
+    # updates, not a gradient for the caller's batch. The discarded dX must
+    # still fit inside each backward task's admitted allocation envelope.
+    ordinary = _lowered(microbatches=1)
+    differentiated = _lowered(microbatches=1, input_requires_grad=True)
+
+    def backward_workspace(lowered):
+        profiles = {p.profile_id: p for p in lowered.program.profiles}
+        return {
+            task.task_id: profiles[task.profile_id].workspace_bytes
+            for task in lowered.program.tasks
+            if task.phase == "backward"
+        }
+
+    before = backward_workspace(ordinary)
+    after = backward_workspace(differentiated)
+    assert after.keys() == before.keys()
+    gradient_bytes = 4 * 3 * torch.float32.itemsize
+    assert after == {key: size + gradient_bytes for key, size in before.items()}

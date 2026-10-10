@@ -448,6 +448,26 @@ is slower rather than rejected. `after_task` returns `NO_PROGRESS` only when the
 pool could not hold the destination even after every pending release — the
 trigger's fetch had nowhere to land and nothing was left to free for it.
 
+## CPU results and transient backward outputs
+
+An explicitly CPU-valued task result remains an ordinary CPU tensor binding.
+Forward and training execution do not adopt it as device storage or give it a
+device-allocation ordinal. Mixed CPU/device public results likewise transfer
+ownership only for their unique device storage roots. CPU results are not
+charged as device workspace or automatically placed in a spill pool.
+
+When partitioning needs authentic integer or boolean intermediates for
+profiling, it executes the required producer slice. Each input is materialized
+on its own captured device: explicit CPU controls stay on the CPU even when
+other inputs or outputs use the execution device. Pool-backed inputs are read
+through the setup-time pool access mechanism.
+
+A backward entrypoint may return a tensor whose gradient the outer program
+does not consume. The allocation is still live during that call. Lowering
+charges such output roots as transient workspace using the measured allocation
+timeline. A root shared with a retained output is not charged a second time.
+This is ordinary memory accounting; no operator-specific allowance is needed.
+
 ## Failure
 
 Both boundaries return a `ShadowSpillStatus`, and a failure latched anywhere -

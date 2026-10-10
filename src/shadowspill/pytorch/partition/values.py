@@ -16,10 +16,10 @@ an integer run at plan time and their results are held on the host until the
 derivation finishes, which is the price of the alternative being a partition
 that puts every consumer of the value in one task with its producer.
 
-**The slice runs where it was captured**, and every value it is given is put
-there first. A root input may be a view into a pool while a value resolved
-from an earlier stage is a snapshot, and a slice handed two devices cannot
-run at all; the capture's device is what they are unified on.
+**Each slice input uses its captured device.** A root may be a pool-backed
+tensor and an earlier stage's value may be a CPU snapshot. Restore each to
+the device recorded for that input: CUDA payloads and explicit CPU control
+inputs can coexist in the same producer slice.
 
 It has to be that device and not the planning host, because a captured graph
 is specialized to the layouts of the device it was captured on. Export
@@ -187,14 +187,12 @@ def _evaluate_control_slice(
     integral: bool,
 ) -> dict[StageOutputKey, torch.Tensor]:
     sliced, input_positions = _slice_outputs(record.graph_module, output_indices)
-    device = _where_captured(record)
     arguments = tuple(
         _resolve_slice_input(
             record,
             position,
             stage_index=stage_index,
             split=split,
-            device=device,
             representative_root_inputs=representative_root_inputs,
             resolved=resolved,
             pending=pending,
@@ -304,7 +302,6 @@ def _resolve_slice_input(
     *,
     stage_index: int,
     split: SplitExportGraph,
-    device: torch.device,
     representative_root_inputs: tuple[object, ...],
     resolved: dict[StageOutputKey, torch.Tensor],
     pending: tuple[StageOutputKey, ...],
@@ -335,7 +332,7 @@ def _resolve_slice_input(
                 f"stage_{stage_index:04d} root input {source.root_input_index} "
                 "is not an authentic tensor"
             )
-        return _on_capture_device(value, device)
+        return _on_capture_device(value, captured.device)
     assert source.producer_stage_index is not None
     assert source.producer_output_index is not None
     key = (source.producer_stage_index, source.producer_output_index)
@@ -355,7 +352,7 @@ def _resolve_slice_input(
             integral=False,
         )
         value = resolved[key]
-    return _on_capture_device(value, device)
+    return _on_capture_device(value, captured.device)
 
 
 def _stage_output_tensor(
@@ -401,16 +398,6 @@ def _validate_geometry(
             f"{origin} control value {key} has geometry {actual_geometry}, "
             f"expected {expected_geometry}"
         )
-
-
-def _where_captured(record: StageRecord) -> torch.device:
-    """The device this stage's values were captured on."""
-
-    leaves, _ = tree_flatten(record.output)
-    for value in leaves:
-        if isinstance(value, torch.Tensor):
-            return value.device
-    raise CaptureError("a stage records no tensor output to take a device from")
 
 
 def _on_capture_device(value: torch.Tensor, device: torch.device) -> torch.Tensor:

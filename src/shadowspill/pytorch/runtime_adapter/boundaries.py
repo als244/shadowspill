@@ -165,23 +165,25 @@ def transfer_outputs_to_caller(
     if not (len(alias_ids) == len(tensors) == len(bindings)):
         raise RuntimeExecutionError("caller output lease count differs")
     seen: set[str] = set()
-    for object_ordinal, (alias_id, tensor, binding) in enumerate(
-        zip(alias_ids, tensors, bindings, strict=True)
-    ):
-        if alias_id in seen:
-            continue
-        if not bridge.objects.requires_storage(alias_id):
-            bridge.objects.release_zero_generation(alias_id)
+    # The admitted handle excludes CPU/zero-byte roots but retains duplicate
+    # device entries. Count every device entry, handing off each root once.
+    object_ordinal = 0
+    for alias_id, tensor, binding in zip(alias_ids, tensors, bindings, strict=True):
+        owns_storage = bridge.objects.requires_storage(alias_id)
+        if alias_id not in seen:
+            if owns_storage:
+                torch.ops.shadowspill._transfer_acquired_storage_to_caller(
+                    tensor,
+                    acquisition_handle,
+                    object_ordinal,
+                    binding.generation,
+                    binding.allocation_id,
+                )
+            else:
+                bridge.objects.release_zero_generation(alias_id)
             seen.add(alias_id)
-            continue
-        torch.ops.shadowspill._transfer_acquired_storage_to_caller(
-            tensor,
-            acquisition_handle,
-            object_ordinal,
-            binding.generation,
-            binding.allocation_id,
-        )
-        seen.add(alias_id)
+        if owns_storage:
+            object_ordinal += 1
 
 
 def rebind(
