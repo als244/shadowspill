@@ -14,6 +14,7 @@ construction, trainable parameters, and data semantics belong to the caller.
 - [OLMoE](#olmoe)
 - [Qwen 3 MoE](#qwen-3-moe)
 - [Qwen 3.5 MoE](#qwen-35-moe)
+- [GLM-5.3-Flash checkpoint integration](#glm-53-flash-checkpoint-integration)
 - [Dtypes and optimizer state](#dtypes-and-optimizer-state)
 - [Trainable parameters and LoRA](#trainable-parameters-and-lora)
 - [Expert parallelism](#expert-parallelism)
@@ -192,6 +193,24 @@ DeltaNet settings apply to layers selected as linear attention. Both defaults
 use separate embedding and head weights. Balancing follows the across-layer
 Qwen convention: balanced top-8 routing gives an unweighted auxiliary near 8.
 `loss(..., aux_coef=...)` overrides the configured coefficient.
+
+## GLM-5.3-Flash checkpoint integration
+
+The [GLM-5.3-Flash workload](mlops/glm53_flash/README.md) imports local
+Hugging Face safetensors directly into an initialized runtime pool. It preserves
+the original FP8 or NVFP4 expert storage and initially uses BF16 GEMMs.
+No permanent converted checkpoint is required. An SSD pool still contains a
+temporary runtime copy.
+
+Its architecture has 45 layers: 34 KDA, 11 NoPE sparse-MLA, mHC streams, three
+initial dense MLPs, then 288 routed experts/top-8 plus a shared expert.
+This checkpoint integration has its own text/image forward-validation CLI; it
+is not yet a supplied quickstart/trainer preset. Complete text forwards for both
+checkpoints and the checkpoint vision encoders execute through SSD-backed plans.
+Reduced-model LoRA updates and selected-state checkpoint replay are also tested.
+See the workload README for numerical limits and the current image/text status;
+full-model LoRA training and checkpoint-specific low-precision GEMMs remain
+unqualified.
 
 ## Dtypes and optimizer state
 
