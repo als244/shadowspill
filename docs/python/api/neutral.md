@@ -513,7 +513,10 @@ workers, and two callers planning at once do not contend.
 Each lease the floor holds gets a static home in the `ResidentSlice` the result
 carries, and the capacity the search plans against is reduced by that slice, so
 those bytes are never charged again. A slice a budget cannot hold is reported as
-infeasible rather than quietly relaxed.
+infeasible rather than quietly relaxed. These reserved homes are distinct even
+when their lifetimes do not overlap. Many small tensors (for example, quantization
+scales or low-rank factors) can therefore reserve significant capacity; lower the
+threshold or set it to zero to let their leases use the ordinary reusable layout.
 
 ```python
 from shadowspill.planner import (

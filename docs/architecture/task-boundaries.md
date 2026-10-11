@@ -448,7 +448,7 @@ is slower rather than rejected. `after_task` returns `NO_PROGRESS` only when the
 pool could not hold the destination even after every pending release — the
 trigger's fetch had nowhere to land and nothing was left to free for it.
 
-## CPU results and transient backward outputs
+## CPU values and transient backward outputs
 
 An explicitly CPU-valued task result remains an ordinary CPU tensor binding.
 Forward and training execution do not adopt it as device storage or give it a
@@ -456,11 +456,31 @@ device-allocation ordinal. Mixed CPU/device public results likewise transfer
 ownership only for their unique device storage roots. CPU results are not
 charged as device workspace or automatically placed in a spill pool.
 
+The same rule applies to root values whose captured device is CPU, including
+tensor literals created with `device="cpu"` inside the model. Export's lifted
+literal values need not be attributes of the original module. Their object and
+alias extents in the GPU memory plan are zero; their ordinary tensor views
+retain CPU shape, stride and offset. Training republishes CPU root bindings
+each step so that releasing a prior step's references cannot discard constants
+needed by the next step. This does not change the capture device selected for
+ordinary example inputs or model parameters.
+
+These contracts describe where a task uses a value, not where it was
+initialized. An opaque optimizer may retain CPU/meta state templates; capture
+describes its spillable state with fake device geometry, matching profiling and
+execution. Its ordinary CPU counters and hyperparameters keep their CPU bindings.
+
 When partitioning needs authentic integer or boolean intermediates for
 profiling, it executes the required producer slice. Each input is materialized
 on its own captured device: explicit CPU controls stay on the CPU even when
 other inputs or outputs use the execution device. Pool-backed inputs are read
 through the setup-time pool access mechanism.
+
+Control-value dependency discovery walks stages backwards, then evaluates the
+needed slices in topological order. This avoids Python recursion limits for
+long chains and restores only the current slice's inputs to their captured
+devices. Intermediate host snapshots are released after their last consumer;
+only the required integer/boolean values remain as profiling representatives.
 
 A backward entrypoint may return a tensor whose gradient the outer program
 does not consume. The allocation is still live during that call. Lowering
@@ -483,5 +503,42 @@ How each scope handles a failure, and why a process that is exiting is
 abandoned rather than closed, is in [failure, abort, and process
 exit](failure-and-exit.md).
 
+### Repeated forward contracts
+
+Forward capture reuses equivalent inference contracts within a capture, as training
+does for graph pairs. The key includes the graph, tensor geometry and aliasing,
+input roles, representation components and metadata, and explicit mutations.
+Reuse replaces occurrence-specific inputs and provenance; it does not substitute
+one layer's weights or control values for another's. Compilation and profiling
+continue to consume the physical contract.
+
 Previous: [Memory runtime](memory-runtime.md). Next: [Failure, abort, and
 process exit](failure-and-exit.md).
+
+### Activation-gradient memory format
+
+A compiled backward expects a specific memory format for incoming activation
+gradients. ShadowSpill normalizes each outgoing activation gradient to the
+canonical format of its corresponding forward input (including channels-last
+where applicable). Any needed layout conversion is inside the backward graph,
+before compilation and profiling, so its allocations and runtime are planned.
+Parameter gradients can retain independent dense transposed storage; they do not
+need this activation-boundary normalization.
+
+Backward dependencies follow the objective through actual stage VJPs. A floating
+output may require gradients locally but feed only a detached or nondifferentiable
+consumer. Such an output remains available to forward execution and receives no
+cotangent input. Root selection is applied inside AOT capture, so the compiler
+can remove the unused derivative rather than leaving an uninitialized gradient
+object for planning to fetch. A manual stage with no path to an objective gradient
+is rejected with a diagnostic; combine that stage with its differentiable consumer.
+
+### Retained views after state mutation
+
+A functionalized mutation replaces an object's device allocation. Retained
+frontend views of that object share the canonical PyTorch storage handle, while
+keeping their own shapes, strides and offsets. Fetch and release can then rebind
+one handle for all of those views. Giving separate storage handles the same
+pointer is insufficient: after eviction or checkpoint restore, a later fetch
+would update only the representative and leave the other views stale. Storage
+publication unifies the handles without copying device data.

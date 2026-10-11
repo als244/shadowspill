@@ -2,7 +2,9 @@
 
 Automatic partitioning follows repeated module structure. Use a custom
 `PartitionPolicy` when the application has a better semantic boundary or must
-control stage granularity explicitly.
+control stage granularity explicitly. The [architecture contract](../architecture/partitioning.md)
+defines stage occurrences, derived object contracts and scheduled tasks; the
+[API reference](../python/api/frontend.md#partitionpolicy) documents the argument.
 
 This policy assigns a new stage after a fixed number of executable FX nodes:
 
@@ -15,10 +17,11 @@ from dataclasses import dataclass
 import torch
 import torch.nn as nn
 from torch.fx import GraphModule
+from shadowspill.pytorch import PartitionPolicy, plan_step
 
 
 @dataclass(frozen=True)
-class EveryNNodes:
+class EveryNNodes(PartitionPolicy):
     nodes_per_stage: int
 
     def assign_stages(
@@ -72,3 +75,11 @@ operator targets, and the source module, while preserving the same complete
 and contiguous contract. Partitioning only defines stages; graph-pair
 construction, graph-pair selection, the plan search, and physical admission
 remain unchanged.
+
+## A model-scale example
+
+[GLMStages](../../workloads/mlops/glm53_flash/partition.py) implements this same
+protocol using exported module paths. Its [workload factory](../../workloads/mlops/glm53_flash/quickstart.py)
+passes the policy through `plan_options`, so quickstart uses it for both geometry
+search and the chosen training plan. Model operators contain no partition API
+calls. Other architectures can supply their own policy in exactly the same way.
