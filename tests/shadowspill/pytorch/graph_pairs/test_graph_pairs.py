@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
 import torch
 import torch.nn as nn
 from torch._subclasses.fake_tensor import FakeTensorMode
@@ -15,6 +16,7 @@ from shadowspill.pytorch.graph_pairs import (
     capture_training_stages,
     partition_training_capture,
     saved_value_footprint,
+    validate_graph_pair_variants,
 )
 from shadowspill.pytorch.partition import PartitionedExport, partition_export
 from shadowspill.pytorch.partition.differentiability import (
@@ -199,6 +201,50 @@ def test_each_training_stage_has_endpoint_graph_pairs() -> None:
         stages[-1].graph_pairs.variant("recompute").pair.specialized_unit_tangent_count
         == 1
     )
+
+
+def test_a_request_may_build_only_the_variant_its_search_can_select() -> None:
+    mode, partitioned = _capture()
+    with mode:
+        stages = capture_training_stages(partitioned, variants=("recompute",))
+    # The last stage is the forward sink: nothing after it reads its outputs,
+    # selection forces it to save, so save is built for it whatever was asked.
+    assert all(
+        tuple(item.option_id for item in stage.graph_pairs.variants) == ("recompute",)
+        for stage in stages[:-1]
+    )
+    assert tuple(item.option_id for item in stages[-1].graph_pairs.variants) == (
+        "save",
+        "recompute",
+    )
+    assert all(
+        stage.graph_pairs.reference_option_id == "recompute" for stage in stages[:-1]
+    )
+    assert stages[-1].graph_pairs.reference_option_id == "save"
+    assert all(
+        saved_value_footprint(stage.graph_pairs.reference).internal_minimum_bytes == 0
+        for stage in stages[:-1]
+    )
+    assert validate_graph_pair_variants(("recompute", "save")) == ("save", "recompute")
+    with pytest.raises(ValueError):
+        validate_graph_pair_variants(("keep",))
+    with pytest.raises(ValueError):
+        validate_graph_pair_variants(())
+
+
+def test_the_variants_built_are_part_of_the_store_key(tmp_path: Path) -> None:
+    mode, partitioned = _capture()
+    store = GraphPairStore(tmp_path)
+    with mode:
+        capture_training_stages(partitioned, graph_pair_store=store)
+        both = store.unique_keys
+        capture_training_stages(
+            partitioned, graph_pair_store=store, variants=("recompute",)
+        )
+    # Every contract but the forward sink's gets a second key; the sink is
+    # built with save either way, so its key is the one it already had.
+    assert both > 1 and store.unique_keys == 2 * both - 1
+    assert store.misses == 2 * both - 1
 
 
 def test_the_accumulating_form_is_derived_only_when_asked_for() -> None:

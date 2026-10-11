@@ -16,6 +16,7 @@ from shadowspill.planner.annotated_plan import AnnotatedProgramPlan
 from shadowspill.planner.program_inputs import TransferBandwidths
 from shadowspill.planner.search import SearchOptions
 from shadowspill.pytorch.capture.retention import MEMORY_BOUND_FLOPS_PER_BYTE
+from shadowspill.pytorch.graph_pairs import GRAPH_PAIR_VARIANTS
 from shadowspill.pytorch.planning.training.plan import plan_training_programs
 from shadowspill.runtime.plan import PlanMemory
 from shadowspill.step import StepDataOrdering
@@ -67,6 +68,7 @@ def build_training(
     parameter_metrics: Callable[[torch.Tensor, torch.Tensor], Any] | None = None,
     round_accumulation_once: bool = False,
     memory_bound_flops_per_byte: float = MEMORY_BOUND_FLOPS_PER_BYTE,
+    graph_pair_variants: tuple[str, ...] = GRAPH_PAIR_VARIANTS,
     keep_resolutions: bool = False,
 ) -> PlannedTrainStep:
     """Compose the independently callable training-planning boundaries.
@@ -97,6 +99,7 @@ def build_training(
         grad_dtype=grad_dtype,
         round_accumulation_once=round_accumulation_once,
         memory_bound_flops_per_byte=memory_bound_flops_per_byte,
+        graph_pair_variants=graph_pair_variants,
     )
     materialized = materialize_training_state(
         model,

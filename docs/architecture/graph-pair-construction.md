@@ -175,7 +175,15 @@ scale with unique structural contracts rather than model positions.
 
 For each configured variant, ShadowSpill calls AOTAutograd with compiler
 callbacks that capture the emitted forward and backward FX graphs as
-`GraphArtifact` values.
+`GraphArtifact` values. A planning request names the variants to configure,
+both by default. A search that can select only one of them -- one that
+recomputes every flexible group, say -- asks for that one alone, and the
+program it is handed carries no alternative at that boundary: nothing is
+captured, compiled or profiled for a choice nobody can make, and the saved
+values of the unselectable variant never occupy the profiling pool. A stage
+no later forward stage reads keeps `save` whatever was asked, because
+[selection forces a forward sink to it](graph-pair-selection.md). The
+variants built are part of the step's identity in the store.
 
 Both variants come from PyTorch's min-cut rematerialization partitioner over
 the joint graph, at the two endpoints of its activation-memory budget. Values

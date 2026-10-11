@@ -27,7 +27,11 @@ from shadowspill.store import (
 
 from ..partition.artifacts import StageExample
 from .artifacts import TaskGraphPairs
-from .build import build_default_graph_pairs
+from .build import (
+    GRAPH_PAIR_VARIANTS,
+    build_default_graph_pairs,
+    validate_graph_pair_variants,
+)
 from .rebind import rebind_task_graph_pairs
 from .serialization import (
     CachedAotGraphPair,
@@ -40,7 +44,7 @@ _GRAPH_PAIR_CACHE_SCHEMA = artifact_schema("aot_graph_pair")
 #: What one entry is keyed by: the structural contract, the differentiation
 #: options, and the retention policy with the classes it gives the stage's
 #: custom operators, as one digest.
-_Key = tuple[str, tuple[int, ...], bool, str, str]
+_Key = tuple[str, tuple[int, ...], bool, str, str, tuple[str, ...]]
 
 
 @dataclass(frozen=True, slots=True)
@@ -87,6 +91,7 @@ class GraphPairStore:
         accumulating: bool = False,
         gradient_dtype: torch.dtype | None = None,
         round_accumulation_once: bool = False,
+        variants: tuple[str, ...] = GRAPH_PAIR_VARIANTS,
     ) -> TaskGraphPairs:
         """The stage's graph pairs, their ``save`` variant retaining what
         ``retention`` says to retain (the library's default when ``None``),
@@ -100,7 +105,9 @@ class GraphPairStore:
         retention policy is part of an entry's key, together with the class
         it gives every custom operator in the stage, so a policy changed by
         the caller or a class changed by an operator's library misses rather
-        than reading back a pair built under the old one.
+        than reading back a pair built under the old one. So are the
+        ``variants`` the pairs carry: an entry holding one endpoint never
+        answers a request for both.
         """
 
         policy = retention or RetentionPolicy()
@@ -116,6 +123,7 @@ class GraphPairStore:
             specialize_unit_tangents,
             policy.digest(example.stage.graph_module),
             "objective_connected_outputs",
+            validate_graph_pair_variants(variants),
         )
         form = _Form(gradient_dtype, accumulating, round_accumulation_once)
         self._keys_seen.add(key)
@@ -134,6 +142,7 @@ class GraphPairStore:
                 roots,
                 specialize_unit_tangents=specialize_unit_tangents,
                 retention=policy,
+                variants=key[5],
             )
             self._pairs[key] = existing
             self._write(
@@ -185,6 +194,7 @@ class GraphPairStore:
             "specialize_unit_tangents": key[2],
             "retention": key[3],
             "gradient_roots_policy": key[4],
+            "variants": list(key[5]),
         }
         encoded = json.dumps(payload, sort_keys=True, separators=(",", ":"))
         # The contract, the differentiation options and the retention policy

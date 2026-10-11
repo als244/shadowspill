@@ -72,8 +72,9 @@ def build_stage_examples(
     *,
     representative_root_inputs: tuple[object, ...] | None = None,
     caller_stage_values: Mapping[StageOutputKey, torch.Tensor] | None = None,
-) -> tuple[StageExample, ...]:
-    """Build occurrence-local stage contracts from one split root graph."""
+) -> tuple[tuple[StageExample, ...], Mapping[StageOutputKey, torch.Tensor]]:
+    """Build occurrence-local stage contracts from one split root graph, and
+    the authentic control values they were given, derived or supplied."""
 
     mutations = _partition_mutations(capture, split)
     user_outputs = _partition_user_outputs(capture, split)
@@ -114,7 +115,7 @@ def build_stage_examples(
                 output=record.output,
             )
         )
-    return tuple(examples)
+    return tuple(examples), control_values
 
 
 def _representative_root_tensor(

@@ -11,13 +11,19 @@ class GLMStages(PartitionPolicy):
     """A workload-local PartitionPolicy, shared by forward and training capture.
 
     Attention/routing form a stage before the experts; each expert is separate;
-    residual work after the experts forms a suffix. Each vision block is bounded
-    separately. Stage IDs identify occurrences, not unique compiled contracts.
+    the residual combination after a layer's experts joins the next layer's
+    attention stage, and the last layer's forms its own. A backward recomputes
+    from its stage's inputs, so every object a boundary hands to a later
+    backward is retained from the forward; placing the combination with the
+    next attention means one copy of the four-stream state per layer is
+    retained rather than two. Each vision block is bounded separately. Stage
+    IDs identify occurrences, not unique compiled contracts.
     """
 
     def assign_stages(self, graph_module, module):
         result = {}
         current, previous = -1, None
+        routed = set()  # text layers whose experts have begun
         for node in graph_module.graph.nodes:
             if node.op in {"placeholder", "get_attr", "output"}:
                 continue
@@ -51,7 +57,17 @@ class GLMStages(PartitionPolicy):
                 None,
             )
             is_vision = any(re.search(r"(?:^|\.)visual(?:\.|$)", p) for p in paths)
-            key = ("vision", vision_block) if is_vision else ("text", layer, expert)
+            if is_vision:
+                key = ("vision", vision_block)
+            elif expert is not None:
+                routed.add(layer)
+                key = ("text", layer, expert)
+            elif layer in routed:
+                # After a layer's experts, its residual combination belongs
+                # with the next layer's attention.
+                key = ("text", str(int(layer) + 1), None)
+            else:
+                key = ("text", layer, None)
             if key != previous:
                 current += 1
                 previous = key

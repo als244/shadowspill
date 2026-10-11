@@ -15,6 +15,7 @@ from shadowspill.planner.annotated_plan import AnnotatedProgramPlan
 from shadowspill.planner.program_inputs import TransferBandwidths
 from shadowspill.pytorch.callables import PlannedForward, PlannedTrainStep
 from shadowspill.pytorch.capture.retention import MEMORY_BOUND_FLOPS_PER_BYTE
+from shadowspill.pytorch.graph_pairs import GRAPH_PAIR_VARIANTS
 from shadowspill.pytorch.partition import PartitionSpec
 from shadowspill.pytorch.runtime import Runtime
 from shadowspill.pytorch.sharing import SharedOutput
@@ -339,6 +340,7 @@ def plan_step(
     parameter_metrics: Callable[[torch.Tensor, torch.Tensor], Any] | None = None,
     round_accumulation_once: bool = False,
     memory_bound_flops_per_byte: float = MEMORY_BOUND_FLOPS_PER_BYTE,
+    graph_pair_variants: tuple[str, ...] = GRAPH_PAIR_VARIANTS,
     keep_resolutions: bool = False,
 ) -> PlannedTrainStep:
     """Plan a fixed accumulated forward/objective/backward/update program.
@@ -420,6 +422,14 @@ def plan_step(
     device's ridge point, so the classification does not depend on the
     machine; the value is part of the step's identity in the store. See
     :doc:`graph-pair construction </architecture/graph-pair-construction>`.
+
+    ``graph_pair_variants`` names which of a stage's graph pairs the build
+    constructs, ``save`` and ``recompute`` by default. A search that can
+    select only one of them -- one asked to recompute every flexible group,
+    say -- needs that one alone, and naming it alone skips the capture,
+    compilation and profiling of the other, except at a sink of the forward
+    phase, the objective's stage, which keeps ``save`` because selection
+    forces it there. Part of the step's identity.
 
     A value that varies between steps -- a scheduled learning rate, say --
     is passed to the optimizer as a **tensor** rather than a float, and
@@ -540,6 +550,7 @@ def plan_step(
                 parameter_metrics=parameter_metrics,
                 round_accumulation_once=round_accumulation_once,
                 memory_bound_flops_per_byte=memory_bound_flops_per_byte,
+                graph_pair_variants=graph_pair_variants,
                 keep_resolutions=keep_resolutions,
             )
         hold_persistent_state(runtime, model, memory.plan_handle)
@@ -584,6 +595,7 @@ def build_step_programs(
     parameter_metrics: Callable[[torch.Tensor, torch.Tensor], Any] | None = None,
     round_accumulation_once: bool = False,
     memory_bound_flops_per_byte: float = MEMORY_BOUND_FLOPS_PER_BYTE,
+    graph_pair_variants: tuple[str, ...] = GRAPH_PAIR_VARIANTS,
 ) -> tuple[StepProgram, ...]:
     """Capture, profile, and lower a reusable step without searching.
 
@@ -672,6 +684,7 @@ def build_step_programs(
                 parameter_metrics=parameter_metrics,
                 round_accumulation_once=round_accumulation_once,
                 memory_bound_flops_per_byte=memory_bound_flops_per_byte,
+                graph_pair_variants=graph_pair_variants,
             )
         try:
             abort_plan(runtime)

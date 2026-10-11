@@ -28,6 +28,7 @@ from shadowspill.pytorch.capture.retention import MEMORY_BOUND_FLOPS_PER_BYTE
 from shadowspill.pytorch.distributed import Distributed
 from shadowspill.pytorch.distributed import current as distributed_preparation
 from shadowspill.pytorch.distributed._preparation import prepared
+from shadowspill.pytorch.graph_pairs import GRAPH_PAIR_VARIANTS
 from shadowspill.pytorch.partition import PartitionSpec
 from shadowspill.pytorch.runtime import Runtime
 from shadowspill.search.geometries import default_orderings
@@ -87,6 +88,7 @@ def plan_step_search(
     parameter_metrics: Callable[[torch.Tensor, torch.Tensor], Any] | None = None,
     round_accumulation_once: bool = False,
     memory_bound_flops_per_byte: float = MEMORY_BOUND_FLOPS_PER_BYTE,
+    graph_pair_variants: tuple[str, ...] = GRAPH_PAIR_VARIANTS,
     keep_resolutions: bool = False,
     profiling_options: ProfilingOptions | None = None,
 ) -> StepSearchReport:
@@ -184,6 +186,7 @@ def plan_step_search(
             parameter_metrics=parameter_metrics,
             round_accumulation_once=round_accumulation_once,
             memory_bound_flops_per_byte=memory_bound_flops_per_byte,
+            graph_pair_variants=graph_pair_variants,
         ),
     )
     return StepSearchReport(

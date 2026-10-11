@@ -3,7 +3,7 @@ and the storage layout lowered from it -- entirely offline, on fake tensors."""
 
 from __future__ import annotations
 
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from typing import Any
 
 import torch
@@ -42,6 +42,7 @@ from ...contracts import (
     ObjectiveResult,
 )
 from ...graph_pairs import (
+    GRAPH_PAIR_VARIANTS,
     PartitionedTrainingCapture,
     partition_training_capture,
 )
@@ -73,12 +74,14 @@ def capture_training_graphs(
     grad_dtype: torch.dtype | None = None,
     round_accumulation_once: bool = False,
     memory_bound_flops_per_byte: float = MEMORY_BOUND_FLOPS_PER_BYTE,
+    graph_pair_variants: tuple[str, ...] = GRAPH_PAIR_VARIANTS,
 ) -> TrainingCaptureArtifacts:
     """Capture objective and stage-local graph pairs entirely offline, their
     parameter gradients at ``grad_dtype`` when one is given, their
     accumulating forms rounding once where they may with
-    ``round_accumulation_once``, and their ``save`` variants regenerating
-    every operator at or under ``memory_bound_flops_per_byte``."""
+    ``round_accumulation_once``, their ``save`` variants regenerating
+    every operator at or under ``memory_bound_flops_per_byte``, and only
+    the ``graph_pair_variants`` named built at all."""
 
     retention = RetentionPolicy(memory_bound_flops_per_byte)
     with timer.measure("validation"):
@@ -118,6 +121,7 @@ def capture_training_graphs(
                 retention=retention,
                 grad_dtype=grad_dtype,
                 round_accumulation_once=round_accumulation_once,
+                graph_pair_variants=graph_pair_variants,
             )
         with timer.measure("storage_layout_lowering"):
             layout = lower_training_storage_layout(
@@ -228,6 +232,7 @@ def _partition_training_graphs(
     retention: RetentionPolicy,
     grad_dtype: torch.dtype | None,
     round_accumulation_once: bool,
+    graph_pair_variants: tuple[str, ...] = GRAPH_PAIR_VARIANTS,
 ) -> tuple[PartitionedTrainingCapture, ...]:
     """Partition every position against its own example inputs.
 
@@ -235,6 +240,13 @@ def _partition_training_graphs(
     inputs to the example tensors it was built from, and the lowering
     registers each position's input objects from those tensors. Sharing a
     partition would make later positions read the first position's inputs.
+
+    What positions of one exported program do share is their authentic
+    control values. Deriving them runs every producer slice for real, from
+    the first stage to the last router, so they are derived once per
+    program rather than once per position; each position checks them
+    against its own geometry, and profiling measures one occurrence per
+    contract whichever position it came from.
     """
 
     representative_roots = tuple(
@@ -242,12 +254,17 @@ def _partition_training_graphs(
         for capture, microbatch in zip(captures, cpu_inputs, strict=True)
     )
     with fake_mode, timer.measure("stage_partition_aot"):
-        return tuple(
-            partition_training_capture(
+        derived: dict[int, Mapping[tuple[int, int], torch.Tensor]] = {}
+        partitioned: list[PartitionedTrainingCapture] = []
+        for capture, root_inputs in zip(captures, representative_roots, strict=True):
+            # Positions rebound from one template share its exported program.
+            template = id(capture.exported.exported_program)
+            result = partition_training_capture(
                 capture,
                 partition=partition,
                 graph_pair_store=stores.graph_pairs,
                 representative_root_inputs=root_inputs,
+                representative_stage_outputs=derived.get(template),
                 retention=retention,
                 # Which microbatch creates a stage's gradient and which add
                 # into it is decided by the step's ordering, after capture,
@@ -256,6 +273,8 @@ def _partition_training_graphs(
                 accumulating=len(captures) > 1,
                 gradient_dtype=grad_dtype,
                 round_accumulation_once=round_accumulation_once,
+                graph_pair_variants=graph_pair_variants,
             )
-            for capture, root_inputs in zip(captures, representative_roots, strict=True)
-        )
+            derived.setdefault(template, result.partitioned.control_values)
+            partitioned.append(result)
+        return tuple(partitioned)

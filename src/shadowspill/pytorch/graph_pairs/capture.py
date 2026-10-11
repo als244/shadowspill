@@ -11,6 +11,7 @@ from shadowspill.pytorch.capture.retention import RetentionPolicy
 from ..partition.artifacts import PartitionedExport
 from ..partition.differentiability import differentiable_output_positions
 from .artifacts import DifferentiatedStage
+from .build import GRAPH_PAIR_VARIANTS, forward_sink_variants
 from .store import GraphPairStore
 
 
@@ -22,10 +23,14 @@ def capture_training_stages(
     accumulating: bool = False,
     gradient_dtype: torch.dtype | None = None,
     round_accumulation_once: bool = False,
+    variants: tuple[str, ...] = GRAPH_PAIR_VARIANTS,
 ) -> tuple[DifferentiatedStage, ...]:
     """Bind every stage occurrence to its structural graph pairs, their
-    parameter gradients produced at ``gradient_dtype`` when one is given, and
-    their ``save`` variant retaining what ``retention`` says to retain."""
+    parameter gradients produced at ``gradient_dtype`` when one is given,
+    their ``save`` variant retaining what ``retention`` says to retain, and
+    only the ``variants`` named built at all -- except for a sink of the
+    forward phase, a stage no later stage reads, which keeps ``save``
+    because graph-pair selection forces it there."""
 
     store = graph_pair_store or GraphPairStore()
     # A requires_grad output can feed a detach, an index selection or a
@@ -33,6 +38,12 @@ def capture_training_stages(
     # so such values never become unproduced activation-gradient inputs.
     needed: list[set[int]] = [set() for _ in partitioned.stages]
     needed[-1].add(partitioned.user_output_indices[0])
+    read_later = {
+        source.producer_stage_index
+        for example in partitioned.stages
+        for source in example.stage.input_sources
+        if source is not None and source.producer_stage_index is not None
+    }
     captured: list[DifferentiatedStage] = []
     for index in reversed(range(len(partitioned.stages))):
         stage = _capture_training_stage(
@@ -44,6 +55,9 @@ def capture_training_stages(
             accumulating=accumulating,
             gradient_dtype=gradient_dtype,
             round_accumulation_once=round_accumulation_once,
+            variants=(
+                variants if index in read_later else forward_sink_variants(variants)
+            ),
         )
         captured.append(stage)
         pair = stage.graph_pairs.reference
@@ -78,6 +92,7 @@ def _capture_training_stage(
     accumulating: bool = False,
     gradient_dtype: torch.dtype | None = None,
     round_accumulation_once: bool = False,
+    variants: tuple[str, ...] = GRAPH_PAIR_VARIANTS,
 ) -> DifferentiatedStage:
     example = partitioned.stages[stage_index]
     leaves, _ = tree_flatten(example.output)
@@ -114,6 +129,7 @@ def _capture_training_stage(
             accumulating=accumulating,
             gradient_dtype=gradient_dtype,
             round_accumulation_once=round_accumulation_once,
+            variants=variants,
         ),
     )
 

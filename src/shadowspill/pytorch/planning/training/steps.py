@@ -29,6 +29,7 @@ from shadowspill.pytorch.distributed._preparation import (
     collective_identity,
     collective_misses,
 )
+from shadowspill.pytorch.graph_pairs import GRAPH_PAIR_VARIANTS
 from shadowspill.pytorch.profiling import profile_environment
 from shadowspill.pytorch.profiling.environment import DEVICE_POOL_PROVIDER_ID
 from shadowspill.runtime.plan import PlanMemory
@@ -86,6 +87,7 @@ def make_training_programs(
     parameter_metrics: Callable[[torch.Tensor, torch.Tensor], Any] | None = None,
     round_accumulation_once: bool = False,
     memory_bound_flops_per_byte: float = MEMORY_BOUND_FLOPS_PER_BYTE,
+    graph_pair_variants: tuple[str, ...] = GRAPH_PAIR_VARIANTS,
 ) -> tuple[StepProgram, ...]:
     """Build one self-contained step artifact per ordering, before any search.
 
@@ -122,6 +124,7 @@ def make_training_programs(
                 parameter_metrics=parameter_metrics,
                 round_accumulation_once=round_accumulation_once,
                 memory_bound_flops_per_byte=memory_bound_flops_per_byte,
+                graph_pair_variants=graph_pair_variants,
                 export_bypass_key=bypass_key,
                 machine=machine_identity(memory),
                 environment=profile_environment(
@@ -175,6 +178,7 @@ def make_training_programs(
                 parameter_metrics=parameter_metrics,
                 round_accumulation_once=round_accumulation_once,
                 memory_bound_flops_per_byte=memory_bound_flops_per_byte,
+                graph_pair_variants=graph_pair_variants,
             )
         )
     return tuple(found[item] for item in orderings)
@@ -205,6 +209,7 @@ def _build_training_step_programs(
     parameter_metrics: Callable[[torch.Tensor, torch.Tensor], Any] | None = None,
     round_accumulation_once: bool = False,
     memory_bound_flops_per_byte: float = MEMORY_BOUND_FLOPS_PER_BYTE,
+    graph_pair_variants: tuple[str, ...] = GRAPH_PAIR_VARIANTS,
 ) -> dict[StepDataOrdering, StepProgram]:
     """Capture, profile and lower once, and publish one program per ordering.
 
@@ -227,6 +232,7 @@ def _build_training_step_programs(
         grad_dtype=grad_dtype,
         round_accumulation_once=round_accumulation_once,
         memory_bound_flops_per_byte=memory_bound_flops_per_byte,
+        graph_pair_variants=graph_pair_variants,
     )
     materialized = materialize_training_state(
         model,

@@ -32,7 +32,10 @@ def partition_export(
 
     ``representative_stage_outputs`` may supply authentic integer/boolean
     values when their producer dependency slice cannot run on the planning
-    host. Geometry-only synthetic control values are never accepted.
+    host. Geometry-only synthetic control values are never accepted. The
+    values the partition ends up with, derived or supplied, are returned as
+    ``control_values`` so another partition of the same exported program
+    can be handed them.
 
     ``fold_control_only_stages`` is what a training caller asks for, because
     a stage is differentiated through its outputs and one that produces only
@@ -57,19 +60,21 @@ def partition_export(
         split,
         control_only=fold_control_only_stages,
     )
+    stages, control_values = build_stage_examples(
+        capture,
+        split,
+        provenance,
+        representative_root_inputs=representative_root_inputs,
+        caller_stage_values=representative_stage_outputs,
+    )
     return PartitionedExport(
         root=split.root,
         root_inputs=capture.flat_inputs,
         root_input_provenance=provenance,
-        stages=build_stage_examples(
-            capture,
-            split,
-            provenance,
-            representative_root_inputs=representative_root_inputs,
-            caller_stage_values=representative_stage_outputs,
-        ),
+        stages=stages,
         repeated_groups=repeated,
         user_output_indices=capture.user_output_indices,
+        control_values=control_values,
     )
 
 

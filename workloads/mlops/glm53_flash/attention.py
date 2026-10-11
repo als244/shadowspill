@@ -2,10 +2,13 @@
 
 import mlops
 import torch
-from mlops import sparse_latent_attention
-from mlops import gated_rms_norm, kda_decay
-from mlops import pooled_topk
-from mlops import kimi_delta_attention
+from mlops import (
+    gated_rms_norm,
+    kda_decay,
+    kimi_delta_attention,
+    pooled_topk,
+    sparse_latent_attention,
+)
 from mlops.lora import LoRALinear
 from torch import nn
 from torch.nn import functional as F
@@ -90,9 +93,12 @@ class Indexer(nn.Module):
         self.index_kpool_compress_gate = nn.Parameter(
             torch.ones(c.index_head_dim, c.hidden_size, device=device, dtype=c.dtype)
         )
-        self.requires_grad_(False)  # HF's selection stage is explicitly no_grad.
+        # HF's selection stage is explicitly no_grad. Frozen parameters and an
+        # integer result give autograd nothing to record here, and a no_grad
+        # wrapper would hide these operations from their module scope under
+        # export, which splits the attention stage around the indexer.
+        self.requires_grad_(False)
 
-    @torch.no_grad()
     def forward(self, x, q_residual, boundaries):
         c = self.config
         q = self.wq_b(q_residual).reshape(-1, c.index_n_heads, c.index_head_dim)

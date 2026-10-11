@@ -21,6 +21,7 @@ import torch.nn as nn
 from shadowspill.profiling.metadata import repeated_profiling_metadata
 from shadowspill.pytorch.capture.artifacts import _representation_identity
 from shadowspill.pytorch.capture.retention import MEMORY_BOUND_FLOPS_PER_BYTE
+from shadowspill.pytorch.graph_pairs import GRAPH_PAIR_VARIANTS
 from shadowspill.pytorch.guards import capture_training_signatures
 from shadowspill.pytorch.optimizer.artifacts import (
     code_identity,
@@ -73,6 +74,7 @@ def step_identity(
     parameter_metrics: Callable[[torch.Tensor, torch.Tensor], Any] | None = None,
     round_accumulation_once: bool = False,
     memory_bound_flops_per_byte: float = MEMORY_BOUND_FLOPS_PER_BYTE,
+    graph_pair_variants: tuple[str, ...] = GRAPH_PAIR_VARIANTS,
 ) -> dict[str, object]:
     """What one capture is the same as, before it runs.
 
@@ -80,7 +82,8 @@ def step_identity(
     step code and hyperparameters; that is what the build does again over the
     pool's copy, and a factory that allocates state on construction would do
     so twice. The retention threshold enters because it changes which values
-    every ``save`` variant retains, and so the graphs the capture produces.
+    every ``save`` variant retains, and so the graphs the capture produces;
+    the variants built enter for the same reason.
     """
 
     optimizer = build_optimizer(model.parameters())
@@ -135,6 +138,7 @@ def step_identity(
         "retention": {
             "memory_bound_flops_per_byte": float(memory_bound_flops_per_byte),
         },
+        "graph_pair_variants": list(graph_pair_variants),
         "partition": partition if isinstance(partition, str) else repr(partition),
         "optimizer_ordering": optimizer_ordering,
         "allocation_probes": {

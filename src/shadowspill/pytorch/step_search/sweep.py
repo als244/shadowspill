@@ -25,6 +25,7 @@ from shadowspill.planner.diagnostics import GraphPairOutcome
 from shadowspill.pytorch.api import build_step_programs
 from shadowspill.pytorch.distributed._preparation import geometry_attempt
 from shadowspill.pytorch.failures import device_exhausted, exception_chain
+from shadowspill.pytorch.graph_pairs import GRAPH_PAIR_VARIANTS
 from shadowspill.pytorch.partition import PartitionSpec
 from shadowspill.pytorch.runtime import Runtime
 from shadowspill.pytorch.state.registry import registry_for
@@ -73,6 +74,7 @@ class _Build:
     grad_dtype: torch.dtype | None
     round_accumulation_once: bool
     memory_bound_flops_per_byte: float
+    graph_pair_variants: tuple[str, ...] = GRAPH_PAIR_VARIANTS
     parameter_metrics: Callable[[torch.Tensor, torch.Tensor], Any] | None = None
     profiling_options: ProfilingOptions = field(default_factory=ProfilingOptions)
     partition: PartitionSpec = "auto"
@@ -119,6 +121,7 @@ class _Build:
                         parameter_metrics=self.parameter_metrics,
                         round_accumulation_once=self.round_accumulation_once,
                         memory_bound_flops_per_byte=self.memory_bound_flops_per_byte,
+                        graph_pair_variants=self.graph_pair_variants,
                     ),
                     None,
                 )

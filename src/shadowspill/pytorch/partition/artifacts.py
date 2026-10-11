@@ -2,8 +2,11 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from collections.abc import Mapping
+from dataclasses import dataclass, field
+from types import MappingProxyType
 
+import torch
 from torch.fx import GraphModule
 
 from shadowspill.pytorch.capture.artifacts import TaskInputProvenance
@@ -86,3 +89,10 @@ class PartitionedExport:
     stages: tuple[StageExample, ...]
     repeated_groups: tuple[str, ...]
     user_output_indices: tuple[int, ...]
+    #: The authentic integer and boolean stage outputs the partition derived
+    #: for profiling, keyed by producer stage and output index. A partition
+    #: of the same exported program at another position may be handed these
+    #: instead of deriving its own.
+    control_values: Mapping[tuple[int, int], torch.Tensor] = field(
+        default_factory=lambda: MappingProxyType({})
+    )

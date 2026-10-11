@@ -56,9 +56,10 @@ def test_each_expert_is_separate_under_export_and_objective_wrapper(wrapped):
     groups = {}
     for node, stage in assignments.items():
         groups.setdefault(stage, []).append(node)
-    # Each layer: one pre-expert group, three experts, one suffix.
-    # The final scalar objective remains in its own root-module group.
-    assert len(groups) == 11
+    # Each layer: one pre-expert group and three experts. The work after a
+    # layer's experts joins the next layer's pre-expert group; the last
+    # layer's forms its own. The scalar objective stays in a root-module group.
+    assert len(groups) == 10
     expert_stages = []
     for stage, nodes in groups.items():
         experts = set()
@@ -74,6 +75,29 @@ def test_each_expert_is_separate_under_export_and_objective_wrapper(wrapped):
         if experts:
             expert_stages.append(stage)
     assert len(expert_stages) == 6
+
+    def paths_of(node):
+        return [path for path, _ in node.meta.get("nn_module_stack", {}).values()]
+
+    def stage_of(predicate):
+        found = {
+            assignments[node]
+            for node in exported.graph_module.graph.nodes
+            if node in assignments and predicate(node)
+        }
+        assert len(found) == 1, found
+        return found.pop()
+
+    combination = stage_of(
+        lambda node: (
+            node.target is torch.ops.aten.sin.default
+            and paths_of(node)[-1].endswith("layers.0")
+        )
+    )
+    next_attention = stage_of(
+        lambda node: any(path.endswith("layers.1.before") for path in paths_of(node))
+    )
+    assert combination == next_attention
     assert repr(GLMStages()) == "GLMStages()"
 
 
