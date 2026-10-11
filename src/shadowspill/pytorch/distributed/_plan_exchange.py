@@ -8,13 +8,14 @@ from __future__ import annotations
 
 import json
 import time
-from dataclasses import asdict, replace
+from dataclasses import replace
 
 from shadowspill.planner.admission.refinement import FixedLayoutSelection
 from shadowspill.planner.annotated_plan import AnnotatedProgramPlan
 from shadowspill.planner.plan_store import certified_result
 from shadowspill.planner.program_inputs import MemoryBudgets, TransferBandwidths
 from shadowspill.planner.serialization import _simulation_config_to_dict
+from shadowspill.planner.serialization.simulation_result import simulation_result_value
 from shadowspill.store import atomic_text
 
 from . import current
@@ -100,7 +101,7 @@ def pack(record: FixedLayoutSelection | AnnotatedProgramPlan) -> dict:
         "choices": [item.to_dict() for item in result.selections],
         "config": _simulation_config_to_dict(result.simulation_config),
         "options": result.search_options.to_dict(),
-        "simulation": asdict(result.simulation),
+        "simulation": simulation_result_value(result.simulation),
         "diagnostics": result.diagnostics.to_dict(),
         "resident_slice": result.resident_slice.to_dict(),
         "facts": facts.to_dict(),
@@ -110,7 +111,7 @@ def pack(record: FixedLayoutSelection | AnnotatedProgramPlan) -> dict:
                 "selection_id": row.selection_id,
                 "candidate_id": row.candidate_id,
                 "schedule": row.schedule.to_dict(),
-                "simulation": asdict(row.simulation),
+                "simulation": simulation_result_value(row.simulation),
                 "choices": [item.to_dict() for item in row.selections],
                 "resident_slice": row.resident_slice.to_dict(),
             }

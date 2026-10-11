@@ -19,6 +19,9 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from functools import cached_property
+from itertools import chain
+
+import numpy as np
 
 from shadowspill.planner.admission.lifetimes import (
     LeaseLifetimes,
@@ -30,19 +33,18 @@ from shadowspill.simulator.indexing import IntervalArrays, interval_arrays_from_
 
 from ..admission_replay import AdmissionReplayPurpose
 from ..setup import AdmissionSetup
-from .model import FixedLayoutPlacement, LeaseLifetime
+from .model import (
+    PURPOSES,
+    FixedLayoutPlacements,
+    FixedLayoutTaskAllocations,
+    LeaseLifetime,
+    column,
+)
 
 #: Compiled purpose codes, in the order `ShadowSpillAdmissionPurpose` declares.
-_PURPOSES = (
-    AdmissionReplayPurpose.INITIAL_OBJECT,
-    AdmissionReplayPurpose.TASK_WORKSPACE,
-    AdmissionReplayPurpose.TASK_OUTPUT,
-    AdmissionReplayPurpose.MUTATION_REPLACEMENT,
-    AdmissionReplayPurpose.RELEASE,
-    AdmissionReplayPurpose.EVICTION,
-    AdmissionReplayPurpose.FETCH_DESTINATION,
-    AdmissionReplayPurpose.TERMINAL_COMPLETION,
-)
+_PURPOSES = PURPOSES
+_INITIAL_OBJECT = PURPOSES.index(AdmissionReplayPurpose.INITIAL_OBJECT)
+_FETCH_DESTINATION = PURPOSES.index(AdmissionReplayPurpose.FETCH_DESTINATION)
 
 #: Initial residency names neither a task nor an action, and its index carries
 #: no meaning; action boundaries name an action and its triggering task.
@@ -81,12 +83,58 @@ class LeaseLayout:
             for index in range(self.leases.fixed_count, self.leases.count)
         )
 
-    def placements(self, offsets: tuple[int, ...]) -> tuple[FixedLayoutPlacement, ...]:
-        """Attach the chosen offsets to the fixed leases, named."""
+    @cached_property
+    def lifetime_records(self) -> np.ndarray:
+        """Every lease's lifetime record, viewed in place as a structured array."""
 
-        return tuple(
-            self._placement(index, offsets[index])
-            for index in range(self.leases.fixed_count)
+        return np.ctypeslib.as_array(self.leases.lifetimes)[: self.leases.count]
+
+    @cached_property
+    def identity_records(self) -> np.ndarray:
+        """Every lease's identity record, viewed in place as a structured array."""
+
+        return np.ctypeslib.as_array(self.leases.identities)[: self.leases.count]
+
+    def placements(self, offsets: np.ndarray) -> FixedLayoutPlacements:
+        """Attach the chosen offsets to the fixed leases, as columns.
+
+        Index columns hold the library's indices, with its no-index marker
+        read as `NONE`: the 32-bit marker is all ones, which is -1 signed.
+        """
+
+        fixed = self.leases.fixed_count
+        lifetimes = self.lifetime_records[:fixed]
+        identities = self.identity_records[:fixed]
+        return FixedLayoutPlacements(
+            lease_id=column(identities["lease_id"], np.uint64),
+            offset=column(offsets[:fixed], np.uint64),
+            bytes=column(lifetimes["bytes"], np.uint64),
+            alignment=column(lifetimes["alignment"], np.uint64),
+            predicted_start_ns=column(lifetimes["start_ns"], np.uint64),
+            predicted_end_ns=column(lifetimes["end_ns"], np.uint64),
+            causal_start=column(identities["causal_start"], np.uint64),
+            causal_end=column(identities["causal_end"], np.uint64),
+            purpose=column(identities["purpose"], np.uint8),
+            task=column(identities["task"].view(np.int32), np.int32),
+            alias=column(identities["alias"].view(np.int32), np.int32),
+            action=column(identities["action"].view(np.int32), np.int32),
+            task_ids=self.setup.task_ids,
+            alias_ids=self.setup.alias_ids,
+        )
+
+    def _leases_with(self, purpose: int, field: str) -> list[tuple[int, int]]:
+        """`(index named by field, lease id)` for every lease of a purpose
+        whose `field` names something, in lease order."""
+
+        identities = self.identity_records
+        named = identities[field]
+        chosen = (identities["purpose"] == purpose) & (named != _NO_INDEX)
+        return list(
+            zip(
+                named[chosen].tolist(),
+                identities["lease_id"][chosen].tolist(),
+                strict=True,
+            )
         )
 
     @cached_property
@@ -94,40 +142,44 @@ class LeaseLayout:
         """Which lease each alias arrived resident in."""
 
         aliases = self.setup.alias_ids
-        found: dict[str, int] = {}
-        for index in range(self.leases.count):
-            identity = self.leases.identities[index]
-            if (
-                _PURPOSES[identity.purpose] is AdmissionReplayPurpose.INITIAL_OBJECT
-                and identity.alias != _NO_INDEX
-            ):
-                found[aliases[identity.alias]] = identity.lease_id
-        return found
+        return {
+            aliases[alias]: lease
+            for alias, lease in self._leases_with(_INITIAL_OBJECT, "alias")
+        }
 
     @cached_property
     def action_destination_leases(self) -> dict[int, int]:
         """Which lease each fetch lands in."""
 
-        found: dict[int, int] = {}
-        for index in range(self.leases.count):
-            identity = self.leases.identities[index]
-            if (
-                _PURPOSES[identity.purpose] is AdmissionReplayPurpose.FETCH_DESTINATION
-                and identity.action != _NO_INDEX
-            ):
-                found[identity.action] = identity.lease_id
-        return found
+        return dict(self._leases_with(_FETCH_DESTINATION, "action"))
 
     @cached_property
-    def task_allocation_leases(self) -> dict[tuple[str, int], int]:
-        """Which lease each task allocation step ended up using."""
+    def task_allocations(self) -> FixedLayoutTaskAllocations:
+        """Which lease each task allocation step ended up using, in step order.
 
-        found: dict[tuple[str, int], int] = {}
-        for offset, step in enumerate(self.setup.allocation_steps):
-            lease = self.leases.allocation_step_leases[offset]
-            if step.allocates and lease != _NO_LEASE:
-                found[(step.task_id, step.ordinal)] = lease
-        return found
+        A step that does not allocate names no lease, so every step that names
+        one is an allocating step.
+        """
+
+        ordinals_by_task = self.setup.allocation_ordinals
+        counts = np.fromiter(
+            (len(ordinals) for ordinals in ordinals_by_task),
+            dtype=np.int64,
+            count=len(ordinals_by_task),
+        )
+        total = int(counts.sum())
+        tasks = np.repeat(np.arange(len(ordinals_by_task), dtype=np.int32), counts)
+        ordinals = np.fromiter(
+            chain.from_iterable(ordinals_by_task), dtype=np.uint32, count=total
+        )
+        leases = np.ctypeslib.as_array(self.leases.allocation_step_leases)[:total]
+        named = leases != _NO_LEASE
+        return FixedLayoutTaskAllocations(
+            task=column(tasks[named], np.int32),
+            allocation_ordinal=column(ordinals[named], np.uint32),
+            lease_id=column(leases[named], np.uint64),
+            task_ids=self.setup.task_ids,
+        )
 
     @cached_property
     def active_aliases(self) -> dict[str, int]:
@@ -150,25 +202,6 @@ class LeaseLayout:
             if identity.alias == _NO_INDEX
             else self.setup.alias_ids[identity.alias],
             None if identity.action == _NO_INDEX else identity.action,
-        )
-
-    def _placement(self, index: int, offset: int) -> FixedLayoutPlacement:
-        lifetime = self.leases.lifetimes[index]
-        identity = self.leases.identities[index]
-        task_id, alias_group_id, action_index = self._names(index)
-        return FixedLayoutPlacement(
-            lease_id=identity.lease_id,
-            offset=offset,
-            bytes=lifetime.bytes,
-            alignment=lifetime.alignment,
-            predicted_start_ns=lifetime.start_ns,
-            predicted_end_ns=lifetime.end_ns,
-            causal_start=identity.causal_start,
-            causal_end=identity.causal_end,
-            purpose=_PURPOSES[identity.purpose],
-            task_id=task_id,
-            alias_group_id=alias_group_id,
-            action_index=action_index,
         )
 
     def _lifetime(self, index: int) -> LeaseLifetime:

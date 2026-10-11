@@ -8,12 +8,15 @@ import time
 from collections import Counter
 from dataclasses import replace
 
+import numpy as np
+
 from shadowspill.ir import ExecutionPlan, MemoryActionKind
 from shadowspill.pipeline.common import (
     fixed_execution_bytes,
     program_phase_timings,
 )
 from shadowspill.planner import ProgramPlanResult, SearchOptions
+from shadowspill.planner.admission.layout.model import PURPOSES
 from shadowspill.planner.admission.refinement import FixedLayoutSelection
 from shadowspill.planner.diagnostics.plan import (
     PlanCacheArtifact,
@@ -444,7 +447,15 @@ def fixed_layout_diagnostic(
     layout = admitted.fixed_layout
     if layout is None:
         raise ValueError("fixed-layout diagnostics require a fixed admission")
-    purposes = Counter(item.purpose.value for item in layout.placements)
+    purposes = Counter(
+        {
+            PURPOSES[code].value: count
+            for code, count in enumerate(
+                np.bincount(layout.placements.purpose, minlength=len(PURPOSES)).tolist()
+            )
+            if count
+        }
+    )
     envelopes = tuple(
         PlanTaskMemoryEnvelope(
             task_id,

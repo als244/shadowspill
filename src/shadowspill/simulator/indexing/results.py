@@ -3,14 +3,18 @@
 from __future__ import annotations
 
 import ctypes
-from dataclasses import dataclass
+from collections.abc import Mapping
+from dataclasses import dataclass, field
+
+import numpy as np
 
 from shadowspill.ir import (
-    MemoryActionKind,
-    MemoryLocation,
     MemorySchedule,
-    ResourceKind,
 )
+from shadowspill.ir.indexing import (
+    MEMORY_ACTION_CODE as _ACTION_CODE,
+)
+from shadowspill.ir.indexing import RESOURCE_KIND_CODE
 from shadowspill.status import Status
 
 from ..capi import (
@@ -35,21 +39,6 @@ from ..model import (
 from .binding import _Projection
 from .template import IndexedSimulationTemplate
 
-_RESOURCE_CODE = {
-    ResourceKind.COMPUTE: 0,
-    ResourceKind.COMMUNICATION: 1,
-    ResourceKind.CONTROL: 2,
-}
-_LOCATION_CODE = {
-    MemoryLocation.DEVICE: 0,
-    MemoryLocation.SPILL: 1,
-}
-_ACTION_CODE = {
-    MemoryActionKind.RELEASE: 0,
-    MemoryActionKind.EVICT: 1,
-    MemoryActionKind.FETCH: 2,
-    MemoryActionKind.WRITE_BACK: 3,
-}
 _STALL_REASONS = (
     (1 << 0, "input-residency"),
     (1 << 1, "device-capacity"),
@@ -66,7 +55,6 @@ _VIOLATION_REASONS = (
     "task-device-capacity",
 )
 _VIOLATION_LOCATIONS = ("device", "spill")
-_DEFAULT_PHYSICAL_DELTA = -(1 << 63)
 
 
 @dataclass(frozen=True, slots=True)
@@ -81,6 +69,14 @@ class IntervalArrays:
     task_interval_count: int
     transfer_intervals: ctypes.Array[CTransferInterval]
     transfer_interval_count: int
+    #: The index space the arrays are in: the template the schedule was bound
+    #: to. A consumer that reads the arrays reads them through this one.
+    template: IndexedSimulationTemplate | None = None
+    #: The decoded intervals as columns, in their decoded order, and the names
+    #: the index columns point into: what a writer stores without building a
+    #: record per interval. Arrays have no equality to compare by.
+    columns: Mapping[str, np.ndarray] | None = field(default=None, compare=False)
+    names: IntervalNames | None = field(default=None, compare=False)
 
 
 def interval_arrays_from_result(
@@ -125,11 +121,253 @@ def interval_arrays_from_result(
         task_interval_count=len(result.task_intervals),
         transfer_intervals=transfers,
         transfer_interval_count=len(result.transfer_intervals),
+        template=template,
     )
 
 
 def _stall_reasons(mask: int) -> tuple[str, ...]:
     return tuple(name for bit, name in _STALL_REASONS if mask & bit)
+
+
+@dataclass(frozen=True, slots=True)
+class IntervalNames:
+    """The names interval columns index: tasks, alias groups and devices."""
+
+    task_ids: tuple[str, ...]
+    alias_ids: tuple[str, ...]
+    device_ids: tuple[str, ...]
+
+
+#: Interval columns, by record and field, with their element types. Index
+#: columns point into `IntervalNames`; `stall_mask` is the simulator's bits.
+TASK_COLUMNS: tuple[tuple[str, type[np.generic]], ...] = (
+    ("task", np.uint32),
+    ("device", np.uint32),
+    ("resource_kind", np.uint8),
+    ("resource_lane", np.uint32),
+    ("ready_ns", np.uint64),
+    ("start_ns", np.uint64),
+    ("end_ns", np.uint64),
+    ("workspace_bytes", np.uint64),
+    ("stall_mask", np.uint32),
+)
+TRANSFER_COLUMNS: tuple[tuple[str, type[np.generic]], ...] = (
+    ("alias", np.uint32),
+    ("trigger_task", np.uint32),
+    ("device", np.uint32),
+    ("direction", np.uint8),
+    ("kind", np.uint8),
+    ("sequence", np.uint32),
+    ("ready_ns", np.uint64),
+    ("start_ns", np.uint64),
+    ("end_ns", np.uint64),
+    ("bytes", np.uint64),
+    ("stall_mask", np.uint32),
+)
+_DIRECTIONS = {0: TransferDirection.FETCH, 1: TransferDirection.EVICT}
+_DIRECTION_CODE = {direction: code for code, direction in _DIRECTIONS.items()}
+_KINDS = {code: kind for kind, code in _ACTION_CODE.items()}
+_RESOURCES = {code: kind for kind, code in RESOURCE_KIND_CODE.items()}
+
+
+def _interval_columns(
+    task_buffer: ctypes.Array[CTaskInterval],
+    task_count: int,
+    transfer_buffer: ctypes.Array[CTransferInterval],
+    transfer_count: int,
+    projection: _Projection,
+) -> dict[str, np.ndarray]:
+    """The library's interval records as columns, in decoded order: tasks by
+    task, and transfers by start, then the direction's spelling, then the
+    device's identifier, then sequence."""
+
+    tasks = np.ctypeslib.as_array(task_buffer)[:task_count]
+    tasks = tasks[np.argsort(tasks["task"], kind="stable")]
+    task_index = tasks["task"]
+    task_device = (
+        np.ctypeslib.as_array(
+            projection.program.task_device, shape=(len(projection.task_ids),)
+        )
+        if projection.task_ids
+        else np.zeros(0, dtype=np.uint32)
+    )
+    kinds = np.array(
+        [RESOURCE_KIND_CODE[kind] for kind, _ in projection.task_resources],
+        dtype=np.uint8,
+    )
+    lanes = np.array([lane for _, lane in projection.task_resources], dtype=np.uint32)
+    columns = {
+        "tasks.task": task_index,
+        "tasks.device": task_device[task_index],
+        "tasks.resource_kind": kinds[task_index],
+        "tasks.resource_lane": lanes[task_index],
+        **{
+            f"tasks.{name}": tasks[name]
+            for name in (
+                "ready_ns",
+                "start_ns",
+                "end_ns",
+                "workspace_bytes",
+                "stall_mask",
+            )
+        },
+    }
+    transfers = np.ctypeslib.as_array(transfer_buffer)[:transfer_count]
+    spelled = sorted(item.value for item in _DIRECTIONS.values())
+    direction_rank = np.zeros(max(_DIRECTIONS) + 1, dtype=np.int64)
+    for code, direction in _DIRECTIONS.items():
+        direction_rank[code] = spelled.index(direction.value)
+    device_rank = np.zeros(max(1, len(projection.device_ids)), dtype=np.int64)
+    for rank, index in enumerate(
+        sorted(range(len(projection.device_ids)), key=projection.device_ids.__getitem__)
+    ):
+        device_rank[index] = rank
+    transfers = transfers[
+        np.lexsort(
+            (
+                transfers["sequence"],
+                device_rank[transfers["device"]],
+                direction_rank[transfers["direction"]],
+                transfers["start_ns"],
+            )
+        )
+    ]
+    columns.update(
+        {f"transfers.{name}": transfers[name] for name, _ in TRANSFER_COLUMNS}
+    )
+    return {
+        name: np.ascontiguousarray(values, dtype=dtype)
+        for name, values in columns.items()
+        for dtype in (_COLUMN_TYPES[name],)
+    }
+
+
+_COLUMN_TYPES = {
+    **{f"tasks.{name}": dtype for name, dtype in TASK_COLUMNS},
+    **{f"transfers.{name}": dtype for name, dtype in TRANSFER_COLUMNS},
+}
+
+
+def intervals_from_columns(
+    columns: Mapping[str, np.ndarray], names: IntervalNames
+) -> tuple[tuple[TaskInterval, ...], tuple[TransferInterval, ...]]:
+    """Interval records from columns already in decoded order, named."""
+
+    task_intervals = tuple(
+        map(
+            TaskInterval,
+            _names(names.task_ids, columns["tasks.task"]),
+            _names(names.device_ids, columns["tasks.device"]),
+            [_RESOURCES[code] for code in columns["tasks.resource_kind"].tolist()],
+            columns["tasks.resource_lane"].tolist(),
+            columns["tasks.ready_ns"].tolist(),
+            columns["tasks.start_ns"].tolist(),
+            columns["tasks.end_ns"].tolist(),
+            columns["tasks.workspace_bytes"].tolist(),
+            _stall_reason_lists(columns["tasks.stall_mask"]),
+        )
+    )
+    transfer_intervals = tuple(
+        map(
+            TransferInterval,
+            _names(names.alias_ids, columns["transfers.alias"]),
+            _names(names.task_ids, columns["transfers.trigger_task"]),
+            _names(names.device_ids, columns["transfers.device"]),
+            [_DIRECTIONS[code] for code in columns["transfers.direction"].tolist()],
+            [_KINDS[code] for code in columns["transfers.kind"].tolist()],
+            columns["transfers.sequence"].tolist(),
+            columns["transfers.ready_ns"].tolist(),
+            columns["transfers.start_ns"].tolist(),
+            columns["transfers.end_ns"].tolist(),
+            columns["transfers.bytes"].tolist(),
+            _stall_reason_lists(columns["transfers.stall_mask"]),
+        )
+    )
+    return task_intervals, transfer_intervals
+
+
+def interval_columns(
+    result: SimulationResult,
+) -> tuple[dict[str, np.ndarray], IntervalNames]:
+    """A result's intervals as columns and the names they index: the columns
+    the simulator decoded them from when it produced the result, else built
+    from the records."""
+
+    arrays = result.interval_arrays
+    columns = getattr(arrays, "columns", None)
+    names = getattr(arrays, "names", None)
+    if columns is not None and names is not None:
+        return dict(columns), names
+    tasks = result.task_intervals
+    transfers = result.transfer_intervals
+    task_ids = tuple(
+        dict.fromkeys(
+            [item.task_id for item in tasks]
+            + [item.trigger_task_id for item in transfers]
+        )
+    )
+    alias_ids = tuple(dict.fromkeys(item.alias_group_id for item in transfers))
+    device_ids = tuple(
+        dict.fromkeys(
+            [item.device_id for item in tasks] + [item.device_id for item in transfers]
+        )
+    )
+    task_at = {name: index for index, name in enumerate(task_ids)}
+    alias_at = {name: index for index, name in enumerate(alias_ids)}
+    device_at = {name: index for index, name in enumerate(device_ids)}
+    bits = {name: bit for bit, name in _STALL_REASONS}
+    built = {
+        "tasks.task": [task_at[item.task_id] for item in tasks],
+        "tasks.device": [device_at[item.device_id] for item in tasks],
+        "tasks.resource_kind": [
+            RESOURCE_KIND_CODE[item.resource_kind] for item in tasks
+        ],
+        "tasks.resource_lane": [item.resource_lane for item in tasks],
+        "tasks.ready_ns": [item.ready_ns for item in tasks],
+        "tasks.start_ns": [item.start_ns for item in tasks],
+        "tasks.end_ns": [item.end_ns for item in tasks],
+        "tasks.workspace_bytes": [item.workspace_bytes for item in tasks],
+        "tasks.stall_mask": [
+            sum(bits[name] for name in item.stall_reasons) for item in tasks
+        ],
+        "transfers.alias": [alias_at[item.alias_group_id] for item in transfers],
+        "transfers.trigger_task": [task_at[item.trigger_task_id] for item in transfers],
+        "transfers.device": [device_at[item.device_id] for item in transfers],
+        "transfers.direction": [_DIRECTION_CODE[item.direction] for item in transfers],
+        "transfers.kind": [_ACTION_CODE[item.kind] for item in transfers],
+        "transfers.sequence": [item.sequence for item in transfers],
+        "transfers.ready_ns": [item.ready_ns for item in transfers],
+        "transfers.start_ns": [item.start_ns for item in transfers],
+        "transfers.end_ns": [item.end_ns for item in transfers],
+        "transfers.bytes": [item.bytes for item in transfers],
+        "transfers.stall_mask": [
+            sum(bits[name] for name in item.stall_reasons) for item in transfers
+        ],
+    }
+    return (
+        {
+            name: np.array(values, dtype=_COLUMN_TYPES[name])
+            for name, values in built.items()
+        },
+        IntervalNames(task_ids, alias_ids, device_ids),
+    )
+
+
+def _stall_reason_lists(masks: np.ndarray) -> list[tuple[str, ...]]:
+    """The reasons of each mask, spelled once per distinct mask."""
+
+    distinct, positions = np.unique(masks, return_inverse=True)
+    spelled = [_stall_reasons(int(mask)) for mask in distinct.tolist()]
+    return [spelled[position] for position in positions.tolist()]
+
+
+def _names(table: tuple[object, ...], indices: np.ndarray) -> list[object]:
+    """`table[index]` for every index, looked up in one array operation."""
+
+    lookup = np.empty(len(table), dtype=object)
+    for position, value in enumerate(table):
+        lookup[position] = value
+    return lookup[indices].tolist()
 
 
 def _optional_name(names: tuple[str, ...], index: int) -> str | None:
@@ -225,52 +463,17 @@ def _simulate_projection(
     task_buffer, transfer_buffer, peak_buffer, violation_buffer, result = (
         _run_projection(projection, schedule)
     )
-    task_intervals = tuple(
-        TaskInterval(
-            task_id=projection.task_ids[item.task],
-            device_id=projection.device_ids[projection.program.task_device[item.task]],
-            resource_kind=projection.task_resources[item.task][0],
-            resource_lane=projection.task_resources[item.task][1],
-            ready_ns=int(item.ready_ns),
-            start_ns=int(item.start_ns),
-            end_ns=int(item.end_ns),
-            workspace_bytes=int(item.workspace_bytes),
-            stall_reasons=_stall_reasons(int(item.stall_mask)),
-        )
-        for item in sorted(
-            task_buffer[: result.task_interval_count],
-            key=lambda value: value.task,
-        )
+    columns = _interval_columns(
+        task_buffer,
+        int(result.task_interval_count),
+        transfer_buffer,
+        int(result.transfer_interval_count),
+        projection,
     )
-    directions = {
-        0: TransferDirection.FETCH,
-        1: TransferDirection.EVICT,
-    }
-    kinds = {code: kind for kind, code in _ACTION_CODE.items()}
-    transfer_intervals = tuple(
-        TransferInterval(
-            alias_group_id=projection.alias_ids[item.alias],
-            trigger_task_id=projection.task_ids[item.trigger_task],
-            device_id=projection.device_ids[item.device],
-            direction=directions[item.direction],
-            kind=kinds[item.kind],
-            sequence=int(item.sequence),
-            ready_ns=int(item.ready_ns),
-            start_ns=int(item.start_ns),
-            end_ns=int(item.end_ns),
-            bytes=int(item.bytes),
-            stall_reasons=_stall_reasons(int(item.stall_mask)),
-        )
-        for item in sorted(
-            transfer_buffer[: result.transfer_interval_count],
-            key=lambda value: (
-                value.start_ns,
-                directions[value.direction].value,
-                projection.device_ids[value.device],
-                value.sequence,
-            ),
-        )
+    names = IntervalNames(
+        projection.task_ids, projection.alias_ids, projection.device_ids
     )
+    task_intervals, transfer_intervals = intervals_from_columns(columns, names)
     device_peaks = tuple(
         DeviceMemoryPeak(
             device_id=device_id,
@@ -317,6 +520,9 @@ def _simulate_projection(
             task_interval_count=int(result.task_interval_count),
             transfer_intervals=transfer_buffer,
             transfer_interval_count=int(result.transfer_interval_count),
+            template=projection.template,
+            columns=columns,
+            names=names,
         )
     )
     return simulated

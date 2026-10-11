@@ -19,6 +19,7 @@ from .artifacts import (
     PlanningArtifact,
     atomic_json,
     atomic_text,
+    atomic_write,
     digest_directory,
 )
 from .policy import CONTRIBUTE, STORE_MODES, StoreMode, StorePolicy
@@ -33,5 +34,6 @@ __all__ = [
     "StorePolicy",
     "atomic_json",
     "atomic_text",
+    "atomic_write",
     "digest_directory",
 ]

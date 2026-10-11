@@ -4,64 +4,11 @@ from __future__ import annotations
 
 import ctypes
 from array import array
+from collections.abc import Sequence
 from dataclasses import dataclass, field
 from typing import TypeVar
 
-from shadowspill.ir import (
-    MemoryActionKind,
-    MemoryLocation,
-    ResourceKind,
-)
-
-_RESOURCE_CODE = {
-    ResourceKind.COMPUTE: 0,
-    ResourceKind.COMMUNICATION: 1,
-    ResourceKind.CONTROL: 2,
-}
-_LOCATION_CODE = {
-    MemoryLocation.DEVICE: 0,
-    MemoryLocation.SPILL: 1,
-}
-_ACTION_CODE = {
-    MemoryActionKind.RELEASE: 0,
-    MemoryActionKind.EVICT: 1,
-    MemoryActionKind.FETCH: 2,
-    MemoryActionKind.WRITE_BACK: 3,
-}
-_STALL_REASONS = (
-    (1 << 0, "input-residency"),
-    (1 << 1, "device-capacity"),
-    (1 << 2, "source-readiness"),
-    (1 << 3, "host-capacity"),
-    (1 << 4, "memory-reuse"),
-    (1 << 5, "lane-busy"),
-)
-_VIOLATION_REASONS = (
-    "initial-device-capacity",
-    "initial-spill-capacity",
-    "fetch-device-capacity",
-    "evict-spill-capacity",
-    "task-device-capacity",
-)
-_VIOLATION_LOCATIONS = ("device", "spill")
-_DEFAULT_PHYSICAL_DELTA = -(1 << 63)
-
-_RESOURCE_CODE = {
-    ResourceKind.COMPUTE: 0,
-    ResourceKind.COMMUNICATION: 1,
-    ResourceKind.CONTROL: 2,
-}
-_LOCATION_CODE = {
-    MemoryLocation.DEVICE: 0,
-    MemoryLocation.SPILL: 1,
-}
-_ACTION_CODE = {
-    MemoryActionKind.RELEASE: 0,
-    MemoryActionKind.EVICT: 1,
-    MemoryActionKind.FETCH: 2,
-    MemoryActionKind.WRITE_BACK: 3,
-}
-_DEFAULT_PHYSICAL_DELTA = -(1 << 63)
+import numpy as np
 
 
 def _u32_array(values: tuple[int, ...]) -> ctypes.Array[ctypes.c_uint32]:
@@ -74,9 +21,11 @@ def _u64_array(values: tuple[int, ...]) -> ctypes.Array[ctypes.c_uint64]:
     return array_type.from_buffer_copy(array("Q", values)) if values else array_type()
 
 
-def _i64_array(values: tuple[int, ...]) -> ctypes.Array[ctypes.c_int64]:
+def _i64_array(values: Sequence[int] | np.ndarray) -> ctypes.Array[ctypes.c_int64]:
     array_type = ctypes.c_int64 * max(1, len(values))
-    return array_type(*values) if values else array_type()
+    if not len(values):
+        return array_type()
+    return array_type.from_buffer_copy(np.ascontiguousarray(values, dtype=np.int64))
 
 
 def _u8_array(values: tuple[int, ...]) -> ctypes.Array[ctypes.c_uint8]:

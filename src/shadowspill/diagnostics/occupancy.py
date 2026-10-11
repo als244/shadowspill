@@ -710,6 +710,53 @@ def spill_occupancy(
     )
 
 
+def placement_rows(layout: Mapping[str, Any]) -> list[dict[str, Any]]:
+    """A stored certificate's placements, one mapping per lease, keyed as a
+    single placement serializes. The certificate keeps them as columns,
+    with task and alias names in tables and purposes as codes."""
+
+    columns = layout["placements"]
+    tasks, aliases = layout["task_ids"], layout["alias_ids"]
+    purposes = layout["purposes"]
+    numbers = (
+        "lease_id",
+        "offset",
+        "bytes",
+        "alignment",
+        "predicted_start_ns",
+        "predicted_end_ns",
+        "causal_start",
+        "causal_end",
+    )
+    return [
+        {
+            **dict(zip(numbers, values[:8], strict=True)),
+            "purpose": purposes[values[8]],
+            "task_id": None if values[9] < 0 else tasks[values[9]],
+            "alias_group_id": None if values[10] < 0 else aliases[values[10]],
+            "action_index": None if values[11] < 0 else values[11],
+        }
+        for values in zip(
+            *(columns[name] for name in numbers),
+            columns["purpose"],
+            columns["task"],
+            columns["alias"],
+            columns["action"],
+            strict=True,
+        )
+    ]
+
+
+def _stored_selection(path: Path, *, layout: bool = True) -> dict[str, Any]:
+    """A plan record with its certificate, which a plan store keeps in a file
+    of its own beside it; `layout=False` reads only the certificate's byte
+    counts. A record with no such file reads as it is."""
+
+    from shadowspill.planner.plan_store import read_stored_selection
+
+    return read_stored_selection(path, layout=layout)
+
+
 def storage_handoffs(
     facts: ProgramFacts, layout: Mapping[str, Any], simulated: Clock
 ) -> dict[int, tuple[str, str]]:
@@ -1065,6 +1112,7 @@ def attribute(
     placed = None
     layout = selection.get("admission_certificate", {}).get("layout")
     if layout is not None:
+        layout = {**layout, "placements": placement_rows(layout)}
         peaks = simulation.get("device_peaks") or ()
         reported = int(peaks[0]["total_bytes"]) if peaks else None
         if diagnostics is not None:
@@ -1683,7 +1731,7 @@ def stored_plans(run_root: Path) -> list[StoredPlan]:
     )
     results = store / "v1" / "planning" / "results"
     for path in sorted(results.glob("*/*/selection.json")):
-        selection = json.loads(path.read_text())
+        selection = _stored_selection(path, layout=False)
         simulation = selection.get("simulation_result")
         layout = selection.get("admission_certificate", {}).get("layout", {})
         if simulation is None or "pool_capacity_bytes" not in layout:
@@ -1706,7 +1754,7 @@ def stored_plans(run_root: Path) -> list[StoredPlan]:
     # one record each under the chosen plan's key, certified like it. One whose
     # layout did not fit has no certificate and no page.
     for path in sorted(results.glob("*/*/resolutions/*/selection.json")):
-        selection = json.loads(path.read_text())
+        selection = _stored_selection(path, layout=False)
         simulation = selection.get("simulation_result")
         layout = selection.get("admission_certificate", {}).get("layout", {})
         resolution = selection.get("resolution") or {}
@@ -2096,7 +2144,7 @@ def write_run_timelines(
 
     finished: str | None = None
     for record in ordered:
-        selection = json.loads(record.path.read_text())
+        selection = _stored_selection(record.path)
         program = json.loads(program_path_for(record.path, selection).read_text())
         geometry = record.geometry or f"plan_{record.path.parent.name[:8]}"
         budget = (
@@ -2188,7 +2236,7 @@ def write_run_timelines(
         )
         for kept in others:
             folder = directory / kept.path.parent.name
-            kept_selection = json.loads(kept.path.read_text())
+            kept_selection = _stored_selection(kept.path)
             kept_views = [
                 attribute(kept_selection, program),
                 unconstrained(program, kept_selection.get("selections", ())),
@@ -2593,9 +2641,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             " with --all-save"
         )
     selection = (
-        {}
-        if arguments.selection is None
-        else json.loads(arguments.selection.read_text())
+        {} if arguments.selection is None else _stored_selection(arguments.selection)
     )
     program_path = arguments.program or program_path_for(arguments.selection, selection)
     program = json.loads(program_path.read_text())

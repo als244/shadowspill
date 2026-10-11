@@ -29,6 +29,9 @@ def _simulation_admission_from_value(
     action_deltas = _list(data.get("action_deltas"), f"{path}.action_deltas")
     dependencies = _list(data.get("reuse_dependencies"), f"{path}.reuse_dependencies")
     return SimulationAdmission(
+        unlisted_delta_bytes=_optional_integer(
+            data.get("unlisted_delta_bytes"), f"{path}.unlisted_delta_bytes"
+        ),
         initial_physical_bytes=_integer_pairs(
             data.get("initial_physical_bytes"), f"{path}.initial_physical_bytes"
         ),
@@ -88,3 +91,23 @@ def _simulation_admission_from_value(
             for item in (_mapping(raw, f"{path}.reuse_dependencies[{index}]"),)
         ),
     )
+
+
+def simulation_admission_value(admission: SimulationAdmission) -> dict[str, object]:
+    """A simulator admission as `asdict` gives it, with its delta tuples,
+    which a dynamic replay fills for every task and action, read flat."""
+
+    from .simulation_result import flat_records, plain_value
+
+    value = {
+        name: plain_value(getattr(admission, name))
+        for name in (
+            "initial_physical_bytes",
+            "device_capacity_bytes",
+            "reuse_dependencies",
+            "unlisted_delta_bytes",
+        )
+    }
+    value["task_deltas"] = flat_records(admission.task_deltas)
+    value["action_deltas"] = flat_records(admission.action_deltas)
+    return value

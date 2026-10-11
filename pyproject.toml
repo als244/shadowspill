@@ -8,7 +8,7 @@ version = "0.1.0.dev0"
 description = "Transparent memory evict, fetch, and recomputation planning"
 readme = "README.md"
 requires-python = ">=3.12"
-dependencies = ["matplotlib>=3.9"]
+dependencies = ["matplotlib>=3.9", "numpy>=2.0"]
 
 [project.optional-dependencies]
 pytorch = ["torch>=2.13,<2.14"]

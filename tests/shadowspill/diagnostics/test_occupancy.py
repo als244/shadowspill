@@ -23,6 +23,7 @@ from shadowspill.diagnostics.occupancy import (
     unconstrained,
     write_pages,
 )
+from shadowspill.planner.admission.layout.model import PURPOSES, FixedLayoutPlacements
 
 MIB = 1 << 20
 S = 1_000_000_000  # nanoseconds in a second
@@ -353,9 +354,9 @@ def _selection(option: str = "save") -> dict:
             ],
         },
         "admission_certificate": {
-            "layout": {
-                "pool_capacity_bytes": 300 * MIB,
-                "placements": [
+            "layout": _stored_layout(
+                300 * MIB,
+                [
                     {
                         "purpose": "fetch_destination",
                         "alias_group_id": "A_w",
@@ -403,8 +404,45 @@ def _selection(option: str = "save") -> dict:
                         "task_id": "t3",
                     },
                 ],
-            }
+            )
         },
+    }
+
+
+def _stored_layout(pool_capacity_bytes: int, placements: list[dict]) -> dict:
+    """A certificate layout as the store keeps it: the placements as columns,
+    task and alias names in tables, purposes as codes. Fields the occupancy
+    walk does not read are filled with zeros."""
+
+    purposes = [item.value for item in PURPOSES]
+    task_ids = sorted({item["task_id"] for item in placements if item.get("task_id")})
+    alias_ids = sorted(
+        {item["alias_group_id"] for item in placements if item.get("alias_group_id")}
+    )
+    columns: dict[str, list[int]] = {name: [] for name in FixedLayoutPlacements.COLUMNS}
+    for index, item in enumerate(placements):
+        task, alias = item.get("task_id"), item.get("alias_group_id")
+        for name, value in (
+            ("lease_id", index),
+            ("offset", 0),
+            ("bytes", item["bytes"]),
+            ("alignment", 1),
+            ("predicted_start_ns", item["predicted_start_ns"]),
+            ("predicted_end_ns", item["predicted_end_ns"]),
+            ("causal_start", 0),
+            ("causal_end", 0),
+            ("purpose", purposes.index(item["purpose"])),
+            ("task", -1 if task is None else task_ids.index(task)),
+            ("alias", -1 if alias is None else alias_ids.index(alias)),
+            ("action", -1),
+        ):
+            columns[name].append(value)
+    return {
+        "pool_capacity_bytes": pool_capacity_bytes,
+        "placements": columns,
+        "task_ids": task_ids,
+        "alias_ids": alias_ids,
+        "purposes": purposes,
     }
 
 

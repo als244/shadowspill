@@ -12,10 +12,12 @@ puts both pools and the transfer lanes on the device's clock.
 A plan store keeps each planning result under
 `<store>/v1/planning/results/<xx>/<key>/selection.json`, and the program it
 was made for under `<store>/v1/planning/programs/<yy>/<digest>/program.json`,
-where the digest is the selection's `program_digest`. The tool finds the
-program from the selection; `--program` names one explicitly. The quickstart
-writes both under a run's `plan_store/`, and `steps/<budget>gib.json` beside
-them is the traced step for `--step`.
+where the digest is the selection's `program_digest`. A certified plan's
+admitted layout is in `certificate.npz` beside its selection, and the tool
+reads the two together; a selection with no certificate beside it is read as
+it stands. The tool finds the program from the selection; `--program` names
+one explicitly. The quickstart writes both under a run's `plan_store/`, and
+`steps/<budget>gib.json` beside them is the traced step for `--step`.
 
 Some entries under `results/` name a plan without carrying its evidence (no
 `simulation_result`); the tool refuses those and says so.
@@ -265,10 +267,12 @@ its own.
 `shadowspill.diagnostics.occupancy.attribute(selection, program, diagnostics=None)`
 takes the three files' contents as mappings (`unconstrained(program,
 selections)` takes the program and a plan's choices, `all_save(program)` the
-program alone) and returns a `PlanOccupancy`
-with `spill` and `execution` (`Occupancy` objects with `at`, `peak`,
-`peaks_by` and `series`), the `tasks` and `transfers` as spans, the
-`facts` the attribution rests on and, on the device's clock,
+program alone); `shadowspill.planner.plan_store.read_stored_selection(path)`
+gives a stored selection with its certificate merged in under
+`admission_certificate`, which is the mapping `attribute` reads. `attribute`
+returns a `PlanOccupancy` with `spill` and `execution` (`Occupancy` objects
+with `at`, `peak`, `peaks_by` and `series`), the `tasks` and `transfers` as
+spans, the `facts` the attribution rests on and, on the device's clock,
 `interpolated_leases`, the lease instants no traced event named;
 `write_pages` and `table` take those. `write_run_timelines(run_root,
 out=None, progress=None)` writes a run's tree and tells `progress` when it

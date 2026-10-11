@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import ctypes
 from dataclasses import dataclass
+from functools import cached_property
 
 from ..capi import (
     CAdmissionOperations,
@@ -22,7 +23,9 @@ class OperationArrays:
     schedule: CIndexedSchedule
 
 
-@dataclass(frozen=True, slots=True)
+# Not slotted: the columns below are decoded on first read and kept in the
+# instance dictionary.
+@dataclass(frozen=True)
 class AdmissionOperations:
     """One schedule's operation sequence, with the provenance a layout needs.
 
@@ -32,31 +35,83 @@ class AdmissionOperations:
     the operations that create and retire it (`None` where a lease outlives
     the step). Those last two let a reader go straight to a lease instead of
     scanning, since most operations touch no lease that matters.
+
+    The library's arrays are what the layout's own library calls read; the
+    columns are decoded from them only when Python reads one.
     """
 
-    lease_ids: tuple[int, ...]
-    dependency_ids: tuple[int | None, ...]
-    bytes: tuple[int, ...]
-    alignments: tuple[int, ...]
-    kinds: tuple[int, ...]
-    purposes: tuple[int, ...]
-    boundaries: tuple[int, ...]
-    indices: tuple[int, ...]
-    allocation_offsets: tuple[int | None, ...]
-    lease_aliases: tuple[int | None, ...]
-    lease_starts: tuple[int, ...]
-    lease_retires: tuple[int | None, ...]
+    operation_count: int
+    live_lease_count: int
     dependency_count: int
     fetch_bytes: int
     evict_bytes: int
     #: The library's own operation arrays and the schedule it derived them
-    #: from, kept so a later library call can read them straight through
-    #: instead of re-encoding the columns above.
+    #: from, read straight through by every later library call.
     arrays: OperationArrays
+
+    def _operations(self, name: str, missing: int | None = None) -> tuple:
+        values = getattr(self.arrays.operations, name)[: self.operation_count]
+        if missing is None:
+            return tuple(values)
+        return tuple(None if value == missing else value for value in values)
+
+    def _leases(self, name: str, missing: int | None = None) -> tuple:
+        values = getattr(self.arrays.operations, name)[: self.live_lease_count]
+        if missing is None:
+            return tuple(values)
+        return tuple(None if value == missing else value for value in values)
+
+    @cached_property
+    def lease_ids(self) -> tuple[int, ...]:
+        return self._operations("lease_ids")
+
+    @cached_property
+    def dependency_ids(self) -> tuple[int | None, ...]:
+        return self._operations("dependency_ids", _NO_DEPENDENCY)
+
+    @cached_property
+    def bytes(self) -> tuple[int, ...]:
+        return self._operations("bytes")
+
+    @cached_property
+    def alignments(self) -> tuple[int, ...]:
+        return self._operations("alignments")
+
+    @cached_property
+    def kinds(self) -> tuple[int, ...]:
+        return self._operations("kinds")
+
+    @cached_property
+    def purposes(self) -> tuple[int, ...]:
+        return self._operations("purposes")
+
+    @cached_property
+    def boundaries(self) -> tuple[int, ...]:
+        return self._operations("boundaries")
+
+    @cached_property
+    def indices(self) -> tuple[int, ...]:
+        return self._operations("indices")
+
+    @cached_property
+    def allocation_offsets(self) -> tuple[int | None, ...]:
+        return self._operations("allocation_offsets", _NO_INDEX)
+
+    @cached_property
+    def lease_aliases(self) -> tuple[int | None, ...]:
+        return self._leases("lease_aliases", _NO_INDEX)
+
+    @cached_property
+    def lease_starts(self) -> tuple[int, ...]:
+        return self._leases("lease_starts")
+
+    @cached_property
+    def lease_retires(self) -> tuple[int | None, ...]:
+        return self._leases("lease_retires", _NO_OPERATION)
 
     @property
     def lease_count(self) -> int:
-        return len(self.lease_aliases)
+        return self.live_lease_count
 
 
 _NO_INDEX = (1 << 32) - 1
@@ -139,31 +194,9 @@ def build_admission_operations(
         ),
         "building admission operations",
     )
-    count = int(result.operation_count)
-    live = int(result.lease_count)
     return AdmissionOperations(
-        lease_ids=tuple(lease_ids[:count]),
-        dependency_ids=tuple(
-            None if value == _NO_DEPENDENCY else value
-            for value in dependency_ids[:count]
-        ),
-        bytes=tuple(sizes[:count]),
-        alignments=tuple(alignments[:count]),
-        kinds=tuple(kinds[:count]),
-        purposes=tuple(purposes[:count]),
-        boundaries=tuple(boundaries[:count]),
-        indices=tuple(indices[:count]),
-        allocation_offsets=tuple(
-            None if value == _NO_INDEX else value
-            for value in allocation_offsets[:count]
-        ),
-        lease_aliases=tuple(
-            None if value == _NO_INDEX else value for value in aliases[:live]
-        ),
-        lease_starts=tuple(lease_starts[:live]),
-        lease_retires=tuple(
-            None if value == _NO_OPERATION else value for value in lease_retires[:live]
-        ),
+        operation_count=int(result.operation_count),
+        live_lease_count=int(result.lease_count),
         dependency_count=int(result.dependency_count),
         fetch_bytes=int(result.fetch_bytes),
         evict_bytes=int(result.evict_bytes),

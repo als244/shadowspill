@@ -173,8 +173,19 @@ class SimulationAdmission:
     task_deltas: tuple[TaskPhysicalDelta, ...] = ()
     action_deltas: tuple[ActionPhysicalDelta, ...] = ()
     reuse_dependencies: tuple[MemoryReuseDependency, ...] = ()
+    #: The delta, at both boundaries, of every task and action the lists
+    #: above leave out. `None` leaves each to its logical bytes, which is what
+    #: the simulator charges without admission; a fixed layout holds all of
+    #: its memory in its slice from the start, so for it every delta is zero
+    #: and nothing need be listed.
+    unlisted_delta_bytes: int | None = None
 
     def __post_init__(self) -> None:
+        if self.unlisted_delta_bytes is not None and (
+            isinstance(self.unlisted_delta_bytes, bool)
+            or not isinstance(self.unlisted_delta_bytes, int)
+        ):
+            raise ValueError("unlisted_delta_bytes must be an integer or None")
         _validate_unique_pairs(self.initial_physical_bytes, "initial_physical_bytes")
         for device_id, bytes_ in self.initial_physical_bytes:
             if not device_id or device_id.strip() != device_id:

@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import json
 from dataclasses import replace
 from pathlib import Path
 from types import SimpleNamespace
@@ -18,7 +17,7 @@ from shadowspill.planner import (
     ResolvedProgramDiagnostics,
     TaskAdmissionSpec,
 )
-from shadowspill.planner.plan_store import PlanLookup
+from shadowspill.planner.plan_store import PlanLookup, read_stored_selection
 from shadowspill.pytorch.planning.admission import resolve_fixed_layout_selection
 from shadowspill.pytorch.planning.forward.plan import plan_forward_program
 from shadowspill.pytorch.planning.stores import open_planning_stores
@@ -198,7 +197,7 @@ def test_pytorch_plan_archives_its_certificate_and_reuses_it(
         search_options=None,
         timer=PlanningTimer(verbose=False),
     )
-    saved = json.loads(stores.plans.path(first.plan.key).read_text())
+    saved = read_stored_selection(stores.plans.path(first.plan.key))
     assert saved["admission_certificate"]["layout"] == first.admission.layout.to_dict()
 
     second = planner(

@@ -405,6 +405,10 @@ meaning of a problem versus a policy.
 `simulation.admission` records timing-independent physical facts: initial
 physical bytes, device capacities, task start/completion deltas, action
 trigger/completion deltas, and cross-lane memory-reuse dependencies.
+`unlisted_delta_bytes` is the delta of every task and action the delta lists
+leave out; when it is `null` each keeps its logical bytes. A fixed layout's
+admission lists no deltas and sets it to zero, because the whole slice is held
+from the start.
 
 ### Physical admission
 
@@ -421,6 +425,25 @@ and required byte counts, every placement, causal reuse dependencies, dynamic
 lifetimes, initial-object leases, task-allocation leases, and transfer-action
 destination leases. Offsets are relative to the
 callable fixed slice, not raw process pointers.
+
+A large step places leases by the million, so the three collections that grow
+with it are stored as columns: one list per field, indexed alike, rather than
+one object per entry. Names appear once, in two tables, and purposes as codes:
+
+| Key | Holds |
+|---|---|
+| `task_ids`, `alias_ids` | The task and alias names the index columns refer to. |
+| `purposes` | The purpose names, in code order; a purpose column holds positions in it. |
+| `placements` | `lease_id`, `offset`, `bytes`, `alignment`, `predicted_start_ns`, `predicted_end_ns`, `causal_start`, `causal_end`, `purpose`, `task`, `alias`, `action`: one entry per fixed lease. |
+| `reuse_dependencies` | `dependency_id`, `predecessor_lease_id`, `predecessor_purpose`, `predecessor_task`, `predecessor_action`, `successor_lease_id`, `successor_task`, `successor_action`: one entry per address a later lease takes over, ordered by successor, then dependency, then predecessor. |
+| `task_allocation_leases` | `task`, `allocation_ordinal`, `lease_id`: the lease each task allocation step used, in step order. |
+
+`task` and `alias` columns hold positions in the name tables, `action` columns
+a schedule action's index, and each holds `-1` where an entry names none; a
+predecessor always names a task. The remaining tables are short and keep one
+object per entry. A planning store keeps the same columns as arrays, in a file
+beside the plan record, which [the artifact
+store](artifact-store.md#what-each-record-contains) describes.
 
 Each attempt records requested/effective object capacity, required bytes,
 pool capacity, accepted status, and the search evidence for that trial.

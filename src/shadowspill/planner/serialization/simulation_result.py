@@ -3,6 +3,9 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
+from dataclasses import fields, is_dataclass
+from operator import attrgetter
+from typing import Any
 
 from shadowspill.ir import MemoryActionKind, ResourceKind
 from shadowspill.simulator import (
@@ -221,3 +224,58 @@ def _simulation_result_from_value(value: object, path: str) -> SimulationResult:
             data.get("capacity_violation_count", 0), f"{path}.capacity_violation_count"
         ),
     )
+
+
+def plain_value(value: Any) -> Any:
+    """`dataclasses.asdict` for the immutable records a plan is made of.
+
+    The same mapping, without the generic walk's per-leaf deep copy: these
+    records hold only scalars, enumerations, nested records and tuples, none
+    of which a copy could change.
+    """
+
+    names = _field_names(type(value))
+    if names is not None:
+        return {name: plain_value(getattr(value, name)) for name in names}
+    if isinstance(value, (tuple, list)):
+        return type(value)(plain_value(item) for item in value)
+    if isinstance(value, dict):
+        return {plain_value(key): plain_value(item) for key, item in value.items()}
+    return value
+
+
+def _field_names(kind: type) -> tuple[str, ...] | None:
+    names = _FIELD_NAMES.get(kind)
+    if names is None and is_dataclass(kind):
+        names = _FIELD_NAMES[kind] = tuple(item.name for item in fields(kind))
+    return names
+
+
+_FIELD_NAMES: dict[type, tuple[str, ...]] = {}
+
+
+def flat_records(records: tuple[Any, ...]) -> list[dict[str, Any]]:
+    """`plain_value` for a long tuple of records of one flat type, whose
+    fields hold scalars, enumerations or tuples of strings: each record read
+    with one getter rather than walked."""
+
+    if not records:
+        return []
+    names = _field_names(type(records[0]))
+    assert names is not None
+    read = attrgetter(*names)
+    return [dict(zip(names, read(item), strict=True)) for item in records]
+
+
+def simulation_result_value(result: SimulationResult) -> dict[str, Any]:
+    """A simulation result as `asdict` gives it, with its interval tuples,
+    which run to hundreds of thousands of records, read flat."""
+
+    value = {
+        name: plain_value(getattr(result, name))
+        for name in _field_names(SimulationResult) or ()
+        if name not in ("task_intervals", "transfer_intervals")
+    }
+    value["task_intervals"] = flat_records(result.task_intervals)
+    value["transfer_intervals"] = flat_records(result.transfer_intervals)
+    return value

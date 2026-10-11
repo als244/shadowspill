@@ -12,6 +12,7 @@ from typing import Any, cast
 
 import torch
 
+from shadowspill.planner.serialization.simulation_result import simulation_result_value
 from shadowspill.pytorch.callables import PlannedTrainStep
 from shadowspill.pytorch.spill import write_spill_tensor
 
@@ -159,6 +160,6 @@ def _selection(call: PlannedTrainStep) -> dict[str, Any]:
         "schedule": report.execution_plan.schedule.to_dict(),
         "selections": [item.to_dict() for item in report.execution_plan.selections],
         "simulation": asdict(result.simulation_config),
-        "simulation_result": asdict(result.simulation),
+        "simulation_result": simulation_result_value(result.simulation),
         "admission_certificate": {"layout": report.physical_layout.to_dict()},
     }

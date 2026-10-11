@@ -13,6 +13,8 @@ import ctypes
 from collections.abc import Sequence
 from typing import Protocol
 
+import numpy as np
+
 from shadowspill.status import ABI_VERSION
 
 from ..capi import (
@@ -51,34 +53,56 @@ def place_records(
 ) -> tuple[tuple[int, ...], int]:
     """Place the first `count` records of an array the library already holds.
 
-    This is the path a measurement takes: the lifetime pass leaves the fixed
-    leases in a contiguous prefix, so placement runs on them where they lie.
     `excluded` marks records to leave out -- their offsets come back as zero
     and they are outside the bytes required -- for leases placed elsewhere.
     """
 
     if count == 0:
         return (), 0
-    offsets = (ctypes.c_uint64 * count)()
-    mask = (
-        None
-        if excluded is None
-        else (ctypes.c_uint8 * count)(*(int(bool(item)) for item in excluded))
+    offsets, required = place_record_array(
+        records,
+        count,
+        None if excluded is None else np.fromiter(excluded, dtype=bool, count=count),
     )
+    return tuple(offsets.tolist()), required
+
+
+def place_record_array(
+    records: ctypes.Array[CLeaseLifetime],
+    count: int,
+    excluded: np.ndarray | None = None,
+) -> tuple[np.ndarray, int]:
+    """`place_records` with arrays in and out, for a caller holding many.
+
+    This is the path a measurement takes: the lifetime pass leaves the fixed
+    leases in a contiguous prefix, so placement runs on them where they lie,
+    and the offsets come back as one writable array.
+    """
+
+    offsets = np.zeros(count, dtype=np.uint64)
+    if count == 0:
+        return offsets, 0
+    mask = None
+    if excluded is not None:
+        flags = np.ascontiguousarray(excluded, dtype=np.uint8)
+        mask = flags.ctypes.data_as(ctypes.POINTER(ctypes.c_uint8))
     problem = CPlacementProblem(
         abi_version=ABI_VERSION,
         lifetime_count=count,
         lifetimes=records,
         excluded=mask,
     )
-    result = CPlacementResult(required_bytes=0, offsets=offsets)
+    result = CPlacementResult(
+        required_bytes=0,
+        offsets=offsets.ctypes.data_as(ctypes.POINTER(ctypes.c_uint64)),
+    )
     check_planner_status(
         planner_api().shadowspill_place_lifetimes(
             ctypes.byref(problem), ctypes.byref(result)
         ),
         "lease placement",
     )
-    return tuple(offsets[:]), int(result.required_bytes)
+    return offsets, int(result.required_bytes)
 
 
 def place_lifetimes(

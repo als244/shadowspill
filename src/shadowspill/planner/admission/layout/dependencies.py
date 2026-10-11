@@ -2,227 +2,168 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+import ctypes
+
+import numpy as np
 
 from shadowspill.planner.admission.operations import AdmissionOperations
+from shadowspill.planner.capi import (
+    CLayoutReuseProblem,
+    CLayoutReuseResult,
+    CLeaseIdentity,
+    CLeaseLifetime,
+    check_planner_status,
+    planner_api,
+)
 from shadowspill.simulator import MemoryReuseDependency
+from shadowspill.status import ABI_VERSION
 
 from ..admission_replay import AdmissionReplayPurpose
 from ..setup import AdmissionSetup
-from .lifetimes import _ACTION_BOUNDARIES, _INITIAL_BOUNDARY, _PURPOSES
-from .model import FixedLayoutPlacement, FixedLayoutReuse
+from .lifetimes import LeaseLayout
+from .model import NONE, PURPOSES, FixedLayoutReuses, column
+
+_EVICTION = PURPOSES.index(AdmissionReplayPurpose.EVICTION)
 
 
-@dataclass(frozen=True, slots=True)
-class _Retirement:
-    """What a reuse of one lease's address must wait for."""
+#: What the library's `ShadowSpillLayoutReuseRefusal` numbers mean, as
+#: the refusal reads.
+_REFUSALS = {
+    1: (
+        "fixed layout overlaps causally live leases: "
+        "predecessor={predecessor}, successor={successor}"
+    ),
+    2: "fixed layout reuses lease {predecessor} without a completion dependency",
+    3: "fixed-layout predecessor lacks a task",
+    4: "fixed-layout successor lacks a consumer",
+}
 
-    dependency_id: int | None
-    purpose: AdmissionReplayPurpose
-    task_id: str | None
-    action_index: int | None
+#: The result's columns, their element types, and the certificate's names.
+_RESULT_COLUMNS = (
+    ("dependency_ids", np.uint64, "dependency_id"),
+    ("predecessor_leases", np.uint64, "predecessor_lease_id"),
+    ("predecessor_purposes", np.uint8, "predecessor_purpose"),
+    ("predecessor_tasks", np.uint32, "predecessor_task"),
+    ("predecessor_actions", np.uint32, "predecessor_action"),
+    ("successor_leases", np.uint64, "successor_lease_id"),
+    ("successor_tasks", np.uint32, "successor_task"),
+    ("successor_actions", np.uint32, "successor_action"),
+)
+
+_CTYPES = {
+    np.uint64: ctypes.c_uint64,
+    np.uint32: ctypes.c_uint32,
+    np.uint8: ctypes.c_uint8,
+}
+
+#: What each result column is kept as. Task and action columns carry the
+#: library's 32-bit no-index marker, which read signed is `NONE`.
+_KEPT = {np.uint64: np.uint64, np.uint32: np.int32, np.uint8: np.uint8}
 
 
-_EMPTY = -1
-_MIXED = -2
-
-
-class _LatestOwnerIndex:
-    """Range-assignment tree whose leaves name the latest physical owner."""
-
-    def __init__(self, placements: tuple[FixedLayoutPlacement, ...]) -> None:
-        coordinates = sorted(
-            {
-                value
-                for item in placements
-                for value in (item.offset, item.offset + item.bytes)
-            }
-        )
-        self._positions = {value: index for index, value in enumerate(coordinates)}
-        self._length = max(0, len(coordinates) - 1)
-        size = 4 * max(1, self._length)
-        self._owners = [_EMPTY] * size
-        self._lazy: list[int | None] = [None] * size
-
-    def replace(self, start: int, end: int, owner: int) -> set[int]:
-        left = self._positions[start]
-        right = self._positions[end]
-        predecessors: set[int] = set()
-        self._query(1, 0, self._length, left, right, predecessors)
-        self._assign(1, 0, self._length, left, right, owner)
-        return predecessors
-
-    def _push(self, node: int) -> None:
-        value = self._lazy[node]
-        if value is None:
-            return
-        for child in (node * 2, node * 2 + 1):
-            self._owners[child] = value
-            self._lazy[child] = value
-        self._lazy[node] = None
-
-    def _query(
-        self,
-        node: int,
-        left: int,
-        right: int,
-        start: int,
-        end: int,
-        found: set[int],
-    ) -> None:
-        if end <= left or right <= start:
-            return
-        if start <= left and right <= end and self._owners[node] != _MIXED:
-            if self._owners[node] >= 0:
-                found.add(self._owners[node])
-            return
-        if right - left == 1:
-            return
-        self._push(node)
-        middle = (left + right) // 2
-        self._query(node * 2, left, middle, start, end, found)
-        self._query(node * 2 + 1, middle, right, start, end, found)
-
-    def _assign(
-        self,
-        node: int,
-        left: int,
-        right: int,
-        start: int,
-        end: int,
-        owner: int,
-    ) -> None:
-        if end <= left or right <= start:
-            return
-        if start <= left and right <= end:
-            self._owners[node] = owner
-            self._lazy[node] = owner
-            return
-        if right - left == 1:
-            self._owners[node] = owner
-            self._lazy[node] = owner
-            return
-        self._push(node)
-        middle = (left + right) // 2
-        self._assign(node * 2, left, middle, start, end, owner)
-        self._assign(node * 2 + 1, middle, right, start, end, owner)
-        left_owner = self._owners[node * 2]
-        right_owner = self._owners[node * 2 + 1]
-        self._owners[node] = left_owner if left_owner == right_owner else _MIXED
+def _kept(values: np.ndarray, dtype: type[np.generic]) -> np.ndarray:
+    return column(values.view(np.int32) if dtype is np.uint32 else values, _KEPT[dtype])
 
 
 def recover_reuse_dependencies(
     operations: AdmissionOperations,
     setup: AdmissionSetup,
-    placements: tuple[FixedLayoutPlacement, ...],
-) -> tuple[FixedLayoutReuse, ...]:
+    layout: LeaseLayout,
+    offsets: np.ndarray,
+) -> FixedLayoutReuses:
     """Recover timing-independent predecessors from causal operation order.
 
-    A predecessor's retirement is resolved only when its address is actually
-    reused, which is a small fraction of the leases.
+    The library takes the placed fixed prefix and the operations it was built
+    from and reports every pair of leases sharing an address, the completion
+    the later one waits for, and who waits: `shadowspill_recover_layout_reuse`,
+    specified readably in `reference/python/admission/reuse.py`. A predecessor
+    that is still live when its successor is acquired, or whose retirement
+    publishes no completion, refuses the layout here. The library writes the
+    columns the certificate keeps, so nothing is decoded per pair.
     """
 
-    def retirement(lease: int) -> _Retirement | None:
-        index = operations.lease_retires[lease]
-        if index is None:
-            return None
-        boundary = operations.boundaries[index]
-        position = operations.indices[index]
-        if boundary in _ACTION_BOUNDARIES:
-            task_id = setup.task_ids[setup.action_trigger_tasks[position]]
-            action_index: int | None = position
-        elif boundary == _INITIAL_BOUNDARY:
-            task_id = None
-            action_index = None
-        else:
-            task_id = setup.task_ids[position]
-            action_index = None
-        return _Retirement(
-            dependency_id=operations.dependency_ids[index],
-            purpose=_PURPOSES[operations.purposes[index]],
-            task_id=task_id,
-            action_index=action_index,
+    count = layout.fixed_count
+    if count == 0:
+        return FixedLayoutReuses(
+            **{
+                name: _kept(np.empty(0, dtype=dtype), dtype)
+                for _, dtype, name in _RESULT_COLUMNS
+            },
+            task_ids=setup.task_ids,
         )
-
-    by_lease = {item.lease_id: item for item in placements}
-    latest = _LatestOwnerIndex(placements)
-    dependencies: set[FixedLayoutReuse] = set()
-    for successor in sorted(
-        placements,
-        key=lambda item: (item.causal_start, item.lease_id),
-    ):
-        predecessors = latest.replace(
-            successor.offset,
-            successor.offset + successor.bytes,
-            successor.lease_id,
+    offset_column = np.ascontiguousarray(offsets[:count], dtype=np.uint64)
+    problem = CLayoutReuseProblem(
+        abi_version=ABI_VERSION,
+        operations=ctypes.pointer(operations.arrays.operations),
+        schedule=ctypes.pointer(operations.arrays.schedule),
+        lifetimes=ctypes.cast(layout.leases.lifetimes, ctypes.POINTER(CLeaseLifetime)),
+        identities=ctypes.cast(
+            layout.leases.identities, ctypes.POINTER(CLeaseIdentity)
+        ),
+        offsets=offset_column.ctypes.data_as(ctypes.POINTER(ctypes.c_uint64)),
+        lifetime_count=count,
+    )
+    library = planner_api()
+    capacity = 2 * count + 16
+    while True:
+        buffers = {
+            field: np.empty(max(capacity, 1), dtype=dtype)
+            for field, dtype, _ in _RESULT_COLUMNS
+        }
+        result = CLayoutReuseResult(
+            **{
+                field: buffers[field].ctypes.data_as(ctypes.POINTER(_CTYPES[dtype]))
+                for field, dtype, _ in _RESULT_COLUMNS
+            },
+            capacity=capacity,
         )
-        for predecessor_id in predecessors:
-            predecessor = by_lease[predecessor_id]
-            if predecessor.causal_end > successor.causal_start:
-                raise ValueError(
-                    "fixed layout overlaps causally live leases: "
-                    f"predecessor={predecessor_id}, "
-                    f"successor={successor.lease_id}"
-                )
-            retired = retirement(predecessor_id)
-            if retired is None or retired.dependency_id is None:
-                raise ValueError(
-                    f"fixed layout reuses lease {predecessor_id} without a "
-                    "completion dependency"
-                )
-            if retired.task_id is None:
-                raise ValueError("fixed-layout predecessor lacks a task")
-            if successor.task_id is None and successor.action_index is None:
-                raise ValueError("fixed-layout successor lacks a consumer")
-            dependencies.add(
-                FixedLayoutReuse(
-                    dependency_id=retired.dependency_id,
-                    predecessor_lease_id=predecessor_id,
-                    predecessor_purpose=retired.purpose,
-                    predecessor_task_id=retired.task_id,
-                    predecessor_action_index=retired.action_index,
-                    successor_lease_id=successor.lease_id,
-                    successor_task_id=successor.task_id,
-                    successor_action_index=successor.action_index,
-                )
+        status = library.shadowspill_recover_layout_reuse(
+            ctypes.byref(problem), ctypes.byref(result)
+        )
+        if status == 1 and result.count > capacity:
+            capacity = result.count
+            continue
+        break
+    if status == 81:
+        raise ValueError(
+            _REFUSALS.get(result.refusal, "fixed layout refused").format(
+                predecessor=result.refusal_predecessor,
+                successor=result.refusal_successor,
             )
-    return tuple(
-        sorted(
-            dependencies,
-            key=lambda item: (
-                item.successor_lease_id,
-                item.dependency_id,
-                item.predecessor_lease_id,
-            ),
         )
+    check_planner_status(status, "shadowspill_recover_layout_reuse")
+    found = int(result.count)
+    return FixedLayoutReuses(
+        **{
+            name: _kept(buffers[field][:found], dtype)
+            for field, dtype, name in _RESULT_COLUMNS
+        },
+        task_ids=setup.task_ids,
     )
 
 
 def simulator_reuse_dependencies(
-    dependencies: tuple[FixedLayoutReuse, ...],
+    dependencies: FixedLayoutReuses,
 ) -> tuple[MemoryReuseDependency, ...]:
     """Project cross-lane eviction proofs into simulator dependencies."""
 
+    evictions = dependencies.predecessor_purpose == _EVICTION
+    predecessors = dependencies.predecessor_action[evictions]
+    if (predecessors == NONE).any():
+        raise ValueError("eviction reuse lacks its action identity")
+    task_ids = dependencies.task_ids
     edges: set[MemoryReuseDependency] = set()
-    for item in dependencies:
-        if item.predecessor_purpose is not AdmissionReplayPurpose.EVICTION:
-            continue
-        predecessor = item.predecessor_action_index
-        if predecessor is None:
-            raise ValueError("eviction reuse lacks its action identity")
-        if item.successor_action_index is not None:
+    for predecessor, action, task in zip(
+        predecessors.tolist(),
+        dependencies.successor_action[evictions].tolist(),
+        dependencies.successor_task[evictions].tolist(),
+        strict=True,
+    ):
+        if action != NONE:
+            edges.add(MemoryReuseDependency(predecessor, successor_action_index=action))
+        elif task != NONE:
             edges.add(
-                MemoryReuseDependency(
-                    predecessor,
-                    successor_action_index=item.successor_action_index,
-                )
-            )
-        elif item.successor_task_id is not None:
-            edges.add(
-                MemoryReuseDependency(
-                    predecessor,
-                    successor_task_id=item.successor_task_id,
-                )
+                MemoryReuseDependency(predecessor, successor_task_id=task_ids[task])
             )
         else:  # pragma: no cover - validated by recovery
             raise ValueError("fixed-layout reuse lacks a successor")

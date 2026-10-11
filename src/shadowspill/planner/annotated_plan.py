@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import json
-from dataclasses import asdict, dataclass, field, replace
+from dataclasses import dataclass, field, replace
 from typing import TYPE_CHECKING
 
 from shadowspill.ir import MemorySchedule, ResidencySpec, TaskAlternativeChoice
@@ -28,6 +28,10 @@ from shadowspill.planner.serialization import (
     _simulation_result_from_value,
     _string,
 )
+from shadowspill.planner.serialization.simulation_admission import (
+    simulation_admission_value,
+)
+from shadowspill.planner.serialization.simulation_result import simulation_result_value
 from shadowspill.schema import artifact_schema
 from shadowspill.simulator import SimulationAdmission, SimulationResult
 
@@ -130,8 +134,8 @@ class AnnotatedProgramPlan:
                 "selections": [item.to_dict() for item in self.result.selections],
             },
             "simulation": {
-                "result": asdict(self.simulation),
-                "admission": asdict(self.simulation_admission),
+                "result": simulation_result_value(self.simulation),
+                "admission": simulation_admission_value(self.simulation_admission),
             },
             "physical_admission": {
                 "effective_facts": self.effective_facts.to_dict(),

@@ -22,11 +22,12 @@ from shadowspill.planner import (
 )
 from shadowspill.planner.admission import AdmissionFacts, TaskAdmissionSpec
 from shadowspill.planner.admission.refinement import resolve_fixed_layout_selection
-from shadowspill.planner.plan_store import PlanStore
+from shadowspill.planner.plan_store import PlanStore, read_stored_selection
 from shadowspill.planner.search.algorithms.pressurefit import PressureFit
 from shadowspill.planner.search.algorithms.pressurefit.options import (
     PressureFitOptions,
 )
+from shadowspill.planner.serialization.certificate_file import CERTIFICATE_FILE
 from shadowspill.schema import artifact_schema
 from shadowspill.store import StorePolicy
 
@@ -612,6 +613,31 @@ def _certified_placeable(
     return cache, program, request, first.key
 
 
+def test_a_verdict_leaves_nothing_of_the_plan_it_replaces(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A verdict recorded under a certified plan's key removes the plan's
+    certificate and summary with it."""
+
+    from shadowspill.errors import PlanSearchExhaustedError
+
+    cache, program, request, key = _certified_placeable(tmp_path)
+    assert cache.certificate_path(key).exists()
+    assert cache.summary_path(key).exists()
+
+    def exhausted(*_args: object, **_kwargs: object) -> None:
+        raise PlanSearchExhaustedError("stopped looking")
+
+    monkeypatch.setattr(PressureFit, "__call__", exhausted)
+    refreshed = PlanStore(tmp_path, policy=StorePolicy.for_mode("refresh"))
+    with pytest.raises(PlanSearchExhaustedError):
+        refreshed.resolve(program, **request)  # type: ignore[arg-type]
+
+    assert "verdict" in json.loads(cache.path(key).read_text())
+    assert not cache.certificate_path(key).exists()
+    assert not cache.summary_path(key).exists()
+
+
 def test_a_summary_is_written_with_the_certificate_and_read_without_the_plan(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -784,6 +810,10 @@ def test_every_resolutions_best_plan_is_kept_beside_the_answer_when_asked(
     assert records["recompute_1"]["schema"] == artifact_schema("plan_resolution")
     assert records["recompute_1"]["key_digest"] == kept.key
     assert "admission_certificate" not in records["recompute_1"]
+    assert not any(
+        path.with_name(CERTIFICATE_FILE).exists()
+        for path in (tmp_path / "kept").rglob("resolutions/*/selection.json")
+    )
     assert "diagnostics" not in records["recompute_1"]
 
     facts = _facts(program, config().devices[0].capacity_bytes)
@@ -798,7 +828,11 @@ def test_every_resolutions_best_plan_is_kept_beside_the_answer_when_asked(
         (path.parent.name, path)
         for path in (tmp_path / "kept").rglob("resolutions/*/selection.json")
     ):
-        certified = json.loads(path.read_text())
+        # The certificate is a file of its own beside the record, which is
+        # not written again.
+        assert "admission_certificate" not in json.loads(path.read_text()), name
+        assert path.with_name(CERTIFICATE_FILE).exists(), name
+        certified = read_stored_selection(path)
         assert "admission_certificate" in certified, name
         assert certified["resolution"]["label"] == name
 

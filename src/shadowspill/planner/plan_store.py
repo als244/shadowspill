@@ -46,13 +46,19 @@ from .search import (
 from .search.toolkit.resolution import recompute_share
 from .serialization import (
     _boolean,
-    _fixed_layout_from_value,
     _integer,
     _list,
     _resident_slice_from_value,
-    _simulation_admission_from_value,
     _simulation_result_from_value,
 )
+from .serialization.certificate_file import (
+    CERTIFICATE_FILE,
+    read_certificate,
+    read_certificate_meta,
+    write_certificate,
+)
+from .serialization.simulation_admission import simulation_admission_value
+from .serialization.simulation_result import simulation_result_value
 
 _SCHEMA = artifact_schema("plan_selection")
 _SUMMARY_SCHEMA = artifact_schema("plan_summary")
@@ -140,6 +146,9 @@ class PlanStore:
 
     def summary_path(self, key: str) -> Path:
         return digest_directory(self.root, key) / "summary.json"
+
+    def certificate_path(self, key: str) -> Path:
+        return digest_directory(self.root, key) / CERTIFICATE_FILE
 
     def resolution_path(self, key: str, label: str) -> Path:
         """Where a kept resolution's record sits, beside the answer's."""
@@ -368,19 +377,13 @@ class PlanStore:
         if not self.policy.write_enabled or not lookup.key:
             return
         path = self.path(lookup.key)
-        payload = self._payload(path)
-        if payload is None or "verdict" in payload:
+        if not path.exists():
             return
+        # Its own file: the plan record is not read or written again.
+        write_certificate(self.certificate_path(lookup.key), admission)
+        self._record(lookup.key, lookup.result.program.digest, path, "certified")
         # The summary is what the certified plan promises, so it is written
         # here, with the certificate, and by nothing that precedes one.
-        payload["admission_certificate"] = {
-            "facts_digest": admission.layout.facts_digest,
-            "layout": admission.layout.to_dict(),
-            "simulator_input": asdict(admission.simulator_input),
-            "simulation": asdict(admission.simulation),
-        }
-        atomic_text(path, json.dumps(payload, sort_keys=True, separators=(",", ":")))
-        self._record(lookup.key, lookup.result.program.digest, path, "certified")
         self._write_summary(lookup.key, certified_result(lookup.result, admission))
 
     def certify_resolution(
@@ -403,17 +406,9 @@ class PlanStore:
         if label is None:
             return
         path = self.resolution_path(lookup.key, label)
-        try:
-            payload = json.loads(path.read_text())
-        except FileNotFoundError:
+        if not path.exists():
             return
-        payload["admission_certificate"] = {
-            "facts_digest": admission.layout.facts_digest,
-            "layout": admission.layout.to_dict(),
-            "simulator_input": asdict(admission.simulator_input),
-            "simulation": asdict(admission.simulation),
-        }
-        atomic_text(path, json.dumps(payload, sort_keys=True, separators=(",", ":")))
+        write_certificate(path.parent / CERTIFICATE_FILE, admission)
         self._record(
             lookup.key, lookup.result.program.digest, path, "certified", resolution=True
         )
@@ -553,7 +548,10 @@ class PlanStore:
             admission_facts=admission,
             resolutions=retained,
         )
-        certificate = _certificate_from_value(value.get("admission_certificate"), path)
+        certificate_path = self.certificate_path(key)
+        certificate = (
+            read_certificate(certificate_path) if certificate_path.exists() else None
+        )
         self._record(key, program.digest, path, "read")
         return PlanLookup(result, True, key, certificate)
 
@@ -658,7 +656,7 @@ class PlanStore:
             **_incumbent_field(incumbent),
             "schedule": result.schedule.to_dict(),
             "selections": [item.to_dict() for item in result.selections],
-            "simulation_result": asdict(result.simulation),
+            "simulation_result": simulation_result_value(result.simulation),
             "diagnostics": result.diagnostics.to_dict(),
             "resident_slice": result.resident_slice.to_dict(),
         }
@@ -684,6 +682,7 @@ class PlanStore:
             # A summary describes the plan it was written beside; a new plan
             # has none until it is certified.
             self.summary_path(key).unlink(missing_ok=True)
+            self.certificate_path(key).unlink(missing_ok=True)
             atomic_text(path, encoded)
             self._record(
                 key, result.program.digest, path, "improved" if improve else "write"
@@ -732,7 +731,7 @@ class PlanStore:
                 },
                 "schedule": plan.schedule.to_dict(),
                 "selections": [item.to_dict() for item in plan.selections],
-                "simulation_result": asdict(plan.simulation),
+                "simulation_result": simulation_result_value(plan.simulation),
                 "resident_slice": plan.resident_slice.to_dict(),
             }
             path = self.resolution_path(key, label)
@@ -785,7 +784,10 @@ class PlanStore:
                 "message": str(error),
             },
         }
+        # A verdict supersedes the plan the key held, and with it what was
+        # written beside that plan.
         self.summary_path(key).unlink(missing_ok=True)
+        self.certificate_path(key).unlink(missing_ok=True)
         atomic_text(path, json.dumps(payload, sort_keys=True, separators=(",", ":")))
         self._record(key, program.digest, path, "verdict")
 
@@ -989,21 +991,35 @@ def _answer(payload: dict[str, object]) -> object:
     )
 
 
-def _certificate_from_value(value: object, path: Path) -> FixedLayoutAdmission | None:
-    if value is None:
-        return None
-    if not isinstance(value, dict):
-        raise ValueError(f"planned program {path} has an invalid certificate")
-    where = f"{path}.admission_certificate"
-    return FixedLayoutAdmission(
-        layout=_fixed_layout_from_value(value.get("layout"), f"{where}.layout"),
-        simulator_input=_simulation_admission_from_value(
-            value.get("simulator_input"), f"{where}.simulator_input"
-        ),
-        simulation=_simulation_result_from_value(
-            value.get("simulation"), f"{where}.simulation"
-        ),
-    )
+def read_stored_selection(path: Path, *, layout: bool = True) -> dict[str, object]:
+    """A stored plan record as its JSON, with the certificate the store keeps
+    in its own file merged back under `admission_certificate`, as a reader of
+    records expects: the layout as `to_dict` gives it, the simulator input and
+    the certified simulation as their encoders give them. `layout=False`
+    merges only the certificate's header fields -- its digests and byte
+    counts -- and reads none of its arrays. A record with no certificate file
+    beside it is returned as it is, so a record that carries its own layout
+    reads the same through this as directly."""
+
+    value = json.loads(path.read_text())
+    certificate = path.parent / CERTIFICATE_FILE
+    if not certificate.exists():
+        return value
+    if not layout:
+        meta = read_certificate_meta(certificate)
+        value["admission_certificate"] = {
+            "facts_digest": meta["facts_digest"],
+            "layout": meta["layout"],
+        }
+        return value
+    admission = read_certificate(certificate)
+    value["admission_certificate"] = {
+        "facts_digest": admission.layout.facts_digest,
+        "layout": admission.layout.to_dict(),
+        "simulator_input": simulation_admission_value(admission.simulator_input),
+        "simulation": simulation_result_value(admission.simulation),
+    }
+    return value
 
 
 def _verdict_error(verdict: _Verdict) -> Exception:

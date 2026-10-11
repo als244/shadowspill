@@ -139,16 +139,17 @@ path through the same helper, `digest_directory`.
 | Step program | `build/steps/<2>/<key>/step_program.json`, with `manifest.json` beside it |
 | Canonical program | `planning/programs/<2>/<digest>/program.json` |
 | Selection request | `planning/requests/<2>/<digest>/request.json` |
-| Planned program | `planning/results/<2>/<digest>/selection.json`, with `summary.json` beside it once certified |
-| Kept resolution | `planning/results/<2>/<digest>/resolutions/<label>/selection.json`: one per resolved program the search planned, when asked to keep them, certified beside the answer; `<label>` is `recompute_<share>`, the share of the flexible groups it recomputes |
+| Planned program | `planning/results/<2>/<digest>/selection.json`, with `certificate.npz` and `summary.json` beside it once certified |
+| Kept resolution | `planning/results/<2>/<digest>/resolutions/<label>/selection.json`: one per resolved program the search planned, when asked to keep them, certified beside the answer, its `certificate.npz` in the same folder; `<label>` is `recompute_<share>`, the share of the flexible groups it recomputes |
 
 The digest in a path is the key described above, so a path is a question and
 its contents are the answer. The program archive is the one entry keyed by
 something it wraps rather than by a composite: its digest is `ShadowSpillProgram.digest`,
 because the archive's job is to hold one immutable copy of each distinct
-program a plan can be traced back to. Graph pairs and optimizer captures are
-the entries that are not JSON, because they hold compiled graphs and traced
-tensors; a graph pair's key covers the structural contract, the
+program a plan can be traced back to. Graph pairs, optimizer captures and
+certificates are the entries that are not JSON: the first two hold compiled
+graphs and traced tensors, and a certificate holds columns that run to
+millions of entries. A graph pair's key covers the structural contract, the
 differentiation options and the retention policy together, so one entry is
 one digest like everything else.
 
@@ -310,8 +311,19 @@ simulation, search, search_options, admission, incumbent
 ```text
 schema, key_digest, program_digest, initial_residency, final_residency,
 simulation, search, search_options, admission_digest, incumbent,
-schedule, selections, simulation_result, resident_slice, diagnostics,
-admission_certificate{ facts_digest, layout, simulator_input, simulation }
+schedule, selections, simulation_result, resident_slice, diagnostics
+```
+
+**Certificate** is the fixed layout certified for that plan, in
+`certificate.npz` beside the record:
+
+```text
+meta                      JSON: schema, facts_digest, layout header,
+                          simulator_input, simulation header, interval_names
+placements.<column>       one array per placement column
+reuse_dependencies.<column>
+task_allocation_leases.<column>
+simulation.tasks.<column>, simulation.transfers.<column>
 ```
 
 `search` names the algorithm and `search_options` is everything it was told,
@@ -320,15 +332,22 @@ back for another. The search that ships carries its `resolution_options` there,
 the shares of the flexible groups to recompute as exact fractions (`"1/4"`).
 `selections` is the task-alternative choice per group and `schedule` the memory
 schedule it implies. `simulation_result` is the simulation the search answered
-with, and `admission_certificate` the fixed layout certified for the plan, the
+with. The certificate is the fixed layout certified for the plan, the
 simulator input it implies and the physical simulation that proved it, named
-for the admission facts it was certified against; the certificate is written
-after the plan, by the call that certified it. Reading one checks the request
-fields and both digests and rejects a mismatch, which is what makes a stale
-entry an error rather than a silent wrong answer; what it does not do is
-simulate or place again, so a hit costs its deserialization. `incumbent` is
-provenance in both documents and in neither key: it names the plan the search
-was handed to beat.
+for the admission facts it was certified against; the call that certified it
+writes it after the plan, as a file of its own, so the record is never read or
+written again for it. What grows with the step is stored as arrays: the
+layout's columns, as the planning JSON lists them, and the simulation's task
+and transfer intervals in the order a simulation decodes them, by index into
+`interval_names`; the rest is the `meta` member. A new plan under the same key
+removes the old certificate with the old summary.
+`read_stored_selection` returns a record with its certificate merged back under
+`admission_certificate`, which is how the occupancy tool reads a store.
+Reading a record checks the request fields and both digests and rejects a
+mismatch, which is what makes a stale entry an error rather than a silent
+wrong answer; what it does not do is simulate or place again, so a hit costs
+its deserialization. `incumbent` is provenance in both documents and in
+neither key: it names the plan the search was handed to beat.
 
 **Plan summary** is what a certified plan promises, beside it under the same
 key:

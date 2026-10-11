@@ -13,7 +13,9 @@ from shadowspill.ir.program import canonical_index
 from shadowspill.ir.schedule import first_use_initial_order
 from shadowspill.planner.admission.admission_replay import AdmissionReplayPurpose
 from shadowspill.planner.admission.layout.model import (
-    FixedLayoutPlacement,
+    NONE,
+    PURPOSES,
+    FixedLayoutPlacements,
     FixedPhysicalLayout,
     LeaseLifetime,
 )
@@ -24,6 +26,11 @@ from shadowspill.runtime.fixed_layout import (
     RuntimeFixedPlacement,
     RuntimePlacementKind,
 )
+
+#: Where one fixed lease lies: its offset, bytes and alignment.
+_Fixed = tuple[int, int, int]
+
+_EVICTION = PURPOSES.index(AdmissionReplayPurpose.EVICTION)
 
 
 @dataclass(frozen=True, slots=True)
@@ -57,7 +64,7 @@ def project_runtime_fixed_layout(
     if layout.schedule_digest != schedule.digest:
         raise ValueError("fixed layout belongs to a different memory schedule")
 
-    fixed_by_lease = {item.lease_id: item for item in layout.placements}
+    fixed_by_lease = _fixed_by_lease(layout.placements)
     dynamic_by_lease = {item.lease_id: item for item in layout.dynamic_lifetimes}
     action_identities = _action_identities(program, schedule)
     task_allocations = _task_allocation_identities(layout)
@@ -119,7 +126,7 @@ def _initial_placements(
     layout: FixedPhysicalLayout,
     program: ShadowSpillProgram,
     schedule: MemorySchedule,
-    fixed_by_lease: dict[int, FixedLayoutPlacement],
+    fixed_by_lease: dict[int, _Fixed],
 ) -> tuple[RuntimeFixedPlacement, ...]:
     initial_leases = dict(layout.initial_alias_leases)
     sizes = {item.alias_group_id: item.size_bytes for item in program.alias_groups}
@@ -146,7 +153,7 @@ def _initial_placements(
 
 def _task_placements(
     layout: FixedPhysicalLayout,
-    fixed_by_lease: dict[int, FixedLayoutPlacement],
+    fixed_by_lease: dict[int, _Fixed],
     dynamic_by_lease: dict[int, LeaseLifetime],
     *,
     dynamic_task_allocations: tuple[DynamicTaskAllocationPolicy, ...],
@@ -204,7 +211,7 @@ def _task_placements(
 
 def _action_placements(
     layout: FixedPhysicalLayout,
-    fixed_by_lease: dict[int, FixedLayoutPlacement],
+    fixed_by_lease: dict[int, _Fixed],
     dynamic_by_lease: dict[int, LeaseLifetime],
     action_identities: dict[int, _ActionIdentity],
 ) -> tuple[RuntimeFixedPlacement, ...]:
@@ -253,14 +260,22 @@ def _runtime_dependencies(
     task_allocations: dict[tuple[str, int], tuple[int, ...]],
 ) -> tuple[RuntimeFixedDependency, ...]:
     result: set[RuntimeFixedDependency] = set()
-    for item in layout.reuse_dependencies:
-        if item.predecessor_purpose is not AdmissionReplayPurpose.EVICTION:
-            continue
-        if item.predecessor_action_index is None:
+    # Only a reuse that waits on an eviction crosses lanes; the rest are
+    # ordered by the task stream already.
+    reuses = layout.reuse_dependencies
+    evictions = reuses.predecessor_purpose == _EVICTION
+    for predecessor_action, successor_lease, successor_task, successor_action in zip(
+        reuses.predecessor_action[evictions].tolist(),
+        reuses.successor_lease_id[evictions].tolist(),
+        reuses.successor_task[evictions].tolist(),
+        reuses.successor_action[evictions].tolist(),
+        strict=True,
+    ):
+        if predecessor_action == NONE:
             raise ValueError("fixed eviction dependency has no action identity")
-        predecessor = action_identities[item.predecessor_action_index]
-        if item.successor_action_index is not None:
-            successor = action_identities[item.successor_action_index]
+        predecessor = action_identities[predecessor_action]
+        if successor_action != NONE:
+            successor = action_identities[successor_action]
             result.add(
                 RuntimeFixedDependency(
                     predecessor_task_id=predecessor.task_id,
@@ -271,20 +286,17 @@ def _runtime_dependencies(
                 )
             )
             continue
-        if item.successor_task_id is None:
+        if successor_task == NONE:
             raise ValueError("fixed reuse dependency has no successor")
-        ordinals = task_allocations.get(
-            (item.successor_task_id, item.successor_lease_id)
-        )
+        successor_task_id = reuses.task_ids[successor_task]
+        ordinals = task_allocations.get((successor_task_id, successor_lease))
         if not ordinals:
-            raise ValueError(
-                f"fixed task lease {item.successor_lease_id} has no ordinal"
-            )
+            raise ValueError(f"fixed task lease {successor_lease} has no ordinal")
         result.add(
             RuntimeFixedDependency(
                 predecessor_task_id=predecessor.task_id,
                 predecessor_action_ordinal=predecessor.ordinal,
-                successor_task_id=canonical_index(item.successor_task_id, "task_"),
+                successor_task_id=canonical_index(successor_task_id, "task_"),
                 successor_ordinal=min(ordinals),
                 successor_kind=RuntimePlacementKind.TASK_ALLOCATION,
             )
@@ -323,21 +335,39 @@ def _action_identities(
     return result
 
 
+def _fixed_by_lease(placements: FixedLayoutPlacements) -> dict[int, _Fixed]:
+    """Each fixed lease's offset, bytes and alignment, by lease id."""
+
+    return dict(
+        zip(
+            placements.lease_id.tolist(),
+            zip(
+                placements.offset.tolist(),
+                placements.bytes.tolist(),
+                placements.alignment.tolist(),
+                strict=True,
+            ),
+            strict=True,
+        )
+    )
+
+
 def _fixed_runtime_placement(
-    placement: FixedLayoutPlacement,
+    placement: _Fixed,
     *,
     task_id: int,
     ordinal: int,
     object_id: int,
     kind: RuntimePlacementKind,
 ) -> RuntimeFixedPlacement:
+    offset, size, alignment = placement
     return RuntimeFixedPlacement(
         task_id=task_id,
         ordinal=ordinal,
         object_id=object_id,
-        offset=placement.offset,
-        bytes=placement.bytes,
-        alignment=placement.alignment,
+        offset=offset,
+        bytes=size,
+        alignment=alignment,
         kind=kind,
     )
 

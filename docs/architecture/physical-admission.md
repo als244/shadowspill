@@ -46,7 +46,8 @@ Physical admission consumes:
 
 It returns `FixedLayoutAdmission`, which contains:
 
-- a `FixedPhysicalLayout` with placements and causal reuse dependencies;
+- a `FixedPhysicalLayout` with placements and causal reuse dependencies,
+  held as columns;
 - a `SimulationAdmission` projection of the physical certificate;
 - a new `SimulationResult` that includes the added dependencies;
 - stable digests tying the layout to its program, schedule, and facts
@@ -66,8 +67,27 @@ how far it missed by instead of catching an exception to find out.
 
 `certify_fixed_layout` takes that measurement and completes it: it recovers
 the reuse dependencies, assembles the certificate, and re-simulates under
-those dependencies. This is the half that produces what the runtime enforces,
-and it costs about as much again as the measurement.
+those dependencies. This is the half that produces what the runtime enforces.
+The library recovers the dependencies from the measurement's own arrays
+(`shadowspill_recover_layout_reuse`), the certificate is assembled from those
+arrays without naming a lease, and the re-simulation replays on the
+measurement's template rather than indexing the program again.
+
+### The certificate holds columns
+
+A step's layout places leases by the million, and so does its set of reuse
+dependencies. The certificate therefore holds its placements, its reuse
+dependencies and its task-allocation leases as columns: one array per field,
+indexed alike, with task and alias names held once in tables the index columns
+point into and purposes held as codes. Building, storing and reading a
+certificate is then a handful of array copies where one object per entry would
+cost an allocation each. The planning store keeps the columns as arrays, in a
+file of their own beside the plan, so storing a certificate never encodes the
+plan again, and the planning JSON writes them as lists of integers rather than
+a record per lease. Each column group is also a read-only sequence that
+decodes one entry at a time, so a reader that wants a placement by name gets
+one. [The planning JSON](../python/planning-json.md#physical-admission) lists
+the columns.
 
 A caller that only wants an admitted layout or an error calls
 `build_fixed_layout_admission`, which is exactly the composition of the two.

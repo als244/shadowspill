@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
+import numpy as np
+
 from shadowspill.schema import artifact_schema
 
 from .common import (
@@ -30,8 +32,10 @@ def _fixed_layout_from_value(value: object, path: str) -> FixedPhysicalLayout:
 
     from shadowspill.planner.admission.admission_replay import AdmissionReplayPurpose
     from shadowspill.planner.admission.layout.model import (
-        FixedLayoutPlacement,
-        FixedLayoutReuse,
+        PURPOSES,
+        FixedLayoutPlacements,
+        FixedLayoutReuses,
+        FixedLayoutTaskAllocations,
         FixedPhysicalLayout,
         LeaseLifetime,
     )
@@ -39,13 +43,61 @@ def _fixed_layout_from_value(value: object, path: str) -> FixedPhysicalLayout:
     data = _mapping(value, path)
     if data.get("schema") != artifact_schema("fixed_physical_layout"):
         raise ValueError(f"{path}.schema: unsupported schema")
-    placements = _list(data.get("placements"), f"{path}.placements")
-    dependencies = _list(data.get("reuse_dependencies"), f"{path}.reuse_dependencies")
+    if data.get("purposes") != [item.value for item in PURPOSES]:
+        raise ValueError(f"{path}.purposes: does not match the purpose codes")
+    task_ids = _names(data.get("task_ids"), f"{path}.task_ids")
+    alias_ids = _names(data.get("alias_ids"), f"{path}.alias_ids")
+    tasks, aliases = len(task_ids), len(alias_ids)
+    purposes = len(PURPOSES)
+    unsigned = 1 << 64
+    # Each column's element type and the range its entries must fall in;
+    # -1 is `NONE`, for an entry that names nothing.
+    placement_columns = _columns(
+        data.get("placements"),
+        f"{path}.placements",
+        FixedLayoutPlacements.COLUMNS,
+        {
+            "lease_id": (np.uint64, 0, unsigned),
+            "offset": (np.uint64, 0, unsigned),
+            "bytes": (np.uint64, 0, unsigned),
+            "alignment": (np.uint64, 0, unsigned),
+            "predicted_start_ns": (np.uint64, 0, unsigned),
+            "predicted_end_ns": (np.uint64, 0, unsigned),
+            "causal_start": (np.uint64, 0, unsigned),
+            "causal_end": (np.uint64, 0, unsigned),
+            "purpose": (np.uint8, 0, purposes),
+            "task": (np.int32, -1, tasks),
+            "alias": (np.int32, -1, aliases),
+            "action": (np.int32, -1, 1 << 31),
+        },
+    )
+    reuse_columns = _columns(
+        data.get("reuse_dependencies"),
+        f"{path}.reuse_dependencies",
+        FixedLayoutReuses.COLUMNS,
+        {
+            "dependency_id": (np.uint64, 0, unsigned),
+            "predecessor_lease_id": (np.uint64, 0, unsigned),
+            "predecessor_purpose": (np.uint8, 0, purposes),
+            "predecessor_task": (np.int32, 0, tasks),
+            "predecessor_action": (np.int32, -1, 1 << 31),
+            "successor_lease_id": (np.uint64, 0, unsigned),
+            "successor_task": (np.int32, -1, tasks),
+            "successor_action": (np.int32, -1, 1 << 31),
+        },
+    )
+    allocation_columns = _columns(
+        data.get("task_allocation_leases"),
+        f"{path}.task_allocation_leases",
+        FixedLayoutTaskAllocations.COLUMNS,
+        {
+            "task": (np.int32, 0, tasks),
+            "allocation_ordinal": (np.uint32, 0, 1 << 32),
+            "lease_id": (np.uint64, 0, unsigned),
+        },
+    )
     dynamic = _list(data.get("dynamic_lifetimes"), f"{path}.dynamic_lifetimes")
     initial = _list(data.get("initial_alias_leases"), f"{path}.initial_alias_leases")
-    allocations = _list(
-        data.get("task_allocation_leases"), f"{path}.task_allocation_leases"
-    )
     actions = _list(
         data.get("action_destination_leases"),
         f"{path}.action_destination_leases",
@@ -100,56 +152,10 @@ def _fixed_layout_from_value(value: object, path: str) -> FixedPhysicalLayout:
             data.get("scratch_reserve_bytes"), f"{path}.scratch_reserve_bytes"
         ),
         required_bytes=_integer(data.get("required_bytes"), f"{path}.required_bytes"),
-        placements=tuple(
-            FixedLayoutPlacement(
-                **lifetime_fields(item, f"{path}.placements[{index}]"),
-                offset=_integer(
-                    item.get("offset"), f"{path}.placements[{index}].offset"
-                ),
-            )
-            for index, raw in enumerate(placements)
-            for item in (_mapping(raw, f"{path}.placements[{index}]"),)
+        placements=FixedLayoutPlacements(
+            **placement_columns, task_ids=task_ids, alias_ids=alias_ids
         ),
-        reuse_dependencies=tuple(
-            FixedLayoutReuse(
-                dependency_id=_integer(
-                    item.get("dependency_id"),
-                    f"{path}.reuse_dependencies[{index}].dependency_id",
-                ),
-                predecessor_lease_id=_integer(
-                    item.get("predecessor_lease_id"),
-                    f"{path}.reuse_dependencies[{index}].predecessor_lease_id",
-                ),
-                predecessor_purpose=AdmissionReplayPurpose(
-                    _string(
-                        item.get("predecessor_purpose"),
-                        f"{path}.reuse_dependencies[{index}].predecessor_purpose",
-                    )
-                ),
-                predecessor_task_id=_string(
-                    item.get("predecessor_task_id"),
-                    f"{path}.reuse_dependencies[{index}].predecessor_task_id",
-                ),
-                predecessor_action_index=_optional_integer(
-                    item.get("predecessor_action_index"),
-                    f"{path}.reuse_dependencies[{index}].predecessor_action_index",
-                ),
-                successor_lease_id=_integer(
-                    item.get("successor_lease_id"),
-                    f"{path}.reuse_dependencies[{index}].successor_lease_id",
-                ),
-                successor_task_id=_optional_string(
-                    item.get("successor_task_id"),
-                    f"{path}.reuse_dependencies[{index}].successor_task_id",
-                ),
-                successor_action_index=_optional_integer(
-                    item.get("successor_action_index"),
-                    f"{path}.reuse_dependencies[{index}].successor_action_index",
-                ),
-            )
-            for index, raw in enumerate(dependencies)
-            for item in (_mapping(raw, f"{path}.reuse_dependencies[{index}]"),)
-        ),
+        reuse_dependencies=FixedLayoutReuses(**reuse_columns, task_ids=task_ids),
         initial_alias_leases=tuple(
             (
                 _string(
@@ -164,23 +170,8 @@ def _fixed_layout_from_value(value: object, path: str) -> FixedPhysicalLayout:
             for index, raw in enumerate(initial)
             for item in (_mapping(raw, f"{path}.initial_alias_leases[{index}]"),)
         ),
-        task_allocation_leases=tuple(
-            (
-                _string(
-                    item.get("task_id"),
-                    f"{path}.task_allocation_leases[{index}].task_id",
-                ),
-                _integer(
-                    item.get("allocation_ordinal"),
-                    f"{path}.task_allocation_leases[{index}].allocation_ordinal",
-                ),
-                _integer(
-                    item.get("lease_id"),
-                    f"{path}.task_allocation_leases[{index}].lease_id",
-                ),
-            )
-            for index, raw in enumerate(allocations)
-            for item in (_mapping(raw, f"{path}.task_allocation_leases[{index}]"),)
+        task_allocation_leases=FixedLayoutTaskAllocations(
+            **allocation_columns, task_ids=task_ids
         ),
         action_destination_leases=tuple(
             (
@@ -202,3 +193,47 @@ def _fixed_layout_from_value(value: object, path: str) -> FixedPhysicalLayout:
             for item in (_mapping(raw, f"{path}.dynamic_lifetimes[{index}]"),)
         ),
     )
+
+
+def _names(value: object, path: str) -> tuple[str, ...]:
+    """A name table: a list of distinct strings."""
+
+    names = tuple(_list(value, path))
+    if not all(type(item) is str for item in names):
+        raise ValueError(f"{path}: expected a list of strings")
+    if len(set(names)) != len(names):
+        raise ValueError(f"{path}: repeats a name")
+    return names
+
+
+def _columns(
+    value: object,
+    path: str,
+    names: tuple[str, ...],
+    specs: dict[str, tuple[type[np.generic], int, int]],
+) -> dict[str, np.ndarray]:
+    """One column group: exactly the named columns, equally long, each a list
+    of integers in its range, converted to its element type."""
+
+    from shadowspill.planner.admission.layout.model import column
+
+    group = _mapping(value, path)
+    if set(group) != set(names):
+        raise ValueError(f"{path}: expected the columns {sorted(names)}")
+    columns: dict[str, np.ndarray] = {}
+    for name in names:
+        dtype, low, high = specs[name]
+        value = group.get(name)
+        if isinstance(value, np.ndarray):
+            raw = value
+        else:
+            items = _list(value, f"{path}.{name}")
+            raw = np.asarray(items) if items else np.zeros(0, dtype=np.int64)
+        if raw.ndim != 1 or raw.dtype.kind not in "iu":
+            raise ValueError(f"{path}.{name}: expected a list of integers")
+        if raw.size and (int(raw.min()) < low or int(raw.max()) >= high):
+            raise ValueError(f"{path}.{name}: an entry is outside [{low}, {high})")
+        columns[name] = column(raw, dtype)
+    if len({len(item) for item in columns.values()}) > 1:
+        raise ValueError(f"{path}: columns differ in length")
+    return columns
