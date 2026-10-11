@@ -8,7 +8,7 @@ import json
 import pickle
 import time
 from dataclasses import dataclass, field, replace
-from typing import TYPE_CHECKING, Any, Literal
+from typing import TYPE_CHECKING, Any, Literal, cast
 
 import torch
 from torch.fx import GraphModule
@@ -28,6 +28,7 @@ from shadowspill.pytorch.contracts import (
 )
 from shadowspill.pytorch.distributed import current as current_preparation
 from shadowspill.pytorch.representations import (
+    component_at,
     is_wrapper,
     map_tensor,
     tensor_components,
@@ -582,15 +583,57 @@ def capture_forward_stage_artifacts(
     compilation and profiling.
     """
 
-    return tuple(
-        capture_inference_artifact(
-            graph_module=example.stage.graph_module,
+    from .aot import physical_input_provenance
+
+    contracts: dict[str, GraphArtifact] = {}
+    artifacts: list[GraphArtifact] = []
+    for example in partitioned.stages:
+        stage = example.stage
+        key = GraphArtifact.input_compatibility_digest(
+            graph_module=stage.graph_module,
             example_inputs=example.inputs,
-            explicit_mutations=example.stage.mutations,
-            input_provenance=example.stage.input_provenance,
+            explicit_mutations=stage.mutations,
+            input_provenance=stage.input_provenance,
         )
-        for example in partitioned.stages
-    )
+        cached = contracts.get(key)
+        if cached is None:
+            result = capture_inference_artifact(
+                graph_module=stage.graph_module,
+                example_inputs=example.inputs,
+                explicit_mutations=stage.mutations,
+                input_provenance=stage.input_provenance,
+            )
+            contracts[key] = result
+        else:
+            components = cached.input_components or tuple(
+                (position, ()) for position in cached.tensor_argument_positions
+            )
+            arguments = tuple(
+                component_at(cast(torch.Tensor, example.inputs[position]), path)
+                for position, path in components
+            )
+            provenance = (
+                physical_input_provenance(
+                    example.inputs, example.stage.input_provenance
+                )
+                if cached.input_components
+                else tuple(
+                    example.stage.input_provenance[position]
+                    for position in cached.tensor_argument_positions
+                )
+            )
+            assert provenance is not None
+            # Inputs and observed values belong to this occurrence; consumers
+            # belong to the already verified physical graph.
+            provenance = tuple(
+                replace(current, consumer_targets=prior.consumer_targets)
+                for current, prior in zip(
+                    provenance, cached.input_provenance, strict=True
+                )
+            )
+            result = cached.rebind_examples(arguments, input_provenance=provenance)
+        artifacts.append(result)
+    return tuple(artifacts)
 
 
 def capture_inference_artifact(

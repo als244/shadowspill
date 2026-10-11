@@ -43,10 +43,12 @@ def derive_training_residency(
     optimizer_aliases = {
         alias_by_object[binding.object_id] for binding in objects.optimizer_objects
     }
+    initial_aliases = parameter_aliases | input_aliases
+    final_aliases = initial_aliases | public_aliases | optimizer_aliases
     initial = tuple(
         ResidencySpec(item.alias_group_id, MemoryLocation.SPILL)
         for item in aliases
-        if item.alias_group_id in parameter_aliases | input_aliases
+        if item.alias_group_id in initial_aliases
     )
     final = tuple(
         ResidencySpec(
@@ -56,8 +58,7 @@ def derive_training_residency(
             else MemoryLocation.SPILL,
         )
         for item in aliases
-        if item.alias_group_id
-        in parameter_aliases | input_aliases | public_aliases | optimizer_aliases
+        if item.alias_group_id in final_aliases
     )
     return initial, final
 

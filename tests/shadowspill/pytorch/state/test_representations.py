@@ -390,3 +390,70 @@ def test_lowering_counts_components_and_one_logical_gradient():
     gradients = [o for o in lowered.program.objects if o.role == ObjectRole.GRADIENT]
     assert sorted(o.size_bytes for o in parameters) == [4, 32, 128]
     assert [o.size_bytes for o in gradients] == [128]
+
+
+@pytest.mark.parametrize("wrapped", [False, True])
+def test_repeated_inference_contracts_rebind_occurrence_values(monkeypatch, wrapped):
+    from shadowspill.pytorch.capture import artifacts as capture
+    from shadowspill.pytorch.capture.aot import capture_forward
+    from shadowspill.pytorch.partition import partition_export
+
+    class Network(torch.nn.Module):
+        def __init__(self):
+            super().__init__()
+            self.blocks = torch.nn.ModuleList(
+                torch.nn.Linear(8, 8, bias=False) for _ in range(4)
+            )
+            if wrapped:
+                for index, block in enumerate(self.blocks):
+                    block.weight = torch.nn.Parameter(
+                        ScaledWeight(
+                            torch.arange(-32, 32, dtype=torch.int8).reshape(8, 8),
+                            torch.tensor(0.01 * (index + 1)),
+                        )
+                    )
+
+        def forward(self, value):
+            for block in self.blocks:
+                value = block(value)
+            return value
+
+    net = Network()
+    value = torch.randn(3, 8)
+    with torch.no_grad():
+        exported = capture_forward(net, (value,))
+        split = partition_export(exported, net)
+        baseline = tuple(
+            capture.capture_inference_artifact(
+                graph_module=example.stage.graph_module,
+                example_inputs=example.inputs,
+                explicit_mutations=example.stage.mutations,
+                input_provenance=example.stage.input_provenance,
+            )
+            for example in split.stages
+        )
+        calls = []
+        original = capture.capture_inference_artifact
+
+        def counted(**kwargs):
+            calls.append(kwargs)
+            return original(**kwargs)
+
+        monkeypatch.setattr(capture, "capture_inference_artifact", counted)
+        reused = capture.capture_forward_stage_artifacts(split)
+        assert len(reused) == 4
+        assert len(calls) < len(reused)
+        assert reused[1].graph_module is reused[2].graph_module
+        for actual, expected in zip(reused, baseline, strict=True):
+            assert actual.compatibility_digest == expected.compatibility_digest
+            assert actual.input_components == expected.input_components
+            assert actual.input_provenance == expected.input_provenance
+            torch.testing.assert_close(
+                actual.graph_module(*actual.example_arguments),
+                expected.graph_module(*expected.example_arguments),
+            )
+        # Each block must retain its own weights and scale, not the first
+        # occurrence's examples or provenance.
+        assert len({id(item.example_arguments[0]) for item in reused}) == 4
+        sources = tuple(item.input_provenance[0].source for item in reused)
+        assert len(set(sources)) == 4

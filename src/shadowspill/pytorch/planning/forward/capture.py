@@ -202,42 +202,48 @@ def _capture_partitioned_forward(
     tuple[ResolvedSharedOutput, ...],
 ]:
     try:
-        fake_mode = FakeTensorMode(allow_non_fake_inputs=True)
-        fake_model = fake_device_model(model, fake_mode, device_index=device_ordinal)
-        forward_view = None
-        if forward_fn is not None:
-            forward_view = _select_forward(fake_model, forward_fn)
-        fake_inputs = fake_device_inputs(
-            cpu_inputs,
-            fake_mode,
-            device_index=device_ordinal,
-        )
-        with fake_mode, torch.no_grad():
-            public_output = fake_model(*fake_inputs)
-            output_leaves, output_tree_spec = tree_flatten(public_output)
-            resolved_shared_outputs = resolve_shared_outputs(
-                public_output,
-                shared_outputs,
-                pool_names=pool_names,
+        with timer.measure("forward_export"):
+            fake_mode = FakeTensorMode(allow_non_fake_inputs=True)
+            fake_model = fake_device_model(
+                model, fake_mode, device_index=device_ordinal
             )
-            del output_leaves
-            capture = capture_forward(fake_model, fake_inputs)
-        if forward_view is not None:
-            _restore_registered_module_paths(capture, fake_model, forward_view)
+            forward_view = None
+            if forward_fn is not None:
+                forward_view = _select_forward(fake_model, forward_fn)
+            fake_inputs = fake_device_inputs(
+                cpu_inputs,
+                fake_mode,
+                device_index=device_ordinal,
+            )
+            with fake_mode, torch.no_grad():
+                public_output = fake_model(*fake_inputs)
+                output_leaves, output_tree_spec = tree_flatten(public_output)
+                resolved_shared_outputs = resolve_shared_outputs(
+                    public_output,
+                    shared_outputs,
+                    pool_names=pool_names,
+                )
+                del output_leaves
+                capture = capture_forward(fake_model, fake_inputs)
+            if forward_view is not None:
+                _restore_registered_module_paths(capture, fake_model, forward_view)
         with timer.measure("export_archival"):
             stores.archive_export(capture, mode="forward", position=0)
-        representative_roots = tuple(
-            detached_representation(value) if isinstance(value, torch.Tensor) else value
-            for value in flat_runtime_arguments(capture, model, cpu_inputs)
-        )
-        with pool_values(runtime), fake_mode, torch.no_grad():
-            partitioned = partition_export(
-                capture,
-                fake_model,
-                partition=partition,
-                representative_root_inputs=representative_roots,
+        with timer.measure("stage_partition_aot"):
+            representative_roots = tuple(
+                detached_representation(value)
+                if isinstance(value, torch.Tensor)
+                else value
+                for value in flat_runtime_arguments(capture, model, cpu_inputs)
             )
-            tasks = capture_forward_stage_artifacts(partitioned)
+            with pool_values(runtime), fake_mode, torch.no_grad():
+                partitioned = partition_export(
+                    capture,
+                    fake_model,
+                    partition=partition,
+                    representative_root_inputs=representative_roots,
+                )
+                tasks = capture_forward_stage_artifacts(partitioned)
     except CaptureError:
         raise
     except BaseException as error:

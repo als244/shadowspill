@@ -93,6 +93,7 @@ NESTED_PHASES: dict[str, frozenset[str]] = {
     "capture_lowering": frozenset(
         {
             "objective_export",
+            "forward_export",
             "export_archival",
             "stage_partition_aot",
             "storage_layout_lowering",

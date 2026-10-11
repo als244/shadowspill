@@ -101,3 +101,40 @@ def test_meta_initialization_and_checkpoint_import_preserve_values_and_ties(
             import_model_state(broken, runtime=runtime, pool="spill")
         assert persistent_state(runtime, broken) is None
         assert runtime.pool_statistics("spill").allocated_bytes == 0
+
+
+def test_persistent_state_indexes_owners_once(monkeypatch):
+    from shadowspill.pytorch.state.records import (
+        PersistentState,
+        PersistentStorage,
+        TensorView,
+    )
+
+    calls = []
+    original = PersistentStorage.storage_identity.fget
+
+    def counted(storage):
+        calls.append(storage)
+        return original(storage)
+
+    monkeypatch.setattr(PersistentStorage, "storage_identity", property(counted))
+    owners = tuple(torch.empty(8) for _ in range(4))
+    storages = tuple(
+        PersistentStorage(
+            persistent_object_id=i,
+            current_object_id=i,
+            pool_id=0,
+            size_bytes=32,
+            pool_pointer=0,
+            anchor=owner,
+            views=(TensorView(owner.view(2, 4), (2, 4), (4, 1), 0, False),),
+            frontend_storage_is_separate=False,
+        )
+        for i, owner in enumerate(owners)
+    )
+    state = PersistentState(object(), "spill", storages, None)
+    for _ in range(3):
+        for owner, storage in zip(owners, storages, strict=True):
+            view = owner.view(2, 4)
+            assert state.by_storage_identity()[view.untyped_storage()._cdata] is storage
+    assert len(calls) == len(storages)

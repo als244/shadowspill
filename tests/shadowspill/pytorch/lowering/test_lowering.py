@@ -273,3 +273,54 @@ def test_shared_residency_is_read_only_unless_emitted_tasks_write_it() -> None:
     assert policies[catalog.alias_id(second)] is (
         SharedResidencyPolicy.SHARED_WRITABLE_UNORDERED
     )
+
+
+def test_cpu_aliases_have_no_gpu_extent_even_for_offset_views():
+    catalog = ObjectCatalog(device_id="device_0")
+    value = torch.arange(8)
+    whole, sliced = (
+        catalog.add(tensor, role=ObjectRole.INPUT, persistence=Persistence.STEP)
+        for tensor in (value, value[2:5])
+    )
+    assert catalog.alias_id(whole) == catalog.alias_id(sliced)
+    assert all(group.size_bytes == 0 for group in catalog.alias_groups())
+    assert all(obj.size_bytes == obj.offset_bytes == 0 for obj in catalog.objects())
+
+
+def test_profile_catalog_unions_cpu_outputs_once_across_occurrences():
+    """CPU outputs from any occurrence affect its contract, not other graphs."""
+    from dataclasses import replace
+
+    from torch.fx.experimental.proxy_tensor import make_fx
+
+    from shadowspill.pytorch.capture.artifacts import capture_inference_artifact
+    from shadowspill.pytorch.lowering.profiles import TaskProfileCatalog
+
+    class Measurements(dict):
+        scans = 0
+
+        def items(self):
+            self.scans += 1
+            return super().items()
+
+    with FakeTensorMode():
+        inputs = (torch.empty(4, device="cuda"),)
+        graph = make_fx(lambda x: (x + 1, x + 2, x + 3))(*inputs)
+        artifact = capture_inference_artifact(graph_module=graph, example_inputs=inputs)
+    measurement = _measurement(artifact)
+    digest = artifact.compatibility_digest
+    measurements = Measurements(
+        {
+            (digest, "first"): replace(measurement, off_device_output_leaves=(0,)),
+            (digest, "second"): replace(measurement, off_device_output_leaves=(2,)),
+            (digest, "third"): measurement,
+            "another-contract": replace(measurement, off_device_output_leaves=(1,)),
+        }
+    )
+    catalog = TaskProfileCatalog(measurements)
+    expected = artifact.storage_contract.without_device_storage({0, 2})
+    for _ in range(5):
+        observed = catalog.contract(artifact)
+        assert observed == expected
+        assert [view.span_bytes for view in observed.output_views] == [0, 16, 0]
+    assert measurements.scans == 1
