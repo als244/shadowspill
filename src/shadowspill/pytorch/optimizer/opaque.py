@@ -4,22 +4,48 @@ update runs on."""
 from __future__ import annotations
 
 from collections import defaultdict
+from dataclasses import replace
 from typing import Any
 
 import torch
-from torch._subclasses.fake_tensor import FakeTensor
+from torch._subclasses.fake_tensor import FakeTensor, FakeTensorMode
 
 from shadowspill.errors import CaptureError
 from shadowspill.pytorch.accelerator import accelerator_device
+from shadowspill.pytorch.capture.fake import fake_device_inputs
 
 from .artifacts import (
     OpaqueOptimizerArtifact,
+    OptimizerTensorBinding,
 )
 from .sandbox import (
     copy_optimizer,
     map_optimizer_tensors,
     optimizer_parameters,
 )
+
+
+def opaque_execution_bindings(
+    bindings: tuple[OptimizerTensorBinding, ...],
+) -> tuple[OptimizerTensorBinding, ...]:
+    """Describe the execution devices without moving the optimizer's values.
+
+    The opaque sandbox keeps CPU/meta templates for its device-side state.
+    Planning needs that state's CUDA geometry, just as profiling materializes
+    it on CUDA. Nonspillable host scalars and hyperparameters stay untouched.
+    Convert together so views of one state allocation keep sharing storage.
+    """
+
+    geometry = iter(
+        fake_device_inputs(
+            tuple(binding.tensor for binding in bindings if binding.spillable),
+            FakeTensorMode(allow_non_fake_inputs=True),
+        )
+    )
+    return tuple(
+        replace(binding, tensor=next(geometry)) if binding.spillable else binding
+        for binding in bindings
+    )
 
 
 def materialize_opaque_optimizer(

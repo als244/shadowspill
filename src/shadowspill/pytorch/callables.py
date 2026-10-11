@@ -721,18 +721,29 @@ class PlannedTrainStep:
         return self._executor.timing.prior_invocation_drain_seconds
 
     def state_dict(
-        self, *, weights: Literal["master", "compute"] = "master"
+        self,
+        *,
+        weights: Literal["master", "compute"] = "master",
+        frozen_state_id: str | None = None,
     ) -> dict[str, object]:
         """Synchronously return CPU ``model``, ``optimizer``, and ``step`` state.
 
         The plan owns the storage holding optimizer state, so the complete
-        checkpoint exists only while this callable is open.
+        checkpoint exists only while this callable is open. Supplying
+        frozen_state_id omits unchanged frozen parameters. The caller must
+        initialize that same base and supply the same identity on restore.
+        Trainable parameters, buffers and mutated state are always included.
         """
 
         self._require_open("read a checkpoint from")
+        names = self._checkpoint_names(frozen_state_id)
         optimizer, masters = self._executor.optimizer_state.state_dict()
         return self._checkpoint_payload(
-            self._state.state_dict(), optimizer, masters, weights=weights
+            self._state.state_dict(names=names),
+            optimizer,
+            masters,
+            weights=weights,
+            frozen_state_id=frozen_state_id,
         )
 
     def save(
@@ -740,6 +751,7 @@ class PlannedTrainStep:
         path: str | os.PathLike[str],
         *,
         weights: Literal["master", "compute"] = "master",
+        frozen_state_id: str | None = None,
     ) -> None:
         """Write the checkpoint :meth:`state_dict` returns to ``path``, from the pool.
 
@@ -750,18 +762,37 @@ class PlannedTrainStep:
         with ``load_state_dict(torch.load(path, mmap=True))``. A weight with a
         master copy is written once, as its master by default. With
         ``weights="compute"``, save compute values and upcast them on restore.
+
+        With frozen_state_id, save trainable parameters, buffers and mutated
+        state only. The ID is a caller-supplied identity for the omitted frozen
+        base (for example a repository revision plus model configuration).
+        ShadowSpill compares this ID on restore; it does not hash base contents.
         """
 
         self._require_open("save a checkpoint from")
+        names = self._checkpoint_names(frozen_state_id)
         writer = PoolCheckpoint(self._state.bridge)
         optimizer, masters = self._executor.optimizer_state.checkpoint_state(writer)
         payload = self._checkpoint_payload(
-            self._state.checkpoint_state(writer), optimizer, masters, weights=weights
+            self._state.checkpoint_state(writer, names=names),
+            optimizer,
+            masters,
+            weights=weights,
+            frozen_state_id=frozen_state_id,
         )
         payload["model"] = encode_tensor_state(
             cast(Mapping[str, Any], payload["model"])
         )
         writer.save(payload, path)
+
+    def _checkpoint_names(self, frozen_state_id: str | None) -> set[str]:
+        if frozen_state_id is not None and (
+            not isinstance(frozen_state_id, str) or not frozen_state_id.strip()
+        ):
+            raise ValueError("frozen_state_id must be a nonempty string")
+        return self._state.checkpoint_state_names(
+            trainable_only=frozen_state_id is not None
+        )
 
     def _checkpoint_payload(
         self,
@@ -770,7 +801,9 @@ class PlannedTrainStep:
         masters: Mapping[str, torch.Tensor],
         *,
         weights: Literal["master", "compute"] = "master",
+        frozen_state_id: str | None = None,
     ) -> dict[str, object]:
+        extra = {} if frozen_state_id is None else {"frozen_state_id": frozen_state_id}
         if weights not in {"master", "compute"}:
             raise ValueError("weights must be 'master' or 'compute'")
         if weights == "compute":
@@ -786,18 +819,33 @@ class PlannedTrainStep:
                 "masters": masters,
                 "distributed": self._distributed_layout,
                 "step": self._step,
+                **extra,
             }
         return {
             "model": _with_masters(model, masters, self._state.model),
             "optimizer": optimizer,
             "step": self._step,
+            **extra,
         }
 
-    def load_state_dict(self, checkpoint: Mapping[str, object]) -> None:
+    def load_state_dict(
+        self,
+        checkpoint: Mapping[str, object],
+        *,
+        frozen_state_id: str | None = None,
+    ) -> None:
         """Restore a checkpoint :meth:`state_dict` or :meth:`save` produced."""
 
         self._require_open("restore a checkpoint into")
+        names = self._checkpoint_names(frozen_state_id)
+        if checkpoint.get("frozen_state_id") != frozen_state_id:
+            raise ValueError(
+                "checkpoint frozen_state_id differs; initialize the same frozen "
+                "base and explicitly supply its identity when restoring"
+            )
         expected_keys = {"model", "optimizer", "step"}
+        if frozen_state_id is not None:
+            expected_keys.add("frozen_state_id")
         if self._distributed_layout is not None:
             expected_keys |= {"masters", "distributed"}
             if checkpoint.get("distributed") != self._distributed_layout:
@@ -836,13 +884,13 @@ class PlannedTrainStep:
                 restore_compute_weights,
             )
 
-            expected = set(self._state.model.state_dict(keep_vars=True))
+            expected = names
             omitted = master_aliases(checkpoint, self._distributed)
             if set(model_state) != expected - omitted:
                 raise ValueError(
                     "checkpoint model entries differ from non-mastered state"
                 )
-            weights = self._state.state_dict(in_place=True)
+            weights = self._state.state_dict(in_place=True, names=names)
             restore_compute_weights(weights, masters, self._distributed)
             model_state = {**weights, **model_state}
             masters = {
@@ -858,6 +906,7 @@ class PlannedTrainStep:
         weight_names = _weight_names(self._state.model)
         self._state.load_model_state(
             model_state,
+            names=names,
             cast_names=frozenset(
                 alias for name in masters for alias in weight_names[name]
             ),

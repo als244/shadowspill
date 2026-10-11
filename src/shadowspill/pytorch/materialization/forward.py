@@ -9,6 +9,7 @@ from typing import Any
 
 import torch
 import torch.nn as nn
+from torch._subclasses.fake_tensor import FakeTensor
 from torch.export.graph_signature import InputKind
 from torch.utils._pytree import tree_flatten, tree_map, tree_unflatten
 
@@ -24,6 +25,7 @@ from shadowspill.pytorch.lowering.forward import LoweredForwardProgram
 from shadowspill.pytorch.materialization.replacement import (
     MaterializedState,
     ReplacementStorageViews,
+    object_ids_by_alias,
 )
 from shadowspill.pytorch.representations import component_at
 from shadowspill.pytorch.runtime_adapter.boundaries import (
@@ -128,7 +130,13 @@ def flat_runtime_arguments(
         elif spec.kind is InputKind.CONSTANT_TENSOR:
             if spec.target is None:
                 raise PlanningError("Export constant tensor has no target")
-            value = _resolve_attribute(model, spec.target)
+            # Tensor literals created inside forward live in Export's constant
+            # table, not on the original module. Existing attribute constants
+            # may instead be fake after device capture; recover those from the
+            # source module as before.
+            value = flat[index]
+            if isinstance(value, FakeTensor) or not isinstance(value, torch.Tensor):
+                value = _resolve_attribute(model, spec.target)
             if not isinstance(value, torch.Tensor) or value.device.type != "cpu":
                 raise PlanningError(
                     f"constant tensor {spec.target!r} is not CPU resident"
@@ -178,6 +186,17 @@ class MaterializedForwardState(MaterializedState):
         self._shared_inputs = tuple(shared_inputs)
         self.device = accelerator_device(device_ordinal)
         self.root_arguments = flat_runtime_arguments(capture, model, example_inputs)
+        placeholders = tuple(
+            node
+            for node in capture.exported_program.graph_module.graph.nodes
+            if node.op == "placeholder"
+        )
+        self._cpu_root_positions = frozenset(
+            index
+            for index, node in enumerate(placeholders)
+            if isinstance(node.meta.get("val"), torch.Tensor)
+            and node.meta["val"].device.type == "cpu"
+        )
         self.object_store: dict[str, torch.Tensor] = {}
         self._closed = False
         self._state_names = tuple(model.state_dict().keys())
@@ -187,12 +206,9 @@ class MaterializedForwardState(MaterializedState):
         self._persistent_state = persistent_state(runtime, model)
         self._user_alias_by_position: dict[int, str] = {}
         self._shared_alias_by_position: dict[int, str] = {}
-        self._object_ids_by_alias: dict[str, tuple[str, ...]] = {
-            group.alias_group_id: tuple(
-                item.object_id
-                for item in lowered.program.objects
-                if item.alias_group_id == group.alias_group_id
-            )
+        self._object_ids_by_alias = object_ids_by_alias(lowered.program)
+        self._alias_sizes = {
+            group.alias_group_id: group.size_bytes
             for group in lowered.program.alias_groups
         }
         try:
@@ -245,6 +261,10 @@ class MaterializedForwardState(MaterializedState):
                 raise RuntimeError("captured tensor input became static")
             if is_accelerator(value.device):
                 value = value.detach().cpu()
+            if position in self._cpu_root_positions:
+                self.root_arguments[position] = value
+                self.object_store[alias_id] = value
+                continue
             if alias_id not in written:
                 write_spill_tensor(self.bridge.objects, alias_id, value)
                 written.add(alias_id)
@@ -397,14 +417,10 @@ class MaterializedForwardState(MaterializedState):
         aliases: set[str] | None = None,
     ) -> dict[str, torch.Tensor]:
         result: dict[str, torch.Tensor] = {}
-        sizes = {
-            group.alias_group_id: group.size_bytes
-            for group in self.lowered.program.alias_groups
-        }
         selected = self._registered_model_aliases if aliases is None else aliases
         for alias_id in selected:
             result[alias_id] = torch.empty(
-                sizes[alias_id], dtype=torch.uint8, device="cpu"
+                self._alias_sizes[alias_id], dtype=torch.uint8, device="cpu"
             )
         return result
 
@@ -473,6 +489,24 @@ class MaterializedForwardState(MaterializedState):
         ordinal: int,
     ) -> None:
         source = values[0][0]
+        cpu_values = [item for item in values if item[1] in self._cpu_root_positions]
+        if cpu_values:
+            if len(cpu_values) != len(values) or self.bridge.objects.requires_storage(
+                alias_id
+            ):
+                raise PlanningError(
+                    "CPU root aliases must contain only CPU inputs "
+                    "and require no GPU storage"
+                )
+            if alias_id in self._model_aliases or any(
+                position in shared_by_root for _, position in values
+            ):
+                raise PlanningError(
+                    "CPU root values cannot be adopted as device-pool state"
+                )
+            self.bridge.objects.register_placeholder(alias_id)
+            self.object_store[alias_id] = source
+            return
         shared_items = self._shared_items(alias_id, values, shared_by_root)
         if shared_items:
             self._adopt_shared_alias(alias_id, shared_items)
