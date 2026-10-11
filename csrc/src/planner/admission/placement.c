@@ -61,23 +61,23 @@ static int occupancy_reserve(Occupancy *list, uint32_t needed)
     return 0;
 }
 
-static int occupancy_append(Occupancy *list, AddressRange range)
-{
-    if (occupancy_reserve(list, list->count + 1U) != 0) {
-        return -1;
-    }
-    list->data[list->count++] = range;
-    return 0;
-}
-
 /* Adds [start, end) to the union. Ranges that touch are merged: a zero-width
- * gap can hold nothing, so merging them cannot change any later answer. */
+ * gap can hold nothing, so merging them cannot change any later answer. The
+ * ranges are disjoint and sorted, so their ends are sorted too, and the first
+ * range that could touch the new one is found by bisection. */
 static int occupancy_insert(Occupancy *list, uint64_t start, uint64_t end)
 {
-    uint32_t first = 0U;
-    while (first < list->count && list->data[first].end < start) {
-        ++first;
+    uint32_t low = 0U;
+    uint32_t high = list->count;
+    while (low < high) {
+        const uint32_t middle = low + (high - low) / 2U;
+        if (list->data[middle].end < start) {
+            low = middle + 1U;
+        } else {
+            high = middle;
+        }
     }
+    const uint32_t first = low;
     uint32_t last = first;
     while (last < list->count && list->data[last].start <= end) {
         ++last;
@@ -262,11 +262,44 @@ static int occupancy_index_insert(
     return 0;
 }
 
-/* Gathers the ranges of every visited node: a node inside the query hands
+/* The lists a query reads, each sorted by address, read in place. */
+typedef struct {
+    const Occupancy **lists;
+    uint32_t count;
+    uint32_t capacity;
+} Gathered;
+
+static void gathered_destroy(Gathered *gathered)
+{
+    free(gathered->lists);
+    memset(gathered, 0, sizeof(*gathered));
+}
+
+static int gathered_add(Gathered *gathered, const Occupancy *list)
+{
+    if (list->count == 0U) {
+        return 0;
+    }
+    if (gathered->count == gathered->capacity) {
+        const uint32_t capacity =
+            gathered->capacity == 0U ? 64U : gathered->capacity * 2U;
+        const Occupancy **lists =
+            realloc(gathered->lists, (size_t)capacity * sizeof(*lists));
+        if (lists == NULL) {
+            return -1;
+        }
+        gathered->lists = lists;
+        gathered->capacity = capacity;
+    }
+    gathered->lists[gathered->count++] = list;
+    return 0;
+}
+
+/* Gathers the lists of every visited node: a node inside the query hands
  * over its subtree union and is not descended into, a node the query only
- * crosses hands over what is recorded at it and is. Ranges from different
- * nodes may overlap; the scan below folds them together, so they are not
- * merged here. */
+ * crosses hands over what is recorded at it and is. Nothing is copied: the
+ * lists are read where they are, and ranges from different lists may
+ * overlap, which the merge below folds together. */
 static int occupancy_index_collect(
     const OccupancyIndex *index,
     uint32_t node,
@@ -274,18 +307,16 @@ static int occupancy_index_collect(
     uint32_t right,
     uint32_t start,
     uint32_t end,
-    Occupancy *found
+    Gathered *found
 )
 {
     if (end <= left || right <= start) {
         return 0;
     }
     const int inside = start <= left && right <= end;
-    const Occupancy *bucket = inside ? &index->subtree[node] : &index->nodes[node];
-    for (uint32_t item = 0U; item < bucket->count; ++item) {
-        if (occupancy_append(found, bucket->data[item]) != 0) {
-            return -1;
-        }
+    if (gathered_add(found, inside ? &index->subtree[node] : &index->nodes[node])
+            != 0) {
+        return -1;
     }
     if (inside || right - left == 1U) {
         return 0;
@@ -365,52 +396,79 @@ static uint64_t align_up(uint64_t value, uint64_t alignment)
     return ((value + alignment - 1U) / alignment) * alignment;
 }
 
-/* Orders gathered ranges by address. A qsort comparator would cost more than
- * the comparison itself, which is a single load. */
-static void sort_by_address(AddressRange *runs, uint32_t count, AddressRange *scratch)
+/* One list's next unread range, keyed on its start for the merge. */
+typedef struct {
+    uint64_t start;
+    uint32_t list;
+    uint32_t item;
+} Head;
+
+static void head_sift_down(Head *heap, uint32_t count, uint32_t index)
 {
-    if (count < 2U) {
-        return;
+    for (;;) {
+        const uint32_t left = index * 2U + 1U;
+        const uint32_t right = left + 1U;
+        uint32_t smallest = index;
+        if (left < count && heap[left].start < heap[smallest].start) {
+            smallest = left;
+        }
+        if (right < count && heap[right].start < heap[smallest].start) {
+            smallest = right;
+        }
+        if (smallest == index) {
+            return;
+        }
+        const Head swap = heap[index];
+        heap[index] = heap[smallest];
+        heap[smallest] = swap;
+        index = smallest;
     }
-    const uint32_t middle = count / 2U;
-    sort_by_address(runs, middle, scratch);
-    sort_by_address(runs + middle, count - middle, scratch);
-    uint32_t left = 0U;
-    uint32_t right = middle;
-    uint32_t out = 0U;
-    while (left < middle && right < count) {
-        scratch[out++] = runs[left].start <= runs[right].start
-            ? runs[left++]
-            : runs[right++];
-    }
-    while (left < middle) {
-        scratch[out++] = runs[left++];
-    }
-    while (right < count) {
-        scratch[out++] = runs[right++];
-    }
-    memcpy(runs, scratch, (size_t)count * sizeof(*runs));
 }
 
-/* Lowest aligned offset clearing every gathered range, which must already be
- * ordered by address. Ranges ending at or below the cursor are skipped, so
- * overlapping ranges from different nodes fold together here. */
+/* Lowest aligned offset clearing every gathered range. The lists are merged
+ * by start through a heap of their heads and read only as far as the first
+ * gap that fits. Ranges ending at or below the cursor are skipped, so
+ * overlapping ranges from different lists fold together here; the order of
+ * ranges sharing a start does not matter, since each raises the cursor to
+ * its end and the cursor settles at the largest. `heap` holds one entry per
+ * gathered list. */
 static uint64_t lowest_fit(
-    const AddressRange *runs,
-    uint32_t count,
+    const Gathered *found,
+    Head *heap,
     uint64_t needed,
     uint64_t alignment
 )
 {
+    uint32_t count = 0U;
+    for (uint32_t list = 0U; list < found->count; ++list) {
+        heap[count++] = (Head){
+            .start = found->lists[list]->data[0].start, .list = list, .item = 0U
+        };
+    }
+    for (uint32_t index = count / 2U; index-- > 0U;) {
+        head_sift_down(heap, count, index);
+    }
     uint64_t cursor = 0U;
-    for (uint32_t item = 0U; item < count; ++item) {
-        if (runs[item].end <= cursor) {
-            continue;
+    while (count != 0U) {
+        const Head head = heap[0];
+        const Occupancy *list = found->lists[head.list];
+        const AddressRange range = list->data[head.item];
+        if (range.end > cursor) {
+            if (align_up(cursor, alignment) + needed <= range.start) {
+                break;
+            }
+            cursor = range.end;
         }
-        if (align_up(cursor, alignment) + needed <= runs[item].start) {
-            break;
+        if (head.item + 1U < list->count) {
+            heap[0] = (Head){
+                .start = list->data[head.item + 1U].start,
+                .list = head.list,
+                .item = head.item + 1U,
+            };
+        } else {
+            heap[0] = heap[--count];
         }
-        cursor = runs[item].end;
+        head_sift_down(heap, count, 0U);
     }
     return align_up(cursor, alignment);
 }
@@ -421,8 +479,9 @@ typedef struct {
     TimeAxis axis;
     OccupancyIndex index;
     OrderKey *order;
-    Occupancy found;
-    Occupancy scratch;
+    Gathered found;
+    Head *heap;
+    uint32_t heap_capacity;
 } Placer;
 
 static void placer_destroy(Placer *placer)
@@ -430,9 +489,26 @@ static void placer_destroy(Placer *placer)
     time_axis_destroy(&placer->axis);
     occupancy_index_destroy(&placer->index);
     free(placer->order);
-    occupancy_destroy(&placer->found);
-    occupancy_destroy(&placer->scratch);
+    gathered_destroy(&placer->found);
+    free(placer->heap);
     memset(placer, 0, sizeof(*placer));
+}
+
+/* The heap holds one head per gathered list. */
+static int placer_reserve_heap(Placer *placer)
+{
+    if (placer->found.count <= placer->heap_capacity) {
+        return 0;
+    }
+    Head *heap = realloc(
+        placer->heap, (size_t)placer->found.capacity * sizeof(*heap)
+    );
+    if (heap == NULL) {
+        return -1;
+    }
+    placer->heap = heap;
+    placer->heap_capacity = placer->found.capacity;
+    return 0;
 }
 
 /* One region: every lease placed from offset zero, offsets in input order. */
@@ -474,13 +550,11 @@ static ShadowSpillStatus place_region(
         placer.found.count = 0U;
         if (occupancy_index_collect(
                 &placer.index, 1U, 0U, length, start, end, &placer.found) != 0 ||
-            occupancy_reserve(&placer.scratch, placer.found.count) != 0) {
+            placer_reserve_heap(&placer) != 0) {
             goto done;
         }
-        sort_by_address(placer.found.data, placer.found.count, placer.scratch.data);
-
         const uint64_t offset = lowest_fit(
-            placer.found.data, placer.found.count, record.bytes, record.alignment
+            &placer.found, placer.heap, record.bytes, record.alignment
         );
         offsets[lifetime] = offset;
         if (offset + record.bytes > *required_bytes) {

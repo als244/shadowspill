@@ -149,5 +149,17 @@ int shadowspill_admission_build_operations(
     OperationTally *tally
 );
 
+/* The public builder with the caller's workspace instead of a transient
+ * one: the operations are built into `workspace`, grown to this schedule if
+ * it is smaller, and copied into `result`. A caller placing the schedule it
+ * just admitted holds a workspace already sized for it. */
+ShadowSpillStatus shadowspill_build_admission_operations_reusing(
+    const ShadowSpillSimulationProgram *simulation,
+    const ShadowSpillAdmissionFacts *admission,
+    const ShadowSpillIndexedSchedule *schedule,
+    ShadowSpillCandidateAdmissionWorkspace *workspace,
+    ShadowSpillAdmissionOperations *result
+);
+
 
 #endif

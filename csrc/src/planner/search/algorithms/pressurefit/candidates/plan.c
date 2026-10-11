@@ -111,9 +111,23 @@ int shadowspill_candidate_place_plan(
         .lease_retires = place->lease_retires,
         .lease_capacity = lease_capacity,
     };
-    ShadowSpillStatus operations_status = shadowspill_build_admission_operations(
-        problem->context.simulation, admission, schedule, &place->operations
-    );
+    /* The candidate's own admission workspace is sized at its high-water
+     * mark and was built from the same program, so the operations are built
+     * into it again at the cost of one walk over the schedule and no
+     * allocation. A problem placed with other facts than it admits with, or
+     * without admission at all, builds into a transient workspace. */
+    const ShadowSpillAdmissionFacts *admitted = problem->context.admission;
+    const int reusable = admitted != NULL &&
+        workspace->admission.active_alias_leases != NULL &&
+        admitted->allocation_slot_count == admission->allocation_slot_count;
+    ShadowSpillStatus operations_status = reusable
+        ? shadowspill_build_admission_operations_reusing(
+              problem->context.simulation, admission, schedule,
+              &workspace->admission, &place->operations
+          )
+        : shadowspill_build_admission_operations(
+              problem->context.simulation, admission, schedule, &place->operations
+          );
     if (operations_status != SHADOWSPILL_STATUS_OK) {
         return -1;
     }

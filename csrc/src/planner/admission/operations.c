@@ -751,14 +751,16 @@ ShadowSpillStatus shadowspill_admission_operation_bounds(
     return SHADOWSPILL_STATUS_OK;
 }
 
-ShadowSpillStatus shadowspill_build_admission_operations(
+ShadowSpillStatus shadowspill_build_admission_operations_reusing(
     const ShadowSpillSimulationProgram *simulation,
     const ShadowSpillAdmissionFacts *admission,
     const ShadowSpillIndexedSchedule *schedule,
+    ShadowSpillCandidateAdmissionWorkspace *workspace,
     ShadowSpillAdmissionOperations *result
 ) {
-    if (schedule == NULL || result == NULL || result->lease_ids == NULL ||
-        result->dependency_ids == NULL || result->bytes == NULL || result->alignments == NULL ||
+    if (schedule == NULL || workspace == NULL || result == NULL ||
+        result->lease_ids == NULL || result->dependency_ids == NULL ||
+        result->bytes == NULL || result->alignments == NULL ||
         result->kinds == NULL || result->purposes == NULL ||
         result->boundaries == NULL || result->indices == NULL ||
         result->allocation_offsets == NULL || result->lease_aliases == NULL ||
@@ -772,51 +774,70 @@ ShadowSpillStatus shadowspill_build_admission_operations(
     if (!shadowspill_admission_facts_valid(&context)) {
         return SHADOWSPILL_STATUS_INVALID_ARGUMENT;
     }
-
-    ShadowSpillCandidateAdmissionWorkspace workspace = {0};
-    if (shadowspill_candidate_admission_workspace_create(&context, &workspace)
-            != 0 ||
-        shadowspill_admission_reserve_buffers(&context, schedule, &workspace)
-            != 0) {
-        shadowspill_candidate_admission_workspace_destroy(&workspace);
+    if (shadowspill_admission_reserve_buffers(&context, schedule, workspace) != 0) {
         return SHADOWSPILL_STATUS_INTERNAL_FAILURE;
     }
-    if (workspace.operation_capacity > result->operation_capacity ||
-        workspace.lease_capacity > result->lease_capacity) {
-        shadowspill_candidate_admission_workspace_destroy(&workspace);
-        return SHADOWSPILL_STATUS_INVALID_ARGUMENT;
-    }
-
     OperationTally tally;
     if (shadowspill_admission_build_operations(
-            &context, schedule, &workspace, &tally) != 0) {
-        shadowspill_candidate_admission_workspace_destroy(&workspace);
+            &context, schedule, workspace, &tally) != 0) {
         return SHADOWSPILL_STATUS_PLANNER_INTERNAL_ERROR;
+    }
+    /* The workspace may be larger than this schedule needs; the result must
+     * hold what was actually built. */
+    if (tally.operation_count > result->operation_capacity ||
+        tally.lease_count > result->lease_capacity) {
+        return SHADOWSPILL_STATUS_INVALID_ARGUMENT;
     }
 
     for (uint64_t index = 0U; index < tally.operation_count; ++index) {
         const ShadowSpillAdmissionReplayOperation operation =
-            workspace.operations[index];
+            workspace->operations[index];
         result->lease_ids[index] = operation.lease_id;
         result->dependency_ids[index] = operation.dependency_id;
         result->bytes[index] = operation.bytes;
         result->alignments[index] = operation.alignment;
         result->kinds[index] = operation.kind;
-        result->purposes[index] = workspace.purposes[index];
-        result->boundaries[index] = workspace.annotations[index].boundary;
-        result->indices[index] = workspace.annotations[index].index;
-        result->allocation_offsets[index] = workspace.allocation_offsets[index];
+        result->purposes[index] = workspace->purposes[index];
+        result->boundaries[index] = workspace->annotations[index].boundary;
+        result->indices[index] = workspace->annotations[index].index;
+        result->allocation_offsets[index] = workspace->allocation_offsets[index];
     }
     for (uint64_t lease = 0U; lease < tally.lease_count; ++lease) {
-        result->lease_aliases[lease] = workspace.lease_aliases[lease];
-        result->lease_starts[lease] = workspace.lease_start_operations[lease];
-        result->lease_retires[lease] = workspace.lease_retire_operations[lease];
+        result->lease_aliases[lease] = workspace->lease_aliases[lease];
+        result->lease_starts[lease] = workspace->lease_start_operations[lease];
+        result->lease_retires[lease] = workspace->lease_retire_operations[lease];
     }
     result->operation_count = tally.operation_count;
     result->lease_count = tally.lease_count;
     result->dependency_count = tally.dependency_count;
     result->fetch_bytes = tally.fetch_bytes;
     result->evict_bytes = tally.evict_bytes;
-    shadowspill_candidate_admission_workspace_destroy(&workspace);
     return SHADOWSPILL_STATUS_OK;
+}
+
+ShadowSpillStatus shadowspill_build_admission_operations(
+    const ShadowSpillSimulationProgram *simulation,
+    const ShadowSpillAdmissionFacts *admission,
+    const ShadowSpillIndexedSchedule *schedule,
+    ShadowSpillAdmissionOperations *result
+) {
+    if (schedule == NULL || result == NULL) {
+        return SHADOWSPILL_STATUS_INVALID_ARGUMENT;
+    }
+    const ShadowSpillScheduleContext context = {
+        .simulation = simulation,
+        .admission = admission,
+    };
+    if (!shadowspill_admission_facts_valid(&context)) {
+        return SHADOWSPILL_STATUS_INVALID_ARGUMENT;
+    }
+    ShadowSpillCandidateAdmissionWorkspace workspace = {0};
+    if (shadowspill_candidate_admission_workspace_create(&context, &workspace) != 0) {
+        return SHADOWSPILL_STATUS_INTERNAL_FAILURE;
+    }
+    const ShadowSpillStatus status = shadowspill_build_admission_operations_reusing(
+        simulation, admission, schedule, &workspace, result
+    );
+    shadowspill_candidate_admission_workspace_destroy(&workspace);
+    return status;
 }

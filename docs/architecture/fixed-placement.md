@@ -119,26 +119,30 @@ is `O(log n)` of them, and gathers the same union either way.
 
 ## Cost
 
-Placing one lease is: gather the occupied ranges it could collide with, sort
-them by address, walk them for the first gap, insert the chosen range. Sorting
-is the only superlinear step, so the total is
+Placing one lease is: gather the lists of occupied ranges it could collide
+with, merge them by address as far as the first gap wide enough, insert the
+chosen range. The lists are read where they are. The merge is the only
+superlinear step, so the total is
 
 ```text
-O(n log n  +  sum_i r_i log r_i)
+O(n log n  +  sum_i r_i log k_i)
 ```
 
-where `r_i` is the number of address ranges the gather returns for lease `i`.
-The `n log n` is the one-off ordering of the leases themselves. Everything
-else lives in `r_i`, so `r_i` is the number that matters.
+where `k_i` is the number of lists the gather returns for lease `i`, which is
+`O(log n)`, and `r_i` is the number of ranges read from them before the first
+fitting gap. The `n log n` is the one-off ordering of the leases themselves.
+Everything else lives in `r_i`, so `r_i` is the number that matters.
 
-**Why the sort exists.** Lowest-fit needs the occupied ranges *in address
-order* — it walks them from zero and stops at the first gap wide enough. The
-index is keyed by time, not address, so what it returns is a bag of ranges
-gathered from the tree nodes covering the lease's lifetime, in node order.
-Sorting it is what turns a set of conflicts into a walkable address line. The
-comparison is a single load and most of these sorts are tiny, so the sort is
-specialised rather than generic: an indirect comparator would cost more than
-the comparison.
+**Why the merge.** Lowest-fit needs the occupied ranges *in address order*:
+it walks them from zero and stops at the first gap wide enough. The index is
+keyed by time, not address, so what it returns is several lists gathered from
+the tree nodes covering the lease's lifetime, each sorted by address on its
+own. A heap over the lists' heads yields their ranges in address order
+without copying or sorting them, and the walk stops at the first fitting gap,
+so a lease that fits low in the address space reads only the ranges below it.
+Ranges reached through two nodes fold together in the walk: a range ending at
+or below the cursor is passed over, and ranges sharing a start raise the
+cursor to the largest end whichever comes first.
 
 **What `r_i` is bounded by.** Two things, and neither is `n`:
 
