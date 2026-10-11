@@ -6,12 +6,15 @@ import argparse
 import contextlib
 import copy
 import gc
+import inspect
 import json
 import statistics
 import sys
 import time
 from collections.abc import Mapping
 from dataclasses import dataclass
+from functools import partial
+from pathlib import Path
 from typing import Any, cast
 
 import torch
@@ -39,7 +42,7 @@ from shadowspill.runtime.failures import RuntimeExecutionError
 from shadowspill.training._model import initialize_model, validate_initialization
 from shadowspill.training.observations import StepObservations
 
-from .options import profiling_policy, search_policy
+from .options import graph_pair_variants, profiling_policy, search_policy
 from .reporting import (
     PlanLog,
     bar,
@@ -67,6 +70,7 @@ class Request:
     device: torch.device
     manual: str | None = None
     spill: SpillPool | None = None
+    image: object | None = None
     external_headroom: int = 512 << 20
 
 
@@ -85,7 +89,14 @@ def open_runtime(
     spill = (
         request.spill if request.spill is not None else pinned_host(capacity=capacity)
     )
-    print(f"spill pool: {spill.kind_name}, {capacity >> 30} GiB", flush=True)
+    image = getattr(spill, "image", None)
+    image_mib = getattr(spill, "image_bytes", 0) >> 20
+    adopted = (
+        f" (image {Path(image).name}, {image_mib} MiB read in place)"
+        if image is not None and image_mib
+        else ""
+    )
+    print(f"spill pool: {spill.kind_name}, {capacity >> 30} GiB{adopted}", flush=True)
     runtime = Runtime(
         control_group=control_group,
         host_headroom_bytes=int(host_headroom_gib * _GIB),
@@ -170,6 +181,27 @@ def plan_budgets(runtime: Runtime, request: Request) -> Budgets:
     return Budgets(request.search_budgets, request.run_budgets, planned)
 
 
+def write_cap_verdict(cap_gib: float | None, evicted_bytes: int) -> str | None:
+    """Why a plan may not run under `--max-evict-gib`, or None when it may.
+
+    A plan that writes more than the cap to the spill pool per step is one
+    that thrashes it: on an SSD the writes are endurance spent, and what the
+    step would measure is a plan nobody wants to run. The search still plans
+    and reports such a point; the run declines to execute it, the way it
+    declines a budget no geometry fits.
+    """
+
+    if cap_gib is None:
+        return None
+    cap = int(cap_gib * _GIB)
+    if evicted_bytes <= cap:
+        return None
+    return (
+        f"writes {gib(evicted_bytes)} to the spill pool per step,"
+        f" above the {gib(cap)} cap"
+    )
+
+
 @dataclass(frozen=True)
 class _Steps:
     """What one budget's steps measured, once the last result is released."""
@@ -238,6 +270,7 @@ class Tour:
             )
         self.policy = search_policy(arguments)
         self.profiling = profiling_policy(arguments)
+        self.variants = graph_pair_variants(arguments)
         marker = time.perf_counter()
         self.model = self._build_model()
         ledger.charge("model construction and import", marker)
@@ -276,15 +309,36 @@ class Tour:
             if specification is not None:
                 specification = copy.copy(specification)
                 specification.symmetric_planning = symmetric
+        experiment_initialize = self.experiment.get("initialize")
+
+        def initialize(target, adopted=frozenset()):
+            # An image names state the experiment's initializer must leave
+            # alone; one that takes `adopted` is told, one that does not
+            # cannot be used with an image.
+            if adopted:
+                if (
+                    experiment_initialize is None
+                    or "adopted"
+                    not in inspect.signature(experiment_initialize).parameters
+                ):
+                    raise ValueError(
+                        "the experiment's initializer must accept `adopted` to run "
+                        "on a pool image"
+                    )
+                initialize_model(
+                    target, initialize=partial(experiment_initialize, adopted=adopted)
+                )
+            else:
+                initialize_model(target, initialize=experiment_initialize)
+
         return import_model_state(
             model,
             runtime=self.runtime,
             pool="spill",
             release_source=True,
             distributed=specification,
-            initialize=lambda target: initialize_model(
-                target, initialize=self.experiment.get("initialize")
-            ),
+            initialize=initialize,
+            image=self.request.image,
         )
 
     @property
@@ -356,6 +410,7 @@ class Tour:
                     ),
                     search_options=self.policy,
                     profiling_options=self.profiling,
+                    graph_pair_variants=self.variants,
                     transfer_bandwidths=arguments.transfer_bandwidths,
                     export_bypass_key=arguments.export_bypass_key,
                     keep_resolutions=arguments.resolution_plans,
@@ -388,6 +443,8 @@ class Tour:
         if arguments.plots:
             if report is None:
                 print("  plots need a search; skipped for a manual geometry")
+            elif not report.winners:
+                print("  no budget produced a winning geometry; no figures")
             else:
                 plot_dir = self.paths.root / "figures"
                 marker = time.perf_counter()
@@ -531,10 +588,11 @@ class Tour:
         candidate: str,
         ordering: StepDataOrdering,
         incumbent: AnnotatedProgramPlan | None = None,
-    ) -> RunBudgetOutcome:
+    ) -> RunBudgetOutcome | None:
         """Plan one budget, run its steps, close it, and own nothing after.
 
-        Returns the budget beside its simulated and measured step times.
+        Returns the budget beside its simulated and measured step times, or
+        None when the plan writes more than the write cap and was not run.
 
         One budget's plan must be entirely gone before the next one is
         built: they hold model, optimizer, and compiled state at the same
@@ -590,6 +648,7 @@ class Tour:
                 # the store and searching again under other options.
                 search_options=self.policy,
                 profiling_options=self.profiling,
+                graph_pair_variants=self.variants,
                 # The search's winning plan is the plan to beat, so the
                 # step executes what the search chose, or better, even
                 # when the replan's facts differ from the search's and
@@ -603,6 +662,13 @@ class Tour:
             note_host_memory(plan_log, f"planned {gib(budget)}")
             plan_report = training.plan_report
             print_breakdown(plan_report, self.units_per_step, self.unit_label)
+            verdict = write_cap_verdict(
+                arguments.max_evict_gib, plan_report.transfer_bytes_evicted
+            )
+            if verdict is not None:
+                print(f"  the plan {verdict}; not running this budget")
+                plan_log.note(f"{gib(budget)} not run: the plan {verdict}")
+                return None
 
             steps = self._run_steps(training, plan_report, candidate, budget=budget)
             diagnostics, walls = steps.diagnostics, steps.walls
@@ -647,7 +713,7 @@ class Tour:
     def run(self) -> list[RunBudgetOutcome]:
         """Every run budget, on the search's winner or the manual geometry."""
 
-        request, plan_log = self.request, self.plan_log
+        arguments, request, plan_log = self.arguments, self.request, self.plan_log
         report = self.report
         run_entries: list[RunBudgetOutcome] = []
         for budget in self.budgets.run:
@@ -667,6 +733,24 @@ class Tour:
                 candidate = winner.candidate
                 ordering = winner.ordering
                 incumbent = report.winner_plans.get((budget, request.spill_budget))
+                # Judged on the search's plan first: the run would execute that
+                # plan or a faster one, never a quieter one, and replanning a
+                # large program costs real time before the answer is the same.
+                verdict = (
+                    None
+                    if winner.summary is None
+                    else write_cap_verdict(
+                        arguments.max_evict_gib,
+                        winner.summary.transfer_bytes_evicted,
+                    )
+                )
+                if verdict is not None:
+                    print(
+                        f"  at {gib(budget)} the search's plan {verdict};"
+                        " skipping this run budget"
+                    )
+                    plan_log.note(f"{gib(budget)} not run: the search's plan {verdict}")
+                    continue
             print(rule(f"Run at execution {gib(budget)}"))
             print(
                 f"  candidate {candidate}, "
@@ -680,9 +764,9 @@ class Tour:
             # than discarding every budget after it. The figures for the budgets
             # that did run are worth more than a stack trace.
             try:
-                run_entries.append(
-                    self.run_one_budget(budget, candidate, ordering, incumbent)
-                )
+                outcome = self.run_one_budget(budget, candidate, ordering, incumbent)
+                if outcome is not None:
+                    run_entries.append(outcome)
             except RuntimeExecutionError as error:
                 if self.distributed is not None:
                     raise

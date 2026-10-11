@@ -1,6 +1,6 @@
 # SSD pool and lanes
 
-`libshadowspill_ssd.so` adds temporary SSD spill storage through the existing
+`libshadowspill_ssd.so` adds SSD spill storage, temporary or persistent, through the existing
 [pool-memory](pool-memory.md) and [lane](lanes.md) contracts. It registers one
 pool kind and two directional lanes: SSD → device (fetch) and device → SSD
 (evict). Allocation, admission, object lifetimes and scheduling remain the
@@ -30,11 +30,17 @@ performs no allocation or device probing; runtime creation does that.
 ```c
 #define SHADOWSPILL_SSD_POOL_KIND 3U
 
+#define SHADOWSPILL_SSD_IMAGE_NONE 0U
+#define SHADOWSPILL_SSD_IMAGE_CREATE 1U
+#define SHADOWSPILL_SSD_IMAGE_ADOPT 2U
+
 typedef struct ShadowSpillSSDConfiguration {
     const char *directory;
     uint64_t staging_bytes;
     uint64_t chunk_bytes;
     uint32_t queue_depth;
+    uint32_t image_mode;
+    const char *image_path;
 } ShadowSpillSSDConfiguration;
 ```
 
@@ -48,6 +54,8 @@ ShadowSpillSSDConfiguration ssd = {
     .staging_bytes = UINT64_C(256) << 20,
     .chunk_bytes = UINT64_C(2) << 20,
     .queue_depth = 16,
+    .image_mode = SHADOWSPILL_SSD_IMAGE_NONE,
+    .image_path = NULL,
 };
 ```
 
@@ -63,6 +71,8 @@ No per-route SSD configuration is needed.
 | `staging_bytes` | Shared cap on host payload buffers for state I/O and all lanes using this pool. |
 | `chunk_bytes` | Positive pipeline chunk size, divisible by the filesystem's direct-I/O alignment (at least 4096 bytes). |
 | `queue_depth` | Positive number of chunk slots per directional lane. |
+| `image_mode` | `NONE`: one unlinked temporary file. `CREATE`: the pool is the named file `image_path`, created here and kept at release. `ADOPT`: `image_path` is opened read-only as the pool's first bytes, its size, and the rest of the capacity is a temporary file in `directory`. |
+| `image_path` | The image file for `CREATE` or `ADOPT`; ignored for `NONE`. |
 
 For one fetch and one evict route, chunk size `C`, queue depth `Q`, and
 alignment `A`, host payload storage is `C + 2 × (Q × C + A)`: one state-I/O
@@ -79,16 +89,25 @@ and supplies a complete runtime example.
 ## State access and lifecycle
 
 Pool acquisition preallocates a direct-I/O file with no persistent name
-(`O_TMPFILE`, or a temporary file unlinked immediately). It returns an address
+(`O_TMPFILE`, or a temporary file unlinked immediately), or with `CREATE` the
+named image file, which is kept at release. With `ADOPT` the pool has two
+files: offsets below the image's size are the image, read-only, and every
+other offset is the temporary file at `offset - image_bytes`. A write into
+the image, or a transfer crossing its end, fails before any I/O; the image's
+size must be a multiple of the direct-I/O alignment and at most the capacity.
+The runtime reserves the image's range for its lifetime and binds the state
+in it with `shadowspill_register_placed_object()`, so nothing is allocated
+there. Acquisition returns an address
 token that cannot be dereferenced. `read` and `write` are synchronous pool-state
 operations used for import, initialization and export, outside scheduled lanes.
 They handle partial sectors using bounded scratch and preserve neighboring
 bytes. Disk-space exhaustion and short or failed I/O are errors.
 
 Normal runtime close drains transfers, destroys the lanes, then releases the
-pool and closes its file. The OS also closes the file on process termination.
-The pool cannot resume across process restarts; durable checkpoints use a
-separate file. Direct-I/O completion does not itself promise checkpoint
+pool and closes its files. The OS also closes them on process termination.
+A temporary pool cannot resume across process restarts; an image is the one
+thing that does, holding state imported once, and durable checkpoints of what
+changes still use a separate file. Direct-I/O completion does not itself promise checkpoint
 durability.
 
 ## Ordering and completion

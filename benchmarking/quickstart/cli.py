@@ -4,18 +4,57 @@ from __future__ import annotations
 
 import functools
 import importlib
+import inspect
 from contextlib import nullcontext
 from datetime import timedelta
 from pathlib import Path
 
 from shadowspill.pytorch.accelerator import resolve_device
 
-from .options import parse_arguments
+from .options import graph_pair_variants, parse_arguments
 from .reporting import gib, rule
 from .runner import Request, Tour, open_runtime, plan_budgets, print_closing
 from .storage import Ledger, console_log, default_run_root, prepare_run_root
 
 GIB = 1 << 30
+
+
+def _factory_arguments(parser, factory, arguments):
+    """The factory's keyword arguments: --factory-args, plus the LoRA flags given.
+
+    A factory decides its own trainability, so --lora and its targeting flags
+    stay with the text presets. Rank, alpha and factor dtype are the knobs a
+    LoRA recipe exposes under the same names whatever the model, so those
+    three reach a factory that takes them -- and one that does not is refused
+    rather than left to ignore a setting the request records.
+    """
+
+    given = {
+        name: value
+        for name, value in (
+            ("lora_rank", arguments.lora_rank),
+            ("lora_alpha", arguments.lora_alpha),
+            ("lora_dtype", arguments.lora_dtype),
+        )
+        if value is not None
+    }
+    if not given:
+        return dict(arguments.factory_args)
+    parameters = inspect.signature(factory).parameters
+    variadic = any(
+        parameter.kind is inspect.Parameter.VAR_KEYWORD
+        for parameter in parameters.values()
+    )
+    missing = sorted(name for name in given if name not in parameters)
+    if missing and not variadic:
+        parser.error(
+            f"{arguments.factory} does not take {', '.join(missing)}; the LoRA"
+            " flags reach a factory only under those names"
+        )
+    twice = sorted(set(given) & set(arguments.factory_args))
+    if twice:
+        parser.error(f"{', '.join(twice)} given both as a flag and in --factory-args")
+    return {**arguments.factory_args, **given}
 
 
 def resolve_request(parser, arguments):
@@ -26,7 +65,9 @@ def resolve_request(parser, arguments):
         if not separator or not module or not name:
             parser.error("--factory must use module:function")
         factory = getattr(importlib.import_module(module), name)
-        setup = functools.partial(factory, **arguments.factory_args)
+        setup = functools.partial(
+            factory, **_factory_arguments(parser, factory, arguments)
+        )
         label = name
         manual = None
     else:
@@ -63,8 +104,17 @@ def resolve_request(parser, arguments):
                 staging_bytes=arguments.ssd_staging_mib << 20,
                 chunk_bytes=arguments.ssd_chunk_mib << 20,
                 queue_depth=arguments.ssd_queue_depth,
+                image=arguments.ssd_image,
             )
         except (TypeError, ValueError) as error:
+            parser.error(str(error))
+    image = None
+    if arguments.ssd_image is not None:
+        from shadowspill.pytorch.state.image import PoolImage
+
+        try:
+            image = PoolImage.read(arguments.ssd_image)
+        except Exception as error:  # every reason it cannot be read is a usage error
             parser.error(str(error))
     return Request(
         label=label,
@@ -75,6 +125,7 @@ def resolve_request(parser, arguments):
         device=device,
         manual=manual,
         spill=pool,
+        image=image,
         external_headroom=int(arguments.external_headroom_gib * GIB),
     ), setup
 
@@ -135,6 +186,19 @@ def execute(arguments, request, setup, *, control_group=None):
                 print(
                     f"  run budgets: {budgets.asked(budgets.requested_run) or 'none'}"
                 )
+                print(
+                    f"  objects under {arguments.minimum_evict_kib} KiB stay"
+                    " resident between their uses"
+                )
+                print(
+                    "  graph pairs built per stage:"
+                    f" {', '.join(graph_pair_variants(arguments))}"
+                )
+                if arguments.max_evict_gib is not None:
+                    print(
+                        f"  write cap: a plan writing more than"
+                        f" {arguments.max_evict_gib:g} GiB per step is not run"
+                    )
                 context = experiment.get("context", nullcontext)
                 with context():
                     tour = Tour(

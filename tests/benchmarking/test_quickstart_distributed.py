@@ -104,6 +104,15 @@ def test_symmetric_cli_override_preserves_the_callers_specification(monkeypatch)
     tour = object.__new__(runner.Tour)
     tour.arguments, tour.runtime, tour.distributed = arguments, object(), specification
     tour.experiment = {"model_factory": lambda: model}
+    # The build reads the request for a pool image; this run has none.
+    tour.request = runner.Request(
+        label="t",
+        search_budgets=[1 << 30],
+        run_budgets=[1 << 30],
+        physical_capacity=1 << 30,
+        spill_budget=1 << 30,
+        device=torch.device("cpu"),
+    )
     monkeypatch.setattr(runner, "initialize_model", lambda value, **_: value)
     monkeypatch.setattr(
         runner,

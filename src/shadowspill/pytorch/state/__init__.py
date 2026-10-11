@@ -1,5 +1,6 @@
 """Persistent PyTorch state import, export, and reading."""
 
+from .image import PoolImage, write_pool_image
 from .model import (
     export_model_state,
     import_model_state,
@@ -15,6 +16,7 @@ from .optimizer import (
 )
 
 __all__ = [
+    "PoolImage",
     "export_model_state",
     "export_optimizer_state",
     "import_model_state",
@@ -24,4 +26,5 @@ __all__ = [
     "read_model_state",
     "read_optimizer_state",
     "release_model_state",
+    "write_pool_image",
 ]

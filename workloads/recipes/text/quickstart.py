@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import functools
+import inspect
 from contextlib import contextmanager
 from dataclasses import dataclass, replace
 from typing import Any, cast
@@ -156,8 +157,27 @@ class Precision:
         )
 
 
+def _lora_settings(arguments: argparse.Namespace) -> dict[str, object]:
+    """Rank, alpha and factor dtype as the preset builds them: the flags
+    given, else configure_lora's own defaults, so the metadata records what
+    was built rather than what was typed."""
+
+    from workloads.lora import configure_lora
+
+    defaults = inspect.signature(configure_lora).parameters
+    return {
+        name: defaults[name].default if value is None else value
+        for name, value in (
+            ("rank", arguments.lora_rank),
+            ("alpha", arguments.lora_alpha),
+            ("factor_dtype", arguments.lora_dtype),
+        )
+    }
+
+
 def recipe(parser, arguments):
     implementation, family = arguments.model.split("_", 1)
+    lora = _lora_settings(arguments) if arguments.lora else None
     manifest = throughput_spec(family, implementation)
     precision = Precision.from_arguments(arguments)
     length = arguments.sequence_length or manifest.sequence_length
@@ -232,9 +252,7 @@ def recipe(parser, arguments):
 
                 model = configure_lora(
                     model,
-                    rank=arguments.lora_rank,
-                    alpha=arguments.lora_alpha,
-                    factor_dtype=arguments.lora_dtype,
+                    **lora,
                     targets=arguments.lora_target,
                     head=arguments.lora_head,
                     shared_experts=arguments.lora_shared_experts,
@@ -262,9 +280,9 @@ def recipe(parser, arguments):
                     "mode": "lora" if arguments.lora else "full",
                     **(
                         {
-                            "rank": arguments.lora_rank,
-                            "alpha": arguments.lora_alpha,
-                            "factor_dtype": arguments.lora_dtype,
+                            "rank": lora["rank"],
+                            "alpha": lora["alpha"],
+                            "factor_dtype": lora["factor_dtype"],
                             "targets": arguments.lora_target,
                             "head": arguments.lora_head,
                             "shared_experts": arguments.lora_shared_experts,

@@ -107,11 +107,11 @@ def experiment(
             source = GLMCheckpoint(checkpoint, gemm_precision=gemm_precision)
         return source.build_model(layer_limit=layer_limit, **lora)
 
-    def initialize(model):
+    def initialize(model, adopted=frozenset()):
         try:
             with torch.random.fork_rng(devices=[]):
                 torch.manual_seed(seed)
-                source.load_into(model)
+                source.load_into(model, adopted=adopted)
         finally:
             close_source()
 

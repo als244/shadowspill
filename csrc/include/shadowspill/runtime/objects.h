@@ -74,6 +74,19 @@ SHADOWSPILL_API ShadowSpillStatus shadowspill_register_object(
 );
 
 /*
+ * Registers one initially resident object whose lease lies at `offset` in
+ * its initial pool, inside a range the caller reserved for the runtime's
+ * lifetime with shadowspill_memory_pool_reserve_range(). Nothing is written:
+ * the bytes already there are the object. The lease borrows the range, so
+ * unregistering the object leaves the range reserved.
+ */
+SHADOWSPILL_API ShadowSpillStatus shadowspill_register_placed_object(
+    ShadowSpillRuntime *runtime,
+    const ShadowSpillObjectDescription *description,
+    uint64_t offset
+);
+
+/*
  * Removes a SPILL_ONLY or RELEASED object with no live allocation or queued
  * action, reclaiming retained spill storage. Intended for deterministic plan
  * teardown after final writeback.

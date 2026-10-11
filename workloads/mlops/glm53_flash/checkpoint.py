@@ -314,14 +314,20 @@ class GLMCheckpoint:
         return model
 
     @torch.no_grad()
-    def load_into(self, model, *, progress=None):
-        """Fill supplied state in place; retain no tensor payload between copies."""
+    def load_into(self, model, *, progress=None, adopted=frozenset()):
+        """Fill supplied state in place; retain no tensor payload between copies.
+
+        ``adopted`` names state a pool image already holds; those copies are
+        skipped and the rest, LoRA factors included, is written as usual.
+        """
         if self.inventory is None:
             raise RuntimeError("Call build_model() before loading")
         targets = physical_state(model)
         # Construct only one factor at a time; imported meta parameters have no
         # initialized bytes. copy_ also supports non-addressable spill pools.
         for name, is_a in self.lora_initializers.items():
+            if name in adopted:
+                continue
             target = targets[name]
             value = torch.empty(tuple(target.shape), dtype=target.dtype, device="cpu")
             if is_a:
@@ -331,6 +337,8 @@ class GLMCheckpoint:
             target.copy_(value)
         grouped = {}
         for copy in self.copies:
+            if copy.destination in adopted:
+                continue
             grouped.setdefault(copy.destination, []).append(copy)
         done = 0
         for destination, copies in grouped.items():

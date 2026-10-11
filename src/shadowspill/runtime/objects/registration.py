@@ -93,6 +93,64 @@ def register_object(
     )
 
 
+def register_placed_object(
+    runtime: Runtime,
+    object_id: int,
+    size_bytes: int,
+    *,
+    pool_id: int,
+    offset: int,
+) -> int:
+    """Register one object over the bytes already at ``offset`` of its pool.
+
+    The range was reserved for the runtime's lifetime with
+    :func:`reserve_pool_range`; nothing is written, and unregistering the
+    object leaves the range reserved. This is how state a pool image holds
+    is bound without a copy.
+    """
+
+    description = ObjectDescription(
+        object_id=object_id,
+        size_bytes=size_bytes,
+        initial_pool_id=pool_id,
+        retain_spill_copy=1,
+        initially_resident=1,
+    )
+    return int(
+        runtime_library().shadowspill_register_placed_object(
+            runtime._runtime_handle, ctypes.byref(description), offset
+        )
+    )
+
+
+def reserve_pool_range(
+    runtime: Runtime, *, pool_id: int, offset: int, size_bytes: int
+) -> int:
+    """Reserve one range of a pool for the runtime's lifetime."""
+
+    return int(
+        runtime_library().shadowspill_memory_pool_reserve_range(
+            runtime._runtime_handle, pool_id, offset, size_bytes
+        )
+    )
+
+
+def pool_base_address(runtime: Runtime, pool_id: int) -> int:
+    """The address a pool's offset 0 presents; lease pointers are offsets from it."""
+
+    base = ctypes.c_void_p()
+    status = int(
+        runtime_library().shadowspill_memory_pool_base(
+            runtime._runtime_handle, pool_id, ctypes.byref(base)
+        )
+    )
+    if status != 0:
+        raise RuntimeExecutionError(
+            f"failed to read the base of pool {pool_id}: status={status}"
+        )
+    return int(base.value or 0)
+
+
 def acquire_object_reference(
     runtime: Runtime,
     *,

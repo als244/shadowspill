@@ -22,6 +22,7 @@ from shadowspill.planner.search.toolkit.resolution import (
     validate_resolution_options,
 )
 from shadowspill.pytorch import ProfilingOptions, StepSearchReport
+from shadowspill.pytorch.graph_pairs import GRAPH_PAIR_VARIANTS
 from shadowspill.schema import artifact_schema
 from shadowspill.store import STORE_MODES
 
@@ -36,6 +37,11 @@ IDENTITIES = (
 )
 _DTYPE_NAMES = ("bfloat16", "float16", "float32")
 _ROUNDINGS = ("nearest", "stochastic")
+# The planner's own small-object threshold, so a change to the library
+# default reaches this tour and its banner says what the planner will do.
+_PLANNER_MINIMUM_EVICT_KIB = (
+    GenericPlanningOptions().minimum_object_bytes_evict_eligible >> 10
+)
 _REQUEST_SCHEMA = artifact_schema("quickstart_request")
 _NOT_REQUEST = frozenset(
     {
@@ -150,7 +156,10 @@ def search_policy(arguments: argparse.Namespace) -> SearchOptions:
 
     return SearchOptions(
         workers=getattr(arguments, "search_workers", 0),
-        generic=GenericPlanningOptions(deterministic=arguments.deterministic),
+        generic=GenericPlanningOptions(
+            deterministic=arguments.deterministic,
+            minimum_object_bytes_evict_eligible=arguments.minimum_evict_kib << 10,
+        ),
         algorithm=PressureFit(
             PressureFitOptions(
                 resolution_options=tuple(
@@ -159,6 +168,24 @@ def search_policy(arguments: argparse.Namespace) -> SearchOptions:
             )
         ),
     )
+
+
+def graph_pair_variants(arguments: argparse.Namespace) -> tuple[str, ...]:
+    """The graph-pair variants the build constructs.
+
+    Both, unless the resolution options pin every flexible group one way:
+    a search asked to recompute everything can only ever select
+    ``recompute``, so building ``save`` as well would capture, compile and
+    profile a choice nobody can make, and the saved values the profiling
+    of that variant holds are what crowd a large stage out of the pool.
+    """
+
+    shares = {Fraction(share) for share in arguments.resolution_options}
+    if shares == {Fraction(1)}:
+        return ("recompute",)
+    if shares == {Fraction(0)}:
+        return ("save",)
+    return GRAPH_PAIR_VARIANTS
 
 
 def profiling_policy(arguments: argparse.Namespace) -> ProfilingOptions:
@@ -358,6 +385,13 @@ def _parser() -> argparse.ArgumentParser:
         "--spill-gib sets capacity",
     )
     parser.add_argument(
+        "--ssd-image",
+        type=Path,
+        metavar="FILE",
+        help="a pool image a conversion wrote: the model's frozen state is read "
+        "from it in place and only new state is written to the SSD directory",
+    )
+    parser.add_argument(
         "--ssd-staging-mib",
         type=int,
         default=256,
@@ -380,13 +414,27 @@ def _parser() -> argparse.ArgumentParser:
         action="store_true",
         help="train LoRA factors in the selected text preset; freeze its base weights",
     )
-    parser.add_argument("--lora-rank", type=int, default=32)
-    parser.add_argument("--lora-alpha", type=float, default=32.0)
+    parser.add_argument(
+        "--lora-rank",
+        type=int,
+        default=None,
+        help="LoRA factor rank; the presets' own 32 when not given. With"
+        " --factory it reaches the factory as lora_rank",
+    )
+    parser.add_argument(
+        "--lora-alpha",
+        type=float,
+        default=None,
+        help="LoRA scaling numerator; the presets' own 32 when not given."
+        " With --factory it reaches the factory as lora_alpha",
+    )
     parser.add_argument(
         "--lora-dtype",
         choices=_DTYPE_NAMES,
-        default="float32",
-        help="trainable LoRA factor dtype, independent of --model-dtype",
+        default=None,
+        help="trainable LoRA factor dtype, independent of --model-dtype; the"
+        " presets' own float32 when not given. With --factory it reaches the"
+        " factory as lora_dtype",
     )
     parser.add_argument(
         "--lora-target",
@@ -431,6 +479,30 @@ def _parser() -> argparse.ArgumentParser:
         " fractions such as 0,1/2,7/8,1. More shares plan more programs per"
         " point; on the llama3 frontier eighths cost 1.75x the search for a"
         " median gain of nothing",
+    )
+    parser.add_argument(
+        "--minimum-evict-kib",
+        type=int,
+        default=_PLANNER_MINIMUM_EVICT_KIB,
+        metavar="KIB",
+        help="objects smaller than this many KiB are never cut mid-step: each"
+        " stays resident from its first use to its last, in a slot the planner"
+        " reserves for it. The planner's own default"
+        f" ({_PLANNER_MINIMUM_EVICT_KIB}); zero makes every object eligible."
+        " A model with very many small objects, such as the block scales of a"
+        " compressed checkpoint, can lose real execution capacity to those"
+        " slots, and 128 gives it back",
+    )
+    parser.add_argument(
+        "--max-evict-gib",
+        type=float,
+        default=None,
+        metavar="GIB",
+        help="a write cap per step: a run budget whose plan writes more than"
+        " this many GiB to the spill pool per step is planned and reported"
+        " but not run. Unbounded by default. A plan that thrashes the pool"
+        " measures nothing worth having, and on an SSD its writes are"
+        " endurance spent",
     )
     parser.add_argument(
         "--transfer-bandwidths",
@@ -645,13 +717,37 @@ def parse_arguments() -> tuple[argparse.ArgumentParser, argparse.Namespace]:
         parser.error(
             "host headroom must be nonnegative and preparation timeout positive"
         )
+    if arguments.ssd_image is not None and arguments.ssd_spill is None:
+        parser.error("--ssd-image needs --ssd-spill for the scratch behind the image")
     if arguments.factory is not None and arguments.lora:
         parser.error(
-            "--lora applies to text presets; configure LoRA in your "
-            "--factory model_factory"
+            "--lora applies to text presets; a factory decides its own"
+            " trainability, and takes --lora-rank, --lora-alpha and --lora-dtype"
         )
-    if arguments.lora_rank <= 0 or arguments.lora_alpha <= 0:
+    if (arguments.lora_rank is not None and arguments.lora_rank <= 0) or (
+        arguments.lora_alpha is not None and arguments.lora_alpha <= 0
+    ):
         parser.error("LoRA rank and alpha must be positive")
+    if (
+        arguments.factory is None
+        and not arguments.lora
+        and any(
+            value is not None
+            for value in (
+                arguments.lora_rank,
+                arguments.lora_alpha,
+                arguments.lora_dtype,
+            )
+        )
+    ):
+        parser.error(
+            "--lora-rank, --lora-alpha and --lora-dtype require --lora with a"
+            " text preset"
+        )
+    if arguments.minimum_evict_kib < 0:
+        parser.error("--minimum-evict-kib must be nonnegative")
+    if arguments.max_evict_gib is not None and arguments.max_evict_gib <= 0:
+        parser.error("--max-evict-gib must be positive")
     if not arguments.lora and (
         arguments.trainable_base
         or arguments.lora_target

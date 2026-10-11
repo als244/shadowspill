@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import inspect
 import os
 from collections.abc import Callable
 from typing import cast
@@ -11,13 +12,17 @@ import torch.nn as nn
 
 from shadowspill.pytorch.distributed import Distributed
 from shadowspill.pytorch.distributed._preparation import prepared_model_import
-from shadowspill.pytorch.representations import materialize_meta_state
+from shadowspill.pytorch.representations import (
+    materialize_meta_state,
+    tensor_components,
+)
 from shadowspill.runtime import (
     MemoryPool,
     Runtime,
 )
 from shadowspill.runtime.objects import require_state_operation_allowed
 
+from .image import PoolImage, image_placements
 from .initialization import empty_host_metadata, pool_values
 from .model_copy import copy_model_with_runtime_storages
 from .storage import (
@@ -43,7 +48,8 @@ def import_model_state[ModelT: nn.Module](
     pool: str,
     release_source: bool = True,
     distributed: Distributed | None = None,
-    initialize: Callable[[nn.Module], None] | None = None,
+    initialize: Callable[..., None] | None = None,
+    image: PoolImage | None = None,
 ) -> ModelT:
     """Return a model copy whose registered state resides in ``pool``.
 
@@ -62,6 +68,12 @@ def import_model_state[ModelT: nn.Module](
         model = import_model_state(
             model, runtime=runtime, pool="spill", release_source=True
         )
+
+    ``image`` is a pool image the pool was opened on: the tensors it names are
+    bound to the state already in it, verified by name, geometry and dtype,
+    and are not initialized; everything else is allocated and initialized
+    as usual. That takes a meta model and an initializer that accepts
+    ``adopted``, the names it must leave alone.
     """
 
     if persistent_state(runtime, model) is not None:
@@ -80,7 +92,12 @@ def import_model_state[ModelT: nn.Module](
                 "Construct the whole model under torch.device('meta')."
             )
         return _materialize_meta_model(
-            model, runtime=runtime, pool=pool, initialize=initialize
+            model, runtime=runtime, pool=pool, initialize=initialize, image=image
+        )
+    if image is not None:
+        raise RuntimeError(
+            "a pool image binds state that is declared on meta; this model is "
+            "already materialized"
         )
     selected = _require_pool(runtime, pool)
     storages = register_tensor_storages(
@@ -142,7 +159,8 @@ def _materialize_meta_model[ModelT: nn.Module](
     *,
     runtime: Runtime,
     pool: str,
-    initialize: Callable[[nn.Module], None] | None = None,
+    initialize: Callable[..., None] | None = None,
+    image: PoolImage | None = None,
 ) -> ModelT:
     """Allocate model state in its pool, then run ordinary initializers.
 
@@ -161,13 +179,39 @@ def _materialize_meta_model[ModelT: nn.Module](
             f"{' and more' if len(offenders) > 4 else ''}"
         )
     # Fails here rather than after a whole model has been built.
-    _require_pool(runtime, pool)
+    selected = _require_pool(runtime, pool)
+    adopted: frozenset[str] = frozenset()
+    if image is not None:
+        if (
+            initialize is None
+            or "adopted" not in inspect.signature(initialize).parameters
+        ):
+            raise RuntimeError(
+                "a pool image needs an initializer that accepts `adopted`, the "
+                "names of the state it must leave alone"
+            )
+        if image.image_bytes > selected.image_bytes:
+            raise RuntimeError(
+                f"pool {pool!r} was not opened on the image {image.path} "
+                f"({image.image_bytes} bytes; the pool holds {selected.image_bytes})"
+            )
+        adopted = image.names()
     materialize_meta_state(model, allocate=empty_host_metadata)
     named = _model_tensors(model)
+    placements = None
+    if image is not None:
+        leaves = {
+            ".".join((item.name, *path)): tensor
+            for item in named
+            for path, tensor in tensor_components(item.tensor)
+        }
+        placements = image_placements(image, leaves)
 
     def fill() -> None:
         with torch.no_grad():
-            if initialize is not None:
+            if image is not None:
+                initialize(model, adopted=adopted)
+            elif initialize is not None:
                 initialize(model)
             else:
                 for module in model.modules():
@@ -188,6 +232,7 @@ def _materialize_meta_model[ModelT: nn.Module](
         fill,
         runtime=runtime,
         pool=pool,
+        placements=placements,
     )
     return model
 

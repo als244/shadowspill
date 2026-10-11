@@ -27,6 +27,8 @@ def run(
     profiling_options=None,
     search_workers=0,
     external_headroom_gib=0.5,
+    minimum_evict_kib=None,
+    max_evict_gib=None,
     control_group=None,
     symmetric_planning=None,
     host_headroom_gib=2,
@@ -35,7 +37,10 @@ def run(
     """Benchmark a user experiment; factory(device=...) supplies its arguments.
 
     spill_pool optionally supplies a configured SSD or remote pool; its capacity
-    must match spill_gib. The default is pinned host memory.
+    must match spill_gib. The default is pinned host memory. minimum_evict_kib
+    keeps objects under that size resident between uses (the planner's own
+    default when None); max_evict_gib declines to run a budget whose plan
+    writes more than that per step.
 
     Required factory keys: model_factory (or an initialized model), objective,
     optimizer, candidates. Optional keys: initialize, hyperparams, plan_options,
@@ -81,6 +86,14 @@ def run(
         raise ValueError("search_workers must be a nonnegative integer")
     arguments.search_workers = search_workers
     arguments.external_headroom_gib = external_headroom_gib
+    if minimum_evict_kib is not None:
+        if type(minimum_evict_kib) is not int or minimum_evict_kib < 0:
+            raise ValueError("minimum_evict_kib must be a nonnegative integer")
+        arguments.minimum_evict_kib = minimum_evict_kib
+    if max_evict_gib is not None:
+        if max_evict_gib <= 0:
+            raise ValueError("max_evict_gib must be positive")
+        arguments.max_evict_gib = float(max_evict_gib)
     if steps < 1 or not search_budget_gib or spill_gib <= 0:
         raise ValueError(
             "positive steps, execution budgets and spill budget are required"

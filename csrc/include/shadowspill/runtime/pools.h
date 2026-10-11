@@ -65,6 +65,30 @@ SHADOWSPILL_API ShadowSpillStatus shadowspill_memory_pool_free(
     ShadowSpillBackendStream stream
 );
 
+/*
+ * Reserves [offset, offset + bytes) of a pool for the runtime's lifetime,
+ * for state that already lies there: placed objects borrow leases inside
+ * it and releasing them does not free it. Fails when any of the range is
+ * already in use.
+ */
+SHADOWSPILL_API ShadowSpillStatus shadowspill_memory_pool_reserve_range(
+    ShadowSpillRuntime *runtime,
+    uint32_t pool_id,
+    uint64_t offset,
+    uint64_t bytes
+);
+
+/*
+ * The address a pool's offset 0 presents, which every lease pointer in the
+ * pool is an offset from. For a pool this process cannot dereference it is
+ * the same token the lease pointers are built on.
+ */
+SHADOWSPILL_API ShadowSpillStatus shadowspill_memory_pool_base(
+    ShadowSpillRuntime *runtime,
+    uint32_t pool_id,
+    const void **base
+);
+
 /* Adds a borrowed stream token to an allocation's retirement set. */
 SHADOWSPILL_API ShadowSpillStatus
 shadowspill_memory_pool_record_stream(

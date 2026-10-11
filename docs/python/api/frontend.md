@@ -340,6 +340,16 @@ a checkpoint file, and a runtime pool. Every one of them takes `runtime` (the
 open `Runtime` that owns or will own the state) and either the `nn.Module` or
 the `torch.optim.Optimizer` whose tensors they act on.
 
+### Pool images
+
+`write_pool_image(model, runtime=..., pool=..., path=..., frozen_state_id=...)`
+describes the model's state as it lies in an SSD pool created as a named image
+file, writing the manifest beside it, and returns a `PoolImage`; `PoolImage.read(path)`
+loads one. `import_model_state(..., image=...)` then binds a meta model's
+matching tensors to that state in a pool opened on the image, without a copy
+or a write, and initializes only the rest; the initializer takes `adopted`, the
+names it leaves alone. The [SSD API](ssd.md) describes the whole path.
+
 ### Importing
 
 <!-- source-signature: src/shadowspill/pytorch/state/model.py:import_model_state -->
@@ -352,6 +362,7 @@ import_model_state(
     release_source=True,
     distributed=None,
     initialize=None,
+    image=None,
 )
 ```
 
@@ -867,6 +878,7 @@ plan_step(
     parameter_metrics=None,
     round_accumulation_once=False,
     memory_bound_flops_per_byte=MEMORY_BOUND_FLOPS_PER_BYTE,
+    graph_pair_variants=GRAPH_PAIR_VARIANTS,
     keep_resolutions=False,
 )
 ```
@@ -891,6 +903,7 @@ Beyond the shared and store arguments:
 | `grad_dtype` | `torch.dtype` \| `None` | `None` | The dtype gradients are created and accumulated at, the weights' own when `None`. The update casts a gradient only where its parameter is at another dtype. |
 | `round_accumulation_once` | `bool` | `False` | Permits a matrix multiply to add into running gradients kept narrower than its accumulator, such as BF16, avoiding a separate product buffer and addition. The BLAS kernel controls rounding; the name does not guarantee a single rounding or equality with a separate multiply and add. Gradients kept at the multiply's own dtype are added inside it either way. See [accumulating onto gradients](../../architecture/graph-pair-construction.md#accumulating-onto-gradients-that-already-exist). |
 | `memory_bound_flops_per_byte` | `float` | `16.0` | The arithmetic intensity, in flops per byte moved, at or under which a stage's `save` graph pair regenerates an operator's results in the backward rather than retaining them: a normalization, an activation, a rotation, a cast, a gather. Above it the results are retained, and so are those of any custom operator whose library registered no flop formula. The default sits well under any device's ridge point, so the classification does not depend on the machine; the value is part of the step's identity in the store. See [the save variant](../../architecture/graph-pair-construction.md#save). |
+| `graph_pair_variants` | `tuple[str, ...]` | `('save', 'recompute')` | Which of a stage's graph pairs the build constructs. A search that can select only one of them, such as one asked to recompute every flexible group, needs that one alone; naming it alone skips the capture, compilation and profiling of the other, and the program then carries no alternative at that boundary. A stage no later forward stage reads, the objective's, keeps `save` whatever was asked, since selection forces a forward sink to it. Part of the step's identity in the store. See [constructing one variant](../../architecture/graph-pair-construction.md#constructing-one-variant). |
 | `keep_resolutions` | `bool` | `False` | Files every resolved program's best plan beside the answer in the planning store, certified like it, when the search runs, as `plan_program()` does; each is as large as the answer. |
 
 `depth` and `breadth` say how the step walks those microbatches: `depth`
@@ -989,6 +1002,7 @@ build_step_programs(
     parameter_metrics=None,
     round_accumulation_once=False,
     memory_bound_flops_per_byte=MEMORY_BOUND_FLOPS_PER_BYTE,
+    graph_pair_variants=GRAPH_PAIR_VARIANTS,
 ) -> tuple[StepProgram, ...]
 ```
 
@@ -1044,6 +1058,7 @@ plan_step_search(
     parameter_metrics=None,
     round_accumulation_once=False,
     memory_bound_flops_per_byte=MEMORY_BOUND_FLOPS_PER_BYTE,
+    graph_pair_variants=GRAPH_PAIR_VARIANTS,
     keep_resolutions=False,
     profiling_options=None,
 )
@@ -1052,7 +1067,7 @@ plan_step_search(
 `model`, `objective`, `optimizer`, `hyperparams`,
 `runtime`, `execution`, `spill`,
 `optimizer_ordering`, `master_dtype`, `grad_dtype`, `parameter_metrics`, `round_accumulation_once`,
-`memory_bound_flops_per_byte` and the store arguments mean what they mean for
+`memory_bound_flops_per_byte`, `graph_pair_variants` and the store arguments mean what they mean for
 `plan_step()`. The rest are:
 
 | argument | type | default | what it must be |

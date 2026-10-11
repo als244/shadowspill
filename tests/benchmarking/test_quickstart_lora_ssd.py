@@ -3,12 +3,22 @@
 import json
 import sys
 from dataclasses import replace
+from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 import torch
 
-from benchmarking.quickstart import cli
-from benchmarking.quickstart.options import _parser, _request_record, parse_arguments
+from benchmarking.quickstart import cli, runner
+from benchmarking.quickstart.options import (
+    _parser,
+    _request_record,
+    graph_pair_variants,
+    parse_arguments,
+    search_policy,
+)
+from benchmarking.quickstart.runner import write_cap_verdict
+from shadowspill.planner import GenericPlanningOptions, StepDataOrdering
 from shadowspill.ssd import SSDPool
 from workloads.recipes.text import quickstart as text
 
@@ -106,5 +116,192 @@ def test_lora_is_configured_before_initialization_with_frozen_base(monkeypatch):
 
 def test_factory_does_not_silently_ignore_lora(monkeypatch):
     monkeypatch.setattr(sys, "argv", ["quickstart", "--factory", "x:y", "--lora"])
+    with pytest.raises(SystemExit):
+        parse_arguments()
+
+
+def factory_taking_lora(
+    *, device, lora_rank=32, lora_alpha=32.0, lora_dtype="float32", other=0
+):
+    return {
+        "device": device,
+        "lora_rank": lora_rank,
+        "lora_alpha": lora_alpha,
+        "lora_dtype": lora_dtype,
+        "other": other,
+    }
+
+
+def factory_without_lora(*, device):
+    return {"device": device}
+
+
+def test_lora_flags_reach_a_factory_that_takes_them(monkeypatch):
+    monkeypatch.setattr(cli, "resolve_device", lambda _: torch.device("cuda:0"))
+    parser = _parser()
+    args = parser.parse_args(
+        [
+            "--factory",
+            f"{__name__}:factory_taking_lora",
+            "--factory-args",
+            '{"other": 7}',
+            "--lora-rank",
+            "8",
+            "--lora-alpha",
+            "8",
+            "--lora-dtype",
+            "bfloat16",
+        ]
+    )
+    _, setup = cli.resolve_request(parser, args)
+    built = setup(device="cpu")
+    assert built["lora_rank"] == 8 and built["lora_alpha"] == 8.0
+    assert built["lora_dtype"] == "bfloat16" and built["other"] == 7
+    saved = _request_record(args, Path("store"), None, Path("plans"))["request"]
+    assert saved["lora_rank"] == 8 and saved["factory_args"] == {"other": 7}
+
+
+def test_lora_flags_are_refused_by_a_factory_that_does_not_take_them(monkeypatch):
+    monkeypatch.setattr(cli, "resolve_device", lambda _: torch.device("cuda:0"))
+    parser = _parser()
+    args = parser.parse_args(
+        ["--factory", f"{__name__}:factory_without_lora", "--lora-rank", "8"]
+    )
+    with pytest.raises(SystemExit):
+        cli.resolve_request(parser, args)
+    args = parser.parse_args(
+        [
+            "--factory",
+            f"{__name__}:factory_taking_lora",
+            "--lora-rank",
+            "8",
+            "--factory-args",
+            '{"lora_rank": 4}',
+        ]
+    )
+    with pytest.raises(SystemExit):
+        cli.resolve_request(parser, args)
+
+
+def test_preset_lora_settings_require_lora(monkeypatch):
+    monkeypatch.setattr(sys, "argv", ["quickstart", "mlops_llama3", "--lora-rank", "8"])
+    with pytest.raises(SystemExit):
+        parse_arguments()
+
+
+def test_preset_lora_defaults_are_configure_loras_own():
+    parser = _parser()
+    args = parser.parse_args(
+        [
+            "mlops_llama3",
+            "--lora",
+            "--sequence-length",
+            "16",
+            "--sequences-per-step",
+            "2",
+            "--sequences-per-microbatch",
+            "1",
+        ]
+    )
+    setup, _, _ = text.recipe(parser, args)
+    trainable = setup(device=torch.device("cuda:0"))["metadata"]["trainable"]
+    assert (trainable["rank"], trainable["alpha"], trainable["factor_dtype"]) == (
+        32,
+        32.0,
+        "float32",
+    )
+
+
+def test_small_object_threshold_reaches_the_search_and_the_record(monkeypatch):
+    parser = _parser()
+    policy = search_policy(parser.parse_args(["--factory", "x:y"]))
+    assert (
+        policy.generic.minimum_object_bytes_evict_eligible
+        == GenericPlanningOptions().minimum_object_bytes_evict_eligible
+    )
+    args = parser.parse_args(["--factory", "x:y", "--minimum-evict-kib", "128"])
+    assert search_policy(args).generic.minimum_object_bytes_evict_eligible == 128 << 10
+    saved = _request_record(args, Path("store"), None, Path("plans"))["request"]
+    assert saved["minimum_evict_kib"] == 128 and saved["max_evict_gib"] is None
+    monkeypatch.setattr(
+        sys, "argv", ["quickstart", "--factory", "x:y", "--minimum-evict-kib", "-1"]
+    )
+    with pytest.raises(SystemExit):
+        parse_arguments()
+
+
+def test_pinned_resolution_builds_only_the_selectable_variant():
+    parser = _parser()
+    assert graph_pair_variants(parser.parse_args(["--factory", "x:y"])) == (
+        "save",
+        "recompute",
+    )
+    assert graph_pair_variants(
+        parser.parse_args(["--factory", "x:y", "--resolution-options", "1"])
+    ) == ("recompute",)
+    assert graph_pair_variants(
+        parser.parse_args(["--factory", "x:y", "--resolution-options", "0"])
+    ) == ("save",)
+    assert graph_pair_variants(
+        parser.parse_args(["--factory", "x:y", "--resolution-options", "0,1"])
+    ) == ("save", "recompute")
+
+
+def test_write_cap_declines_only_a_plan_above_it(monkeypatch):
+    assert write_cap_verdict(None, 1 << 50) is None
+    assert write_cap_verdict(1.0, 1 << 30) is None
+    verdict = write_cap_verdict(1.0, (1 << 30) + 1)
+    assert verdict is not None and verdict.endswith("above the 1.00 GiB cap")
+    monkeypatch.setattr(
+        sys, "argv", ["quickstart", "--factory", "x:y", "--max-evict-gib", "0"]
+    )
+    with pytest.raises(SystemExit):
+        parse_arguments()
+
+
+def test_write_cap_skips_a_run_budget_before_it_is_planned(tmp_path):
+    arguments = _parser().parse_args(["--factory", "x:y", "--max-evict-gib", "1"])
+    tour = object.__new__(runner.Tour)
+    tour.arguments = arguments
+    tour.request = runner.Request(
+        label="t",
+        search_budgets=[1 << 30],
+        run_budgets=[1 << 30],
+        physical_capacity=1 << 30,
+        spill_budget=1 << 30,
+        device=torch.device("cpu"),
+    )
+    tour.budgets = runner.Budgets([1 << 30], [1 << 30], {1 << 30: 1 << 30})
+    tour.candidates = {"1": ((torch.zeros(1),),)}
+    tour.paths = runner.RunPaths(tmp_path, tmp_path, None, tmp_path)
+    tour.units_per_step, tour.unit_label, tour.distributed = 1.0, "updates", None
+    notes = []
+    tour.plan_log = SimpleNamespace(note=notes.append, write=lambda text: len(text))
+    point = SimpleNamespace(
+        candidate="1",
+        ordering=StepDataOrdering.depth_first(1),
+        summary=SimpleNamespace(transfer_bytes_evicted=2 << 30),
+    )
+    tour.report = SimpleNamespace(winner=lambda budget, spill: point, winner_plans={})
+    tour.run_one_budget = lambda *args, **kwargs: pytest.fail("the budget was planned")
+    assert tour.run() == []
+    assert notes and "above the 1.00 GiB cap" in notes[0]
+
+
+def test_an_image_needs_the_ssd_pool_it_sits_behind(tmp_path, monkeypatch):
+    (tmp_path / "frozen.image").write_bytes(b"\0" * 4096)
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "quickstart",
+            "--factory",
+            "x:y",
+            "--ssd-image",
+            str(tmp_path / "frozen.image"),
+            "--spill-gib",
+            "1",
+        ],
+    )
     with pytest.raises(SystemExit):
         parse_arguments()

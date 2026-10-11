@@ -114,6 +114,14 @@ step, while retaining solo/concurrent measurements for diagnostics.
   address rather than an id needs.
 - `shadowspill_memory_pool_free()` performs logical release and records causal
   retirement in that pool.
+- `shadowspill_memory_pool_reserve_range()` reserves one range of a pool for
+  the runtime's lifetime, for state that already lies there, such as a pool
+  image; placed objects borrow leases inside it and releasing them does not
+  free it. It fails when any of the range is in use.
+- `shadowspill_memory_pool_base()` returns the address a pool's offset 0
+  presents, which every lease pointer in the pool is an offset from; for a
+  pool this process cannot dereference it is the same token the pointers are
+  built on.
 - `shadowspill_memory_pool_record_stream()` adds a stream use that must
   complete before the range can be reused.
 
@@ -128,6 +136,10 @@ structured no-progress status.
   and whether it starts resident -- and `shadowspill_unregister_object()`
   removes an object that is spill-only or released, with no live allocation
   and no queued action.
+- `shadowspill_register_placed_object()` admits an initially resident object
+  whose lease lies at a given offset of its initial pool, inside a range
+  reserved with `shadowspill_memory_pool_reserve_range()`: nothing is written,
+  the bytes already there are the object, and the lease borrows the range.
 - `shadowspill_rekey_object()` changes the public identity without changing
   the retained object record.
 - `shadowspill_write_object()` and `shadowspill_read_object()` move bytes

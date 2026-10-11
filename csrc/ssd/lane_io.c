@@ -55,27 +55,29 @@ void ssd_io_destroy(SSDLane *lane) {
 static int write_edge(SSDLane *lane, const SSDPiece *piece) {
     SSDRegion *region = lane->region;
     const uint64_t alignment = region->alignment;
+    int fd = -1;
+    uint64_t file_offset = 0U;
+    if (ssd_locate(region, piece->file_offset, piece->disk_bytes, 1, &fd,
+                   &file_offset) != 0)
+        return -1;
     int status = 0;
     pthread_mutex_lock(&region->state_lock);
     if (piece->prefix != 0U) {
-        status = ssd_direct_io(region->fd, lane->edges, alignment,
-                               piece->file_offset, 0);
+        status = ssd_direct_io(fd, lane->edges, alignment, file_offset, 0);
         if (status == 0)
             memcpy(piece->slot, lane->edges, (size_t)piece->prefix);
     }
     const uint64_t end = piece->prefix + piece->bytes;
     if (status == 0 && end < piece->disk_bytes) {
         const uint64_t tail = piece->disk_bytes - alignment;
-        status = ssd_direct_io(region->fd, lane->edges, alignment,
-                               piece->file_offset + tail, 0);
+        status = ssd_direct_io(fd, lane->edges, alignment, file_offset + tail, 0);
         if (status == 0)
             memcpy((char *)piece->slot + end,
                    (char *)lane->edges + end - tail,
                    (size_t)(piece->disk_bytes - end));
     }
     if (status == 0)
-        status = ssd_direct_io(region->fd, piece->slot, piece->disk_bytes,
-                               piece->file_offset, 1);
+        status = ssd_direct_io(fd, piece->slot, piece->disk_bytes, file_offset, 1);
     pthread_mutex_unlock(&region->state_lock);
     return status;
 }
@@ -93,14 +95,22 @@ static int post(SSDLane *lane, SSDWork *work, uint64_t index) {
         if (write_edge(lane, &piece) != 0) return -1;
         lane->landed[slot] = 1U;
     } else {
+        int fd = -1;
+        uint64_t file_offset = 0U;
+        if (ssd_locate(lane->region, piece.file_offset, piece.disk_bytes,
+                       lane->writing, &fd, &file_offset) != 0) {
+            fprintf(stderr, "shadowspill SSD: a transfer %s the pool image\n",
+                    lane->writing ? "writes into" : "crosses the end of");
+            return -1;
+        }
         struct iocb *request = &lane->requests[slot];
         *request = (struct iocb){
             .aio_data = number,
             .aio_lio_opcode = lane->writing ? IOCB_CMD_PWRITE : IOCB_CMD_PREAD,
-            .aio_fildes = (uint32_t)lane->region->fd,
+            .aio_fildes = (uint32_t)fd,
             .aio_buf = (uint64_t)(uintptr_t)piece.slot,
             .aio_nbytes = piece.disk_bytes,
-            .aio_offset = (int64_t)piece.file_offset,
+            .aio_offset = (int64_t)file_offset,
         };
         const long result = syscall(SYS_io_submit, lane->aio, 1L, &request);
         if (result != 1L) {

@@ -295,6 +295,21 @@ _RUNTIME_SIGNATURES: tuple[tuple[str, list[object], object], ...] = (
         ctypes.c_uint32,
     ),
     (
+        "shadowspill_register_placed_object",
+        [ctypes.c_size_t, ctypes.POINTER(ObjectDescription), ctypes.c_uint64],
+        ctypes.c_uint32,
+    ),
+    (
+        "shadowspill_memory_pool_reserve_range",
+        [ctypes.c_size_t, ctypes.c_uint32, ctypes.c_uint64, ctypes.c_uint64],
+        ctypes.c_uint32,
+    ),
+    (
+        "shadowspill_memory_pool_base",
+        [ctypes.c_size_t, ctypes.c_uint32, ctypes.POINTER(ctypes.c_void_p)],
+        ctypes.c_uint32,
+    ),
+    (
         "shadowspill_unregister_object",
         [ctypes.c_size_t, ctypes.c_uint64],
         ctypes.c_uint32,

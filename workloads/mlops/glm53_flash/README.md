@@ -55,6 +55,23 @@ python -m workloads.mlops.glm53_flash.forward \
 
 `--spill-gib` overrides the default of the planner's minimum reservation (including its admission margin), rounded up to GiB plus 4 GiB. `--layer-limit N` selects a decoder prefix for debugging and is explicitly recorded in the inventory. Only BF16 GEMMs are currently validated for the composed checkpoint path; unsupported recipes fail rather than silently selecting another one.
 
+The sparse-attention indexer is mlops's `pooled_topk`, which scores each chunk
+of queries against every pooled key in one fused kernel and selects each query's
+pools with a second; a 32K-token call is a few dozen allocations and about
+256 MiB of scores at a time, within what a profiled task may make.
+
+A checkpoint is imported once into a pool image with
+`python -m workloads.mlops.glm53_flash.convert --checkpoint DIR --image FILE
+[--layer-limit N] [--lora-rank R]`: the frozen model as ShadowSpill lays it out
+in an SSD pool file, with a manifest beside it. The model is built with LoRA
+factors (rank 8 unless told otherwise) because the frozen expert weights are
+named and stored differently with and without them; an image converted with any
+positive rank serves every LoRA run, and one converted with rank 0 serves runs
+without LoRA. A quickstart given `--ssd-image FILE` binds the
+frozen tensors where they lie and writes only LoRA factors, optimizer state and
+activations; `GLMCheckpoint.load_into(model, adopted=...)` skips the adopted
+copies.
+
 The `--minimum-evict-kib` option configures the ordinary planner's small-object
 policy (default 1024 KiB; zero allows every object to be evicted). Objects below
 it are retained between uses and currently receive separate reserved physical
@@ -270,18 +287,27 @@ occurrences**:
 |---|---|
 | Input/embedding preparation | Group root-level operations until entering a layer or vision block. |
 | Layers 0–2 | One stage per complete KDA + dense-MLP decoder layer. |
-| Layers 3–44, before experts | One stage containing attention, mHC/norm work, routing and the shared expert. |
+| Layers 3–44, before experts | One stage containing the previous layer's residual/mHC combination, then this layer's attention, mHC/norm work, routing and the shared expert. |
 | Each routed expert | One stage for each of the 288 individual expert calls. |
-| After those experts | A suffix stage for remaining activation/output handling and residual/mHC combination. |
+| After those experts | The remaining activation handling and residual/mHC combination join the next layer's attention stage; the last layer's form their own stage. |
 | Final norm and output head/objective | One root-level suffix stage. |
 | Optional vision | Patch preparation, each of the 24 blocks, and post-block merging/projection are separated. |
 
 Sparse-MLA layers are 3, 7, 11, ..., 43; the other 34 layers use KDA. Attention
 type affects the stage's graph, but does not introduce a separate attention
-boundary. Each MoE decoder layer contributes 290 stage occurrences. Repeated
-expert occurrences can reuse compiled contracts; stage count does not equal
-compilation count. CPU input preparation can form an additional small stage
-when vision separates it from embedding operations.
+boundary. Each MoE decoder layer contributes 289 stage occurrences, and the
+last layer's combination adds one. Repeated expert occurrences can reuse
+compiled contracts; stage count does not equal compilation count. CPU input
+preparation can form an additional small stage when vision separates it from
+embedding operations.
+
+A backward task recomputes from its stage's inputs, so every object a stage
+boundary hands to a later backward is retained from the forward until then.
+The four-stream residual state is the largest such object, 32 KiB per token.
+Placing a layer's combination with the next layer's attention retains one
+copy of that state per layer rather than two: the attention stage's input
+streams, not also the post-attention streams a separate combination stage
+would read for its mixing gradient.
 
 Use the policy explicitly with any direct planning API:
 
@@ -327,7 +353,8 @@ initialization. For example, to investigate a four-layer LoRA prefix:
 ```bash
 python -m benchmarking.quickstart \
   --factory workloads.mlops.glm53_flash.quickstart:experiment \
-  --factory-args '{"checkpoint":"/local/models/GLM-5.3-Flash-NVFP4","layer_limit":4,"sequence_length":1024,"sequences_per_step":8,"sequences_per_microbatch":[1,2,4],"lora_rank":32}' \
+  --factory-args '{"checkpoint":"/local/models/GLM-5.3-Flash-NVFP4","layer_limit":4,"sequence_length":1024,"sequences_per_step":8,"sequences_per_microbatch":[1,2,4]}' \
+  --lora-rank 32 --minimum-evict-kib 128 \
   --search-budget-gib 16,24 --run-budget-gib 24 --spill-gib 64 \
   --ssd-spill /local/spill --steps 3 --resolution-plans \
   --output-dir /local/results/glm-prefix
@@ -341,7 +368,10 @@ trainable state and saved activations. Do not assume the prefix budgets suffice.
 Factory arguments: `checkpoint` or `tiny`; `sequence_length`;
 `sequences_per_step`; `sequences_per_microbatch`; `lora_rank`;
 `lora_alpha`; `lora_dtype`; `lora_head`; `grad_dtype`;
-`gemm_precision`; `layer_limit`; `head_chunk_size`; `seed`.
+`gemm_precision`; `layer_limit`; `head_chunk_size`; `seed`. The quickstart
+flags `--lora-rank`, `--lora-alpha` and `--lora-dtype` reach the factory under
+the first three of those LoRA names. `--minimum-evict-kib 128` is the forward
+CLI's small-object policy for this checkpoint's many scales.
 Precision defaults and supported recipes are stated in the function signature.
 The checkpoint path rejects unsupported low-precision GEMMs immediately.
 The small random fixture additionally permits FP8 expert GEMMs; that is not

@@ -62,6 +62,7 @@ from .sharing import (
     shared_output,
 )
 from .state import (
+    PoolImage,
     export_model_state,
     export_optimizer_state,
     import_model_state,
@@ -71,6 +72,7 @@ from .state import (
     read_model_state,
     read_optimizer_state,
     release_model_state,
+    write_pool_image,
 )
 from .step_search import (
     GraphPairOutcome,
@@ -112,6 +114,7 @@ __all__ = [
     "PlanUniqueStage",
     "PlannedForward",
     "PlannedTrainStep",
+    "PoolImage",
     "ProfilingOptions",
     "Runtime",
     "RuntimeConfigurationError",
@@ -149,6 +152,7 @@ __all__ = [
     "release_model_state",
     "shared_input",
     "shared_output",
+    "write_pool_image",
 ]
 
 from .distributed import Distributed as Distributed

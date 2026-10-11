@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import ctypes
 import os
-from collections.abc import Callable, Iterable, Iterator
+from collections.abc import Callable, Iterable, Iterator, Mapping
 from contextlib import contextmanager
 from dataclasses import dataclass
 from typing import Any
@@ -27,6 +27,7 @@ from shadowspill.runtime.abi import (
 )
 from shadowspill.runtime.objects import (
     register_object,
+    register_placed_object,
     require_state_operation_allowed,
     reserve_persistent_object_ids,
 )
@@ -53,13 +54,17 @@ def import_tensors(
     pool: str,
     release_source: bool,
     owning_plan: int | None = None,
+    placements: Mapping[str, int] | None = None,
     _allow_in_progress_plan: bool = False,
     _initialize: bool = True,
 ) -> PersistentState:
     """Copy unique CPU storages into authoritative runtime-pool objects.
 
     ``owning_plan`` names the plan whose close releases the result. Leave it
-    None for state the caller owns, which outlives every plan.
+    None for state the caller owns, which outlives every plan. ``placements``
+    maps state names to pool offsets whose bytes already are the state: those
+    roots are bound where they lie instead of being copied (see
+    :mod:`shadowspill.pytorch.state.image`).
     """
 
     selected_pool = _validate_pool(
@@ -77,6 +82,7 @@ def import_tensors(
             tensors,
             runtime=runtime,
             pool=pool,
+            placements=placements,
             _allow_in_progress_plan=_allow_in_progress_plan,
             _initialize=_initialize,
         )
@@ -180,6 +186,7 @@ def import_then_fill(
     runtime: Runtime,
     pool: str,
     owning_plan: int | None = None,
+    placements: Mapping[str, int] | None = None,
     _allow_in_progress_plan: bool = False,
 ) -> PersistentState:
     """Allocate pool state first, then initialize through ordinary tensor ops.
@@ -203,6 +210,7 @@ def import_then_fill(
             pool=pool,
             release_source=True,
             owning_plan=owning_plan,
+            placements=placements,
             _allow_in_progress_plan=_allow_in_progress_plan,
             _initialize=False,
         )
@@ -266,16 +274,16 @@ def register_tensor_storages(
     *,
     runtime: Runtime,
     pool: str,
+    placements: Mapping[str, int] | None = None,
     _allow_in_progress_plan: bool = False,
     _initialize: bool = True,
 ) -> tuple[PersistentStorage, ...]:
-    """Copy unique source storages into newly registered runtime objects.
+    """Register the unique source storages as runtime objects.
 
-    Every root is ordinary memory the caller owns, so every root is copied.
-    There used to be a second case -- a storage that already presented pool
-    memory, adopted rather than copied -- which existed because state could be
-    built in the pool and imported from there. Nothing builds state in a pool
-    any more, so the case cannot arise.
+    Every root is ordinary memory the caller owns, so every root is copied,
+    except one whose name ``placements`` gives a pool offset for: its bytes
+    already lie there, in a range the pool reserved for its lifetime, so it is
+    bound in place and nothing is written.
     """
 
     selected_pool = _validate_pool(
@@ -295,20 +303,35 @@ def register_tensor_storages(
         for anchor, views in roots:
             object_id = next(pending)
             size_bytes = int(anchor.untyped_storage().nbytes())
-            _require_status(
-                register_object(
-                    runtime,
-                    object_id,
-                    size_bytes,
-                    pool_id=selected_pool.pool_id,
-                    retain_spill_copy=True,
-                    initially_resident=True,
-                    source_address=(
-                        int(anchor.untyped_storage().data_ptr()) if _initialize else 0
+            placed = _placement(views, placements)
+            if placed is not None:
+                _require_status(
+                    register_placed_object(
+                        runtime,
+                        object_id,
+                        size_bytes,
+                        pool_id=selected_pool.pool_id,
+                        offset=placed,
                     ),
-                ),
-                f"import persistent object {object_id}",
-            )
+                    f"adopt persistent object {object_id} at offset {placed}",
+                )
+            else:
+                _require_status(
+                    register_object(
+                        runtime,
+                        object_id,
+                        size_bytes,
+                        pool_id=selected_pool.pool_id,
+                        retain_spill_copy=True,
+                        initially_resident=True,
+                        source_address=(
+                            int(anchor.untyped_storage().data_ptr())
+                            if _initialize
+                            else 0
+                        ),
+                    ),
+                    f"import persistent object {object_id}",
+                )
             snapshot = _object_location_snapshot(
                 runtime._runtime_handle, object_id, selected_pool.pool_id
             )
@@ -333,6 +356,25 @@ def register_tensor_storages(
     except BaseException:
         unregister_tensor_storages(created, runtime=runtime)
         raise
+
+
+def _placement(
+    views: tuple[TensorView, ...], placements: Mapping[str, int] | None
+) -> int | None:
+    """The pool offset a root's views were given, when every one agrees."""
+
+    if not placements:
+        return None
+    offsets = {placements[view.name] for view in views if view.name in placements}
+    if not offsets:
+        return None
+    if len(offsets) > 1 or any(view.name not in placements for view in views):
+        names = ", ".join(view.name for view in views)
+        raise RuntimeConfigurationError(
+            f"the views {names} share one storage but the image places them "
+            "differently or only in part"
+        )
+    return offsets.pop()
 
 
 def own_persistent_state(
@@ -775,6 +817,7 @@ def _storage_roots(
                 stride=tuple(tensor.stride()),
                 storage_offset=int(tensor.storage_offset()),
                 requires_grad=bool(tensor.requires_grad),
+                name=item.name,
             )
         )
     return tuple((anchor, tuple(views)) for anchor, views in grouped.values())

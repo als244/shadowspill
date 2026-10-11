@@ -38,7 +38,7 @@ from .failures import (
     RuntimeExecutionError,
     RuntimeFailureDiagnostics,
 )
-from .objects import ObjectRef, release_object_reference
+from .objects import ObjectRef, release_object_reference, reserve_pool_range
 from .topology import (
     MemoryPool,
     RuntimeRoute,
@@ -177,6 +177,20 @@ class Runtime:
             self._pool_names = topology.pool_names
             self._route_names = topology.route_names
             _active_runtime = self
+        # A pool opened on an image keeps the image's bytes out of the
+        # allocator's hands for its whole life; placed objects borrow them.
+        for name, pool in self._pools.items():
+            if not pool.image_bytes:
+                continue
+            status = reserve_pool_range(
+                self, pool_id=pool.pool_id, offset=0, size_bytes=pool.image_bytes
+            )
+            if status != 0:
+                self.close()
+                raise RuntimeConfigurationError(
+                    f"pool {name!r} could not reserve the {pool.image_bytes} bytes "
+                    f"of its image: status={status}"
+                )
         if calibrate:
             # Announced because it is the one part of construction whose cost
             # is a property of the hardware rather than of the code, and the

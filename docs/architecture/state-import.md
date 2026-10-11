@@ -27,6 +27,7 @@ between operations. The model's initialization code is unchanged.
 | **Meta model, then initialize** | `reset_parameters()` or an explicit `initialize(model)` callback | Initializer scratch; non-addressable pools also stage roots touched by one operation |
 | **Import an existing model** | Already initialized registered tensors | The caller's source until its references are dropped |
 | **Import a checkpoint** | A memory-mapped file | Reclaimable file pages, plus per-operation staging for non-addressable pools |
+| **Adopt a pool image** | An SSD pool file a conversion imported into once | None for the adopted state; the rest of the model as in the meta path |
 
 A meta model is materialized in place and returned as the same module. An
 already initialized model is copied into a distinct module hierarchy, preserving
@@ -43,6 +44,18 @@ their explicit `prepare(..., initialize=fn)` contract and execute that callback
 after the ShadowSpill backend has allocated pool state. Quickstart uses the same
 import path. Optimizer moments and optional master parameters are also declared
 without payloads and initialized after pool allocation.
+
+A pool image is the fourth path. A conversion imports the frozen model once
+into an SSD pool created as a named file and writes a manifest of where every
+storage root lies and which tensors view it. A later runtime opens its pool on
+that image, read-only, with a scratch file behind it for everything new, and
+`import_model_state(..., image=...)` binds the tensors the manifest names to
+those offsets after checking name, geometry and dtype, so the frozen state is
+neither copied nor written again; the initializer is told which names it must
+leave alone and the remaining state is allocated and initialized as in the meta
+path. The runtime keeps the image's range out of the allocator for its lifetime,
+and the pool refuses a write into it, so a frozen tensor that is somehow
+mutated fails loudly rather than changing the image.
 
 The entry points and return values are in the
 [frontend API](../python/api/frontend.md#persistent-state).

@@ -146,12 +146,9 @@ class Topology:
                 kind=0 if isinstance(config, DevicePool) else config.kind,
                 capacity_bytes=0 if isinstance(config, DevicePool) else config.capacity,
                 configuration=(
-                    None if isinstance(config, DevicePool)
-                    else config.configuration()
+                    None if isinstance(config, DevicePool) else config.configuration()
                 ),
-                library=(
-                    None if isinstance(config, DevicePool) else config.library
-                ),
+                library=(None if isinstance(config, DevicePool) else config.library),
             )
             for index, config in enumerate(self.pool_configs.values())
         )
@@ -179,8 +176,7 @@ class Topology:
                     name=name,
                     pool_id=index,
                     kind=(
-                        "device" if isinstance(config, DevicePool)
-                        else config.kind_name
+                        "device" if isinstance(config, DevicePool) else config.kind_name
                     ),
                     capacity=(
                         allocator_pool_bytes
@@ -199,9 +195,12 @@ class Topology:
                     # addresses through the backend rather than directly; every
                     # other kind answers for itself.
                     addressable=(
-                        True
+                        True if isinstance(config, DevicePool) else config.addressable
+                    ),
+                    image_bytes=(
+                        0
                         if isinstance(config, DevicePool)
-                        else config.addressable
+                        else int(getattr(config, "image_bytes", 0) or 0)
                     ),
                 )
                 for index, (name, config) in enumerate(self.pool_configs.items())

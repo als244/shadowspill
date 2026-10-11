@@ -12,9 +12,12 @@
 
 typedef struct SSDRegion {
     int fd;
+    /* The read-only image behind offsets below image_bytes, or -1. */
+    int image_fd;
     void *base;
     uint64_t capacity;
     uint64_t file_bytes;
+    uint64_t image_bytes;
     uint64_t alignment;
     ShadowSpillSSDConfiguration config;
     void *scratch;
@@ -33,5 +36,10 @@ int ssd_staging_reserve(SSDRegion *region, uint64_t bytes);
 void ssd_staging_release(SSDRegion *region, uint64_t bytes);
 int ssd_direct_io(int fd, void *buffer, uint64_t bytes, uint64_t offset,
                   int writing);
+/* The file and file offset behind a pool range: the image for ranges
+   below image_bytes, which are not written, else the scratch file. A range
+   crossing the image's end has no single file and fails. */
+int ssd_locate(const SSDRegion *region, uint64_t offset, uint64_t bytes,
+               int writing, int *fd, uint64_t *file_offset);
 
 #endif

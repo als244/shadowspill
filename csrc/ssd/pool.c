@@ -41,6 +41,24 @@ static int temporary_file(const char *directory) {
     return fd;
 }
 
+static int image_file(const char *path, int create) {
+    const int access = create ? (O_CREAT | O_EXCL | O_RDWR) : O_RDONLY;
+    return open(path, access | O_DIRECT | O_CLOEXEC, 0644);
+}
+
+int ssd_locate(const SSDRegion *region, uint64_t offset, uint64_t bytes,
+               int writing, int *fd, uint64_t *file_offset) {
+    if (offset < region->image_bytes) {
+        if (writing || bytes > region->image_bytes - offset) return -1;
+        *fd = region->image_fd;
+        *file_offset = offset;
+        return 0;
+    }
+    *fd = region->fd;
+    *file_offset = offset - region->image_bytes;
+    return 0;
+}
+
 SSDRegion *ssd_region_find(void *base) {
     pthread_mutex_lock(&regions_lock);
     SSDRegion *region = regions;
@@ -97,13 +115,17 @@ static int acquire(void *configuration, uint64_t capacity,
         config->directory == NULL || capacity == 0U || capacity > SIZE_MAX ||
         capacity > (uint64_t)INT64_MAX || config->chunk_bytes == 0U ||
         config->chunk_bytes > SIZE_MAX ||
-        config->chunk_bytes > (uint64_t)SSIZE_MAX || config->queue_depth == 0U) {
+        config->chunk_bytes > (uint64_t)SSIZE_MAX || config->queue_depth == 0U ||
+        config->image_mode > SHADOWSPILL_SSD_IMAGE_ADOPT ||
+        (config->image_mode != SHADOWSPILL_SSD_IMAGE_NONE &&
+         config->image_path == NULL)) {
         fprintf(stderr, "shadowspill SSD: invalid pool configuration\n");
         return -1;
     }
     SSDRegion *region = calloc(1U, sizeof(*region));
     if (region == NULL) return -1;
     region->fd = -1;
+    region->image_fd = -1;
     region->config = *config;
     region->capacity = capacity;
     region->alignment = 4096U;
@@ -116,11 +138,30 @@ static int acquire(void *configuration, uint64_t capacity,
         free(region);
         return -1;
     }
-    region->fd = temporary_file(config->directory);
-    if (region->fd < 0) {
-        fprintf(stderr, "shadowspill SSD: cannot create a direct-I/O temporary "
-                "file in %s: %s\n", config->directory, strerror(errno));
-        goto fail;
+    if (config->image_mode == SHADOWSPILL_SSD_IMAGE_CREATE) {
+        region->fd = image_file(config->image_path, 1);
+        if (region->fd < 0) {
+            fprintf(stderr, "shadowspill SSD: cannot create the pool image %s: %s\n",
+                    config->image_path, strerror(errno));
+            goto fail;
+        }
+    } else {
+        if (config->image_mode == SHADOWSPILL_SSD_IMAGE_ADOPT) {
+            struct stat image = {0};
+            region->image_fd = image_file(config->image_path, 0);
+            if (region->image_fd < 0 || fstat(region->image_fd, &image) != 0) {
+                fprintf(stderr, "shadowspill SSD: cannot open the pool image %s: %s\n",
+                        config->image_path, strerror(errno));
+                goto fail;
+            }
+            region->image_bytes = (uint64_t)image.st_size;
+        }
+        region->fd = temporary_file(config->directory);
+        if (region->fd < 0) {
+            fprintf(stderr, "shadowspill SSD: cannot create a direct-I/O temporary "
+                    "file in %s: %s\n", config->directory, strerror(errno));
+            goto fail;
+        }
     }
 #ifdef STATX_DIOALIGN
     struct statx details = {0};
@@ -143,6 +184,13 @@ static int acquire(void *configuration, uint64_t capacity,
         fprintf(stderr, "shadowspill SSD: chunk size must satisfy direct-I/O alignment\n");
         goto fail;
     }
+    if (region->image_bytes % region->alignment != 0U ||
+        region->image_bytes > capacity) {
+        fprintf(stderr, "shadowspill SSD: pool image %s holds %" PRIu64
+                " bytes, which must be aligned and within the capacity\n",
+                config->image_path, region->image_bytes);
+        goto fail;
+    }
     region->scratch_bytes = config->chunk_bytes;
     if (region->scratch_bytes > config->staging_bytes ||
         posix_memalign(&region->scratch, (size_t)region->alignment,
@@ -152,7 +200,10 @@ static int acquire(void *configuration, uint64_t capacity,
     }
     region->staging_reserved = region->scratch_bytes;
     region->file_bytes = round_up(capacity, region->alignment);
-    const int allocated = posix_fallocate(region->fd, 0, (off_t)region->file_bytes);
+    /* The scratch file holds what the image does not. */
+    const uint64_t scratch_file_bytes = region->file_bytes - region->image_bytes;
+    const int allocated = scratch_file_bytes == 0U
+        ? 0 : posix_fallocate(region->fd, 0, (off_t)scratch_file_bytes);
     if (allocated != 0) {
         fprintf(stderr, "shadowspill SSD: cannot reserve %" PRIu64
                 " bytes in %s: %s\n", region->file_bytes, config->directory,
@@ -176,6 +227,7 @@ static int acquire(void *configuration, uint64_t capacity,
     return 0;
 fail:
     if (region->fd >= 0) (void)close(region->fd);
+    if (region->image_fd >= 0) (void)close(region->image_fd);
     free(region->scratch);
     pthread_mutex_destroy(&region->staging_lock);
     pthread_mutex_destroy(&region->state_lock);
@@ -194,11 +246,12 @@ static int release(void *state, void *base, uint64_t capacity) {
     pthread_mutex_unlock(&regions_lock);
     const int unmapped = munmap(base, (size_t)capacity);
     const int closed = close(region->fd);
+    const int image_closed = region->image_fd < 0 ? 0 : close(region->image_fd);
     free(region->scratch);
     pthread_mutex_destroy(&region->staging_lock);
     pthread_mutex_destroy(&region->state_lock);
     free(region);
-    return unmapped == 0 && closed == 0 ? 0 : -1;
+    return unmapped == 0 && closed == 0 && image_closed == 0 ? 0 : -1;
 }
 
 static int state_io(SSDRegion *region, uint64_t offset, void *buffer,
@@ -216,13 +269,19 @@ static int state_io(SSDRegion *region, uint64_t offset, void *buffer,
         const uint64_t payload = bytes - moved < available ? bytes - moved : available;
         const uint64_t transfer = round_up(prefix + payload, region->alignment);
         const uint64_t start = at - prefix;
+        int fd = -1;
+        uint64_t file_offset = 0U;
+        if (ssd_locate(region, start, transfer, writing, &fd, &file_offset) != 0) {
+            status = -1;
+            break;
+        }
         if (!writing || prefix != 0U || transfer != payload)
-            status = ssd_direct_io(region->fd, region->scratch, transfer, start, 0);
+            status = ssd_direct_io(fd, region->scratch, transfer, file_offset, 0);
         if (status != 0) break;
         if (writing) {
             memcpy((char *)region->scratch + prefix, (char *)buffer + moved,
                    (size_t)payload);
-            status = ssd_direct_io(region->fd, region->scratch, transfer, start, 1);
+            status = ssd_direct_io(fd, region->scratch, transfer, file_offset, 1);
         } else {
             memcpy((char *)buffer + moved, (char *)region->scratch + prefix,
                    (size_t)payload);

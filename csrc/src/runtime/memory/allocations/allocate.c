@@ -318,6 +318,41 @@ ShadowSpillStatus shadowspill_memory_pool_allocate(
     return status;
 }
 
+ShadowSpillStatus shadowspill_memory_pool_reserve_range(
+    ShadowSpillRuntime *runtime,
+    uint32_t pool_id,
+    uint64_t offset,
+    uint64_t bytes
+) {
+    if (runtime == NULL || bytes == 0U) {
+        return SHADOWSPILL_STATUS_INVALID_ARGUMENT;
+    }
+    ShadowSpillMemoryPool *pool = shadowspill_runtime_pool(runtime, pool_id);
+    if (pool == NULL) {
+        return SHADOWSPILL_STATUS_INVALID_ARGUMENT;
+    }
+    shadowspill_memory_pool_lock_foreground(pool);
+    const int reserved = shadowspill_memory_pool_reserve_at_locked(pool, offset, bytes);
+    shadowspill_memory_pool_unlock_foreground(pool);
+    return reserved == 0 ? SHADOWSPILL_STATUS_OK : SHADOWSPILL_STATUS_INVALID_STATE;
+}
+
+ShadowSpillStatus shadowspill_memory_pool_base(
+    ShadowSpillRuntime *runtime,
+    uint32_t pool_id,
+    const void **base
+) {
+    if (runtime == NULL || base == NULL) {
+        return SHADOWSPILL_STATUS_INVALID_ARGUMENT;
+    }
+    ShadowSpillMemoryPool *pool = shadowspill_runtime_pool(runtime, pool_id);
+    if (pool == NULL) {
+        return SHADOWSPILL_STATUS_INVALID_ARGUMENT;
+    }
+    *base = shadowspill_memory_pool_pointer(pool, 0U);
+    return SHADOWSPILL_STATUS_OK;
+}
+
 ShadowSpillStatus shadowspill_memory_pool_allocation_for_pointer(
     ShadowSpillRuntime *runtime,
     uint32_t pool_id,

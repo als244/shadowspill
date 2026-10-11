@@ -220,3 +220,13 @@ shadowspill_add_public_api_test(
 shadowspill_add_public_api_test(
   test_partial_checkpoint.py test_partial_checkpoint_keeps_mutations_and_replays_from_ssd 300
 )
+
+shadowspill_add_public_api_test(
+  test_pool_image.py test_an_image_is_written_once_and_adopted_without_a_copy 300
+)
+shadowspill_add_public_api_test(
+  test_pool_image.py test_an_image_refuses_state_it_does_not_describe 300
+)
+shadowspill_add_public_api_test(
+  test_pool_image.py test_an_image_pool_needs_an_image_to_adopt 300
+)

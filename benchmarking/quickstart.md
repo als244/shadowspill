@@ -65,8 +65,8 @@ its default remains 0.5 GiB. Workloads with communication allocations can reques
 more. This reserve comes out of each requested physical execution budget, and
 the console reports the resulting slab budgets.
 
-The Python `run(...)` API accepts `search_workers`, `external_headroom_gib`, and
-`plan_store` as well. A stable `artifact_store` and `plan_store` let later
+The Python `run(...)` API accepts `search_workers`, `external_headroom_gib`,
+`plan_store`, `minimum_evict_kib` and `max_evict_gib` as well. A stable `artifact_store` and `plan_store` let later
 invocations reuse completed builds/searches while keeping separate output
 directories for their logs and measurements.
 
@@ -168,7 +168,9 @@ What the search plans:
 | Argument | Meaning | Default |
 |---|---|---|
 | `--orderings` | Which microbatch orderings the search tries per geometry: `factors` lowers every `depth x breadth` factor pair of the accumulation count into its own program and plans each under every budget, so the winner at a budget may be any walk of any geometry; `depth-first` tries only the plain walk, one microbatch start to finish before the next. The loss stays paired and the backward walk reversed either way. The run phase plans the winner's ordering | `factors` |
-| `--resolution-options` | The shares of flexible groups to recompute, as `quarters`, `eighths`, `halves`, or a comma-separated list of exact fractions such as `0,1/2,7/8,1`. More shares plan more programs per point, so the search wall grows with the count and the finer rungs may or may not be worth it for a given model. The options are part of every plan's identity in the store, and the runs plan the same options the search did | `quarters` |
+| `--resolution-options` | The shares of flexible groups to recompute, as `quarters`, `eighths`, `halves`, or a comma-separated list of exact fractions such as `0,1/2,7/8,1`. More shares plan more programs per point, so the search wall grows with the count and the finer rungs may or may not be worth it for a given model. The options are part of every plan's identity in the store, and the runs plan the same options the search did. A single share of `1` or `0` also tells the build to construct only the `recompute` or only the `save` graph pair of each stage, since no other choice could be selected: half the capture, compilation and profiling, and the unselectable variant's saved values never occupy the profiling pool. The objective's stage keeps `save` either way, which selection forces on a forward sink | `quarters` |
+| `--minimum-evict-kib` | Objects smaller than this many KiB are never cut mid-step: each stays resident from its first use to its last, in a slot the planner reserves for it, because a copy under that size is latency-bound and relieves no boundary. The planner's own default. A model with very many small objects, such as the block scales of a compressed checkpoint, can lose real execution capacity to those slots; `128` gives it back at the price of more cut candidates, dispatches and events. Zero makes every object eligible. Part of every plan's identity in the store | `1024` |
+| `--max-evict-gib` | A write cap per step. A run budget whose plan writes more than this many GiB to the spill pool per step is planned and reported but not run: judged first on the search's winning plan, before the run replans the budget, and again on the plan the run would execute. A plan that thrashes the pool measures nothing worth having, and on an SSD its writes are endurance spent. The budget reads as skipped, like one no geometry fits | unbounded |
 | `--transfer-bandwidths` | Plan the search against this calibration instead of the one the runtime measures at start: `FETCH_SOLO,FETCH_CONCURRENT,EVICT_SOLO,EVICT_CONCURRENT` in GB/s, optionally followed by fetch/evict latency in microseconds (`40,26,56,26,8,4`); a two-number form gives fixed fetch/evict rates, or the path of another run's `search.json` to pin to what that run planned against, latencies included. Two runs are comparable only when they plan against the same lanes, and a fresh calibration differs run to run on one machine. The run phase plans against the same lanes as the search either way, pinned or calibrated once at start, so each budget asks the store the search's question | calibrated |
 | `--deterministic` / `--no-deterministic` | Make the **search** reproduce exactly at any worker count: a candidate's placement gate consults only its own placed plans rather than the shared best-placed record, so every graph-pair selection reports the plan it actually found rather than showing up only if it was measured before a better plan existed. Costs wall time, because the shared bound is what lets a candidate skip measuring a plan that cannot win. It does not reach the per-budget replan a run does before executing, which has no such option | on |
 | `--incumbents` / `--no-incumbents` | Hand each budget the best plan found at a smaller budget of the same program as the plan to beat, so no program plans worse with more memory: the search plans budgets ascending, and a point that did not beat the plan it was handed answers with it and says which budget it came from (`plan from 6 GiB` in the table, `incumbent_budget_bytes` in `search.json`). The run phase is handed the search's winning plan as its plan to beat, so it executes that plan or better even when its facts differ from the search's. `--no-incumbents` searches every point alone, for comparing the two | on |
@@ -644,8 +646,12 @@ embeddings, router, normalization, and shared experts remain frozen by default.
 
 `--grad-dtype`, `--master-dtype` and optimizer dtype/rounding flags retain their
 usual meanings. The request and search metadata record the chosen trainability.
-A custom `--factory` configures its own model; preset LoRA flags are rejected
-there so they cannot be silently ignored.
+A custom `--factory` decides its own trainability, so `--lora` and its
+targeting flags are rejected there rather than ignored. `--lora-rank`,
+`--lora-alpha` and `--lora-dtype` do reach a factory: given with `--factory`,
+each is passed to it as `lora_rank`, `lora_alpha` or `lora_dtype` beside
+`--factory-args`, and a factory that does not take those names is refused.
+The [GLM factory](../workloads/mlops/glm53_flash/quickstart.py) takes all three.
 
 `--ssd-spill DIRECTORY` selects an ordinary temporary SSD pool instead of pinned
 host memory. The directory must already exist on the intended local SSD;
@@ -654,6 +660,11 @@ bounded independently by `--ssd-staging-mib` (256 by default), with
 `--ssd-chunk-mib` (2) and `--ssd-queue-depth` (16 per direction). Runtime owns
 initialization, calibration and cleanup. Pool files are temporary, not
 checkpoints. `--ssd-spill` and `--remote-spill` are mutually exclusive.
+`--ssd-image FILE` opens the SSD pool on a pool image a conversion wrote (for
+GLM-5.3-Flash, `python -m workloads.mlops.glm53_flash.convert`): the model's
+frozen state is bound where it lies in the image instead of being imported, so
+a run writes only the state it creates, and the experiment's initializer must
+accept `adopted`, the names it leaves alone.
 
 ```bash
 mkdir -p ~/shadowspill_ssd
@@ -672,6 +683,7 @@ it does not forbid activation writes. Checkpoint inputs can still spill when the
 selected schedule needs that space. Initialization writes the frozen weights to
 the pool once, using bounded host materialization; unchanged weights do not need
 optimizer writeback. Use an SSD with sufficient free capacity for `--spill-gib`.
+`--max-evict-gib` bounds what a step may write to it; see the search table above.
 
 The Python runner also accepts `spill_pool=shadowspill.ssd.ssd(...)` (or a remote
 pool), with capacity matching `spill_gib`. LoRA remains ordinary model construction

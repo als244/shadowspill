@@ -9,12 +9,15 @@ Mirrors `csrc/src/runtime/objects/`.
 from .references import ObjectConsistency, ObjectRef
 from .registration import (
     acquire_object_reference,
+    pool_base_address,
     register_object,
+    register_placed_object,
     release_object_generation,
     release_object_reference,
     release_persistent_state,
     require_state_operation_allowed,
     reserve_persistent_object_ids,
+    reserve_pool_range,
     reserve_runtime_object_ids,
     retain_persistent_state,
 )
@@ -23,12 +26,15 @@ __all__ = [
     "ObjectConsistency",
     "ObjectRef",
     "acquire_object_reference",
+    "pool_base_address",
     "register_object",
+    "register_placed_object",
     "release_object_generation",
     "release_object_reference",
     "release_persistent_state",
     "require_state_operation_allowed",
     "reserve_persistent_object_ids",
+    "reserve_pool_range",
     "reserve_runtime_object_ids",
     "retain_persistent_state",
 ]

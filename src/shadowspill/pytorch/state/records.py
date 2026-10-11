@@ -16,6 +16,8 @@ class TensorView:
     stride: tuple[int, ...]
     storage_offset: int
     requires_grad: bool
+    #: The state name of this view, with a wrapper's component path appended.
+    name: str = ""
 
 
 @dataclass(slots=True)

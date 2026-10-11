@@ -3,7 +3,8 @@
 For model-scale correctness checks, use the opt-in
 [`numerical_ssd` qualification gate](../../../qualification/README.md#ssd-numerical-qualification).
 
-`shadowspill.ssd.ssd()` configures a temporary SSD-backed spill pool. It uses
+`shadowspill.ssd.ssd()` configures an SSD-backed spill pool, temporary unless it
+is opened on a pool image (below). It uses
 normal Runtime ownership, object placement, fetch/evict routes, calibration and
 completion events. The Linux extension is built with ShadowSpill; no separate
 I/O library is required. Use an existing directory on a local filesystem that
@@ -20,6 +21,8 @@ ssd(
     staging_bytes: int = 256 << 20,
     chunk_bytes: int = 2 << 20,
     queue_depth: int = 16,
+    image: str | Path | None = None,
+    create_image: bool = False,
 ) -> SSDPool
 ```
 
@@ -67,6 +70,8 @@ with Runtime(
 | `staging_bytes` | 256 MiB | Upper bound on host payload buffers owned by the pool and its lanes |
 | `chunk_bytes` | 2 MiB | Pipeline chunk size; multiple of 4096, at most 1 GiB, subject to the filesystem's alignment |
 | `queue_depth` | 16 | Number of host staging slots per direction; 1–1024 |
+| `image` | None | A pool image: with `create_image` the file to create, which the pool then is; otherwise an existing image read in place as the pool's first `image_bytes` bytes, never written |
+| `create_image` | False | Create `image` as the pool file and keep it at close, for a conversion that imports frozen state once |
 
 With one fetch route and one evict route, 2 MiB chunks and depth 16, payload
 staging uses **66 MiB + 8 KiB** at 4 KiB alignment: two 32 MiB rings, one 2 MiB
@@ -94,6 +99,25 @@ with ShadowSpill(
 `spill_gib`, if also supplied, is the planner's limit within the configured pool.
 Otherwise it uses the pool's capacity. Existing `spill_gib=N` callers continue to
 use pinned host memory.
+
+## A pool image: import frozen state once
+
+A model's frozen state is imported once into a pool created with
+`create_image=True`; the pool file is the image, and
+`write_pool_image(model, runtime=..., pool=..., path=..., frozen_state_id=...)`
+writes `<image>.manifest.json`, which records every storage root's offset and
+size and the tensors viewing it. After the runtime closes, `PoolImage.trim()`
+cuts the file to the bytes the state reaches.
+
+Every later runtime opens the pool on that image, `ssd(..., image=path)`, and
+imports the model with `image=PoolImage.read(path)`: the tensors the manifest
+names are verified by name, geometry and dtype and bound where they lie,
+without a copy; the rest of the model, LoRA factors and all, is allocated and
+initialized in the scratch file behind the image, as are optimizer state and
+evicted activations. The initializer takes `adopted`, the names it must leave
+alone, and a write into adopted state fails. The GLM-5.3-Flash workload's
+`python -m workloads.mlops.glm53_flash.convert` is such a conversion, and the
+quickstart's `--ssd-image` opens its result.
 
 ## Initialize without a complete host model
 
@@ -143,9 +167,10 @@ Fetch completion includes H2D completion; evict completion includes the SSD
 write. Errors propagate through the ordinary runtime failure path and unblock
 pending waits before teardown.
 
-The pool preallocates an anonymous, unlinked file. `Runtime.close()` drains and
-closes its lanes and file; process termination also closes the file descriptor.
-The pool is temporary and cannot resume a job. Durable checkpoints are separate.
+The pool preallocates an anonymous, unlinked file, or the named image file.
+`Runtime.close()` drains and closes its lanes and files; process termination
+also closes the file descriptors. A temporary pool cannot resume a job; an image
+holds only the state imported into it once. Durable checkpoints are separate.
 Direct I/O bypasses the filesystem page cache; SSD write completion is not a
 claim of durable checkpoint publication.
 

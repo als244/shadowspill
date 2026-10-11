@@ -27,6 +27,11 @@ class MemoryPool:
     #: own storage and let the runtime copy across the edge.
     addressable: bool = True
 
+    #: Bytes at the start of the pool that are a read-only image of state the
+    #: pool was opened on; reserved for the runtime's lifetime, bound by
+    #: placed objects, never allocated or written.
+    image_bytes: int = 0
+
 
 @dataclass(frozen=True, slots=True)
 class RuntimeRoute:
