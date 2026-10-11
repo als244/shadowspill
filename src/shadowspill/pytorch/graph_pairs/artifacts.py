@@ -70,7 +70,9 @@ class GraphPairVariant:
         # AOT may reuse one value (for example, a broadcast auxiliary-loss
         # derivative) for several distinct stage inputs.
         backward = materialize_gradient_outputs(
-            backward, tuple(sorted(_produced_output_leaves(backward)))
+            backward,
+            tuple(sorted(_produced_output_leaves(backward))),
+            memory_formats=_activation_gradient_formats(self.pair, leaves),
         )
         return (
             self
@@ -174,6 +176,31 @@ class TaskGraphPairs:
         """
 
         return tuple(item for item in self.variants if item.accumulates == accumulates)
+
+
+def _activation_gradient_formats(
+    pair: AotGraphPair,
+    parameter_leaves: tuple[int, ...],
+) -> dict[int, torch.memory_format]:
+    """Match AOT's tangent format for each ordinary activation input.
+
+    Forward inputs may expand wrapper components, while backward outputs retain
+    logical positions. Parameter gradients have a different owner and may keep
+    their dense strided layouts.
+    """
+    from torch._prims_common import suggest_memory_format
+
+    inputs = pair.forward.example_arguments
+    components = pair.forward.input_components or tuple(
+        (index, ()) for index in range(len(inputs))
+    )
+    return {
+        logical: suggest_memory_format(inputs[physical])
+        for physical, (logical, path) in enumerate(components)
+        if not path
+        and logical not in parameter_leaves
+        and isinstance(inputs[physical], torch.Tensor)
+    }
 
 
 def parameter_gradient_leaves(pair: AotGraphPair) -> tuple[int, ...]:

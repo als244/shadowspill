@@ -40,7 +40,7 @@ _GRAPH_PAIR_CACHE_SCHEMA = artifact_schema("aot_graph_pair")
 #: What one entry is keyed by: the structural contract, the differentiation
 #: options, and the retention policy with the classes it gives the stage's
 #: custom operators, as one digest.
-_Key = tuple[str, tuple[int, ...], bool, str]
+_Key = tuple[str, tuple[int, ...], bool, str, str]
 
 
 @dataclass(frozen=True, slots=True)
@@ -115,6 +115,7 @@ class GraphPairStore:
             roots,
             specialize_unit_tangents,
             policy.digest(example.stage.graph_module),
+            "objective_connected_outputs",
         )
         form = _Form(gradient_dtype, accumulating, round_accumulation_once)
         self._keys_seen.add(key)
@@ -183,6 +184,7 @@ class GraphPairStore:
             "roots": key[1],
             "specialize_unit_tangents": key[2],
             "retention": key[3],
+            "gradient_roots_policy": key[4],
         }
         encoded = json.dumps(payload, sort_keys=True, separators=(",", ":"))
         # The contract, the differentiation options and the retention policy
@@ -291,6 +293,7 @@ class GraphPairStore:
             "differentiable_root_positions": list(key[1]),
             "specialize_unit_tangents": key[2],
             "retention_digest": key[3],
+            "gradient_roots_policy": key[4],
             "retention": retention,
             "reference_option_id": pairs.reference_option_id,
             "variants": [

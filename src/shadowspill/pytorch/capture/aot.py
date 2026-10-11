@@ -16,7 +16,7 @@ from torch._guards import detect_fake_mode
 from torch._prims_common import get_computation_dtype
 from torch.export.graph_signature import ExportGraphSignature, InputKind, OutputKind
 from torch.fx.passes.shape_prop import _extract_tensor_metadata
-from torch.utils._pytree import tree_flatten
+from torch.utils._pytree import tree_flatten, tree_unflatten
 
 from shadowspill.errors import CaptureError, ObjectiveError
 from shadowspill.pytorch.capture.artifacts import (
@@ -192,10 +192,48 @@ def _functional_copy(
     return source.to(destination.dtype).expand_as(destination).clone()
 
 
+def _repair_constant_targets(exported: torch.export.ExportedProgram) -> None:
+    """Give lifted constants valid attribute names before Export unlift.
+
+    A selected forward callback can make Dynamo name an inline tensor through
+    a Python closure, including indexing such as __closure__[1]. Export
+    later interprets that string as an attribute path and fails. Constants have
+    no source-model state name to preserve: rename only those invalid targets,
+    keeping the exact tensors, input positions, aliases and parameter names.
+    """
+    used = {
+        str(spec.target).split(".")[0]
+        for spec in exported.graph_signature.input_specs
+        if spec.target is not None
+    }
+    renamed: dict[str, str] = {}
+    for spec in exported.graph_signature.input_specs:
+        target = spec.target
+        if (
+            spec.kind is not InputKind.CONSTANT_TENSOR
+            or not isinstance(target, str)
+            or all(
+                part.isidentifier() or part.isdecimal() for part in target.split(".")
+            )
+        ):
+            continue
+        if target not in renamed:
+            index = len(renamed)
+            candidate = f"_shadowspill_constant_{index}"
+            while candidate in used:
+                index += 1
+                candidate = f"_shadowspill_constant_{index}"
+            used.add(candidate)
+            exported.constants[candidate] = exported.constants.pop(target)
+            renamed[target] = candidate
+        spec.target = renamed[target]
+
+
 def _export(module: nn.Module, inputs: Sequence[Any]) -> ExportCapture:
     try:
         with quiet_leaf_spec_deprecation():
             exported = torch.export.export(module, tuple(inputs), strict=True)
+            _repair_constant_targets(exported)
             # Decomposition unwraps tensor subclasses before differentiation,
             # losing their logical gradient contract (and can mark integer
             # payloads requires_grad). Preserve logical operators until AOT.
@@ -510,7 +548,7 @@ def _execute_aot_capture(
             compiled = cast(
                 Callable[..., object],
                 aot(
-                    graph_module,
+                    _rooted_forward(graph_module, root_output_positions),
                     fw_compiler=collector.compile_forward,
                     bw_compiler=collector.compile_backward,
                     partition_fn=partition,
@@ -526,6 +564,34 @@ def _execute_aot_capture(
         raise CaptureError(
             f"AOTAutograd capture at partition budget {memory_budget:g} failed: {exc}"
         ) from exc
+
+
+def _rooted_forward(
+    graph_module: torch.fx.GraphModule,
+    root_output_positions: tuple[int, ...] | None,
+) -> Callable[..., object]:
+    """Keep non-root values as forward outputs without creating cotangents.
+
+    Selecting outputs only at torch.autograd.grad is too late: AOT has already
+    built a backward accepting gradients for every differentiable output.
+    """
+    if root_output_positions is None:
+        return graph_module
+    selected = frozenset(root_output_positions)
+
+    def forward(*args: object) -> object:
+        leaves, spec = tree_flatten(graph_module(*args))
+        return tree_unflatten(
+            [
+                value.detach()
+                if isinstance(value, torch.Tensor) and index not in selected
+                else value
+                for index, value in enumerate(leaves)
+            ],
+            spec,
+        )
+
+    return forward
 
 
 def _differentiable_roots(
@@ -912,7 +978,10 @@ def _dense_gradient_layout(value: torch.Tensor) -> bool:
 
 
 def materialize_gradient_outputs(
-    backward: GraphArtifact, leaf_indices: Sequence[int]
+    backward: GraphArtifact,
+    leaf_indices: Sequence[int],
+    *,
+    memory_formats: Mapping[int, torch.memory_format] | None = None,
 ) -> GraphArtifact:
     """Give boundary gradients independent dense writable storage.
 
@@ -922,8 +991,11 @@ def materialize_gradient_outputs(
     A fused backward may also return slices of one larger gradient allocation.
     Each parameter gradient and activation cotangent has its own canonical
     lifetime, so shared outputs are materialized inside the measured task too.
-    Ordinary full-storage dense and transposed-dense gradients need no copy.
+    Parameter gradients may retain transposed-dense layouts. Activation
+    cotangents must use the canonical memory format expected by the preceding
+    task; callers supply those formats explicitly.
     """
+    memory_formats = memory_formats or {}
     output = next(
         node for node in backward.graph_module.graph.nodes if node.op == "output"
     )
@@ -937,6 +1009,12 @@ def materialize_gradient_outputs(
         index
         for index in leaf_indices
         if not _dense_gradient_layout(leaves[index].meta["val"])
+        or (
+            index in memory_formats
+            and not leaves[index]
+            .meta["val"]
+            .is_contiguous(memory_format=memory_formats[index])
+        )
         or (
             index in views
             and (
@@ -956,6 +1034,7 @@ def materialize_gradient_outputs(
     mode = detect_fake_mode(backward.example_arguments)
     for index in needed:
         produced = leaves[index]
+        memory_format = memory_formats.get(index, torch.contiguous_format)
         # Preserve an explicit allocation for slices of a shared gradient bank.
         # An ordinary broadcast-layout clone can still fuse with its producer.
         independent = index in views and (
@@ -967,15 +1046,13 @@ def materialize_gradient_outputs(
             node = graph.call_function(
                 MATERIALIZE_GRADIENT if independent else torch.ops.aten.clone.default,
                 args=(produced,),
-                kwargs={}
+                kwargs={"memory_format": str(memory_format).removeprefix("torch.")}
                 if independent
-                else {"memory_format": torch.contiguous_format},
+                else {"memory_format": memory_format},
             )
         node.meta = dict(produced.meta)
         with mode if mode is not None else nullcontext():
-            _record_value(
-                node, produced.meta["val"].clone(memory_format=torch.contiguous_format)
-            )
+            _record_value(node, produced.meta["val"].clone(memory_format=memory_format))
         leaves[index] = node
     output.args = (tuple(leaves),)
     graph.lint()
