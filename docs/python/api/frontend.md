@@ -401,6 +401,14 @@ the input so no other reference keeps the source alive.
 
 ### Importing from a checkpoint
 
+The file helpers below read ShadowSpill's PyTorch checkpoint representation.
+A different source format can be imported directly with
+`import_model_state(meta_model, ..., initialize=load_into)`: the callback reads
+source tensors and fills the supplied model state in place. It does not need to
+write a converted checkpoint first. For SSD pools, initialization still writes
+the runtime's temporary pool copy; checkpoint files are not currently used as
+read-only pool extents.
+
 <!-- source-signature: src/shadowspill/pytorch/state/model.py:import_model_state_from_file -->
 ```text
 import_model_state_from_file(
@@ -1125,10 +1133,39 @@ across accumulation rounds, and are unrelated to `PlanReport` or runtime-trace
 diagnostics. Applications that do not need auxiliary outputs should return the
 loss tensor directly.
 
-`PartitionSpec` accepts `"auto"`, `"whole"`, or a `PartitionPolicy` object.
-A custom `PartitionPolicy.assign_stages(graph_module, module)` returns a
-complete mapping from executable FX node names to nonnegative contiguous stage
-labels. It must not mutate the graph.
+## PartitionPolicy
+
+`PartitionSpec` accepts `"auto"`, `"whole"`, or an object implementing the
+public `shadowspill.pytorch.PartitionPolicy` protocol:
+
+```python
+class MyPartition(PartitionPolicy):
+    def assign_stages(self, graph_module, module) -> Mapping[str, int]:
+        ...
+```
+
+Return every executable FX node name exactly once, excluding `placeholder`,
+`get_attr` and `output`. Labels must be nonnegative integers, not booleans;
+labels need not be consecutive, but each occupies one contiguous graph interval.
+The callback must not modify the graph/model/metadata or execute model kernels.
+Use deterministic structural rules and a stable configuration representation.
+Subclassing the protocol is optional: implementing the method is sufficient.
+
+Pass the same policy as `partition=policy` to `plan_forward`, `plan_step`,
+`build_step_programs`, or `plan_step_search`. A quickstart factory supplies it
+in `plan_options={"partition": policy}`; those options reach both search and
+execution planning. Direct API calls do not infer policy from a model name.
+
+The policy defines forward-stage boundaries. ShadowSpill derives object inputs,
+outputs, explicit mutations and aliases, then constructs backward alternatives
+and profiles workspace. It does not let the policy split an opaque custom op,
+choose residency, supply byte counts, or select save/recompute behavior.
+Malformed mappings fail with `CaptureError` before compilation; later capture
+may also reject unsupported differentiation or mutation boundaries.
+
+See the [architecture contract](../../architecture/partitioning.md),
+[standalone example](../../examples/custom-partitioning.md), and
+[GLM example](../../../workloads/mlops/glm53_flash/README.md#partitioning).
 
 ## Planned callables
 
@@ -1381,3 +1418,29 @@ random numbers normally.
 
 Explicit `torch.Generator` instances and custom operators with private RNG state
 remain caller-owned; they are not discovered or reset automatically.
+
+### Checkpointing a model with an unchanged frozen base
+
+A planned training callable can omit unchanged frozen parameters by receiving a
+caller-supplied `frozen_state_id` in `state_dict()` or `save()`. The checkpoint
+always includes trainable parameters, persistent buffers and model-mutated
+state, plus optimizer state and the update count. Reads and writes remain bounded
+by the selected pool objects. This supports any partially trained model; no
+specific layer or adapter naming convention is required.
+
+```python
+step.save("update.pt", frozen_state_id="base-revision-and-config")
+# After initializing the same base:
+step.load_state_dict(
+    torch.load("update.pt", mmap=True, weights_only=True),
+    frozen_state_id="base-revision-and-config",
+)
+```
+
+The restore must explicitly supply the same nonempty identity. ShadowSpill checks
+this identifier and the selected state inventory/geometry; it does not hash or
+reconstruct the omitted base. Use an immutable revision or another verified
+identity that also covers the model and precision configuration. Omitting the
+argument preserves full-model checkpoints. `weights="master"|"compute"` retains
+its existing meaning. These arguments currently belong to the planned callable;
+the higher-level trainer checkpoint options do not yet expose base omission.

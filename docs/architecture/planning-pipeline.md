@@ -29,6 +29,10 @@ store under the identity the request has before any capture. Capturing a program
 frontend; planning a saved one does not, so `plan_program()` lives in
 `shadowspill.planner` and a sweep never imports torch.
 
+Stage boundaries follow the frontend [partition policy contract](partitioning.md).
+Policies belong to callers/workloads and reach this pipeline through the ordinary
+`partition=` argument; the neutral planner has no model-specific rules.
+
 ## Two layers
 
 Two functions divide the work, and the boundary between them is exactly the

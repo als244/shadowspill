@@ -16,9 +16,17 @@ class PartitionPolicy(Protocol):
     """Choose a contiguous stage number for every executable FX node.
 
     Implementations receive the captured graph and its source module and return
-    a mapping from FX node name to an integer stage label. Labels need not be
-    contiguous, but every executable node must appear exactly once and each label
-    must occupy one contiguous topological interval.
+    a complete mapping from executable FX node names to nonnegative integer
+    labels (not booleans). Exclude placeholder/get_attr/output nodes. Labels
+    need not be consecutive, but each must occupy one contiguous graph interval.
+
+    Policies describe boundaries without executing kernels or changing the graph,
+    metadata, or model. Use deterministic structural rules and a stable repr for
+    persisted request identity. The frontend derives inputs, outputs, mutations,
+    aliases and backward graphs; policies do not declare memory or placement.
+
+    See docs/architecture/partitioning.md for the full contract and the GLM
+    workload's partition.py for a model-scale example.
     """
 
     def assign_stages(

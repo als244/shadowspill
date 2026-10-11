@@ -60,6 +60,8 @@ what is profiled, and what the planner is handed.
 
 3. [PyTorch capture and lowering](architecture/lowering.md) — semantic roots,
    executable storage, profiling, and canonical objects.
+   [Model and task partitioning](architecture/partitioning.md) defines the generic
+   `PartitionPolicy` contract and how workloads supply custom boundaries.
 4. [Graph-pair construction](architecture/graph-pair-construction.md) —
    structural forward/backward alternatives, saved-value accounting, and
    profiling.
