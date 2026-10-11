@@ -337,3 +337,29 @@ def test_a_name_in_both_registries_is_refused() -> None:
     model = _Model({"lr": torch.tensor(1.0)})
     with pytest.raises(ValueError, match="ambiguous"):
         declare_varying_hyperparams(model, _optimizer(), ("lr",))
+
+
+def test_streamed_restore_indexes_model_once_and_preserves_overlapping_entries(
+    pooled: _PooledState,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls = 0
+    original = pooled._registrations
+
+    def registrations():
+        nonlocal calls
+        calls += 1
+        return original()
+
+    monkeypatch.setattr(pooled, "_registrations", registrations)
+    pooled.write_model_entries(
+        {
+            "temperature": torch.tensor(2.0),
+            "other": torch.tensor(3.0),
+            "weight": torch.full((4,), 7.0),
+        }
+    )
+    assert calls == 1
+    assert pooled.view("b", 0, ()).item() == 2.0
+    assert pooled.view("b", 1, ()).item() == 3.0
+    assert pooled.view("a", 0, (4,)).tolist() == [7.0] * 4

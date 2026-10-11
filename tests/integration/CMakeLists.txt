@@ -209,3 +209,14 @@ shadowspill_add_public_api_test(
 shadowspill_add_public_api_test(
   test_cpu_controls.py test_cpu_outputs_and_mixed_device_controls_from_ssd 300
 )
+
+shadowspill_add_public_api_test(
+  test_cpu_literals.py test_cpu_literal_forward_from_ssd 300
+)
+shadowspill_add_public_api_test(
+  test_cpu_literals.py test_cpu_literal_training_from_ssd 300
+)
+
+shadowspill_add_public_api_test(
+  test_partial_checkpoint.py test_partial_checkpoint_keeps_mutations_and_replays_from_ssd 300
+)

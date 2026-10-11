@@ -273,7 +273,9 @@ class ObjectCatalog:
             )
             return object_id
         alias_id = self._alias_by_storage.get(key.storage_identity)
-        storage_bytes = live_storage_bytes(tensor)
+        storage_bytes = (
+            live_storage_bytes(tensor) if tensor.device.type == DEVICE_TYPE else 0
+        )
         if alias_id is None:
             alias_id = self._new_alias(storage_bytes)
             self._alias_by_storage[key.storage_identity] = alias_id
@@ -284,7 +286,11 @@ class ObjectCatalog:
         return self._new_object(
             key,
             alias_id=alias_id,
-            offset_bytes=int(tensor.storage_offset()) * tensor.element_size(),
+            offset_bytes=(
+                int(tensor.storage_offset()) * tensor.element_size()
+                if tensor.device.type == DEVICE_TYPE
+                else 0
+            ),
             tensor=tensor,
             role=role,
             persistence=persistence,

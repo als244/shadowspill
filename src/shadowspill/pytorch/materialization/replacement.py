@@ -5,13 +5,26 @@ from __future__ import annotations
 from collections import OrderedDict
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import torch
 
 from shadowspill.pytorch.representations import map_tensor, storage_view
 from shadowspill.pytorch.spill import read_spill_tensor, spill_view, write_spill_tensor
 from shadowspill.runtime.plan import RuntimeBridge
+
+if TYPE_CHECKING:
+    from shadowspill.ir import ShadowSpillProgram
+
+
+def object_ids_by_alias(program: ShadowSpillProgram) -> dict[str, tuple[str, ...]]:
+    """Index each object's alias once, preserving program order."""
+    grouped: dict[str, list[str]] = {
+        group.alias_group_id: [] for group in program.alias_groups
+    }
+    for item in program.objects:
+        grouped[item.alias_group_id].append(item.object_id)
+    return {alias: tuple(objects) for alias, objects in grouped.items()}
 
 
 @dataclass(frozen=True, slots=True)
@@ -79,9 +92,12 @@ class MaterializedState:
                 "registered with persistent=False is not state a call can set"
             )
         aliases_by_name: dict[str, set[str]] = {}
+        entries_by_name: dict[str, list[tuple[str, torch.Tensor]]] = {}
         for item in self._registrations():
-            aliases_by_name.setdefault(item.binding.name, set()).add(
-                self.bridge.objects.alias_for_object(item.binding.object_id)
+            alias_id = self.bridge.objects.alias_for_object(item.binding.object_id)
+            aliases_by_name.setdefault(item.binding.name, set()).add(alias_id)
+            entries_by_name.setdefault(item.binding.name, []).append(
+                (alias_id, item.tensor)
             )
         missing = sorted(set(values) - set(aliases_by_name))
         if missing:
@@ -97,6 +113,8 @@ class MaterializedState:
                 raise RuntimeError(
                     f"model state entry {name!r} has incompatible geometry"
                 )
+        logical = dict(self.model.named_parameters(remove_duplicate=False))
+        logical.update(self.model.named_buffers(remove_duplicate=False))
         self.bridge.wait_runtime_idle()
         # A logical parameter may have several physical components. Stage only
         # those roots; later aliases read back any preceding partial updates.
@@ -107,12 +125,20 @@ class MaterializedState:
                 if owner is None:
                     owner = self._read_model_aliases(aliases={alias_id})[alias_id]
                 owners[alias_id] = owner
-            destination = self._state_from_owners(owners, names={name})[name]
+            # Resolve only this entry's components. Re-enumerating the complete
+            # model for every weight makes streamed restore quadratic.
+            mapped = {
+                id(tensor): self._cpu_view(owners[alias_id], tensor)
+                for alias_id, tensor in entries_by_name[name]
+            }
+            destination = map_tensor(
+                logical[name], lambda value: mapped[id(value)]
+            ).detach()
             with torch.no_grad():
                 destination.copy_(source.detach().to(device="cpu"))
             for alias_id, owner in owners.items():
                 write_spill_tensor(self.bridge.objects, alias_id, owner)
-            del destination, owners, owner
+            del destination, mapped, owners, owner
 
     def _state_from_owners(
         self, owners: Mapping[str, torch.Tensor], *, names: set[str] | None = None

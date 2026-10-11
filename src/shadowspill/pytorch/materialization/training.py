@@ -25,9 +25,10 @@ from shadowspill.pytorch.lowering.training import (
 from shadowspill.pytorch.materialization.replacement import (
     MaterializedState,
     ReplacementStorageViews,
+    object_ids_by_alias,
 )
 from shadowspill.pytorch.optimizer import current_optimizer_bindings
-from shadowspill.pytorch.representations import component_at
+from shadowspill.pytorch.representations import component_at, tensor_components
 from shadowspill.pytorch.runtime_adapter.boundaries import (
     publish_initial_tensor,
     submit_initial_actions,
@@ -79,6 +80,17 @@ class TrainingMaterializedState(MaterializedState):
         self.bridge = bridge
         self.runtime = runtime
         self.device = accelerator_device(device_ordinal)
+        self._cpu_root_positions = frozenset(
+            (position, index)
+            for position, capture in enumerate(captures)
+            for index, node in enumerate(
+                node
+                for node in capture.exported.exported_program.graph_module.graph.nodes
+                if node.op == "placeholder"
+            )
+            if isinstance(node.meta.get("val"), torch.Tensor)
+            and node.meta["val"].device.type == "cpu"
+        )
         self.object_store: dict[str, torch.Tensor] = {}
         self.object_tensors: dict[str, torch.Tensor] = {}
         self._closed = False
@@ -90,12 +102,9 @@ class TrainingMaterializedState(MaterializedState):
         self._planning_cpu_owners: dict[str, torch.Tensor] = {}
         self._persistent_aliases: set[str] = set()
         self._persistent_state = persistent_state(runtime, model)
-        self._object_ids_by_alias: dict[str, tuple[str, ...]] = {
-            group.alias_group_id: tuple(
-                item.object_id
-                for item in layout.program.objects
-                if item.alias_group_id == group.alias_group_id
-            )
+        self._object_ids_by_alias = object_ids_by_alias(layout.program)
+        self._alias_sizes = {
+            group.alias_group_id: group.size_bytes
             for group in layout.program.alias_groups
         }
         self._flat_arguments = tuple(
@@ -277,11 +286,13 @@ class TrainingMaterializedState(MaterializedState):
         """Write every guarded microbatch into its persistent host slot."""
 
         self.bridge.wait_runtime_idle()
-        for capture, microbatch, slots in zip(
-            self.captures,
-            values,
-            self._user_alias_by_position,
-            strict=True,
+        for position, (capture, microbatch, slots) in enumerate(
+            zip(
+                self.captures,
+                values,
+                self._user_alias_by_position,
+                strict=True,
+            )
         ):
             flat = _flat_training_arguments(capture, self.model, microbatch)
             written: set[str] = set()
@@ -291,6 +302,10 @@ class TrainingMaterializedState(MaterializedState):
                     raise RuntimeError("captured tensor input became static")
                 if is_accelerator(tensor.device):
                     tensor = tensor.detach().cpu()
+                if (position, index) in self._cpu_root_positions:
+                    self._publish_initial_view(tensor, tensor, (position, index), {})
+                    self.object_store[alias_id] = tensor
+                    continue
                 if alias_id not in written:
                     write_spill_tensor(self.bridge.objects, alias_id, tensor)
                     written.add(alias_id)
@@ -328,30 +343,80 @@ class TrainingMaterializedState(MaterializedState):
             tensors=unique,
         )
 
-    def state_dict(self, *, in_place: bool = False) -> OrderedDict[str, torch.Tensor]:
-        """The model's state, read out of the spill pool -- or, ``in_place``,
-        viewed where it is there, valid only until the next step."""
+    def checkpoint_state_names(self, *, trainable_only: bool = False) -> set[str]:
+        """Include trainable weights, all buffers, and any mutated frozen state."""
+        names = set(self._state_names)
+        if not trainable_only:
+            return names
+        frozen = {
+            name
+            for name, value in self.model.named_parameters(remove_duplicate=False)
+            if not value.requires_grad
+        }
+        selected = names - frozen
+        changed_components = {
+            id(component)
+            for position, capture in enumerate(self.captures)
+            for mutation in capture.exported.mutations
+            for _, component in tensor_components(
+                self._flat_arguments[position][mutation.input_index]
+            )
+        }
+        registrations = self._registrations()
+        mutated = {
+            self.bridge.objects.alias_for_object(item.binding.object_id)
+            for item in registrations
+            if id(item.tensor) in changed_components
+        }
+        for item in registrations:
+            alias = self.bridge.objects.alias_for_object(item.binding.object_id)
+            if alias in mutated:
+                selected.add(item.binding.name)
+        return selected
 
+    def _aliases_for_names(self, names: set[str]) -> set[str]:
+        return {
+            self.bridge.objects.alias_for_object(item.binding.object_id)
+            for item in self._registrations()
+            if item.binding.name in names
+        }
+
+    def state_dict(
+        self, *, in_place: bool = False, names: set[str] | None = None
+    ) -> OrderedDict[str, torch.Tensor]:
+        """Read selected model state, or view it in place until the next step."""
+        names = set(self._state_names) if names is None else names
         if self._closed:
-            return OrderedDict(self.model.state_dict())
-        owners = self._model_alias_views() if in_place else self._read_model_aliases()
-        result = self._state_from_owners(owners)
-        missing = set(self._state_names) - set(result)
+            return OrderedDict(
+                (name, value)
+                for name, value in self.model.state_dict().items()
+                if name in names
+            )
+        aliases = self._aliases_for_names(names)
+        owners = (
+            self._model_alias_views(aliases=aliases)
+            if in_place
+            else self._read_model_aliases(aliases=aliases)
+        )
+        result = self._state_from_owners(owners, names=names)
+        missing = names - set(result)
         if missing:
             raise RuntimeError(f"unsupported model state entries: {sorted(missing)}")
         return result
 
     def checkpoint_state(
-        self, writer: PoolCheckpoint
+        self, writer: PoolCheckpoint, *, names: set[str] | None = None
     ) -> OrderedDict[str, torch.Tensor]:
-        """Checkpoint geometry with deferred readers for its pool objects."""
+        """Checkpoint geometry with deferred readers for selected pool objects."""
+        names = set(self._state_names) if names is None else names
+        aliases = self._aliases_for_names(names)
         owners = {
             item.alias_group_id: writer.alias(item.alias_group_id, item.size_bytes)
             for item in self.layout.program.alias_groups
-            if item.alias_group_id in self._model_aliases
+            if item.alias_group_id in aliases
         }
         with writer.mode:
-            return self._state_from_owners(owners)
+            return self._state_from_owners(owners, names=names)
 
     def model_state_templates(self) -> OrderedDict[str, torch.Tensor]:
         """Consistent CPU wrappers over existing pool metadata, without reads.
@@ -362,17 +427,20 @@ class TrainingMaterializedState(MaterializedState):
         """
         return self._state_from_owners(self._planning_cpu_owners)
 
-    def _model_alias_views(self) -> dict[str, torch.Tensor]:
+    def _model_alias_views(
+        self, *, aliases: set[str] | None = None
+    ) -> dict[str, torch.Tensor]:
         """Each model alias viewed where it is in the spill pool, and copied out
         only where it cannot be viewed."""
 
         self.bridge.wait_runtime_idle()
         owners: dict[str, torch.Tensor] = {}
-        for alias_id in self._model_aliases:
+        aliases = self._model_aliases if aliases is None else aliases
+        for alias_id in aliases:
             view = spill_view(self.bridge.objects, alias_id)
             if view is not None:
                 owners[alias_id] = view
-        missing = self._model_aliases - set(owners)
+        missing = aliases - set(owners)
         if missing:
             owners.update(self._read_model_aliases(aliases=missing))
         return owners
@@ -382,8 +450,9 @@ class TrainingMaterializedState(MaterializedState):
         state: Mapping[str, torch.Tensor],
         *,
         cast_names: frozenset[str] = frozenset(),
+        names: set[str] | None = None,
     ) -> None:
-        expected = set(self._state_names)
+        expected = set(self._state_names) if names is None else names
         if set(state) != expected:
             raise RuntimeError("model state_dict keys differ")
         self.write_model_entries(state, cast_names=cast_names)
@@ -474,10 +543,13 @@ class TrainingMaterializedState(MaterializedState):
                 alias_id = self.bridge.objects.alias_for_object(slot.object_id)
                 if alias_id not in self._model_aliases:
                     self._input_aliases.add(alias_id)
-                    # A lifted constant is published here like any other root
-                    # input, but it is the same value on every step, so it is
-                    # kept out of the map the per-step refresh walks.
-                    if slot.leaf_index not in constants:
+                    # Device constants keep an immutable spill copy. CPU
+                    # constants are ordinary Python values; their references
+                    # can be released at last use, so republish each step.
+                    if (
+                        slot.leaf_index not in constants
+                        or (position, slot.leaf_index) in self._cpu_root_positions
+                    ):
                         slots[slot.leaf_index] = alias_id
                     entries.setdefault(alias_id, []).append(
                         (value, (position, slot.leaf_index))
@@ -508,6 +580,22 @@ class TrainingMaterializedState(MaterializedState):
         ordinal: int,
     ) -> None:
         source = values[0][0]
+        cpu_values = [item for item in values if item[1] in self._cpu_root_positions]
+        if cpu_values:
+            if len(cpu_values) != len(values) or self.bridge.objects.requires_storage(
+                alias_id
+            ):
+                raise PlanningError(
+                    "CPU root aliases must contain only CPU inputs "
+                    "and require no GPU storage"
+                )
+            if alias_id in self._model_aliases:
+                raise PlanningError("CPU roots cannot be adopted as device-pool state")
+            self.bridge.objects.register_placeholder(alias_id)
+            self.object_store[alias_id] = source
+            for tensor, root_position in values:
+                self._publish_initial_view(tensor, tensor, root_position, registrations)
+            return
         persistent = adopt_persistent_tensor(
             self.runtime,
             self.model,
@@ -635,13 +723,11 @@ class TrainingMaterializedState(MaterializedState):
         *,
         aliases: set[str] | None = None,
     ) -> dict[str, torch.Tensor]:
-        sizes = {
-            item.alias_group_id: item.size_bytes
-            for item in self.layout.program.alias_groups
-        }
         selected = self._model_aliases if aliases is None else aliases
         return {
-            alias_id: torch.empty(sizes[alias_id], dtype=torch.uint8, device="cpu")
+            alias_id: torch.empty(
+                self._alias_sizes[alias_id], dtype=torch.uint8, device="cpu"
+            )
             for alias_id in selected
         }
 

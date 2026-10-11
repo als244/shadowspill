@@ -34,6 +34,7 @@ from .discovery import (
     fake_update_sandbox,
     is_data_dependent_failure,
 )
+from .opaque import opaque_execution_bindings
 from .phases import PhaseTimer
 from .sandbox import (
     has_optimizer_step_hooks,
@@ -244,6 +245,7 @@ def _opaque_optimizer_capture(
     *,
     reason: str,
 ) -> OptimizerCapture:
+    bindings = opaque_execution_bindings(bindings)
     mutations = tuple(binding.name for binding in bindings if binding.mutable)
     return OptimizerCapture(
         optimizer_type=discovery.optimizer_type,

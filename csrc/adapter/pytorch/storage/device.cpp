@@ -288,6 +288,9 @@ void rebind_replacement_views(
   TORCH_CHECK(
       publication_ordinals.size() == adopted_tensors.size(),
       "adopted storage fields must have equal lengths");
+  if (count == 0U) {
+    return;
+  }
 
   uintptr_t runtime_handle = 0;
   TORCH_CHECK(
@@ -333,21 +336,30 @@ void rebind_replacement_views(
           shadowspill_status_string(status));
     }
   }
+  // Every retained view of a logical object must share its StorageImpl.
+  // Merely installing the same address in separate StorageImpls leaves those
+  // other views stale when a later fetch rebinds the canonical representative.
+  std::vector<int64_t> first_views(adopted_tensors.size(), -1);
   for (const auto index : c10::irange(count)) {
     const int64_t target_index = target_indices[index];
-    const uint64_t target = static_cast<uint64_t>(reinterpret_cast<uintptr_t>(
-        adopted_tensors[target_index].storage().data_ptr().get()));
-    const uint64_t current = static_cast<uint64_t>(reinterpret_cast<uintptr_t>(
-        replacement_tensors[index].storage().data_ptr().get()));
-    if (current == target) {
+    int64_t& first_view = first_views[target_index];
+    if (first_view >= 0) {
+      replacement_tensors[index].unsafeGetTensorImpl()->set_storage_keep_dtype(
+          replacement_tensors[first_view].storage());
       continue;
     }
+    first_view = static_cast<int64_t>(index);
+    const uint64_t target = static_cast<uint64_t>(reinterpret_cast<uintptr_t>(
+        adopted_tensors[target_index].storage().data_ptr().get()));
     c10::Storage storage = replacement_tensors[index].storage();
-    c10::DataPtr prior = storage.set_data_ptr(c10::DataPtr(
-        reinterpret_cast<void*>(
-            static_cast<uintptr_t>(target)),
-        replacement_tensors[index].device()));
-    prior.clear();
+    const uint64_t current = static_cast<uint64_t>(
+        reinterpret_cast<uintptr_t>(storage.data_ptr().get()));
+    if (current != target) {
+      c10::DataPtr prior = storage.set_data_ptr(c10::DataPtr(
+          reinterpret_cast<void*>(static_cast<uintptr_t>(target)),
+          replacement_tensors[index].device()));
+      prior.clear();
+    }
   }
 }
 

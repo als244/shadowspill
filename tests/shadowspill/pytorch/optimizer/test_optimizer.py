@@ -466,7 +466,7 @@ def test_opaque_fallbacks_preserve_the_original_optimizer(
     opaque_graph = capture_optimizer({"parameter": parameter}, optimizer)
     assert opaque_graph.update_is_opaque
     assert opaque_graph.bindings[1].name == "gradient.parameter"
-    assert opaque_graph.bindings[1].tensor.device.type == "meta"
+    assert opaque_graph.bindings[1].tensor.device.type == "cuda"
     assert tuple(opaque_graph.bindings[1].tensor.shape) == (4,)
     assert parameter.grad is None
     assert "the optimizer update is opaque" in (opaque_graph.opaque_reason or "")
@@ -695,12 +695,14 @@ def test_stochastic_optimizer_tasks_share_structure_with_distinct_salts():
     for parameter in parameters.values():
         parameter.grad = torch.ones_like(parameter)
     optimizer = mlops.optim.AdamW(
-        list(parameters.values()), opt_state_rounding="stochastic",
+        list(parameters.values()),
+        opt_state_rounding="stochastic",
         parameter_rounding="stochastic",
     )
     _install_declared_state(parameters, optimizer)
     captured = capture_optimizer(
-        parameters, optimizer,
+        parameters,
+        optimizer,
         parameter_stage_owners={
             name: (index,) for index, name in enumerate(parameters)
         },
@@ -712,8 +714,10 @@ def test_stochastic_optimizer_tasks_share_structure_with_distinct_salts():
     assert len(salts) == 3
     assert all(
         b.role is OptimizerTensorRole.HYPERPARAMETER
-        and not b.mutable and not b.spillable
-        and b.tensor.device.type == "cpu" and b.tensor.dtype == torch.int64
+        and not b.mutable
+        and not b.spillable
+        and b.tensor.device.type == "cpu"
+        and b.tensor.dtype == torch.int64
         for b in salts
     )
     # Each occurrence binds its own salt even though it reuses the code/profile.
@@ -723,3 +727,46 @@ def test_stochastic_optimizer_tasks_share_structure_with_distinct_salts():
     ]
     assert all(len(names) == 1 for names in occurrences)
     assert len(set(occurrences)) == 3
+
+
+def test_opaque_execution_geometry_preserves_aliases_and_cpu_counters() -> None:
+    from torch._subclasses.fake_tensor import FakeTensor
+
+    from shadowspill.pytorch.optimizer.artifacts import (
+        OptimizerTensorBinding,
+        OptimizerTensorRole,
+    )
+    from shadowspill.pytorch.optimizer.opaque import opaque_execution_bindings
+
+    # Distinct views of a CPU-side template describe one GPU state allocation.
+    state = torch.arange(16, dtype=torch.float32)
+    counter = torch.tensor(3, dtype=torch.int64)
+    bindings = (
+        OptimizerTensorBinding(
+            "optimizer.weight.first", OptimizerTensorRole.STATE, state[2:6], True, True
+        ),
+        OptimizerTensorBinding(
+            "optimizer.weight.second",
+            OptimizerTensorRole.STATE,
+            state[8::2],
+            True,
+            True,
+        ),
+        OptimizerTensorBinding(
+            "optimizer.weight.step", OptimizerTensorRole.STATE, counter, True, False
+        ),
+    )
+    first, second, step = opaque_execution_bindings(bindings)
+    assert isinstance(first.tensor, FakeTensor)
+    assert first.tensor.device.type == second.tensor.device.type == "cuda"
+    assert (
+        first.tensor.untyped_storage()._cdata == second.tensor.untyped_storage()._cdata
+    )
+    assert first.tensor.untyped_storage().nbytes() == state.untyped_storage().nbytes()
+    assert first.tensor.storage_offset() == 2
+    assert second.tensor.storage_offset() == 8
+    assert second.tensor.stride() == (2,)
+    assert step is bindings[2]
+    assert step.tensor.device.type == "cpu"
+    assert step.tensor.item() == 3
+    torch.testing.assert_close(state, torch.arange(16, dtype=torch.float32))
