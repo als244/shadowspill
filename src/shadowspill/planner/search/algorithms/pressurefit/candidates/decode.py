@@ -459,7 +459,7 @@ def decode_schedule(
             )
         ),
         actions=tuple(
-            MemoryAction(
+            MemoryAction.from_validated(
                 simulation.task_ids[task],
                 simulation.alias_ids[alias],
                 _ACTION_KIND[kind],

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from dataclasses import field as dataclass_field
 from enum import StrEnum
 
 from shadowspill.schema import artifact_schema
@@ -15,6 +16,7 @@ from .program import (
 )
 from .serialization import JsonValue, canonical_json, digest_json, parse_json
 from .validation import (
+    ValidationError,
     expect_list,
     expect_mapping,
     expect_string,
@@ -103,6 +105,23 @@ class MemoryAction:
         require_identifier(self.alias_group_id, "action.alias_group_id")
         require(isinstance(self.kind, MemoryActionKind), "action.kind", "invalid kind")
 
+    @classmethod
+    def from_validated(
+        cls, trigger_task_id: str, alias_group_id: str, kind: MemoryActionKind
+    ) -> MemoryAction:
+        """An action whose identifiers a validated program already holds.
+
+        A decoder of an indexed schedule takes every name from the program's
+        own tables, so the checks construction makes would only repeat the
+        program's; a schedule has hundreds of thousands of actions.
+        """
+
+        action = object.__new__(cls)
+        object.__setattr__(action, "trigger_task_id", trigger_task_id)
+        object.__setattr__(action, "alias_group_id", alias_group_id)
+        object.__setattr__(action, "kind", kind)
+        return action
+
     def to_dict(self) -> dict[str, JsonValue]:
         return {
             "alias_group_id": self.alias_group_id,
@@ -148,9 +167,18 @@ class MemorySchedule:
             "schedule.final_residency",
         )
 
+    #: The digest, once computed: a schedule is immutable, plan records,
+    #: certificates and summaries all name it, and computing it serializes
+    #: every action.
+    _digest_cache: list[str] = dataclass_field(
+        default_factory=list, init=False, repr=False, compare=False
+    )
+
     @property
     def digest(self) -> str:
-        return digest_json(self.to_dict())
+        if not self._digest_cache:
+            self._digest_cache.append(digest_json(self.to_dict()))
+        return self._digest_cache[0]
 
     def to_dict(self) -> dict[str, JsonValue]:
         return {
@@ -484,6 +512,64 @@ def _apply_action(
         residency.device.remove(alias_id)
 
 
+def schedule_refusal(
+    refusal: int,
+    index: int,
+    alias_group_id: str,
+    task_ids: tuple[str, ...],
+    schedule: MemorySchedule,
+) -> ValidationError:
+    """The error `MemorySchedule.validate` raises for the refusal a compiled
+    check reports, `ShadowSpillScheduleRefusal` by number: the same path and
+    message the rules above give, so where a schedule was checked does not
+    show in what it was refused for."""
+
+    action = f"schedule.actions[{index}]"
+    if refusal == 1:
+        return ValidationError(
+            f"schedule.initial_residency[{index}].alias_group_id", _RUNTIME_OWNED
+        )
+    if refusal == 2:
+        return ValidationError(
+            f"{action}.alias_group_id",
+            "shared alias groups cannot have plan-owned memory actions",
+        )
+    if refusal == 3:
+        return ValidationError(
+            f"{action}.alias_group_id",
+            "zero-size alias groups cannot have physical memory actions",
+        )
+    if refusal == 4:
+        return ValidationError(action, "actions must be ordered by trigger task")
+    if refusal == 5:
+        return ValidationError(
+            f"schedule.task[{task_ids[index]}].inputs",
+            f"alias group {alias_group_id!r} is not device resident",
+        )
+    if refusal == 6:
+        return ValidationError(action, "fetch requires current host residency")
+    if refusal == 7:
+        return ValidationError(action, "fetch requires absent device residency")
+    if refusal == 8:
+        kind = schedule.actions[index].kind.value.replace("_", "-")
+        return ValidationError(action, f"{kind} requires device residency")
+    if refusal == 9:
+        return ValidationError(
+            action, "release drops the only current copy of a value still needed"
+        )
+    if refusal == 10:
+        return ValidationError(
+            f"schedule.final_residency[{index}].alias_group_id", _RUNTIME_OWNED
+        )
+    if refusal == 11:
+        location = schedule.final_residency[index].location.value
+        return ValidationError(
+            f"schedule.final_residency[{index}]",
+            f"required current {location} residency was not reached",
+        )
+    raise ValueError(f"unknown schedule refusal {refusal}")
+
+
 def first_use_initial_order(
     program: ShadowSpillProgram, schedule: MemorySchedule
 ) -> tuple[str, ...]:
@@ -533,4 +619,5 @@ __all__ = [
     "MemorySchedule",
     "ResidencySpec",
     "first_use_initial_order",
+    "schedule_refusal",
 ]

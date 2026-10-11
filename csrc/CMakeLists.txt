@@ -14,6 +14,7 @@ add_library(
   src/simulator/diagnostics.c
   src/simulator/events.c
   src/simulator/memory.c
+  src/simulator/schedule_check.c
   src/simulator/simulator.c
   src/simulator/tasks.c
   src/simulator/transfer_timing.c
@@ -26,6 +27,7 @@ add_library(
   src/planner/admission/lifetimes.c
   src/planner/admission/operations.c
   src/planner/admission/placement.c
+  src/planner/admission/reuse.c
   src/planner/abi.c
   src/planner/search/toolkit/digest.c
   src/planner/search/toolkit/schedule.c

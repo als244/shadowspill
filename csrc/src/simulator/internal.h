@@ -62,6 +62,13 @@ typedef struct ShadowSpillSimulationWork {
     uint64_t *active_tasks;
     uint32_t task_word_count;
     ShadowSpillTransferState *transfers;
+    /* The reuse dependencies indexed by successor, as offsets into a list of
+     * predecessor actions: whether a task or an action may start reads only
+     * its own predecessors rather than every dependency in the program. */
+    uint32_t *task_reuse_offsets;
+    uint32_t *task_reuse_predecessors;
+    uint32_t *action_reuse_offsets;
+    uint32_t *action_reuse_predecessors;
     /* Where a value is still needed after a release: the last task that
      * reads each alias (NO_INDEX when none) and whether the final residency
      * names it. */

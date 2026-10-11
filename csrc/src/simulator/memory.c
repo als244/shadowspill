@@ -3,6 +3,37 @@
 
 #include "internal.h"
 
+/* One successor-indexed list: `offsets` holds `count + 1` entries and
+ * `predecessors` the predecessor action of every dependency whose successor
+ * (read from `successors`) is below `count`, grouped by that successor. */
+static void index_reuse(
+    const ShadowSpillSimulationProgram *program,
+    const uint32_t *successors,
+    uint32_t count,
+    uint32_t *offsets,
+    uint32_t *predecessors
+) {
+    for (uint32_t edge = 0; edge < program->reuse_dependency_count; ++edge) {
+        if (successors[edge] < count) {
+            ++offsets[successors[edge] + 1U];
+        }
+    }
+    for (uint32_t index = 0; index < count; ++index) {
+        offsets[index + 1U] += offsets[index];
+    }
+    for (uint32_t edge = 0; edge < program->reuse_dependency_count; ++edge) {
+        if (successors[edge] < count) {
+            predecessors[offsets[successors[edge]]++] =
+                program->reuse_predecessor_actions[edge];
+        }
+    }
+    /* Filling advanced every start to the next one's; move them back. */
+    for (uint32_t index = count; index > 0U; --index) {
+        offsets[index] = offsets[index - 1U];
+    }
+    offsets[0] = 0U;
+}
+
 int shadowspill_allocate_work(
     const ShadowSpillSimulationProgram *program,
     ShadowSpillSimulationWork *work
@@ -41,6 +72,17 @@ int shadowspill_allocate_work(
         program->action_count == 0U ? 1U : program->action_count,
         sizeof(*work->transfers)
     );
+    const uint32_t edges =
+        program->reuse_dependency_count == 0U ? 1U : program->reuse_dependency_count;
+    work->task_reuse_offsets =
+        calloc((size_t)program->task_count + 1U, sizeof(*work->task_reuse_offsets));
+    work->task_reuse_predecessors =
+        malloc((size_t)edges * sizeof(*work->task_reuse_predecessors));
+    work->action_reuse_offsets = calloc(
+        (size_t)program->action_count + 1U, sizeof(*work->action_reuse_offsets)
+    );
+    work->action_reuse_predecessors =
+        malloc((size_t)edges * sizeof(*work->action_reuse_predecessors));
     work->active_fetch = malloc(program->device_count * sizeof(*work->active_fetch));
     work->active_evict = malloc(program->device_count * sizeof(*work->active_evict));
     work->fetch_cursor = calloc(program->device_count, sizeof(*work->fetch_cursor));
@@ -71,6 +113,9 @@ int shadowspill_allocate_work(
         work->lane_successors == NULL || work->lane_heads == NULL ||
         work->active_tasks == NULL ||
         work->transfers == NULL || work->active_fetch == NULL ||
+        work->task_reuse_offsets == NULL || work->task_reuse_predecessors == NULL ||
+        work->action_reuse_offsets == NULL ||
+        work->action_reuse_predecessors == NULL ||
         work->active_evict == NULL || work->fetch_cursor == NULL ||
         work->evict_cursor == NULL || work->fetch_sequence == NULL ||
         work->evict_sequence == NULL || work->device_object_bytes == NULL ||
@@ -84,6 +129,16 @@ int shadowspill_allocate_work(
     for (uint32_t index = 0; index < program->device_count; ++index) {
         work->active_fetch[index] = -1;
         work->active_evict[index] = -1;
+    }
+    if (program->reuse_dependency_count != 0U) {
+        index_reuse(
+            program, program->reuse_successor_tasks, program->task_count,
+            work->task_reuse_offsets, work->task_reuse_predecessors
+        );
+        index_reuse(
+            program, program->reuse_successor_actions, program->action_count,
+            work->action_reuse_offsets, work->action_reuse_predecessors
+        );
     }
     for (uint32_t task = 0; task < program->task_count; ++task) {
         work->lane_successors[task] = SHADOWSPILL_SIMULATOR_NO_INDEX;
@@ -117,6 +172,10 @@ void shadowspill_free_work(ShadowSpillSimulationWork *work) {
     free(work->alias_last_reader);
     free(work->alias_final_required);
     free(work->transfers);
+    free(work->task_reuse_offsets);
+    free(work->task_reuse_predecessors);
+    free(work->action_reuse_offsets);
+    free(work->action_reuse_predecessors);
     free(work->active_fetch);
     free(work->active_evict);
     free(work->fetch_cursor);

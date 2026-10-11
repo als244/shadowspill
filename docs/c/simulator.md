@@ -82,9 +82,28 @@ ShadowSpillSimulationResult *result)` validates and evaluates one indexed
 program, returning a `ShadowSpillStatus`. `program` is borrowed; every buffer on
 `result` is the caller's, and each is filled up to its capacity field.
 
+`shadowspill_check_schedule(const ShadowSpillSimulationProgram *program,
+const uint8_t *alias_flags, ShadowSpillScheduleCheck *result)` holds the
+schedule bound into `program` to the schedule's own rules, independent of
+timing, and writes the first refusal to `result`, or
+`SHADOWSPILL_SCHEDULE_REFUSAL_NONE`. The rules are the ones
+`MemorySchedule.validate` states, in the same order: the initial residency
+names no runtime-owned group; every action moves a movable group that holds
+bytes, in trigger order; every input is on the device when its task reads it;
+a fetch needs a current spill copy and no device copy, and an evict, release
+or write-back needs a device copy; a release may not drop the only current
+copy of a value a later task reads or the final residency names; and the final
+residency is reached. `alias_flags` holds one `ShadowSpillAliasCheckFlags`
+value per alias for what the compiled program does not carry: whether the
+runtime owns the group's residency, whether it holds no bytes, and whether it
+keeps its spill copy. `index` names the initial or final residency entry, the
+action, or the task the refusal points at, and `alias` the group. The call
+returns `SHADOWSPILL_STATUS_OK` once the check has run, whatever its verdict,
+and `SHADOWSPILL_STATUS_INVALID_ARGUMENT` for a malformed program.
+
 `shadowspill_abi_version()` and `shadowspill_status_string()` cover loading
 and diagnostics for this boundary as for every other; see the
 [C API guide](README.md#abi-use).
 
-The call performs no I/O, owns no external storage after return, and uses no
-global mutable state. Distinct result buffers can be evaluated concurrently.
+Neither call performs I/O, owns external storage after return, or uses global
+mutable state. Distinct result buffers can be evaluated concurrently.

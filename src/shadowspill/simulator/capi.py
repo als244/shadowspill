@@ -153,6 +153,16 @@ class CResult(ctypes.Structure):
     ]
 
 
+class CScheduleCheck(ctypes.Structure):
+    """The first refusal of a schedule check, and where it points."""
+
+    _fields_ = [
+        ("refusal", ctypes.c_uint32),
+        ("index", ctypes.c_uint32),
+        ("alias", ctypes.c_uint32),
+    ]
+
+
 @cache
 def simulator_api() -> ctypes.CDLL:
     library = load_shadowspill_library()
@@ -161,6 +171,12 @@ def simulator_api() -> ctypes.CDLL:
         ctypes.POINTER(CResult),
     ]
     library.shadowspill_simulate.restype = ctypes.c_uint32
+    library.shadowspill_check_schedule.argtypes = [
+        ctypes.POINTER(CProgram),
+        ctypes.POINTER(ctypes.c_uint8),
+        ctypes.POINTER(CScheduleCheck),
+    ]
+    library.shadowspill_check_schedule.restype = ctypes.c_uint32
     library.shadowspill_status_string.argtypes = [ctypes.c_uint32]
     library.shadowspill_status_string.restype = ctypes.c_char_p
     return library

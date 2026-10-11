@@ -79,15 +79,19 @@ static int dependencies_complete(
     uint32_t successor,
     int successor_is_task
 ) {
-    for (uint32_t index = 0; index < program->reuse_dependency_count; ++index) {
-        uint32_t candidate = successor_is_task != 0
-            ? program->reuse_successor_tasks[index]
-            : program->reuse_successor_actions[index];
-        if (candidate != successor) {
-            continue;
-        }
-        uint32_t predecessor = program->reuse_predecessor_actions[index];
-        if (work->transfers[predecessor].state !=
+    const uint32_t count =
+        successor_is_task != 0 ? program->task_count : program->action_count;
+    if (program->reuse_dependency_count == 0U || successor >= count) {
+        return 1;
+    }
+    const uint32_t *offsets = successor_is_task != 0
+        ? work->task_reuse_offsets
+        : work->action_reuse_offsets;
+    const uint32_t *predecessors = successor_is_task != 0
+        ? work->task_reuse_predecessors
+        : work->action_reuse_predecessors;
+    for (uint32_t index = offsets[successor]; index < offsets[successor + 1U]; ++index) {
+        if (work->transfers[predecessors[index]].state !=
             SHADOWSPILL_TRANSFER_COMPLETE) {
             return 0;
         }

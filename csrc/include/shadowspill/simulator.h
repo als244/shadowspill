@@ -233,6 +233,67 @@ SHADOWSPILL_API ShadowSpillStatus shadowspill_simulate(
     ShadowSpillSimulationResult *result
 );
 
+/* What one alias group is, as a schedule check reads it: facts of the program
+ * the compiled arrays do not carry. */
+enum ShadowSpillAliasCheckFlags {
+    /* The runtime owns its residency: on the device from the start, and no
+       schedule may move it or declare where it is. */
+    SHADOWSPILL_ALIAS_SHARED = 1U << 0U,
+    /* It holds no bytes: nothing to move, and nothing to wait for. */
+    SHADOWSPILL_ALIAS_ZERO_SIZE = 1U << 1U,
+    /* It keeps its spill copy: current in spill from the start, and still
+       there after a fetch or a release. */
+    SHADOWSPILL_ALIAS_RETAINED = 1U << 2U,
+};
+
+/* Why a schedule cannot run on its program; `index` and `alias` name where. */
+enum ShadowSpillScheduleRefusal {
+    SHADOWSPILL_SCHEDULE_REFUSAL_NONE = 0,
+    /* index: an initial residency entry naming a runtime-owned group. */
+    SHADOWSPILL_SCHEDULE_REFUSAL_INITIAL_RUNTIME_OWNED = 1,
+    /* index: an action moving a runtime-owned group. */
+    SHADOWSPILL_SCHEDULE_REFUSAL_ACTION_RUNTIME_OWNED = 2,
+    /* index: an action moving a group that holds no bytes. */
+    SHADOWSPILL_SCHEDULE_REFUSAL_ACTION_ZERO_SIZE = 3,
+    /* index: an action triggered by an earlier task than the one before it. */
+    SHADOWSPILL_SCHEDULE_REFUSAL_ACTION_ORDER = 4,
+    /* index: a task reading `alias` while it is not on the device. */
+    SHADOWSPILL_SCHEDULE_REFUSAL_INPUT_NOT_RESIDENT = 5,
+    /* index: a fetch of a group with no current spill copy. */
+    SHADOWSPILL_SCHEDULE_REFUSAL_FETCH_WITHOUT_HOST_COPY = 6,
+    /* index: a fetch of a group already on the device. */
+    SHADOWSPILL_SCHEDULE_REFUSAL_FETCH_ALREADY_RESIDENT = 7,
+    /* index: an evict, release or write-back of a group not on the device. */
+    SHADOWSPILL_SCHEDULE_REFUSAL_NOT_DEVICE_RESIDENT = 8,
+    /* index: a release dropping the only current copy of a value a later task
+       reads or the final residency names. */
+    SHADOWSPILL_SCHEDULE_REFUSAL_RELEASE_ONLY_COPY = 9,
+    /* index: a final residency entry naming a runtime-owned group. */
+    SHADOWSPILL_SCHEDULE_REFUSAL_FINAL_RUNTIME_OWNED = 10,
+    /* index: a final residency entry the schedule does not reach. */
+    SHADOWSPILL_SCHEDULE_REFUSAL_FINAL_NOT_REACHED = 11,
+};
+
+typedef struct ShadowSpillScheduleCheck {
+    uint32_t refusal; /* ShadowSpillScheduleRefusal */
+    uint32_t index;
+    uint32_t alias;
+} ShadowSpillScheduleCheck;
+
+/*
+ * Whether the schedule bound into `program` can run on it, by the schedule's
+ * own rules rather than its timing: the first refusal, in the order the rules
+ * are stated, or SHADOWSPILL_SCHEDULE_REFUSAL_NONE. `alias_flags` holds one
+ * ShadowSpillAliasCheckFlags value per alias. Returns
+ * SHADOWSPILL_STATUS_INVALID_ARGUMENT for a malformed program and
+ * SHADOWSPILL_STATUS_OK once the check has run, whatever its verdict.
+ */
+SHADOWSPILL_API ShadowSpillStatus shadowspill_check_schedule(
+    const ShadowSpillSimulationProgram *program,
+    const uint8_t *alias_flags,
+    ShadowSpillScheduleCheck *result
+);
+
 #ifdef __cplusplus
 }
 #endif
