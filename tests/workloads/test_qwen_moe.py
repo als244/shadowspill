@@ -233,9 +233,17 @@ def test_logits_and_all_parameter_gradients_match_transformers(
 
         from transformers.models.qwen3_5_moe import modeling_qwen3_5_moe as hf
 
-        # Test the published CPU recurrence, not optional FLA/CUDA kernels.
+        # Keep the oracle on the published PyTorch recurrence. When the optional
+        # kernels package is installed, HF wraps the decorated function in an
+        # nn.Module, so inspect.unwrap alone cannot reach the original function.
         for name in ("causal_conv1d_fn", "torch_chunk_gated_delta_rule"):
-            monkeypatch.setattr(hf, name, inspect.unwrap(getattr(hf, name)))
+            function = getattr(hf, name)
+            if isinstance(function, torch.nn.Module):
+                function = inspect.getclosurevars(function.forward).nonlocals["func"]
+            reference_function = inspect.unwrap(function)
+            assert inspect.isfunction(reference_function)
+            assert reference_function.__module__ == hf.__name__
+            monkeypatch.setattr(hf, name, reference_function)
     model = cls(c)
     checks = _copy_reference(model, reference)
     tokens = torch.randint(c.vocab_size, (1, 7))
