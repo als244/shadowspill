@@ -131,8 +131,9 @@ class MaterializedState:
                 id(tensor): self._cpu_view(owners[alias_id], tensor)
                 for alias_id, tensor in entries_by_name[name]
             }
+            # Bound now: the entry's components are rebuilt on every iteration.
             destination = map_tensor(
-                logical[name], lambda value: mapped[id(value)]
+                logical[name], lambda value, views=mapped: views[id(value)]
             ).detach()
             with torch.no_grad():
                 destination.copy_(source.detach().to(device="cpu"))

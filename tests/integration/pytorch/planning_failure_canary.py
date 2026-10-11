@@ -14,6 +14,7 @@ import torch.nn as nn
 from canary_phases import phase
 from torch._inductor import config as inductor_config
 
+from qualification.profiling import CORRECTNESS_PROFILING
 from shadowspill.errors import (
     AdmissionError,
     CaptureError,
@@ -29,7 +30,6 @@ from shadowspill.pytorch import (
     plan_forward,
 )
 from tests.spill_pool import spill_pool
-from qualification.profiling import CORRECTNESS_PROFILING
 
 
 class _DataDependentModel(nn.Module):

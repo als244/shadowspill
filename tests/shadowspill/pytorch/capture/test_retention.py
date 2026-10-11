@@ -317,7 +317,7 @@ def test_a_formula_that_cannot_price_its_call_is_an_error() -> None:
         return _pass_over(_mispriced(value), scale)
 
     inputs = _inputs((ROWS, WIDTH), (WIDTH,))
-    with pytest.raises(CaptureError, match="mispriced.*could not price"):
+    with pytest.raises(CaptureError, match=r"mispriced.*could not price"):
         _pair(forward, inputs)
 
 

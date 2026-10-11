@@ -12,6 +12,7 @@ import torch
 import torch.nn as nn
 from canary_phases import phase
 
+from qualification.profiling import CORRECTNESS_PROFILING
 from shadowspill.memory import device, transfer_route
 from shadowspill.pytorch import (
     ObjectiveResult,
@@ -21,7 +22,6 @@ from shadowspill.pytorch import (
 )
 from shadowspill.step import StepDataOrdering
 from tests.spill_pool import spill_pool
-from qualification.profiling import CORRECTNESS_PROFILING
 
 
 class _Model(nn.Module):

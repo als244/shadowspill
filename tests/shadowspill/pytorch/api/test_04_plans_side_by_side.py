@@ -13,11 +13,11 @@ import pytest
 import torch
 import torch.nn as nn
 
+from qualification.profiling import CORRECTNESS_PROFILING
 from shadowspill.errors import AdmissionError
 from shadowspill.pytorch import import_model_state, plan_forward, plan_step
 from shadowspill.runtime.abi import runtime_library
 from shadowspill.runtime.occupancy import plan_slices
-from qualification.profiling import CORRECTNESS_PROFILING
 
 from ..runtime_test_support import public_test_runtime
 from .test_01_public_training import _require_adapter

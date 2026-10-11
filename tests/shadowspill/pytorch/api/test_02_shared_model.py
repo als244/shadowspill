@@ -13,8 +13,8 @@ import pytest
 import torch
 import torch.nn as nn
 
-from shadowspill.pytorch import import_model_state, plan_forward, plan_step
 from qualification.profiling import CORRECTNESS_PROFILING
+from shadowspill.pytorch import import_model_state, plan_forward, plan_step
 
 from ..runtime_test_support import public_test_runtime
 from .test_01_public_training import _require_adapter
@@ -89,7 +89,9 @@ def test_a_forward_planned_after_training_sees_every_update(tmp_path: Path) -> N
 
 @pytest.mark.cuda
 @pytest.mark.fresh_process
-def test_a_training_step_planned_after_a_forward_shares_its_model(tmp_path: Path) -> None:
+def test_a_training_step_planned_after_a_forward_shares_its_model(
+    tmp_path: Path,
+) -> None:
     _require_adapter()
     runtime = public_test_runtime()
     model = import_model_state(_network(), runtime=runtime, pool="spill")

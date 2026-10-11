@@ -6,9 +6,9 @@ from functools import partial
 import pytest
 import torch
 
+from qualification.profiling import CORRECTNESS_PROFILING
 from shadowspill.pytorch import plan_step
 from shadowspill.training.observations import parameter_norms
-from qualification.profiling import CORRECTNESS_PROFILING
 
 from ..runtime_test_support import public_test_runtime
 from .test_01_public_training import (
