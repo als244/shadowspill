@@ -96,11 +96,26 @@ is slot reuse — a task that frees a slot and reallocates it needs one lease,
 not two. That gap is why a lease is tied to its allocation step through the
 slot rather than through the operation sequence.
 
-**Slots are assigned once, here, not during the walk.** Compiling the
-allocation rows walks each task's steps in order: a step that allocates
-without reusing takes the next free slot; a step that reuses an earlier
-ordinal takes that ordinal's slot; a release step takes the slot of the
-ordinal it releases. The walk then only has to fill slots with leases.
+**Slots are assigned once, here, not during the walk.** A step that
+allocates without reusing takes the next new slot, in step order across the
+template's tasks; a step that reuses an earlier ordinal takes that ordinal's
+slot; a release step takes the slot of the ordinal it releases. A task's
+allocations name distinct ordinals, so each reuse and each release names one
+allocation of its own task, and following those names ends at a new slot.
+The walk then only has to fill slots with leases.
+
+The compile reads the facts as columns: one array per field of a task and
+per field of an allocation step, with alias names held once. They are
+extracted once for a tuple of tasks, which every capacity variant of the
+facts shares, and the facts' digest hashes the same columns, so neither the
+digest nor the compile builds an object per allocation step. The compile
+gathers them in the template's task order and resolves the slot names above
+with array operations.
+
+Beside the template and the facts, the setup keeps each task's allocation
+ordinals in the order its steps are flattened. The walk never reads them; a
+certificate does, because it names the lease an allocation step used by the
+step's task and ordinal.
 
 ## The walk
 

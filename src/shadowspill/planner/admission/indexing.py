@@ -10,6 +10,9 @@ from __future__ import annotations
 import ctypes
 from array import array
 from dataclasses import dataclass
+from itertools import repeat
+
+import numpy as np
 
 from shadowspill.ir import (
     IndexedMemorySchedule,
@@ -33,11 +36,8 @@ from ..capi import (
     CScheduleAdmissionResult,
     planner_api,
 )
-from . import (
-    AdmissionFacts,
-    TaskAdmissionSpec,
-    TaskAllocationStepKind,
-)
+from . import AdmissionFacts
+from .task_columns import ALLOCATE, TaskColumns
 
 
 def _u32(values: tuple[int, ...]) -> ctypes.Array[ctypes.c_uint32]:
@@ -53,17 +53,6 @@ def _u64(values: tuple[int, ...]) -> ctypes.Array[ctypes.c_uint64]:
 def _u8(values: tuple[int, ...]) -> ctypes.Array[ctypes.c_uint8]:
     result_type = ctypes.c_uint8 * max(1, len(values))
     return result_type.from_buffer_copy(bytes(values)) if values else result_type()
-
-
-def _flatten_rows(
-    rows: tuple[tuple[int, ...], ...],
-) -> tuple[tuple[int, ...], tuple[int, ...]]:
-    offsets = [0]
-    flattened: list[int] = []
-    for row in rows:
-        flattened.extend(row)
-        offsets.append(len(flattened))
-    return tuple(offsets), tuple(flattened)
 
 
 @dataclass(frozen=True, slots=True)
@@ -93,11 +82,6 @@ _ACTION_KIND = {
     MemoryActionKind.WRITE_BACK: 3,
 }
 _LOCATION = {MemoryLocation.DEVICE: 0, MemoryLocation.SPILL: 1}
-_ALLOCATION_KIND = {
-    TaskAllocationStepKind.ALLOCATE: 0,
-    TaskAllocationStepKind.RELEASE: 1,
-}
-_CompiledAllocationRow = tuple[tuple[int, int, int, int], ...]
 
 
 def encode_schedule(
@@ -141,73 +125,10 @@ def index_admission_facts(
         raise ValueError(
             f"admission device {facts.device_id!r} is absent from simulation"
         )
-    by_task = {item.task_id: item for item in facts.tasks}
-    try:
-        tasks = tuple(by_task[item] for item in simulation.task_ids)
-    except KeyError as exc:
-        raise ValueError(
-            f"admission facts lacks selected task {exc.args[0]!r}"
-        ) from exc
-    alias_index = simulation.alias_index
-    fresh_rows = tuple(
-        tuple(alias_index[item] for item in task.fresh_output_aliases) for task in tasks
-    )
-    replacement_rows = tuple(
-        tuple(alias_index[item] for item in task.replacement_aliases) for task in tasks
-    )
-    handoff_source_rows = tuple(
-        tuple(alias_index[item.source_alias_group_id] for item in task.storage_handoffs)
-        for task in tasks
-    )
-    handoff_destination_rows = tuple(
-        tuple(
-            alias_index[item.destination_alias_group_id]
-            for item in task.storage_handoffs
-        )
-        for task in tasks
-    )
-    fresh_offsets, fresh = _flatten_rows(fresh_rows)
-    replacement_offsets, replacements = _flatten_rows(replacement_rows)
-    handoff_offsets, handoff_sources = _flatten_rows(handoff_source_rows)
-    _, handoff_destinations = _flatten_rows(handoff_destination_rows)
-    workspace_offsets, workspace_extents = _flatten_rows(
-        tuple(task.workspace_extents for task in tasks)
-    )
-    allocation_rows, allocation_slot_count = _compile_allocation_rows(
-        tasks,
-        alias_index=alias_index,
-    )
-    allocation_offsets, allocation_kinds = _flatten_rows(
-        tuple(tuple(item[0] for item in row) for row in allocation_rows)
-    )
-    _, allocation_slots = _flatten_rows(
-        tuple(tuple(item[1] for item in row) for row in allocation_rows)
-    )
-    _, allocation_bytes = _flatten_rows(
-        tuple(tuple(item[2] for item in row) for row in allocation_rows)
-    )
-    _, allocation_aliases = _flatten_rows(
-        tuple(tuple(item[3] for item in row) for row in allocation_rows)
-    )
-    buffers = (
-        _u32(workspace_offsets),
-        _u64(workspace_extents),
-        _u32(fresh_offsets),
-        _u32(fresh),
-        _u32(replacement_offsets),
-        _u32(replacements),
-        _u32(handoff_offsets),
-        _u32(handoff_sources),
-        _u32(handoff_destinations),
-        _u32(allocation_offsets),
-        _u32(allocation_slots),
-        _u64(allocation_bytes),
-        _u32(allocation_aliases),
-        _u8(allocation_kinds),
-    )
+    buffers, allocation_slot_count, task_count = _compiled_tasks(facts, simulation)
     value = CAdmissionFacts(
         abi_version=ABI_VERSION,
-        task_count=len(tasks),
+        task_count=task_count,
         alias_count=len(simulation.alias_ids),
         pool_capacity_bytes=facts.pool_capacity_bytes,
         object_capacity_bytes=facts.object_capacity_bytes,
@@ -231,43 +152,164 @@ def index_admission_facts(
     return IndexedAdmissionFacts(value, buffers, facts.digest)
 
 
-def _compile_allocation_rows(
-    tasks: tuple[TaskAdmissionSpec, ...],
-    *,
-    alias_index: dict[str, int],
-) -> tuple[tuple[_CompiledAllocationRow, ...], int]:
-    """Assign indexed lease slots while preserving each profiled task order."""
+def _compiled_tasks(
+    facts: AdmissionFacts, simulation: IndexedSimulationTemplate
+) -> tuple[tuple[object, ...], int, int]:
+    """The per-task arrays of `facts.tasks` in this template's index space.
 
-    rows: list[tuple[tuple[int, int, int, int], ...]] = []
-    next_slot = 0
-    for task in tasks:
-        steps = task.allocation_steps
-        slot_by_ordinal: dict[int, int] = {}
-        row: list[tuple[int, int, int, int]] = []
-        for step in steps:
-            if step.kind is TaskAllocationStepKind.ALLOCATE:
-                if step.reuses_allocation_ordinal is None:
-                    slot = next_slot
-                    next_slot += 1
-                else:
-                    slot = slot_by_ordinal[step.reuses_allocation_ordinal]
-                slot_by_ordinal[step.allocation_ordinal] = slot
-            else:
-                slot = slot_by_ordinal[step.allocation_ordinal]
-            row.append(
-                (
-                    _ALLOCATION_KIND[step.kind],
-                    slot,
-                    step.charged_bytes,
-                    (
-                        NO_INDEX
-                        if step.output_alias_group_id is None
-                        else alias_index[step.output_alias_group_id]
-                    ),
-                )
+    They depend on the tasks alone, which every capacity variant of a set of
+    facts shares, so they are compiled once per template and the variants
+    differ only in the scalars their own structure carries. They are gathered
+    from the facts' columns in the template's task order.
+    """
+
+    cached = simulation.derived.get("admission_tasks")
+    if cached is not None and cached[0] is facts.tasks:
+        return cached[1]
+    columns = facts.task_columns
+    position = dict(zip(columns.task_ids, range(len(columns.task_ids)), strict=True))
+    try:
+        order = np.fromiter(
+            map(position.__getitem__, simulation.task_ids),
+            dtype=np.int64,
+            count=len(simulation.task_ids),
+        )
+    except KeyError as exc:
+        raise ValueError(
+            f"admission facts lacks selected task {exc.args[0]!r}"
+        ) from exc
+    alias_index = simulation.alias_index
+    # Where each alias the facts name sits in the template; an alias only
+    # unselected tasks name may be absent, and only a selected one is read.
+    aliases = np.fromiter(
+        map(alias_index.get, columns.alias_ids, repeat(-1)),
+        dtype=np.int64,
+        count=len(columns.alias_ids),
+    )
+
+    def indexed(positions: np.ndarray) -> np.ndarray:
+        found = aliases[positions]
+        if (found < 0).any():
+            raise KeyError(columns.alias_ids[int(positions[np.argmax(found < 0)])])
+        return found
+
+    workspace_offsets, workspace = _gather(columns.workspace_offsets, order)
+    fresh_offsets, fresh = _gather(columns.fresh_offsets, order)
+    replacement_offsets, replacements = _gather(columns.replacement_offsets, order)
+    handoff_offsets, handoffs = _gather(columns.handoff_offsets, order)
+    allocation_offsets, steps = _gather(columns.step_offsets, order)
+    slots, slot_count = _allocation_slots(columns, allocation_offsets, steps)
+    outputs = columns.step_outputs[steps]
+    present = outputs >= 0
+    allocation_aliases = np.full(len(steps), NO_INDEX, dtype=np.int64)
+    allocation_aliases[present] = indexed(outputs[present])
+    buffers = (
+        _u32_array(workspace_offsets),
+        _u64_array(columns.workspace_extents[workspace]),
+        _u32_array(fresh_offsets),
+        _u32_array(indexed(columns.fresh_aliases[fresh])),
+        _u32_array(replacement_offsets),
+        _u32_array(indexed(columns.replacement_aliases[replacements])),
+        _u32_array(handoff_offsets),
+        _u32_array(indexed(columns.handoff_sources[handoffs])),
+        _u32_array(indexed(columns.handoff_destinations[handoffs])),
+        _u32_array(allocation_offsets),
+        _u32_array(slots),
+        _u64_array(columns.step_bytes[steps]),
+        _u32_array(allocation_aliases),
+        _u8_array(columns.step_kinds[steps]),
+    )
+    compiled = (buffers, slot_count, len(order))
+    simulation.derived["admission_tasks"] = (facts.tasks, compiled)
+    return compiled
+
+
+def _gather(offsets: np.ndarray, order: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+    """A per-task list's offsets in `order`, and where each of its values
+    sits in the facts' own order."""
+
+    starts = offsets[order]
+    lengths = offsets[order + 1] - starts
+    gathered = np.zeros(len(order) + 1, dtype=np.int64)
+    np.cumsum(lengths, out=gathered[1:])
+    return gathered, np.repeat(starts - gathered[:-1], lengths) + np.arange(
+        gathered[-1], dtype=np.int64
+    )
+
+
+def _allocation_slots(
+    columns: TaskColumns, offsets: np.ndarray, steps: np.ndarray
+) -> tuple[np.ndarray, int]:
+    """The lease slot of every allocation step, in compiled order.
+
+    An allocation that reuses no earlier one takes the next new slot, in step
+    order; an allocation that reuses an ordinal takes the slot that ordinal's
+    allocation took, and a release the slot of the allocation it ends. A
+    task's allocations name distinct ordinals, so each step names one
+    allocation of its own task, and following those names reaches a new slot.
+    """
+
+    count = len(steps)
+    if count == 0:
+        return np.zeros(0, dtype=np.int64), 0
+    task = np.repeat(np.arange(len(offsets) - 1, dtype=np.int64), np.diff(offsets))
+    ordinals = columns.step_ordinals[steps]
+    reuses = columns.step_reuses[steps]
+    allocates = columns.step_kinds[steps] == ALLOCATE
+    fresh = allocates & (reuses < 0)
+    slot = np.full(count, -1, dtype=np.int64)
+    slot_count = int(fresh.sum())
+    slot[fresh] = np.arange(slot_count, dtype=np.int64)
+
+    # Each allocation keyed by its task and ordinal, to find the allocation a
+    # step names.
+    span = int(max(ordinals.max(), reuses.max())) + 1
+    allocations = np.flatnonzero(allocates)
+    keys = task[allocations] * span + ordinals[allocations]
+    by_key = np.argsort(keys, kind="stable")
+    sorted_keys = keys[by_key]
+
+    def allocation_of(where: np.ndarray, named: np.ndarray) -> np.ndarray:
+        wanted = task[where] * span + named
+        at = np.minimum(np.searchsorted(sorted_keys, wanted), len(sorted_keys) - 1)
+        if len(at) and not np.array_equal(sorted_keys[at], wanted):
+            raise ValueError(
+                "an allocation step names an ordinal its task never allocated"
             )
-        rows.append(tuple(row))
-    return tuple(rows), next_slot
+        return allocations[by_key[at]]
+
+    source = np.arange(count, dtype=np.int64)
+    reusing = np.flatnonzero(allocates & (reuses >= 0))
+    source[reusing] = allocation_of(reusing, reuses[reusing])
+    releasing = np.flatnonzero(~allocates)
+    source[releasing] = allocation_of(releasing, ordinals[releasing])
+    while True:
+        followed = source[source]
+        if np.array_equal(followed, source):
+            break
+        source = followed
+    return slot[source], slot_count
+
+
+def _u32_array(values: np.ndarray) -> ctypes.Array[ctypes.c_uint32]:
+    result_type = ctypes.c_uint32 * max(1, len(values))
+    if not len(values):
+        return result_type()
+    return result_type.from_buffer_copy(np.ascontiguousarray(values, dtype=np.uint32))
+
+
+def _u64_array(values: np.ndarray) -> ctypes.Array[ctypes.c_uint64]:
+    result_type = ctypes.c_uint64 * max(1, len(values))
+    if not len(values):
+        return result_type()
+    return result_type.from_buffer_copy(np.ascontiguousarray(values, dtype=np.uint64))
+
+
+def _u8_array(values: np.ndarray) -> ctypes.Array[ctypes.c_uint8]:
+    result_type = ctypes.c_uint8 * max(1, len(values))
+    if not len(values):
+        return result_type()
+    return result_type.from_buffer_copy(np.ascontiguousarray(values, dtype=np.uint8))
 
 
 def evaluate_schedule_admission(

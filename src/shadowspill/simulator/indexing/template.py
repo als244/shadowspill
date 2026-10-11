@@ -3,17 +3,21 @@
 from __future__ import annotations
 
 import ctypes
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 from shadowspill.ir import (
-    MemoryActionKind,
-    MemoryLocation,
     ResidencySpec,
     ResourceKind,
     ShadowSpillProgram,
     TaskAlternativeChoice,
     TaskSpec,
     shared_residency_footprint,
+)
+from shadowspill.ir.indexing import (
+    MEMORY_LOCATION_CODE as _LOCATION_CODE,
+)
+from shadowspill.ir.indexing import (
+    RESOURCE_KIND_CODE as _RESOURCE_CODE,
 )
 from shadowspill.ir.indexing import flatten_rows
 from shadowspill.ir.sharing import SharedResidencyFootprint
@@ -27,39 +31,6 @@ from ..model import (
     SimulationConfig,
 )
 from .arrays import _Arena
-
-_RESOURCE_CODE = {
-    ResourceKind.COMPUTE: 0,
-    ResourceKind.COMMUNICATION: 1,
-    ResourceKind.CONTROL: 2,
-}
-_LOCATION_CODE = {
-    MemoryLocation.DEVICE: 0,
-    MemoryLocation.SPILL: 1,
-}
-_ACTION_CODE = {
-    MemoryActionKind.RELEASE: 0,
-    MemoryActionKind.EVICT: 1,
-    MemoryActionKind.FETCH: 2,
-    MemoryActionKind.WRITE_BACK: 3,
-}
-_STALL_REASONS = (
-    (1 << 0, "input-residency"),
-    (1 << 1, "device-capacity"),
-    (1 << 2, "source-readiness"),
-    (1 << 3, "host-capacity"),
-    (1 << 4, "memory-reuse"),
-    (1 << 5, "lane-busy"),
-)
-_VIOLATION_REASONS = (
-    "initial-device-capacity",
-    "initial-spill-capacity",
-    "fetch-device-capacity",
-    "evict-spill-capacity",
-    "task-device-capacity",
-)
-_VIOLATION_LOCATIONS = ("device", "spill")
-_DEFAULT_PHYSICAL_DELTA = -(1 << 63)
 
 
 @dataclass(frozen=True, slots=True)
@@ -76,6 +47,30 @@ class IndexedSimulationTemplate:
     task_resources: tuple[tuple[ResourceKind, int], ...]
     shared_device_bytes: tuple[int, ...]
     shared_spill_bytes: int
+    #: One `ShadowSpillAliasCheckFlags` byte per alias, in `alias_ids` order:
+    #: what a schedule check needs to know of each group that the compiled
+    #: program does not carry.
+    alias_flags: bytes = b""
+    #: What other layers compile against this index space, kept with it so a
+    #: second request for the same thing is a lookup: each entry is keyed by
+    #: name and holds the object it was compiled from, to be checked by
+    #: identity before it is reused.
+    derived: dict[str, object] = field(default_factory=dict, repr=False, compare=False)
+
+
+#: `ShadowSpillAliasCheckFlags`, as the schedule check reads them.
+ALIAS_SHARED = 1 << 0
+ALIAS_ZERO_SIZE = 1 << 1
+ALIAS_RETAINED = 1 << 2
+
+
+def _alias_flags(program: ShadowSpillProgram) -> bytes:
+    return bytes(
+        (ALIAS_SHARED if group.shared_residency is not None else 0)
+        | (ALIAS_ZERO_SIZE if group.size_bytes == 0 else 0)
+        | (ALIAS_RETAINED if group.retain_spill_copy else 0)
+        for group in program.alias_groups
+    )
 
 
 def _shared_footprint(
@@ -321,4 +316,5 @@ def index_simulation_template(
         tuple((item.resource.kind, item.resource.lane) for item in tasks),
         shared_device_bytes,
         shared.spill_bytes,
+        _alias_flags(program),
     )

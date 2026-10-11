@@ -78,6 +78,14 @@ class ShadowSpillProgram:
         default_factory=list, init=False, repr=False, compare=False
     )
 
+    #: The most recent selection's tasks, once derived: deriving them rebuilds
+    #: every selected task, and planning and execution ask for the same
+    #: selection many times over. One entry, so a program never holds more
+    #: than one resolved copy of its tasks.
+    _selected_cache: list[
+        tuple[tuple[TaskAlternativeChoice, ...], tuple[TaskSpec, ...]]
+    ] = dataclass_field(default_factory=list, init=False, repr=False, compare=False)
+
     @property
     def digest(self) -> str:
         if not self._digest_cache:
@@ -154,6 +162,16 @@ class ShadowSpillProgram:
         self, selections: tuple[TaskAlternativeChoice, ...]
     ) -> tuple[TaskSpec, ...]:
         require_tuple(selections, "selections")
+        cached = self._selected_cache
+        if cached and cached[0][0] == selections:
+            return cached[0][1]
+        selected = self._select_tasks(selections)
+        cached[:] = [(selections, selected)]
+        return selected
+
+    def _select_tasks(
+        self, selections: tuple[TaskAlternativeChoice, ...]
+    ) -> tuple[TaskSpec, ...]:
         selection_by_group = {selection.group_id: selection for selection in selections}
         require(
             len(selection_by_group) == len(selections),
@@ -185,14 +203,7 @@ class ShadowSpillProgram:
             if task.task_id not in variant_tasks or task.task_id in active_variant_tasks
         }
         selected = tuple(
-            replace(
-                task,
-                dependencies=tuple(
-                    dependency
-                    for dependency in task.dependencies
-                    if dependency in selected_ids
-                ),
-            )
+            _without_inactive_dependencies(task, selected_ids)
             for task in self.tasks
             if task.task_id in selected_ids
         )
@@ -215,6 +226,19 @@ class ShadowSpillProgram:
                     )
         return selected
 
+
+
+def _without_inactive_dependencies(task: TaskSpec, active: set[str]) -> TaskSpec:
+    """The task with its dependencies on inactive tasks dropped: the task
+    itself when it has none, which is every task of a program without
+    alternatives, since rebuilding one validates it again."""
+
+    dependencies = tuple(
+        dependency for dependency in task.dependencies if dependency in active
+    )
+    if len(dependencies) == len(task.dependencies):
+        return task
+    return replace(task, dependencies=dependencies)
 
 __all__ = [
     "AliasGroupSpec",

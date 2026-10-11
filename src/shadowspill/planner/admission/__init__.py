@@ -13,6 +13,7 @@ import json
 from dataclasses import dataclass
 from dataclasses import field as dataclass_field
 from enum import StrEnum
+from typing import TYPE_CHECKING
 
 from shadowspill.ir import ShadowSpillProgram
 from shadowspill.schema import artifact_schema
@@ -27,6 +28,9 @@ from ..strict import (
     _string,
     _string_tuple,
 )
+
+if TYPE_CHECKING:
+    from .task_columns import TaskColumns
 
 _SCHEMA = artifact_schema("admission_facts")
 
@@ -342,8 +346,17 @@ class AdmissionFacts:
         if len(task_ids) != len(set(task_ids)):
             raise ValueError("admission task IDs must be unique")
 
-    #: The digest, once computed: the facts are immutable, every plan key and
-    #: certificate names them, and computing it serializes every task's facts.
+    #: `tasks` as columns, and their digest, shared with every copy `replace`
+    #: makes of these facts. The tasks are nearly all of the facts and the
+    #: same in each capacity variant of them, so a variant's digest hashes its
+    #: own fields and this one, and every variant compiles from the same
+    #: columns; a copy uses them only if it was taken of the same tasks.
+    _tasks_derived: list[tuple[tuple[TaskAdmissionSpec, ...], TaskColumns, str]] = (
+        dataclass_field(default_factory=list, repr=False, compare=False)
+    )
+
+    #: The digest, once computed: the facts are immutable and every plan key
+    #: and certificate names them.
     _digest_cache: list[str] = dataclass_field(
         default_factory=list, init=False, repr=False, compare=False
     )
@@ -351,9 +364,40 @@ class AdmissionFacts:
     @property
     def digest(self) -> str:
         if not self._digest_cache:
-            encoded = json.dumps(self.to_dict(), sort_keys=True, separators=(",", ":"))
+            encoded = json.dumps(
+                {
+                    "device_id": self.device_id,
+                    "minimum_alignment": self.minimum_alignment,
+                    "object_capacity_bytes": self.object_capacity_bytes,
+                    "pool_capacity_bytes": self.pool_capacity_bytes,
+                    "schema": _SCHEMA,
+                    "tasks_digest": self._digest_of_tasks(),
+                },
+                sort_keys=True,
+                separators=(",", ":"),
+            )
             self._digest_cache.append(hashlib.sha256(encoded.encode()).hexdigest())
         return self._digest_cache[0]
+
+    @property
+    def task_columns(self) -> TaskColumns:
+        """`tasks` as columns, extracted once for every variant of these facts."""
+
+        return self._derived_tasks()[0]
+
+    def _digest_of_tasks(self) -> str:
+        return self._derived_tasks()[1]
+
+    def _derived_tasks(self) -> tuple[TaskColumns, str]:
+        shared = self._tasks_derived
+        if shared and shared[0][0] is self.tasks:
+            return shared[0][1], shared[0][2]
+        from .task_columns import task_columns
+
+        columns = task_columns(self.tasks)
+        digest = columns.digest()
+        shared[:] = [(self.tasks, columns, digest)]
+        return columns, digest
 
     def to_dict(self) -> dict[str, object]:
         return {

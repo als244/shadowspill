@@ -16,7 +16,6 @@ from dataclasses import dataclass
 
 from shadowspill.ir import ShadowSpillProgram, TaskAlternativeChoice
 from shadowspill.planner.admission import AdmissionFacts
-from shadowspill.planner.admission.admission_replay import AdmissionReplayPurpose
 from shadowspill.planner.admission.indexing import (
     IndexedAdmissionFacts,
     index_admission_facts,
@@ -29,29 +28,15 @@ from shadowspill.simulator.indexing import (
 
 
 @dataclass(frozen=True, slots=True)
-class AllocationStep:
-    """One task allocation step, in the order the facts flattens them.
-
-    `slot` is the lease it uses: a step that reallocates an earlier ordinal's
-    slot shares its lease and emits no operation of its own.
-    """
-
-    task_id: str
-    ordinal: int
-    slot: int
-    allocates: bool
-    purpose: AdmissionReplayPurpose
-    alias_group_id: str | None
-
-
-@dataclass(frozen=True, slots=True)
 class AdmissionSetup:
     """The schedule-invariant half of measuring one resolved program."""
 
     template: IndexedSimulationTemplate
     indexed_facts: IndexedAdmissionFacts
-    allocation_steps: tuple[AllocationStep, ...]
-    storage_handoffs: tuple[tuple[str, str], ...]
+    #: Per selected task, in template order, the allocation ordinal of each of
+    #: its allocation steps, in the order the indexed facts flatten them. A
+    #: certificate names a step's lease by its task and ordinal.
+    allocation_ordinals: tuple[tuple[int, ...], ...]
     action_trigger_tasks: tuple[int, ...] = ()
 
     @property
@@ -68,72 +53,30 @@ def build_admission_setup(
     selections: tuple[TaskAlternativeChoice, ...],
     config: SimulationConfig,
     facts: AdmissionFacts,
+    *,
+    template: IndexedSimulationTemplate | None = None,
 ) -> AdmissionSetup:
-    """Compile the parts of admission a schedule cannot change."""
+    """Compile the parts of admission a schedule cannot change.
+
+    `template` is the resolved program already indexed, when the caller holds
+    it: the one a plan was simulated on, say.
+    """
 
     facts.validate(program)
-    template = index_simulation_template(program, selections, config)
+    if template is None:
+        template = index_simulation_template(program, selections, config)
+    indexed_facts = index_admission_facts(facts, template)
     contracts = {item.task_id: item for item in facts.tasks}
-    sizes = {item.alias_group_id: item.size_bytes for item in program.alias_groups}
-
-    steps: list[AllocationStep] = []
-    handoffs: list[tuple[str, str]] = []
-    next_slot = 0
-    for task in program.selected_tasks(selections):
-        contract = contracts.get(task.task_id)
-        if contract is None:
-            continue
-        replacements = frozenset(contract.replacement_aliases)
-        slot_by_ordinal: dict[int, int] = {}
-        for step in contract.allocation_steps:
-            allocates = step.kind.value == "allocate"
-            if allocates:
-                if step.reuses_allocation_ordinal is None:
-                    slot = next_slot
-                    next_slot += 1
-                else:
-                    slot = slot_by_ordinal[step.reuses_allocation_ordinal]
-                slot_by_ordinal[step.allocation_ordinal] = slot
-            else:
-                slot = slot_by_ordinal[step.allocation_ordinal]
-            alias = step.output_alias_group_id
-            steps.append(
-                AllocationStep(
-                    task_id=task.task_id,
-                    ordinal=step.allocation_ordinal,
-                    slot=slot,
-                    allocates=allocates,
-                    purpose=_purpose(alias, replacements),
-                    alias_group_id=alias,
-                )
-            )
-        handoffs.extend(
-            (item.source_alias_group_id, item.destination_alias_group_id)
-            for item in contract.storage_handoffs
-            # A zero-byte destination is not a handoff; the source keeps its
-            # lease.
-            if sizes.get(item.destination_alias_group_id, 0) != 0
-        )
-
     return AdmissionSetup(
         template=template,
-        indexed_facts=index_admission_facts(facts, template),
-        allocation_steps=tuple(steps),
-        storage_handoffs=tuple(handoffs),
+        indexed_facts=indexed_facts,
+        allocation_ordinals=tuple(
+            tuple(
+                step.allocation_ordinal for step in contracts[task_id].allocation_steps
+            )
+            for task_id in template.task_ids
+        ),
     )
 
 
-def _purpose(
-    alias_group_id: str | None,
-    replacements: frozenset[str],
-) -> AdmissionReplayPurpose:
-    """Anonymous scratch, a fresh output, or the generation one supersedes."""
-
-    if alias_group_id is None:
-        return AdmissionReplayPurpose.TASK_WORKSPACE
-    if alias_group_id in replacements:
-        return AdmissionReplayPurpose.MUTATION_REPLACEMENT
-    return AdmissionReplayPurpose.TASK_OUTPUT
-
-
-__all__ = ["AdmissionSetup", "AllocationStep", "build_admission_setup"]
+__all__ = ["AdmissionSetup", "build_admission_setup"]

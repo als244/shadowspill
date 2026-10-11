@@ -5,13 +5,20 @@ from __future__ import annotations
 import ctypes
 from dataclasses import dataclass
 
+import numpy as np
+
 from shadowspill.ir import (
     MemoryActionKind,
-    MemoryLocation,
     MemorySchedule,
     ResourceKind,
     ShadowSpillProgram,
     TaskAlternativeChoice,
+)
+from shadowspill.ir.indexing import (
+    MEMORY_ACTION_CODE as _ACTION_CODE,
+)
+from shadowspill.ir.indexing import (
+    MEMORY_LOCATION_CODE as _LOCATION_CODE,
 )
 
 from ..capi import (
@@ -26,36 +33,7 @@ from ..model import (
 from .arrays import _i64_array, _u8_array, _u32_array, _u64_array
 from .template import IndexedSimulationTemplate, index_simulation_template
 
-_RESOURCE_CODE = {
-    ResourceKind.COMPUTE: 0,
-    ResourceKind.COMMUNICATION: 1,
-    ResourceKind.CONTROL: 2,
-}
-_LOCATION_CODE = {
-    MemoryLocation.DEVICE: 0,
-    MemoryLocation.SPILL: 1,
-}
-_ACTION_CODE = {
-    MemoryActionKind.RELEASE: 0,
-    MemoryActionKind.EVICT: 1,
-    MemoryActionKind.FETCH: 2,
-    MemoryActionKind.WRITE_BACK: 3,
-}
-_STALL_REASONS = (
-    (1 << 0, "input-residency"),
-    (1 << 1, "device-capacity"),
-    (1 << 2, "source-readiness"),
-    (1 << 3, "host-capacity"),
-    (1 << 4, "memory-reuse"),
-)
-_VIOLATION_REASONS = (
-    "initial-device-capacity",
-    "initial-spill-capacity",
-    "fetch-device-capacity",
-    "evict-spill-capacity",
-    "task-device-capacity",
-)
-_VIOLATION_LOCATIONS = ("device", "spill")
+#: The binding's marker for a delta the admission leaves to the simulator.
 _DEFAULT_PHYSICAL_DELTA = -(1 << 63)
 
 
@@ -69,6 +47,7 @@ class _Projection:
     task_resources: tuple[tuple[ResourceKind, int], ...]
     shared_device_bytes: tuple[int, ...]
     shared_spill_bytes: int
+    template: IndexedSimulationTemplate | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -244,42 +223,32 @@ def _admission_arrays(
     reuse_predecessors, reuse_successor_tasks, reuse_successor_actions = _reuse_arrays(
         template, schedule, admission
     )
+    # Every entry starts at the default for what the admission leaves out, and
+    # the entries it lists are written over it.
+    unlisted = (
+        _DEFAULT_PHYSICAL_DELTA
+        if admission.unlisted_delta_bytes is None
+        else admission.unlisted_delta_bytes
+    )
+    task_start = np.full(len(template.task_ids), unlisted, dtype=np.int64)
+    task_completion = task_start.copy()
+    for item in task_deltas.values():
+        index = template.task_index[item.task_id]
+        task_start[index] = item.start_bytes
+        task_completion[index] = item.completion_bytes
+    action_trigger = np.full(len(schedule.actions), unlisted, dtype=np.int64)
+    action_completion = action_trigger.copy()
+    for index, item in action_deltas.items():
+        action_trigger[index] = item.trigger_bytes
+        action_completion[index] = item.completion_bytes
     return _AdmissionArrays(
         initial_physical=_u64_array(
             tuple(initial_by_device[item] for item in template.device_ids)
         ),
-        task_start_deltas=_i64_array(
-            tuple(
-                task_deltas[item].start_bytes
-                if item in task_deltas
-                else _DEFAULT_PHYSICAL_DELTA
-                for item in template.task_ids
-            )
-        ),
-        task_completion_deltas=_i64_array(
-            tuple(
-                task_deltas[item].completion_bytes
-                if item in task_deltas
-                else _DEFAULT_PHYSICAL_DELTA
-                for item in template.task_ids
-            )
-        ),
-        action_trigger_deltas=_i64_array(
-            tuple(
-                action_deltas[index].trigger_bytes
-                if index in action_deltas
-                else _DEFAULT_PHYSICAL_DELTA
-                for index in range(len(schedule.actions))
-            )
-        ),
-        action_completion_deltas=_i64_array(
-            tuple(
-                action_deltas[index].completion_bytes
-                if index in action_deltas
-                else _DEFAULT_PHYSICAL_DELTA
-                for index in range(len(schedule.actions))
-            )
-        ),
+        task_start_deltas=_i64_array(task_start),
+        task_completion_deltas=_i64_array(task_completion),
+        action_trigger_deltas=_i64_array(action_trigger),
+        action_completion_deltas=_i64_array(action_completion),
         reuse_predecessors=reuse_predecessors,
         reuse_successor_tasks=reuse_successor_tasks,
         reuse_successor_actions=reuse_successor_actions,
@@ -365,6 +334,7 @@ def _bind_schedule(
         template.task_resources,
         template.shared_device_bytes,
         template.shared_spill_bytes,
+        template=template,
     )
 
 

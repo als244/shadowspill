@@ -19,21 +19,19 @@ from __future__ import annotations
 
 from dataclasses import dataclass, replace
 
+import numpy as np
+
 from shadowspill.planner.admission import AdmissionFacts
 from shadowspill.planner.admission.indexing import encode_schedule
 from shadowspill.planner.admission.operations import (
     AdmissionOperations,
     build_admission_operations,
 )
-from shadowspill.planner.admission.placement import place_records
+from shadowspill.planner.admission.placement import place_record_array
 from shadowspill.planner.capi import NO_INDEX
 from shadowspill.planner.result import ProgramPlanResult
-from shadowspill.simulator import (
-    ActionPhysicalDelta,
-    SimulationAdmission,
-    TaskPhysicalDelta,
-    simulate,
-)
+from shadowspill.simulator import SimulationAdmission
+from shadowspill.simulator.indexing import simulate_template
 
 from ..admission_replay import AdmissionReplayPurpose
 from ..setup import AdmissionSetup, build_admission_setup
@@ -67,7 +65,7 @@ class FixedLayoutMeasurement:
     resident_slice_bytes: int
     dynamic_reserve_bytes: int
     scratch_reserve_bytes: int
-    offsets: tuple[int, ...]
+    offsets: np.ndarray
     layout: LeaseLayout
     operations: AdmissionOperations
     setup: AdmissionSetup
@@ -113,11 +111,16 @@ def measure_fixed_layout(
     if scratch_reserve_bytes < 0:
         raise ValueError("dynamic scratch reserve must be non-negative")
     if setup is None:
+        # A plan the simulator produced carries the template it was simulated
+        # on, which is this resolved program indexed; reusing it reuses
+        # whatever was compiled against it.
+        arrays = selected.simulation.interval_arrays
         setup = build_admission_setup(
             selected.program,
             selected.selections,
             selected.simulation_config,
             facts,
+            template=getattr(arrays, "template", None),
         )
     encoded = encode_schedule(selected.schedule, setup.template)
     setup = replace(setup, action_trigger_tasks=encoded.action_trigger_tasks)
@@ -131,26 +134,23 @@ def measure_fixed_layout(
     # The leases of the objects the planner kept resident stay out of the
     # main assignment: each takes a static home in the resident slice, which
     # follows the assignment, in lease order.
-    resident = frozenset(selected.resident_slice.aliases)
-    identities = layout.leases.identities
-    alias_ids = setup.template.alias_ids
-    excluded = tuple(
-        identities[index].alias != NO_INDEX
-        and alias_ids[identities[index].alias] in resident
-        for index in range(layout.fixed_count)
-    )
-    placed, main_bytes = place_records(
-        layout.leases.lifetimes, layout.fixed_count, excluded
-    )
-    offsets = list(placed)
+    fixed = layout.fixed_count
+    alias_index = setup.template.alias_index
+    # One flag per alias, and a last one for leases that name no alias.
+    kept = np.zeros(len(setup.template.alias_ids) + 1, dtype=bool)
+    resident = selected.resident_slice.aliases
+    kept[[alias_index[alias] for alias in resident if alias in alias_index]] = True
+    aliases = layout.identity_records["alias"][:fixed].astype(np.int64)
+    aliases[aliases == NO_INDEX] = len(setup.template.alias_ids)
+    excluded = kept[aliases]
+    offsets, main_bytes = place_record_array(layout.leases.lifetimes, fixed, excluded)
     fixed_slice_bytes = main_bytes
-    for index, skip in enumerate(excluded):
-        if skip:
-            lifetime = layout.leases.lifetimes[index]
-            offsets[index] = -(-fixed_slice_bytes // lifetime.alignment) * (
-                lifetime.alignment
-            )
-            fixed_slice_bytes = offsets[index] + lifetime.bytes
+    lifetimes = layout.lifetime_records
+    for index in np.flatnonzero(excluded).tolist():
+        alignment = int(lifetimes["alignment"][index])
+        offsets[index] = -(-fixed_slice_bytes // alignment) * alignment
+        fixed_slice_bytes = int(offsets[index]) + int(lifetimes["bytes"][index])
+    offsets.setflags(write=False)
     dynamic_reserve_bytes = sum(item.bytes for item in layout.dynamic_lifetimes)
     return FixedLayoutMeasurement(
         required_bytes=(
@@ -161,7 +161,7 @@ def measure_fixed_layout(
         resident_slice_bytes=fixed_slice_bytes - main_bytes,
         dynamic_reserve_bytes=dynamic_reserve_bytes,
         scratch_reserve_bytes=scratch_reserve_bytes,
-        offsets=tuple(offsets),
+        offsets=offsets,
         layout=layout,
         operations=operations,
         setup=setup,
@@ -200,15 +200,13 @@ def certify_fixed_layout(
         required_bytes=measurement.required_bytes,
         placements=placements,
         reuse_dependencies=recover_reuse_dependencies(
-            measurement.operations, measurement.setup, placements
+            measurement.operations,
+            measurement.setup,
+            measurement.layout,
+            measurement.offsets,
         ),
         initial_alias_leases=tuple(sorted(resolved.initial_alias_leases.items())),
-        task_allocation_leases=tuple(
-            (task_id, ordinal, lease_id)
-            for (task_id, ordinal), lease_id in sorted(
-                resolved.task_allocation_leases.items()
-            )
-        ),
+        task_allocation_leases=resolved.task_allocations,
         action_destination_leases=tuple(
             sorted(resolved.action_destination_leases.items())
         ),
@@ -217,15 +215,18 @@ def certify_fixed_layout(
         ),
     )
     simulator_input = _simulation_input(selected, layout)
+    # The setup's template is the plan's own program, selections and config
+    # indexed, so replaying on it is the full projection without indexing the
+    # program again; the library holds the schedule to its rules on the same
+    # binding before replaying it.
     return FixedLayoutAdmission(
         layout=layout,
         simulator_input=simulator_input,
-        simulation=simulate(
-            selected.program,
+        simulation=simulate_template(
+            measurement.setup.template,
             selected.schedule,
-            selections=selected.selections,
-            config=selected.simulation_config,
             admission=simulator_input,
+            checked=True,
         ),
     )
 
@@ -273,15 +274,12 @@ def _simulation_input(
     layout: FixedPhysicalLayout,
 ) -> SimulationAdmission:
     device_id = selected.program.devices[0].device_id
-    tasks = selected.program.selected_tasks(selected.selections)
+    # The whole fixed slice is held from the start, so no task or action moves
+    # the pool's physical bytes.
     return SimulationAdmission(
         initial_physical_bytes=((device_id, layout.required_bytes),),
         device_capacity_bytes=((device_id, layout.pool_capacity_bytes),),
-        task_deltas=tuple(TaskPhysicalDelta(task.task_id, 0, 0) for task in tasks),
-        action_deltas=tuple(
-            ActionPhysicalDelta(index, 0, 0)
-            for index in range(len(selected.schedule.actions))
-        ),
+        unlisted_delta_bytes=0,
         reuse_dependencies=simulator_reuse_dependencies(layout.reuse_dependencies),
     )
 
