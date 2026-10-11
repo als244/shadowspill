@@ -106,6 +106,17 @@ pays for the ranges each covering node holds. A range is stored on every node
 covering its interval, so one query can reach the same range through several
 covering nodes and return more ranges than the lease has conflicts.
 
+**Every node also holds the union of its whole subtree.** A lease recorded
+anywhere below a node is live somewhere inside that node's interval, so a
+query whose lifetime contains the interval overlaps every one of them. The
+node keeps that union up to date on each insert — a range is merged into the
+subtree union of every node the insert passes through — and a query that
+reaches a node it contains reads the one list and does not descend. Without
+it a query would visit every node under its lifetime, which for a lease
+resident across the step is every node in the tree. With it a query visits
+the nodes its two endpoints pass through and the nodes that cover it, which
+is `O(log n)` of them, and gathers the same union either way.
+
 ## Cost
 
 Placing one lease is: gather the occupied ranges it could collide with, sort
@@ -131,9 +142,9 @@ the comparison.
 
 **What `r_i` is bounded by.** Two things, and neither is `n`:
 
-- A query touches `O(log n)` nodes per level of the tree, so `r_i` grows with
-  how many nodes the lease's lifetime spans. Long-lived leases pay the most,
-  and a handful resident for the whole step dominate the total.
+- A query touches `O(log n)` nodes: the ones its endpoints pass through and
+  the ones that cover it, each handing over one merged list. The lifetime's
+  length changes which nodes those are, not how many.
 - Each node holds a *merged* union, so its list is short when the layout is
   contiguous. This is where the packing pays for itself twice: a tight layout
   is both smaller and cheaper to extend.

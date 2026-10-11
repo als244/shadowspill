@@ -197,7 +197,15 @@ static int time_axis_build(
  * the query visits does overlap the query - which is what makes it sound to
  * merge them before the query ever runs. */
 typedef struct {
+    /* Ranges recorded exactly at this node: those of the leases whose
+     * lifetime this node is one canonical cover of. */
     Occupancy *nodes;
+    /* The union of every range recorded at this node or anywhere below it.
+     * A query whose lifetime contains a node's whole interval overlaps every
+     * lease recorded in that subtree, so it reads this one list and never
+     * descends: the gather costs O(log n) nodes rather than every node under
+     * the lifetime. */
+    Occupancy *subtree;
     uint32_t node_count;
     uint32_t length;
 } OccupancyIndex;
@@ -206,9 +214,12 @@ static void occupancy_index_destroy(OccupancyIndex *index)
 {
     for (uint32_t node = 0U; node < index->node_count; ++node) {
         occupancy_destroy(&index->nodes[node]);
+        occupancy_destroy(&index->subtree[node]);
     }
     free(index->nodes);
+    free(index->subtree);
     index->nodes = NULL;
+    index->subtree = NULL;
     index->node_count = 0U;
 }
 
@@ -217,7 +228,8 @@ static int occupancy_index_create(OccupancyIndex *index, uint32_t length)
     index->length = length == 0U ? 1U : length;
     index->node_count = index->length * 4U + 4U;
     index->nodes = calloc(index->node_count, sizeof(*index->nodes));
-    return index->nodes == NULL ? -1 : 0;
+    index->subtree = calloc(index->node_count, sizeof(*index->subtree));
+    return index->nodes == NULL || index->subtree == NULL ? -1 : 0;
 }
 
 static int occupancy_index_insert(
@@ -231,6 +243,9 @@ static int occupancy_index_insert(
     uint64_t bytes
 )
 {
+    if (occupancy_insert(&index->subtree[node], offset, offset + bytes) != 0) {
+        return -1;
+    }
     if (start <= left && right <= end) {
         return occupancy_insert(&index->nodes[node], offset, offset + bytes);
     }
@@ -247,8 +262,11 @@ static int occupancy_index_insert(
     return 0;
 }
 
-/* Gathers the ranges of every visited node. Ranges from different nodes may
- * overlap; the scan below folds them together, so they are not merged here. */
+/* Gathers the ranges of every visited node: a node inside the query hands
+ * over its subtree union and is not descended into, a node the query only
+ * crosses hands over what is recorded at it and is. Ranges from different
+ * nodes may overlap; the scan below folds them together, so they are not
+ * merged here. */
 static int occupancy_index_collect(
     const OccupancyIndex *index,
     uint32_t node,
@@ -262,13 +280,14 @@ static int occupancy_index_collect(
     if (end <= left || right <= start) {
         return 0;
     }
-    const Occupancy *bucket = &index->nodes[node];
+    const int inside = start <= left && right <= end;
+    const Occupancy *bucket = inside ? &index->subtree[node] : &index->nodes[node];
     for (uint32_t item = 0U; item < bucket->count; ++item) {
         if (occupancy_append(found, bucket->data[item]) != 0) {
             return -1;
         }
     }
-    if (right - left == 1U) {
+    if (inside || right - left == 1U) {
         return 0;
     }
     const uint32_t middle = left + (right - left) / 2U;
