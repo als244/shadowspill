@@ -23,6 +23,10 @@ uint64_t shadowspill_planner_struct_size(uint32_t which) {
         return sizeof(ShadowSpillPressureFitReductionStep);
     case SHADOWSPILL_STRUCT_ADMISSION_FACTS:
         return sizeof(ShadowSpillAdmissionFacts);
+    case SHADOWSPILL_STRUCT_LAYOUT_REUSE_PROBLEM:
+        return sizeof(ShadowSpillLayoutReuseProblem);
+    case SHADOWSPILL_STRUCT_LAYOUT_REUSE_RESULT:
+        return sizeof(ShadowSpillLayoutReuseResult);
     case SHADOWSPILL_PRESSUREFIT_STRUCT_BEST_PLACED_RECORD:
         return sizeof(ShadowSpillPressureFitBestPlacedRecord);
     case SHADOWSPILL_PRESSUREFIT_STRUCT_RESULT:

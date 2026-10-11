@@ -316,6 +316,72 @@ typedef struct ShadowSpillPlacementResult {
     uint64_t *offsets;
 } ShadowSpillPlacementResult;
 
+/* Reuse dependencies of a fixed layout: which earlier lease each lease takes
+ * its address range from, and the completion that reuse waits for.
+ *
+ * `lifetimes`, `identities` and `offsets` hold `lifetime_count` entries,
+ * indexed alike: the fixed prefix a placement assigned, with the offsets it
+ * chose. `operations` and `schedule` are what the lifetimes were built from.
+ * Leases are taken in causal order, and every lease whose address range a
+ * later lease covers, wholly or in part, is that lease's predecessor. A
+ * predecessor must retire before its successor is acquired, in operation
+ * order, and its retirement must publish a completion dependency.
+ */
+typedef struct ShadowSpillLayoutReuseProblem {
+    uint32_t abi_version;
+    const ShadowSpillAdmissionOperations *operations;
+    const ShadowSpillIndexedSchedule *schedule;
+    const ShadowSpillLeaseLifetime *lifetimes;
+    const ShadowSpillLeaseIdentity *identities;
+    const uint64_t *offsets;
+    uint64_t lifetime_count;
+} ShadowSpillLayoutReuseProblem;
+
+/* Why a layout was refused, on a result whose call returned
+ * SHADOWSPILL_STATUS_INVALID_OPERATIONS. */
+enum ShadowSpillLayoutReuseRefusal {
+    SHADOWSPILL_LAYOUT_REUSE_REFUSAL_NONE = 0,
+    /* The predecessor is still live, in operation order, when the successor
+       is acquired. */
+    SHADOWSPILL_LAYOUT_REUSE_REFUSAL_OVERLAP = 1,
+    /* The predecessor's retirement publishes no completion dependency, or it
+       outlives the step. */
+    SHADOWSPILL_LAYOUT_REUSE_REFUSAL_NO_DEPENDENCY = 2,
+    /* The predecessor retires at the initial boundary, so no task completes
+       it. */
+    SHADOWSPILL_LAYOUT_REUSE_REFUSAL_PREDECESSOR_WITHOUT_TASK = 3,
+    /* The successor names neither a task nor an action to wait. */
+    SHADOWSPILL_LAYOUT_REUSE_REFUSAL_SUCCESSOR_WITHOUT_CONSUMER = 4,
+};
+
+/* Caller-owned, `capacity` entries each, indexed alike; `count` is written
+ * with the number of dependencies, ordered by successor lease, then the
+ * dependency waited for, then predecessor lease. When `count` exceeds
+ * `capacity` the arrays are not written and the call returns
+ * SHADOWSPILL_STATUS_INVALID_ARGUMENT, so a caller sizes them from `count`
+ * and calls again. A task or action that is not named is
+ * SHADOWSPILL_PLANNER_NO_INDEX; a successor always names at least one. */
+typedef struct ShadowSpillLayoutReuseResult {
+    uint64_t *dependency_ids;
+    uint64_t *predecessor_leases;
+    uint8_t *predecessor_purposes;  /* ShadowSpillAdmissionPurpose */
+    uint32_t *predecessor_tasks;
+    uint32_t *predecessor_actions;
+    uint64_t *successor_leases;
+    uint32_t *successor_tasks;
+    uint32_t *successor_actions;
+    uint64_t capacity;
+    uint64_t count;
+    uint32_t refusal;  /* ShadowSpillLayoutReuseRefusal */
+    uint64_t refusal_predecessor;
+    uint64_t refusal_successor;
+} ShadowSpillLayoutReuseResult;
+
+SHADOWSPILL_API ShadowSpillStatus shadowspill_recover_layout_reuse(
+    const ShadowSpillLayoutReuseProblem *problem,
+    ShadowSpillLayoutReuseResult *result
+);
+
 /*
  * The size of one planner structure, so a caller mirroring these layouts can
  * check its mirror rather than discover a mismatch as corrupted fields. Takes
@@ -328,6 +394,9 @@ SHADOWSPILL_API uint64_t shadowspill_planner_struct_size(uint32_t which);
  * one call answers for the generic planner and for the search. */
 enum ShadowSpillPlannerStruct {
     SHADOWSPILL_STRUCT_ADMISSION_FACTS = 0,
+    /* 1 to 7 are the search's. */
+    SHADOWSPILL_STRUCT_LAYOUT_REUSE_PROBLEM = 8,
+    SHADOWSPILL_STRUCT_LAYOUT_REUSE_RESULT = 9,
 };
 
 SHADOWSPILL_API ShadowSpillStatus shadowspill_place_lifetimes(

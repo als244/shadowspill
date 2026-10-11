@@ -121,6 +121,7 @@ answer. Input pointers are borrowed; output structs are the caller's.
 | `shadowspill_build_admission_operations` | the same first three, then `ShadowSpillAdmissionOperations *result`, whose arrays the caller has sized from those bounds |
 | `shadowspill_build_lease_lifetimes` | `const ShadowSpillLeaseLifetimeProblem *problem`, `ShadowSpillLeaseLifetimeResult *result` |
 | `shadowspill_place_lifetimes` | `const ShadowSpillPlacementProblem *problem`, `ShadowSpillPlacementResult *result` |
+| `shadowspill_recover_layout_reuse` | `const ShadowSpillLayoutReuseProblem *problem`, `ShadowSpillLayoutReuseResult *result` |
 | `shadowspill_planner_struct_size` | `uint32_t which`, a `ShadowSpillPlannerStruct`; returns `uint64_t` |
 
 - `shadowspill_evaluate_schedule_admission()` checks one selected schedule
@@ -158,6 +159,18 @@ answer. Input pointers are borrowed; output structs are the caller's.
   alone and not on the order they were listed in. The assignment and the
   structure behind it are specified in
   [fixed-offset placement](../architecture/fixed-placement.md).
+- `shadowspill_recover_layout_reuse()` recovers the reuse dependencies a
+  placed layout implies: for every lease, the earlier leases whose address
+  range it takes over, wholly or in part, and the completion each such reuse
+  must wait for. Leases are taken in causal order, a predecessor must have
+  retired before its successor is acquired, in operation order, and its
+  retirement must publish a completion dependency; a layout where either
+  fails is refused with `SHADOWSPILL_STATUS_INVALID_OPERATIONS` and the
+  result's `refusal` naming why and which pair. The dependencies are
+  reported as columns ordered by successor, dependency and predecessor; a
+  result too small for them is refused with the count the caller needs.
+  Why causal order is what makes a shared address safe is specified in
+  [fixed-offset placement](../architecture/fixed-placement.md).
 - `shadowspill_planner_struct_size()` reports the compiled size of one
   planner structure, named by `enum ShadowSpillPlannerStruct`, and zero for a
   value it does not know. The enum spans this header and whichever searches
@@ -184,5 +197,5 @@ lease that outlives the step, and an allocation step or alias holding no lease.
 All problem input arrays are borrowed, and a call writes only the caller's own
 result buffers. Calls with distinct inputs and results are independent; the API
 performs no I/O and does not own global mutable planning state.
-`shadowspill_place_lifetimes()` keeps its scratch state on the stack or in
-allocations it frees before returning.
+`shadowspill_place_lifetimes()` and `shadowspill_recover_layout_reuse()` keep
+their scratch state on the stack or in allocations they free before returning.

@@ -139,6 +139,40 @@ class CLeaseLifetimeResult(ctypes.Structure):
     ]
 
 
+class CLayoutReuseProblem(ctypes.Structure):
+    """A placed fixed prefix, with what its leases were built from."""
+
+    _fields_ = [
+        ("abi_version", ctypes.c_uint32),
+        ("operations", ctypes.POINTER(CAdmissionOperations)),
+        ("schedule", ctypes.POINTER(CIndexedSchedule)),
+        ("lifetimes", ctypes.POINTER(CLeaseLifetime)),
+        ("identities", ctypes.POINTER(CLeaseIdentity)),
+        ("offsets", ctypes.POINTER(ctypes.c_uint64)),
+        ("lifetime_count", ctypes.c_uint64),
+    ]
+
+
+class CLayoutReuseResult(ctypes.Structure):
+    """Caller-owned columns, `capacity` entries each; `count` written."""
+
+    _fields_ = [
+        ("dependency_ids", ctypes.POINTER(ctypes.c_uint64)),
+        ("predecessor_leases", ctypes.POINTER(ctypes.c_uint64)),
+        ("predecessor_purposes", ctypes.POINTER(ctypes.c_uint8)),
+        ("predecessor_tasks", ctypes.POINTER(ctypes.c_uint32)),
+        ("predecessor_actions", ctypes.POINTER(ctypes.c_uint32)),
+        ("successor_leases", ctypes.POINTER(ctypes.c_uint64)),
+        ("successor_tasks", ctypes.POINTER(ctypes.c_uint32)),
+        ("successor_actions", ctypes.POINTER(ctypes.c_uint32)),
+        ("capacity", ctypes.c_uint64),
+        ("count", ctypes.c_uint64),
+        ("refusal", ctypes.c_uint32),
+        ("refusal_predecessor", ctypes.c_uint64),
+        ("refusal_successor", ctypes.c_uint64),
+    ]
+
+
 class CPlacementProblem(ctypes.Structure):
     _fields_ = [
         ("abi_version", ctypes.c_uint32),
@@ -239,7 +273,15 @@ def planner_api() -> ctypes.CDLL:
     library = load_shadowspill_library()
     library.shadowspill_planner_struct_size.argtypes = [ctypes.c_uint32]
     library.shadowspill_planner_struct_size.restype = ctypes.c_uint64
-    check_struct_layout(library, ((0, "CAdmissionFacts", CAdmissionFacts),), "planner")
+    check_struct_layout(
+        library,
+        (
+            (0, "CAdmissionFacts", CAdmissionFacts),
+            (8, "CLayoutReuseProblem", CLayoutReuseProblem),
+            (9, "CLayoutReuseResult", CLayoutReuseResult),
+        ),
+        "planner",
+    )
     library.shadowspill_evaluate_schedule_admission.argtypes = [
         ctypes.POINTER(CProgram),
         ctypes.POINTER(CAdmissionFacts),
@@ -267,6 +309,11 @@ def planner_api() -> ctypes.CDLL:
         ctypes.POINTER(CPlacementResult),
     ]
     library.shadowspill_place_lifetimes.restype = ctypes.c_uint32
+    library.shadowspill_recover_layout_reuse.argtypes = [
+        ctypes.POINTER(CLayoutReuseProblem),
+        ctypes.POINTER(CLayoutReuseResult),
+    ]
+    library.shadowspill_recover_layout_reuse.restype = ctypes.c_uint32
     library.shadowspill_build_lease_lifetimes.argtypes = [
         ctypes.POINTER(CLeaseLifetimeProblem),
         ctypes.POINTER(CLeaseLifetimeResult),
