@@ -10,12 +10,9 @@ int shadowspill_residency_workspace_create(
         return -1;
     }
     *workspace_output = NULL;
-    uint64_t cells =
-        (uint64_t)problem->alias_count * problem->boundary_count;
     uint64_t pressure_cells =
         (uint64_t)problem->device_count * problem->boundary_count;
-    if (cells > SIZE_MAX / sizeof(int32_t) ||
-        pressure_cells > SIZE_MAX / sizeof(uint64_t)) {
+    if (pressure_cells > SIZE_MAX / sizeof(uint64_t)) {
         return -1;
     }
     ShadowSpillPressureFitResidencyWorkspace *workspace =
@@ -30,35 +27,22 @@ int shadowspill_residency_workspace_create(
     workspace->pressure = malloc(
         ((size_t)pressure_cells + problem->device_count) * sizeof(*workspace->pressure)
     );
-    workspace->before = malloc(
-        (size_t)problem->boundary_count * sizeof(*workspace->before)
-    );
-    workspace->after = malloc(
-        (size_t)problem->boundary_count * sizeof(*workspace->after)
-    );
     workspace->first_required = malloc(
         aliases * sizeof(*workspace->first_required)
     );
     workspace->run_offsets = malloc(
         (aliases + 1U) * sizeof(*workspace->run_offsets)
     );
-    workspace->touched_aliases = calloc(aliases, 1U);
-    workspace->touched_list = malloc(aliases * sizeof(*workspace->touched_list));
     workspace->base_pressure[0] = malloc(
         (size_t)pressure_cells * sizeof(*workspace->base_pressure[0])
     );
     workspace->base_pressure[1] = malloc(
         (size_t)pressure_cells * sizeof(*workspace->base_pressure[1])
     );
-    workspace->cut_cursors = malloc(
-        (size_t)pressure_cells * sizeof(*workspace->cut_cursors)
-    );
-    if (workspace->pressure == NULL || workspace->before == NULL ||
-        workspace->after == NULL ||
+    if (workspace->pressure == NULL ||
         workspace->first_required == NULL || workspace->run_offsets == NULL ||
-        workspace->touched_aliases == NULL || workspace->touched_list == NULL ||
         workspace->base_pressure[0] == NULL ||
-        workspace->base_pressure[1] == NULL || workspace->cut_cursors == NULL) {
+        workspace->base_pressure[1] == NULL) {
         shadowspill_residency_workspace_destroy(workspace);
         return -1;
     }
@@ -73,16 +57,12 @@ void shadowspill_residency_workspace_destroy(
         return;
     }
     free(workspace->pressure);
-    free(workspace->before);
-    free(workspace->after);
     free(workspace->first_required);
     free(workspace->run_offsets);
     free(workspace->run_bounds);
-    free(workspace->touched_aliases);
-    free(workspace->touched_list);
     free(workspace->base_pressure[0]);
     free(workspace->base_pressure[1]);
-    free(workspace->cut_cursors);
+    free(workspace->node_cursors);
     free(workspace->cut_active);
     free(workspace->excess_entries);
     shadowspill_residency_destroy_cut_index(&workspace->cut_index);
@@ -93,10 +73,7 @@ void shadowspill_residency_workspace_destroy(
  * reset; everything the reduction is about to decide does not. */
 void shadowspill_residency_reset_residency_result(ShadowSpillPressureFitResidencyResult *result) {
     const ShadowSpillPressureFitResidencyResult borrowed = {
-        .resident = result->resident,
-        .resident_capacity = result->resident_capacity,
-        .breaks = result->breaks,
-        .break_capacity = result->break_capacity,
+        .residency = result->residency,
         .cut_aliases = result->cut_aliases,
         .cut_capacity = result->cut_capacity,
     };
@@ -107,19 +84,41 @@ void shadowspill_residency_reset_residency_result(ShadowSpillPressureFitResidenc
 
 /* Start from the residency the caller seeded rather than from nothing: a
  * repair reduces again from the same base its candidate began with. */
-void shadowspill_residency_seed_residency(
-    const ShadowSpillPressureFitResidencyProblem *problem,
+int shadowspill_residency_seed_residency(
     const ShadowSpillPressureFitResidencyOptions *options,
     ShadowSpillPressureFitResidencyResult *result
 ) {
-    const uint64_t cells =
-        (uint64_t)problem->alias_count * problem->boundary_count;
-    if (cells == 0U) {
-        return;
+    return shadowspill_residency_copy(result->residency, options->seed);
+}
+
+int shadowspill_residency_valid_problem(
+    const ShadowSpillPressureFitResidencyProblem *problem,
+    const ShadowSpillPressureFitResidencyOptions *options,
+    const ShadowSpillPressureFitResidencyResult *result
+) {
+    if (problem == NULL || options == NULL || result == NULL ||
+        problem->abi_version != SHADOWSPILL_ABI_VERSION ||
+        problem->boundary_count == 0U || problem->device_count == 0U) {
+        return 0;
     }
-    const size_t packed = shadowspill_packed_cells(cells);
-    memcpy(result->resident, options->seed_resident, packed);
-    memcpy(result->breaks, options->seed_breaks, packed);
+    return problem->alias_size_bytes != NULL && problem->alias_device != NULL &&
+        problem->alias_retain_spill_copy != NULL && problem->initial_location != NULL &&
+        problem->final_location != NULL && problem->anchor_offsets != NULL &&
+        problem->anchor_positions != NULL && problem->anchor_tasks != NULL &&
+        problem->anchor_earliest != NULL && problem->anchor_flags != NULL &&
+        problem->reserved_offsets != NULL && problem->reserved_positions != NULL &&
+        problem->write_offsets != NULL && problem->write_boundaries != NULL &&
+        problem->first_input_task != NULL && problem->fetch_runtime_ns != NULL &&
+        problem->evict_runtime_ns != NULL && problem->task_ideal_end_ns != NULL &&
+        problem->device_capacity_bytes != NULL &&
+        problem->boundary_capacity_bytes != NULL &&
+        problem->device_priority != NULL && options->seed != NULL &&
+        options->seed->alias_count == problem->alias_count &&
+        options->seed->boundary_count == problem->boundary_count &&
+        options->extra_pressure_bytes != NULL &&
+        result->residency != NULL &&
+        result->residency->alias_count == problem->alias_count &&
+        result->residency->boundary_count == problem->boundary_count;
 }
 
 /* Every cut starts available again, and the per-cell cursors that remember

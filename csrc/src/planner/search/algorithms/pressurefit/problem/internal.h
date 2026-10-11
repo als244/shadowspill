@@ -27,25 +27,22 @@ typedef struct PreparedProblem {
 
     int8_t *initial_location;
     int8_t *final_location;
-    uint8_t *anchors;
-    uint8_t *productions;
-    uint32_t *latest_access_task;
+    /* Per alias, the boundaries the program touches it at: the anchors, the
+       output reservations and the writes. Everything the search knows about
+       an alias's boundaries is one of these lists. */
     ShadowSpillPressureFitResidencySparseLists sparse;
-    uint8_t *output_reservations;
-    uint8_t *write_prefix;
     uint32_t *first_input_task;
     uint64_t *fetch_runtime_ns;
     uint64_t *evict_runtime_ns;
     uint64_t *task_ideal_end_ns;
     uint64_t *device_capacity_bytes;
     uint64_t *boundary_capacity_bytes;
-    uint8_t *seed_resident;
-    uint8_t *seed_breaks;
+    /* The seed residency: each alias resident over the hull of its anchors,
+       one span. Built once here and read by every worker. */
+    ShadowSpillResidency seed;
 
-    uint32_t *first_access_task;
     uint8_t *produced;
     uint8_t *seen_input;
-    uint8_t *charged_anchors;
     uint64_t *required_bytes;
     /* Which aliases the reducer may cut; for the ones it may not, the
        trigger of their one fetch, the resident slice reserved for them
@@ -87,11 +84,6 @@ int shadowspill_problem_bind_residency(
     int8_t *destination
 );
 
-ShadowSpillStatus shadowspill_problem_build_sparse_lists(
-    const ShadowSpillSimulationProgram *program,
-    PreparedProblem *prepared
-);
-
 ShadowSpillStatus shadowspill_problem_derive_task_facts(
     const ShadowSpillSimulationProgram *program,
     PreparedProblem *prepared
@@ -118,7 +110,7 @@ ShadowSpillStatus shadowspill_problem_reserve_resident_slice(
     PreparedProblem *prepared
 );
 
-void shadowspill_problem_build_anchor_seed(
+int shadowspill_problem_build_anchor_seed(
     const ShadowSpillSimulationProgram *program,
     PreparedProblem *prepared
 );

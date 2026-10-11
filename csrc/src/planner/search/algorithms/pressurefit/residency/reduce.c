@@ -6,17 +6,12 @@ static int apply_cut_and_repressure(
     const ShadowSpillPressureFitResidencyOptions *options,
     ShadowSpillPressureFitResidencyResult *result,
     ShadowSpillPressureFitResidencyWorkspace *workspace,
-    const ResidencyCut *chosen
+    const ResidencyCut *chosen,
+    uint32_t chosen_id
 ) {
     const uint32_t alias = chosen->alias;
     const uint32_t count = problem->boundary_count;
-    const uint64_t row = (uint64_t)alias * count;
-    uint8_t *resident = result->resident;
-    uint8_t *breaks = result->breaks;
-    if (workspace->touched_aliases[alias] == 0U) {
-        workspace->touched_aliases[alias] = 1U;
-        workspace->touched_list[workspace->touched_count++] = alias;
-    }
+    ShadowSpillResidency *residency = result->residency;
     /* A cut changes one span. Its coverage can only move inside the cut
      * plus a boundary of charge on either side, and at the span's last two
      * boundaries, where the future-access rule can flip. Spans touching it
@@ -25,24 +20,25 @@ static int apply_cut_and_repressure(
         ? chosen->end + 1
         : chosen->start + 1);
     const uint32_t high = (uint32_t)(chosen->end + 1);
-    const int inside = shadowspill_cell_get(resident, row + low) != 0;
+    const int inside = shadowspill_residency_resident_at(residency, alias, low);
     uint32_t span_start = low;
     uint32_t span_end = high;
     int32_t before_start = 0;
     int32_t before_end = -1;
     if (inside) {
-        shadowspill_residency_span_around(resident, breaks, alias, count, low, &span_start, &span_end);
+        shadowspill_residency_span_around(residency, alias, low, &span_start, &span_end);
         shadowspill_residency_span_charge(problem, options, alias, span_start, span_end, &before_start, &before_end);
     }
     /* What this reduction gave up, when anyone asked to be told. */
     if (result->cut_aliases != NULL && result->cut_count < result->cut_capacity) {
         result->cut_aliases[result->cut_count++] = alias;
     }
-    shadowspill_residency_apply_cut(problem, resident, breaks, chosen);
+    if (shadowspill_residency_apply_cut(residency, chosen) != 0) {
+        return -1;
+    }
     shadowspill_residency_refresh_alias_candidates(
         problem,
-        resident,
-        breaks,
+        residency,
         workspace->first_required,
         workspace->run_offsets,
         workspace->run_bounds,
@@ -50,6 +46,11 @@ static int apply_cut_and_repressure(
         workspace->cut_active,
         alias
     );
+    /* Applying a cut always leaves it invalid -- its cells are gone, or the
+     * split it asked for is made -- and the refresh above has just found
+     * that. Said outright as well, so that no later change to what a cut
+     * means can turn a selection into a loop that applies it again. */
+    workspace->cut_active[chosen_id] = 0U;
     if (!inside) {
         return 0;
     }
@@ -60,7 +61,7 @@ static int apply_cut_and_repressure(
     while (cursor <= span_end && pieces < 4U) {
         uint32_t start = 0U;
         uint32_t end = 0U;
-        if (!shadowspill_residency_next_span(resident, breaks, alias, count, &cursor, &start, &end) ||
+        if (!shadowspill_residency_next_span(residency, alias, &cursor, &start, &end) ||
             start > span_end) {
             break;
         }
@@ -71,19 +72,19 @@ static int apply_cut_and_repressure(
     }
     /* The neighbours' charge at the two boundaries they can share. */
     int mask_left = 0;
-    if (span_start > 0U && shadowspill_cell_get(resident, row + span_start - 1U)) {
+    if (span_start > 0U && shadowspill_residency_resident_at(residency, alias, span_start - 1U)) {
         uint32_t neighbour_start = 0U;
         uint32_t neighbour_end = 0U;
-        shadowspill_residency_span_around(resident, breaks, alias, count, span_start - 1U, &neighbour_start, &neighbour_end);
+        shadowspill_residency_span_around(residency, alias, span_start - 1U, &neighbour_start, &neighbour_end);
         int32_t charge_start = 0;
         int32_t charge_end = -1;
         shadowspill_residency_span_charge(problem, options, alias, neighbour_start, neighbour_end, &charge_start, &charge_end);
         mask_left = charge_end == (int32_t)span_start - 1;
     }
     int mask_right = 0;
-    if (span_end + 1U < count && shadowspill_cell_get(resident, row + span_end + 1U)) {
+    if (span_end + 1U < count && shadowspill_residency_resident_at(residency, alias, span_end + 1U)) {
         mask_right = options->fetch_headroom != 0U &&
-            problem->productions[shadowspill_residency_cell(alias, count, span_end + 1U)] == 0U;
+            !shadowspill_produced_at(problem, alias, span_end + 1U);
     }
     /* Boundaries whose charge changed: those the span covered that no piece
      * covers (a decrement), and the rare boundary a piece covers that the
@@ -178,7 +179,7 @@ static int apply_cut_and_repressure(
         for (uint32_t index = 0U; index < gained; ++index)
         for (int32_t boundary = gained_start[index]; boundary <= gained_end[index]; ++boundary) {
             const int mask =
-                problem->output_reservations[shadowspill_residency_cell(alias, count, (uint32_t)boundary)] != 0U ||
+                shadowspill_reserved_at(problem, alias, (uint32_t)boundary) ||
                 (boundary == (int32_t)span_start - 1 && mask_left) ||
                 (boundary == (int32_t)span_end && mask_right);
             if (mask) {
@@ -248,12 +249,13 @@ ShadowSpillStatus shadowspill_pressurefit_reduce_residency_reusing(
         return SHADOWSPILL_STATUS_INVALID_ARGUMENT;
     }
     shadowspill_residency_reset_residency_result(result);
-    shadowspill_residency_seed_residency(problem, options, result);
+    if (shadowspill_residency_seed_residency(options, result) != 0) {
+        return SHADOWSPILL_STATUS_INTERNAL_FAILURE;
+    }
     if (shadowspill_residency_prepare_seed_geometry(problem, options, workspace) != 0 ||
         shadowspill_residency_prepare_base_pressure(problem, options, workspace) != 0) {
         return SHADOWSPILL_STATUS_PLANNER_INTERNAL_ERROR;
     }
-    workspace->touched_count = 0U;
     if (shadowspill_residency_reset_cut_candidates(workspace) != 0) {
         return SHADOWSPILL_STATUS_INTERNAL_FAILURE;
     }
@@ -270,25 +272,14 @@ ShadowSpillStatus shadowspill_pressurefit_reduce_residency_reusing(
             problem, options, workspace, &device, &boundary, &used_bytes
         );
         if (over_capacity < 0) {
-            shadowspill_residency_clear_touched(workspace);
             return SHADOWSPILL_STATUS_INTERNAL_FAILURE;
         }
         if (over_capacity == 0) {
-            for (uint32_t index = 0U; index < workspace->touched_count; ++index) {
-                const uint32_t touched = workspace->touched_list[index];
-                shadowspill_residency_canonicalize_row(
-                    result->breaks,
-                    result->resident,
-                    touched,
-                    problem->boundary_count
-                );
-                workspace->touched_aliases[touched] = 0U;
-            }
-            workspace->touched_count = 0U;
             result->status = SHADOWSPILL_STATUS_OK;
             return SHADOWSPILL_STATUS_OK;
         }
         ResidencyCut chosen;
+        uint32_t chosen_id = UINT32_MAX;
         if (!shadowspill_residency_select_cut(
                 problem,
                 device,
@@ -296,16 +287,15 @@ ShadowSpillStatus shadowspill_pressurefit_reduce_residency_reusing(
                 options->minimize_transfer != 0U,
                 &workspace->cut_index,
                 workspace->cut_active,
-                workspace->cut_cursors,
-                &chosen
+                workspace->node_cursors,
+                &chosen,
+                &chosen_id
             )) {
-            shadowspill_residency_clear_touched(workspace);
             return report_analytic_infeasible(
                 problem, result, device, boundary, used_bytes
             );
         }
-        if (apply_cut_and_repressure(problem, options, result, workspace, &chosen) != 0) {
-            shadowspill_residency_clear_touched(workspace);
+        if (apply_cut_and_repressure(problem, options, result, workspace, &chosen, chosen_id) != 0) {
             return SHADOWSPILL_STATUS_INTERNAL_FAILURE;
         }
     }

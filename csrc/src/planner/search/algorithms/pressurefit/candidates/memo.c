@@ -439,8 +439,7 @@ static ScheduleMemoEntry *append_schedule_memo(
 int shadowspill_candidate_emit_cached(
     const ShadowSpillScheduleFacts *facts,
     CandidateWorkspace *workspace,
-    const uint8_t *resident,
-    const uint8_t *breaks,
+    const ShadowSpillResidency *residency,
     uint8_t rule,
     uint8_t coalesced,
     uint8_t fetch_headroom
@@ -471,8 +470,7 @@ int shadowspill_candidate_emit_cached(
     }
     if (shadowspill_emit_indexed_schedule(
             facts,
-            resident,
-            breaks,
+            residency,
             rule,
             coalesced != 0U,
             fetch_headroom != 0U,

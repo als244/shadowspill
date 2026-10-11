@@ -60,17 +60,14 @@ int shadowspill_schedule_reserve_actions(
 void shadowspill_schedule_storage_clear(ShadowSpillScheduleStorage *storage);
 
 uint32_t shadowspill_schedule_collect_spans(
-    const uint8_t *resident,
-    const uint8_t *breaks,
+    const ShadowSpillResidency *residency,
     uint32_t alias,
-    uint32_t boundary_count,
     Span *spans
 );
 
 int shadowspill_schedule_build_pressure(
     const ShadowSpillScheduleFacts *facts,
-    const uint8_t *resident,
-    const uint8_t *breaks,
+    const ShadowSpillResidency *residency,
     int fetch_headroom,
     uint64_t *pressure
 );
@@ -125,8 +122,7 @@ void shadowspill_schedule_choose_packed_triggers(
 
 int shadowspill_schedule_clamp_triggers_to_fit(
     const ShadowSpillScheduleFacts *facts,
-    const uint8_t *resident,
-    const uint8_t *breaks,
+    const ShadowSpillResidency *residency,
     Reload *reloads,
     uint32_t reload_count,
     int fetch_headroom

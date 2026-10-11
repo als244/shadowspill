@@ -209,48 +209,18 @@ int shadowspill_candidate_candidate_workspace_create(
     CandidateWorkspace *workspace
 ) {
     memset(workspace, 0, sizeof(*workspace));
-    uint64_t cell_count = (uint64_t)problem->residency->alias_count *
-        problem->residency->boundary_count;
     uint64_t pressure_count = (uint64_t)problem->residency->device_count *
         problem->residency->boundary_count;
-    if (cell_count > SIZE_MAX || pressure_count > SIZE_MAX) {
+    if (pressure_count > SIZE_MAX) {
         return -1;
     }
-    size_t cells = (size_t)cell_count;
-    workspace->cell_count = cells;
-    workspace->packed_cell_count = shadowspill_packed_cells(cells);
-    const size_t packed = workspace->packed_cell_count == 0U
-        ? 1U
-        : workspace->packed_cell_count;
-    workspace->resident = calloc(packed, 1U);
-    workspace->breaks = calloc(packed, 1U);
-    workspace->base_resident = calloc(packed, 1U);
-    workspace->base_breaks = calloc(packed, 1U);
-    workspace->repair_resident = calloc(packed, 1U);
-    workspace->repair_breaks = calloc(packed, 1U);
-    workspace->packed_seed_resident = calloc(packed, 1U);
-    workspace->packed_seed_breaks = calloc(packed, 1U);
-    if (workspace->packed_seed_resident != NULL &&
-        workspace->packed_seed_breaks != NULL) {
-        for (uint64_t index = 0U; index < cells; ++index) {
-            shadowspill_cell_set(
-                workspace->packed_seed_resident,
-                index,
-                problem->seed_resident[index] != 0U
-            );
-            shadowspill_cell_set(
-                workspace->packed_seed_breaks,
-                index,
-                problem->seed_breaks[index] != 0U
-            );
-        }
-        shadowspill_canonicalize_breaks(
-            workspace->packed_seed_breaks,
-            workspace->packed_seed_resident,
-            problem->residency->alias_count,
-            problem->residency->boundary_count
-        );
+    const uint32_t aliases = problem->residency->alias_count;
+    const uint32_t boundaries = problem->residency->boundary_count;
+    if (shadowspill_residency_create(&workspace->resident, aliases, boundaries) != 0 ||
+        shadowspill_residency_create(&workspace->base_resident, aliases, boundaries) != 0) {
+        return -1;
     }
+    workspace->seed = problem->seed;
     workspace->cut_scratch_capacity = problem->residency->alias_count;
     workspace->cut_scratch = calloc(
         workspace->cut_scratch_capacity == 0U
@@ -258,24 +228,12 @@ int shadowspill_candidate_candidate_workspace_create(
             : (size_t)workspace->cut_scratch_capacity,
         sizeof(*workspace->cut_scratch)
     );
-    workspace->removable_aliases = calloc(
-        problem->residency->alias_count == 0U
-            ? 1U
-            : problem->residency->alias_count,
-        1U
-    );
     workspace->extra_pressure = calloc(
         pressure_count == 0U ? 1U : (size_t)pressure_count,
         sizeof(*workspace->extra_pressure)
     );
-    if (workspace->resident == NULL || workspace->breaks == NULL ||
-        workspace->base_resident == NULL || workspace->base_breaks == NULL ||
-        workspace->repair_resident == NULL ||
-        workspace->repair_breaks == NULL ||
-        workspace->packed_seed_resident == NULL ||
-        workspace->packed_seed_breaks == NULL ||
+    if (workspace->seed == NULL ||
         workspace->cut_scratch == NULL ||
-        workspace->removable_aliases == NULL ||
         workspace->extra_pressure == NULL ||
         shadowspill_schedule_storage_create(
             problem->residency->alias_count,
@@ -311,13 +269,8 @@ void shadowspill_candidate_candidate_workspace_destroy(CandidateWorkspace *works
     if (workspace == NULL) {
         return;
     }
-    free(workspace->resident);
-    free(workspace->breaks);
-    free(workspace->base_resident);
-    free(workspace->base_breaks);
-    free(workspace->repair_resident);
-    free(workspace->repair_breaks);
-    free(workspace->removable_aliases);
+    shadowspill_residency_destroy(&workspace->resident);
+    shadowspill_residency_destroy(&workspace->base_resident);
     free(workspace->extra_pressure);
     free(workspace->cut_scratch);
     free(workspace->fetch_constraints);
@@ -328,8 +281,6 @@ void shadowspill_candidate_candidate_workspace_destroy(CandidateWorkspace *works
     placement_workspace_destroy(&workspace->placement);
     shadowspill_candidate_admission_workspace_destroy(&workspace->admission);
     shadowspill_residency_workspace_destroy(workspace->residency_workspace);
-    free(workspace->packed_seed_resident);
-    free(workspace->packed_seed_breaks);
     for (uint32_t index = 0U; index < workspace->schedule_memo.count; ++index) {
         shadowspill_candidate_free_indexed_schedule(&workspace->schedule_memo.entries[index].schedule);
     }

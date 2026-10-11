@@ -140,8 +140,7 @@ static int worker_evaluate_task(SearchWorker *worker, uint32_t task) {
         workspace,
         &reduce_options,
         strategy,
-        workspace->base_resident,
-        workspace->base_breaks,
+        &workspace->base_resident,
         &base
     );
     shadowspill_candidate_section_close(reduce);
@@ -311,9 +310,6 @@ void shadowspill_candidate_program_search_destroy(
         if (problem->ready) {
             shadowspill_schedule_facts_destroy(&problem->facts);
             shadowspill_schedule_storage_destroy(&problem->selected);
-        }
-        if (problem->derived) {
-            shadowspill_residency_sparse_lists_destroy(&problem->lists);
         }
     }
     free(search->problems);

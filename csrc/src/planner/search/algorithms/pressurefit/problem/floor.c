@@ -6,6 +6,14 @@ ShadowSpillStatus shadowspill_problem_validate_required_floor(
     PreparedProblem *prepared
 ) {
     uint32_t boundary_count = program->task_count + 1U;
+    const ShadowSpillPressureFitResidencySparseLists *lists = &prepared->sparse;
+    const uint32_t anchor_total = lists->anchor_offsets[program->alias_count];
+    /* Which anchors the floor charged, so a reservation at a charged anchor's
+     * boundary is not charged again. */
+    uint8_t *charged = calloc(anchor_total == 0U ? 1U : anchor_total, 1U);
+    if (charged == NULL) {
+        return SHADOWSPILL_STATUS_INTERNAL_FAILURE;
+    }
     /* The aliases the reducer may not cut live in the resident slice, which
      * the capacity below already excludes, so they are not in the floor. */
     for (uint32_t alias = 0U; alias < program->alias_count; ++alias) {
@@ -14,22 +22,22 @@ ShadowSpillStatus shadowspill_problem_validate_required_floor(
         if (prepared->evict_eligible[alias] == 0U) {
             continue;
         }
-        for (uint32_t position = 0U; position < boundary_count; ++position) {
-            size_t cell = (size_t)alias * boundary_count + position;
-            if (prepared->anchors[cell] == 0U) {
-                continue;
-            }
+        for (uint32_t anchor = lists->anchor_offsets[alias];
+             anchor < lists->anchor_offsets[alias + 1U];
+             ++anchor) {
+            const uint32_t position = lists->anchor_positions[anchor];
+            const uint32_t latest = lists->anchor_tasks[anchor];
             int contributes = position == 0U ||
                 prepared->final_location[alias] == SHADOWSPILL_MEMORY_DEVICE ||
-                (prepared->latest_access_task[cell] != UINT32_MAX &&
-                 prepared->latest_access_task[cell] > position - 1U);
+                (latest != UINT32_MAX && latest > position - 1U);
             if (!contributes) {
                 continue;
             }
-            prepared->charged_anchors[cell] = 1U;
+            charged[anchor] = 1U;
             size_t pressure = (size_t)device * boundary_count + position;
             if (shadowspill_problem_add_u64(prepared->required_bytes[pressure], size,
                         &prepared->required_bytes[pressure]) != 0) {
+                free(charged);
                 return SHADOWSPILL_STATUS_INVALID_ARGUMENT;
             }
         }
@@ -39,10 +47,16 @@ ShadowSpillStatus shadowspill_problem_validate_required_floor(
         if (prepared->evict_eligible[alias] == 0U) {
             continue;
         }
-        for (uint32_t task = 0U; task < program->task_count; ++task) {
-            size_t cell = (size_t)alias * boundary_count + task;
-            if (prepared->output_reservations[cell] == 0U ||
-                prepared->charged_anchors[cell] != 0U) {
+        for (uint32_t reserved = lists->reserved_offsets[alias];
+             reserved < lists->reserved_offsets[alias + 1U];
+             ++reserved) {
+            const uint32_t task = lists->reserved_positions[reserved];
+            const uint32_t last = lists->anchor_offsets[alias + 1U];
+            const uint32_t anchor = shadowspill_anchor_lower_bound(
+                lists->anchor_positions, lists->anchor_offsets[alias], last, task
+            );
+            if (anchor < last && lists->anchor_positions[anchor] == task &&
+                charged[anchor] != 0U) {
                 continue;
             }
             size_t pressure = (size_t)device * boundary_count + task;
@@ -51,10 +65,12 @@ ShadowSpillStatus shadowspill_problem_validate_required_floor(
                     program->alias_size_bytes[alias],
                     &prepared->required_bytes[pressure]
                 ) != 0) {
+                free(charged);
                 return SHADOWSPILL_STATUS_INVALID_ARGUMENT;
             }
         }
     }
+    free(charged);
     for (uint32_t device = 0U; device < program->device_count; ++device) {
         for (uint32_t position = 0U; position < boundary_count; ++position) {
             uint64_t required = prepared->required_bytes[
@@ -103,7 +119,6 @@ ShadowSpillStatus shadowspill_problem_reserve_resident_slice(
     PreparedProblem *prepared
 ) {
     const ShadowSpillSimulationProgram *program = source->context.simulation;
-    const uint32_t boundary_count = program->task_count + 1U;
     const uint64_t threshold = options->minimum_object_bytes_evict_eligible;
     uint64_t alignment = 1U;
     if (source->context.placement != NULL && source->context.placement->minimum_alignment != 0U) {
@@ -129,14 +144,12 @@ ShadowSpillStatus shadowspill_problem_reserve_resident_slice(
         if (threshold == 0U || size == 0U || size >= threshold) {
             continue;
         }
-        const size_t row = (size_t)alias * boundary_count;
-        uint32_t first = 0U;
-        while (first < boundary_count && prepared->anchors[row + first] == 0U) {
-            ++first;
-        }
-        if (first == boundary_count) {
+        const ShadowSpillPressureFitResidencySparseLists *lists = &prepared->sparse;
+        const uint32_t anchor = lists->anchor_offsets[alias];
+        if (anchor == lists->anchor_offsets[alias + 1U]) {
             continue; /* never accessed, so never given a lease */
         }
+        const uint32_t first = lists->anchor_positions[anchor];
         if (program->alias_device[alias] >= program->device_count) {
             status = SHADOWSPILL_STATUS_INVALID_ARGUMENT;
             goto done;
@@ -149,7 +162,8 @@ ShadowSpillStatus shadowspill_problem_reserve_resident_slice(
             goto done;
         }
         if (prepared->initial_location[alias] != SHADOWSPILL_MEMORY_DEVICE &&
-            prepared->productions[row + first] == 0U && first > 0U) {
+            (lists->anchor_flags[anchor] & SHADOWSPILL_ANCHOR_PRODUCED) == 0U &&
+            first > 0U) {
             /* Consumed before it is produced, so fetched: as late as the
              * ideal timeline allows, which is where the emitter puts it. */
             const uint64_t ideal_start = prepared->task_ideal_end_ns[first - 1U];

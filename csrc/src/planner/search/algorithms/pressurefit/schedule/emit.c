@@ -125,8 +125,7 @@ static int plan_span_reload(
 ) {
     const ShadowSpillPressureFitResidencyProblem *problem = facts->problem->residency;
     const int32_t start_boundary = (int32_t)span.start - 1;
-    const int produced_at_entry =
-        problem->productions[shadowspill_schedule_cell(alias, facts->boundary_count, span.start)] != 0U;
+    const int produced_at_entry = shadowspill_produced_at(problem, alias, span.start);
     if (produced_at_entry ||
         (start_boundary == -1 &&
          problem->initial_location[alias] == SHADOWSPILL_MEMORY_DEVICE)) {
@@ -237,15 +236,14 @@ static int plan_span_departure(
  * or eviction landed. */
 static int collect_alias_transitions(
     const ShadowSpillScheduleFacts *facts,
-    const uint8_t *resident,
-    const uint8_t *breaks,
+    const ShadowSpillResidency *residency,
     uint32_t alias,
     int coalesced,
     Emission *emission
 ) {
     const ShadowSpillPressureFitResidencyProblem *problem = facts->problem->residency;
     const uint32_t span_count = shadowspill_schedule_collect_spans(
-        resident, breaks, alias, facts->boundary_count, emission->spans
+        residency, alias, emission->spans
     );
     if (span_count == 0U) {
         return 0;
@@ -292,8 +290,7 @@ static int collect_alias_transitions(
  * same windows and differs only here. */
 static int choose_triggers(
     const ShadowSpillScheduleFacts *facts,
-    const uint8_t *resident,
-    const uint8_t *breaks,
+    const ShadowSpillResidency *residency,
     uint8_t fetch_rule,
     int fetch_headroom,
     Emission *emission
@@ -315,8 +312,7 @@ static int choose_triggers(
     }
     return shadowspill_schedule_clamp_triggers_to_fit(
         facts,
-        resident,
-        breaks,
+        residency,
         emission->reloads,
         emission->reload_count,
         fetch_headroom
@@ -398,14 +394,13 @@ static void emit_boundary_residency(
 
 int shadowspill_emit_indexed_schedule(
     const ShadowSpillScheduleFacts *facts,
-    const uint8_t *resident,
-    const uint8_t *breaks,
+    const ShadowSpillResidency *residency,
     uint8_t fetch_rule,
     int coalesced,
     int fetch_headroom,
     ShadowSpillScheduleStorage *storage
 ) {
-    if (facts == NULL || resident == NULL || breaks == NULL || storage == NULL ||
+    if (facts == NULL || residency == NULL || storage == NULL ||
         fetch_rule > SHADOWSPILL_PRESSUREFIT_FETCH_DEMAND) {
         return -1;
     }
@@ -422,7 +417,7 @@ int shadowspill_emit_indexed_schedule(
             continue;
         }
         const int collected = collect_alias_transitions(
-            facts, resident, breaks, alias, coalesced, &emission
+            facts, residency, alias, coalesced, &emission
         );
         if (collected != 0) {
             emission_destroy(&emission);
@@ -431,7 +426,7 @@ int shadowspill_emit_indexed_schedule(
     }
 
     if (choose_triggers(
-            facts, resident, breaks, fetch_rule, fetch_headroom, &emission
+            facts, residency, fetch_rule, fetch_headroom, &emission
         ) != 0 ||
         build_actions(&emission) != 0 ||
         shadowspill_schedule_copy_actions(

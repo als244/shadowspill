@@ -61,8 +61,8 @@ static int problem_valid(
     const ShadowSpillPressureFitOptions *options
 ) {
     if (problem == NULL || options == NULL || problem->residency == NULL ||
-        problem->context.simulation == NULL || problem->seed_resident == NULL ||
-        problem->seed_breaks == NULL || problem->context.alias_json_names == NULL ||
+        problem->context.simulation == NULL || problem->seed == NULL ||
+        problem->context.alias_json_names == NULL ||
         problem->context.task_json_names == NULL ||
         problem->abi_version != SHADOWSPILL_ABI_VERSION ||
         problem->residency->abi_version != SHADOWSPILL_ABI_VERSION ||
@@ -171,10 +171,10 @@ void shadowspill_pressurefit_result_destroy(
  *                     and the only part that needs a lock.
  */
 /*
- * One SearchedProblem per resolved program: the sparse residency lists it
- * needs, the schedule facts it plans against, and the slot its candidates
- * write into. The caller owns the search, so a failure here leaves what this
- * reached for the caller to destroy.
+ * One SearchedProblem per resolved program: the schedule facts it plans
+ * against and the slot its candidates write into. The caller owns the
+ * search, so a failure here leaves what this reached for the caller to
+ * destroy.
  */
 static ShadowSpillStatus prepare_problems(
     ProgramSearch *search,
@@ -186,29 +186,6 @@ static ShadowSpillStatus prepare_problems(
     for (uint32_t index = 0U; index < problem_count; ++index) {
         SearchedProblem *problem = &search->problems[index];
         problem->problem = &problems[index];
-        if (problems[index].residency->anchor_offsets == NULL) {
-            const ShadowSpillPressureFitResidencyProblem *residency = problems[index].residency;
-            if (shadowspill_residency_sparse_lists_build(
-                    residency->anchors,
-                    residency->latest_access_task,
-                    residency->output_reservations,
-                    residency->alias_count,
-                    residency->boundary_count,
-                    &problem->lists
-                ) != 0) {
-                return SHADOWSPILL_STATUS_INTERNAL_FAILURE;
-            }
-            problem->derived = 1;
-            problem->owned_residency = *residency;
-            problem->owned_residency.anchor_offsets = problem->lists.anchor_offsets;
-            problem->owned_residency.anchor_positions = problem->lists.anchor_positions;
-            problem->owned_residency.anchor_tasks = problem->lists.anchor_tasks;
-            problem->owned_residency.reserved_offsets = problem->lists.reserved_offsets;
-            problem->owned_residency.reserved_positions = problem->lists.reserved_positions;
-            problem->owned_problem = problems[index];
-            problem->owned_problem.residency = &problem->owned_residency;
-            problem->problem = &problem->owned_problem;
-        }
         problem->result = &results[index];
         problem->first_task = search->total_tasks;
         problem->candidate_count = per_problem;

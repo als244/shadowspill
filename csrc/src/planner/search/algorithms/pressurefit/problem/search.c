@@ -26,10 +26,6 @@ static ShadowSpillStatus prepare_problem(
     if (status != SHADOWSPILL_STATUS_OK) {
         return status;
     }
-    status = shadowspill_problem_build_sparse_lists(program, prepared);
-    if (status != SHADOWSPILL_STATUS_OK) {
-        return status;
-    }
     if (source->context.admission != NULL) {
         if (program->device_count != 1U ||
             source->context.admission->object_capacity_bytes == 0U ||
@@ -66,18 +62,17 @@ static ShadowSpillStatus prepare_problem(
         .alias_retain_spill_copy = program->alias_retain_spill_copy,
         .initial_location = prepared->initial_location,
         .final_location = prepared->final_location,
-        .anchors = prepared->anchors,
-        .productions = prepared->productions,
-        .latest_access_task = prepared->latest_access_task,
         .anchor_offsets = prepared->sparse.anchor_offsets,
         .anchor_positions = prepared->sparse.anchor_positions,
         .anchor_tasks = prepared->sparse.anchor_tasks,
+        .anchor_earliest = prepared->sparse.anchor_earliest,
+        .anchor_flags = prepared->sparse.anchor_flags,
         .reserved_offsets = prepared->sparse.reserved_offsets,
         .reserved_positions = prepared->sparse.reserved_positions,
+        .write_offsets = prepared->sparse.write_offsets,
+        .write_boundaries = prepared->sparse.write_boundaries,
         .alias_evict_eligible = prepared->evict_eligible,
         .fixed_fetch_trigger = prepared->fixed_fetch_trigger,
-        .output_reservations = prepared->output_reservations,
-        .write_prefix = prepared->write_prefix,
         .first_input_task = prepared->first_input_task,
         .fetch_runtime_ns = prepared->fetch_runtime_ns,
         .evict_runtime_ns = prepared->evict_runtime_ns,
@@ -87,13 +82,14 @@ static ShadowSpillStatus prepare_problem(
         .device_priority = source->device_priority,
     };
 
-    shadowspill_problem_build_anchor_seed(program, prepared);
+    if (shadowspill_problem_build_anchor_seed(program, prepared) != 0) {
+        return SHADOWSPILL_STATUS_INTERNAL_FAILURE;
+    }
     prepared->problem = (ShadowSpillPressureFitProblem){
         .abi_version = SHADOWSPILL_ABI_VERSION,
         .context = source->context,
         .residency = &prepared->residency,
-        .seed_resident = prepared->seed_resident,
-        .seed_breaks = prepared->seed_breaks,
+        .seed = &prepared->seed,
         .incumbent = source->incumbent,
     };
     /* The same machine and names, over the resolved program this one plans. */

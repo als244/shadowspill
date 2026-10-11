@@ -27,8 +27,6 @@ static void search_begin(
     search->rule = rule;
     search->coalesced = coalesced;
     search->placing = problem->context.placement != NULL;
-    search->cells = (uint64_t)problem->residency->alias_count *
-        problem->residency->boundary_count;
     search->pressure_cells = (uint64_t)problem->residency->device_count *
         problem->residency->boundary_count;
     search->need_emit = 1;
@@ -48,8 +46,7 @@ static void search_begin(
     );
     workspace->plan_capacity_given_back = 0U;
     workspace->cut_scratch_count = 0U;
-    memcpy(workspace->resident, workspace->base_resident, workspace->packed_cell_count);
-    memcpy(workspace->breaks, workspace->base_breaks, workspace->packed_cell_count);
+    (void)shadowspill_residency_copy(&workspace->resident, &workspace->base_resident);
     workspace->fetch_constraint_count = 0U;
     workspace->current_residency = workspace->base_residency;
 }
@@ -219,15 +216,14 @@ static StageOutcome search_emit(CandidateSearch *search) {
     CandidateWorkspace *workspace = search->workspace;
     if (search->rule == SHADOWSPILL_PRESSUREFIT_FETCH_INTERVAL_ENTRY &&
         shadowspill_extend_interval_entries(
-            &search->facts, workspace->resident, workspace->breaks
+            &search->facts, &workspace->resident
         ) != 0) {
         return search_done(search, -1);
     }
     if (shadowspill_candidate_emit_cached(
             &search->facts,
             workspace,
-            workspace->resident,
-            workspace->breaks,
+            &workspace->resident,
             search->rule,
             search->coalesced,
             search->reduce_options.fetch_headroom
@@ -481,8 +477,9 @@ static StageOutcome search_refine_capacity(
     mark_search_step(search, SHADOWSPILL_STEP_REFINED, 0U);
     /* Plan again at the smaller capacity rather than pressing further on what
      * this capacity produced. */
-    memcpy(workspace->resident, workspace->base_resident, workspace->packed_cell_count);
-    memcpy(workspace->breaks, workspace->base_breaks, workspace->packed_cell_count);
+    if (shadowspill_residency_copy(&workspace->resident, &workspace->base_resident) != 0) {
+        return search_done(search, -1);
+    }
     workspace->fetch_constraint_count = 0U;
     if (shadowspill_candidate_reduce_repaired_candidate(
             search->problem,

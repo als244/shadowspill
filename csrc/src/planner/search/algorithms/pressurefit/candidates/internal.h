@@ -165,13 +165,9 @@ typedef struct CandidateWorkspace {
     /* Where the last repair pressure went, so an ask that cannot be met can
      * be taken back from the boundary it was made at. */
     uint64_t last_pressure_position;
-    uint8_t *resident;
-    uint8_t *breaks;
-    uint8_t *base_resident;
-    uint8_t *base_breaks;
-    uint8_t *repair_resident;
-    uint8_t *repair_breaks;
-    uint8_t *removable_aliases;
+    /* The residency being reduced, and the strategy's base it returns to. */
+    ShadowSpillResidency resident;
+    ShadowSpillResidency base_resident;
     uint64_t *extra_pressure;
     ShadowSpillScheduleStorage schedule;
     ShadowSpillScheduleStorage selected;
@@ -186,12 +182,9 @@ typedef struct CandidateWorkspace {
      * because a candidate places many plans and the sizes barely move. */
     PlacementWorkspace placement;
     ShadowSpillCandidateAdmissionWorkspace admission;
-    /* Cell geometry, and the problem's seed residency packed once per
-     * workspace so every reduction starts from packed bitmaps. */
-    size_t cell_count;
-    size_t packed_cell_count;
-    uint8_t *packed_seed_resident;
-    uint8_t *packed_seed_breaks;
+    /* The problem's seed residency, which every reduction starts from. The
+     * problem owns it; every worker reads it. */
+    const ShadowSpillResidency *seed;
     ScheduleMemo schedule_memo;
     SimulationMemo simulation_memo;
     ShadowSpillPressureFitResidencyWorkspace *residency_workspace;
@@ -261,7 +254,6 @@ typedef struct CandidateSearch {
      * candidate answers with its fastest plan, which is what a caller that
      * supplied no topology can be told. */
     int placing;
-    uint64_t cells;
     uint64_t pressure_cells;
 
     /* Moves as the search runs. */
@@ -303,13 +295,6 @@ typedef struct CandidateSearch {
 
 typedef struct SearchedProblem {
     const ShadowSpillPressureFitProblem *problem;
-    /* A caller may hand in a residency problem without its sparse anchor and
-     * reservation lists; the search then derives them once, here, and works
-     * from its own copy of the problem. */
-    ShadowSpillPressureFitProblem owned_problem;
-    ShadowSpillPressureFitResidencyProblem owned_residency;
-    ShadowSpillPressureFitResidencySparseLists lists;
-    int derived;
     ShadowSpillScheduleFacts facts;
     ShadowSpillPressureFitResult *result;
     /* Global index of this problem's first candidate. */
@@ -364,7 +349,7 @@ int shadowspill_candidate_fingerprint_equal(Fingerprint left, Fingerprint right)
 uint64_t shadowspill_candidate_hash_bytes(uint64_t hash, const void *data, size_t size);
 uint64_t shadowspill_candidate_hash_bytes_high(uint64_t hash, const void *data, size_t size);
 int shadowspill_candidate_simulate_cached( const ShadowSpillPressureFitProblem *problem, CandidateWorkspace *workspace, ShadowSpillSimulationResult *result, ShadowSpillStatus *admission_status, ShadowSpillAdmissionReplayResult *admission_result, ShadowSpillAdmissionAnnotation *admission_error_annotation, SimulationMemoEntry **selected_entry );
-int shadowspill_candidate_emit_cached( const ShadowSpillScheduleFacts *facts, CandidateWorkspace *workspace, const uint8_t *resident, const uint8_t *breaks, uint8_t rule, uint8_t coalesced, uint8_t fetch_headroom );
+int shadowspill_candidate_emit_cached( const ShadowSpillScheduleFacts *facts, CandidateWorkspace *workspace, const ShadowSpillResidency *residency, uint8_t rule, uint8_t coalesced, uint8_t fetch_headroom );
 void shadowspill_candidate_free_indexed_schedule(ShadowSpillIndexedSchedule *schedule);
 int shadowspill_candidate_simulation_workspace_reserve_transfers( SimulationWorkspace *workspace, uint32_t capacity );
 int shadowspill_candidate_placement_reserve( PlacementWorkspace *workspace, uint64_t operations, uint64_t leases, uint32_t aliases, uint32_t allocation_slots );
@@ -394,7 +379,7 @@ int shadowspill_candidate_move_for_layout(
     uint64_t shortfall_bytes
 );
 void shadowspill_candidate_residency_options( CandidateWorkspace *workspace, uint8_t strategy, ShadowSpillPressureFitResidencyOptions *options );
-ShadowSpillStatus shadowspill_candidate_reduce_residency( const ShadowSpillPressureFitProblem *problem, CandidateWorkspace *workspace, const ShadowSpillPressureFitResidencyOptions *options, uint8_t strategy, uint8_t *resident, uint8_t *breaks, ShadowSpillPressureFitResidencyResult *result );
+ShadowSpillStatus shadowspill_candidate_reduce_residency( const ShadowSpillPressureFitProblem *problem, CandidateWorkspace *workspace, const ShadowSpillPressureFitResidencyOptions *options, uint8_t strategy, ShadowSpillResidency *residency, ShadowSpillPressureFitResidencyResult *result );
 void shadowspill_candidate_copy_simulation_error( ShadowSpillPressureFitCandidateDiagnostic *diagnostic, const ShadowSpillSimulationResult *simulation );
 void shadowspill_candidate_copy_analytic_error( ShadowSpillPressureFitCandidateDiagnostic *diagnostic, const ShadowSpillPressureFitResidencyResult *residency );
 int shadowspill_candidate_add_repair_pressure( const ShadowSpillPressureFitProblem *problem, CandidateWorkspace *workspace, const ShadowSpillSimulationResult *failure, uint32_t escalation, uint64_t *asked_beyond_shortfall );

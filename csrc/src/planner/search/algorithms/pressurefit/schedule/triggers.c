@@ -6,13 +6,15 @@ uint32_t shadowspill_schedule_event_min_task(
     uint32_t alias,
     const Span *span
 ) {
+    const ShadowSpillPressureFitResidencyProblem *problem = facts->problem->residency;
+    const uint32_t last = problem->anchor_offsets[alias + 1U];
     uint32_t selected = UINT32_MAX;
-    for (uint32_t index = span->start; index <= span->end; ++index) {
-        uint32_t task = facts->earliest_access_task[shadowspill_schedule_cell(
-            alias,
-            facts->boundary_count,
-            index
-        )];
+    for (uint32_t index = shadowspill_anchor_lower_bound(
+             problem->anchor_positions, problem->anchor_offsets[alias], last, span->start
+         );
+         index < last && problem->anchor_positions[index] <= span->end;
+         ++index) {
+        const uint32_t task = problem->anchor_earliest[index];
         if (task != UINT32_MAX && (selected == UINT32_MAX || task < selected)) {
             selected = task;
         }
@@ -51,13 +53,17 @@ int shadowspill_schedule_has_write_since(
     if (first < 0) {
         first = 0;
     }
-    for (int32_t boundary = first; boundary <= through; ++boundary) {
-        uint32_t index = (uint32_t)(boundary + 1);
-        if (facts->write_events[shadowspill_schedule_cell(alias, facts->boundary_count, index)] != 0U) {
-            return 1;
-        }
+    if (through < first) {
+        return 0;
     }
-    return 0;
+    /* A write at boundary b + 1 follows the task at boundary b, so the
+     * question is whether any write boundary lies in [first + 1, through + 1]. */
+    const ShadowSpillPressureFitResidencyProblem *problem = facts->problem->residency;
+    const uint32_t last = problem->write_offsets[alias + 1U];
+    const uint32_t index = shadowspill_anchor_lower_bound(
+        problem->write_boundaries, problem->write_offsets[alias], last, (uint32_t)first + 1U
+    );
+    return index < last && problem->write_boundaries[index] <= (uint32_t)through + 1U;
 }
 
 static int reload_compare_descending(const void *left_value, const void *right_value) {

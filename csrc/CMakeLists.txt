@@ -50,7 +50,7 @@ add_library(
   src/planner/search/algorithms/pressurefit/residency/spans.c
   src/planner/search/algorithms/pressurefit/residency/cuts.c
   src/planner/search/algorithms/pressurefit/residency/index.c
-  src/planner/search/algorithms/pressurefit/residency/canonical.c
+  src/planner/search/algorithms/pressurefit/residency/lists.c
   src/planner/search/algorithms/pressurefit/residency/tree.c
   src/planner/search/algorithms/pressurefit/residency/heap.c
   src/planner/search/algorithms/pressurefit/residency/reduce.c

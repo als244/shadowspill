@@ -399,6 +399,21 @@ optional admission arrays. This is the only section that exists at the
 problem level and not the candidate level: a candidate never prepares
 anything, it inherits what preparation produced.
 
+What the program does to each alias -- the boundaries it is read, written,
+produced or declared resident at -- is kept as sorted lists per alias, never
+as an array over every alias and boundary. A step of tens of thousands of
+tasks touches each alias at a handful of boundaries, so the lists are the
+size of the program's accesses, where anything sized by alias and boundary
+together would be billions of cells. Every question the search asks about
+an alias at a boundary is a search of that alias's list. A residency -- the
+seed, a strategy's base, the plan being reduced -- is likewise one list of
+spans per alias, ascending and disjoint, where two spans that touch are what
+a break between them is; a cut trims or splits one span, and the list is the
+residency's one spelling, so there is nothing to canonicalize. The cuts that
+relieve a boundary are kept on a segment tree over the boundaries, each cut
+on the few nodes that cover its range in score order, rather than once per
+boundary it covers.
+
 The seed is the hull of each alias's access and declared residency anchors.
 Initial residency remains the caller's actual state. Spill inputs consumed by
 the first computational task need an earlier action boundary, provided by a

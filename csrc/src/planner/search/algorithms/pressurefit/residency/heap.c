@@ -157,18 +157,3 @@ int shadowspill_residency_pop_worst_boundary(
     }
     return 0;
 }
-
-/*
- * Give up one object, and carry the change through the pressure map.
- *
- * Cutting an alias changes what it contributes at every boundary, not just
- * the one that was over capacity: it stops occupying the boundaries it is no
- * longer resident at, and starts occupying any it newly spans. A cell that
- * rose may now be over capacity itself, so it joins the heap.
- */
-void shadowspill_residency_clear_touched(ShadowSpillPressureFitResidencyWorkspace *workspace) {
-    for (uint32_t index = 0U; index < workspace->touched_count; ++index) {
-        workspace->touched_aliases[workspace->touched_list[index]] = 0U;
-    }
-    workspace->touched_count = 0U;
-}

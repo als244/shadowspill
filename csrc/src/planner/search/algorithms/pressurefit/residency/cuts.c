@@ -28,12 +28,7 @@ CutScore shadowspill_residency_score_cut(
     int32_t entry = cut->end + 1;
     int writeback = problem->alias_retain_spill_copy[alias] == 0U;
     if (!writeback && departure >= -1) {
-        uint32_t index = (uint32_t)(departure + 1);
-        writeback = problem->write_prefix[shadowspill_residency_cell(
-            alias,
-            problem->boundary_count,
-            index
-        )] != 0U;
+        writeback = shadowspill_written_by(problem, alias, (uint32_t)(departure + 1));
     }
     uint64_t fetch_ns = problem->fetch_runtime_ns[alias];
     uint64_t evict_ns = writeback ? problem->evict_runtime_ns[alias] : 0U;
@@ -69,8 +64,7 @@ CutScore shadowspill_residency_score_cut(
 
 int shadowspill_residency_candidate_cut(
     const ShadowSpillPressureFitResidencyProblem *problem,
-    const uint8_t *resident,
-    const uint8_t *breaks,
+    const ShadowSpillResidency *residency,
     const uint32_t *first_required,
     const uint32_t *run_offsets,
     const int32_t *run_bounds,
@@ -79,13 +73,13 @@ int shadowspill_residency_candidate_cut(
     ResidencyCut *cut
 ) {
     uint32_t boundary_index = (uint32_t)(boundary + 1);
-    uint64_t position = shadowspill_residency_cell(alias, problem->boundary_count, boundary_index);
-    if (!shadowspill_cell_get(resident, position)) {
+    const uint32_t span = shadowspill_residency_span_index(residency, alias, boundary_index);
+    if (span == UINT32_MAX) {
         return 0;
     }
-    if (shadowspill_cell_get(resident, shadowspill_residency_cell(alias, problem->boundary_count, 0U)) &&
+    if (shadowspill_residency_resident_at(residency, alias, 0U) &&
         problem->initial_location[alias] == 1 &&
-        problem->anchors[shadowspill_residency_cell(alias, problem->boundary_count, 0U)] == 0U &&
+        shadowspill_anchor_at(problem, alias, 0U) == UINT32_MAX &&
         first_required[alias] != UINT32_MAX &&
         boundary_index < first_required[alias]) {
         *cut = (ResidencyCut){
@@ -98,7 +92,8 @@ int shadowspill_residency_candidate_cut(
 
     int32_t start = boundary;
     int32_t end = boundary;
-    if (problem->anchors[position] == 0U) {
+    const uint32_t anchor = shadowspill_anchor_at(problem, alias, boundary_index);
+    if (anchor == UINT32_MAX) {
         uint32_t low = run_offsets[alias];
         uint32_t high = run_offsets[alias + 1U];
         int inside = 0;
@@ -121,13 +116,11 @@ int shadowspill_residency_candidate_cut(
             return 0;
         }
     } else {
-        uint32_t latest = problem->latest_access_task[position];
-        int connected_after = boundary_index + 1U < problem->boundary_count &&
-            shadowspill_cell_get(
-                resident,
-                shadowspill_residency_cell(alias, problem->boundary_count, boundary_index + 1U)
-            ) &&
-            !shadowspill_cell_get(breaks, position);
+        uint32_t latest = problem->anchor_tasks[anchor];
+        /* Connected after: the next cell is resident and in this same span,
+         * which is what no break between them means. */
+        int connected_after =
+            residency->aliases[alias].bounds[2U * span + 1U] > boundary_index;
         int can_split = connected_after &&
             (latest == UINT32_MAX || (int32_t)latest <= boundary);
         if (!can_split) {
@@ -152,6 +145,14 @@ int shadowspill_residency_same_cut(const ResidencyCut *left, const ResidencyCut 
         left->end == right->end;
 }
 
+/* The best cut still available at one boundary.
+ *
+ * The cuts relieving the boundary sit on the nodes from its leaf to the
+ * root, each node's in score order behind a cursor that has passed the
+ * cuts gone inactive. The answer is the best of the nodes' first available
+ * cuts, ties to the lower cut id, which is the order one merged list would
+ * have had; the cursors move only past inactive cuts, so a cut is skipped
+ * at a node exactly when it would have been skipped in that list. */
 int shadowspill_residency_select_cut(
     const ShadowSpillPressureFitResidencyProblem *problem,
     uint32_t device,
@@ -159,32 +160,50 @@ int shadowspill_residency_select_cut(
     int minimize_transfer,
     const CutIndex *index,
     const uint8_t *active,
-    uint64_t *cursors,
-    ResidencyCut *selected
+    uint32_t *cursors,
+    ResidencyCut *selected,
+    uint32_t *selected_id
 ) {
-    uint32_t boundary_index = (uint32_t)(boundary + 1);
-    uint64_t position = (uint64_t)device * problem->boundary_count + boundary_index;
-    uint64_t begin = index->offsets[position];
-    uint64_t end = index->offsets[position + 1U];
+    const uint32_t boundary_index = (uint32_t)(boundary + 1);
     const uint32_t *refs = index->refs[minimize_transfer != 0];
-    uint64_t ref = begin + cursors[position];
-    for (; ref < end; ++ref) {
-        uint32_t cut_id = refs[ref];
-        if (active[cut_id] == 0U) {
+    const uint64_t device_base = (uint64_t)device * index->node_count;
+    uint32_t best = UINT32_MAX;
+    for (uint32_t node = index->leaf_base + boundary_index; node >= 1U; node >>= 1U) {
+        const uint64_t slot = device_base + node;
+        const uint64_t begin = index->node_offsets[slot];
+        const uint64_t end = index->node_offsets[slot + 1U];
+        uint64_t ref = begin + cursors[slot];
+        while (ref < end && active[refs[ref]] == 0U) {
+            ++ref;
+        }
+        cursors[slot] = (uint32_t)(ref - begin);
+        if (ref == end) {
             continue;
         }
-        cursors[position] = ref - begin + 1U;
-        *selected = index->cuts[cut_id].cut;
-        return 1;
+        const uint32_t cut_id = refs[ref];
+        if (best == UINT32_MAX) {
+            best = cut_id;
+            continue;
+        }
+        const int comparison = shadowspill_residency_compare_score(
+            &index->cuts[cut_id].score, &index->cuts[best].score, minimize_transfer
+        );
+        if (comparison < 0 || (comparison == 0 && cut_id < best)) {
+            best = cut_id;
+        }
     }
-    cursors[position] = end - begin;
-    return 0;
+    (void)problem;
+    if (best == UINT32_MAX) {
+        return 0;
+    }
+    *selected = index->cuts[best].cut;
+    *selected_id = best;
+    return 1;
 }
 
 void shadowspill_residency_refresh_alias_candidates(
     const ShadowSpillPressureFitResidencyProblem *problem,
-    const uint8_t *resident,
-    const uint8_t *breaks,
+    const ShadowSpillResidency *residency,
     const uint32_t *first_required,
     const uint32_t *run_offsets,
     const int32_t *run_bounds,
@@ -199,8 +218,7 @@ void shadowspill_residency_refresh_alias_candidates(
         ResidencyCut current;
         int valid = shadowspill_residency_candidate_cut(
             problem,
-            resident,
-            breaks,
+            residency,
             first_required,
             run_offsets,
             run_bounds,
@@ -212,19 +230,16 @@ void shadowspill_residency_refresh_alias_candidates(
     }
 }
 
-void shadowspill_residency_apply_cut(
-    const ShadowSpillPressureFitResidencyProblem *problem,
-    uint8_t *resident,
-    uint8_t *breaks,
+int shadowspill_residency_apply_cut(
+    ShadowSpillResidency *residency,
     const ResidencyCut *cut
 ) {
     if (cut->start > cut->end) {
-        uint32_t after = (uint32_t)(cut->end + 1);
-        shadowspill_cell_set(breaks, shadowspill_residency_cell(cut->alias, problem->boundary_count, after), 1);
-        return;
+        return shadowspill_residency_split_after(
+            residency, cut->alias, (uint32_t)(cut->end + 1)
+        );
     }
-    for (int32_t boundary = cut->start; boundary <= cut->end; ++boundary) {
-        uint32_t index = (uint32_t)(boundary + 1);
-        shadowspill_cell_set(resident, shadowspill_residency_cell(cut->alias, problem->boundary_count, index), 0);
-    }
+    return shadowspill_residency_clear_cells(
+        residency, cut->alias, (uint32_t)(cut->start + 1), (uint32_t)(cut->end + 1)
+    );
 }

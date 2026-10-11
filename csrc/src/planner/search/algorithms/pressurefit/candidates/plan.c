@@ -287,8 +287,7 @@ void shadowspill_candidate_residency_options(
                 strategy == SHADOWSPILL_PRESSUREFIT_RESIDENCY_HEADROOM_TRANSFER
             ? 1U
             : 0U,
-        .seed_resident = workspace->packed_seed_resident,
-        .seed_breaks = workspace->packed_seed_breaks,
+        .seed = workspace->seed,
         .extra_pressure_bytes = workspace->extra_pressure,
     };
 }
@@ -297,17 +296,11 @@ static ShadowSpillStatus reduce(
     const ShadowSpillPressureFitProblem *problem,
     CandidateWorkspace *workspace,
     const ShadowSpillPressureFitResidencyOptions *options,
-    uint8_t *resident,
-    uint8_t *breaks,
+    ShadowSpillResidency *residency,
     ShadowSpillPressureFitResidencyResult *result
 ) {
-    uint64_t cells = (uint64_t)problem->residency->alias_count *
-        problem->residency->boundary_count;
     *result = (ShadowSpillPressureFitResidencyResult){
-        .resident = resident,
-        .resident_capacity = cells,
-        .breaks = breaks,
-        .break_capacity = cells,
+        .residency = residency,
         /* Records what this reduction gives up, when anyone is recording.
          * Several reductions can run before the record is drained, so each
          * appends after the last rather than from the start. A full scratch
@@ -333,15 +326,14 @@ static ShadowSpillStatus reduce(
  * Reductions are not cached. A repair trajectory cuts aliases monotonically,
  * so it never revisits a residency, and the only reuse a cache ever found
  * was a strategy's base residency across its rule variants -- half a percent
- * of reductions when measured, against two packed bitmaps retained per
- * visited residency. The fingerprint is what other stages key on. */
+ * of reductions when measured, against a residency retained per visited
+ * residency. The fingerprint is what other stages key on. */
 ShadowSpillStatus shadowspill_candidate_reduce_residency(
     const ShadowSpillPressureFitProblem *problem,
     CandidateWorkspace *workspace,
     const ShadowSpillPressureFitResidencyOptions *options,
     uint8_t strategy,
-    uint8_t *resident,
-    uint8_t *breaks,
+    ShadowSpillResidency *residency,
     ShadowSpillPressureFitResidencyResult *result
 ) {
     (void)strategy;
@@ -350,28 +342,15 @@ ShadowSpillStatus shadowspill_candidate_reduce_residency(
         problem,
         workspace,
         options,
-        resident,
-        breaks,
+        residency,
         &computed
     );
     workspace->current_residency = (Fingerprint){
-        .low = shadowspill_candidate_hash_bytes(
-            shadowspill_candidate_hash_bytes(
-                UINT64_C(1469598103934665603),
-                resident,
-                workspace->packed_cell_count
-            ),
-            breaks,
-            workspace->packed_cell_count
+        .low = shadowspill_residency_hash(
+            residency, UINT64_C(1469598103934665603), UINT64_C(1099511628211)
         ),
-        .high = shadowspill_candidate_hash_bytes_high(
-            shadowspill_candidate_hash_bytes_high(
-                UINT64_C(1099511628211),
-                resident,
-                workspace->packed_cell_count
-            ),
-            breaks,
-            workspace->packed_cell_count
+        .high = shadowspill_residency_hash(
+            residency, UINT64_C(1099511628211), UINT64_C(0x9E3779B97F4A7C15)
         ),
     };
     *result = (ShadowSpillPressureFitResidencyResult){
@@ -380,10 +359,7 @@ ShadowSpillStatus shadowspill_candidate_reduce_residency(
         .error_boundary = computed.error_boundary,
         .required_bytes = computed.required_bytes,
         .capacity_bytes = computed.capacity_bytes,
-        .resident = resident,
-        .resident_capacity = workspace->cell_count,
-        .breaks = breaks,
-        .break_capacity = workspace->cell_count,
+        .residency = residency,
     };
     return status;
 }

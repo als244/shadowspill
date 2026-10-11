@@ -87,8 +87,8 @@ void shadowspill_residency_reset_working_pressure(
     const uint32_t variant = options->fetch_headroom != 0U ? 1U : 0U;
     pressure_build(workspace, workspace->base_pressure[variant], problem->device_count);
     memset(
-        workspace->cut_cursors,
+        workspace->node_cursors,
         0,
-        (size_t)pressure_cells * sizeof(*workspace->cut_cursors)
+        (size_t)workspace->node_cursor_count * sizeof(*workspace->node_cursors)
     );
 }

@@ -260,11 +260,9 @@ int shadowspill_candidate_add_admission_repair_pressure(
     if (shadowspill_residency_pressure_at(
             problem->residency,
             options,
-            workspace->resident,
-            workspace->breaks,
+            &workspace->resident,
             0U,
             pressure_index,
-            workspace->residency_workspace,
             &resident_pressure
         ) != 0) {
         return -1;
@@ -350,8 +348,7 @@ int shadowspill_candidate_reduce_repaired_candidate(
         workspace,
         options,
         strategy,
-        workspace->resident,
-        workspace->breaks,
+        &workspace->resident,
         &residency
     );
     if (status == SHADOWSPILL_STATUS_ANALYTIC_INFEASIBLE) {

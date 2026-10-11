@@ -15,8 +15,8 @@ typedef struct ShadowSpillPressureFitProblem {
     /* What any code judging this problem's schedules needs. */
     ShadowSpillScheduleContext context;
     const ShadowSpillPressureFitResidencyProblem *residency;
-    const uint8_t *seed_resident;
-    const uint8_t *seed_breaks;
+    /* The seed residency, shared read-only by every worker. */
+    const ShadowSpillResidency *seed;
     /* The plan to beat: a plan for this resolved program already in hand --
        found at a smaller capacity, say -- or NULL. The search measures it at
        this capacity before any candidate runs and answers with it unless a
@@ -57,14 +57,6 @@ typedef struct ShadowSpillScheduleFacts {
     uint32_t task_count;
     uint32_t boundary_count;
     uint32_t device_count;
-    uint32_t *earliest_access_task;
-    uint8_t *write_events;
-    /* The same write events, indexed for the passes that ask when an object
-     * was written last rather than whether it was written here: the
-     * boundaries alias `a` is written at are
-     * `write_boundaries[write_offsets[a] .. write_offsets[a + 1])`, ascending. */
-    uint32_t *write_offsets;
-    uint32_t *write_boundaries;
 } ShadowSpillScheduleFacts;
 
 /*
@@ -123,14 +115,12 @@ int shadowspill_best_placed_offer(
 
 int shadowspill_extend_interval_entries(
     const ShadowSpillScheduleFacts *facts,
-    uint8_t *resident,
-    uint8_t *breaks
+    ShadowSpillResidency *residency
 );
 
 int shadowspill_emit_indexed_schedule(
     const ShadowSpillScheduleFacts *facts,
-    const uint8_t *resident,
-    const uint8_t *breaks,
+    const ShadowSpillResidency *residency,
     uint8_t fetch_rule,
     int coalesced,
     int fetch_headroom,

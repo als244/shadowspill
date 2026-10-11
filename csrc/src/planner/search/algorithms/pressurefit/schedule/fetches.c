@@ -46,14 +46,17 @@ uint32_t shadowspill_schedule_next_input_consumer(
     uint32_t alias,
     uint32_t trigger
 ) {
-    const ShadowSpillSimulationProgram *program = facts->problem->context.simulation;
-    for (uint32_t task = trigger + 1U; task < facts->task_count; ++task) {
-        for (uint32_t offset = program->input_offsets[task];
-             offset < program->input_offsets[task + 1U];
-             ++offset) {
-            if (program->input_aliases[offset] == alias) {
-                return task;
-            }
+    /* A task reads the alias at its own boundary, so the next reader is the
+     * first anchor past the trigger that an input marks. */
+    const ShadowSpillPressureFitResidencyProblem *problem = facts->problem->residency;
+    const uint32_t last = problem->anchor_offsets[alias + 1U];
+    for (uint32_t index = shadowspill_anchor_lower_bound(
+             problem->anchor_positions, problem->anchor_offsets[alias], last, trigger + 1U
+         );
+         index < last;
+         ++index) {
+        if ((problem->anchor_flags[index] & SHADOWSPILL_ANCHOR_INPUT) != 0U) {
+            return problem->anchor_positions[index];
         }
     }
     return UINT32_MAX;
@@ -255,12 +258,19 @@ int shadowspill_advance_indexed_fetch_to_release(
             break;
         }
     }
+    /* The last task before the trigger that wrote the alias: the write at
+     * boundary b + 1 is that task's, so it is the last write boundary at or
+     * before the trigger, less one. */
     uint32_t latest_write = UINT32_MAX;
-    for (uint32_t task = 0U; task < current_trigger; ++task) {
-        if (facts->write_events[shadowspill_schedule_cell(
-                alias, facts->boundary_count, task + 1U
-            )] != 0U) {
-            latest_write = task;
+    {
+        const ShadowSpillPressureFitResidencyProblem *problem = facts->problem->residency;
+        const uint32_t begin = problem->write_offsets[alias];
+        const uint32_t index = shadowspill_anchor_lower_bound(
+            problem->write_boundaries, begin, problem->write_offsets[alias + 1U],
+            current_trigger + 1U
+        );
+        if (index > begin) {
+            latest_write = problem->write_boundaries[index - 1U] - 1U;
         }
     }
     int authoritative_spill_copy = initial_spill_copy;

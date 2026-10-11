@@ -1,30 +1,30 @@
 /* Seed residency from declared state and task access anchors. */
 #include "internal.h"
 
-void shadowspill_problem_build_anchor_seed(
+/* The seed is the hull of each alias's anchors: one span per accessed
+ * alias, from its first anchor to its last. */
+int shadowspill_problem_build_anchor_seed(
     const ShadowSpillSimulationProgram *program,
     PreparedProblem *prepared
 ) {
-    uint32_t boundary_count = program->task_count + 1U;
+    if (shadowspill_residency_create(
+            &prepared->seed, program->alias_count, program->task_count + 1U
+        ) != 0) {
+        return -1;
+    }
+    const ShadowSpillPressureFitResidencySparseLists *lists = &prepared->sparse;
     for (uint32_t alias = 0U; alias < program->alias_count; ++alias) {
-        uint32_t first = UINT32_MAX;
-        uint32_t last = 0U;
-        for (uint32_t position = 0U; position < boundary_count; ++position) {
-            if (prepared->anchors[(size_t)alias * boundary_count + position] == 0U) {
-                continue;
-            }
-            if (first == UINT32_MAX) {
-                first = position;
-            }
-            last = position;
-        }
-        if (first == UINT32_MAX) {
-            continue;
-        }
-        for (uint32_t position = first; position <= last; ++position) {
-            prepared->seed_resident[
-                (size_t)alias * boundary_count + position
-            ] = 1U;
+        const uint32_t begin = lists->anchor_offsets[alias];
+        const uint32_t end = lists->anchor_offsets[alias + 1U];
+        if (begin != end &&
+            shadowspill_residency_append_span(
+                &prepared->seed,
+                alias,
+                lists->anchor_positions[begin],
+                lists->anchor_positions[end - 1U]
+            ) != 0) {
+            return -1;
         }
     }
+    return 0;
 }
