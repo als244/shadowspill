@@ -86,6 +86,19 @@ class TaskProfileCatalog:
         layout_cache: CompiledLayoutIndex | None = None,
     ) -> None:
         self._measurements = measurements
+        # Several occurrences can share a graph contract while carrying
+        # different representative inputs. Union their observed CPU outputs
+        # once, rather than scanning every measurement for every occurrence.
+        off_device: dict[str, set[int]] = {}
+        for key, measurement in measurements.items():
+            if measurement.off_device_output_leaves:
+                digest = key[0] if isinstance(key, tuple) else key
+                off_device.setdefault(digest, set()).update(
+                    measurement.off_device_output_leaves
+                )
+        self._off_device_by_digest = {
+            digest: frozenset(leaves) for digest, leaves in off_device.items()
+        }
         self._storage_contracts = storage_contracts
         self._root_allocations = root_allocations
         self._compatibility_digests = compatibility_digests
@@ -131,12 +144,8 @@ class TaskProfileCatalog:
         return declared.without_device_storage(self._off_device_output_leaves(artifact))
 
     def _off_device_output_leaves(self, artifact: GraphArtifact) -> frozenset[int]:
-        return frozenset(
-            leaf_index
-            for key, measurement in self._measurements.items()
-            for leaf_index in measurement.off_device_output_leaves
-            if (key[0] if isinstance(key, tuple) else key)
-            == artifact.compatibility_digest
+        return self._off_device_by_digest.get(
+            artifact.compatibility_digest, frozenset()
         )
 
     def measurement(

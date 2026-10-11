@@ -63,6 +63,7 @@ def derive_forward_residency(
     final_spill -= final_device
     final_spill -= shared_aliases
     final_device -= shared_aliases
+    final_aliases = final_spill | final_device
     return (
         tuple(
             ResidencySpec(group.alias_group_id, MemoryLocation.SPILL)
@@ -77,7 +78,7 @@ def derive_forward_residency(
                 else MemoryLocation.SPILL,
             )
             for group in aliases
-            if group.alias_group_id in final_spill | final_device
+            if group.alias_group_id in final_aliases
         ),
     )
 

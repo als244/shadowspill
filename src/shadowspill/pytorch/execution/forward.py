@@ -330,8 +330,7 @@ class _ExecutingStage(nn.Module):
         # the object. The compiled replacement tensor is only the temporary
         # source lease; dematerializing it would leave the stable view naming
         # a retired address on the next invocation.
-        available = dict(bindings)
-        available.update(self._state.object_store)
+        output_bindings = dict(bindings)
         dematerialized: list[tuple[str, torch.Tensor]] = []
         adopted_aliases = {item.alias_id for item in adopted}
         handoff_sources = {
@@ -348,7 +347,9 @@ class _ExecutingStage(nn.Module):
             alias_id = action.alias_group_id
             if alias_id in handoff_sources:
                 continue
-            tensor = available.get(alias_id)
+            tensor = self._state.object_store.get(alias_id)
+            if tensor is None:
+                tensor = output_bindings.get(alias_id)
             if tensor is None or (
                 alias_id not in self._state.object_store
                 and alias_id not in adopted_aliases

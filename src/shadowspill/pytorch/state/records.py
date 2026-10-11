@@ -62,8 +62,17 @@ class PersistentState:
     owning_plan: int | None = None
     holders: set[int] = field(default_factory=set)
 
+    _storage_index: dict[int, PersistentStorage] = field(
+        init=False, repr=False, compare=False
+    )
+
+    def __post_init__(self) -> None:
+        # Owners/anchors are finalized before PersistentState is registered.
+        # Plan adoption rebinds the public views, never these storage anchors.
+        self._storage_index = {item.storage_identity: item for item in self.storages}
+
     def by_storage_identity(self) -> dict[int, PersistentStorage]:
-        return {item.storage_identity: item for item in self.storages}
+        return self._storage_index
 
 
 __all__ = ["PersistentState", "PersistentStorage", "TensorView"]

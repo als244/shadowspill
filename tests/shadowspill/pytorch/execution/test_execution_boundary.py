@@ -3,18 +3,22 @@
 from __future__ import annotations
 
 import weakref
+from collections.abc import Iterator, Mapping
 from types import SimpleNamespace
 from typing import Any, cast
 from unittest.mock import patch
 
 import pytest
+import torch
 
 import shadowspill.pytorch.execution.annotations as annotations_module
 import shadowspill.pytorch.execution.timing as timing_module
 import shadowspill.pytorch.execution.training.boundary as boundary_module
 import shadowspill.pytorch.execution.training.publication as publication_module
 from shadowspill.diagnostics.timing import InvocationTimelines
+from shadowspill.ir import MemoryActionKind
 from shadowspill.pytorch.execution.annotations import TaskBoundaryAnnotations
+from shadowspill.pytorch.execution.forward import _ExecutingStage
 from shadowspill.pytorch.execution.timing import ExecutionTiming
 from shadowspill.pytorch.execution.training import TrainingExecutor
 from shadowspill.pytorch.execution.training.boundary import execute_task
@@ -329,3 +333,55 @@ def test_trace_preparation_is_reusable_and_recovers_from_failure(
     assert len(attempts) == 2
     timing.release()
     assert len(library.released) == 14
+
+
+def test_forward_release_uses_stable_views_without_scanning_other_bindings() -> None:
+    """Replacement publication retires the stable view, not the temporary output."""
+
+    stable = torch.zeros(2)
+    replacement, created = torch.ones(2), torch.full((2,), 2.0)
+
+    class Bindings(Mapping[str, torch.Tensor]):
+        def __getitem__(self, key: str) -> torch.Tensor:
+            if key == "replaced":
+                return stable
+            raise KeyError(key)
+
+        def __iter__(self) -> Iterator[str]:
+            raise AssertionError("a task must not scan unrelated model bindings")
+
+        def __len__(self) -> int:
+            return 1
+
+    stage = SimpleNamespace(
+        _entrypoint=SimpleNamespace(
+            output_slots=(
+                SimpleNamespace(object_id="replaced", leaf_index=0),
+                SimpleNamespace(object_id="created", leaf_index=1),
+            ),
+            replacement_output_leaves=(0,),
+            storage_handoffs=(),
+        ),
+        _bridge=SimpleNamespace(
+            objects=SimpleNamespace(
+                alias_for_object=lambda object_id: object_id,
+                requires_storage=lambda alias_id: True,
+            )
+        ),
+        _input_aliases=("replaced",),
+        _publication_ordinals={"replaced": 0, "created": 1},
+        _state=SimpleNamespace(
+            object_store=Bindings(),
+            replacement_storage_views=lambda alias_id: alias_id,
+        ),
+        _actions=(
+            SimpleNamespace(kind=MemoryActionKind.RELEASE, alias_group_id="replaced"),
+            SimpleNamespace(kind=MemoryActionKind.EVICT, alias_group_id="created"),
+        ),
+    )
+    result = _ExecutingStage._process_outputs(cast(Any, stage), (replacement, created))
+    assert result.dematerialized[0][1] is stable
+    assert result.dematerialized[1][1] is created
+    assert result.adopted[0].tensor is replacement
+    assert result.adopted[1].tensor is created
+    assert result.replacements == ("replaced",)

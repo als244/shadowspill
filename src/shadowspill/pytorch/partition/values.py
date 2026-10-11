@@ -1,7 +1,7 @@
 """Authentic control-value propagation across partition boundaries.
 
 Integer and boolean task inputs can select kernels, allocation paths, and
-provider caches.  They therefore cannot use geometry-only synthetic values.
+kernel caches. They therefore cannot use geometry-only synthetic values.
 This module evaluates the producer dependency slices needed to construct such
 a value from caller-supplied roots, and nothing else: a stage the value does
 not depend on is never executed to manufacture a profiling input.
@@ -9,12 +9,11 @@ not depend on is never executed to manufacture a profiling input.
 What a value depends on is not always another control value.  A model that
 selects which tokens to attend to computes that selection from the
 activations of the layer that produces it, so the slice that computes an
-integer needs a float the stage before it produced.  Those are resolved the
-same way and by the same code, recursively, back to the caller's roots; a
-value needed twice is evaluated once.  The cost is that the slices leading to
-an integer run at plan time and their results are held on the host until the
-derivation finishes, which is the price of the alternative being a partition
-that puts every consumer of the value in one task with its producer.
+integer needs a float the stage before it produced. Discover those dependencies
+backwards, then evaluate them in stage order. Only the current slice's inputs
+are restored to their captured devices. Host snapshots are released at last use,
+except for the control values returned to profiling. This also supports long
+stage chains without depending on Python's recursion limit.
 
 **Each slice input uses its captured device.** A root may be a pool-backed
 tensor and an earlier stage's value may be a CPU snapshot. Restore each to
@@ -35,6 +34,7 @@ worked while slices were short enough not to reach such an operator.
 from __future__ import annotations
 
 from collections.abc import Mapping
+from dataclasses import dataclass
 
 import torch
 from torch._subclasses.fake_tensor import unset_fake_temporarily
@@ -73,69 +73,78 @@ def derive_authentic_control_values(
             "partitioned integer/boolean inputs require authentic "
             "producer-derived values or explicit caller-supplied stage values"
         )
-    for stage_index in sorted({stage for stage, _output in required}):
-        output_indices = tuple(
-            output
-            for stage, output in sorted(required)
-            if stage == stage_index and (stage, output) not in resolved
+    slices, last_use = _plan_control_slices(split, required - resolved.keys(), resolved)
+    release: dict[int, list[StageOutputKey]] = {}
+    for key, index in last_use.items():
+        if key not in required:
+            release.setdefault(index, []).append(key)
+    for stage_index in sorted(slices):
+        resolved.update(
+            _evaluate_control_slice(
+                split.stages[stage_index],
+                stage_index=stage_index,
+                selected=slices[stage_index],
+                required=required,
+                representative_root_inputs=representative_root_inputs,
+                resolved=resolved,
+            )
         )
-        if not output_indices:
-            continue
-        _evaluate_into(
-            split,
-            stage_index,
-            output_indices,
-            representative_root_inputs=representative_root_inputs,
-            resolved=resolved,
-            pending=(),
-            integral=True,
-        )
+        for key in release.get(stage_index, ()):
+            del resolved[key]
     missing = sorted(required - resolved.keys())
     if missing:
         raise AssertionError(f"control-value propagation is incomplete: {missing}")
-    # Everything else in here is a dependency that was evaluated on the way
-    # and is nobody's control value.
     return {key: value for key, value in resolved.items() if key in required}
 
 
-def _evaluate_into(
-    split: SplitExportGraph,
-    stage_index: int,
-    output_indices: tuple[int, ...],
-    *,
-    representative_root_inputs: tuple[object, ...],
-    resolved: dict[StageOutputKey, torch.Tensor],
-    pending: tuple[StageOutputKey, ...],
-    integral: bool,
-) -> None:
-    """Evaluate one stage's slice for these outputs, and record what it made."""
+@dataclass(frozen=True)
+class _ControlSlice:
+    graph: GraphModule
+    inputs: tuple[int, ...]
+    outputs: tuple[int, ...]
 
-    keys = tuple((stage_index, output) for output in output_indices)
-    cycle = [key for key in keys if key in pending]
-    if cycle:
-        raise CaptureError(
-            "stage outputs depend on themselves, so no order derives them: "
-            f"{sorted(cycle)}, while deriving {sorted(pending)}"
-        )
-    try:
-        record = split.stages[stage_index]
-    except IndexError as error:
-        raise CaptureError(
-            f"control-value producer names stage {stage_index}, "
-            f"which the partition does not have"
-        ) from error
-    resolved.update(
-        _evaluate_control_slice(
-            record,
-            stage_index=stage_index,
-            output_indices=output_indices,
-            split=split,
-            representative_root_inputs=representative_root_inputs,
-            resolved=resolved,
-            pending=pending + keys,
-            integral=integral,
-        )
-    )
+
+def _plan_control_slices(
+    split: SplitExportGraph,
+    required: set[StageOutputKey],
+    resolved: Mapping[StageOutputKey, torch.Tensor],
+) -> tuple[dict[int, _ControlSlice], dict[StageOutputKey, int]]:
+    """Find the needed slices without restoring any tensor to a device.
+
+    StageRecord order is topological. A backwards pass therefore discovers
+    every requested output before visiting its producer, even across branches.
+    """
+    needed: dict[int, set[int]] = {}
+    for stage, output_index in required:
+        if not 0 <= stage < len(split.stages):
+            raise CaptureError(f"control-value producer names missing stage {stage}")
+        needed.setdefault(stage, set()).add(output_index)
+    slices: dict[int, _ControlSlice] = {}
+    last_use: dict[StageOutputKey, int] = {}
+    for index in reversed(range(len(split.stages))):
+        if index not in needed:
+            continue
+        record = split.stages[index]
+        outputs = tuple(sorted(needed[index]))
+        graph, positions = _slice_outputs(record.graph_module, outputs)
+        slices[index] = _ControlSlice(graph, positions, outputs)
+        for position in positions:
+            source = record.input_sources[position]
+            if source is None or source.producer_stage_index is None:
+                continue
+            producer = source.producer_stage_index
+            output = source.producer_output_index
+            assert output is not None
+            if producer >= index:
+                raise CaptureError(
+                    f"stage_{index:04d} depends on nonpreceding stage {producer}; "
+                    "control-value dependencies must be topologically ordered"
+                )
+            key = (producer, output)
+            last_use[key] = max(last_use.get(key, index), index)
+            if key not in resolved:
+                needed.setdefault(producer, set()).add(output)
+    return slices, last_use
 
 
 def _required_control_outputs(split: SplitExportGraph) -> set[StageOutputKey]:
@@ -179,23 +188,23 @@ def _evaluate_control_slice(
     record: StageRecord,
     *,
     stage_index: int,
-    output_indices: tuple[int, ...],
-    split: SplitExportGraph,
+    selected: _ControlSlice,
+    required: set[StageOutputKey],
     representative_root_inputs: tuple[object, ...],
     resolved: dict[StageOutputKey, torch.Tensor],
-    pending: tuple[StageOutputKey, ...],
-    integral: bool,
 ) -> dict[StageOutputKey, torch.Tensor]:
-    sliced, input_positions = _slice_outputs(record.graph_module, output_indices)
+    sliced, input_positions, output_indices = (
+        selected.graph,
+        selected.inputs,
+        selected.outputs,
+    )
     arguments = tuple(
         _resolve_slice_input(
             record,
             position,
             stage_index=stage_index,
-            split=split,
             representative_root_inputs=representative_root_inputs,
             resolved=resolved,
-            pending=pending,
         )
         for position in input_positions
     )
@@ -238,7 +247,7 @@ def _evaluate_control_slice(
         if not isinstance(value, torch.Tensor):
             raise CaptureError(f"derived control value {key} is not a tensor")
         expected = _stage_output_tensor(
-            record, output_index, key=key, integral=integral
+            record, output_index, key=key, integral=key in required
         )
         _validate_geometry(value, expected, key=key, origin="producer")
         result[key] = _snapshot(value)
@@ -301,10 +310,8 @@ def _resolve_slice_input(
     position: int,
     *,
     stage_index: int,
-    split: SplitExportGraph,
     representative_root_inputs: tuple[object, ...],
     resolved: dict[StageOutputKey, torch.Tensor],
-    pending: tuple[StageOutputKey, ...],
 ) -> object:
     try:
         captured = record.inputs[position]
@@ -336,22 +343,7 @@ def _resolve_slice_input(
     assert source.producer_stage_index is not None
     assert source.producer_output_index is not None
     key = (source.producer_stage_index, source.producer_output_index)
-    value = resolved.get(key)
-    if value is None:
-        # What this slice needs is whatever the stage before it made, and
-        # that is derived the same way. An activation is as derivable as a
-        # control value: only the dependency slice that produces it runs,
-        # and what it needs is resolved before it in turn.
-        _evaluate_into(
-            split,
-            key[0],
-            (key[1],),
-            representative_root_inputs=representative_root_inputs,
-            resolved=resolved,
-            pending=pending,
-            integral=False,
-        )
-        value = resolved[key]
+    value = resolved[key]
     return _on_capture_device(value, captured.device)
 
 
