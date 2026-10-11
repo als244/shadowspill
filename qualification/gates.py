@@ -399,7 +399,13 @@ def _host_state() -> str:
     return f"[{time.strftime('%H:%M:%S')}] host: {load}; {gpu}"
 
 
-def _stream(command: Sequence[str], log: Path, *, preamble: str = "") -> int:
+def _stream(
+    command: Sequence[str],
+    log: Path,
+    *,
+    preamble: str = "",
+    environment: Mapping[str, str] | None = None,
+) -> int:
     """Run a gate, sending every line to this stdout and to its own log.
 
     A gate is long enough that watching it matters, and its log is what the
@@ -419,6 +425,7 @@ def _stream(command: Sequence[str], log: Path, *, preamble: str = "") -> int:
             handle.flush()
         process = subprocess.Popen(
             list(command),
+            env=environment,
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
         )
@@ -517,6 +524,21 @@ def _refuse_a_stale_library() -> str | None:
     )
 
 
+def _cpu_environment(cpu_threads: int | None = None) -> tuple[int, dict[str, str]]:
+    """Use the process's available CPUs, even if its shell limits OpenMP."""
+    if cpu_threads is None:
+        try:
+            cpu_threads = len(os.sched_getaffinity(0))
+        except (AttributeError, OSError):
+            cpu_threads = os.cpu_count() or 1
+    if cpu_threads < 1:
+        raise ValueError("cpu_threads must be positive")
+    environment = dict(os.environ)
+    for name in ("OMP_NUM_THREADS", "MKL_NUM_THREADS", "OPENBLAS_NUM_THREADS"):
+        environment[name] = str(cpu_threads)
+    return cpu_threads, environment
+
+
 def run_gates(
     gates: Sequence[str],
     *,
@@ -524,9 +546,11 @@ def run_gates(
     keep_going: bool = False,
     continue_after_failure: bool = False,
     options: Mapping[str, Sequence[str]] | None = None,
+    cpu_threads: int | None = None,
 ) -> list[GateOutcome]:
     """Run each gate in `GATE_ORDER`, newest output under `qualification/results`."""
 
+    cpu_threads, environment = _cpu_environment(cpu_threads)
     # Ordered by ALL_GATES so a gate outside the default run still runs in a
     # sensible place when asked for alongside others.
     ordered = [name for name in ALL_GATES if name in gates]
@@ -543,10 +567,10 @@ def run_gates(
         # gates is a line that looks like any other.
         print(f"\n\n{_banner(f'START OF {name.upper()} GATE')}\n", flush=True)
         print(f"[{time.strftime('%H:%M:%S')}] {name}: {' '.join(command)}", flush=True)
-        host = _host_state()
+        host = _host_state() + f"; CPU threads {cpu_threads}"
         print(host, flush=True)
         started = time.perf_counter()
-        returncode = _stream(command, log, preamble=host)
+        returncode = _stream(command, log, preamble=host, environment=environment)
         if returncode != 0:
             host = _host_state()
             print(host, flush=True)
@@ -640,7 +664,15 @@ def main() -> int:
             "csrc/. Only for deliberately measuring a build as it stands"
         ),
     )
+    parser.add_argument(
+        "--cpu-threads",
+        type=int,
+        default=None,
+        help="CPU threads per gate process; default: all CPUs available by affinity",
+    )
     arguments = parser.parse_args()
+    if arguments.cpu_threads is not None and arguments.cpu_threads < 1:
+        parser.error("--cpu-threads must be positive")
 
     if not arguments.allow_stale_library:
         stale = _refuse_a_stale_library()
@@ -655,6 +687,7 @@ def main() -> int:
         keep_going=arguments.keep_going,
         continue_after_failure=arguments.continue_after_failure,
         options=gate_options(arguments.config),
+        cpu_threads=arguments.cpu_threads,
     )
     print()
     print(_summary(f"gates {run}", outcomes, run))

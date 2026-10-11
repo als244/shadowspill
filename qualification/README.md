@@ -485,3 +485,18 @@ Neither setting resizes the pool or permits pool overflow; actual device OOMs
 still fail. Banners and artifacts record both controls, including
 `external_headroom_bytes`, `reject_overbudget`, `physical_budget_enforced`, and
 `physical_budget_within_limit`.
+
+### CPU threads and local references
+
+The gate launcher uses all logical CPUs available to its process by default,
+respecting CPU affinity (including scheduler CPU allocations). It sets OpenMP,
+MKL, and OpenBLAS thread counts for its children, overriding inherited shell
+limits such as `OMP_NUM_THREADS=1`. The selected count appears in each gate log.
+Use `python -m qualification.gates --cpu-threads 8` to set a smaller limit.
+This controls CPU operations within each process; GPU tests still run sequentially.
+
+Keep the canonical reference directory on local SSD:
+`qualification/results/references/approximately_1b` (or `pre_sm80`).
+Archive historical result directories separately; do not move the canonical
+references onto cold storage. Each `reference.pt` and its `inputs.pt` sidecar
+must be kept together. No regeneration is needed when relocating these files.

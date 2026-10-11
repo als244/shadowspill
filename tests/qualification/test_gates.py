@@ -298,3 +298,43 @@ def test_naming_no_gate_runs_them_all(
 
     assert gates.main() == 0
     assert [_gate_of(call) for call in calls] == list(GATE_ORDER)
+
+
+
+def test_cpu_threads_default_uses_affinity_over_shell(monkeypatch):
+    from qualification.gates import _cpu_environment
+    monkeypatch.setattr(os, "sched_getaffinity", lambda pid: {2, 4, 6, 8})
+    monkeypatch.setenv("OMP_NUM_THREADS", "1")
+    count, environment = _cpu_environment()
+    assert count == 4
+    assert all(environment[key] == "4" for key in
+               ("OMP_NUM_THREADS", "MKL_NUM_THREADS", "OPENBLAS_NUM_THREADS"))
+    assert os.environ["OMP_NUM_THREADS"] == "1"
+
+
+def test_cpu_threads_override_and_validation():
+    from qualification.gates import _cpu_environment
+    assert _cpu_environment(3)[1]["MKL_NUM_THREADS"] == "3"
+    with pytest.raises(ValueError, match="positive"):
+        _cpu_environment(0)
+
+
+def test_cpu_threads_fallback(monkeypatch):
+    from qualification.gates import _cpu_environment
+    monkeypatch.delattr(os, "sched_getaffinity")
+    monkeypatch.setattr(os, "cpu_count", lambda: None)
+    assert _cpu_environment()[0] == 1
+
+
+
+def test_gate_child_receives_cpu_thread_environment(monkeypatch, tmp_path):
+    monkeypatch.chdir(tmp_path)
+    observed = []
+    def popen(command, **kwargs):
+        observed.append(kwargs["env"])
+        return _FakeProcess(0)
+    monkeypatch.setattr(subprocess, "Popen", popen)
+    monkeypatch.setattr("qualification.gates._host_state", lambda: "host")
+    run_gates(["suite"], run="threads", cpu_threads=6)
+    assert observed[0]["OMP_NUM_THREADS"] == "6"
+    assert observed[0]["MKL_NUM_THREADS"] == "6"
