@@ -8,12 +8,14 @@ and turns its final input copies into ordinary Export mutation outputs.
 
 from __future__ import annotations
 
+import operator
 from collections.abc import Callable, Sequence
 from dataclasses import replace
 from typing import Any
 
 import torch
 from torch.export.graph_signature import (
+    ConstantArgument,
     ExportGraphSignature,
     InputKind,
     OutputKind,
@@ -53,7 +55,28 @@ def functionalize_logical_export(
     specs = exported.graph_signature.input_specs
     for node, spec in zip(placeholders, specs, strict=True):
         node.name = node.target = spec.arg.name
+        if isinstance(spec.arg, ConstantArgument):
+            # make_fx specializes Python scalars and omits their placeholder
+            # values. Export still requires that metadata for its full input
+            # signature, including unused/nested controls.
+            node.meta["val"] = spec.arg.value
 
+    # make_fx also leaves static/None fields of tuple-returning operators
+    # without metadata (for example, optional attention results). Reuse the
+    # already inferred parent value; do not retrace or invent tensor geometry.
+    for node in functional.graph.nodes:
+        if (
+            node.op == "call_function"
+            and node.target is operator.getitem
+            and "val" not in node.meta
+        ):
+            source, index = node.args
+            if isinstance(source, torch.fx.Node) and isinstance(
+                values := source.meta.get("val"), (tuple, list, dict)
+            ):
+                node.meta["val"] = values[index]
+
+    specs_by_input = dict(zip(placeholders, specs, strict=True))
     kinds = {
         InputKind.PARAMETER: OutputKind.PARAMETER_MUTATION,
         InputKind.BUFFER: OutputKind.BUFFER_MUTATION,
@@ -65,13 +88,13 @@ def functionalize_logical_export(
         if (
             node.op != "call_function"
             or node.target is not torch.ops.aten.copy_.default
-            or node.args[0] not in placeholders
+            or node.args[0] not in specs_by_input
         ):
             continue
         destination, source = node.args[:2]
         assert isinstance(destination, torch.fx.Node)
         assert isinstance(source, torch.fx.Node)
-        spec = specs[placeholders.index(destination)]
+        spec = specs_by_input[destination]
         if spec.kind not in kinds:
             raise CaptureError("a captured operation mutates constant tensor state")
         target = spec.arg.name if spec.kind is InputKind.USER_INPUT else spec.target

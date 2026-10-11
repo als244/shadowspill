@@ -28,24 +28,51 @@ def capture_training_stages(
     their ``save`` variant retaining what ``retention`` says to retain."""
 
     store = graph_pair_store or GraphPairStore()
-    return tuple(
-        _capture_training_stage(
+    # A requires_grad output can feed a detach, an index selection or a
+    # custom backward returning None. Follow actual VJPs from the objective,
+    # so such values never become unproduced activation-gradient inputs.
+    needed: list[set[int]] = [set() for _ in partitioned.stages]
+    needed[-1].add(partitioned.user_output_indices[0])
+    captured: list[DifferentiatedStage] = []
+    for index in reversed(range(len(partitioned.stages))):
+        stage = _capture_training_stage(
             partitioned,
             index,
+            roots=tuple(sorted(needed[index])),
             graph_pair_store=store,
             retention=retention,
             accumulating=accumulating,
             gradient_dtype=gradient_dtype,
             round_accumulation_once=round_accumulation_once,
         )
-        for index in range(len(partitioned.stages))
-    )
+        captured.append(stage)
+        pair = stage.graph_pairs.reference
+        output = next(
+            node
+            for node in pair.backward.graph_module.graph.nodes
+            if node.op == "output"
+        )
+        gradients, _ = tree_flatten(output.args[0])
+        sources = stage.example.stage.input_sources
+        if len(gradients) != len(sources):
+            raise CaptureError("backward gradient arity differs from stage inputs")
+        for gradient, source in zip(gradients, sources, strict=True):
+            if (
+                gradient is None
+                or source is None
+                or source.producer_stage_index is None
+            ):
+                continue
+            assert source.producer_output_index is not None
+            needed[source.producer_stage_index].add(source.producer_output_index)
+    return tuple(reversed(captured))
 
 
 def _capture_training_stage(
     partitioned: PartitionedExport,
     stage_index: int,
     *,
+    roots: tuple[int, ...],
     graph_pair_store: GraphPairStore,
     retention: RetentionPolicy | None = None,
     accumulating: bool = False,
@@ -70,13 +97,13 @@ def _capture_training_stage(
             "stage must produce at least one continuous value that requires "
             "one."
         )
-    roots = (
-        (partitioned.user_output_indices[0],)
-        if stage_index == len(partitioned.stages) - 1
-        else differentiable
-    )
+    if not roots:
+        raise CaptureError(
+            f"training {example.stage.stage_id} has no output contributing a "
+            "gradient to the objective; combine it with a differentiable consumer"
+        )
     if any(position not in differentiable for position in roots):
-        raise CaptureError("terminal objective loss is not differentiable")
+        raise CaptureError("a stage gradient targets a nondifferentiable output")
     return DifferentiatedStage(
         example=example,
         graph_pairs=graph_pair_store.resolve(
