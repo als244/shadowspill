@@ -375,7 +375,8 @@ For FP8 training, select `weight_grad_dtype=torch.float32` and choose trainer
 masters/gradient precision explicitly. ShadowSpill handles payloads and scales
 through its generic [tensor representation contract](../docs/architecture/state-import.md#tensor-representations).
 Quack's grouped expert kernels require H100/SM90. Install its optional
-backend from the MLOps checkout with
+backend with this repository's `./scripts/setup.sh --expert-parallel quack`, or
+add it to an existing environment from the MLOps checkout with
 `./scripts/setup_expert_parallel.sh --backend quack --python /path/to/python`.
 The standalone Transformer Engine modules also expose `fp8_block`; these model
 constructors select QuackMoE and do not expose a TE-backend switch.

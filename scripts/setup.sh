@@ -6,15 +6,19 @@ readonly default_environment="${project_root}/.venv"
 
 python_executable=""
 torch_backend="auto"
+expert_parallel=""
 
 usage() {
   cat <<'EOF'
 Usage: ./scripts/setup.sh [--python PATH] [--torch-backend BACKEND]
+                          [--expert-parallel quack|te|both]
 
 Create a complete ShadowSpill development environment.  By default the script
 creates .venv with Python 3.12 and automatically selects the installed GPU's
 PyTorch backend.  --python installs into an existing virtual or Conda
-environment instead.
+environment instead.  --expert-parallel also installs mlops's optional
+expert-parallel backends, which the expert-parallel workloads use; it needs
+the mlops checkout beside this one.
 EOF
 }
 
@@ -30,6 +34,14 @@ while (($#)); do
       torch_backend="$2"
       shift 2
       ;;
+    --expert-parallel)
+      [[ $# -ge 2 ]] || { echo "--expert-parallel requires quack, te, or both" >&2; exit 2; }
+      case "$2" in
+        quack|te|both) expert_parallel="$2" ;;
+        *) echo "--expert-parallel must be quack, te, or both" >&2; exit 2 ;;
+      esac
+      shift 2
+      ;;
     --help|-h)
       usage
       exit 0
@@ -41,6 +53,14 @@ while (($#)); do
       ;;
   esac
 done
+
+readonly mlops_checkout="$(cd "${project_root}/.." && pwd)/mlops"
+# The expert-parallel installer is a script in the mlops checkout, so the
+# fallback install from Git cannot provide it; say so before installing anything.
+if [[ -n "${expert_parallel}" && ! -x "${mlops_checkout}/scripts/setup.sh" ]]; then
+  echo "--expert-parallel needs the mlops checkout at ${mlops_checkout}" >&2
+  exit 2
+fi
 
 uv_executable="$(command -v uv || true)"
 bootstrap_dir=""
@@ -120,11 +140,12 @@ print(Path(next(iter(spec.submodule_search_locations))) / "share" / "cmake")
   --editable "${project_root}[pytorch,dev,training]"
 
 echo "[3/5] Installing mlops with its implementation providers"
-mlops_checkout="$(cd "${project_root}/.." && pwd)/mlops"
 if [[ -x "${mlops_checkout}/scripts/setup.sh" ]]; then
+  echo "  through ${mlops_checkout}/scripts/setup.sh, whose own steps follow"
   "${mlops_checkout}/scripts/setup.sh" \
     --python "${python_executable}" \
-    --torch-backend "${torch_backend}"
+    --torch-backend "${torch_backend}" \
+    ${expert_parallel:+--expert-parallel "${expert_parallel}"}
 else
   "${uv_executable}" pip install \
     --python "${python_executable}" \

@@ -228,6 +228,11 @@ adapter. To use an existing virtual or Conda environment:
 ./scripts/setup.sh --python "$CONDA_PREFIX/bin/python"
 ```
 
+`--expert-parallel quack`, `te` or `both` also installs mlops's optional
+expert-parallel backends, which the expert-parallel workloads use. mlops's own
+setup installs them, after everything else, from the mlops checkout beside this
+one, so the option needs that checkout.
+
 Building also needs the compiler of the accelerator toolkit PyTorch was built
 against. PyTorch's wheel carries that toolkit's runtime but not its compiler,
 and PyTorch's CMake package, which the adapter's build loads, enables
