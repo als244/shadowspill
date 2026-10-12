@@ -3,7 +3,9 @@ and the storage layout lowered from it -- entirely offline, on fake tensors."""
 
 from __future__ import annotations
 
+import time
 from collections.abc import Callable, Mapping, Sequence
+from contextlib import AbstractContextManager, nullcontext
 from typing import Any
 
 import torch
@@ -23,6 +25,7 @@ from shadowspill.pytorch.capture.aot import (
     capture_training_objective,
     rebind_training_objective,
 )
+from shadowspill.pytorch.capture.artifacts import TensorGeometry
 from shadowspill.pytorch.capture.fake import fake_device_inputs, fake_device_model
 from shadowspill.pytorch.capture.retention import (
     MEMORY_BOUND_FLOPS_PER_BYTE,
@@ -54,6 +57,7 @@ from ...materialization import representative_cpu_inputs
 from ...partition import (
     PartitionSpec,
 )
+from ...partition.artifacts import PartitionedExport
 from ..artifacts import (
     TrainingCaptureArtifacts,
 )
@@ -109,20 +113,20 @@ def capture_training_graphs(
             stores=stores,
             timer=timer,
         )
-        with pool_values(memory.runtime):
-            partitioned = _partition_training_graphs(
-                model,
-                captures,
-                cpu_inputs,
-                fake_mode=fake_mode,
-                partition=partition,
-                stores=stores,
-                timer=timer,
-                retention=retention,
-                grad_dtype=grad_dtype,
-                round_accumulation_once=round_accumulation_once,
-                graph_pair_variants=graph_pair_variants,
-            )
+        partitioned = _partition_training_graphs(
+            model,
+            captures,
+            cpu_inputs,
+            fake_mode=fake_mode,
+            partition=partition,
+            stores=stores,
+            timer=timer,
+            retention=retention,
+            grad_dtype=grad_dtype,
+            round_accumulation_once=round_accumulation_once,
+            graph_pair_variants=graph_pair_variants,
+            values=lambda: pool_values(memory.runtime),
+        )
         with timer.measure("storage_layout_lowering"):
             layout = lower_training_storage_layout(
                 fake_model, captures, device_ordinal=device_ordinal
@@ -233,6 +237,7 @@ def _partition_training_graphs(
     grad_dtype: torch.dtype | None,
     round_accumulation_once: bool,
     graph_pair_variants: tuple[str, ...] = GRAPH_PAIR_VARIANTS,
+    values: Callable[[], AbstractContextManager[object]] = nullcontext,
 ) -> tuple[PartitionedTrainingCapture, ...]:
     """Partition every position against its own example inputs.
 
@@ -247,34 +252,101 @@ def _partition_training_graphs(
     program rather than once per position; each position checks them
     against its own geometry, and profiling measures one occurrence per
     contract whichever position it came from.
+
+    They also share the split. The stage policy, the split root and the
+    folds are functions of the exported program, and splitting is the cost
+    that grows with the graph, so a program is split once: each later
+    position whose inputs have the first one's geometry takes the first
+    one's stages with their values mapped onto its own inputs, storage for
+    storage, and runs the first one's split root only where a value cannot
+    be mapped. A position whose inputs differ is split for itself. Nothing
+    here decides which microbatch creates a gradient and which adds into
+    one; every position still carries both backward forms.
+
+    ``values`` reads state a pool holds for the operations that need it,
+    which are those deriving control values: they run producer slices on
+    authentic values. Only a program's first position derives them, so only
+    it runs under ``values``; every other position works on fake tensors and
+    is not slowed by a hook on each of its operations.
     """
 
     representative_roots = tuple(
         representative_training_arguments(capture, model, microbatch)
         for capture, microbatch in zip(captures, cpu_inputs, strict=True)
     )
-    with fake_mode, timer.measure("stage_partition_aot"):
+    with timer.measure("stage_partition_aot"):
         derived: dict[int, Mapping[tuple[int, int], torch.Tensor]] = {}
+        splits: dict[int, PartitionedExport] = {}
+        spent: dict[int, list[int]] = {}
         partitioned: list[PartitionedTrainingCapture] = []
         for capture, root_inputs in zip(captures, representative_roots, strict=True):
             # Positions rebound from one template share its exported program.
             template = id(capture.exported.exported_program)
-            result = partition_training_capture(
-                capture,
-                partition=partition,
-                graph_pair_store=stores.graph_pairs,
-                representative_root_inputs=root_inputs,
-                representative_stage_outputs=derived.get(template),
-                retention=retention,
-                # Which microbatch creates a stage's gradient and which add
-                # into it is decided by the step's ordering, after capture,
-                # so every microbatch of an accumulating step carries both
-                # forms; the store derives each contract's once.
-                accumulating=len(captures) > 1,
-                gradient_dtype=grad_dtype,
-                round_accumulation_once=round_accumulation_once,
-                graph_pair_variants=graph_pair_variants,
-            )
+            shared = splits.get(template)
+            if shared is not None and not _same_geometry(
+                capture.exported.flat_inputs, shared.root_inputs
+            ):
+                shared = None
+            # The reader sits under the fake mode, as it always has, and only
+            # where control values are derived.
+            reader = values() if template not in derived else nullcontext()
+            started = time.perf_counter_ns()
+            with reader, fake_mode:
+                result = partition_training_capture(
+                    capture,
+                    partition=partition,
+                    graph_pair_store=stores.graph_pairs,
+                    representative_root_inputs=root_inputs,
+                    representative_stage_outputs=derived.get(template),
+                    retention=retention,
+                    # Which microbatch creates a stage's gradient and which
+                    # add into it is decided by the step's ordering, after
+                    # capture, so every microbatch of an accumulating step
+                    # carries both forms; the store derives each contract's
+                    # once.
+                    accumulating=len(captures) > 1,
+                    gradient_dtype=grad_dtype,
+                    round_accumulation_once=round_accumulation_once,
+                    graph_pair_variants=graph_pair_variants,
+                    template=shared,
+                )
+            spent.setdefault(template, []).append(time.perf_counter_ns() - started)
             derived.setdefault(template, result.partitioned.control_values)
+            splits.setdefault(template, result.partitioned)
             partitioned.append(result)
+        # A program's first position pays for everything done once: deriving
+        # control values, building graph pairs, splitting. What scales with
+        # the step is each later position, so the two are reported apart.
+        for index, times in enumerate(spent.values(), 1):
+            later = times[1:]
+            timer.progress(
+                f"stage partition of program {index}/{len(spent)}:"
+                f" {len(times)} positions, first {times[0] / 1e9:.1f} s"
+                + (
+                    f", later {sum(later) / len(later) / 1e9:.2f} s each"
+                    if later
+                    else ""
+                )
+            )
         return tuple(partitioned)
+
+
+def _same_geometry(inputs: tuple[object, ...], template: tuple[object, ...]) -> bool:
+    """Whether a position's root inputs are laid out as the template's were:
+    the same tensors' geometry, and the same values where they are static."""
+
+    if len(inputs) != len(template):
+        return False
+    for value, reference in zip(inputs, template, strict=True):
+        if isinstance(value, torch.Tensor) and isinstance(reference, torch.Tensor):
+            if TensorGeometry.from_tensor(value) != TensorGeometry.from_tensor(
+                reference
+            ):
+                return False
+        elif (
+            isinstance(value, torch.Tensor)
+            or isinstance(reference, torch.Tensor)
+            or value != reference
+        ):
+            return False
+    return True

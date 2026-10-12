@@ -62,6 +62,53 @@ A policy is applied during capture for each relevant input structure. Labels
 are local to that graph. Reusing a policy across a geometry sweep does not
 require exactly the same number of operations at every geometry.
 
+## Microbatches of one export
+
+An accumulated step exports its objective once and calls the exported program
+once per microbatch, and a partition is a function of that program: the policy
+reads only its graph, and the split and the folds after it follow from what the
+policy returned. So a program is split once, by its first microbatch.
+
+A later microbatch whose inputs have the first one's geometry -- the shape,
+stride, dtype and layout of every input -- takes the first one's stages, and
+only the values they were recorded with change. Each stage's inputs and
+outputs are mapped onto the later microbatch's own inputs storage for storage,
+so a view of an input stays a view of that input and two values that shared a
+storage still share one. A stage value the mapping cannot reproduce, a wrapper
+around several tensors or a layout other than strided, sends that microbatch
+through the first one's split with its own inputs instead, so the mapping is a
+shortcut to the same stages and never a different answer. A microbatch whose
+inputs differ in geometry is split for itself.
+
+Deriving the integer and boolean values a stage needs from its producers runs
+those producers on authentic state ([allocation
+behavior](lowering.md#allocation-behavior)), and only a program's first
+microbatch does it; later microbatches check the derived values against their
+own geometry. So only the first microbatch reads state from the pool, and every
+later one works on describing values throughout. Which microbatch creates a
+stage's gradient and which adds into it is not decided here: every microbatch
+carries both backward forms and the step's ordering chooses ([graph-pair
+construction](graph-pair-construction.md#accumulating-onto-gradients-that-already-exist)).
+
+The planning progress log reports each exported program's partition on one
+line:
+
+```text
+stage partition of program <i>/<n>: <count> positions, first <s> s, later <s> s each
+```
+
+| Field | Meaning |
+|---|---|
+| `<i>/<n>` | The exported program, in the order microbatches first used it, out of the step's distinct exported programs. |
+| `<count> positions` | The microbatches that share it. |
+| `first` | Its first microbatch: the split, the derived values, and any graph pair the store did not hold. |
+| `later` | The mean of every other microbatch, absent when there is none. |
+
+`later` is what grows with the microbatch count, and `first` is paid once per
+program. A later microbatch costs what binding its stages' graph pairs to its
+own values costs; one that costs about what the first did was split for itself,
+because its inputs' geometry differed.
+
 ## What a boundary means
 
 The frontend derives live tensor inputs and outputs from graph dependencies.

@@ -15,7 +15,12 @@ from .computation import computes_nothing
 from .differentiability import differentiable_output_positions
 from .policy import PartitionSpec, resolve_partition_assignments
 from .provenance import build_stage_examples, root_input_provenance
-from .split import SplitExportGraph, split_export_graph
+from .split import (
+    SplitExportGraph,
+    observe_split_root,
+    rebind_split_records,
+    split_export_graph,
+)
 from .values import StageOutputKey
 
 
@@ -27,6 +32,7 @@ def partition_export(
     representative_root_inputs: tuple[object, ...] | None = None,
     representative_stage_outputs: Mapping[StageOutputKey, torch.Tensor] | None = None,
     fold_control_only_stages: bool = False,
+    template: PartitionedExport | None = None,
 ) -> PartitionedExport:
     """Split one Export graph according to a built-in or custom policy.
 
@@ -42,24 +48,51 @@ def partition_export(
     control values has no backward to take. A stage with no kernel to
     generate is folded whatever the caller, because neither path can compile
     one.
+
+    ``template`` is a partition of another position of the same exported
+    program, whose inputs have this position's geometry. The policy, the
+    split and the folds are functions of the program alone, so they are not
+    repeated, and neither is running the graph: this position's stage
+    records are the template's with each tensor mapped to one of its own,
+    storage for storage (:func:`rebind_split_records`). Where a tensor
+    cannot be mapped exactly, the position is observed through the
+    template's split root instead.
     """
 
-    assignments, repeated = resolve_partition_assignments(
-        capture.exported_program.graph_module,
-        module,
-        partition,
-    )
     provenance = root_input_provenance(
         capture,
         representative_root_inputs=representative_root_inputs,
     )
-    split = split_export_graph(capture, assignments)
-    split = _fold_unproductive_stages(
-        capture,
-        assignments,
-        split,
-        control_only=fold_control_only_stages,
-    )
+    if template is not None:
+        split = rebind_split_records(
+            template.root,
+            tuple(
+                StageRecord(
+                    example.stage.module_target,
+                    example.stage.graph_module,
+                    example.inputs,
+                    example.stage.input_sources,
+                    example.output,
+                )
+                for example in template.stages
+            ),
+            template.root_inputs,
+            capture.flat_inputs,
+        ) or observe_split_root(template.root, capture.flat_inputs)
+        repeated = template.repeated_groups
+    else:
+        assignments, repeated = resolve_partition_assignments(
+            capture.exported_program.graph_module,
+            module,
+            partition,
+        )
+        split = split_export_graph(capture, assignments)
+        split = _fold_unproductive_stages(
+            capture,
+            assignments,
+            split,
+            control_only=fold_control_only_stages,
+        )
     stages, control_values = build_stage_examples(
         capture,
         split,

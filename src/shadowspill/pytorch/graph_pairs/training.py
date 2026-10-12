@@ -10,6 +10,7 @@ from shadowspill.pytorch.capture.aot import TrainingObjectiveCapture
 from shadowspill.pytorch.capture.retention import RetentionPolicy
 
 from ..partition import PartitionSpec, partition_export
+from ..partition.artifacts import PartitionedExport
 from ..partition.values import StageOutputKey
 from .artifacts import PartitionedTrainingCapture
 from .build import GRAPH_PAIR_VARIANTS
@@ -29,6 +30,7 @@ def partition_training_capture(
     gradient_dtype: torch.dtype | None = None,
     round_accumulation_once: bool = False,
     graph_pair_variants: tuple[str, ...] = GRAPH_PAIR_VARIANTS,
+    template: PartitionedExport | None = None,
 ) -> PartitionedTrainingCapture:
     """Partition and differentiate one captured objective template.
 
@@ -45,6 +47,8 @@ def partition_training_capture(
     running gradient narrower than it sums at, with BLAS-controlled rounding
     (:func:`~shadowspill.pytorch.capture.aot.accumulate_gradient_outputs`).
     ``graph_pair_variants`` names the variants to build, both by default.
+    ``template`` is a partition of another position of the same exported
+    program, as :func:`partition_export` takes it.
     """
 
     partitioned = partition_export(
@@ -57,6 +61,7 @@ def partition_training_capture(
         # that produces only control values belongs to the stage consuming
         # it rather than standing alone.
         fold_control_only_stages=True,
+        template=template,
     )
     return PartitionedTrainingCapture(
         training=capture,
