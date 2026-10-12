@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 
 import torch
 from torch.utils._pytree import tree_flatten
@@ -349,10 +349,15 @@ def resolve_stage_input_slots(
     artifact: GraphArtifact,
     *,
     root_objects: Mapping[RootInputKey, str],
-    stage_outputs: tuple[dict[int, str], ...],
+    stage_outputs: Sequence[Mapping[int, str] | Sequence[str]],
     compact_leaf_indices: bool,
 ) -> tuple[ObjectSlot, ...]:
-    """Resolve stage inputs from split-root FX topology, never storage IDs."""
+    """Resolve stage inputs from split-root FX topology, never storage IDs.
+
+    ``stage_outputs`` holds, for each stage before this one, its outputs'
+    object IDs by leaf index: a mapping, or the sequence of them in leaf
+    order, which indexes the same way and costs nothing to hand over.
+    """
 
     input_leaves, _ = tree_flatten(stage.inputs)
     if len(stage.stage.input_sources) != len(input_leaves):

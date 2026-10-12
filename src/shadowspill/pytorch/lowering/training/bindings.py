@@ -121,14 +121,14 @@ def _bind_canonical_stage_boundary(
     pair = stage.graph_pairs.reference
     if pair.forward.output_count - pair.saved_value_count != len(leaves):
         raise CaptureError("stage boundary output count changed during AOT")
+    # The earlier stages' boundaries as they are: each a tuple of object
+    # IDs in leaf order. Rebuilt as mappings here, every stage paid for all
+    # the stages before it.
     inputs = resolve_stage_input_slots(
         stage.example,
         pair.forward,
         root_objects=root_objects,
-        stage_outputs=tuple(
-            {leaf_index: object_id for leaf_index, object_id in enumerate(ids)}
-            for ids in prior_boundaries
-        ),
+        stage_outputs=prior_boundaries,
         compact_leaf_indices=True,
     )
     resolver = TaskBindingResolver(
@@ -415,15 +415,11 @@ def _variant_forward_inputs(
     pair: AotGraphPair,
     boundaries: TrainingBoundaries,
 ) -> tuple[ObjectSlot, ...]:
-    stage_outputs = tuple(
-        {leaf_index: object_id for leaf_index, object_id in enumerate(ids)}
-        for ids in boundaries.object_ids[position][:stage_index]
-    )
     return resolve_stage_input_slots(
         stage.example,
         pair.forward,
         root_objects=boundaries.root_objects[position],
-        stage_outputs=stage_outputs,
+        stage_outputs=boundaries.object_ids[position][:stage_index],
         compact_leaf_indices=True,
     )
 
