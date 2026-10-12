@@ -367,11 +367,17 @@ trainable state and saved activations. Do not assume the prefix budgets suffice.
 
 Factory arguments: `checkpoint` or `tiny`; `sequence_length`;
 `sequences_per_step`; `sequences_per_microbatch`; `lora_rank`;
-`lora_alpha`; `lora_dtype`; `lora_head`; `grad_dtype`;
-`gemm_precision`; `layer_limit`; `head_chunk_size`; `seed`. The quickstart
-flags `--lora-rank`, `--lora-alpha` and `--lora-dtype` reach the factory under
-the first three of those LoRA names. `--minimum-evict-kib 128` is the forward
-CLI's small-object policy for this checkpoint's many scales.
+`lora_alpha`; `lora_dtype`; `lora_head`; `grad_dtype`; `opt_state_dtype`;
+`opt_state_rounding`; `gemm_precision`; `layer_limit`; `head_chunk_size`;
+`seed`. The quickstart flags `--lora-rank`, `--lora-alpha` and `--lora-dtype`
+reach the factory under the first three of those LoRA names.
+`--minimum-evict-kib 128` is the forward CLI's small-object policy for this
+checkpoint's many scales.
+
+The optimizer is `mlops.optim.AdamW`, as in the other mlops recipes: one fused
+update per parameter, reading each gradient at `grad_dtype`, the dtype the step
+accumulates it in, and keeping its moments at `opt_state_dtype` (BF16 by
+default, rounded stochastically; `opt_state_rounding` names another rounding).
 Precision defaults and supported recipes are stated in the function signature.
 The checkpoint path rejects unsupported low-precision GEMMs immediately.
 The small random fixture additionally permits FP8 expert GEMMs; that is not

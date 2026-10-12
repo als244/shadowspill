@@ -8,6 +8,7 @@ from contextlib import contextmanager
 from functools import partial
 from pathlib import Path
 
+import mlops
 import torch
 
 from .checkpoint import GLMCheckpoint
@@ -30,6 +31,8 @@ def experiment(
     lora_dtype="float32",
     lora_head=False,
     grad_dtype="float32",
+    opt_state_dtype="bfloat16",
+    opt_state_rounding=None,
     gemm_precision="bf16",
     layer_limit=None,
     head_chunk_size=1024,
@@ -64,6 +67,16 @@ def experiment(
     }
     if lora_dtype not in dtypes or grad_dtype not in dtypes:
         raise ValueError("LoRA/gradient dtypes must be float32, bfloat16 or float16")
+    if opt_state_dtype not in (*dtypes, "parameter"):
+        raise ValueError(
+            "the optimizer state dtype must be float32, bfloat16, float16 or parameter"
+        )
+    if opt_state_rounding is None:
+        # As the other mlops recipes: moments stored at BF16 keep small
+        # updates in expectation, anything wider rounds to nearest.
+        opt_state_rounding = (
+            "stochastic" if opt_state_dtype == "bfloat16" else "nearest"
+        )
     if tiny and layer_limit is not None:
         raise ValueError(
             "layer_limit applies to checkpoint prefixes, not the tiny fixture"
@@ -167,7 +180,16 @@ def experiment(
     result = {
         "model_factory": model_factory,
         "objective": objective,
-        "optimizer": partial(torch.optim.AdamW, lr=1e-4, foreach=False),
+        # mlops's AdamW, as the other mlops recipes use: one fused update per
+        # parameter, reading each gradient at the dtype the step accumulates
+        # it in, so nothing rounds it on the way.
+        "optimizer": partial(
+            mlops.optim.AdamW,
+            lr=1e-4,
+            gradient_dtype=dtypes[grad_dtype],
+            opt_state_dtype=dtypes.get(opt_state_dtype, opt_state_dtype),
+            opt_state_rounding=opt_state_rounding,
+        ),
         "hyperparams": {"lr": 1e-4},
         "candidates": candidates,
         "plan_options": {"partition": GLMStages(), "grad_dtype": dtypes[grad_dtype]},
@@ -185,6 +207,9 @@ def experiment(
             "lora_alpha": lora_alpha,
             "lora_dtype": lora_dtype,
             "grad_dtype": grad_dtype,
+            "optimizer": "mlops.optim.AdamW",
+            "opt_state_dtype": opt_state_dtype,
+            "opt_state_rounding": opt_state_rounding,
             "gemm_precision": gemm_precision,
             "partition": "GLMStages()",
         },
