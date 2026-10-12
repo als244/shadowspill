@@ -195,6 +195,10 @@ shadowspill_add_public_api_test(
   test_meta_initialization_and_checkpoint_import_preserve_values_and_ties 180
 )
 shadowspill_add_public_api_test(
+  ../state/test_pool_initialization.py
+  test_a_wrapped_weight_in_an_unreadable_pool_is_read_component_by_component 180
+)
+shadowspill_add_public_api_test(
   test_08_tensor_representations.py test_planned_packed_parameter_gradients 300
 )
 

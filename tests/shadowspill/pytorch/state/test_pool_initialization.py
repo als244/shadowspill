@@ -103,6 +103,49 @@ def test_meta_initialization_and_checkpoint_import_preserve_values_and_ties(
         assert runtime.pool_statistics("spill").allocated_bytes == 0
 
 
+@pytest.mark.cuda
+@pytest.mark.fresh_process
+def test_a_wrapped_weight_in_an_unreadable_pool_is_read_component_by_component(
+    tmp_path: Path,
+) -> None:
+    """A wrapper owns no storage of its own; its components are what a pool
+    holds. Reading its value for profiling, from a pool the host cannot read,
+    reads each component through the runtime and rebuilds the wrapper."""
+
+    from shadowspill.pytorch.representations import detached_representation
+    from shadowspill.pytorch.state.storage import read_tensor_value
+    from shadowspill.ssd import ssd
+
+    from .representations import ScaledWeight, model
+
+    reference = model()
+    with Runtime(
+        pools={
+            "execution": device(physical_capacity=2 << 30),
+            "spill": ssd(capacity=512 << 20, directory=tmp_path),
+        },
+        routes={
+            "fetch": transfer_route(source="spill", destination="execution"),
+            "evict": transfer_route(source="execution", destination="spill"),
+        },
+        calibrate=False,
+    ) as runtime:
+        assert not runtime.pools["spill"].addressable
+        imported = import_model_state(model(), runtime=runtime, pool="spill")
+        try:
+            with pytest.raises(RuntimeError, match="non-addressable"):
+                imported.weight.payload.sum()
+            value = read_tensor_value(runtime, detached_representation(imported.weight))
+            assert isinstance(value, ScaledWeight)
+            torch.testing.assert_close(
+                value.dense(), reference.weight.dense(), rtol=0, atol=0
+            )
+            del value
+        finally:
+            release_model_state(imported, runtime=runtime)
+        assert runtime.pool_statistics("spill").allocated_bytes == 0
+
+
 def test_persistent_state_indexes_owners_once(monkeypatch):
     from shadowspill.pytorch.state.records import (
         PersistentState,

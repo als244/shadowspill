@@ -604,8 +604,14 @@ def read_tensor_value(runtime: Runtime, tensor: torch.Tensor) -> torch.Tensor:
 
     The returned value owns only this storage's bytes. Callers must release it
     after copying; keeping it in graph metadata would retain the host payload.
-    Ordinary CPU tensors and addressable pool views need no copy.
+    Ordinary CPU tensors and addressable pool views need no copy. A wrapper
+    owns no storage of its own: its components are what the pool holds, so
+    each is read the same way and the wrapper is rebuilt around them.
     """
+    return map_tensor(tensor, lambda leaf: _read_leaf_value(runtime, leaf))
+
+
+def _read_leaf_value(runtime: Runtime, tensor: torch.Tensor) -> torch.Tensor:
     item = registry_for(runtime).storage(int(tensor.untyped_storage()._cdata))
     if item is None or not item.unbacked:
         return tensor
