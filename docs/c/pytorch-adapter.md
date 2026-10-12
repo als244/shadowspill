@@ -102,7 +102,12 @@ frontend copies both.
   `shadowspill_pytorch_check_physical_budget()`, and
   `shadowspill_pytorch_seal_physical_budget()` expose and seal physical limits.
   `external_headroom_bytes` is reserved before sizing the pool; zero reserves
-  nothing. The independent `reject_overbudget` flag controls enforcement:
+  nothing. A budget that leaves less than one 2 MiB unit once what the process
+  holds at bootstrap and that headroom are taken out, or that exceeds the
+  device, refuses bootstrap with `SHADOWSPILL_STATUS_OUT_OF_MEMORY` and latches
+  the bytes held as `requested_bytes`, the budget as `free_bytes` and the
+  allocator pool as `pool_id`, from which the Python bootstrap says which it
+  was. The independent `reject_overbudget` flag controls enforcement:
   zero reports external and whole-process overruns, one rejects them. This
   applies at bootstrap, sealing, and subsequent checks. Pool bounds and device
   allocation failures remain enforced. Sealing never resizes the pool. Its second argument is

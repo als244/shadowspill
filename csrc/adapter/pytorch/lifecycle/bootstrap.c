@@ -182,6 +182,21 @@ static ShadowSpillStatus create_runtime(
     }
     *pool_bytes = allocator_pool_bytes(config, baseline);
     if (*pool_bytes == 0U) {
+        /* The device is usually far from full here: the budget less what the
+           process already holds, mostly its accelerator context, and less the
+           headroom leaves no pool. Latch those numbers against the allocator
+           pool, so the refusal can say so instead of reading as "out of
+           memory". */
+        pthread_mutex_lock(&adapter.mutex);
+        if (adapter.failure.status == SHADOWSPILL_STATUS_OK) {
+            shadowspill_pytorch_failure_latch_physical_locked(
+                SHADOWSPILL_STATUS_OUT_OF_MEMORY,
+                baseline->process_bytes,
+                config->device_budget_bytes
+            );
+            adapter.failure.runtime.pool_id = config->allocator_pool_id;
+        }
+        pthread_mutex_unlock(&adapter.mutex);
         return SHADOWSPILL_STATUS_OUT_OF_MEMORY;
     }
     return build_runtime_topology(

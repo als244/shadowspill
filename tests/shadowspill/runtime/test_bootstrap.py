@@ -43,6 +43,7 @@ from shadowspill.runtime.bootstrap import (
     PoolBootstrap,
     RouteBootstrap,
     RuntimeInstallError,
+    _bootstrap_refusal,
     _function_pointer,
     install_runtime,
     validate_dynamic_execution_reservation,
@@ -392,6 +393,36 @@ def test_installer_rejects_invalid_physical_configuration(
             frontend=_NoProcessAllocator(),
             **arguments,
         )
+
+
+class _LatchedFailure:
+    """An adapter library whose failure record holds one physical latch."""
+
+    def __init__(self, held: int, budget: int, pool_id: int) -> None:
+        self.held, self.budget, self.pool_id = held, budget, pool_id
+
+    def shadowspill_pytorch_allocator_failure(self, failure: object) -> int:
+        record = failure._obj
+        record.status = record.runtime.status = 40
+        record.runtime.requested_bytes = self.held
+        record.runtime.free_bytes = self.budget
+        record.runtime.pool_id = self.pool_id
+        return 40
+
+
+def test_a_refusal_to_size_the_device_pool_says_why() -> None:
+    mib = 1 << 20
+    config = AdapterConfig(external_headroom_bytes=512 * mib, allocator_pool_id=0)
+    no_room = _bootstrap_refusal(_LatchedFailure(520 * mib, 1024 * mib, 0), config)
+    assert "no room for a device pool" in no_room
+    assert "520.00 MiB" in no_room and "512.00 MiB" in no_room
+    past_device = _bootstrap_refusal(
+        _LatchedFailure(520 * mib, 200 * 1024 * mib, 0), config
+    )
+    assert "more than the device holds" in past_device
+    # Holding more than the budget is the budget refusal, whichever pool.
+    over = _bootstrap_refusal(_LatchedFailure(1100 * mib, 1024 * mib, 0), config)
+    assert "passed that budget" in over
 
 
 def test_numa_binding_requires_a_boolean_before_allocator_install() -> None:

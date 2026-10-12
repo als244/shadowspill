@@ -51,6 +51,8 @@ class RuntimeInstallError(RuntimeError):
 _MIB = 1 << 20
 _PERSISTENT_GROWTH_MARGIN = 64 * _MIB
 _PERSISTENT_RESERVATION_GRANULARITY = 64 * _MIB
+# The adapter sizes the device pool in whole units of this many bytes.
+_DEVICE_POOL_GRANULARITY = 2 * _MIB
 
 
 @dataclass(frozen=True)
@@ -600,6 +602,30 @@ def _bootstrap_allocator(library: Any, config: AdapterConfig) -> None:
     )
 
 
+def _sizing_refusal(held: int, budget: int, headroom: int) -> str:
+    """Why the budget left no device pool, from what the adapter latched.
+
+    The pool is the budget less what the process held when the pools were
+    sized and less the headroom. Less than one unit of it left means the
+    budget is too small for this process on this device; more means the
+    budget passed the device's own memory, the other refusal sizing makes.
+    """
+
+    if budget - held - headroom >= _DEVICE_POOL_GRANULARITY:
+        return (
+            f": the declared execution budget of {format_bytes(budget)} is more"
+            " than the device holds, so no device pool can be sized inside it."
+        )
+    return (
+        f": this process already held {format_bytes(held)} on the device when its"
+        " pools were sized -- mostly its accelerator context, whose size differs by"
+        f" device -- and the external headroom reserves {format_bytes(headroom)}"
+        f" more, which leaves the declared execution budget of"
+        f" {format_bytes(budget)} no room for a device pool. Raise the budget or"
+        " lower the external headroom."
+    )
+
+
 def _bootstrap_refusal(library: Any, config: AdapterConfig) -> str:
     """What the bootstrap latched about why it refused, if it latched anything.
 
@@ -614,6 +640,11 @@ def _bootstrap_refusal(library: Any, config: AdapterConfig) -> str:
         return ""
     held = int(failure.runtime.requested_bytes)
     budget = int(failure.runtime.free_bytes)
+    # Sizing the device pool latches against that pool, holding no more than
+    # the budget; a budget refusal holds more than it.
+    sizing = int(failure.runtime.pool_id) == int(config.allocator_pool_id)
+    if sizing and budget > 0 and held <= budget:
+        return _sizing_refusal(held, budget, int(config.external_headroom_bytes))
     if held <= budget or budget == 0:
         return ""
     return (
