@@ -67,12 +67,17 @@ def _routes():
 
 ROOT = Path(__file__).resolve().parents[4]
 
+# Pool sizing takes what the process already holds and 512 MiB of external
+# headroom out of the budget. A CUDA context alone holds 520 MiB on an H100,
+# which leaves a 1 GiB budget no pool at all; 2 GiB leaves one on any device.
+_DEVICE_BUDGET = 2 << 30
+
 
 def _write_image_here(tmp_path, image_path):
     """Import the frozen model into a new image and describe it; one runtime."""
     with Runtime(
         pools={
-            "execution": device(physical_capacity=1 << 30),
+            "execution": device(physical_capacity=_DEVICE_BUDGET),
             "spill": ssd(
                 capacity=64 << 20,
                 directory=tmp_path,
@@ -123,7 +128,7 @@ def test_an_image_is_written_once_and_adopted_without_a_copy(tmp_path):
     assert image.frozen_state_id == "frozen-v1"
     with Runtime(
         pools={
-            "execution": device(physical_capacity=2 << 30),
+            "execution": device(physical_capacity=_DEVICE_BUDGET),
             "spill": ssd(capacity=512 << 20, directory=tmp_path, image=image_path),
         },
         routes=_routes(),
@@ -177,7 +182,7 @@ def test_an_image_refuses_state_it_does_not_describe(tmp_path):
     image, _ = _write_image(tmp_path, image_path)
     with Runtime(
         pools={
-            "execution": device(physical_capacity=1 << 30),
+            "execution": device(physical_capacity=_DEVICE_BUDGET),
             "spill": ssd(capacity=64 << 20, directory=tmp_path, image=image_path),
         },
         routes=_routes(),
