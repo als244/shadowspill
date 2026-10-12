@@ -62,7 +62,7 @@ from .materialize import (
     rollback_training_materialization,
 )
 from .profile import profile_training_tasks, release_build_executables
-from .programs import build_training_programs
+from .programs import build_training_programs, training_lowering
 
 
 def make_training_programs(
@@ -263,6 +263,14 @@ def _build_training_step_programs(
             release_build_executables(profiled, captured.installed)
         timer.attribute_compilation_and_profiling(profiled.profiler.wall_times)
         shared = tuple(timer.values)
+        # One lowering for every ordering: what no ordering changes is done
+        # by the first program built, inside its own lowering phase.
+        lowering = training_lowering(
+            captured,
+            materialized,
+            profiled,
+            optimizer_ordering=optimizer_ordering,
+        )
         for index, ordering in enumerate(orderings):
             own_started = time.perf_counter_ns()
             mark = len(timer.values)
@@ -274,6 +282,7 @@ def _build_training_step_programs(
                 optimizer_ordering=optimizer_ordering,
                 data_ordering=ordering,
                 timer=timer,
+                lowering=lowering,
             )
             own = tuple(timer.values[mark:])
             phases = (*shared, *own) if index == 0 else own

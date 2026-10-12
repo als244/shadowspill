@@ -16,9 +16,6 @@ from shadowspill.pipeline.common import (
 )
 from shadowspill.planner.program_inputs import TransferBandwidths
 from shadowspill.pytorch.lowering.program import execution_device_id
-from shadowspill.pytorch.optimizer import (
-    OptimizerCapture,
-)
 from shadowspill.pytorch.planning.admission import (
     build_admission_facts,
     output_bindings_for_entrypoints,
@@ -30,8 +27,8 @@ from shadowspill.step import StepDataOrdering
 from ...lowering.profiles import CompiledLayoutIndex, ProfileMeasurementKey
 from ...lowering.training import (
     LoweredTrainingProgram,
+    TrainingLowering,
     TrainingStorageLayout,
-    lower_partitioned_training_program,
 )
 from ..artifacts import (
     TrainingCaptureArtifacts,
@@ -51,26 +48,27 @@ def build_training_programs(
     data_ordering: StepDataOrdering,
     timer: PlanningTimer,
     transfer_bandwidths: TransferBandwidths | None = None,
+    lowering: TrainingLowering | None = None,
 ) -> TrainingProgramArtifacts:
     """Construct the step's canonical program from semantic and physical IR.
 
     `transfer_bandwidths` prices the simulator input at given lanes instead
-    of the runtime's calibration; see `build_simulation_config`.
+    of the runtime's calibration; see `build_simulation_config`. `lowering`
+    is the step's lowering shared by every ordering built from these
+    artifacts (`training_lowering`); without one, this ordering's program is
+    lowered alone.
     """
 
     with timer.measure("program_lowering"):
-        measurements, measurements_by_profile, compatibility_digests = (
-            _training_measurement_maps(profiled)
-        )
-        lowered = _lower_training_program(
-            captured,
-            materialized.optimizer_capture,
-            profiled,
-            measurements,
-            compatibility_digests,
-            optimizer_ordering=optimizer_ordering,
-            data_ordering=data_ordering,
-        )
+        measurements, measurements_by_profile, _ = _training_measurement_maps(profiled)
+        if lowering is None:
+            lowering = training_lowering(
+                captured,
+                materialized,
+                profiled,
+                optimizer_ordering=optimizer_ordering,
+            )
+        lowered = lowering.lower(data_ordering)
         _verify_provisional_layout(captured.layout, lowered)
         _report_training_program_inventory(lowered, timer)
     with timer.measure("admission_facts"):
@@ -146,21 +144,22 @@ def _training_measurement_maps(
     return measurements, by_profile, compatibility_digests
 
 
-def _lower_training_program(
+def training_lowering(
     captured: TrainingCaptureArtifacts,
-    optimizer_capture: OptimizerCapture,
+    materialized: TrainingMaterializationArtifacts,
     profiled: TrainingProfileArtifacts,
-    measurements: dict[ProfileMeasurementKey, TaskMeasurement],
-    compatibility_digests: dict[tuple[str, str | None], str],
     *,
     optimizer_ordering: Literal["stage_interleaved", "tail"],
-    data_ordering: StepDataOrdering,
-) -> LoweredTrainingProgram:
-    return lower_partitioned_training_program(
+) -> TrainingLowering:
+    """The lowering every ordering of these artifacts shares: what does not
+    depend on the ordering is done once, by the first program built."""
+
+    measurements, _, compatibility_digests = _training_measurement_maps(profiled)
+    return TrainingLowering(
         captured.fake_model,
         captured.partitioned,
         measurements,
-        optimizer_capture,
+        materialized.optimizer_capture,
         storage_contracts={
             digest: manifest.storage_contract
             for digest, manifest in profiled.manifests.manifests.items()
@@ -171,7 +170,6 @@ def _lower_training_program(
         },
         device_ordinal=captured.device_ordinal,
         optimizer_ordering=optimizer_ordering,
-        data_ordering=data_ordering,
         layout_cache=CompiledLayoutIndex(),
         profiling_metadata_digests=tuple(item.digest for item in captured.workloads),
         profile_compatibility_digests=compatibility_digests,

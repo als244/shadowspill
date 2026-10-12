@@ -104,12 +104,31 @@ class TaskProfileCatalog:
         self._compatibility_digests = compatibility_digests
         self._metadata_enabled = metadata_enabled
         self._layout_cache = layout_cache or CompiledLayoutIndex()
+        self._contracts: dict[tuple[str, str], TaskStorageContract] = {}
         self._profile_by_key: dict[str, str] = {}
         self._profiles: list[TaskProfile] = []
 
     @property
     def profiles(self) -> tuple[TaskProfile, ...]:
         return tuple(self._profiles)
+
+    def copy(self) -> TaskProfileCatalog:
+        """An independent catalog with the profiles this one has numbered,
+        sharing the measurements, the narrowed contracts and the layout
+        cache, which only grow by what any copy would compute the same way."""
+
+        result = TaskProfileCatalog.__new__(TaskProfileCatalog)
+        result._measurements = self._measurements
+        result._off_device_by_digest = self._off_device_by_digest
+        result._storage_contracts = self._storage_contracts
+        result._root_allocations = self._root_allocations
+        result._compatibility_digests = self._compatibility_digests
+        result._metadata_enabled = self._metadata_enabled
+        result._layout_cache = self._layout_cache
+        result._contracts = self._contracts
+        result._profile_by_key = dict(self._profile_by_key)
+        result._profiles = list(self._profiles)
+        return result
 
     def control_profile_id(self) -> str:
         """A control boundary has no device computation or workspace."""
@@ -141,7 +160,16 @@ class TaskProfileCatalog:
                 "compiled storage contract is missing for artifact "
                 f"{artifact.compatibility_digest}"
             )
-        return declared.without_device_storage(self._off_device_output_leaves(artifact))
+        # Narrowing rebuilds the contract and digests it again, and every
+        # binding of every occurrence asks; the answer is the same each time.
+        key = (artifact.compatibility_digest, declared.compatibility_digest)
+        narrowed = self._contracts.get(key)
+        if narrowed is None:
+            narrowed = declared.without_device_storage(
+                self._off_device_output_leaves(artifact)
+            )
+            self._contracts[key] = narrowed
+        return narrowed
 
     def _off_device_output_leaves(self, artifact: GraphArtifact) -> frozenset[int]:
         return self._off_device_by_digest.get(

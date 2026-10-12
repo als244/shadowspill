@@ -288,7 +288,8 @@ def test_cpu_aliases_have_no_gpu_extent_even_for_offset_views():
 
 
 def test_profile_catalog_unions_cpu_outputs_once_across_occurrences():
-    """CPU outputs from any occurrence affect its contract, not other graphs."""
+    """CPU outputs from any occurrence affect its contract, not other graphs,
+    and the contract is narrowed once for every reader, a copy's included."""
     from dataclasses import replace
 
     from torch.fx.experimental.proxy_tensor import make_fx
@@ -319,8 +320,11 @@ def test_profile_catalog_unions_cpu_outputs_once_across_occurrences():
     )
     catalog = TaskProfileCatalog(measurements)
     expected = artifact.storage_contract.without_device_storage({0, 2})
+    first = catalog.contract(artifact)
     for _ in range(5):
         observed = catalog.contract(artifact)
         assert observed == expected
         assert [view.span_bytes for view in observed.output_views] == [0, 16, 0]
+        assert observed is first
+    assert catalog.copy().contract(artifact) is first
     assert measurements.scans == 1

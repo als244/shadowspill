@@ -10,7 +10,7 @@ from .artifacts import (
     TrainingStorageLayout,
 )
 from .objects import lower_training_storage_layout
-from .program import lower_partitioned_training_program
+from .program import TrainingLowering, lower_partitioned_training_program
 from .tasks import optimizer_object_ids
 
 __all__ = [
@@ -19,6 +19,7 @@ __all__ = [
     "LoweredTrainingProgram",
     "OptimizerObjectBinding",
     "TaskEntrypoint",
+    "TrainingLowering",
     "TrainingStorageLayout",
     "lower_partitioned_training_program",
     "lower_training_storage_layout",

@@ -106,7 +106,9 @@ microbatch of an accumulating step; see
 
 `plan_step_search()` accepts caller-named representative updates and lowers
 every `depth x breadth` factor pair of their microbatch counts
-into its own program over the geometry's one capture and profile set and
+into its own program over the geometry's one capture and profile set -- one
+lowering, whose ordering-independent part is done once
+([cross-task lowering](lowering.md#cross-task-lowering)) -- and
 plans each under every budget, so the winner at a budget is a walk of a
 geometry rather than a geometry alone. Which walk wins depends on the budget:
 a breadth-first walk keeps a stage's activations together and lets a tight

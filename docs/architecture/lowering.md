@@ -150,6 +150,18 @@ root/view/mutation rules to forward, backward, recomputation, inference, and
 optimizer tasks. Mode-specific helpers only classify public results and state
 roles.
 
+A training step is lowered once per [microbatch
+ordering](planning-pipeline.md#the-walk-through-the-microbatches), and the
+orderings share everything that comes before the walk matters.
+`TrainingLowering` registers the step's objects and binds its stage boundaries
+once, on the first program it is asked for, and gives each ordering's program
+its own copy of the object and profile catalogs to continue from. Identifiers
+are numbered in the order they are first used, so a program built from the copy
+is the program its ordering lowers to alone. What each ordering does for itself
+is what the walk decides: whether each microbatch's stage runs its creating or
+its accumulating backward form, the order of the tasks, and the residency at
+the step's boundaries.
+
 No output copy is added merely to preserve mutation identity. When compiled
 code returns a replacement allocation for a mutated object, the replacement
 becomes the object's next generation at the task boundary that publishes it;

@@ -146,6 +146,37 @@ class ObjectCatalog:
         self._object_specs: tuple[ObjectSpec, ...] | None = None
         self._next_alias_id = 0
 
+    def copy(self) -> ObjectCatalog:
+        """An independent catalog holding what this one holds.
+
+        Records are copied, because adding a tensor already registered can
+        widen its record's role or persistence; the tensors kept alive are
+        shared, being immutable references.
+        """
+
+        result = ObjectCatalog.__new__(ObjectCatalog)
+        result._device_id = self._device_id
+        result._tensor_keepalive = list(self._tensor_keepalive)
+        result._alias_by_storage = dict(self._alias_by_storage)
+        result._alias_sizes = dict(self._alias_sizes)
+        result._retain_spill = set(self._retain_spill)
+        result._shared_residency = dict(self._shared_residency)
+        result._object_by_key = dict(self._object_by_key)
+        result._objects = [
+            _ObjectRecord(
+                item.object_id,
+                item.alias_group_id,
+                item.offset_bytes,
+                item.size_bytes,
+                item.role,
+                item.persistence,
+            )
+            for item in self._objects
+        ]
+        result._object_specs = self._object_specs
+        result._next_alias_id = self._next_alias_id
+        return result
+
     @staticmethod
     def key(tensor: torch.Tensor) -> _TensorKey:
         if tensor.layout is not torch.strided:
