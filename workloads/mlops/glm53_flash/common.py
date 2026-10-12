@@ -44,8 +44,10 @@ class HyperConnection(nn.Module):
         super().__init__()
         self.config = config
         n, d = config.hc_mult, config.hidden_size
+        # Every mHC parameter stays FP32, as Megatron-Core keeps them; the
+        # checkpoint's BF16 projection widens to FP32 when it loads.
         self.fn = nn.Parameter(
-            torch.empty(n * (n + 2), n * d, device=device, dtype=config.dtype)
+            torch.empty(n * (n + 2), n * d, device=device, dtype=torch.float32)
         )
         self.base = nn.Parameter(
             torch.zeros(n * (n + 2), device=device, dtype=torch.float32)

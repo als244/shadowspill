@@ -72,6 +72,11 @@ frozen tensors where they lie and writes only LoRA factors, optimizer state and
 activations; `GLMCheckpoint.load_into(model, adopted=...)` skips the adopted
 copies.
 
+Every mHC parameter -- the projection, bias and scale -- is kept in FP32, as
+Megatron-Core keeps them, and the coefficients are computed in FP32 while the
+streams stay in the model's dtype. The checkpoint stores the projection in
+BF16, which widens to FP32 on import.
+
 The `--minimum-evict-kib` option configures the ordinary planner's small-object
 policy (default 1024 KiB; zero allows every object to be evicted). Objects below
 it are retained between uses and currently receive separate reserved physical
