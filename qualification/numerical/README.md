@@ -45,8 +45,7 @@ Pass `--reference-dir` to read that canonical set from elsewhere, or
 specific to what produced it -- the machine, and the kernels that machine
 selects. Through the gates wrapper these go in the `numerical` section of its
 config rather than on its own command line, and
-[`../README.md`](../README.md) covers how a per-machine reference set is
-named and pointed at.
+[`../README.md`](../README.md) covers recording and replacing the set.
 
 Optimizer updates are grouped by captured training stage and placed immediately
 after that stage's final-microbatch backward task by default. Pass

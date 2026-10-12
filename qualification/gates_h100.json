@@ -1,7 +1,0 @@
-{
-  "suite": [],
-  "numerical": [
-    "--reference-dir", "qualification/results/references/h100/approximately_1b"
-  ],
-  "performance": []
-}

@@ -80,24 +80,23 @@ in one config file with a section per gate:
 {
   "suite": ["-k", "not slow"],
   "numerical": [
-    "--reference-dir", "qualification/results/references/h100/approximately_1b"
+    "--reference-dir", "qualification/results/references/approximately_1b"
   ],
   "performance": []
 }
 ```
 
 ```bash
-python -m qualification.gates --config qualification/gates_h100.json
+python -m qualification.gates --config path/to/gates.json
 ```
 
-**A config file is named for the machine its references were recorded on.**
-`gates_h100.json` points the numerical gate at `references/h100/`, and running
-it anywhere else fails the first cell on optimizer-state structure rather than
-on anything numerical -- the two machines' runs enumerate optimizer parameter
-groups differently, so every ordinal mismatches while the model tensors are
-exact and the replay is bitwise. That reads as a broken tree and is not one.
-Passing no config at all uses each gate's own defaults, which is what a run on
-the machine that recorded the default set wants.
+Passing no config at all uses each gate's own defaults, which read the
+numerical references from `qualification/results/references/approximately_1b`.
+References recorded on another machine can fail the first cell on
+optimizer-state structure rather than on anything numerical -- two machines'
+runs can enumerate optimizer parameter groups differently, so every ordinal
+mismatches while the model tensors are exact and the replay is bitwise. That
+reads as a broken tree and is not one; record the references again instead.
 
 Each section is that gate's own command line, forwarded verbatim and
 unread by the wrapper. That is deliberate: an option the wrapper understood
@@ -110,13 +109,11 @@ than a silently ignored typo.
 Keeping all three in one file is what lets a run be reproduced from a single
 artifact rather than from a remembered command line.
 
-References are specific to the machine that recorded them, so a set recorded
-elsewhere belongs in a directory named for what recorded it, and the gate is
-pointed at the one that matches. Record a set once, then read it:
+A missing reference is recorded on first use. To replace the set -- after a
+change to what a step computes, or on a new machine -- record it once:
 
 ```json
-{"numerical": ["--reference-dir", "<root>/h100/approximately_1b",
-               "--regenerate-reference"]}
+{"numerical": ["--regenerate-reference"]}
 ```
 
 then drop `--regenerate-reference` from every run after. A run that records
