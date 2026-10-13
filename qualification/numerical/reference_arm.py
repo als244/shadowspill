@@ -36,6 +36,37 @@ def device_microbatches(values: list[list[Any]]) -> list[list[Any]]:
     ]
 
 
+def warm_worker(request: CaseRequest) -> None:
+    """Run every microbatch once, compiled as the reference arm is, and exit.
+
+    Kernels that compile or tune on their first use do so here, in a process
+    that records nothing. A process that tunes a kernel computes slightly
+    differently from one that reads the tuned choice, for the rest of its
+    life, so neither arm may be the process that tuned: both start after this
+    one, read the same cached choices, and agree with each other.
+    """
+
+    case = request.build()
+    model = case.model.to(DEVICE_TYPE)
+    microbatches = device_microbatches(case.microbatches)
+
+    def objective(*microbatch: Any) -> torch.Tensor:
+        return case.objective(model, *microbatch)
+
+    compiled_objective: Callable[..., torch.Tensor] = torch.compile(
+        objective, fullgraph=True, dynamic=False
+    )
+    with case.implementations(deterministic=True):
+        for microbatch in microbatches:
+            compiled_objective(*microbatch).backward()  # type: ignore[no-untyped-call]
+    torch.cuda.synchronize()
+    print(
+        f"warm {request.model_implementation}/{request.family}: "
+        f"{len(microbatches)} microbatches compiled and run",
+        flush=True,
+    )
+
+
 def reference_worker(request: CaseRequest, output: Path) -> None:
     """Train the reference arm and write its artifact and inputs."""
 

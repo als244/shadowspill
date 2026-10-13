@@ -160,11 +160,20 @@ def _case_commands(
     artifact: Path,
     options: _CaseOptions,
 ) -> list[list[str]]:
-    """The reference arm, when one must be made, and always the planned arm."""
+    """The warm-up, the reference arm when one must be made, and the planned arm.
+
+    The warm-up process compiles and runs every microbatch once and exits, so
+    kernels that tune on first use (Quack's autotuner under the SonicMoE
+    implementations) are tuned before either arm starts: a process that tunes
+    a kernel computes slightly differently from one that reads the tuned
+    choice, for the rest of its life, and both arms must be readers.
+    """
 
     base = [sys.executable, "-m", "qualification.numerical.run"]
     shared = options.case_arguments()
-    commands: list[list[str]] = []
+    commands: list[list[str]] = [
+        [*base, "_warm", family, "--model-implementation", implementation, *shared]
+    ]
     if options.regenerate_reference or not reference_artifact_exists(reference):
         commands.append(
             [
@@ -211,9 +220,11 @@ def _run_commands(
     """Run each arm in its own process, in the caches the options ask for."""
 
     return_code = 0
-    for command_index, command in enumerate(commands):
+    for command in commands:
         command_environment = dict(options.environment)
-        is_reference = command_index == 0 and len(commands) == 2
+        mode = command[3]  # after: python -m qualification.numerical.run
+        is_warm = mode == "_warm"
+        is_reference = mode == "_reference"
         plan_cache = (
             (output_directory / "artifact_store" / prefix)
             if options.cache_directory is None
@@ -229,14 +240,14 @@ def _run_commands(
             cache_parent.mkdir(parents=True, exist_ok=True)
             cache_root = Path(
                 tempfile.mkdtemp(prefix=f"{prefix}-", dir=cache_parent)
-            ) / ("reference" if is_reference else "plan")
+            ) / ("warm" if is_warm else "reference" if is_reference else "plan")
             cache_root.mkdir(parents=True, exist_ok=False)
             plan_cache = cache_root / "shadowspill"
             command_environment["TORCHINDUCTOR_CACHE_DIR"] = str(
                 cache_root / "torchinductor"
             )
             command_environment["TRITON_CACHE_DIR"] = str(cache_root / "triton")
-        if not is_reference:
+        if not (is_warm or is_reference):
             command.extend(("--artifact-store", str(plan_cache)))
             if options.detailed_artifacts:
                 command.append("--detailed-artifacts")
@@ -245,7 +256,9 @@ def _run_commands(
                 # reads what is there and leaves the store as it found it.
                 command.extend(("--plan-store-mode", "reuse"))
         phase = (
-            "compiled reference generation"
+            "kernel warm-up: compile and tune, record nothing"
+            if is_warm
+            else "compiled reference generation"
             if is_reference
             else "planned parity, checkpoint replay, and physical budgets"
         )

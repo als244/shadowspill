@@ -58,8 +58,10 @@ def test_ssd_changes_only_the_planned_arm(tmp_path):
 
     host = commands(options)
     on_ssd = commands(replace(options, spill_pool=pool))
-    assert on_ssd[0] == host[0]
-    assert on_ssd[1] == host[1] + spill_arguments(pool)
+    # The warm-up and the reference arm never see the spill pool.
+    assert [command[3] for command in host] == ["_warm", "_reference", "_planned"]
+    assert on_ssd[:2] == host[:2]
+    assert on_ssd[2] == host[2] + spill_arguments(pool)
 
 
 def test_ssd_requires_explicit_storage_and_checks_configuration(tmp_path, monkeypatch):

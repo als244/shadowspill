@@ -20,7 +20,7 @@ from qualification.precision import (
 
 from .orchestrate import orchestrate
 from .planned import planned_worker
-from .reference_arm import reference_worker
+from .reference_arm import reference_worker, warm_worker
 from .references import DEFAULT_REFERENCE_DIRECTORY
 from .request import CaseRequest, PlannedRequest
 from .spill import add_spill_arguments, configured_spill, spill_arguments
@@ -66,10 +66,10 @@ def main() -> int:
 
 
 def _parser() -> argparse.ArgumentParser:
-    """Every option the three modes share, and the paths each one takes."""
+    """Every option the modes share, and the paths each one takes."""
 
     parser = argparse.ArgumentParser()
-    parser.add_argument("mode", choices=("run", "_reference", "_planned"))
+    parser.add_argument("mode", choices=("run", "_warm", "_reference", "_planned"))
     parser.add_argument("family", help="built-in family or custom model name")
     parser.add_argument("paths", nargs="*")
     parser.add_argument("--device-budget", type=int)
@@ -250,7 +250,9 @@ def _dispatch(
     family = case.family
     model_implementation = case.model_implementation
     spill = (
-        None if arguments.mode == "_reference" else configured_spill(parser, arguments)
+        None
+        if arguments.mode in ("_warm", "_reference")
+        else configured_spill(parser, arguments)
     )
     if arguments.mode == "run":
         if len(arguments.paths) != 1:
@@ -287,6 +289,10 @@ def _dispatch(
             detailed_artifacts=arguments.detailed_artifacts,
             spill_options=spill_arguments(spill),
         )
+    elif arguments.mode == "_warm":
+        if arguments.paths:
+            parser.error("_warm takes no paths")
+        warm_worker(case)
     elif arguments.mode == "_reference":
         if len(arguments.paths) != 1:
             parser.error("_reference requires one output path")

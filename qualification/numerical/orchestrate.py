@@ -95,6 +95,20 @@ def orchestrate(
     for value in case_option_arguments:
         options.extend(("--case-option", value))
     environment = dict(os.environ)
+    # The warm-up process tunes and compiles first, so neither arm is the
+    # process that tuned (matrix._case_commands says why).
+    subprocess.run(
+        [
+            *base,
+            "_warm",
+            family,
+            "--model-implementation",
+            model_implementation,
+            *options,
+        ],
+        check=True,
+        env=environment,
+    )
     if regenerate_reference or not reference_artifact_exists(reference):
         subprocess.run(
             [

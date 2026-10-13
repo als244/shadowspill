@@ -9,8 +9,14 @@ python -m qualification.numerical.run run llama3 qualification/results/numerical
 
 The reference is the same model and optimizer run by PyTorch alone, compiled
 with `torch.compile` in Inductor fullgraph mode and with no part of ShadowSpill
-involved: no planner, no runtime, no pools. It is not an eager run. What the
-gate asserts is that planning a step does not change what that step computes.
+involved: no planner, no runtime, no pools. It is not an eager run. Before
+either arm, a warm-up process compiles and runs every microbatch once and
+exits: kernels that tune on first use (Quack's autotuner under the SonicMoE
+implementations) are tuned there, because a process that tunes a kernel
+computes slightly differently from one that reads the tuned choice, for the
+rest of its life, and both arms must be readers of the same cached choices.
+What the gate asserts is that planning a step does not change what that step
+computes.
 
 The opt-in [`numerical_ssd` gate](../README.md#ssd-numerical-qualification)
 runs this same matrix against an SSD spill pool, preserving references, model
