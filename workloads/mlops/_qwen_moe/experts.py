@@ -37,15 +37,15 @@ class MoE(nn.Module):
             self.w13 = nn.Parameter(
                 torch.empty(
                     config.n_experts,
-                    config.d_model,
                     2 * config.d_ff_expert,
+                    config.d_model,
                 )
             )
             self.w2 = nn.Parameter(
                 torch.empty(
                     config.n_experts,
-                    config.d_ff_expert,
                     config.d_model,
+                    config.d_ff_expert,
                 )
             )
             self.reset_parameters()
@@ -64,7 +64,7 @@ class MoE(nn.Module):
             output, _auxiliary, counts, probability_sum = mlops.moe(
                 hidden,
                 residual,
-                self.router.weight.T,
+                self.router.weight,
                 self.w13,
                 self.w2,
                 top_k=c.top_k,

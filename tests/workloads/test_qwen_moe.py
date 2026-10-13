@@ -197,16 +197,8 @@ def _copy_reference(model, reference):
             bind(own.A_log, other.A_log)
             bind(own.dt_bias, other.dt_bias)
         bind(block.moe.router.weight, layer.mlp.gate.weight)
-        bind(
-            block.moe.w13,
-            layer.mlp.experts.gate_up_proj,
-            transform=lambda xs: xs[0].transpose(1, 2),
-        )
-        bind(
-            block.moe.w2,
-            layer.mlp.experts.down_proj,
-            transform=lambda xs: xs[0].transpose(1, 2),
-        )
+        bind(block.moe.w13, layer.mlp.experts.gate_up_proj)
+        bind(block.moe.w2, layer.mlp.experts.down_proj)
         if block.moe.shared is not None:
             bind(
                 block.moe.shared.gate_up.weight,

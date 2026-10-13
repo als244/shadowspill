@@ -20,7 +20,7 @@ def expert_lora(
     scale,
 ):
     flat = hidden.reshape(-1, hidden.shape[-1])
-    logits = F.linear(flat.to(router_weight.dtype), router_weight.T).float()
+    logits = F.linear(flat.to(router_weight.dtype), router_weight).float()
     probabilities = logits.softmax(-1)
     _, order = torch.sort(logits, descending=True, stable=True)
     ids = order[:, :top_k]
@@ -37,14 +37,14 @@ def expert_lora(
     )
     output = torch.zeros_like(flat, dtype=torch.float32)
     for expert in range(gate_up.shape[0]):
-        h13 = flat @ gate_up[expert] + scale * (
-            flat @ a13[expert].to(flat.dtype)
-        ) @ b13[expert].to(flat.dtype)
+        h13 = F.linear(flat, gate_up[expert]) + scale * F.linear(
+            F.linear(flat, a13[expert].to(flat.dtype)), b13[expert].to(flat.dtype)
+        )
         gate, up = h13.chunk(2, -1)
         active = F.silu(gate.float()).to(gate.dtype) * up
-        y = active @ down[expert] + scale * (active @ a2[expert].to(active.dtype)) @ b2[
-            expert
-        ].to(active.dtype)
+        y = F.linear(active, down[expert]) + scale * F.linear(
+            F.linear(active, a2[expert].to(active.dtype)), b2[expert].to(active.dtype)
+        )
         coefficient = (weights * (ids == expert)).sum(-1)
         output = output + coefficient[:, None] * y.float()
     return (

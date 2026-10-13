@@ -28,7 +28,7 @@ class OLMoELoRA(OLMoE):
         return function(
             hidden,
             residual,
-            self.router.weight.T,
+            self.router.weight,
             self.w13_experts,
             self.w2_experts,
             self.lora_gate_up_a,
@@ -72,7 +72,7 @@ class QwenMoELoRA(QwenMoE):
         output, _, counts, probabilities = expert_lora(
             hidden,
             residual,
-            self.router.weight.T,
+            self.router.weight,
             self.w13,
             self.w2,
             self.lora_gate_up_a,

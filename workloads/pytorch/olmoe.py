@@ -96,10 +96,10 @@ class MoE(nn.Module):
         self.config = config
         self.router = nn.Linear(config.d_model, config.n_experts, bias=False)
         self.w13_experts = nn.Parameter(
-            torch.empty(config.n_experts, config.d_model, 2 * config.d_ff_expert)
+            torch.empty(config.n_experts, 2 * config.d_ff_expert, config.d_model)
         )
         self.w2_experts = nn.Parameter(
-            torch.empty(config.n_experts, config.d_ff_expert, config.d_model)
+            torch.empty(config.n_experts, config.d_model, config.d_ff_expert)
         )
         self.reset_parameters()
 
@@ -134,11 +134,11 @@ class MoE(nn.Module):
         routed = torch.zeros_like(hidden, dtype=torch.float32)
         for expert in range(config.n_experts):
             coefficient = (weights * (experts == expert)).sum(dim=-1)
-            gate_and_up = hidden @ self.w13_experts[expert]
+            gate_and_up = hidden @ self.w13_experts[expert].T
             gate, up = gate_and_up.split(  # type: ignore[no-untyped-call]
                 config.d_ff_expert, dim=-1
             )
-            contribution = swiglu(gate, up) @ self.w2_experts[expert]
+            contribution = swiglu(gate, up) @ self.w2_experts[expert].T
             routed = routed + coefficient[..., None] * contribution.float()
         return (residual.float() + routed).to(hidden.dtype), auxiliary
 
