@@ -63,11 +63,15 @@ def expert_construction(
     """Set construction defaults and optionally share one EP buffer across layers.
 
     The yielded factory returns an expert module for EP, or None for local
-    experts. On success the model owns its layers and any newly created buffer;
-    on failure all resources created here are released, including incomplete
-    blocks. A supplied buffer always remains caller-owned.
+    experts -- also for an EP group of one rank: expert parallelism moves every
+    row into the communication buffer's layout and back, which on one GPU is a
+    third of the layer's step spent for no one, while the local experts
+    (`mlops.moe`, the SonicMoE implementation where it applies) have no
+    transport. On success the model owns its layers and any newly created
+    buffer; on failure all resources created here are released, including
+    incomplete blocks. A supplied buffer always remains caller-owned.
     """
-    parallel = ep_group is not None
+    parallel = ep_group is not None and torch.distributed.get_world_size(ep_group) > 1
     options = None
     if parallel:
         if config.n_layers < 1:
@@ -108,7 +112,7 @@ def expert_construction(
             share_expert_banks=True,
             init_std=getattr(config, "initializer_range", 0.02),
         )
-    elif buffer is not None or token_capacity is not None:
+    elif ep_group is None and (buffer is not None or token_capacity is not None):
         raise ValueError("a communication buffer requires an EP process group")
 
     dtype = dtype or torch.get_default_dtype()
