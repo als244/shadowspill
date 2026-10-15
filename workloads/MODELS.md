@@ -356,6 +356,7 @@ The same keyword arguments work with `Qwen3MoE(config, ...)` and
 | `compute_precision` | EP routed expert compute: `"bf16"` default or `"fp8_current"` |
 | `weight_grad_dtype` | EP expert gradients: BF16 default, or FP32 |
 | `activation_transport` | EP activation communication: `"bf16"` default, or `"fp8"` with FP8 compute |
+| `expert_backend` | Qwen EP experts: `"quack"` default, or `"te"` for Transformer Engine's TEMoE with BF16 compute and activation transport; OLMoE always uses QuackMoE |
 
 With EP, supply exactly one of `token_capacity` and `buffer`. A single buffer
 and its expert publication/reduction banks are reused across every model layer;
@@ -382,8 +383,8 @@ Quack's grouped expert kernels require H100/SM90. Install its optional
 backend with this repository's `./scripts/setup.sh --expert-parallel quack`, or
 add it to an existing environment from the MLOps checkout with
 `./scripts/setup_expert_parallel.sh --backend quack --python /path/to/python`.
-The standalone Transformer Engine modules also expose `fp8_block`; these model
-constructors select QuackMoE and do not expose a TE-backend switch.
+The standalone Transformer Engine modules also expose `fp8_block`, which these
+constructors do not use.
 
 `model.expert_parameters()` identifies unique home expert shards. Attention,
 routers, shared experts, normalization, embeddings, and output heads are

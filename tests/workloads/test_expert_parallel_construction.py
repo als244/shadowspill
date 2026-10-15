@@ -217,3 +217,45 @@ def test_empty_ep_model_fails_before_allocating(fake_ep):
             parameter_device="cpu",
         )
     assert not fake_ep.buffers and not fake_ep.layers
+
+
+def test_qwen_te_backend_selection(fake_ep, monkeypatch):
+    import mlops.expert_parallel as ep
+
+    calls = []
+    original = ep.__dict__["QuackMoE"]
+
+    def te_layer(*args, **kwargs):
+        calls.append(True)
+        return original(*args, **kwargs)
+
+    monkeypatch.setitem(ep.__dict__, "TEMoE", te_layer)
+    config = replace(
+        Qwen3MoEConfig(),
+        n_layers=2,
+        d_model=128,
+        n_heads=4,
+        n_kv_heads=2,
+        head_dim=32,
+        n_experts=4,
+        top_k=2,
+        d_ff_expert=128,
+        vocab_size=97,
+        max_seq_len=16,
+    )
+    model = Qwen3MoE(
+        config,
+        ep_group=object(),
+        token_capacity=256,
+        device="cuda:0",
+        parameter_device="cpu",
+        dtype=torch.bfloat16,
+        expert_backend="te",
+    )
+    assert len(calls) == 2
+    assert all(layer.config.share_expert_banks for layer in fake_ep.layers)
+    assert all(
+        type(layer.config).__module__.endswith("transformer_engine.config")
+        for layer in fake_ep.layers
+    )
+    model.close()

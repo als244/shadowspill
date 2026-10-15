@@ -32,8 +32,9 @@ class Block(nn.Module):
 
 
 class QwenMoE(nn.Module):
-    """Published text architecture with local MLOps or QuackMoE routed experts.
+    """Published text architecture with local MLOps or EP routed experts.
 
+    Select ``expert_backend="quack"`` (default) or ``"te"`` for EP experts.
     For EP, supply ``ep_group`` and either ``token_capacity`` or a caller-owned
     ``buffer``. One model-owned buffer is reused across every block, including
     the expert publication banks. ``expert_parameters()`` identifies rank-unique
@@ -57,6 +58,7 @@ class QwenMoE(nn.Module):
         compute_precision="bf16",
         weight_grad_dtype=torch.bfloat16,
         activation_transport="bf16",
+        expert_backend="quack",
     ):
         super().__init__()
         self.config = config
@@ -74,6 +76,7 @@ class QwenMoE(nn.Module):
             compute_precision=compute_precision,
             weight_grad_dtype=weight_grad_dtype,
             activation_transport=activation_transport,
+            expert_backend=expert_backend,
         ) as experts:
             self.embed = Embedding(
                 config.vocab_size, config.d_model, std=config.initializer_range

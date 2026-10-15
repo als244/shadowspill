@@ -14,20 +14,24 @@ from torch.nn import functional as F
 class _ExpertFactory:
     """Temporary construction state; never attach this object to a model."""
 
-    def __init__(self, options, group, buffer, device, parameter_device, cleanup):
+    def __init__(
+        self, options, group, buffer, device, parameter_device, cleanup, backend
+    ):
         self.options = options
         self.group = group
         self.buffer = buffer
         self.device = device
         self.parameter_device = parameter_device
         self.cleanup = cleanup
+        self.backend = backend
 
     def __call__(self):
         if self.options is None:
             return None
-        from mlops.expert_parallel import QuackMoE
+        import mlops.expert_parallel as ep
 
-        layer = QuackMoE(
+        layer_type = ep.QuackMoE if self.backend == "quack" else ep.TEMoE
+        layer = layer_type(
             self.options, self.group, buffer=self.buffer, device=self.device
         )
         self.cleanup.callback(layer.close)
@@ -59,6 +63,7 @@ def expert_construction(
     compute_precision="bf16",
     weight_grad_dtype=torch.bfloat16,
     activation_transport="bf16",
+    expert_backend="quack",
 ):
     """Set construction defaults and optionally share one EP buffer across layers.
 
@@ -71,6 +76,10 @@ def expert_construction(
     buffer; on failure all resources created here are released, including
     incomplete blocks. A supplied buffer always remains caller-owned.
     """
+    if expert_backend not in {"quack", "te"}:
+        raise ValueError("expert_backend must be quack or te")
+    if expert_backend == "te" and activation_transport != "bf16":
+        raise ValueError("TEMoE requires BF16 activation transport")
     parallel = ep_group is not None and torch.distributed.get_world_size(ep_group) > 1
     options = None
     if parallel:
@@ -92,12 +101,18 @@ def expert_construction(
             raise ValueError("Parameters must start on the compute device or CPU")
         dtype = dtype or torch.bfloat16
         if dtype != torch.bfloat16:
-            raise ValueError("QuackMoE's hidden activation dtype must be BF16")
+            raise ValueError("EP hidden activation dtype must be BF16")
         # Optional accelerator dependencies stay out of ordinary CPU/meta
         # construction and workload discovery.
-        from mlops.expert_parallel import QuackMoEConfig
+        import mlops.expert_parallel as ep
 
-        options = QuackMoEConfig(
+        config_type = ep.QuackMoEConfig if expert_backend == "quack" else ep.TEMoEConfig
+        transport = (
+            {"activation_transport": activation_transport}
+            if expert_backend == "quack"
+            else {}
+        )
+        options = config_type(
             ep_size=torch.distributed.get_world_size(ep_group),
             num_experts=config.n_experts,
             top_k=config.top_k,
@@ -107,7 +122,7 @@ def expert_construction(
             router_weight_grad_dtype=router_dtype or dtype,
             weight_grad_dtype=weight_grad_dtype,
             compute_precision=compute_precision,
-            activation_transport=activation_transport,
+            **transport,
             renormalize_topk=renormalize_topk,
             share_expert_banks=True,
             init_std=getattr(config, "initializer_range", 0.02),
@@ -127,7 +142,13 @@ def expert_construction(
                 buffer = create_buffer(options, token_capacity, ep_group)
                 cleanup.callback(buffer.destroy)
             factory = _ExpertFactory(
-                options, ep_group, buffer, device, parameter_device, cleanup
+                options,
+                ep_group,
+                buffer,
+                device,
+                parameter_device,
+                cleanup,
+                expert_backend,
             )
             torch.set_default_dtype(dtype)
             with torch.device(parameter_device):
