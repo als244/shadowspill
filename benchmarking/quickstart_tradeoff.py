@@ -18,20 +18,51 @@ import matplotlib
 
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
+import numpy as np
 from matplotlib.lines import Line2D
+from matplotlib.path import Path as LinePath
 from matplotlib.ticker import MaxNLocator, StrMethodFormatter
 
-from benchmarking.quickstart_timeline import COLORS, load_timeline
+from benchmarking.quickstart_timeline import (
+    COLORS,
+    load_timeline,
+    requested_budgets,
+    requested_for,
+)
 
 
 def raw_data_directory(source: Path) -> Path:
+    """A run's raw data: points.csv from its search, run_budgets.csv when it
+    measured. A rerun that measured chosen plans without searching has only the
+    second."""
     for path in (source, source / "raw_data", source / "figures/raw_data"):
-        if all((path / name).is_file() for name in ("run_budgets.csv", "points.csv")):
+        if (path / "points.csv").is_file() or (path / "run_budgets.csv").is_file():
             return path.resolve()
     raise ValueError(
-        "Expected run_budgets.csv and points.csv in SOURCE, raw_data/, or "
+        "Expected points.csv or run_budgets.csv in SOURCE, raw_data/, or "
         "figures/raw_data/. Select one quickstart run, not its parent collection."
     )
+
+
+def planned_from_run(run: dict[str, str]) -> dict[str, str]:
+    """A measured budget's plan as points.csv would record it, for a rerun with
+    no search: the run row splits the same predicted step into task time (with
+    its recompute), idle time, the entry delay and the final writeback."""
+    metric = "units" if "simulated_units_per_second" in run else "tokens"
+    recompute = float(run["recomputation_seconds"])
+    idle = float(run["simulated_idle_seconds"]) + float(
+        run["simulated_entry_delay_seconds"]
+    )
+    return {
+        "status": "succeeded",
+        "execution_budget_gib": run["execution_budget_gib"],
+        "simulated_step_seconds": run["simulated_step_seconds"],
+        f"simulated_{metric}_per_second": run[f"simulated_{metric}_per_second"],
+        "unconstrained_seconds": str(float(run["profiled_task_seconds"]) - recompute),
+        "recomputation_overhead_seconds": str(recompute),
+        "idle_seconds": str(idle),
+        "terminal_writeback_seconds": run["terminal_tail_seconds"],
+    }
 
 
 def read_csv(path: Path) -> list[dict[str, str]]:
@@ -50,47 +81,80 @@ def agree(actual: float, expected: float, name: str) -> None:
         raise ValueError(f"{name}: inconsistent report values {actual} and {expected}.")
 
 
-def load_winners(directory: Path, budgets: list[float] | None):
-    runs = read_csv(directory / "run_budgets.csv")
-    points = read_csv(directory / "points.csv")
-    if not runs:
-        raise ValueError("The report has no measured budgets to plot.")
+def load_winners(
+    directory: Path, budgets: list[float] | None, display: str = "execution"
+):
+    """Each budget's winning plan: measured where the run executed it, and only
+    simulated for a report that planned without running (no run_budgets.csv).
+    With ``display="requested"`` budgets are named, filtered and plotted by the
+    device budget the run was asked for rather than the execution budget left
+    after headroom."""
+    runs_path = directory / "run_budgets.csv"
+    runs = read_csv(runs_path) if runs_path.is_file() else []
+    points_path = directory / "points.csv"
+    points = (
+        read_csv(points_path)
+        if points_path.is_file()
+        else [planned_from_run(run) for run in runs]
+    )
+    planned = [p for p in points if p["status"] == "succeeded"]
+    if not runs and not planned:
+        raise ValueError("The report has no planned budgets to plot.")
     # Current generic reports use units/s; archived text reports use tokens/s.
-    metric = "units" if "measured_units_per_second" in runs[0] else "tokens"
+    columns = runs[0] if runs else planned[0]
+    metric = (
+        "units" if any(k.endswith("_units_per_second") for k in columns) else "tokens"
+    )
     throughput_path = directory / "throughput.json"
     throughput = (
         json.loads(throughput_path.read_text()) if throughput_path.is_file() else {}
     )
-    units = positive(
-        float(
-            throughput.get(
-                "units_per_step",
-                float(runs[0][f"measured_{metric}_per_second"])
-                * float(runs[0]["measured_step_seconds"]),
-            )
-        ),
-        "units per step",
-    )
+    if "units_per_step" in throughput:
+        units = float(throughput["units_per_step"])
+    elif runs:
+        units = float(runs[0][f"measured_{metric}_per_second"]) * float(
+            runs[0]["measured_step_seconds"]
+        )
+    else:
+        units = float(planned[0][f"simulated_{metric}_per_second"]) * float(
+            planned[0]["simulated_step_seconds"]
+        )
+    units = positive(units, "units per step")
     label = throughput.get("unit_label", metric)
-    available = sorted({float(r["execution_budget_gib"]) for r in runs})
+    requested = requested_budgets(directory.parent.parent)
+
+    def shown(budget: float) -> float:
+        if display == "execution":
+            return budget
+        named = requested_for(budget, requested)
+        if named is None:
+            raise ValueError(
+                f"request.json names no requested budget for the {budget:g} GiB "
+                "execution budget."
+            )
+        return named
+
+    available = sorted({float(r["execution_budget_gib"]) for r in runs or planned})
     selected = set(available)
     if budgets:
         selected = set()
         for budget in budgets:
-            matches = [v for v in available if abs(v - budget) < 0.05]
+            matches = [v for v in available if abs(shown(v) - budget) < 0.05]
             if len(matches) != 1:
                 raise ValueError(
-                    f"Budget {budget:g} GiB does not identify one measured point; "
-                    f"available: {available}"
+                    f"Budget {budget:g} GiB does not identify one planned point; "
+                    f"available: {[shown(v) for v in available]}"
                 )
             selected.add(matches[0])
     steps_path = directory / "steps.csv"
     steps = read_csv(steps_path) if steps_path.is_file() else []
+    by_budget = {float(r["execution_budget_gib"]): r for r in runs}
+    if len(by_budget) != len(runs):
+        raise ValueError("Duplicate run rows for one budget.")
     rows = []
-    for run in sorted(runs, key=lambda r: float(r["execution_budget_gib"])):
-        budget = positive(float(run["execution_budget_gib"]), "budget")
-        if budget not in selected:
-            continue
+    for budget in sorted(selected):
+        positive(budget, "budget")
+        run = by_budget.get(budget)
         candidates = [
             p
             for p in points
@@ -103,25 +167,43 @@ def load_winners(directory: Path, budgets: list[float] | None):
             )
         winner = min(candidates, key=lambda p: float(p["simulated_step_seconds"]))
         predicted = positive(float(winner["simulated_step_seconds"]), "predicted time")
-        agree(
-            predicted, float(run["simulated_step_seconds"]), f"winner at {budget:g} GiB"
-        )
-        measured = positive(float(run["measured_step_seconds"]), "measured time")
-        samples = [
-            float(s["seconds"])
-            for s in steps
-            if math.isclose(float(s["execution_budget_gib"]), budget, abs_tol=1e-7)
-        ]
-        if steps and not samples:
-            raise ValueError(f"steps.csv has no measurements at {budget:g} GiB.")
-        if samples:
+        measured, samples = None, []
+        if run is not None:
+            agree(
+                predicted,
+                float(run["simulated_step_seconds"]),
+                f"winner at {budget:g} GiB",
+            )
+            measured = positive(float(run["measured_step_seconds"]), "measured time")
+            at_budget = sorted(
+                (
+                    s
+                    for s in steps
+                    if math.isclose(
+                        float(s["execution_budget_gib"]), budget, abs_tol=1e-7
+                    )
+                ),
+                key=lambda s: int(s.get("step") or 0),
+            )
+            samples = [float(s["seconds"]) for s in at_budget]
+            if steps and not samples:
+                raise ValueError(f"steps.csv has no measurements at {budget:g} GiB.")
             for sample in samples:
                 positive(sample, "step time")
-            agree(
-                measured,
-                statistics.median(samples),
-                f"measured median at {budget:g} GiB",
-            )
+            # The runner's median leaves out its first step, which reconciles the
+            # plan's initial state, and its last, which is traced; older reports
+            # took every step. Whichever the report used names the sample count.
+            middle = samples[1:-1] if len(samples) > 2 else samples
+            if middle and math.isclose(
+                measured, statistics.median(middle), rel_tol=1e-6, abs_tol=1e-7
+            ):
+                samples = middle
+            elif samples:
+                agree(
+                    measured,
+                    statistics.median(samples),
+                    f"measured median at {budget:g} GiB",
+                )
         effective = positive(
             float(winner["unconstrained_seconds"]), "effective compute"
         )
@@ -134,22 +216,24 @@ def load_winners(directory: Path, budgets: list[float] | None):
         agree(
             effective + recompute + idle, predicted, f"time breakdown at {budget:g} GiB"
         )
-        agree(
-            units / measured,
-            float(run[f"measured_{metric}_per_second"]),
-            "measured throughput",
-        )
-        agree(
-            units / predicted,
-            float(run[f"simulated_{metric}_per_second"]),
-            "simulated throughput",
-        )
+        if run is not None:
+            agree(
+                units / measured,
+                float(run[f"measured_{metric}_per_second"]),
+                "measured throughput",
+            )
+            agree(
+                units / predicted,
+                float(run[f"simulated_{metric}_per_second"]),
+                "simulated throughput",
+            )
         rows.append(
             dict(
                 budget_gib=budget,
+                shown_gib=shown(budget),
                 measured_seconds=measured,
                 simulated_seconds=predicted,
-                measured_rate=units / measured,
+                measured_rate=units / measured if measured else None,
                 simulated_rate=units / predicted,
                 chosen_compute_rate=units / (effective + recompute),
                 effective_compute_seconds=effective,
@@ -166,11 +250,43 @@ def load_winners(directory: Path, budgets: list[float] | None):
                 ordering=winner.get("ordering"),
             )
         )
-    if len(rows) != len(selected):
-        raise ValueError("Duplicate or missing run rows for a selected budget.")
-    sources = [directory / "run_budgets.csv", directory / "points.csv"]
-    sources += [p for p in (throughput_path, steps_path) if p.is_file()]
+    sources = [
+        p for p in (points_path, runs_path, throughput_path, steps_path) if p.is_file()
+    ]
     return rows, units, label, sources
+
+
+def merged_winners(args):
+    """Every report's winners, one row per budget. A later report replaces an
+    earlier one at a budget unless only the earlier measured it, so a rerun of
+    one budget fills in a point the first report could not run."""
+    by_budget, units, unit_label, sources, directories = {}, None, None, [], []
+    for source in args.source:
+        directory = raw_data_directory(source)
+        found, found_units, found_label, found_sources = load_winners(
+            directory, args.budget_gib, args.budget_display
+        )
+        if units is not None:
+            agree(found_units, units, "units per step across reports")
+        units, unit_label = found_units, unit_label or found_label
+        report = (
+            directory.parent.parent
+            if directory.parent.name == "figures"
+            else directory.parent
+        )
+        for row in found:
+            row["report"] = report.name
+            kept = by_budget.get(row["shown_gib"])
+            if (
+                kept is None
+                or row["measured_rate"] is not None
+                or kept["measured_rate"] is None
+            ):
+                by_budget[row["shown_gib"]] = row
+        sources += found_sources
+        directories.append(directory)
+    rows = [by_budget[budget] for budget in sorted(by_budget)]
+    return rows, units, unit_label, sources, directories
 
 
 def unconstrained_reference(directory: Path, units: float, args):
@@ -182,10 +298,14 @@ def unconstrained_reference(directory: Path, units: float, args):
             else directory.parent
         )
         choices = list((root / "timelines/all_save").glob("*/all_save.html"))
-        if choices:
-            source = min(
-                choices, key=lambda p: float(load_timeline(p)["summary"]["seconds"])
-            )
+        if choices:  # the fastest; among equally fast ones, the smallest peak
+
+            def speed_then_peak(path):
+                data = load_timeline(path)
+                pool = next(p for p in data["pools"] if p["name"] == "execution")
+                return float(data["summary"]["seconds"]), float(pool["peak_gib"])
+
+            source = min(choices, key=speed_then_peak)
     if source is None:
         if args.unconstrained_peak_gib is not None:
             raise ValueError(
@@ -221,6 +341,78 @@ def range_ceiling(value: float) -> float:
     return math.ceil(value / scale * 10) * scale / 10
 
 
+def place_labels(fig, labels):
+    """Put each endpoint label where it covers no plotted line, no other axes and no
+    earlier label, inside the figure and never below or left of its own axes (the
+    tick labels live there), and keeps the order of the values it is drawn beside:
+    the larger of two labels at one end is the higher. It tries its preferred side
+    of the point, then the other side, then further out, then beside the point. The
+    curves can cross, so no fixed side per series keeps every label legible."""
+    renderer = fig.canvas.get_renderer()
+    page = fig.bbox
+    placed = []  # (box, end, value)
+
+    def put(ax, text, xy, style, dx, dy, ha, va):
+        label = ax.annotate(
+            text,
+            xy,
+            xytext=(dx, dy),
+            textcoords="offset points",
+            ha=ha,
+            va=va,
+            **style,
+        )
+        return label, label.get_window_extent(renderer).padded(2)
+
+    def ordered(box, end, value):
+        mid = (box.y0 + box.y1) / 2
+        return all(
+            (value - v) * (mid - (b.y0 + b.y1) / 2) > 0
+            for b, e, v in placed
+            if e == end and v != value
+        )
+
+    for ax, text, xy, above, align, style, end, value in labels:
+        inside = ax.get_window_extent(renderer)
+        others = [o.get_window_extent(renderer) for o in fig.axes if o is not ax]
+        segments = []
+        for line in ax.get_lines():
+            points = line.get_transform().transform(
+                np.column_stack([line.get_xdata(), line.get_ydata()])
+            )
+            segments += [LinePath(points[k : k + 2]) for k in range(len(points) - 1)]
+        sides = (1, -1) if above else (-1, 1)
+        flip = "right" if align == "left" else "left"
+        inward = 1 if align == "left" else -1
+        near = "bottom" if sides[0] > 0 else "top"
+        candidates = [
+            (0, side * distance, ha, "bottom" if side > 0 else "top")
+            for ha in (align, flip)
+            for distance in (7, 15)
+            for side in sides
+        ] + [
+            (sx * 8, dy, "left" if sx > 0 else "right", va)
+            for sx in (inward, -inward)
+            for dy, va in ((0, "center"), (sides[0] * 4, near), (2, "bottom"))
+        ]
+        for candidate in candidates:
+            label, box = put(ax, text, xy, style, *candidate)
+            if (
+                box.y0 >= inside.y0
+                and box.x0 >= inside.x0 - 2
+                and box.x1 <= page.x1 - 2
+                and not any(box.overlaps(o) for o in others)
+                and not any(box.overlaps(b) for b, _, _ in placed)
+                and not any(s.intersects_bbox(box, filled=False) for s in segments)
+                and ordered(box, end, value)
+            ):
+                break
+            label.remove()
+        else:  # nowhere is clear: the preferred spot
+            label, box = put(ax, text, xy, style, *candidates[0])
+        placed.append((box, end, value))
+
+
 def render_figure(rows, reference, unit_label, args):
     plt.rcParams.update(
         {
@@ -238,12 +430,10 @@ def render_figure(rows, reference, unit_label, args):
     fig = plt.figure(figsize=(12, 4), facecolor="white")
     full = fig.add_axes([0.070, 0.575, 0.388, 0.245])
     zoom = fig.add_axes([0.070, 0.235, 0.388, 0.245], sharex=full)
-    x = [r["budget_gib"] for r in rows]
-    rates = [
-        r[k]
-        for r in rows
-        for k in ("measured_rate", "simulated_rate", "chosen_compute_rate")
-    ]
+    x = [r["shown_gib"] for r in rows]
+    measured = all(r["measured_rate"] is not None for r in rows)
+    series = ("measured_rate",) * measured + ("simulated_rate", "chosen_compute_rate")
+    rates = [r[k] for r in rows for k in series]
     maximum = max(rates + ([reference["rate"]] if reference else []))
     full_max = args.full_ymax or range_ceiling(maximum * 1.06)
     if full_max <= maximum:
@@ -254,7 +444,7 @@ def render_figure(rows, reference, unit_label, args):
     if not zoom_limits[0] < zoom_limits[1] or zoom_limits[0] < 0:
         raise ValueError("--zoom-ylim needs nonnegative increasing limits.")
     if zoom_limits[0] > min(rates) or zoom_limits[1] < max(rates):
-        raise ValueError("--zoom-ylim must include all three budget-dependent series.")
+        raise ValueError("--zoom-ylim must include every budget-dependent series.")
     for ax in (full, zoom):
         for key, color, style, label, marker in (
             ("measured_rate", "ink", "-", "Measured", "o"),
@@ -267,6 +457,8 @@ def render_figure(rows, reference, unit_label, args):
                 None,
             ),
         ):
+            if key not in series:
+                continue
             ax.plot(
                 x,
                 [r[key] for r in rows],
@@ -316,30 +508,41 @@ def render_figure(rows, reference, unit_label, args):
             dash_capstyle="round",
         )
     )
-    for key, color, offset in (
-        ("measured_rate", "ink", 8),
-        ("simulated_rate", "muted", -13),
+    labels = []  # endpoint labels, placed once every axis has its final limits
+    ends = ((0, "left"), (-1, "right")) if len(rows) > 1 else ((0, "left"),)
+    for key, rival, color in (
+        ("measured_rate", "simulated_rate", "ink"),
+        ("simulated_rate", "measured_rate", "muted"),
     ):
-        for i, align in (
-            ((0, "left"), (-1, "right")) if len(rows) > 1 else ((0, "left"),)
-        ):
+        if key not in series:
+            continue
+        for i, align in ends:
             value = rows[i][key]
-            zoom.annotate(
-                f"{value:,.0f}" if maximum >= 100 else f"{value:.3g}",
-                (x[i], value),
-                xytext=(0, offset),
-                textcoords="offset points",
-                ha=align,
-                va="bottom",
-                color=COLORS[color],
-                fontsize=9,
-                weight="bold",
-                bbox=dict(facecolor="white", edgecolor="none", pad=0.8, alpha=0.88),
+            labels.append(
+                (
+                    zoom,
+                    f"{value:,.0f}" if maximum >= 100 else f"{value:.3g}",
+                    (x[i], value),
+                    rows[i][rival] is None
+                    or value > rows[i][rival]
+                    or (value == rows[i][rival] and key == "measured_rate"),
+                    align,
+                    dict(
+                        color=COLORS[color],
+                        fontsize=9,
+                        weight="bold",
+                        bbox=dict(
+                            facecolor="white", edgecolor="none", pad=0.8, alpha=0.88
+                        ),
+                    ),
+                    ("rate", i),
+                    value,
+                )
             )
     fig.text(
         0.070,
         0.985,
-        "Throughput: measured vs. simulated",
+        "Throughput: measured vs. simulated" if measured else "Throughput: simulated",
         fontsize=11.5,
         weight="bold",
         va="top",
@@ -347,7 +550,9 @@ def render_figure(rows, reference, unit_label, args):
     counts = {r["samples"] for r in rows}
     count = next(iter(counts)) if len(counts) == 1 else None
     sampling = (
-        f"measured median of {count} steps"
+        "planned and simulated, not run"
+        if not measured
+        else f"measured median of {count} steps"
         if count
         else "recorded per-budget measurements"
     )
@@ -418,20 +623,32 @@ def render_figure(rows, reference, unit_label, args):
             marker="o",
             markersize=4.5,
         )
-        for i, align in (
-            ((0, "left"), (-1, "right")) if len(rows) > 1 else ((0, "left"),)
-        ):
-            ax.annotate(
-                f"{values[i]:.1f}%",
-                (x[i], values[i]),
-                xytext=(0, 7),
-                textcoords="offset points",
-                ha=align,
-                va="bottom",
-                color=COLORS[color],
-                fontsize=9,
-                weight="bold",
-                bbox=dict(facecolor="white", edgecolor="none", pad=0.6, alpha=0.88),
+        # Of the two small shares, the larger is labeled above its point.
+        rival = {"recompute_pct": "idle_pct", "idle_pct": "recompute_pct"}.get(key)
+        for i, align in ends:
+            above = (
+                rival is None
+                or values[i] > rows[i][rival]
+                or (values[i] == rows[i][rival] and key == "recompute_pct")
+            )
+            labels.append(
+                (
+                    ax,
+                    "0%" if values[i] == 0 else f"{values[i]:.1f}%",
+                    (x[i], values[i]),
+                    above,
+                    align,
+                    dict(
+                        color=COLORS[color],
+                        fontsize=9,
+                        weight="bold",
+                        bbox=dict(
+                            facecolor="white", edgecolor="none", pad=0.6, alpha=0.88
+                        ),
+                    ),
+                    ("share" if rival else key, i),
+                    values[i],
+                )
             )
         handles.append(
             Line2D(
@@ -487,6 +704,7 @@ def render_figure(rows, reference, unit_label, args):
         ax.set_xlabel("")
     if broken:
         share_top.spines["bottom"].set_visible(False)
+    place_labels(fig, labels)
     fig.legend(
         *full.get_legend_handles_labels(),
         loc="lower left",
@@ -582,7 +800,7 @@ def export_slide(args, metadata):
     text(args.title, 0.62, 0.86, 12.1, 0.60, 30, bold=True)
     subtitle = args.subtitle or (
         f"{metadata['units_per_step']:g} {metadata['unit_label']} per step · "
-        f"{len(rows)} measured budgets"
+        f"{len(rows)} {'measured' if rows[0]['measured_rate'] else 'planned'} budgets"
     )
     text(subtitle, 0.64, 1.63, 12.05, 0.38, 15, muted=True)
     card(2.02, 4.19, "FFFFFF")
@@ -592,11 +810,12 @@ def export_slide(args, metadata):
         Inches(2.13),
         width=Inches(11.73),
     )
-    first, best = rows[0], max(r["measured_rate"] for r in rows)
+    kind = "measured" if rows[0]["measured_rate"] else "simulated"
+    first, best = rows[0], max(r[f"{kind}_rate"] for r in rows)
     caption = args.caption or (
-        f"{first['budget_gib']:g} GiB achieves "
-        f"{100 * first['measured_rate'] / best:.0f}% "
-        "of the best measured throughput."
+        f"{first['shown_gib']:g} GiB achieves "
+        f"{100 * first[f'{kind}_rate'] / best:.0f}% "
+        f"of the best {kind} throughput."
     )
     card(6.40, 0.50, "E9EFF8")
     text(caption, 0.82, 6.49, 11.7, 0.30, 15, bold=True)
@@ -617,7 +836,14 @@ def main():
         description=__doc__, formatter_class=argparse.ArgumentDefaultsHelpFormatter
     )
     parser.add_argument(
-        "source", type=Path, help="Quickstart run root, figures/, or figures/raw_data/"
+        "source",
+        type=Path,
+        nargs="+",
+        help=(
+            "Quickstart run root, figures/, or figures/raw_data/. Several reports "
+            "of one workload merge by budget: each budget comes from the last "
+            "report that measured it, or else the last that planned it"
+        ),
     )
     parser.add_argument(
         "--outdir",
@@ -629,6 +855,15 @@ def main():
         "--budget-gib",
         type=comma_floats,
         help="Optional comma-separated subset, e.g. 8,16,29",
+    )
+    parser.add_argument(
+        "--budget-display",
+        choices=("execution", "requested"),
+        default="execution",
+        help=(
+            "Name budgets by the execution budget left after headroom, or by the "
+            "device budget request.json asked for"
+        ),
     )
     parser.add_argument(
         "--unconstrained",
@@ -695,9 +930,16 @@ def main():
                 positive(getattr(args, name), name)
         if args.zoom_ylim and not all(math.isfinite(v) for v in args.zoom_ylim):
             raise ValueError("--zoom-ylim must be finite.")
-        directory = raw_data_directory(args.source)
-        rows, units, unit_label, sources = load_winners(directory, args.budget_gib)
-        reference = unconstrained_reference(directory, units, args)
+        rows, units, unit_label, sources, directories = merged_winners(args)
+        reference = None
+        for directory in directories if args.unconstrained is None else directories[:1]:
+            found = unconstrained_reference(directory, units, args)
+            if found and (
+                reference is None
+                or (found["rate"], -found["source_peak_gib"])
+                > (reference["rate"], -reference["source_peak_gib"])
+            ):
+                reference = found  # the fastest all-save timeline of any report
         if reference:
             sources.append(Path(reference["source"]))
         axes = render_figure(rows, reference, args.unit_label or unit_label, args)

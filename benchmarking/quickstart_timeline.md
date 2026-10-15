@@ -66,17 +66,20 @@ resolution.
 | --- | --- |
 | `SOURCE` | One report directory, its `timelines/` directory, or an exact HTML/JSON timeline |
 | `--view traced\|simulated\|all-save\|unconstrained` | Default: `traced` for directories; the file's own view for files |
-| `--budget-gib N` | Budget to select; also labels the memory-budget line |
+| `--budget-gib N` | Budget to select, named as on the axis (8 selects an 8.0137 GiB execution budget); the line is drawn at the page's own budget and labeled the same way |
+| `--budget-display execution\|requested` | Name, select and draw the budget as the execution budget left after device headroom (default), or as the device budget the run's `request.json` asked for: a 16 GiB request that ran at 14.99 GiB reads as 16, and the dashed line sits at 16 above the execution pool's stack |
 | `--geometry NAME`, `--resolution FRACTION` | Optional exact candidate filters |
 | `--list` | List a directory's available timelines and exit |
 | `--outdir PATH` | Output directory; default `timeline-slide`; rerunning replaces its generated files |
 | `--time-max SECONDS` | Align multiple plots to a common full-step time range |
 | `--transfers auto\|show\|hide` | Default `auto`; refuses to hide transfers that actually exist |
 | `--columns N`, `--dpi N` | Overview bins (1,800) and PNG resolution (300) |
+| `--transfer-lanes occupancy\|presence` | Default `occupancy`: each fetch/evict column is as tall as the share of it the lane is busy. `presence` paints any column a transfer touches full height, as the HTML overview does |
 | `--pptx` | Also create an importable PowerPoint slide |
 | `--title TEXT`, `--subtitle TEXT` | Editable slide labels |
 | `--summary`, `--no-summary` | HTML summary statistics under simulated/traced slides; enabled by default |
 | `--caption TEXT` | Editable takeaway when summary cards are disabled or inapplicable |
+| `--counts`, `--no-counts` | Print the step's objects, tasks, fetches and evicts at the right of the legend row; enabled by default. Objects are those the step's tasks use, read from the program the report's stored plans name for the page's geometry, so they need ShadowSpill importable; without it the line omits them |
 | `--persistent-gradients-gib N` | Explicit unconstrained illustration: replace the gradient series with a constant bank |
 
 ## Outputs
@@ -96,7 +99,9 @@ not require Drive credentials or automatically overwrite an online deck.
 Simulated/traced slides show all twelve summary statistics from the HTML:
 step time, tokens/s, peak execution and spill memory, idle and recompute
 percentages, fetch/evict lane utilization, fetched/evicted GiB, and transfer
-rates. Rate cells show **result / planned blend** in GB/s. These are read directly
+rates. They are rounded as a slide reads them: seconds and small sizes to one
+decimal, large sizes and rates to whole numbers, percentages to whole numbers
+from 10%. Rate cells show **result / planned blend** in GB/s. These are read directly
 from the selected page, including when measured and simulated statistics differ.
 The slide labels are **Peak spill**, **Stalled**, and **Optimizer Update**.
 Recomputation uses lime green (`#84CC16`), distinct from brown backward tasks.
@@ -116,9 +121,19 @@ These display labels do not change the source report's accounting definitions.
   stack, not task timings; it is disallowed for simulated/traced plans.
 - Recompute segments use the source report's profile-cost split inside
   backward tasks. They are not separately measured kernel boundaries.
-- Transfer colors identify the tensor class. Overview bins use the dominant
-  duration per category; very short/overlapping transfers are condensed as in
-  the HTML overview. No total-memory outline or smoothing is applied.
+- Transfer colors identify the tensor class. Each overview bin takes the
+  color of the class that moves for longest in it. A fetch or evict bin is as
+  tall as the share of it the lane is busy, against a light full-height track,
+  so a lane's ink matches its busy share in the summary: many short transfers
+  spread across a stretch read as a low fringe, not a solid band. The HTML
+  overview's rule, a full-height bin wherever any transfer touches it, is
+  `--transfer-lanes presence`. No total-memory outline or smoothing is applied.
+- Optimizer updates last milliseconds, so they rarely win an overview bin.
+  Each one is marked with a short dark tick just above the GPU lane at its
+  midpoint, so the lane's own work stays visible, and the legend lists
+  Optimizer Update whenever the page has any. The tick shows where an update
+  runs, not how long it takes; metadata records the count as
+  `optimizer_marks`.
 - Only gaps **between** compute tasks receive idle shading. Opening restores
   and terminal writeback are visible in transfer lanes without shading the
   surrounding initial/final GPU gaps.
@@ -128,9 +143,26 @@ These display labels do not change the source report's accounting definitions.
 ## Tradeoff exporter
 
 `python -m benchmarking.quickstart_tradeoff` creates the comparison slide from
-`run_budgets.csv` and `points.csv`. It accepts a single quickstart run root,
+`run_budgets.csv` and `points.csv`. A report that planned without running (no
+`run_budgets.csv`, as with `--transfer-bandwidths` what-if searches) plots each
+budget's simulated winner alone: no measured series, dots or labels. It accepts a quickstart run root,
 its `figures/` directory, or its `figures/raw_data/` directory. The same Python
 dependencies listed above apply; a GPU and Google credentials are unnecessary.
+
+Several reports of one workload can share a chart: name each, oldest first.
+Each budget comes from the last report that measured it, or else the last that
+planned it, so a rerun of one budget fills in a point the first report could
+not run. A rerun that measured chosen plans without searching has no
+`points.csv`; its `run_budgets.csv` splits each predicted step the same way and
+stands in for it. Their steps must hold the same number of units. The unconstrained
+reference is the fastest all-save timeline among them, and every row of
+`winners.csv` and `metadata.json` names the report it came from.
+
+```bash
+python -m benchmarking.quickstart_tradeoff \
+  /path/to/report_20_24_28 /path/to/rerun_28 \
+  --budget-display requested --outdir figures/memory-tradeoff
+```
 
 ```bash
 python -m benchmarking.quickstart_tradeoff \
@@ -147,8 +179,8 @@ counts come from `steps.csv`, when present. Neither tokens per step nor the
 number of iterations is hardcoded.
 
 It finds the fastest all-save timeline under the run's `timelines/all_save/`
-directory and uses its compute floor and peak memory for the unconstrained
-reference. To choose that reference explicitly, pass `--unconstrained` an
+directory, the one with the smallest peak among equally fast ones, and uses
+its compute floor and peak memory for the unconstrained reference. To choose that reference explicitly, pass `--unconstrained` an
 all-save/unconstrained HTML or JSON file. If no such timeline exists, the plot
 omits the unconstrained reference; it does not substitute an unrelated value.
 
@@ -159,6 +191,7 @@ omits the unconstrained reference; it does not substitute an unrelated value.
 | `SOURCE` | A quickstart run root, `figures/`, or `figures/raw_data/` containing `run_budgets.csv` and `points.csv` |
 | `--outdir PATH` | Generated files; default `tradeoff-slide`; rerunning replaces generated files there |
 | `--budget-gib 8,16,29` | Optional subset of measured budgets; permits rounded labels such as 29 for 29.0137 GiB |
+| `--budget-display execution\|requested` | Plot and name budgets by execution budget (default) or by the device budget `request.json` asked for |
 | `--unconstrained PATH` | Explicit all-save/unconstrained timeline HTML or JSON instead of automatic discovery |
 | `--unconstrained-peak-gib N` | Explicit override of the reference's memory label for an adjusted illustration; original peak and override are recorded in metadata |
 | `--full-ymax N` | Upper throughput limit of the zero-based plot; auto extends slightly above all series/references |
@@ -183,7 +216,7 @@ For the Llama report used in the presentation:
 ```bash
 python -m benchmarking.quickstart_tradeoff /path/to/report/seq1024/seqsperstep64 \
   --outdir figures/slide12 --pptx \
-  --full-ymax 4800 --zoom-ylim 3450 4100 \
+  --full-ymax 4800 --zoom-ylim 3450 4300 \
   --unconstrained-peak-gib 296.3293 \
   --title 'Tight budgets preserve most of the throughput.' \
   --subtitle 'Llama 8B · 64K tokens per step · RTX 5090 · 160 GiB host spill pool'
@@ -205,7 +238,9 @@ gradient illustration. Omit it for an unmodified quickstart report's peak.
   above, detailed scale below, separated by a dark dotted divider. Grid lines
   use a thicker, contrasting solid stroke.
 - **Measured** is the recorded per-budget median, verified against `steps.csv`
-  when available. **Simulated** is the winning plan's predicted throughput.
+  when available: the steps between the first, which reconciles the plan's
+  initial state, and the last, which is traced (older reports: every step). The
+  subtitle names how many steps that is. **Simulated** is the winning plan's predicted throughput.
 - **Chosen recompute (no stalls)** is units per step divided by effective
   compute plus recomputation time for that budget's winning plan. It retains
   the chosen geometry and all task costs, including optimizer work, while
@@ -216,7 +251,8 @@ gradient illustration. Omit it for an unmodified quickstart report's peak.
 - The right plot uses **simulated** effective-compute, recompute and idle
   shares. Idle includes final writeback; the three shares sum to 100%.
 - All four throughput and six share endpoint labels use the smallest and
-  largest selected budgets. The divider is not a data/reference line.
+  largest selected budgets. Each is placed clear of the curves, other labels and
+  the neighbouring axes, the larger of two values at one end above the smaller. The divider is not a data/reference line.
 - The script exports files locally. Import the PPTX slide into Google Slides,
   or insert the PNG in an existing slide; it does not overwrite an online deck.
 

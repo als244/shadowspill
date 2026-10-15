@@ -21,7 +21,7 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import numpy as np
 from matplotlib.patches import Patch, Rectangle
-from matplotlib.ticker import MaxNLocator
+from matplotlib.ticker import MaxNLocator, StrMethodFormatter
 
 COLORS = dict(
     params="#3268DE",
@@ -37,6 +37,7 @@ COLORS = dict(
     muted="#62738A",
     line="#D6DFEB",
     red="#CF5555",
+    occupancy_track="#EEF2F7",
 )
 MEMORY_CLASSES = {
     "params": "Parameters",
@@ -44,6 +45,104 @@ MEMORY_CLASSES = {
     "optimizer_state": "Optimizer state",
     "activations": "Activations",
 }
+
+
+def budget_label(budget):
+    """A budget as the axis names it: an 8.0137 GiB execution budget is the 8 GiB
+    point, as in the tradeoff exporter."""
+    whole = round(budget)
+    return f"{whole:g}" if abs(budget - whole) < 0.05 else f"{budget:.2f}"
+
+
+def page_budget(data):
+    """The execution budget a simulated or traced page says it was planned for."""
+    match = re.search(r"execution budget ([\d.]+)gib", data.get("plan", ""))
+    return float(match[1]) if match else None
+
+
+def report_root(path):
+    """The quickstart run a page or summary sits in: the directory above timelines/."""
+    parts = Path(path).resolve().parts
+    return Path(*parts[: parts.index("timelines")]) if "timelines" in parts else None
+
+
+def requested_budgets(root):
+    """The device budgets a quickstart was asked for, from its request.json."""
+    path = root / "request.json" if root is not None else None
+    if path is None or not path.is_file():
+        return []
+    request = json.loads(path.read_text()).get("request", {})
+    return sorted(
+        {
+            float(budget)
+            for key in ("search_budget_gib", "run_budget_gib")
+            for budget in request.get(key) or ()
+        }
+    )
+
+
+def requested_for(execution, requested):
+    """The device budget an execution budget was cut from. A run takes its
+    headroom off each request, so that is the smallest request at or above the
+    execution budget, within 2 GiB; None when no request fits."""
+    above = [r for r in requested if 0 <= r - execution < 2]
+    return min(above) if above else None
+
+
+def step_program(page):
+    """The program a page's step was planned on, and its path, found the way the
+    report's own timeline writer names it: the stored plans label each program with
+    its geometry, which the page's directory carries. None when ShadowSpill is not
+    importable, the page is not inside a report's timelines/, or the program is not
+    stored."""
+    try:
+        from shadowspill.diagnostics.occupancy import program_path_for, stored_plans
+    except ImportError:
+        return None
+    parts = page.resolve().parts
+    if "timelines" not in parts:
+        return None
+    root = Path(*parts[: parts.index("timelines")])
+    folder = page.parent
+    geometry = (folder.parent if folder.name.startswith("recompute_") else folder).name
+    stored = stored_plans(root)
+    plans = [plan for plan in stored if plan.geometry == geometry]
+    if not plans and len({plan.program_digest for plan in stored}) == 1:
+        plans = stored  # one program: its folders are named by plan, not geometry
+    digests = {plan.program_digest for plan in plans}
+    if len(digests) != 1:
+        return None
+    path = program_path_for(plans[0].path, {"program_digest": digests.pop()})
+    return (json.loads(path.read_text()), path) if path.is_file() else None
+
+
+def count_line(data, planned, program, transfers):
+    """How much the step moves through memory: the objects its tasks use, the
+    tasks (control tasks are bookkeeping, not work), fetches and evicts. The
+    objects come from ``planned``, the page whose tasks carry program task ids."""
+    tasks = [item for item in data["compute"] if item[2] != "control"]
+    counts = {"tasks": len(tasks)}
+    if program is not None:
+        by_id = {task["task_id"]: task for task in program["tasks"]}
+        run = [by_id.get(item[3]) for item in planned["compute"]]
+        if all(run):
+            used = {  # a reference is an object id, or a record naming one
+                ref["object_id"] if isinstance(ref, dict) else ref
+                for task in run
+                for key in ("inputs", "outputs", "mutations")
+                for ref in task.get(key) or ()
+            }
+            groups = {o["object_id"]: o["alias_group_id"] for o in program["objects"]}
+            counts = {
+                "objects": len(used),
+                "alias_groups": len({groups[o] for o in used if o in groups}),
+                **counts,
+            }
+    if transfers:
+        counts.update(fetches=len(data["fetch"]), evicts=len(data["evict"]))
+    order = ("objects", "tasks", "fetches", "evicts")
+    text = " · ".join(f"{counts[k]:,} {k}" for k in order if k in counts)
+    return counts, text
 
 
 def category(name):
@@ -98,11 +197,38 @@ def select_source(args):
             r for r in candidates if r.get("selected", "true").lower() in ("true", "1")
         ]
     if args.budget_gib is not None:
+        # Named as on the axis: 8 selects the 8.0137 GiB execution budget, or with
+        # --budget-display requested, the execution budget an 8 GiB request left.
+        requested = requested_budgets(summaries[0].parent.parent)
+
+        def shown(budget):
+            if args.budget_display == "execution":
+                return budget
+            return requested_for(budget, requested)
+
+        budgets = sorted(
+            {
+                budget
+                for budget in (
+                    float(r["budget"][:-3])
+                    for r in candidates
+                    if r["budget"].endswith("gib")
+                )
+                if shown(budget) is not None
+                and abs(shown(budget) - args.budget_gib) < 0.05
+            }
+        )
+        if len(budgets) > 1:
+            raise ValueError(
+                f"Budget {args.budget_gib:g} GiB does not identify one budget: "
+                f"{budgets}"
+            )
         candidates = [
             r
             for r in candidates
-            if r["budget"].endswith("gib")
-            and math.isclose(float(r["budget"][:-3]), args.budget_gib, abs_tol=1e-6)
+            if budgets
+            and r["budget"].endswith("gib")
+            and math.isclose(float(r["budget"][:-3]), budgets[0], abs_tol=1e-6)
         ]
     elif selection_view == "simulated":
         raise ValueError(
@@ -143,8 +269,12 @@ def load_timeline(path):
     return data
 
 
-def lane_runs(items, duration, *, compute=False, columns=1800):
-    """Same dominant-duration overview binning as the report's HTML timeline."""
+def lane_runs(items, duration, *, compute=False, columns=1800, occupancy=False):
+    """Same dominant-duration overview binning as the report's HTML timeline.
+
+    With ``occupancy``, a transfer lane instead returns one run per column it
+    touches, with the share of that column the lane is busy as a fourth field:
+    serial lanes never overlap themselves, so the shares never exceed one."""
     tally = [{} for _ in range(columns)]
 
     def paint(start, end, kind):
@@ -173,6 +303,17 @@ def lane_runs(items, duration, *, compute=False, columns=1800):
                 paint(latest, item[0], "idle")
             latest = max(latest, item[1])
     kinds = [max(t, key=t.get) if t else None for t in tally]
+    if occupancy and not compute:
+        return [
+            (
+                i * duration / columns,
+                (i + 1) * duration / columns,
+                kinds[i],
+                min(1.0, sum(t.values())),
+            )
+            for i, t in enumerate(tally)
+            if t
+        ]
     runs, start = [], 0
     for i in range(1, columns + 1):
         if i == columns or kinds[i] != kinds[start]:
@@ -190,10 +331,24 @@ def render(data, source, args):
     xmax = args.time_max or duration
     if xmax < duration:
         raise ValueError("--time-max must include the full timeline.")
-    budget = args.budget_gib
-    if budget is None and data["view"] in ("simulated", "traced"):
-        match = re.search(r"execution budget ([\d.]+)gib", data.get("plan", ""))
-        budget = float(match[1]) if match else None
+    # The line sits at the page's own budget, or at the device budget it was cut
+    # from with --budget-display requested; --budget-gib may only name it.
+    budget = page_budget(data) if data["view"] in ("simulated", "traced") else None
+    shown = budget
+    if budget is not None and args.budget_display == "requested":
+        shown = requested_for(budget, requested_budgets(report_root(source)))
+        if shown is None:
+            raise ValueError(
+                f"request.json names no requested budget for the {budget:g} GiB "
+                "execution budget."
+            )
+    if budget is None:
+        budget = shown = args.budget_gib
+    elif args.budget_gib is not None and abs(shown - args.budget_gib) >= 0.05:
+        raise ValueError(
+            f"--budget-gib {args.budget_gib:g} does not name this page's "
+            f"{shown:g} GiB budget."
+        )
     if args.persistent_gradients_gib is not None and data["view"] not in (
         "all_save",
         "unconstrained",
@@ -205,6 +360,14 @@ def render(data, source, args):
     show_transfers = args.transfers == "show" or (
         args.transfers == "auto" and bool(data["fetch"] or data["evict"])
     )
+    found = step_program(source) if args.counts else None
+    program, program_path = found if found else (None, None)
+    planned = data
+    sibling = source.with_name("simulated.html")
+    if data["view"] == "traced" and sibling.is_file():
+        # A trace names its tasks for the device; the plan it ran names them by id.
+        planned = load_timeline(sibling)
+    step_counts, count_text = count_line(data, planned, program, show_transfers)
     if args.transfers == "hide" and (data["fetch"] or data["evict"]):
         raise ValueError("Cannot hide transfers that exist in the source timeline.")
     plt.rcParams.update(
@@ -255,20 +418,22 @@ def render(data, source, args):
         step="post",
         linewidth=0,
     )
-    ymax = max(peak, budget or 0) * 1.15
-    if budget:
-        ax_mem.axhline(budget, color=COLORS["red"], lw=0.9, dashes=(4, 3))
+    ymax = max(peak, shown or 0) * 1.15
+    if shown:
+        ax_mem.axhline(shown, color=COLORS["red"], lw=0.9, dashes=(4, 3))
         ax_mem.text(
             xmax,
-            budget + ymax * 0.012,
-            f"{budget:g} GiB budget",
+            shown + ymax * 0.012,
+            f"{budget_label(shown)} GiB budget",
             color=COLORS["red"],
             fontsize=9,
             ha="right",
             va="bottom",
             bbox=dict(facecolor="white", edgecolor="none", pad=0.3),
         )
-        ax_mem.set_yticks([0, budget / 2, budget])
+        top = float(budget_label(shown))
+        ax_mem.set_yticks([0, top / 2, top])
+        ax_mem.yaxis.set_major_formatter(StrMethodFormatter("{x:g}"))
     else:
         ax_mem.yaxis.set_major_locator(MaxNLocator(nbins=5, steps=[1, 2, 5, 10]))
     ax_mem.set_ylim(0, ymax)
@@ -278,17 +443,35 @@ def render(data, source, args):
     peak_label = (
         f"Illustrative peak ≈{peak:.0f} GiB"
         if args.persistent_gradients_gib is not None
-        else f"Peak {peak:.2f} GiB"
+        else f"Peak {peak:.1f} GiB"
     )
     fig.text(0.989, 0.965, peak_label, fontsize=11, weight="bold", va="top", ha="right")
-    axes, counts, used = [ax_mem], {}, set()
+    axes, counts, used, optimizer_marks = [ax_mem], {}, set(), 0
     for key, label, bottom in lanes:
         ax = fig.add_axes([left, bottom, width, 0.077])
         axes.append(ax)
+        occupancy = key != "compute" and args.transfer_lanes == "occupancy"
         runs = lane_runs(
-            data[key], duration, compute=key == "compute", columns=args.columns
+            data[key],
+            duration,
+            compute=key == "compute",
+            columns=args.columns,
+            occupancy=occupancy,
         )
         counts[key] = len(runs)
+        if occupancy:  # each column as tall as the share of it the lane is busy
+            ax.axhspan(0, 1, color=COLORS["occupancy_track"], lw=0, zorder=0)
+            for kind in sorted({run[2] for run in runs}):
+                mine = [run for run in runs if run[2] == kind]
+                ax.bar(
+                    [a for a, *_ in mine],
+                    [share for *_, share in mine],
+                    width=[b - a for a, b, *_ in mine],
+                    align="edge",
+                    color=COLORS[kind],
+                    linewidth=0,
+                )
+            runs = []
         for a, b, kind in runs:
             ax.broken_barh(
                 [(a, b - a)], (0, 1), facecolors=COLORS[kind], edgecolors="none"
@@ -296,6 +479,23 @@ def render(data, source, args):
             if key == "compute":
                 used.add(kind)
         if key == "compute":
+            # An optimizer update lasts milliseconds and loses its overview column
+            # to the backward work around it, so each one is marked where it runs:
+            # a short tick just above the lane, which leaves the lane's work visible.
+            updates = [item for item in data[key] if item[2] == "optimizer"]
+            for a, b, *_ in updates:
+                ax.axvline(
+                    (a + b) / 2,
+                    ymin=1.04,
+                    ymax=1.3,
+                    color=COLORS["optimizer"],
+                    lw=0.9,
+                    clip_on=False,
+                    solid_capstyle="butt",
+                )
+            if updates:
+                used.add("optimizer")
+            optimizer_marks = len(updates)
             for a, b, *_ in data[key]:
                 if (b - a) / xmax * args.columns > 3:
                     ax.add_patch(
@@ -360,6 +560,16 @@ def render(data, source, args):
         columnspacing=1.8,
         borderaxespad=0,
     )
+    if args.counts:  # the legend row's free right end
+        fig.text(
+            left + width,
+            0.012,
+            count_text,
+            fontsize=9,
+            ha="right",
+            va="bottom",
+            color=COLORS["muted"],
+        )
     args.outdir.mkdir(parents=True, exist_ok=True)
     for ext in ("png", "svg", "pdf"):
         fig.savefig(
@@ -383,12 +593,17 @@ def render(data, source, args):
         original_peak_gib=pool["peak_gib"],
         original_sample_peak_gib=original_sample_peak,
         budget_gib=budget,
+        budget_display=args.budget_display,
+        shown_budget_gib=shown,
         pool_capacity_gib=pool.get("capacity_gib"),
         persistent_gradients_gib=args.persistent_gradients_gib,
         spill_peak_gib=data["summary"].get("spill_peak_gib"),
         events={k: len(data[k]) for k in ("compute", "fetch", "evict")},
+        counts=dict(step_counts, program=str(program_path) if program_path else None),
         summary=data["summary"],
         rendered_runs=counts,
+        transfer_lanes=args.transfer_lanes,
+        optimizer_marks=optimizer_marks,
         overview_columns=args.columns,
         interpretation={
             "memory": (
@@ -514,28 +729,35 @@ def make_slide(args, meta):
 
 
 def summary_cards(summary):
-    """The twelve summary statistics from the quickstart HTML, in slide order."""
+    """The twelve summary statistics from the quickstart HTML, in slide order,
+    rounded as a slide reads them: no more digits than the comparison needs."""
 
     def number(key, spec, unit=""):
         value = summary.get(key)
         return "n/a" if value is None else f"{value:{spec}}{unit}"
 
+    def percent(key):
+        value = summary.get(key)
+        if value is None:
+            return "n/a"
+        return "0%" if value == 0 else f"{value:.{1 if value < 10 else 0}f}%"
+
     def rate(direction):
-        value = number(direction + "_gbps", ".1f")
-        assumed = number("assumed_" + direction + "_gbps", ".1f")
+        value = number(direction + "_gbps", ".0f")
+        assumed = number("assumed_" + direction + "_gbps", ".0f")
         return f"{value} / {assumed} GB/s"
 
     return [
-        ("Step time", number("seconds", ".2f", " s")),
+        ("Step time", number("seconds", ".1f", " s")),
         ("Tokens/s", number("tokens_per_second", ",.0f")),
-        ("Peak GPU memory", number("execution_peak_gib", ".2f", " GiB")),
-        ("Peak spill", number("spill_peak_gib", ".2f", " GiB")),
-        ("Stalled", number("idle_percent", ".1f", "%")),
-        ("Recompute", number("recompute_percent", ".1f", "%")),
-        ("Fetch lane busy", number("fetch_utilization_percent", ".1f", "%")),
-        ("Evict lane busy", number("evict_utilization_percent", ".1f", "%")),
-        ("Fetched", number("fetch_gib", ".1f", " GiB")),
-        ("Evicted", number("evict_gib", ".1f", " GiB")),
+        ("Peak GPU memory", number("execution_peak_gib", ".1f", " GiB")),
+        ("Peak spill", number("spill_peak_gib", ",.0f", " GiB")),
+        ("Stalled", percent("idle_percent")),
+        ("Recompute", percent("recompute_percent")),
+        ("Fetch lane busy", percent("fetch_utilization_percent")),
+        ("Evict lane busy", percent("evict_utilization_percent")),
+        ("Fetched", number("fetch_gib", ",.0f", " GiB")),
+        ("Evicted", number("evict_gib", ",.0f", " GiB")),
         ("Fetch rate / planned blend", rate("fetch")),
         ("Evict rate / planned blend", rate("evict")),
     ]
@@ -560,6 +782,15 @@ def main():
         "--budget-gib",
         type=float,
         help="Select a budget's fastest simulated plan; also label the budget line",
+    )
+    parser.add_argument(
+        "--budget-display",
+        choices=("execution", "requested"),
+        default="execution",
+        help=(
+            "Name and draw the budget as the execution budget left after headroom, "
+            "or as the device budget request.json asked for"
+        ),
     )
     parser.add_argument(
         "--geometry", help="Optional exact report geometry, e.g. 8x8_1x8rp"
@@ -593,6 +824,16 @@ def main():
         help="Explicit illustration only: replace gradients with this constant bank",
     )
     parser.add_argument("--columns", type=int, default=1800, help="Overview time bins")
+    parser.add_argument(
+        "--transfer-lanes",
+        choices=("occupancy", "presence"),
+        default="occupancy",
+        help=(
+            "Fetch/evict columns: occupancy (default) draws each column as tall "
+            "as the share of it the lane is busy; presence paints any column a "
+            "transfer touches full height, the HTML overview's rule"
+        ),
+    )
     parser.add_argument("--dpi", type=int, default=300, help="PNG resolution")
     parser.add_argument(
         "--pptx",
@@ -610,6 +851,12 @@ def main():
     )
     parser.add_argument("--title", help="PowerPoint title")
     parser.add_argument("--subtitle", help="PowerPoint subtitle")
+    parser.add_argument(
+        "--counts",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="Print the step's objects, tasks, fetches and evicts beside the legend",
+    )
     parser.add_argument(
         "--caption", help="PowerPoint takeaway when summary cards are not shown"
     )
