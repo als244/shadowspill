@@ -42,7 +42,7 @@ compile_commands.json
 /benchmarking/planning_eval/results
 *.nsys-rep
 *.sqlite
-/benchmarking/quickstart_reports/
+/benchmarking/quickstart_reports
 # Presentation material: launchers, experiment outputs, stores and figures.
 /presentation/
 # HuggingFace compatibility experiments: scripts and their outputs.
