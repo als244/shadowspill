@@ -263,9 +263,19 @@ def _transfer_lanes(
     bridge: RuntimeBridge,
     origin_ns: int,
 ) -> dict[str, _LaneRecords]:
-    """Join every scheduled transfer with its trace events, lane by lane."""
+    """Join every scheduled transfer with its trace events, lane by lane.
 
-    events = evidence.runtime_trace.events
+    A runtime trace that ran out of room holds only the step's first events,
+    and joining those would hand each lane a summary of part of the step that
+    reads as the whole of it. So an overflowed trace joins nothing: every
+    scheduled transfer keeps its record, simulated side and relations, with
+    every instant the trace would have supplied left `None`. In a complete
+    trace a count that disagrees with the schedule is a real disagreement,
+    and raises.
+    """
+
+    joined = not evidence.runtime_trace.event_overflow
+    events = evidence.runtime_trace.events if joined else ()
     dispatches = _lane_events(events, RuntimeTraceEventKind.TRANSFER_DISPATCHED)
     completions = _lane_events(events, RuntimeTraceEventKind.TRANSFER_COMPLETED)
     queued = _boundary_events(events, RuntimeTraceEventKind.ACTION_QUEUED)
@@ -286,7 +296,9 @@ def _transfer_lanes(
         )
         lane_dispatches = dispatches[direction]
         lane_completions = completions[direction]
-        if not len(intervals) == len(lane_dispatches) == len(lane_completions):
+        if joined and not (
+            len(intervals) == len(lane_dispatches) == len(lane_completions)
+        ):
             raise RuntimeError(
                 f"runtime/simulator {direction} transfer count mismatch: "
                 f"scheduled={len(intervals)}, dispatched={len(lane_dispatches)}, "
@@ -294,6 +306,25 @@ def _transfer_lanes(
             )
         records: list[TransferRecord] = []
         for interval in intervals:
+            relations = _object_relations(
+                timing, interval.alias_group_id, interval.trigger_task_id
+            )
+            triggered_by = execution_ids[interval.trigger_task_id]
+            if not joined:
+                records.append(
+                    _transfer_record(
+                        interval,
+                        direction,
+                        triggered_by,
+                        relations,
+                        None,
+                        None,
+                        None,
+                        None,
+                        origin_ns,
+                    )
+                )
+                continue
             dispatch = lane_dispatches[interval.sequence]
             completion = lane_completions[interval.sequence]
             task_number = canonical_index(interval.trigger_task_id, "task_")
@@ -307,10 +338,8 @@ def _transfer_lanes(
                 _transfer_record(
                     interval,
                     direction,
-                    execution_ids[interval.trigger_task_id],
-                    _object_relations(
-                        timing, interval.alias_group_id, interval.trigger_task_id
-                    ),
+                    triggered_by,
+                    relations,
                     dispatch,
                     completion,
                     queued_event,
@@ -358,8 +387,8 @@ def _transfer_record(
     direction: str,
     triggered_by: str,
     relations: tuple[str, str, str],
-    dispatch: RuntimeTraceEvent,
-    completion: RuntimeTraceEvent,
+    dispatch: RuntimeTraceEvent | None,
+    completion: RuntimeTraceEvent | None,
     queued: RuntimeTraceEvent | None,
     reserved: RuntimeTraceEvent | None,
     origin_ns: int,
@@ -369,7 +398,8 @@ def _transfer_record(
     lane_started = lane_finished = None
     start_delta = end_delta = None
     if (
-        completion.lane_started_at_ns is not None
+        completion is not None
+        and completion.lane_started_at_ns is not None
         and completion.lane_finished_at_ns is not None
     ):
         lane_started = completion.lane_started_at_ns / 1e9
@@ -380,7 +410,7 @@ def _transfer_record(
     # not when the bytes moved, and the wait is worth having either way.
     lane_issued = (
         None
-        if completion.lane_issued_at_ns is None
+        if completion is None or completion.lane_issued_at_ns is None
         else completion.lane_issued_at_ns / 1e9
     )
     return TransferRecord(
@@ -403,8 +433,8 @@ def _transfer_record(
         end_delta_seconds=end_delta,
         queued_at_seconds=_event_seconds(queued, origin_ns),
         reserved_at_seconds=_event_seconds(reserved, origin_ns),
-        dispatched_at_seconds=(dispatch.timestamp_ns - origin_ns) / 1e9,
-        completion_observed_at_seconds=(completion.timestamp_ns - origin_ns) / 1e9,
+        dispatched_at_seconds=_event_seconds(dispatch, origin_ns),
+        completion_observed_at_seconds=_event_seconds(completion, origin_ns),
     )
 
 

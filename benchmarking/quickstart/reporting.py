@@ -350,6 +350,17 @@ def print_epilogue(diagnostics: Any) -> None:
     timelines = diagnostics.timelines
     simulated_step = summary.simulator_makespan_seconds
     real_step = summary.real_invocation_seconds
+    runtime = diagnostics.runtime
+    if runtime.event_overflow:
+        print(
+            f"  the runtime trace filled its {runtime.event_capacity:,} events"
+            " before the step ended, so no transfer is joined to it"
+        )
+    if runtime.allocation_event_overflow:
+        print(
+            f"  the allocator ledger filled its {runtime.allocation_event_capacity:,}"
+            " events before the step ended, so its events are partial"
+        )
     if real_step is None:
         print("  traced invocation: unknown (incomplete transfer timestamps)")
     else:
