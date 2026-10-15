@@ -13,9 +13,14 @@ diagnostics = result.diagnostics.result()
 
 `DiagnosticsHandle.result()` (also available as `wait()`) resolves once and
 may wait for the instants it measured between. Resolve a traced step before
-launching another traced step. `runtime_trace=False` is the default: the
-runtime appends nothing to its trace buffers and records no instants, so none
-of the measurement below runs in an untraced step.
+launching another traced step. Collection consumes the measurement whether it
+succeeds or not, so a collection that raises keeps its error and raises it
+again on every later call rather than collecting a second time; the handle
+then counts as resolved, and the next traced call may begin.
+
+`runtime_trace=False` is the default: the runtime appends nothing to its trace
+buffers and records no instants, so none of the measurement below runs in an
+untraced step.
 
 Every instant here is recorded by the runtime, on the same clock as the
 transfers it times on its own lanes -- so a step's compute intervals and its
@@ -122,6 +127,16 @@ Missing transfer measurements make `summary.trace_complete` false and leave
 invalidate measured compute durations or separately measured cycle throughput.
 Quickstart keeps the run and its artifacts, and marks trace-dependent
 comparisons unknown instead of aborting the sweep.
+
+A runtime trace that runs out of room before the step ends
+(`runtime.event_overflow`) holds only the step's first events, and joining
+those to the schedule would describe part of each lane as the whole of it. So
+an overflowed trace joins no transfer: every scheduled transfer keeps its
+record -- identity, relations and simulated side -- with every lane and host
+instant `None`, and each lane summary counts its scheduled transfers with
+`measured_transfers` at zero. The step reads as incomplete exactly as above.
+Its task records come from the compute-stream markers, not from the trace,
+and are unaffected.
 
 ## Summary
 
@@ -285,7 +300,7 @@ is the task a fetch was made for.
 | Simulated | `simulated_ready_at_seconds`, `simulated_started_at_seconds`, `simulated_finished_at_seconds` | When the transfer could start, when the lane started it, and when it ended, at the bandwidth the plan assumed, which the plan summary states. |
 | Lane | `lane_issued_at_seconds`, `lane_started_at_seconds`, `lane_finished_at_seconds` | What the copy did on its transfer lane, as the lane itself reports it: when the worker handed it over, when its bytes began moving, and when they had landed. **Issued to started is the dependency wait** -- a copy held behind an event is late, not slow, and folding the two together hides which. The pinned-host lane brackets the copy with timing events for the last two and reads a host clock for the first; a lane whose bytes do not move on a stream reads a host clock for all three and converts through the trace's anchor. `None` where there is nothing to report: the timing pool ran out, the lane does not report that instant, or the transfer was handed over before the trace began and so has no place on its axis. |
 | Delta | `start_delta_seconds`, `end_delta_seconds` | Device minus simulated from invocation entry; `None` without lane timestamps. |
-| Host | `queued_at_seconds`, `reserved_at_seconds`, `dispatched_at_seconds`, `completion_observed_at_seconds` | When the action was queued, when its destination was reserved, when the worker handed the copy to the lane, and when the worker's nonblocking poll saw it complete. |
+| Host | `queued_at_seconds`, `reserved_at_seconds`, `dispatched_at_seconds`, `completion_observed_at_seconds` | When the action was queued, when its destination was reserved, when the worker handed the copy to the lane, and when the worker's nonblocking poll saw it complete. All `None` when the step's runtime trace overflowed, which joins no transfer. |
 
 Read `dispatched_at_seconds` against `lane_started_at_seconds` to see how long a
 copy sat behind its predecessors on the lane, and `completion_observed_at_seconds`
@@ -304,8 +319,9 @@ that completed inside the trace.
 
 Check action identity and byte totals before interpreting timing: the
 records are joined to the trace by lane sequence and validated against task,
-object, and bytes, so a mismatch raises rather than producing a misleading
-lane.
+object, and bytes, so in a complete trace a mismatch raises rather than
+producing a misleading lane. A trace that overflowed is not joined at all; see
+[Missing transfer timestamps](#missing-transfer-timestamps).
 
 ## Timelines
 
@@ -437,11 +453,20 @@ step end is not a healthy steady state.
 | `event_capacity`, `allocation_event_capacity`, `event_overflow`, `allocation_event_overflow` | Configured capacities and whether either buffer overflowed. |
 | `events` | Raw bounded runtime-event records, including the transfer events the lanes were built from. |
 
-Trace storage is preallocated and bounded. Treat any overflow as incomplete
-evidence. The training frontend prepares 1,000,000 runtime-event slots and
-1,000,000 allocation-event slots for a traced call; the recorded capacities,
-rather than that default, are authoritative for a specific result.
-`summary.trace_complete` provides the combined verdict.
+Trace storage is preallocated and bounded, and each executor sizes it from its
+plan (`shadowspill.runtime.plan.trace_capacities`). Most of a step's records
+are certain -- the session opens and closes, each task is entered and left,
+each action is queued, each copy reserves its destination, is dispatched and
+completes -- and the rest are bounded from the plan: a task waits at most once
+for each distinct object it reads or updates, each allocation in its profiled
+contract may wait for a range and retires once, a release or an eviction
+retires the lease it frees, and a lease changes state at most four times in
+the allocator's ledger. Neither capacity falls below 1,000,000 records, and
+room costs nothing until a record is written, because the runtime's pages are
+committed as records land. Allocations a task makes outside its contract are
+outside the bound, so a trace can still fill: treat any overflow as incomplete
+evidence. The recorded capacities are authoritative for a specific result, and
+`summary.trace_complete` gives the combined verdict.
 
 ## Exporting diagnostics
 
@@ -462,6 +487,16 @@ task's start; `compute` is the list of execution task ids in stream order; and
 its order through the records. The dictionary is an observation of one real
 call. It is not an execution plan and has no `from_json()` planning
 constructor.
+
+`as_dict(events=False)` leaves out the two event ledgers, `runtime.events`
+and `allocator.events`, which grow with the step: a step of a hundred
+thousand tasks records millions of events. A step file keeps them beside
+itself instead. `shadowspill.diagnostics.step_file.write_step_diagnostics(path,
+diagnostics)` writes that dictionary to `path` and the ledgers to
+`<name>.events.npz` next to it, one column per field as the runtime recorded
+it, under the schema `shadowspill.step_events/v1`; `read_step_events(path)`
+decodes them back into the `RuntimeTraceEvent` and `CapturedAllocationEvent`
+records the live trace produced.
 
 ## Common investigations
 

@@ -20,6 +20,7 @@ from typing import Any, cast
 import torch
 
 from shadowspill.diagnostics.occupancy import write_run_timelines
+from shadowspill.diagnostics.step_file import write_step_diagnostics
 from shadowspill.memory import SpillPool, device, pinned_host, transfer_route
 from shadowspill.planner import StepDataOrdering
 from shadowspill.planner.annotated_plan import AnnotatedProgramPlan
@@ -58,6 +59,14 @@ from .reporting import (
 from .storage import Ledger, RunPaths
 
 _GIB = 1 << 30
+
+
+class _TracedStepNotCollected(RuntimeError):
+    """A budget's steps ran, and its traced step's diagnostics did not resolve.
+
+    The steps were measured and reported before collection began, so this is
+    a result about one budget's evidence: the tour reports it and moves on.
+    """
 
 
 @dataclass(frozen=True)
@@ -573,7 +582,10 @@ class Tour:
             f" step{'' if len(measured) == 1 else 's'} after the first)\n"
         )
         assert diagnostics_handle is not None
-        diagnostics = diagnostics_handle.result()
+        try:
+            diagnostics = diagnostics_handle.result()
+        except Exception as error:
+            raise _TracedStepNotCollected(str(error)) from error
         return _Steps(
             diagnostics=diagnostics,
             walls=tuple(walls),
@@ -681,11 +693,9 @@ class Tour:
             print()
             print_epilogue(diagnostics)
             trace_path = paths.root / "steps" / f"{budget / _GIB:g}gib.json"
-            trace_path.parent.mkdir(parents=True, exist_ok=True)
-            trace_path.write_text(
-                json.dumps(diagnostics.as_dict(), indent=2, sort_keys=True)
-            )
+            events_path = write_step_diagnostics(trace_path, diagnostics)
             print(f"  step diagnostics: {trace_path}")
+            print(f"  step events:      {events_path}")
             ledger["steps execution"] = (
                 ledger.get("steps execution", 0.0) + steps.host_seconds
             )
@@ -772,6 +782,15 @@ class Tour:
                     raise
                 print(f"  {gib(budget)} could not be admitted: {error}")
                 plan_log.note(f"{gib(budget)} refused admission; skipping")
+                gc.collect()
+            except _TracedStepNotCollected as error:
+                if self.distributed is not None:
+                    raise
+                print(
+                    f"  {gib(budget)}: the steps above ran, and the traced"
+                    f" step's diagnostics could not be collected: {error}"
+                )
+                plan_log.note(f"{gib(budget)} traced step not collected; skipping")
                 gc.collect()
             if run_entries:
                 # The record is kept current rather than written once at the

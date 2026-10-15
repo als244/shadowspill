@@ -1261,8 +1261,10 @@ objective metrics for each accumulation round, the completed `step_number`,
 once-per-step `parameter_metrics` keyed by parameter name, and an optional
 `DiagnosticsHandle`. Tensor-valued metrics remain raw detached device tensors;
 static metric leaves preserve the captured pytree. `DiagnosticsHandle.result()`
-and `DiagnosticsHandle.wait()` synchronously resolve the trace once; `resolved`
-reports whether that has happened.
+and `DiagnosticsHandle.wait()` synchronously resolve the trace once; a
+collection that raises keeps its error and raises it again rather than
+collecting a second time, and `resolved` reports whether collection has run,
+whichever way it ended.
 
 ### Setting hyperparameters
 

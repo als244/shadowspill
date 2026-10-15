@@ -29,21 +29,36 @@ class StepResult:
 
 
 class DiagnosticsHandle:
-    """Deferred collection of an explicitly enabled detailed execution trace."""
+    """Deferred collection of an explicitly enabled detailed execution trace.
+
+    Collection runs once. The measurement is consumed by that attempt whether
+    it succeeds or raises, so a second attempt could only fail with a message
+    about the measurement rather than the cause; a failed collection keeps its
+    error and raises it again instead.
+    """
 
     def __init__(self, collector: Callable[[], StepDiagnostics]) -> None:
         self._collector = collector
         self._result: StepDiagnostics | None = None
+        self._error: BaseException | None = None
 
     @property
     def resolved(self) -> bool:
-        return self._result is not None
+        """Whether collection has run, whether it produced evidence or raised."""
+
+        return self._result is not None or self._error is not None
 
     def result(self) -> StepDiagnostics:
         """Synchronize trace completion and return immutable step evidence."""
 
+        if self._error is not None:
+            raise self._error
         if self._result is None:
-            self._result = self._collector()
+            try:
+                self._result = self._collector()
+            except BaseException as error:
+                self._error = error
+                raise
         return self._result
 
     wait = result
