@@ -977,6 +977,97 @@ def test_a_run_gets_pages_for_every_plan_and_both_clocks_for_a_budget_that_ran(
     assert kept_row["resolution"] == "1" and kept_row["selected"] == "False"
 
 
+@pytest.mark.parametrize("searched", [True, False])
+def test_a_traced_step_is_filed_under_the_budget_that_ran_it(
+    tmp_path: Path,
+    searched: bool,
+) -> None:
+    """One plan, at one makespan, is a candidate at two budgets, each with its
+    own pool, and the larger budget's record sorts first in the store. The
+    step's file is named for its budget to six digits, 1 GiB and 14 MiB as
+    ``1.01367gib``, and its pages are that budget's, with that budget's pool.
+    A search labels its plans by the budgets the steps are named for; a run
+    that named its geometry, by the budgets it asked for."""
+
+    import csv
+
+    from shadowspill.diagnostics.occupancy import write_run_timelines
+
+    gib = 1 << 30
+    small, large = gib + 14 * MIB, 2 * gib + 14 * MIB
+    run = tmp_path / "run"
+    planning = run / "plan_store" / "v1" / "planning"
+    selection = _selection()
+    digest = selection["program_digest"]
+    (planning / "programs" / digest[:2] / digest).mkdir(parents=True)
+    (planning / "programs" / digest[:2] / digest / "program.json").write_text(
+        json.dumps(_program())
+    )
+    keys = {large: "aa" + "1" * 62, small: "cd" + "2" * 62}
+    for budget, key in keys.items():
+        selection["admission_certificate"]["layout"]["pool_capacity_bytes"] = (
+            budget - 128 * MIB
+        )
+        (planning / "results" / key[:2] / key).mkdir(parents=True)
+        (planning / "results" / key[:2] / key / "selection.json").write_text(
+            json.dumps(selection)
+        )
+    request: dict = {"model": "toy", "sequence_length": 8, "sequences_per_step": 4}
+    if searched:
+        (run / "search.json").write_text(
+            json.dumps(
+                {
+                    "budgets": [[small, 4 * gib], [large, 4 * gib]],
+                    "points": [
+                        {
+                            "candidate": "4",
+                            "accumulation_count": 2,
+                            "ordering_label": "1x2rp",
+                            "makespan_seconds": 10.0,
+                            "status": "succeeded",
+                        }
+                    ],
+                }
+            )
+        )
+    else:
+        request["run_budget_gib"] = [1.25, 2.25]
+    (run / "request.json").write_text(json.dumps({"request": request}))
+    (run / "steps").mkdir()
+    assert f"{small / gib:g}gib" == "1.01367gib"
+    (run / "steps" / "1.01367gib.json").write_text(json.dumps(_diagnostics()))
+    # a step whose budget holds no pool with its makespan is not another's
+    (run / "steps" / "0.5gib.json").write_text(json.dumps(_diagnostics()))
+
+    index = write_run_timelines(run)
+
+    def geometry(budget: int) -> str:
+        return "4x2_1x2rp" if searched else f"plan_{keys[budget][:8]}"
+
+    ran, other = ("1.01367gib", "2.01367gib") if searched else ("1.25gib", "2.25gib")
+    timelines = run / "timelines"
+    traced = timelines / ran / geometry(small) / "recompute_0" / "traced.html"
+    assert traced.is_file()
+    assert (timelines / ran / "traced.html").read_bytes() == traced.read_bytes()
+    assert not (timelines / other / "traced.html").exists()
+    assert not (
+        timelines / other / geometry(large) / "recompute_0" / "traced.html"
+    ).exists()
+    page = traced.read_text()
+    plan = json.loads(
+        page.split('<script id="data" type="application/json">')[1].split("</script>")[
+            0
+        ]
+    )["plan"]
+    assert f"execution budget {ran} (pool 0.89 GiB)" in plan
+    with (timelines / "summary.csv").open() as handle:
+        rows = [row for row in csv.DictReader(handle) if row["view"] == "traced"]
+    assert [(row["budget"], float(row["pool_capacity_gib"])) for row in rows] == [
+        (ran, (small - 128 * MIB) / gib)
+    ]
+    assert "no stored plan within this budget" in index.read_text()
+
+
 def test_the_summary_reads_the_step_off_the_same_spans() -> None:
     result = attribute(_selection(), _program())
     summary = summarize(result, tokens_per_step=1000)

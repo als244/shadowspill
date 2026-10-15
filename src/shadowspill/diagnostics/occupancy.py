@@ -1725,10 +1725,12 @@ def stored_plans(run_root: Path) -> list[StoredPlan]:
                 int(value * GIB) for value in request.get("run_budget_gib", ())
             )
     plans: list[StoredPlan] = []
+    # A report copied from another machine records that machine's path; its own
+    # plan_store/ beside it is the same store.
     recorded_store = _request(run_root).get("plan_store")
-    store = (
-        Path(recorded_store) if recorded_store is not None else run_root / "plan_store"
-    )
+    store = run_root / "plan_store"
+    if recorded_store is not None and Path(recorded_store).is_dir():
+        store = Path(recorded_store)
     results = store / "v1" / "planning" / "results"
     for path in sorted(results.glob("*/*/selection.json")):
         selection = _stored_selection(path, layout=False)
@@ -2044,7 +2046,8 @@ def _traced_steps(
     run_root: Path, plans: Sequence[StoredPlan]
 ) -> tuple[dict[Path, Mapping[str, Any]], list[tuple[str, str]]]:
     """Each traced step's diagnostics, keyed by the plan it ran, found by
-    the makespan the step records; and the steps no stored plan matches."""
+    the makespan the step records at the budget its file is named for; and
+    the steps no stored plan matches."""
 
     matched: dict[Path, Mapping[str, Any]] = {}
     missing: list[tuple[str, str]] = []
@@ -2059,16 +2062,41 @@ def _traced_steps(
             for record in plans
             if not record.resolution and abs(record.makespan_ns - makespan_ns) <= 1_000
         ]
-        exact = [record for record in candidates if record.budget_bytes == budget_bytes]
-        chosen = (exact or candidates)[:1]
-        if chosen:
-            matched[chosen[0].path] = diagnostics
+        # One plan can be a candidate at several budgets, at one makespan and a
+        # larger pool at each, so the makespan alone does not say which ran.
+        # The runner names the file for its budget as `_budget_label` labels a
+        # plan's, to six digits; without that label, the budget ran the largest
+        # pool that fits under it, and never one it could not hold.
+        labelled = [
+            record
+            for record in candidates
+            if record.budget_bytes is not None
+            and _budget_label(record.budget_bytes) == trace.stem
+        ]
+        fitting = [
+            record
+            for record in candidates
+            if record.pool_capacity_bytes <= budget_bytes
+        ]
+        chosen = (
+            labelled[0]
+            if labelled
+            else max(
+                fitting, key=lambda record: record.pool_capacity_bytes, default=None
+            )
+        )
+        if chosen is not None:
+            matched[chosen.path] = diagnostics
         else:
             missing.append(
                 (
                     trace.stem,
-                    "no stored plan has this step's simulated makespan"
-                    f" ({makespan_ns / 1e9:.3f} s)",
+                    (
+                        "no stored plan within this budget has"
+                        if candidates
+                        else "no stored plan has"
+                    )
+                    + f" this step's simulated makespan ({makespan_ns / 1e9:.3f} s)",
                 )
             )
     return matched, missing
