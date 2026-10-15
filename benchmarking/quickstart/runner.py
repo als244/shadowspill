@@ -717,6 +717,13 @@ class Tour:
                 terminal_tail_seconds=step_summary.simulator_terminal_tail_seconds,
                 real_terminal_tail_seconds=step_summary.real_terminal_tail_seconds,
             )
+        except BaseException:
+            # Report the originating failure before distributed cleanup, which
+            # may have to wait for peers still executing collectives.
+            import traceback
+
+            traceback.print_exc()
+            raise
         finally:
             training.close()
 
