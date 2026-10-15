@@ -111,6 +111,10 @@ All public diagnostic records are immutable. `PlanDiagnostics.as_dict()` and
 `StepDiagnostics.as_dict()` return JSON-friendly nested dictionaries for
 storage or analysis; the [StepResult diagnostics
 guide](../step-diagnostics.md) defines every field.
+`shadowspill.diagnostics.step_file` stores a traced step as that dictionary
+without its two event ledgers, which `write_step_diagnostics` writes beside it
+as columns and `read_step_events` reads back
+([exporting diagnostics](../step-diagnostics.md#exporting-diagnostics)).
 
 ## Figures
 

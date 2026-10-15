@@ -192,11 +192,13 @@ class TransferRecord:
     end_delta_seconds: float | None
     #: Host clock, from invocation entry: when the action was queued,
     #: when its destination was reserved, when the worker dispatched the copy
-    #: to the lane, and when the worker observed its completion.
+    #: to the lane, and when the worker observed its completion. A runtime
+    #: trace that ran out of room is joined to no transfer, so in that step
+    #: these and the lane instants above are `None` for every transfer.
     queued_at_seconds: float | None
     reserved_at_seconds: float | None
-    dispatched_at_seconds: float
-    completion_observed_at_seconds: float
+    dispatched_at_seconds: float | None
+    completion_observed_at_seconds: float | None
 
     def as_dict(self) -> dict[str, object]:
         """Serialize under the field names themselves, grouped by clock."""
@@ -396,22 +398,10 @@ class AllocatorTrace:
     blocked_allocators_after: int
     overflow: bool
 
-    def as_dict(self) -> dict[str, object]:
-        return {
-            "events": [
-                {
-                    "sequence": item.sequence,
-                    "task_id": item.task_id,
-                    "allocation_id": item.allocation_id,
-                    "generation": item.generation,
-                    "requested_bytes": item.requested_bytes,
-                    "charged_bytes": item.charged_bytes,
-                    "slab_offset": item.slab_offset,
-                    "kind": item.kind.name.lower(),
-                    "category": item.category.name.lower(),
-                }
-                for item in self.events
-            ],
+    def as_dict(self, *, events: bool = True) -> dict[str, object]:
+        """Serialize the pool's state, and the ledger unless `events` is false."""
+
+        value: dict[str, object] = {
             "live_allocations_before": self.live_allocations_before,
             "live_allocations_after": self.live_allocations_after,
             "allocated_bytes_before": self.allocated_bytes_before,
@@ -426,6 +416,22 @@ class AllocatorTrace:
             "blocked_allocators_after": self.blocked_allocators_after,
             "overflow": self.overflow,
         }
+        if events:
+            value["events"] = [
+                {
+                    "sequence": item.sequence,
+                    "task_id": item.task_id,
+                    "allocation_id": item.allocation_id,
+                    "generation": item.generation,
+                    "requested_bytes": item.requested_bytes,
+                    "charged_bytes": item.charged_bytes,
+                    "slab_offset": item.slab_offset,
+                    "kind": item.kind.name.lower(),
+                    "category": item.category.name.lower(),
+                }
+                for item in self.events
+            ]
+        return value
 
 
 @dataclass(frozen=True, slots=True)
@@ -451,8 +457,10 @@ class RuntimeTrace:
     allocation_event_overflow: bool
     events: tuple[RuntimeTraceEvent, ...]
 
-    def as_dict(self) -> dict[str, object]:
-        return {
+    def as_dict(self, *, events: bool = True) -> dict[str, object]:
+        """Serialize the counters, and the raw events unless `events` is false."""
+
+        value: dict[str, object] = {
             "wait_events_inserted": self.wait_events_inserted,
             "allocation_requests": self.allocation_requests,
             "zero_byte_allocation_requests": self.zero_byte_allocation_requests,
@@ -470,8 +478,10 @@ class RuntimeTrace:
             "allocation_event_capacity": self.allocation_event_capacity,
             "event_overflow": self.event_overflow,
             "allocation_event_overflow": self.allocation_event_overflow,
-            "events": [item.as_dict() for item in self.events],
         }
+        if events:
+            value["events"] = [item.as_dict() for item in self.events]
+        return value
 
 
 @dataclass(frozen=True, slots=True)
@@ -613,15 +623,20 @@ class StepDiagnostics:
     allocator: AllocatorTrace
     runtime: RuntimeTrace
 
-    def as_dict(self) -> dict[str, object]:
+    def as_dict(self, *, events: bool = True) -> dict[str, object]:
+        """Serialize every view. Without `events`, the two event ledgers --
+        `allocator.events` and `runtime.events` -- are left out: they grow
+        with the step, and a step file keeps them beside itself as columns
+        (`shadowspill.diagnostics.step_file`)."""
+
         return {
             "schema": artifact_schema("step_diagnostics"),
             "summary": self.summary.as_dict(),
             "tasks": {key: item.as_dict() for key, item in self.tasks.items()},
             "transfers": self.transfers.as_dict(),
             "timelines": self.timelines.as_dict(),
-            "allocator": self.allocator.as_dict(),
-            "runtime": self.runtime.as_dict(),
+            "allocator": self.allocator.as_dict(events=events),
+            "runtime": self.runtime.as_dict(events=events),
         }
 
 

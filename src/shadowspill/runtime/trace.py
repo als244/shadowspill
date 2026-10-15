@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import ctypes
+from collections.abc import Iterable
 from dataclasses import dataclass
 from enum import IntEnum
+from typing import Any
 
 from shadowspill.status import ABI_VERSION
 
@@ -211,35 +213,15 @@ def end_runtime_trace(runtime_handle: int) -> None:
         raise RuntimeError(f"runtime trace end failed with status {status}")
 
 
-def read_runtime_trace(runtime_handle: int) -> CapturedRuntimeTrace:
-    summary = TraceSummary()
-    status = int(
-        runtime_library().shadowspill_trace_read(
-            runtime_handle, ctypes.byref(summary), None, 0, None, 0
-        )
-    )
-    if status != 0 or int(summary.abi_version) != ABI_VERSION:
-        raise RuntimeError(f"runtime trace query failed with status {status}")
-    event_buffer = (TraceEvent * int(summary.event_count))()
-    allocation_buffer = (AllocationEvent * int(summary.allocation_event_count))()
-    copied = TraceSummary()
-    status = int(
-        runtime_library().shadowspill_trace_read(
-            runtime_handle,
-            ctypes.byref(copied),
-            event_buffer if summary.event_count else None,
-            int(summary.event_count),
-            allocation_buffer if summary.allocation_event_count else None,
-            int(summary.allocation_event_count),
-        )
-    )
-    if status != 0 or (
-        copied.event_count != summary.event_count
-        or copied.allocation_event_count != summary.allocation_event_count
-    ):
-        raise RuntimeError("runtime trace changed or failed during bounded copy")
+def decode_runtime_events(events: Iterable[Any]) -> tuple[RuntimeTraceEvent, ...]:
+    """Decode records laid out as the runtime's trace event, in sequence order.
+
+    Each record carries the C structure's fields by name, the runtime's
+    sentinels included, which become `None` here.
+    """
+
     decoded: list[RuntimeTraceEvent] = []
-    for expected_sequence, event in enumerate(event_buffer):
+    for expected_sequence, event in enumerate(events):
         if int(event.sequence) != expected_sequence:
             raise RuntimeError("runtime trace sequence is not contiguous")
         try:
@@ -281,6 +263,36 @@ def read_runtime_trace(runtime_handle: int) -> CapturedRuntimeTrace:
                 ),
             )
         )
+    return tuple(decoded)
+
+
+def read_runtime_trace(runtime_handle: int) -> CapturedRuntimeTrace:
+    summary = TraceSummary()
+    status = int(
+        runtime_library().shadowspill_trace_read(
+            runtime_handle, ctypes.byref(summary), None, 0, None, 0
+        )
+    )
+    if status != 0 or int(summary.abi_version) != ABI_VERSION:
+        raise RuntimeError(f"runtime trace query failed with status {status}")
+    event_buffer = (TraceEvent * int(summary.event_count))()
+    allocation_buffer = (AllocationEvent * int(summary.allocation_event_count))()
+    copied = TraceSummary()
+    status = int(
+        runtime_library().shadowspill_trace_read(
+            runtime_handle,
+            ctypes.byref(copied),
+            event_buffer if summary.event_count else None,
+            int(summary.event_count),
+            allocation_buffer if summary.allocation_event_count else None,
+            int(summary.allocation_event_count),
+        )
+    )
+    if status != 0 or (
+        copied.event_count != summary.event_count
+        or copied.allocation_event_count != summary.allocation_event_count
+    ):
+        raise RuntimeError("runtime trace changed or failed during bounded copy")
     return CapturedRuntimeTrace(
         step_id=int(copied.step_id),
         began_at_ns=int(copied.began_at_ns),
@@ -292,6 +304,6 @@ def read_runtime_trace(runtime_handle: int) -> CapturedRuntimeTrace:
         allocation_event_capacity=int(copied.allocation_event_capacity),
         event_overflow=bool(copied.event_overflow),
         allocation_event_overflow=bool(copied.allocation_event_overflow),
-        events=tuple(decoded),
+        events=decode_runtime_events(event_buffer),
         allocation_events=decode_allocation_events(allocation_buffer),
     )
