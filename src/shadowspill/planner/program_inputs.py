@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 from dataclasses import dataclass, replace
 
+from shadowspill.errors import PlanInfeasibleError
 from shadowspill.ir import ResidencySpec, ShadowSpillProgram, shared_residency_footprint
 from shadowspill.planner.admission import AdmissionFacts
 from shadowspill.planner.serialization import (
@@ -277,11 +278,22 @@ class ShadowSpillPlanningProblem:
         pool_capacity = execution_budget - self.fixed_execution_bytes - shared_execution
         object_capacity = pool_capacity - self.object_reserve_bytes
         if pool_capacity <= 0 or object_capacity <= 0:
-            raise ValueError(
+            # A well-formed budget too small for what this program holds back
+            # is an answer about the program, not a mistake by the caller: a
+            # sweep records the point as infeasible and goes on to the next.
+            raise PlanInfeasibleError(
                 "execution budget leaves no positive pool/object capacity: "
                 f"budget={execution_budget}, fixed={self.fixed_execution_bytes}, "
                 f"shared={shared_execution}, "
-                f"object_reserve={self.object_reserve_bytes}"
+                f"object_reserve={self.object_reserve_bytes}",
+                kind="analytic_capacity",
+                required_bytes=(
+                    self.fixed_execution_bytes
+                    + shared_execution
+                    + self.object_reserve_bytes
+                    + 1
+                ),
+                capacity_bytes=execution_budget,
             )
         selected_transfer = transfer_bandwidths or self.transfer_bandwidths
         source_device = self.simulation_config.devices[0]

@@ -15,6 +15,9 @@ from __future__ import annotations
 
 import pytest
 
+from shadowspill.errors import PlanInfeasibleError
+from shadowspill.ir import shared_residency_footprint
+
 from .test_annotated_plan import _pressurefit_program
 
 
@@ -37,6 +40,23 @@ def test_the_execution_budget_keeps_its_ceiling() -> None:
         problem.machine_inputs(
             execution_budget_bytes=problem.maximum_execution_budget_bytes + 1
         )
+
+
+def test_an_execution_budget_below_the_reserve_is_infeasible() -> None:
+    """A budget the program cannot fit is a point a sweep records, not a crash."""
+
+    problem = _pressurefit_program()
+    shared = shared_residency_footprint(problem.program).for_device(
+        problem.admission_facts.device_id
+    )
+    smallest = problem.fixed_execution_bytes + shared + problem.object_reserve_bytes + 1
+
+    problem.machine_inputs(execution_budget_bytes=smallest)
+    with pytest.raises(PlanInfeasibleError, match="no positive pool/object") as caught:
+        problem.machine_inputs(execution_budget_bytes=smallest - 1)
+    assert caught.value.kind == "analytic_capacity"
+    assert caught.value.required_bytes == smallest
+    assert caught.value.capacity_bytes == smallest - 1
 
 
 def test_the_recorded_maximum_is_left_as_provenance() -> None:

@@ -97,9 +97,13 @@ ShadowSpillPlanningProblem.machine_inputs(
 Rebases the budget-dependent inputs without changing the program, and returns
 the `SimulationConfig` and `AdmissionFacts` a search at those budgets and rates
 plans against. A requested budget above the runtime capacity the program was
-compiled and profiled under, or one that leaves no positive pool or object
-capacity, is refused. Use `to_json()`, `from_json()`, or `from_value()` for
-serialization.
+compiled and profiled under raises `ValueError`: nothing was measured there. A
+budget that leaves no positive pool or object capacity raises
+`PlanInfeasibleError` with kind `analytic_capacity`, `required_bytes` the
+smallest budget that leaves one object byte, and `capacity_bytes` the budget
+asked for. That is an answer about the program rather than a malformed request,
+so a step search records the point as infeasible and plans the next. Use
+`to_json()`, `from_json()`, or `from_value()` for serialization.
 
 ```python
 from shadowspill.planner import plan_program
