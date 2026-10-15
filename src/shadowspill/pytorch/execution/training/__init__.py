@@ -32,6 +32,7 @@ from shadowspill.runtime.plan import (
     RuntimeBridge,
     TaskMemoryEnvelope,
     clear_tasks,
+    trace_capacities,
 )
 from shadowspill.simulator import SimulationResult
 
@@ -94,6 +95,13 @@ class TrainingExecutor(AnnotatedExecutor):
         self.timing = ExecutionTiming(
             bridge,
             tuple(dict.fromkeys(record.task.task_id for record in self._run.execution)),
+            trace_capacities(
+                (
+                    (record.task, record.memory_envelope)
+                    for record in self._run.execution
+                ),
+                self._run.plan.schedule.actions,
+            ),
         )
         self._task_annotations = TaskBoundaryAnnotations(self._bridge)
         self._completion = ReusableCompletionEvent(

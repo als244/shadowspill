@@ -23,7 +23,10 @@ from shadowspill.pytorch.execution.timing import ExecutionTiming
 from shadowspill.pytorch.execution.training import TrainingExecutor
 from shadowspill.pytorch.execution.training.boundary import execute_task
 from shadowspill.pytorch.execution.training.publication import after_task
+from shadowspill.runtime.plan import TraceCapacities
 from tests.shadowspill.runtime._timing import TimingLibrary, install
+
+_CAPACITIES = TraceCapacities(events=1, allocation_events=1)
 
 
 class _CallLog:
@@ -206,7 +209,7 @@ def test_runtime_trace_begins_after_prior_invocation_is_idle(
     harness._bridge = bridge  # type: ignore[assignment]
     harness._invocations = 3
     install(monkeypatch, TimingLibrary())
-    harness.timing = ExecutionTiming(cast(Any, bridge), ())
+    harness.timing = ExecutionTiming(cast(Any, bridge), (), _CAPACITIES)
     # Every invocation records its timeline against the fake library, which
     # keeps the call log to the boundary's own steps.
     harness.timing._timelines = InvocationTimelines(0)
@@ -297,7 +300,7 @@ def test_final_cycle_includes_required_terminal_work(
         runtime=SimpleNamespace(_runtime_handle=0),
         wait_until_idle=lambda: library.clock.advance(4.0),
     )
-    timing = ExecutionTiming(cast(Any, bridge), ())
+    timing = ExecutionTiming(cast(Any, bridge), (), _CAPACITIES)
     stream = SimpleNamespace(cuda_stream=11)
     timing.begin_invocation(1, cast(Any, stream))
     timing.record_compute_start(cast(Any, stream))
@@ -316,7 +319,7 @@ def test_trace_preparation_is_reusable_and_recovers_from_failure(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     library = install(monkeypatch, TimingLibrary())
-    timing = ExecutionTiming(cast(Any, _CallLog()), ("task_000000",))
+    timing = ExecutionTiming(cast(Any, _CallLog()), ("task_000000",), _CAPACITIES)
     attempts = []
 
     def prepare(*args: object, **kwargs: object) -> None:

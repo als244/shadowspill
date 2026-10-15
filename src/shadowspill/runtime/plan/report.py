@@ -13,11 +13,15 @@ import dataclasses
 from collections.abc import Iterable, Mapping
 from typing import TYPE_CHECKING, Any
 
+from shadowspill.ir import MemoryAction, MemoryActionKind, TaskSpec
 from shadowspill.runtime import failures, trace
 from shadowspill.runtime.abi import AdapterStatistics, ObjectSnapshot
 from shadowspill.runtime.occupancy import allocation_id_for_address, live_allocations
 from shadowspill.runtime.timing import Marker
 from shadowspill.runtime.trace import CapturedRuntimeTrace
+from shadowspill.task.allocations import TaskAllocationOperation
+
+from .common import TaskMemoryEnvelope
 
 if TYPE_CHECKING:
     from . import RuntimeBridge
@@ -236,6 +240,68 @@ def set_profiler_annotations(bridge: RuntimeBridge, enabled: bool) -> None:
     )
 
 
+#: The fewest records a prepared trace holds. The bound below leaves out
+#: allocations a task makes outside its profiled contract, and a plan whose
+#: bound falls under this has room for them anyway; room costs nothing until
+#: it is written, because the runtime's pages are committed as records land.
+_TRACE_RECORD_FLOOR = 1_000_000
+
+
+@dataclasses.dataclass(frozen=True, slots=True)
+class TraceCapacities:
+    """How many records a runtime trace of one invocation is prepared for."""
+
+    events: int
+    allocation_events: int
+
+
+def trace_capacities(
+    tasks: Iterable[tuple[TaskSpec, TaskMemoryEnvelope]],
+    actions: Iterable[MemoryAction],
+    *,
+    floor: int = _TRACE_RECORD_FLOOR,
+) -> TraceCapacities:
+    """Room for every record one invocation of these tasks and actions makes.
+
+    Most of the count is exact: the session opens and closes, each task is
+    entered and left, each action is queued, and each copy reserves its
+    destination, is dispatched and completes. The rest is bounded from the
+    plan: a task waits at most once for each distinct object it reads or
+    updates; each allocation in its profiled contract may wait for a range,
+    which is two records, and retires once; a release or an eviction retires
+    the lease it frees. In the allocator's ledger a lease changes state at
+    most four times. A trace that fills anyway says so, in its overflow flags,
+    rather than failing the step. Neither capacity falls below `floor`.
+    """
+
+    # Session begin and end, and a latched failure.
+    events = 3
+    leases = 0
+    for task, envelope in tasks:
+        contract = envelope.allocation_contract
+        allocations = (
+            0
+            if contract is None
+            else sum(
+                step.operation is TaskAllocationOperation.ALLOCATE
+                for step in contract.steps
+            )
+        )
+        objects = set(task.inputs) | {item.object_id for item in task.mutations}
+        events += 2 + len(objects) + 3 * allocations
+        leases += allocations
+    for action in actions:
+        events += 1
+        if action.kind is not MemoryActionKind.RELEASE:
+            events += 3
+        if action.kind in (MemoryActionKind.RELEASE, MemoryActionKind.EVICT):
+            events += 1
+        leases += 1
+    return TraceCapacities(
+        events=max(floor, events), allocation_events=max(floor, 4 * leases)
+    )
+
+
 def prepare_runtime_trace(
     bridge: RuntimeBridge, *, event_capacity: int, allocation_event_capacity: int
 ) -> None:
@@ -268,6 +334,7 @@ def raise_if_allocator_failed(bridge: RuntimeBridge, operation: str) -> None:
 
 
 __all__ = [
+    "TraceCapacities",
     "begin_runtime_trace",
     "describe_object_state",
     "describe_pool_occupants",
@@ -280,4 +347,5 @@ __all__ = [
     "raise_if_allocator_failed",
     "set_profiler_annotations",
     "statistics",
+    "trace_capacities",
 ]

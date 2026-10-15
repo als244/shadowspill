@@ -36,6 +36,7 @@ from shadowspill.ir import MemoryAction, ShadowSpillProgram, TaskSpec
 from shadowspill.planner.diagnostics.mapping import FrozenMapping
 from shadowspill.runtime.plan import (
     RuntimeBridge,
+    TraceCapacities,
     begin_runtime_trace,
     end_and_read_runtime_trace,
     prepare_runtime_trace,
@@ -102,20 +103,23 @@ class ExecutionTiming:
     it is allocated lazily.
     """
 
-    def __init__(self, bridge: RuntimeBridge, task_ids: tuple[str, ...]) -> None:
+    def __init__(
+        self,
+        bridge: RuntimeBridge,
+        task_ids: tuple[str, ...],
+        capacities: TraceCapacities,
+    ) -> None:
         self._bridge = bridge
         self._task_ids = task_ids
         self.armed: _ArmedExecutionTiming | None = None
         self.prior_invocation_drain_ns = 0
         self._runtime_handle = bridge.runtime._runtime_handle
         self._timelines = InvocationTimelines(self._runtime_handle)
-        # Detailed tracing is default-off and allocated lazily. Full-model
-        # schedules emit several records per action plus readiness and
-        # retirement records, so task count alone is not a safe bound. Keep a
-        # deliberately generous fixed capacity and report any overflow in the
-        # public reconciliation summary rather than truncating silently.
-        self._trace_allocation_capacity = 1_000_000
-        self._trace_event_capacity = 1_000_000
+        # Detailed tracing is default-off and allocated lazily, with room for
+        # what this executor's plan can record (`trace_capacities`). A trace
+        # that fills anyway is reported in the public reconciliation summary
+        # rather than truncated silently.
+        self._trace_capacities = capacities
         self._trace_start_event: Marker | None = None
         self._trace_end_event: Marker | None = None
         self._trace_origin_event: Marker | None = None
@@ -155,8 +159,8 @@ class ExecutionTiming:
             }
             prepare_runtime_trace(
                 self._bridge,
-                event_capacity=self._trace_event_capacity,
-                allocation_event_capacity=self._trace_allocation_capacity,
+                event_capacity=self._trace_capacities.events,
+                allocation_event_capacity=self._trace_capacities.allocation_events,
             )
         except BaseException:
             self._release_trace_markers()

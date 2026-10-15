@@ -18,6 +18,7 @@ from .bridge import (
     RuntimeExecutionError,
     TaskMemoryEnvelope,
     TaskPublication,
+    TraceCapacities,
     abort_task,
     actions_by_task,
     admit_caller_acquisition,
@@ -39,6 +40,7 @@ from .bridge import (
     seal_fixed_layout,
     set_profiler_annotations,
     statistics,
+    trace_capacities,
 )
 from .lending import take_back_lent_slabs
 from .lifecycle import (
@@ -58,6 +60,7 @@ __all__ = [
     "RuntimeExecutionError",
     "TaskMemoryEnvelope",
     "TaskPublication",
+    "TraceCapacities",
     "abort_plan",
     "abort_task",
     "actions_by_task",
@@ -84,5 +87,6 @@ __all__ = [
     "set_profiler_annotations",
     "statistics",
     "take_back_lent_slabs",
+    "trace_capacities",
     "wait_plan_idle",
 ]

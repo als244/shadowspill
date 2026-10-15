@@ -40,6 +40,7 @@ from .common import (
 from .lending import require_lent_slabs_back
 from .objects import PlanObjects
 from .report import (
+    TraceCapacities,
     begin_runtime_trace,
     describe_object_state,
     describe_pool_occupants,
@@ -52,6 +53,7 @@ from .report import (
     raise_if_allocator_failed,
     set_profiler_annotations,
     statistics,
+    trace_capacities,
 )
 
 
@@ -191,6 +193,7 @@ __all__ = [
     "RuntimeExecutionError",
     "TaskMemoryEnvelope",
     "TaskPublication",
+    "TraceCapacities",
     "abort_task",
     "actions_by_task",
     "admit_caller_acquisition",
@@ -212,4 +215,5 @@ __all__ = [
     "seal_fixed_layout",
     "set_profiler_annotations",
     "statistics",
+    "trace_capacities",
 ]

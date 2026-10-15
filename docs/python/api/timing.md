@@ -47,7 +47,8 @@ PlannedTrainStep.prepare_runtime_trace() -> None
 PlannedForward.prepare_runtime_trace() -> None
 ```
 
-Allocates reusable detailed-trace buffers and events. Call before a measured
+Allocates reusable detailed-trace buffers, sized for the callable's plan
+([runtime](../step-diagnostics.md#runtime)), and events. Call before a measured
 loop so preparing its final traced step cannot inflate the preceding cycle.
 Repeated calls do nothing; calling a closed callable raises. The first
 `runtime_trace=True` call still prepares lazily if necessary.

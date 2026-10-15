@@ -40,6 +40,7 @@ from shadowspill.runtime.plan import (
     admit_task,
     clear_tasks,
     seal_fixed_layout,
+    trace_capacities,
 )
 from shadowspill.runtime.transfer_labels import TransferLabelIndex
 from shadowspill.simulator import SimulationResult
@@ -428,10 +429,21 @@ class ForwardExecutor(AnnotatedExecutor):
         self._task_annotations = TaskBoundaryAnnotations(bridge)
         selected = plan.program.selected_tasks(plan.selections)
         self._entrypoints = execution_entrypoints(selected, lowered.entrypoints)
-        self.timing = ExecutionTiming(
-            bridge, tuple(item.task_id for item in self._entrypoints)
-        )
         task_by_id = {task.task_id: task for task in selected}
+        self.timing = ExecutionTiming(
+            bridge,
+            tuple(item.task_id for item in self._entrypoints),
+            trace_capacities(
+                (
+                    (
+                        task_by_id[item.task_id],
+                        memory_envelopes.get(item.task_id, TaskMemoryEnvelope()),
+                    )
+                    for item in self._entrypoints
+                ),
+                plan.schedule.actions,
+            ),
+        )
         self._control_tasks: list[_ExecutingStage] = []
         grouped_actions = actions_by_task(plan.schedule.actions)
         # Materialization uses a short-lived action batch. It is idle now and
