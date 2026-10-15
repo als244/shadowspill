@@ -25,14 +25,15 @@ construction, trainable parameters, and data semantics belong to the caller.
 ## Architecture index
 
 `mlops_qwen3moe` means **Qwen 3 with MoE**, whose default shape is 30B-A3B.
-`mlops_qwen35` means the **dense** Qwen 3.5 architecture.
+`mlops_qwen35` means the **dense** Qwen 3.5 architecture, and
+`mlops_qwen35_27b` the same architecture at the shape of Qwen3.5-27B.
 `mlops_qwen35moe` means **Qwen 3.5 with MoE**, whose default shape is 35B-A3B.
 Dimensions are configurable; the architecture name does not force a model size.
 
 | Architecture | Python model and configuration | Implementations | Quickstart names |
 |---|---|---|---|
 | [Llama 3](#llama-3) | `Llama3`, `Llama3Config` | `workloads.pytorch`, `workloads.mlops` | `pytorch_llama3`, `mlops_llama3` |
-| [Dense Qwen 3.5](#dense-qwen-35) | `Qwen35`, `Qwen35Config` | `workloads.pytorch`, `workloads.mlops` | `pytorch_qwen35`, `mlops_qwen35` |
+| [Dense Qwen 3.5](#dense-qwen-35) | `Qwen35`, `Qwen35Config` | `workloads.pytorch`, `workloads.mlops` | `pytorch_qwen35`, `mlops_qwen35`, `mlops_qwen35_27b` |
 | [OLMoE](#olmoe) | `OLMoE`, `OLMoEConfig` | `workloads.pytorch`, `workloads.mlops`; optional EP in MLOps | `mlops_olmoe` |
 | [Qwen 3 MoE](#qwen-3-moe) | `Qwen3MoE`, `Qwen3MoEConfig` | `workloads.mlops`; optional EP constructor | `mlops_qwen3moe` |
 | [Qwen 3.5 MoE](#qwen-35-moe) | `Qwen35MoE`, `Qwen35MoEConfig` | `workloads.mlops`; optional EP constructor | `mlops_qwen35moe` |
@@ -50,8 +51,10 @@ For a non-text example, see the [regression recipe](recipes/regression.py) and
 ## Preset dimensions and parameter counts
 
 `numerical()` supplies a smaller validation shape; `throughput()` supplies a
-larger performance shape. Both are ordinary configuration dataclasses. Qwen
-MoE configurations also have published dimensions as constructor defaults.
+larger performance shape. Both are ordinary configuration dataclasses.
+`Qwen35Config.dense_27b()` supplies Qwen3.5-27B's published text dimensions,
+without its multi-token prediction layer. Qwen MoE configurations also have
+published dimensions as constructor defaults.
 
 Counts below include embeddings and the output head, count shared Parameter
 objects once, and exclude buffers and optimizer state. They describe the whole
@@ -64,6 +67,7 @@ They are **total parameters**, not the subset used by one routed token.
 | Llama 3 throughput | 32 | 4,096 | 32 / 8 | 128 | 14,336 | — | 128,256 | 8,030,261,248 |
 | Dense Qwen 3.5 numerical | 8 | 1,536 | 12 / 4 | 128 | 4,608 | — | 248,320 | 1,006,955,408 |
 | Dense Qwen 3.5 throughput | 32 | 4,096 | 16 / 4 | 256 | 12,288 | — | 248,320 | 8,953,803,264 |
+| Dense Qwen 3.5 27B | 64 | 5,120 | 24 / 4 | 256 | 17,408 | — | 248,320 | 26,895,998,464 |
 | OLMoE numerical | 16 | 1,024 | 8 / 8 | 128 | 1,024 | 16 / 4 | 50,304 | 975,766,528 |
 | OLMoE throughput | 16 | 2,048 | 16 / 16 | 128 | 1,024 | 64 / 8 | 50,304 | 6,919,161,856 |
 | Qwen3-30B-A3B default | 48 | 2,048 | 32 / 4 | 128 | 768 | 128 / 8 | 151,936 | 30,532,122,624 |
@@ -114,13 +118,13 @@ Configuration: [Qwen35Config](pytorch/qwen35.py). Implementations:
 | `n_layers`, `d_model`, `d_ff`, `vocab_size` | Decoder depth, residual width, dense MLP width, vocabulary rows |
 | `full_attention_interval` | Full attention every Nth block, counting from 1 |
 | `n_heads`, `n_kv_heads`, `head_dim` | Full-attention query/KV heads and per-head width |
-| `partial_rotary_factor` | Fraction of each attention head using RoPE; 0.25 in both presets |
+| `partial_rotary_factor` | Fraction of each attention head using RoPE; 0.25 in every preset |
 | `lin_k_heads`, `lin_v_heads` | DeltaNet key/value head counts; value heads must divide into key-head groups |
 | `lin_k_head_dim`, `lin_v_head_dim` | DeltaNet key/value head widths |
 | `lin_conv_kernel` | Depthwise causal-convolution width |
 | `rope_base` | 10,000,000 |
 | `tied_embeddings` | Share embedding and output-head weights; false |
-| `max_seq_len` | Maximum sequence length; 131,072 |
+| `max_seq_len` | Maximum sequence length; 131,072, or 262,144 in `dense_27b()` |
 
 Full-attention projection width is `n_heads * head_dim` and may differ from
 `d_model`. The rotary width must be positive and even. With tied embeddings,
@@ -282,8 +286,8 @@ print(parameter_report(model))
 
 | Option | Default and behavior |
 |---|---|
-| `rank`, `alpha` | 32, 32; scale is alpha/rank |
-| `factor_dtype` | `"float32"` storage; compute uses the activation dtype |
+| `rank`, `alpha` | 16, 16; scale is alpha/rank |
+| `factor_dtype` | `"bfloat16"` storage; compute uses the activation dtype |
 | `targets` | Attention/mixer linear projections, dense MLPs and routed experts; explicit module globs replace the preset |
 | `head` | `"frozen"`, `"lora"`, or `"full"` |
 | `shared_experts` | False; opt in to LoRA on shared-expert linear projections |

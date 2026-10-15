@@ -15,7 +15,8 @@ The [example model catalog](MODELS.md) is the central reference for:
 - Frozen/trainable parameters, LoRA availability, and expert parallelism.
 - Inputs, losses, packing, and runnable Python/JSON/CLI examples.
 
-`mlops_qwen35` is dense; `mlops_qwen3moe` and `mlops_qwen35moe` select
+`mlops_qwen35` is dense, and `mlops_qwen35_27b` is the same architecture at
+Qwen3.5-27B's shape; `mlops_qwen3moe` and `mlops_qwen35moe` select
 Qwen 3 and Qwen 3.5 MoE. Their default dimensions match the 30B-A3B and
 35B-A3B models, respectively.
 

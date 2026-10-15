@@ -145,7 +145,7 @@ Geometry:
 
 | Argument | Meaning | Default |
 |---|---|---|
-| `model` | One of `mlops_llama3`, `mlops_qwen35`, `mlops_olmoe`, `pytorch_llama3`, `pytorch_qwen35` | required |
+| `model` | One of `mlops_llama3`, `mlops_qwen35`, `mlops_qwen35_27b`, `mlops_qwen3moe`, `mlops_qwen35moe`, `mlops_olmoe`, `pytorch_llama3`, `pytorch_qwen35` | required |
 | `--sequence-length` | Tokens per sequence | the model's retained value |
 | `--sequences-per-step` | Sequences one optimizer step consumes; the search splits this into microbatches times accumulation | retained value |
 | `--sequences-per-microbatch` | Choose the geometry yourself instead of searching; must divide the sequences per step, and requires a run budget | search decides |
@@ -302,7 +302,9 @@ benchmarking/quickstart_reports/
                                 stamped and tailable while it runs
         steps/
           12gib.json            one traced step per run budget
+          12gib.events.npz      its runtime and allocator event ledgers
           16gib.json
+          16gib.events.npz
         figures/
           sim/  real/  raw_data/
         timelines/              every plan's pools and lanes over the step,
@@ -333,21 +335,28 @@ carries the start minute, so this catches an explicit `--output-dir` and two
 runs that begin in the same minute; `--force-overwrite` or `--output-dir` is
 the way past it.
 
-Each traced step under `steps/` is the complete `StepDiagnostics` for that
-budget's final step, which is the only step run with `runtime_trace=True`.
+Each traced step under `steps/` is the `StepDiagnostics` of that budget's
+final step, which is the only step run with `runtime_trace=True`.
 The figures keep a handful of aggregate numbers per budget, and those answer
 *how far* the prediction was from the measurement; the trace is what answers
 *which* transfers drifted and *which* tasks ran long. It is the same
 `shadowspill.step_diagnostics` schema the performance matrix writes, so
 `python -m qualification.gap_report` reads a quickstart run the same way
-it reads a matrix.
+it reads a matrix. The step's two event ledgers grow with it, so they sit
+beside the JSON in `<budget>gib.events.npz`, as columns that
+`read_step_events` decodes
+([exporting diagnostics](../docs/python/step-diagnostics.md#exporting-diagnostics)).
 
 Missing transfer timestamps do not fail a completed run. The console and
 fidelity figure label the traced invocation as **unknown**; throughput and
 step timings remain available, and subsequent budgets still run. Missing
 measurements are `null` in step JSON and empty cells in the run CSV, including
 the traced invocation and its simulator error. Replotting preserves these gaps
-instead of substituting zero or treating an incomplete trace as a full one.
+instead of substituting zero or treating an incomplete trace as a full one. A
+runtime trace that fills before the step ends is reported the same way, and
+the console says it filled. A traced step whose diagnostics cannot be
+collected at all is reported for its budget, below the steps it measured, and
+the next budget runs.
 
 `timelines/` is written as the run closes, unless `--no-timelines`, by
 [the occupancy tool](../docs/python/occupancy.md); a failure to write it is
@@ -637,8 +646,8 @@ embeddings, router, normalization, and shared experts remain frozen by default.
 | Flag | Default | Meaning |
 | --- | --- | --- |
 | `--lora` | off | Train LoRA factors instead of all base weights. |
-| `--lora-rank`, `--lora-alpha` | 32, 32 | Factor rank and scaling numerator. |
-| `--lora-dtype` | `float32` | Factor storage/compute dtype; `--model-dtype` still controls the base. |
+| `--lora-rank`, `--lora-alpha` | 16, 16 | Factor rank and scaling numerator. |
+| `--lora-dtype` | `bfloat16` | Factor storage/compute dtype; `--model-dtype` still controls the base. |
 | `--lora-target MODULE_GLOB` | preset targets | Repeat to replace the default target selection. |
 | `--lora-head frozen\|lora\|full` | `frozen` | Head trainability. |
 | `--lora-shared-experts` | off | Add LoRA to shared experts. |

@@ -112,6 +112,28 @@ class Qwen35Config:
             248_320,
         )
 
+    @classmethod
+    def dense_27b(cls) -> Qwen35Config:
+        """The text decoder of Qwen3.5-27B, without its multi-token prediction
+        layer."""
+        return cls(
+            64,
+            5_120,
+            4,
+            24,
+            4,
+            256,
+            0.25,
+            16,
+            48,
+            128,
+            128,
+            4,
+            17_408,
+            248_320,
+            max_seq_len=262_144,
+        )
+
     def __post_init__(self) -> None:
         if self.n_heads % self.n_kv_heads:
             raise ValueError("n_heads must be divisible by n_kv_heads")

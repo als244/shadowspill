@@ -73,6 +73,9 @@ def throughput_spec(family: str, implementation: ModelImplementation) -> FullMod
     elif family == "qwen35":
         config = Qwen35Config.throughput()
         tokens = 16_384
+    elif family == "qwen35_27b":
+        config = Qwen35Config.dense_27b()
+        tokens = 8_192
     elif family == "olmoe":
         if implementation == "pytorch":
             raise ValueError("pure-PyTorch OLMoE full-model benchmarking is deferred")
@@ -233,7 +236,11 @@ def build_model(manifest: FullModelSpec) -> nn.Module:
     from importlib import import_module
 
     models = import_module("workloads." + manifest.implementation)
-    model_types = {"llama3": models.Llama3, "qwen35": models.Qwen35}
+    model_types = {
+        "llama3": models.Llama3,
+        "qwen35": models.Qwen35,
+        "qwen35_27b": models.Qwen35,
+    }
     if manifest.family == "olmoe":
         model_types["olmoe"] = models.OLMoE
     if manifest.implementation == "mlops":
