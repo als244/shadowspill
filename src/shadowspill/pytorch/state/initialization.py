@@ -13,6 +13,7 @@ from collections.abc import Sequence
 from typing import Any, cast
 
 import torch
+from torch._higher_order_ops.effects import with_effects, with_effects_dense
 from torch.utils._python_dispatch import TorchDispatchMode
 from torch.utils._pytree import tree_leaves, tree_map
 
@@ -194,3 +195,11 @@ def _view_key(tensor: torch.Tensor) -> tuple[Any, ...]:
         tuple(tensor.stride()),
         tensor.storage_offset(),
     )
+
+
+# Effect tokens order setup-time operations; the wrapped operation must still
+# stage its pool-backed arguments through this mode, just like an ordinary op.
+@with_effects.py_impl(pool_values)
+def _pool_with_effects(mode: pool_values, *args: Any, **kwargs: Any) -> Any:
+    with mode:
+        return with_effects_dense(*args, **kwargs)

@@ -181,3 +181,32 @@ def test_persistent_state_indexes_owners_once(monkeypatch):
             view = owner.view(2, 4)
             assert state.by_storage_identity()[view.untyped_storage()._cdata] is storage
     assert len(calls) == len(storages)
+
+
+def test_effect_wrapper_stages_pool_values(monkeypatch):
+    """Effectful operations must see authoritative bytes, not metadata payloads."""
+    from types import SimpleNamespace
+
+    from torch._higher_order_ops.effects import with_effects
+
+    from shadowspill.pytorch.state import initialization
+
+    declaration = torch.zeros(4)
+    authoritative = torch.arange(4, dtype=torch.float32)
+    identity = declaration.untyped_storage()._cdata
+    item = SimpleNamespace(unbacked=True, size_bytes=16)
+    registry = SimpleNamespace(storage=lambda key: item if key == identity else None)
+    monkeypatch.setattr(initialization, "registry_for", lambda runtime: registry)
+
+    def read_bytes(record, *, runtime, owner):
+        owner.copy_(authoritative.view(torch.uint8))
+        return owner
+
+    monkeypatch.setattr(initialization, "_storage_bytes", read_bytes)
+    with initialization.pool_values(object()):
+        token, result = with_effects(
+            torch.empty(0), torch.ops.aten.sin.default, declaration
+        )
+    torch.testing.assert_close(result, authoritative.sin())
+    assert token.numel() == 0
+    assert torch.count_nonzero(declaration) == 0
