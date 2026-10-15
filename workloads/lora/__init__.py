@@ -8,9 +8,9 @@ from torch import nn
 def configure_lora(
     model,
     *,
-    rank=32,
-    alpha=32.0,
-    factor_dtype="float32",
+    rank=16,
+    alpha=16.0,
+    factor_dtype="bfloat16",
     targets=None,
     head="frozen",
     shared_experts=False,

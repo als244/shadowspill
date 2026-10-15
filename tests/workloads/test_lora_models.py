@@ -64,7 +64,8 @@ def test_full_model_losses_gradients_updates_and_frozen_state(
     targets = torch.randint(0, 97, (1, 7))
     before_logits = model(tokens, (3, 4)).detach()
     original = {name: p.detach().clone() for name, p in model.named_parameters()}
-    configure_lora(model, rank=4, alpha=4, head=head)
+    # FP32 factors: the reference comparison below holds FP32 tolerances.
+    configure_lora(model, rank=4, alpha=4, head=head, factor_dtype="float32")
     torch.testing.assert_close(
         model(tokens, (3, 4)), before_logits, atol=2e-6, rtol=3e-5
     )
@@ -110,7 +111,11 @@ def test_full_model_losses_gradients_updates_and_frozen_state(
         model.state_dict(), oracle.state_dict(), atol=3e-6, rtol=3e-5
     )
     restored = configure_lora(
-        tiny_model(implementation, family), rank=4, alpha=4, head=head
+        tiny_model(implementation, family),
+        rank=4,
+        alpha=4,
+        head=head,
+        factor_dtype="float32",
     )
     restored.load_state_dict(model.state_dict(), strict=True)
     torch.testing.assert_close(restored(tokens), model(tokens))
