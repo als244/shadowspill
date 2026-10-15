@@ -40,6 +40,20 @@ def main():
     )
     parser.add_argument("--gemm-precision", choices=("bf16",), default="bf16")
     parser.add_argument(
+        "--expert-storage",
+        choices=("bf16", "fp8", "fp8_block"),
+        help="how the routed experts are held (default: bf16 for a dense "
+        "checkpoint, fp8_block -- E4M3 once with 128x128 block scales, an FP8 "
+        "checkpoint's bytes as they are -- for a compressed one; fp8 is the "
+        "two-copy container)",
+    )
+    parser.add_argument(
+        "--partition",
+        choices=("auto", "glm-stages"),
+        default="auto",
+        help="the planner's own partition (default), or GLMStages",
+    )
+    parser.add_argument(
         "--layer-limit", type=int, help="Debug only: execute a decoder prefix"
     )
     parser.add_argument(
@@ -63,7 +77,9 @@ def main():
         parser.error("--assistant-prefix requires --image")
     args.outdir.mkdir(parents=True, exist_ok=True)
     with GLMCheckpoint(
-        args.checkpoint, gemm_precision=args.gemm_precision
+        args.checkpoint,
+        gemm_precision=args.gemm_precision,
+        expert_storage=args.expert_storage,
     ) as checkpoint:
         model = checkpoint.build_model(
             layer_limit=args.layer_limit, include_vision=args.image is not None
@@ -133,6 +149,7 @@ def main():
                     "assistant_prefix": args.assistant_prefix,
                     "padding_token_id": 0,
                     "gemm_precision": args.gemm_precision,
+                    "expert_storage": checkpoint.inventory["expert_storage"],
                     "torch_version": torch.__version__,
                     "inductor_emulate_precision_casts": bool(
                         inductor_config.emulate_precision_casts
@@ -212,7 +229,9 @@ def main():
                     runtime=runtime,
                     execution="execution",
                     spill="spill",
-                    partition=GLMStages(),
+                    partition=(
+                        GLMStages() if args.partition == "glm-stages" else "auto"
+                    ),
                     artifact_store=args.outdir / "artifacts",
                     search_options=SearchOptions(
                         generic=GenericPlanningOptions(

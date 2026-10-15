@@ -2,15 +2,29 @@
 
 Text architecture: 45 decoder layers (34 KDA, 11 NoPE sparse-MLA), mHC streams, three initial dense MLPs, then 288 routed experts/top-8 plus one shared expert per MoE layer. Operations live in MLOps; this folder owns model composition and Hugging Face naming/layouts.
 
+Each MoE layer is one `mlops.moe` call, or `mlops.lora.experts.expert_lora` when
+the experts carry LoRA, so the façade picks the kernels: SonicMoE on Hopper and
+Blackwell, the builtin grouped GEMMs elsewhere. Routing is GLM's -- sigmoid
+scores, the correction bias for selection only, normalized and scaled by 2.5
+-- with the router's GEMM at mlops' precision (bf16 operands, fp32 sums and
+logits). Every SwiGLU, the shared expert's too, is clamped at
+`swiglu_limit` (10). The routed experts are stacked banks, `w13 [E, 2I, H]`
+(gate rows, then up rows) and `w2 [E, H, I]`, held as `expert_storage` says:
+`"bf16"`; `"fp8_block"`, frozen `BlockFP8Weight`s (E4M3 once with a scale per
+128x128 block, the default for compressed checkpoints); or `"fp8"`, frozen
+`QuackFP8Weight`s (two E4M3 orientations with per-row descales, as many bytes
+as bf16). Both FP8 forms compute the experts' GEMMs in FP8 on SM90.
+
 ## Direct checkpoint import
 
 No permanent converted checkpoint is required. The importer:
 
 1. Reads safetensors headers and quantization metadata.
 2. Declares the model on `meta`, validates every required tensor, and records physical storage sizes.
-3. Fills already-allocated destination tensors in place, with bounded per-tensor scratch.
-4. Preserves FP8/NVFP4 bytes and scales, joining gate/up rows without requantization.
-5. Releases consumed mapped source pages. No whole-model host allocation is needed.
+3. Fills already-allocated destination tensors in place, writing each destination once. Scratch is one joined projection, or one component of one layer's expert bank.
+4. Keeps compressed dense projections' FP8/NVFP4 bytes and scales, for BF16 GEMMs.
+5. Stores the routed experts as `expert_storage` says (default: `"bf16"` for a dense checkpoint, `"fp8_block"` -- one copy -- for a compressed one). Dense experts copy into bf16 banks and an FP8 checkpoint's experts into `"fp8_block"` banks byte for byte; every other pairing decodes each expert and quantizes it as the storage does, on the GPU when there is one.
+6. Releases consumed mapped source pages. No whole-model host allocation is needed.
 
 Example:
 
@@ -30,7 +44,7 @@ with GLMCheckpoint(checkpoint_directory, gemm_precision="bf16") as source:
 
 The initializer also works with ordinary allocated CPU tensors. It has no runtime or pool dependency. A temporary SSD spill pool still contains an execution copy of the imported state; directly using existing safetensors extents as a read-only pool is a separate, unimplemented storage capability.
 
-The original Z.ai release uses block FP8. The RedHatAI release mixes 1x16 NVFP4 routed experts with BF16 dense projections and FP8 auxiliary MTP weights. The importer resolves formats per projection, preserves activation global-scale metadata, and excludes MTP. Vision is optional; text-only construction leaves its tensors unread.
+The original Z.ai release uses block FP8. The RedHatAI release mixes 1x16 NVFP4 routed experts with BF16 dense projections and FP8 auxiliary MTP weights. The importer resolves formats per projection and excludes MTP. The experts' activation global scales are read past: the FP8 forms quantize their activations per row per call. Vision is optional; text-only construction leaves its tensors unread.
 
 ## CLI
 
@@ -62,12 +76,10 @@ pools with a second; a 32K-token call is a few dozen allocations and about
 
 A checkpoint is imported once into a pool image with
 `python -m workloads.mlops.glm53_flash.convert --checkpoint DIR --image FILE
-[--layer-limit N] [--lora-rank R]`: the frozen model as ShadowSpill lays it out
-in an SSD pool file, with a manifest beside it. The model is built with LoRA
-factors (rank 8 unless told otherwise) because the frozen expert weights are
-named and stored differently with and without them; an image converted with any
-positive rank serves every LoRA run, and one converted with rank 0 serves runs
-without LoRA. A quickstart given `--ssd-image FILE` binds the
+[--layer-limit N] [--lora-rank R] [--expert-storage S]`: the frozen model as
+ShadowSpill lays it out in an SSD pool file, with a manifest beside it. The
+frozen tensors are named the same whatever the LoRA rank, so an image serves
+every LoRA run with its expert storage. A quickstart given `--ssd-image FILE` binds the
 frozen tensors where they lie and writes only LoRA factors, optimizer state and
 activations; `GLMCheckpoint.load_into(model, adopted=...)` skips the adopted
 copies.
@@ -88,34 +100,12 @@ per-call times/top tokens/log probabilities and final logits. Repeatable finite 
 
 ## Development status
 
-Both complete checkpoints run through SSD-backed planned execution with BF16
-GEMMs. The tested text prompt and the processed red-image prompt each produce
-three bit-identical repeated forwards and the same final answer as the streamed
-HF-definition reference.
-
-| Stored weights | Text-only forward | Image/text forward |
-|---|---:|---:|
-| NVFP4 / BF16 mix | about 27.4 s | about 27.4 s |
-| Block FP8 / BF16 mix | about 45.6 s | about 46.2 s |
-
-These short prompts use the fixed expert schedule intended for training.
-Even an empty expert declares its weights as task inputs, so a forward fetches
-essentially the complete compressed model (190 GB or 321 GB with vision).
-These timings do not represent active-expert-only inference.
-
-A matching answer is not full numerical parity. On the image prompt, text-token
-logit relative L2 versus the independent reference is 11.7% for NVFP4 and 12.7%
-for FP8; image-token positions differ substantially more. The reference uses
-the independently evaluated FP32 KDA recurrence. It manually decodes the same
-checkpoint weights for BF16 GEMMs and bypasses the Transformers quantized loader.
-Thus these are BF16 implementation comparisons, not comparisons with a stock
-checkpoint-configured FP8/NVFP4 execution. Component, accumulated-error, and
-ordinary torch.compile controls are recorded in
-docs/internal/plans/glm_checkpoint_1010/VALIDATION.md.
-
-The supported composed checkpoint recipe remains original compressed storage
-plus BF16 GEMMs. Checkpoint-specific low-precision GEMMs and full-size LoRA
-training remain unqualified.
+The importer is tested on synthetic checkpoints -- dense, and FP8 with 128x128
+blocks -- in every expert storage (`tests/workloads/test_glm53_checkpoint.py`).
+The full checkpoints' planned forwards, their comparison with the streamed
+HF-definition reference, and LoRA training on real prefixes are to be repeated
+with the stacked experts. The supported checkpoint recipe keeps compressed
+dense projections with BF16 GEMMs; full-size LoRA training remains unqualified.
 
 ## Training checkpoints
 
@@ -147,25 +137,6 @@ saves the full model. Master/compute weight selection remains independent.
 Training-loop RNG, data progress and schedule state remain the loop's/trainer's
 responsibility.
 
-The reduced composed GLM passes three SSD-planned LoRA updates and exact
-full-checkpoint replay with BF16, FP8 and NVFP4 expert storage, all using BF16
-GEMMs. Selected-state checkpoints now pass the same three precision cases and
-exact next-step replay. Their size is approximately 1.76 MB, versus 3.77–4.60 MB
-for complete tiny-model checkpoints. Real four-layer checkpoint prefixes execute three LoRA updates and restore the
-complete next update exactly. Their selected checkpoints are about 443 MB.
-They remain numerical diagnostics: aggregate first-step gradient relative L2
-versus eager is 1.15% for NVFP4 and 1.42% for FP8 with the default compiler
-behavior, or 0.58% and 1.11% with explicit precision-cast emulation. An all-save
-FP8 control retains the same 1.11% discrepancy; recomputation does not explain it.
-Near-zero gradients and discrete routing make relative factor error after Adam
-larger. This is not a claim of full-size model training or exact reference parity.
-
-The reduced packed image/text model also passes three LoRA updates with an
-optional LoRA output head when eager and planned execution use the same bounded
-loss. Its maximum per-factor difference is 2.96% under the unchanged 3% test
-limit, and the selected checkpoint replays the next step exactly. This integration
-check complements the independent operation-level gradient tests.
-
 ## Multiple prompts with one plan
 
 Repeat `--text` to reuse one model import and plan:
@@ -196,9 +167,12 @@ model = source.build_model(
 
 The base, router, shared experts, indexer and normalization weights remain frozen.
 Dense attention/MLP projections and routed experts train through LoRA; the output
-head is optional. BF16 activations/GEMMs with FP32 factor storage yield FP32 factor
-gradients. Import initializes supplied pool state one projection/factor at a time.
-Meta tensors alone contain no initialized factor values.
+head is optional. The experts' factors are stacked per layer (`lora_gate_up_a
+[E, R, H]`, `lora_gate_up_b [E, 2I, R]`, `lora_down_a [E, R, I]`, `lora_down_b
+[E, H, R]`) and train through `expert_lora`; their base GEMMs run at the expert
+storage's precision. FP32 factor storage yields FP32 factor gradients. Import
+initializes supplied pool state one projection/factor at a time. Meta tensors
+alone contain no initialized factor values.
 
 Composed training and checkpoint validation remain tracked in the internal agenda.
 Full-model LoRA training is not yet qualified.
@@ -280,39 +254,24 @@ sequence packing. Output-head LoRA is enabled with `lora_head=True`.
 
 ## Partitioning
 
-GLM uses the public `PartitionPolicy` protocol. Its implementation is isolated
-in [partition.py](partition.py), separate from model mathematics, checkpoint
-conversion, and MLOps kernels. The [generic architecture contract](../../../docs/architecture/partitioning.md)
-defines the same terminology and requirements for every model.
-
-The policy follows exported module scopes and creates these **forward stage
-occurrences**:
+By default the planner partitions GLM as it does any model. `GLMStages`
+([partition.py](partition.py)) is an optional `PartitionPolicy`, kept apart
+from model mathematics, checkpoint conversion and MLOps kernels; the
+[generic architecture contract](../../../docs/architecture/partitioning.md)
+defines the terminology. It follows exported module scopes and creates these
+**forward stage occurrences**:
 
 | Model region | Boundary rule |
 |---|---|
 | Input/embedding preparation | Group root-level operations until entering a layer or vision block. |
-| Layers 0–2 | One stage per complete KDA + dense-MLP decoder layer. |
-| Layers 3–44, before experts | One stage containing the previous layer's residual/mHC combination, then this layer's attention, mHC/norm work, routing and the shared expert. |
-| Each routed expert | One stage for each of the 288 individual expert calls. |
-| After those experts | The remaining activation handling and residual/mHC combination join the next layer's attention stage; the last layer's form their own stage. |
+| Each decoder layer | One stage: attention, mHC/norm work and the MLP -- dense, or the MoE layer's one `mlops.moe` / `expert_lora` call with its shared expert. |
 | Final norm and output head/objective | One root-level suffix stage. |
 | Optional vision | Patch preparation, each of the 24 blocks, and post-block merging/projection are separated. |
 
-Sparse-MLA layers are 3, 7, 11, ..., 43; the other 34 layers use KDA. Attention
-type affects the stage's graph, but does not introduce a separate attention
-boundary. Each MoE decoder layer contributes 289 stage occurrences, and the
-last layer's combination adds one. Repeated expert occurrences can reuse
-compiled contracts; stage count does not equal compilation count. CPU input
-preparation can form an additional small stage when vision separates it from
-embedding operations.
-
-A backward task recomputes from its stage's inputs, so every object a stage
-boundary hands to a later backward is retained from the forward until then.
-The four-stream residual state is the largest such object, 32 KiB per token.
-Placing a layer's combination with the next layer's attention retains one
-copy of that state per layer rather than two: the attention stage's input
-streams, not also the post-attention streams a separate combination stage
-would read for its mixing gradient.
+Modules laid out as `...backend.experts.N` would each get a stage, with the
+work after them joining the next layer's stage; GLM's stacked experts have no
+such modules. Repeated layer occurrences can reuse compiled contracts; stage
+count does not equal compilation count.
 
 Use the policy explicitly with any direct planning API:
 
@@ -328,17 +287,18 @@ with plan_forward(
     outputs = forward(inputs)
 ```
 
-The direct checkpoint CLI uses this policy too. A custom model can provide a
-different `PartitionPolicy`; there is no architecture-name lookup in the
-planning API and no GLM rule in the neutral planner.
+The forward CLI takes `--partition glm-stages` and the quickstart factory
+`partition="glm_stages"`. A custom model can provide a different
+`PartitionPolicy`; there is no architecture-name lookup in the planning API
+and no GLM rule in the neutral planner.
 
 ## Generic quickstart and training sweeps
 
 [quickstart.py](quickstart.py) supplies a text-only LoRA experiment through the
-normal quickstart factory interface. Its `plan_options` contains
-`partition=GLMStages()`, shared by geometry search and execution planning.
-Use `--factory` for this workload; it is not one of the short-name performance
-gate presets.
+normal quickstart factory interface. Its `plan_options` carry the gradient
+dtype and, with `partition="glm_stages"`, `GLMStages`, shared by geometry
+search and execution planning. Use `--factory` for this workload; it is not
+one of the short-name performance gate presets.
 
 A small random validation model:
 
@@ -373,8 +333,8 @@ trainable state and saved activations. Do not assume the prefix budgets suffice.
 Factory arguments: `checkpoint` or `tiny`; `sequence_length`;
 `sequences_per_step`; `sequences_per_microbatch`; `lora_rank`;
 `lora_alpha`; `lora_dtype`; `lora_head`; `grad_dtype`; `opt_state_dtype`;
-`opt_state_rounding`; `gemm_precision`; `layer_limit`; `head_chunk_size`;
-`seed`. The quickstart flags `--lora-rank`, `--lora-alpha` and `--lora-dtype`
+`opt_state_rounding`; `gemm_precision`; `expert_storage`; `layer_limit`;
+`head_chunk_size`; `partition`; `seed`. The quickstart flags `--lora-rank`, `--lora-alpha` and `--lora-dtype`
 reach the factory under the first three of those LoRA names.
 `--minimum-evict-kib 128` is the forward CLI's small-object policy for this
 checkpoint's many scales.
@@ -384,9 +344,11 @@ update per parameter, reading each gradient at `grad_dtype`, the dtype the step
 accumulates it in, and keeping its moments at `opt_state_dtype` (BF16 by
 default, rounded stochastically; `opt_state_rounding` names another rounding).
 Precision defaults and supported recipes are stated in the function signature.
-The checkpoint path rejects unsupported low-precision GEMMs immediately.
-The small random fixture additionally permits FP8 expert GEMMs; that is not
-equivalent to applying the full checkpoint's quantization recipe.
+The checkpoint path rejects unsupported low-precision dense GEMMs immediately;
+its experts compute at their storage's precision (`expert_storage`). The small
+random fixture's experts are bf16, or with `gemm_precision="fp8"` block-scaled
+FP8 (`expert_storage` picks another form), quantized from its random weights;
+that is not the full checkpoint's quantization recipe.
 
 Each candidate uses the same generated token/target sequence, split into
 microbatches. The objective sums token losses and divides by tokens per step.
@@ -406,5 +368,6 @@ mHC, sigmoid routing, and the existing SwiGLU/gated RMSNorm options.
 No `mlops.glm` namespace is required. `mlops.bootstrap` registers custom
 operations before artifacts are loaded; optional FLA/TileLang code loads only
 at execution. Architecture, quantized checkpoint mappings and task partitioning
-remain in this workload. SequentialMoE remains the independent
-`mlops.sequential_moe` package.
+remain in this workload. The checkpoint reader and the compressed dense
+projections come from `mlops.sequential_moe.precision`; the MoE itself is
+`mlops.moe` / `expert_lora`.

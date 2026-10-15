@@ -7,6 +7,18 @@ import torch
 
 @dataclass(frozen=True)
 class Config:
+    """The dimensions, and the storage and precision choices.
+
+    ``expert_storage`` is how the routed experts are held: ``"bf16"``,
+    ``"fp8_block"`` for frozen `BlockFP8Weight`s (E4M3 once, a scale per
+    128x128 block), or ``"fp8"`` for frozen `QuackFP8Weight` containers (two
+    E4M3 orientations with per-row descales, as many bytes as bf16); the FP8
+    forms' GEMMs run in FP8. A compressed checkpoint (FP8 or NVFP4) loads as
+    ``"fp8_block"`` unless asked otherwise, an FP8 one byte for byte.
+    ``gemm_precision`` is the dense projections' GEMM precision with a
+    compressed checkpoint, BF16 only.
+    """
+
     hidden_size: int = 4096
     vocab_size: int = 154880
     num_hidden_layers: int = 45
@@ -39,8 +51,6 @@ class Config:
     dtype: torch.dtype = torch.bfloat16
     expert_storage: str = "bf16"
     gemm_precision: str = "bf16"
-    chunk_capacity: int = 8192
-    row_multiple: int = 256
     lora_rank: int = 0
     lora_alpha: float = 32.0
     lora_factor_dtype: torch.dtype = torch.float32
@@ -67,6 +77,11 @@ class Config:
             raise ValueError("The KDA safe-gate path requires a bound in [-5,0)")
         if self.lora_rank < 0:
             raise ValueError("lora_rank must be nonnegative")
+        if self.expert_storage not in ("bf16", "fp8", "fp8_block"):
+            raise ValueError(
+                "expert_storage must be 'bf16', 'fp8' or 'fp8_block', "
+                f"not {self.expert_storage!r}"
+            )
 
     @property
     def layer_types(self):
@@ -103,8 +118,6 @@ class Config:
             "index_n_heads": 2,
             "index_head_dim": 32,
             "index_topk": 128,
-            "chunk_capacity": 256,
-            "row_multiple": 256,
         }
         values.update(kwargs)
         return cls(**values)

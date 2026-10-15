@@ -80,6 +80,7 @@ remain unchanged.
 
 [GLMStages](../../workloads/mlops/glm53_flash/partition.py) implements this same
 protocol using exported module paths. Its [workload factory](../../workloads/mlops/glm53_flash/quickstart.py)
-passes the policy through `plan_options`, so quickstart uses it for both geometry
-search and the chosen training plan. Model operators contain no partition API
-calls. Other architectures can supply their own policy in exactly the same way.
+passes the policy through `plan_options` when asked (`partition="glm_stages"`),
+so quickstart uses it for both geometry search and the chosen training plan.
+Model operators contain no partition API calls. Other architectures can supply
+their own policy in exactly the same way.

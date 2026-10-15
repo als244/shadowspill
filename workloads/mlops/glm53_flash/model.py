@@ -8,7 +8,7 @@ from torch import nn
 
 from .attention import KDA, SparseMLA
 from .common import HyperConnection, RMSNorm
-from .moe import DenseMLP, MoE
+from .moe import FACTORS, DenseMLP, MoE
 from .vision import VisionModel
 
 
@@ -55,9 +55,8 @@ def enable_lora(model, config):
         setattr(model.get_submodule(parent), leaf, wrapper(module, recipe))
     for layer in model.layers:
         if isinstance(layer.mlp, MoE):
-            for expert in layer.mlp.backend.experts:
-                for name in ("gate_up_a", "gate_up_b", "down_a", "down_b"):
-                    getattr(expert, name).requires_grad_(True)
+            for name in FACTORS:
+                getattr(layer.mlp, name).requires_grad_(True)
 
 
 class LanguageModel(nn.Module):

@@ -1,7 +1,9 @@
 """GLM LoRA recipe for generic quickstart and plan_step_search.
 
-Architecture, inputs, initialization and partitioning are supplied here. The
-benchmark runner and planner need no GLM-specific behavior.
+Architecture, inputs and initialization are supplied here. The benchmark
+runner and planner need no GLM-specific behavior; the planner partitions the
+model by its own default unless ``partition="glm_stages"`` asks for
+`GLMStages`.
 """
 
 from contextlib import contextmanager
@@ -34,16 +36,24 @@ def experiment(
     opt_state_dtype="bfloat16",
     opt_state_rounding=None,
     gemm_precision="bf16",
+    expert_storage=None,
     layer_limit=None,
     head_chunk_size=1024,
+    partition=None,
     seed=0,
 ):
     """Return the ordinary quickstart factory contract.
 
     Supply a local HF checkpoint, or explicitly select the small random fixture
-    with `tiny=True`. Checkpoint import retains compressed weight storage and
-    currently requires BF16 GEMMs. The tiny fixture can also exercise FP8 GEMMs.
-    This text-only recipe does not imply full-checkpoint numerical qualification.
+    with `tiny=True`. A compressed checkpoint's experts (FP8 or NVFP4) load as
+    one-copy block-scaled FP8 (``expert_storage="fp8_block"``, an FP8
+    checkpoint's bytes as they are) whose GEMMs run in FP8; ``"fp8"`` is the
+    two-copy container and ``"bf16"`` decodes them. Its dense projections
+    need BF16 GEMMs. The tiny fixture's experts are bf16, or with
+    ``gemm_precision="fp8"`` block-scaled FP8 (``expert_storage`` picks
+    another form). ``partition="glm_stages"`` plans with
+    `GLMStages`; by default the planner chooses. This text-only recipe does
+    not imply full-checkpoint numerical qualification.
     """
     if (checkpoint is not None) == bool(tiny):
         raise ValueError("Choose a checkpoint directory or tiny=True")
@@ -81,9 +91,28 @@ def experiment(
         raise ValueError(
             "layer_limit applies to checkpoint prefixes, not the tiny fixture"
         )
+    if tiny and gemm_precision not in ("bf16", "fp8"):
+        raise ValueError("The tiny fixture's experts compute in bf16 or fp8")
+    if expert_storage not in (None, "bf16", "fp8", "fp8_block"):
+        raise ValueError(
+            f"expert_storage must be None, 'bf16', 'fp8' or 'fp8_block', "
+            f"not {expert_storage!r}"
+        )
+    if tiny:
+        expert_storage = expert_storage or (
+            "fp8_block" if gemm_precision == "fp8" else "bf16"
+        )
+    if partition not in (None, "glm_stages"):
+        raise ValueError(f"partition must be None or 'glm_stages', not {partition!r}")
 
     checkpoint = None if tiny else Path(checkpoint).expanduser().resolve()
-    source = None if tiny else GLMCheckpoint(checkpoint, gemm_precision=gemm_precision)
+    source = (
+        None
+        if tiny
+        else GLMCheckpoint(
+            checkpoint, gemm_precision=gemm_precision, expert_storage=expert_storage
+        )
+    )
     lora = dict(
         lora_rank=lora_rank,
         lora_alpha=lora_alpha,
@@ -91,12 +120,7 @@ def experiment(
         lora_head=lora_head,
     )
     config = (
-        Config.tiny(
-            hidden_size=128,
-            expert_storage=gemm_precision,
-            gemm_precision=gemm_precision,
-            **lora,
-        )
+        Config.tiny(hidden_size=128, expert_storage=expert_storage, **lora)
         if tiny
         else from_huggingface(source.metadata)
     )
@@ -117,7 +141,9 @@ def experiment(
                 torch.manual_seed(seed)
                 return LanguageModel(config, device=selected).cpu()
         if source is None:
-            source = GLMCheckpoint(checkpoint, gemm_precision=gemm_precision)
+            source = GLMCheckpoint(
+                checkpoint, gemm_precision=gemm_precision, expert_storage=expert_storage
+            )
         return source.build_model(layer_limit=layer_limit, **lora)
 
     def initialize(model, adopted=frozenset()):
@@ -192,7 +218,10 @@ def experiment(
         ),
         "hyperparams": {"lr": 1e-4},
         "candidates": candidates,
-        "plan_options": {"partition": GLMStages(), "grad_dtype": dtypes[grad_dtype]},
+        "plan_options": {
+            "grad_dtype": dtypes[grad_dtype],
+            **({"partition": GLMStages()} if partition == "glm_stages" else {}),
+        },
         "units_per_step": total,
         "unit_label": "tokens",
         "context": resources,
@@ -211,7 +240,8 @@ def experiment(
             "opt_state_dtype": opt_state_dtype,
             "opt_state_rounding": opt_state_rounding,
             "gemm_precision": gemm_precision,
-            "partition": "GLMStages()",
+            "expert_storage": expert_storage,
+            "partition": "GLMStages()" if partition == "glm_stages" else "auto",
         },
     }
     if not tiny:

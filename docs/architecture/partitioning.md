@@ -152,9 +152,9 @@ architecture names or substitute a model-specific policy.
 
 The [custom partitioning example](../examples/custom-partitioning.md) shows a
 small standalone policy. The [GLM workload](../../workloads/mlops/glm53_flash/README.md#partitioning)
-is a model-scale example: its workload-local policy bounds individual experts
-while grouping ordinary attention/routing and residual work. No GLM condition
-belongs in the planner, simulator, runtime, or MLOps operators.
+is a model-scale example: its optional workload-local policy bounds each
+decoder layer and vision block, and would bound individual expert modules. No
+GLM condition belongs in the planner, simulator, runtime, or MLOps operators.
 
 See also [frontend API](../python/api/frontend.md#partitionpolicy),
 [graph-pair construction](graph-pair-construction.md), and

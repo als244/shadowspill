@@ -1,4 +1,5 @@
-"""Optional semantic stages for the example model's sequential experts."""
+"""An optional stage partition for the GLM model; the planner's own is the
+default."""
 
 import re
 from dataclasses import dataclass
@@ -10,14 +11,14 @@ from shadowspill.pytorch import PartitionPolicy
 class GLMStages(PartitionPolicy):
     """A workload-local PartitionPolicy, shared by forward and training capture.
 
-    Attention/routing form a stage before the experts; each expert is separate;
-    the residual combination after a layer's experts joins the next layer's
-    attention stage, and the last layer's forms its own. A backward recomputes
-    from its stage's inputs, so every object a boundary hands to a later
-    backward is retained from the forward; placing the combination with the
-    next attention means one copy of the four-stream state per layer is
-    retained rather than two. Each vision block is bounded separately. Stage
-    IDs identify occurrences, not unique compiled contracts.
+    One stage per text decoder layer -- attention, mHC/norm work and the MLP,
+    the MoE layer's one ``mlops.moe`` / ``expert_lora`` call included -- and
+    one per vision block. Modules laid out as ``...backend.experts.N`` would
+    each be a stage of their own, the work after them joining the next
+    layer's stage (a backward recomputes from its stage's inputs, so that
+    keeps one copy of the four-stream state per layer rather than two); GLM's
+    stacked experts have no such modules. Stage IDs identify occurrences, not
+    unique compiled contracts.
     """
 
     def assign_stages(self, graph_module, module):

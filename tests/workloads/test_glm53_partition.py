@@ -109,7 +109,8 @@ def test_recipe_preserves_step_data_across_microbatch_candidates():
         sequences_per_step=4,
         sequences_per_microbatch=(1, 2, 4),
     )
-    assert isinstance(spec["plan_options"]["partition"], GLMStages)
+    # The planner partitions by its own default unless GLMStages is asked for.
+    assert "partition" not in spec["plan_options"]
     assert spec["plan_options"]["grad_dtype"] is torch.float32
     expected = spec["candidates"]["4"][0]
     for batches in spec["candidates"].values():
@@ -130,9 +131,17 @@ def test_recipe_preserves_step_data_across_microbatch_candidates():
         assert sum(spec["objective"](Loss(), *batch) for batch in batches) == 2
 
 
+def test_glm_stages_are_opt_in():
+    spec = experiment(device="cuda:0", tiny=True, partition="glm_stages")
+    assert isinstance(spec["plan_options"]["partition"], GLMStages)
+    assert spec["metadata"]["partition"] == "GLMStages()"
+
+
 @pytest.mark.parametrize(
     "changes",
     (
+        {"partition": "per_layer"},
+        {"expert_storage": "nvfp4"},
         {"tiny": False},
         {"checkpoint": "unused", "tiny": True},
         {"sequences_per_microbatch": (3,)},

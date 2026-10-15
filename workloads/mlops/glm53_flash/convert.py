@@ -45,9 +45,8 @@ def main(argv=None):
         "--lora-rank",
         type=int,
         default=8,
-        help="build the model with LoRA factors so the frozen state is named as a "
-        "LoRA run names it; any positive rank gives the same names, 0 the names of "
-        "a run without LoRA (default: 8)",
+        help="build the model with LoRA factors, as a LoRA run builds it; the "
+        "frozen tensors' names do not depend on the rank (default: 8)",
     )
     parser.add_argument(
         "--frozen-state-id",
@@ -57,6 +56,13 @@ def main(argv=None):
     parser.add_argument(
         "--gemm-precision", default="bf16", help="the checkpoint's GEMM precision"
     )
+    parser.add_argument(
+        "--expert-storage",
+        choices=("bf16", "fp8", "fp8_block"),
+        help="how the routed experts are held (default: bf16 for a dense "
+        "checkpoint, fp8_block -- one copy -- for a compressed one; fp8 is the "
+        "two-copy container)",
+    )
     arguments = parser.parse_args(argv)
     checkpoint = arguments.checkpoint.expanduser().resolve()
     image = arguments.image.expanduser().resolve()
@@ -65,7 +71,11 @@ def main(argv=None):
         identity = f"{identity}:layers={arguments.layer_limit}"
     if arguments.frozen_state_id is None:
         identity = f"{identity}:{'lora' if arguments.lora_rank else 'full'}"
-    with GLMCheckpoint(checkpoint, gemm_precision=arguments.gemm_precision) as source:
+    with GLMCheckpoint(
+        checkpoint,
+        gemm_precision=arguments.gemm_precision,
+        expert_storage=arguments.expert_storage,
+    ) as source:
         model = source.build_model(
             layer_limit=arguments.layer_limit, lora_rank=arguments.lora_rank
         )

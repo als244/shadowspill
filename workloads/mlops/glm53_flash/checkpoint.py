@@ -2,6 +2,16 @@
 
 This module knows GLM names and layouts. It imports no ShadowSpill runtime code:
 ``load_into`` is an ordinary in-place initializer usable with any destination.
+
+The routed experts are stacked banks, ``w13 [E, 2I, H]`` and ``w2 [E, H, I]``,
+held as ``expert_storage`` says: ``"bf16"``, ``"fp8_block"``
+(`BlockFP8Weight`, E4M3 once with a scale per 128x128 block) or ``"fp8"``
+(`QuackFP8Weight`, two E4M3 orientations with per-row descales) -- by
+default bf16 for a dense checkpoint and ``"fp8_block"`` for a compressed one.
+A dense checkpoint's experts copy into bf16, an FP8 checkpoint's into
+``"fp8_block"``, byte for byte; every other pairing decodes each expert and
+quantizes it as the storage does. Either way a bank is assembled in host
+memory, an expert at a time, and written to its destination once.
 """
 
 import json
@@ -11,15 +21,25 @@ from pathlib import Path
 
 import torch
 from mlops.lora import LoRALinear
-from mlops.sequential_moe.experts.layer import SequentialExpert
-from mlops.sequential_moe.precision.checkpoint import HFWeights, join_gate_up
+from mlops.sequential_moe.precision.checkpoint import HFWeights
 from mlops.sequential_moe.precision.linear import FrozenLinear, FrozenLoRALinear
-from mlops.sequential_moe.precision.storage import DENSE
+from mlops.sequential_moe.precision.storage import DENSE, materialize
 from torch import nn
 
 from .hf_config import from_huggingface
 from .model import LanguageModel
+from .moe import MoE
 from .vision import VisionConfig
+
+EXPERT_STORAGES = ("bf16", "fp8", "fp8_block")
+LORA_FACTORS = {
+    "lora_a",
+    "lora_b",
+    "lora_gate_up_a",
+    "lora_gate_up_b",
+    "lora_down_a",
+    "lora_down_b",
+}
 
 
 def physical_state(model):
@@ -46,7 +66,7 @@ def source_name(name):
         for field in ("fn", "base", "scale"):
             name = name.replace(f".{short}.{field}", f".{original}_{field}")
     name = name.replace(".forget_gate.", ".")
-    name = name.replace(".backend.router", ".gate.weight")
+    name = name.replace(".mlp.router", ".mlp.gate.weight")
     name = name.replace(
         ".mlp.e_score_correction_bias", ".mlp.gate.e_score_correction_bias"
     )
@@ -55,15 +75,70 @@ def source_name(name):
 
 @dataclass(frozen=True)
 class Copy:
+    """``source`` into rows ``start:stop`` of ``destination`` (of its expert
+    ``index``, for a stacked bank)."""
+
     destination: str
     source: str
     start: int | None = None
     stop: int | None = None
     reciprocal: bool = False
+    index: int | None = None
 
     def view(self, tensors):
         value = tensors[self.destination]
+        if self.index is not None:
+            value = value[self.index]
         return value if self.start is None else value[self.start : self.stop]
+
+
+@dataclass(frozen=True)
+class Conversion:
+    """One layer's ``w13`` or ``w2`` bank decoded from the checkpoint, an
+    expert at a time, and stored as ``storage`` holds it."""
+
+    module: str
+    kind: str
+    storage: str
+    experts: tuple
+
+    @property
+    def destinations(self):
+        name = f"{self.module}.{self.kind}"
+        if self.storage == "bf16":
+            return (name,)
+        components = (
+            ("_data", "_scale")
+            if self.storage == "fp8_block"
+            else ("_data", "_transposed", "_scale", "_transposed_scale")
+        )
+        return tuple(f"{name}.{component}" for component in components)
+
+
+def _projections(kind):
+    return ("gate_proj", "up_proj") if kind == "w13" else ("down_proj",)
+
+
+def _check_rows(destination, copies, shape):
+    """The copies into ``destination`` cover each row (of each expert) once,
+    in order."""
+    stacked = copies[0].index is not None
+    rows = shape[1] if stacked else shape[0]
+    spans = {}
+    for copy in copies:
+        spans.setdefault(copy.index, []).append(copy)
+    if stacked and sorted(spans) != list(range(shape[0])):
+        raise ValueError(f"Incomplete experts for {destination}")
+    for group in spans.values():
+        position = 0
+        for copy in group:
+            start = 0 if copy.start is None else copy.start
+            stop = rows if copy.stop is None else copy.stop
+            if start != position:
+                raise ValueError(f"Incomplete/overlapping rows for {destination}")
+            position = stop
+        if position != rows:
+            raise ValueError(f"Incomplete rows for {destination}")
 
 
 class GLMCheckpoint:
@@ -73,7 +148,9 @@ class GLMCheckpoint:
     it may be closed immediately afterwards. Vision is optional; MTP is excluded.
     """
 
-    def __init__(self, directory, *, gemm_precision="bf16"):
+    def __init__(self, directory, *, gemm_precision="bf16", expert_storage=None):
+        if expert_storage not in (None, *EXPERT_STORAGES):
+            raise ValueError(f"expert_storage must be one of {EXPERT_STORAGES}")
         if gemm_precision != "bf16":
             raise ValueError(
                 "The composed GLM checkpoint path currently supports BF16 GEMMs "
@@ -85,9 +162,14 @@ class GLMCheckpoint:
         self.weights = HFWeights(directory)
         self.metadata = json.loads((self.directory / "config.json").read_text())
         self.gemm_precision = gemm_precision
+        self.expert_storage = expert_storage
         self.copies = []
+        self.conversions = []
         self.lora_initializers = {}
         self.inventory = None
+        self._keys = None
+        self._expert_keys = set()
+        self._expert_shapes = None
 
     def _projection_copies(self, destinations, prefix, spec, *, starts=None):
         keys = (
@@ -113,6 +195,108 @@ class GLMCheckpoint:
                 )
             )
 
+    def _projection_keys(self, prefix):
+        """Every checkpoint tensor of one projection (``prefix.weight``, its
+        scales, any activation-scale metadata)."""
+        if self._keys is None:
+            self._keys = {}
+            for key in self.weights.files:
+                self._keys.setdefault(key.rsplit(".", 1)[0], []).append(key)
+        return tuple(self._keys.get(prefix, ()))
+
+    def _plan_experts(self, name, c):
+        """The copies, or else the conversions, that fill one layer's banks."""
+        h, d = c.moe_intermediate_size, c.hidden_size
+        self._expert_shapes = {
+            "gate_proj": (h, d),
+            "up_proj": (h, d),
+            "down_proj": (d, h),
+        }
+        source = "model.language_model." + name + ".experts"
+        experts = [(index, f"{source}.{index}") for index in range(c.num_local_experts)]
+        for kind in ("w13", "w2"):
+            specs = [
+                self.weights.projection(
+                    f"{prefix}.{projection}", self._expert_shapes[projection], meta=True
+                )[1]
+                for _index, prefix in experts
+                for projection in _projections(kind)
+            ]
+            formats = {spec.format for spec in specs}
+            exact = len(formats) == 1 and (
+                (c.expert_storage == "bf16" and formats == {"bf16"})
+                or (
+                    c.expert_storage == "fp8_block"
+                    and formats == {"fp8"}
+                    and all(s.block_rows == s.block_cols == 128 for s in specs)
+                    and (kind == "w2" or h % 128 == 0)
+                )
+            )
+            if not exact:
+                self.conversions.append(
+                    Conversion(name, kind, c.expert_storage, tuple(experts))
+                )
+                continue
+            for index, prefix in experts:
+                self._copy_expert(name, kind, index, prefix, c.expert_storage, h)
+
+    def _copy_expert(self, name, kind, index, prefix, storage, rows):
+        """One expert's tensors as stored: a dense weight's rows into the bf16
+        bank, or an FP8 weight's E4M3 rows and 128x128 block scales into a
+        block-scaled bank's components; ``w13`` gate rows, then up rows."""
+        scale_key = (
+            "weight_scale" if self.weights.encoding == "mixed" else "weight_scale_inv"
+        )
+        parts = (
+            (("", "weight", rows),)
+            if storage == "bf16"
+            else (("._data", "weight", rows), ("._scale", scale_key, rows // 128))
+        )
+        for position, projection in enumerate(_projections(kind)):
+            self._expert_keys.update(self._projection_keys(f"{prefix}.{projection}"))
+            for component, key, count in parts:
+                start, stop = (
+                    (position * count, (position + 1) * count)
+                    if kind == "w13"
+                    else (None, None)
+                )
+                self.copies.append(
+                    Copy(
+                        f"{name}.{kind}{component}",
+                        f"{prefix}.{projection}.{key}",
+                        start,
+                        stop,
+                        index=index,
+                    )
+                )
+
+    def _converted(self, prefix, conversion, device):
+        """One expert's ``w13`` or ``w2`` decoded from the checkpoint and taken
+        to ``conversion.storage``'s components, in its destinations' order."""
+        from mlops.expert_parallel.quack.parameters.fp8 import QuackFP8Weight
+        from mlops.kernels.block_fp8 import quantize_blocks
+
+        values = []
+        for projection in _projections(conversion.kind):
+            name = f"{prefix}.{projection}"
+            parts, spec = self.weights.projection(name, self._expert_shapes[projection])
+            values.append(
+                materialize([part.to(device) for part in parts], spec, torch.float32)
+            )
+            del parts
+            for key in self._projection_keys(name):
+                self.weights.source.release_pages(key)
+        value = torch.cat(values) if len(values) > 1 else values[0]
+        if conversion.storage == "bf16":
+            return (value.to(torch.bfloat16),)
+        if conversion.storage == "fp8_block":
+            data, scale = quantize_blocks(value[None])
+            return data[0], scale[0]
+        container = QuackFP8Weight.quantize(
+            value[None], interleaved=conversion.kind == "w13"
+        )
+        return tuple(component[0] for component in container.components())
+
     def build_model(
         self,
         *,
@@ -127,15 +311,20 @@ class GLMCheckpoint:
         if self.inventory is not None:
             raise RuntimeError("Use a fresh GLMCheckpoint to build another model")
         c = from_huggingface(self.metadata, gemm_precision=self.gemm_precision)
-        # Choose the actual routed format before constructing wrapper parameters.
+        # The routed experts' checkpoint format chooses their default storage:
+        # dense stays bf16, compressed (FP8, NVFP4) becomes one-copy block FP8.
         first = c.first_k_dense_replace
         prefix = f"model.language_model.layers.{first}.mlp.experts.0"
         _, spec = self.weights.projection(
             prefix + ".gate_proj", (c.moe_intermediate_size, c.hidden_size), meta=True
         )
+        self.expert_format = spec.format
+        storage = self.expert_storage or (
+            "bf16" if spec.format in DENSE else "fp8_block"
+        )
         c = from_huggingface(
             self.metadata,
-            expert_storage=spec.format,
+            expert_storage=storage,
             gemm_precision=self.gemm_precision,
             lora_rank=lora_rank,
             lora_alpha=lora_alpha,
@@ -174,65 +363,22 @@ class GLMCheckpoint:
                 [name + f".components.{i}" for i in range(spec.count)], prefix, spec
             )
 
-        for name, expert in model.named_modules():
-            if not isinstance(expert, SequentialExpert):
-                continue
-            prefix = "model.language_model." + name.replace(".backend", "")
-            h, d = c.moe_intermediate_size, c.hidden_size
-            gate = self.weights.projection(prefix + ".gate_proj", (h, d), meta=True)
-            up = self.weights.projection(prefix + ".up_proj", (h, d), meta=True)
-            down = self.weights.projection(prefix + ".down_proj", (d, h), meta=True)
-            joined = join_gate_up(gate, up)
-            expert.load_weights_(gate_up=joined, down=down)
-            for kind, (_parts, spec) in (("gate_up", joined), ("down", down)):
-                parameter = getattr(expert, kind)
-                flatten = getattr(parameter, "__tensor_flatten__", None)
-                destinations = (
-                    [name + "." + kind + "." + key for key in flatten()[0]]
-                    if flatten
-                    else [
-                        name + "." + kind + suffix
-                        for suffix in ("", "_block_scale", "_global_scale")[
-                            : spec.count
-                        ]
-                    ]
-                )
-                if kind == "down":
-                    self._projection_copies(destinations, prefix + ".down_proj", spec)
-                else:
-                    for index, source in enumerate(("gate_proj", "up_proj")):
-                        starts = [index * h]
-                        if spec.count > 1:
-                            starts.append(index * (h // spec.block_rows))
-                        if spec.count > 2:
-                            starts.append(index)
-                        self._projection_copies(
-                            destinations, prefix + "." + source, gate[1], starts=starts
-                        )
-            # Preserve activation quantization metadata for the later GEMM recipe.
-            for projection in ("gate", "up", "down"):
-                key = prefix + f".{projection}_proj.input_global_scale"
-                if key in self.weights.files:
-                    attr = projection + "_input_global_scale"
-                    expert.register_buffer(
-                        attr, self.weights.source.tensor(key, meta=True)
-                    )
-                    self.copies.append(Copy(name + "." + attr, key))
+        for name, module in model.named_modules():
+            if isinstance(module, MoE):
+                self._plan_experts(name, c)
 
         targets = physical_state(model)
         bound = {copy.destination for copy in self.copies}
+        bound.update(
+            destination
+            for conversion in self.conversions
+            for destination in conversion.destinations
+        )
         for name, value in targets.items():
             if name in bound:
                 continue
             leaf = name.removesuffix(".compute").rsplit(".", 1)[-1]
-            if c.lora_rank and leaf in {
-                "lora_a",
-                "lora_b",
-                "gate_up_a",
-                "gate_up_b",
-                "down_a",
-                "down_b",
-            }:
+            if c.lora_rank and leaf in LORA_FACTORS:
                 self.lora_initializers[name] = leaf.endswith("_a")
                 continue
             if name.endswith(".self_attn.conv1d.weight"):
@@ -266,6 +412,17 @@ class GLMCheckpoint:
                     f"{source.dtype} -> {target.dtype}"
                 )
         used = {copy.source for copy in self.copies}
+        # Every tensor of an expert projection is accounted for, the
+        # activation scales of an NVFP4 recipe included: the FP8 forms
+        # quantize their activations per row per call.
+        used.update(
+            key
+            for conversion in self.conversions
+            for _index, source in conversion.experts
+            for projection in _projections(conversion.kind)
+            for key in self._projection_keys(f"{source}.{projection}")
+        )
+        used.update(self._expert_keys)
         required = {
             key
             for key in self.weights.files
@@ -301,6 +458,8 @@ class GLMCheckpoint:
                 t.numel() * t.element_size() for t in targets.values()
             ),
             "expert_storage": c.expert_storage,
+            "checkpoint_expert_format": self.expert_format,
+            "converted_expert_banks": len(self.conversions),
             "gemm_precision": c.gemm_precision,
             "lora_rank": c.lora_rank,
             "lora_alpha": c.lora_alpha,
@@ -331,7 +490,10 @@ class GLMCheckpoint:
             target = targets[name]
             value = torch.empty(tuple(target.shape), dtype=target.dtype, device="cpu")
             if is_a:
-                nn.init.kaiming_uniform_(value, a=math.sqrt(5))
+                # Per expert for a stacked [E, rank, in] factor: fan-in ``in``.
+                nn.init.kaiming_uniform_(
+                    value.view(-1, value.shape[-1]), a=math.sqrt(5)
+                )
             else:
                 nn.init.zeros_(value)
             target.copy_(value)
@@ -340,24 +502,18 @@ class GLMCheckpoint:
             if copy.destination in adopted:
                 continue
             grouped.setdefault(copy.destination, []).append(copy)
+        total = len(self.copies) + sum(len(c.experts) for c in self.conversions)
         done = 0
         for destination, copies in grouped.items():
             target = targets[destination]
-            if len(copies) == 1 and copies[0].start is None:
+            if len(copies) == 1 and copies[0].start is None and copies[0].index is None:
                 staging = target
             else:
-                # Assemble joined gate/up and Q/K/V rows before publishing.
-                # This writes each destination once even for an SSD pool.
-                # Scratch is bounded by one joined projection, never a layer.
-                expected_start = 0
-                for copy in copies:
-                    if copy.start != expected_start or copy.stop is None:
-                        raise ValueError(
-                            f"Incomplete/overlapping rows for {destination}"
-                        )
-                    expected_start = copy.stop
-                if expected_start != target.shape[0]:
-                    raise ValueError(f"Incomplete rows for {destination}")
+                # Assemble joined gate/up and Q/K/V rows, and a layer's expert
+                # bank, before publishing: each destination is written once,
+                # even to an SSD pool. Scratch is one joined projection or one
+                # component of one layer's bank.
+                _check_rows(destination, copies, tuple(target.shape))
                 staging = torch.empty(
                     tuple(target.shape), dtype=target.dtype, device="cpu"
                 )
@@ -367,18 +523,48 @@ class GLMCheckpoint:
                     if not bool(torch.isfinite(source).all() & (source > 0).all()):
                         raise ValueError(f"Invalid NVFP4 global scale: {copy.source}")
                     source = source.reciprocal()
-                view = (
-                    staging if copy.start is None else staging[copy.start : copy.stop]
-                )
+                view = copy.view({destination: staging})
                 view.copy_(source)
                 del source, view
                 self.weights.source.release_pages(copy.source)
                 done += 1
                 if progress is not None:
-                    progress(done, len(self.copies), copy.source)
+                    progress(done, total, copy.source)
             if staging is not target:
                 target.copy_(staging)
             del staging
+        # Banks that change form: decoded and quantized an expert at a time,
+        # on the GPU when there is one, into host staging written once.
+        device = (
+            torch.device("cuda", torch.cuda.current_device())
+            if torch.cuda.is_available()
+            else torch.device("cpu")
+        )
+        for conversion in self.conversions:
+            stagings = {
+                destination: torch.empty(
+                    tuple(targets[destination].shape),
+                    dtype=targets[destination].dtype,
+                    device="cpu",
+                )
+                for destination in conversion.destinations
+                if destination not in adopted
+            }
+            for index, prefix in conversion.experts:
+                if stagings:
+                    values = self._converted(prefix, conversion, device)
+                    for destination, value in zip(
+                        conversion.destinations, values, strict=True
+                    ):
+                        if destination in stagings:
+                            stagings[destination][index].copy_(value)
+                    del values
+                done += 1
+                if progress is not None:
+                    progress(done, total, prefix)
+            for destination, staging in stagings.items():
+                targets[destination].copy_(staging)
+            del stagings
 
     def close(self):
         self.weights.close()

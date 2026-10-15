@@ -59,7 +59,8 @@ def test_multimodal_lora_freezes_base_and_selects_only_projection_factors(head):
     }
     assert "visual.blocks.0.attn.qkv.lora_a" in trainable
     assert "layers.0.self_attn.q_proj.lora_b" in trainable
-    assert "layers.1.mlp.backend.experts.0.gate_up_a" in trainable
+    assert "layers.1.mlp.lora_gate_up_a" in trainable
+    assert not model.layers[1].mlp.w13.requires_grad
     assert ("lm_head.lora_a" in trainable) is head
     assert all(
         name.endswith(
