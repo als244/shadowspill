@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import json
 import time
+import zlib
 from collections.abc import Callable
 from typing import Any, NoReturn, TypeVar, cast
 
@@ -48,6 +49,7 @@ class Control:
         )
         self.timeout = timeout
         self.sequence = 0
+        self._chunk_counts: dict[str, int] = {}
 
     def fork(self, name: str) -> Control:
         """Use a distinct failure channel for one coordinated preparation attempt."""
@@ -104,23 +106,52 @@ class Control:
         # acknowledgement/barrier or racing deletion against a slow reader.
         prefix = f"round/{number % 2}"
         try:
-            message = json.dumps(
+            payload = json.dumps(
                 {"round": number, "phase": phase, "value": value}, allow_nan=False
+            ).encode("utf-8")
+            compressed = len(payload) > 65536
+            if compressed:
+                payload = zlib.compress(payload, level=1)
+            key = f"{prefix}/{self.rank}"
+            chunk_bytes = 4 << 20  # Below TCPStore's 8 MiB per-value limit.
+            count = (len(payload) + chunk_bytes - 1) // chunk_bytes
+            for index in range(count):
+                self.store.set(
+                    f"{key}/chunk/{index}",
+                    payload[index * chunk_bytes : (index + 1) * chunk_bytes],
+                )
+            for index in range(count, self._chunk_counts.get(key, 0)):
+                self.store.delete_key(f"{key}/chunk/{index}")
+            self._chunk_counts[key] = count
+            # Publish only after every chunk is ready. Reusing the alternating
+            # mailbox is safe for chunks for the same reason as its header.
+            self.store.set(
+                key,
+                json.dumps(
+                    {"round": number, "chunks": count, "compressed": compressed}
+                ),
             )
-            self.store.set(f"{prefix}/{self.rank}", message)
         except BaseException as caught:
             self.fail(phase, caught)
             raise
         keys = [f"{prefix}/{rank}" for rank in self.members]
         deadline = time.monotonic() + self.timeout
-        messages = []
+        messages: list[dict[str, Any] | None] = [None] * len(keys)
         while True:
             self.check_failure()
-            available = [self.store.check([key]) for key in keys]
-            messages = [
-                json.loads(self.store.get(key)) if ready else None
-                for key, ready in zip(keys, available, strict=True)
-            ]
+            for index, key in enumerate(keys):
+                if messages[index] is not None or not self.store.check([key]):
+                    continue
+                header = json.loads(self.store.get(key))
+                if header["round"] != number:
+                    continue
+                payload = b"".join(
+                    self.store.get(f"{key}/chunk/{chunk}")
+                    for chunk in range(header["chunks"])
+                )
+                if header["compressed"]:
+                    payload = zlib.decompress(payload)
+                messages[index] = json.loads(payload)
             missing = [
                 rank
                 for rank, item in zip(self.members, messages, strict=True)
