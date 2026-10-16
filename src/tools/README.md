@@ -4,8 +4,12 @@ This package contains repository support files outside ShadowSpill's wheel.
 
 - `check_naming.py` enforces naming and component boundaries.
 - `sanitizers/` contains tool-specific support files.
-- [`pressurefit_trace/`](pressurefit_trace/README.md) captures planner traces,
-  analyzes each decision, and renders residency-cut trajectories as PNG or MP4.
+- [`pressurefit_trace/`](pressurefit_trace/README.md) contains capture and
+  analysis tools and all three video renderers: residency cuts, action emission
+  plus placement, and simulated compute/fetch/evict execution. Start with that
+  guide for inputs, examples, CLI arguments, and the code map.
+- `plan_video/` forwards the earlier plan-video CLI to
+  `pressurefit_trace/plan/`; it contains no rendering or analysis implementation.
 
 [Qualification](../../qualification/README.md) owns gate orchestration and
 acceptance checks. Runtime diagnostics and occupancy rendering live in the

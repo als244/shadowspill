@@ -1,15 +1,30 @@
-# PressureFit trace tools
+# PressureFit tracing and videos
 
-Capture real planner decisions, analyze their scores, and render residency-cut
-trajectories. These source-tree tools use the installed trace API; they contain
-no workload names or hard-coded run paths. Generated data belongs in a separate
-run directory.
+Capture real planner decisions, analyze their scores, and render the algorithm
+and its resulting plan. All three video implementations live in this directory.
+These source-tree tools contain no workload names or hard-coded run paths.
+Generated data belongs in a separate, ignored run directory such as `runs/`.
+
+| Video | Input | Rendering file | Usage guide |
+| --- | --- | --- | --- |
+| Residency cuts | Raw PressureFit trace directory | [`render.py`](render.py) | This guide |
+| Emission + placement | Saved `AnnotatedProgramPlan` JSON | [`plan/render_emission_placement.py`](plan/render_emission_placement.py) | [Plan videos](plan/README.md) |
+| Execution timelines | Saved `AnnotatedProgramPlan` JSON | [`plan/render_execution.py`](plan/render_execution.py) | [Plan videos](plan/README.md) |
+
+Capture once with `dump`, search with `plan`, then record decisions with `trace`.
+The resulting raw trace feeds the cut video; the saved plan feeds the other two.
+The [trace API guide](../../../docs/python/pressurefit-trace.md) covers recording
+from Python. The [algorithm guide](../../../docs/architecture/pressurefit.md)
+defines the policies and scores. The [occupancy guide](../../../docs/python/occupancy.md)
+describes the plan's memory/timing evidence and the existing HTML view.
 
 Run from a development checkout with the `shadowspill` environment active:
 
 ```sh
 python -m tools.pressurefit_trace --help
 python -m tools.pressurefit_trace render --help
+python -m tools.pressurefit_trace.plan --help
+python -m tools.pressurefit_trace.plan render --help
 ```
 
 Python, NumPy, and Matplotlib are already project dependencies. MP4 rendering
@@ -17,6 +32,12 @@ also needs `ffmpeg` on `PATH`. Analysis and PNG rendering run on the CPU and
 do not need an accelerator. `dump` uses the quickstart frontend and its normal
 accelerator/workload dependencies. This package lives under `src/tools/` and
 is not included in the product wheel.
+
+If necessary, set `PYTHONPATH=src` when running from the repository root.
+For emitted actions, physical placement, and simulated compute/fetch/evict
+execution, use the [plan tools in this directory](plan/README.md). They read
+the annotated plan saved by `plan`, alongside optional semantic labels; a cut
+trace alone does not contain physical offsets or transfer timings.
 
 Titles and labels use Matplotlib's bundled STIX serif font, chosen for readable
 small labels alongside Computer Modern math. A TeX compiler or extra font
@@ -82,6 +103,22 @@ The answer can come from an earlier attempt. `frame` defaults to `answer` and
 after the first cut. `frame --explain` explains the *next* cut from that state.
 
 ### Pacing and layout controls
+
+Common input and state selectors:
+
+| Argument | Commands | Meaning |
+| --- | --- | --- |
+| `input` | `analyze`, `frame`, `render` | Raw trace directory containing `manifest.json`. |
+| `--output` | All | Required output directory for analysis, PNG path for a frame, or MP4 path for a movie. |
+| `--candidate` | `analyze`, `frame`, `render` | `winner` (default), or a zero-based index in the trace manifest. |
+| `--reduction` | `frame`, `render` | Zero-based pass index, `answer`, or `all` (movies only). Defaults: `answer` for frames, `all` for movies. |
+| `--cut` | `frame` | Number of already applied cuts; `0` is the seed, `final` (default) is the last state. |
+| `--boundary` | `frame` | Override the focus with a zero-based boundary position. |
+| `--explain` | `frame` | Explain the next cut from the selected state. |
+| `--object-timeline` | `frame` | Show the selected object's prior use, removed residency, and next use. |
+
+Layout options below apply to `frame` and `render`. Timing, pacing, encoding,
+and automatic example-selection options apply only to `render`.
 
 | Argument | Default | Meaning |
 | --- | --- | --- |
@@ -407,6 +444,23 @@ winning candidate. `--candidates-json pairs.json` supplies a JSON list of
 `[selection_id, candidate_id]` pairs and is mutually exclusive with
 `--all-candidates`. Full collections can be much larger than winner-only traces.
 
+Collection arguments:
+
+| Command | Argument | Meaning/default |
+| --- | --- | --- |
+| `dump` | `output` | Fresh output directory for captured programs and profiling metadata. |
+| `dump` | `-- <quickstart arguments>` | Forward workload, geometry, and profiling options to quickstart. Use `python -m benchmarking.quickstart --help` for that frontend's arguments. |
+| `plan` | `input`, `--output` | Capture directory and required fresh planning output directory. |
+| `plan` | `--physical-gib` | Physical execution cap; subtract the capture's runtime/headroom carve-out. |
+| `plan` | `--execution-gib` | Usable planner execution capacity; mutually exclusive with `--physical-gib`. Without either, retain captured budgets. |
+| `plan` | `--spill-gib` | Override the captured spill capacity. |
+| `plan` | `--workers` | CPU planning workers; `0` (default) delegates worker selection to the planner. |
+| `trace` | `input`, `--output` | Planning directory and required fresh trace collection directory. |
+| `trace` | `--programs winner\|all` | Record the winning program (default) or every feasible program. |
+| `trace` | `--all-candidates` | Record every resolution/policy pair instead of only each program's winner. |
+| `trace` | `--candidates-json` | JSON list of `[selection_id, candidate_id]` pairs; mutually exclusive with `--all-candidates`. |
+| `export` | `input`, `--output` | Raw trace or collection, and required fresh directory for compressed, verified exports. |
+
 The collection's `dump.json`, `plans.json`, and `collection.json` link stages
 and retain their source paths; keep the collection tree in place while using
 those links. A raw per-search trace directory is self-contained and can be
@@ -418,15 +472,33 @@ reduction, independently of whether it displays all reductions or only the answe
 
 ## Code map and validation
 
-`collect.py` owns capture/plan/trace/export. `data.py` joins metadata, builds
-task-use geometry, and exports analysis. `explain.py` decodes comparator fields
-and draws the explanation card. `render.py` draws states and encodes movies.
-`__main__.py` owns the CLI. The binary reader/replay implementation stays in
-`shadowspill.diagnostics.pressurefit_trace`.
+```text
+pressurefit_trace/
+  __main__.py                 capture, trace analysis, and cut-video CLI
+  collect.py                  dump / plan / trace / export
+  data.py, pressure.py         cut replay geometry and memory accounting
+  explain.py                  cut selection formulas and alternatives
+  render.py                   cut-trajectory renderer and encoding
+  style.py                    shared palette and duration labels
+  plan/
+    __main__.py               plan analysis and video CLI
+    data.py, waits.py         actions, transfers, occupancy, and task blockers
+    placement.py             verified replay of physical placement
+    storyboard.py            examples, timing, and camera movement
+    render_common.py         shared canvas, lanes, and placement raster
+    render_emission_placement.py
+    render_execution.py
+    render.py                renderer selection and plan-video encoding
+```
+
+The binary reader/replay implementation stays in
+`shadowspill.diagnostics.pressurefit_trace`. The old `tools.plan_video` command
+is a thin CLI alias to `tools.pressurefit_trace.plan`; all implementation is
+here. Both video guides document their complete CLI arguments and outputs.
 
 ```sh
-python -m pytest tests/tools/test_pressurefit_trace.py
-ruff check src/tools/pressurefit_trace tests/tools/test_pressurefit_trace.py
+python -m pytest tests/tools/test_pressurefit_trace.py tests/tools/test_plan_video.py
+ruff check src/tools/pressurefit_trace src/tools/plan_video tests/tools
 ```
 
 Tests use a fresh real planner trace, verify filters and ordering preserve

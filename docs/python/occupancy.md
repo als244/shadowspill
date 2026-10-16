@@ -264,6 +264,12 @@ its own.
 
 ## From Python
 
+For animated views of these saved simulated timelines, including transfer
+backlog and physical placement construction, see the source-tree
+[plan video tools](../../src/tools/pressurefit_trace/plan/README.md). They reuse this
+module's role attribution and interval accounting and accept the annotated
+plans written by the collection workflow.
+
 `shadowspill.diagnostics.occupancy.attribute(selection, program, diagnostics=None)`
 takes the three files' contents as mappings (`unconstrained(program,
 selections)` takes the program and a plan's choices, `all_save(program)` the

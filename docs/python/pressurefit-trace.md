@@ -216,6 +216,13 @@ provide profiled-time and equal-width task-index views, semantic object labels,
 per-cut pressure replay, and explanation pauses comparing the selected cut with
 recorded alternatives.
 
+The same [tools directory](../../src/tools/pressurefit_trace/README.md) also
+contains separate renderers for emission/placement and simulated execution.
+Those [plan videos](../../src/tools/pressurefit_trace/plan/README.md) read the
+saved `AnnotatedProgramPlan`, optionally joined with semantic labels. A cut
+trace by itself does not provide physical addresses or copy timings. Both
+guides list input formats, commands, timing controls, and encoding arguments.
+
 Eight magic bytes `PFTRACE\0`, then array blocks. Each block header is little
 endian `(kind: u32, width: u32, rows: u64)`, followed by `rows * width` little
 endian u64 words, with no native struct padding. Signed fields use two's

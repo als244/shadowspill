@@ -57,7 +57,12 @@ compile_commands.json
 *.pdf
 *.csv
 *.log
+*.mp4
+*.webm
+*.mov
 /figures/
+# Local capture, analysis, and video examples from the reusable tool READMEs.
+/runs/
 
 # Training: the harness, its configs, scripts and guide are tracked. What runs
 # and investigations leave beside them -- data, runs, stores, notes, logs,
