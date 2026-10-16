@@ -123,7 +123,7 @@ plus `recomputation_overhead_seconds` plus `idle_seconds` plus
 | `fetch_busy_ns`, `evict_busy_ns` | Sum of simulated transfer durations on each lane, excluding per-transfer latency. Utilization uses these intervals, not bytes divided by a fixed bandwidth. |
 | `fetch_latency_ns`, `evict_latency_ns` | Coarsened calibration latency retained with the plan for diagnostics and provenance. The simulator does not use these values for transfer timing. |
 | `planning_phase_seconds` | Each planning phase's wall time in phase order, ending with `total`. A view over the report's `phase_timings_ns`, which stays the stored record. |
-| `selected_candidate` | The candidate whose plan was selected: residency strategy, fetch rule, coalescing, repairs at best, the fastest plan it could not place (`best_unplaced_makespan_ns`, `unplaced_plans`) and `placement_gap`, the answer over that plan (`None` when every measured plan fit). When the search answered with the plan it was handed, `incumbent` with that plan's outcome instead. |
+| `selected_candidate` | The candidate whose plan was selected: residency strategy, fetch rule, repairs at best, the fastest plan it could not place (`best_unplaced_makespan_ns`, `unplaced_plans`) and `placement_gap`, the answer over that plan (`None` when every measured plan fit). When the search answered with the plan it was handed, `incumbent` with that plan's outcome instead. |
 
 `recomputing_group_fraction` is derived from the two counts.
 
@@ -512,7 +512,9 @@ candidate ran.
 ## CandidateDiagnostic
 
 One candidate policy evaluated in one problem. `candidate_id` identifies only
-the reusable policy: residency strategy, fetch rule, and coalescing mode.
+the reusable policy: residency strategy and fetch rule. Scoring and ranking
+are fixed by the algorithm: `E, writeback, -slack, -size`, followed by stable
+identity tie breaks. Transfer strategies omit `E`.
 
 | Field | Meaning |
 |---|---|
@@ -532,7 +534,7 @@ the reusable policy: residency strategy, fetch rule, and coalescing mode.
 | `repairs` | Its repairs, by category. |
 | `work` | Its operation counts and section times. |
 | `steps` | Every plan it held, in order. Empty unless a trajectory was asked for. |
-| `residency_strategy`, `fetch_rule`, `coalesced` | The policy, parsed back out of `candidate_id`. |
+| `residency_strategy`, `fetch_rule` | The policy, parsed back out of `candidate_id`. |
 
 ## PlanningWorkDiagnostics
 

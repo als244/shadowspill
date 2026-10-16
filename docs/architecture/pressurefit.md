@@ -1,800 +1,677 @@
 # PressureFit
 
-PressureFit is the [search](search.md) ShadowSpill ships: one implementation
-of `SearchAlgorithm`, and the only one today. What the planner asks of any
-search is on that page, and what an implementer writes against is in [writing
-a search algorithm](search-algorithm.md); this page is how PressureFit
-answers.
-
-Given a [program](program.md), required initial and final residency, memory
-and transfer capacities, and an optional physical-admission contract, it
-chooses:
-
-- which logical objects remain in execution memory between tasks;
-- where objects leave execution memory by release or eviction;
-- which task boundary triggers each later fetch;
-- whether a clean release/fetch pair is coalesced; and
-- the minimum-makespan valid candidate among the bounded policies it
-  evaluates.
-
-It does not capture graphs, inspect framework tensors, partition a model,
-construct graph pairs, execute kernels, or advance the runtime worker. It
-consumes program facts and machine parameters, and nothing else. The entry to
-it is `shadowspill.planner.search.algorithms.pressurefit`; what surrounds it
--- turning a budget into a machine, keying the answer, holding it to a plan
-already in hand, admitting the winner -- belongs to `plan_program()` and is
-the same whichever search runs.
-
-## Resolved programs, and who expands them
-
-A program arrives with its [task alternatives](program.md#task-alternatives)
-still open. Fixing one option for every group gives a **resolved program**: a
-concrete task set. A program with no groups is already resolved.
-
-Expanding a program into resolved programs is PressureFit's own work, not the
-planner's, because how many ways of fixing the alternatives are worth
-planning -- and in what order -- is a judgement about the search. PressureFit
-plans several and answers with the best across them, and the order is part of
-the algorithm: a plan admitted under any resolved program bounds the search
-under every later one. Which shares to expand is
-`PressureFitOptions.resolution_options`.
-
-Program and problem are not the same word here: the program is what the
-caller has, and the [problem](planning-problem.md) is the planning question
-derived from it -- residency, boundaries, capacities. One compiled problem is
-one resolved program.
-
-## Inputs
-
-### Program facts
-
-For each selected task, PressureFit uses:
-
-- declared inputs, outputs, and mutations;
-- the task's execution device and profiled runtime;
-- profiled anonymous workspace bytes;
-- dependencies and execution order.
-
-For each logical alias bundle, it uses:
-
-- byte size and execution device;
-- initial and required final location;
-- whether a current spill copy may be retained;
-- production, access, and write boundaries.
-
-Object names, semantic tensor roles, model families, and operator names do not
-enter policy decisions. Zero-byte alias bundles remain semantic objects but do
-not contribute physical pressure or transfer actions.
-
-### Machine facts
-
-For each execution device $d$, `SimulationConfig` supplies logical planning
-capacity $C_d$ and fetch/evict bandwidths. Route latency is retained as
-calibration metadata and excluded from transfer-duration estimates. It also supplies
-the spill-pool capacity. The runtime calibrates transfer behavior; PressureFit
-only consumes the resulting values.
-
-Workspace is task-local. PressureFit subtracts task $i$'s workspace only at
-the boundary where that task's inputs, fresh outputs, and workspace must
-coexist. It does not subtract a global maximum workspace from every boundary.
-
-An optional `AdmissionFacts` carries the pool a layout must fit: task
-allocation steps, output and replacement ownership, storage handoffs, pool
-capacity and alignment, all defined by [physical
-admission](physical-admission.md). Its `pool_capacity_bytes` is the complete
-execution-pool capacity and its `object_capacity_bytes` the logical capacity
-offered to PressureFit; physical refinement may reduce the latter without
-changing the former.
-
-### What it is told
-
-Two records reach the search, the halves of a `SearchOptions`.
-`GenericPlanningOptions` is what any search is told; `PressureFitOptions` is
-PressureFit's own, carried into the plan key and read by nothing else. The
-[planner API reference](../python/api/neutral.md) gives each field's type and
-meaning; the defaults are:
-
-| option | default |
-|---|---|
-| `resolution_options` | every quarter, `0` through `1` |
-| `residency_strategies` | `("headroom-stall", "tight-stall")` |
-| `fetch_rules` | `("packed-fifo", "packed-fit", "latest-safe", "demand")` |
-| `evaluate_coalesced` | `True` |
-| `max_repair_attempts` | `256` |
-| `capacity_refinement_bytes` | `256 MiB` |
-| `record_reduction_steps` | `False` |
-
-The first three axes are the candidate set: two strategies, four fetch rules
-and ordinary/coalesced emission are 16 candidate policies per resolved
-program. The strategies and rules outside that default remain valid explicit
-options, and naming more of them widens the set, every member of which is
-searched; [built-in candidate policies](#built-in-candidate-policies) is what
-each one does.
-
-Each remaining option is defined by the section of the cycle that reads it:
-`max_repair_attempts` under
-[repair](#repair-moving-a-transfer-or-making-room-for-one),
-`capacity_refinement_bytes` under
-[place](#place-measuring-whether-the-layout-fits), and
-`record_reduction_steps` under [trajectories](#trajectories).
-
-`minimum_object_bytes_evict_eligible`, from the generic half, takes objects out
-of the search entirely: one smaller than it is never cut, so it is never
-evicted and fetched mid-step, and every lease of it gets a static home in the
-[resident slice](fixed-placement.md#the-resident-slice) instead.
-
-`deterministic` is how a caller gets a reproducible answer without giving up
-its workers. Candidates publish what they place to a shared record, so which
-plans are worth measuring depends on what has already been placed, and the
-search is order-dependent by default -- one record is shared by every resolved
-program dispatched within a call. Under `deterministic` the placement gate
-consults only the candidate's own placed plans instead, so every outcome is a
-pure function of that candidate's inputs and any worker count answers the
-same. It costs wall time, because the shared bound is what lets a candidate
-skip measuring a plan that cannot win. `workers=1` is reproducible too, and
-slower still.
-
-A problem may also carry the plan to beat. PressureFit measures it at this
-capacity before any candidate runs -- simulated, admitted, placed against the
-pool -- and, in the default mode, seeds the shared record with it so every
-candidate measures against it from the start; under `deterministic` it changes
-only the answer. [Plan search](search.md#what-the-planner-promises) states the
-guarantee this serves.
-
-### Workers and the unit of work
-
-The unit of work is one **(resolved program, candidate) pair**. A worker takes
-the next pair, evaluates it to completion, and takes another, so a worker that
-draws a cheap candidate never waits on the problem it came from.
-
-That granularity is what makes worker count and problem count independent:
-`workers` sizes the threads whether the call was given one resolved program or
-five, and the threads belong to the call, so two callers planning at once do
-not contend. Problems are searched in the order they are passed, and putting
-them in one call is what shares the placement record between them -- the
-pruning that makes searching several together cheaper than searching each
-alone.
-
-Worker count changes neither which plans are legal nor how they simulate, but
-it does change how much of the search is skipped, because a candidate is
-skipped when the record already holds something it cannot beat. Per-candidate
-counters such as `placements_attempted` therefore move with worker count, and
-so can the choice between plans that tie. Because workers interleave, a
-problem's `work.sections` is the sum of what its candidates did rather than the
-time the call took; `started_ns`/`finished_ns` are the elapsed-time
-counterpart.
-
-## Output
-
-`ProgramPlanResult` preserves all inputs needed to explain or replay the
-decision:
-
-- `program`, `initial_residency`, `final_residency`, and `simulation_config`;
-- `search_options`: the generic options, the search that ran, and its own
-  options;
-- selected `selections` for any program alternatives;
-- selected `schedule`: initial placement and ordered fetch, release,
-  write-back and evict actions;
-- full `simulation`, including makespan, task/transfer intervals, and peaks;
-- `diagnostics`, including every problem and candidate outcome, repair counts,
-  the work each did and the sections its time went to, when each ran
-  (`started_ns`/`finished_ns`, nanoseconds from the start of the call, so
-  candidates that overlap ran at the same time), schedule digests, capacity
-  refinements, and -- when asked for -- each candidate's reduction trajectory;
-- the original `admission_facts`, when supplied, and the `placement_facts`
-  the layout was measured against;
-- the `resident_slice`: the objects kept resident under
-  `minimum_object_bytes_evict_eligible` and the bytes reserved for them.
-
-`validate_schedule_feasibility()` is the separate necessary-condition
-preflight on a program and its legal task selections. It does not validate an
-already annotated `MemorySchedule`, which is `simulate()`'s job.
-
-## Mathematical formulation
-
-### Selected task sequence and boundaries
-
-Let $r\in\mathcal R(P)$ be one legal task selection exposed by program $P$.
-Most programs have a singleton set. For one $r$, let
-
-\[
-\mathcal T_r=(\tau_0,\ldots,\tau_{n-1})
-\]
-
-be the selected task sequence and
-
-\[
-\mathcal B=\{-1,0,\ldots,n-1\}
-\]
-
-its boundaries. Boundary $-1$ precedes task 0; boundary $i$ follows task $i$.
-Thus task $i$ consumes its inputs from boundary $i-1$ and publishes its
-outputs at boundary $i$.
-
-Let:
-
-- $\mathcal A$ be the alias bundles;
-- $s_a$ and $d(a)$ be alias $a$'s bytes and execution device;
-- $c_i$, $w_i$, and $d_i$ be task $i$'s profiled runtime, workspace,
-  and execution device;
-- $H_a\subseteq\mathcal B$ be the required residency anchors of $a$;
-- $F_i\subseteq\mathcal A$ be task $i$'s fresh output aliases;
-- $\lambda_a^0$ and $\lambda_a^f$ be declared initial and final
-  locations.
-
-The anchor set contains the pre-task boundary for every input or mutation,
-the post-task boundary for every output or mutation, an initial device
-boundary when required, and the final boundary when final device residency is
-required.
-
-### Residency pressure
-
-A residency plan $R$ maps each alias $a$ to an ordered tuple of disjoint
-inclusive spans whose covered boundaries $R_a\subseteq\mathcal B$ contain
-every anchor:
-
-\[
-H_a\subseteq R_a.
-\]
-
-Let $\chi_{a,b}(R)$ be one when alias $a$ is physically charged at boundary
-$b$. It follows span membership with one task-boundary refinement used by the
-implementation: an alias whose last access has completed and whose final
-location is not execution memory may depart before the next task is admitted.
-
-The object capacity available at boundary $b$ is
-
-\[
-\widehat C_{d,b}=
-\begin{cases}
-C_d-w_{b+1}, & b+1<n\ \text{and}\ d_{b+1}=d,\\
-C_d, & \text{otherwise}.
-\end{cases}
-\]
-
-Fresh outputs must have capacity before their producing task starts, even
-though their residency anchor is the post-task boundary. Define
-
-\[
-Q_{d,b}(R)=
-\sum_{a\in F_{b+1}:d(a)=d}
-s_a\,\mathbf 1[\chi_{a,b}(R)=0]
-\]
-
-for $b+1<n$, and zero at the terminal boundary. The analytic pressure
-constraint is
-
-\[
-M_{d,b}(R)=
-Q_{d,b}(R)+
-\sum_{a:d(a)=d}s_a\chi_{a,b}(R)
-\le \widehat C_{d,b}
-\qquad \forall d,b.
-\]
-
-This boundary model is necessary but not sufficient. It deliberately omits
-exact FIFO timing, simultaneous transfer reservations, physical range
-fragmentation, and causal range reuse. Those constraints are enforced by
-physical admission and simulation.
-
-### Legal residency reductions
-
-The required seed for alias $a$ is the inclusive hull of its anchors:
-
-\[
-R_a^0=\operatorname{Hull}(H_a).
-\]
-
-Declared initial residency is fixed. A spill value is fetched by an ordinary
-action before its first consumer; it is never promoted to a free device value.
-A legal cut removes an anchor-free subinterval from one current span, possibly
-splitting it in two. Therefore every generated plan satisfies
-
-\[
-H_a\subseteq R_a\subseteq R_a^0
-\]
-
-
-A legal cut normally removes an anchor-free run. It may also insert a span
-break immediately after an anchor when that anchor has no later access tied to
-the same boundary. In that second case the covered-boundary set is unchanged,
-but the span segmentation records a legal departure/re-entry point. A gap or
-break between two spans creates a departure and, if the later span was not
-produced there, a fetch window. A current spill copy with no intervening write
-allows a release; otherwise the departure is an eviction. Final residency
-determines whether the last span is retained, released, or evicted.
-
-### Candidate space and objective
-
-Let $\mathcal S$ be the configured residency strategies,
-$\mathcal F$ the configured fetch rules, and
-$\mathcal K\subseteq\{0,1\}$ the enabled coalescing modes. For one legal task
-selection $r$, one policy tuple is
-
-\[
-\theta=(s,f,k)\in\mathcal S\times\mathcal F\times\mathcal K.
-\]
-
-`Reduce` greedily constructs an analytically fitting residency plan,
-`Emit` converts its gaps to a schedule, and bounded `Repair` monotonically
-changes fetch constraints or adds measured boundary pressure after admission
-or simulation rejects a candidate:
-
-\[
-\Gamma_{r,\theta}=
-\operatorname{Repair}
-\left(
-\operatorname{Emit}
-\left(
-\operatorname{Reduce}(R_r^0,s),f,k
-\right)
-\right).
-\]
-
-Let `Admit` be true when the optional physical topology accepts a schedule,
-and let
-
-\[
-\operatorname{Simulate}(P,r,\Gamma;\mathcal H)=(v,m)
-\]
-
-return validity and makespan under the full machine model. PressureFit selects
-
-\[
-(r^\star,\theta^\star)=
-\arg\min_{r\in\mathcal R(P),\theta}
-\left(m_{r,\theta},\operatorname{ordinal}(r,\theta)\right)
-\]
-
-over candidates for which analytic reduction succeeds, admission succeeds
-when present, and $v=\mathrm{true}$. The ordinal is a deterministic
-tie-breaker. This is an optimum over the bounded generated family, not over
-all possible residency intervals, alternative selections, or transfer
-triggers.
-
-## Current algorithm
-
-Almost all of PressureFit is one cycle, repeated. A candidate reduces
-residency until the analytic pressure fits, emits a schedule, simulates it,
-and then either keeps what it got or repairs it and goes again. Everything
-else — preparing the problem, setting up the workspace, adopting a winner —
-happens once, around that cycle.
-
-The section names below are load-bearing: they are the names the diagnostics
-report, the plan JSON carries, and `PlanningSectionTiming` measures —
-`ShadowSpillPressureFitSectionTiming` across the C ABI. A section is a disjoint
-span opened and closed by the function that orchestrates it, so the named
-sections plus `residual_ns` sum exactly to the time the step took. Reading a
-plan's timing and reading this page are the same activity.
-
-```text
-per resolved program:  prepare -> setup -> [ per strategy ] -> select -> teardown
-per strategy:          reduce  -> [ per fetch rule x coalescing mode ]
-per candidate:         ( emit -> simulate -> repair (admission)
-                              -> digest -> place -> settle -> repair )*
-```
-
-The first `repair` answers an admission refusal and the last a simulated
-shortfall or a plan that waited.
-
-### Before the cycle: preflight and problem construction
-
-The resolved programs are expanded first, one problem each, ordered
-most-recomputed first; [graph-pair selection](graph-pair-selection.md)
-documents the training-specific policy that built the alternatives they fix.
-
-For every resolved program, the planner then derives anchors, fresh-output
-reservations and per-boundary capacity, and at least one problem must fit its
-required anchor/output floor -- which catches a task whose inputs, outputs and
-workspace cannot coexist before any candidate search happens. A resolved
-program that fails the derivation is reported infeasible on its own result and
-the others are evaluated as if it were absent, so a resolution that cannot fit
-never silences the ones that can; a program whose every resolution fails it is
-infeasible at that capacity.
-
-### Prepare — deriving the residency problem
-
-Projecting a resolved program into indexed task, alias, simulation, and
-optional admission arrays. This is the only section that exists at the
-problem level and not the candidate level: a candidate never prepares
-anything, it inherits what preparation produced.
-
-What the program does to each alias -- the boundaries it is read, written,
-produced or declared resident at -- is kept as sorted lists per alias, never
-as an array over every alias and boundary. A step of tens of thousands of
-tasks touches each alias at a handful of boundaries, so the lists are the
-size of the program's accesses, where anything sized by alias and boundary
-together would be billions of cells. Every question the search asks about
-an alias at a boundary is a search of that alias's list. A residency -- the
-seed, a strategy's base, the plan being reduced -- is likewise one list of
-spans per alias, ascending and disjoint, where two spans that touch are what
-a break between them is; a cut trims or splits one span, and the list is the
-residency's one spelling, so there is nothing to canonicalize. The cuts that
-relieve a boundary are kept on a segment tree over the boundaries, each cut
-on the few nodes that cover its range in score order, rather than once per
-boundary it covers.
-
-The seed is the hull of each alias's access and declared residency anchors.
-Initial residency remains the caller's actual state. Spill inputs consumed by
-the first computational task need an earlier action boundary, provided by a
-zero-duration control task in PyTorch-generated plans. Their fetches are
-ordinary candidate actions and contribute to every candidate's makespan.
-
-The objects under `minimum_object_bytes_evict_eligible` are settled here as
-well, because everything below assumes they are already gone. Each holds one
-lease, from the trigger of its fetch — chosen once, as late as the ideal
-timeline allows — or the start, to the boundary after its last access or the
-end. Packing those leases on their own gives the resident slice, and the
-device capacity the reducer sees loses it. From there these objects are absent
-from the search: the floor and the pressure do not count them, the cut index
-has no entries for them, and the emitter issues
-each fetch at the trigger the slice was sized for, so no fetch rule can move a
-lifetime the slice was sized without. Every extent placement measures includes
-the slice, and a slice the device cannot hold is a preflight failure of its
-own. [Fixed-offset placement](fixed-placement.md#the-resident-slice) says where
-the slice sits in the final layout.
-
-### Setup — schedule facts and the candidate workspace
-
-Deriving the facts every candidate shares — access windows, transfer costs,
-boundary capacities — and allocating the buffers the cycle reuses. Both are
-paid once per resolved program rather than once per candidate, which is why
-they are a section of their own rather than part of any candidate's time.
-
-### Reduce — choosing what stays resident
-
-Given a residency strategy, the reducer removes objects until the analytic
-pressure fits every boundary:
-
-1. Find the boundary/device pair with the largest byte excess; break ties by
-   earlier boundary and stable device priority.
-2. Enumerate legal cuts that relieve that boundary without removing anchors.
-3. Rank cuts using the strategy's lower-is-better score.
-4. Apply the best cut and update only that alias's pressure contribution.
-5. Repeat until every analytic boundary fits or no legal cut exists.
-
-The stall score first minimizes estimated exposed
-
-\[
-\max(t_{\mathrm{depart}}+t_{\mathrm{evict}}+t_{\mathrm{fetch}}
--t_{\mathrm{deadline}},0).
-\]
-
-The transfer score omits this first term. Both then prefer no required
-write-back, later first use, larger
-objects, longer removable spans, and stable alias/boundary identity.
-
-Reductions are not cached. A repair trajectory cuts aliases monotonically,
-so a candidate never returns to a residency it has already reduced; every
-candidate pays its own reductions, the cost lands in `reduce_ns`, and
-reductions a repair forces later are charged to the repair that forced
-them. A reduction's fingerprint — a 128-bit hash of the packed residency —
-is what the later stages key on.
-
-What a worker keeps is small and bounded: the last sixteen emitted schedules,
-in a ring keyed by residency fingerprint, fetch rule, coalescing mode and
-headroom, so re-emission is recency-local and an evicted schedule is emitted
-again. Simulated outcomes are kept by schedule digest with only their scalar
-results, so a schedule that recurs across candidates is not simulated twice.
-
-### Emit — turning residency gaps into an ordered schedule
-
-Residency gaps determine whether an alias is released or evicted and the
-legal window for its next fetch. The selected fetch rule picks exactly one
-task boundary in that window. Emission sorts actions by task, then release,
-evict, fetch, then alias identity, and finally applies whatever trigger
-constraints earlier repairs recorded. A constraint that cannot be satisfied
-ends the candidate here.
-
-Coalescing removes a clean release and fetch for the same alias at the same
-task boundary. Dirty values require eviction and are never removed by this
-coalescing rule.
-
-### Simulate — replaying the schedule for a makespan
-
-The simulator replays the schedule against the machine facts and returns a
-makespan, task and transfer intervals, and every place the plan came up
-short of capacity and waited.
-
-**Admit** is nested inside this section rather than beside it. When an
-admission topology is supplied, the planner dry-runs the task allocation
-path, output ownership, transfer reservations, retirements, and causal reuse
-through the production memory-pool policy, and the physical deltas and reuse
-dependencies it emits are what the simulation consumes. Because admission
-runs as part of simulating, `admit_ns` is reported inside `simulate_ns` and
-excluded from the disjoint sum.
-
-A fetch or task launch with nowhere to go waits for room rather than
-ending the simulation, as [simulation](simulation.md#trigger-time-capacity)
-specifies. A plan that comes up short is therefore slower, not
-rejected, and it reaches the rest of the cycle with a real makespan and a
-`device-capacity` stall recording what it waited for. What still fails is a
-plan over budget before it starts, a copy with no room in the spill pool,
-and a plan that can never make room, which deadlocks.
-
-### Repair — moving a transfer, or making room for one
-
-For a repairable admission failure, the candidate tries, in order:
-
-1. advancing a fetch to a compatible release boundary;
-2. delaying a fetch toward its consumer;
-3. adding the measured physical deficit to the failing analytic boundary and
-   reducing again.
-
-For a repairable simulator capacity failure it first delays an implicated
-fetch, then adds simulator-observed boundary pressure and reduces again. A
-plan that simulated but waited for memory is repaired the same way: the
-shortfall it recorded stands in for an error, because a plan that runs while
-waiting is valid but not finished, and the waiting is time it pays.
-
-A pressure repair asks the reducer for the shortfall the simulator measured.
-When the next simulation comes up short at the same task and the same moment,
-the room the reducer made did not become room where the simulator looks —
-copies still in flight hold it, or the emitter packed the freed bytes again —
-so a repeat asks for twice what the last round asked, up to the task's whole
-request; asking for the same bytes would emit the same plan and spend the
-whole repair budget without moving. An ask that no cut can meet is taken back
-for a plain ask, so a candidate is only ever slower for having asked for more.
-A new capacity round starts its count of repeats afresh.
-
-A layout that overruns the pool is answered under
-[place](#place-measuring-whether-the-layout-fits): a fetch delayed before any
-capacity is given back.
-
-Every change is monotonic and counts against `max_repair_attempts`. A
-non-capacity contradiction is rejected directly. A move the schedule already
-carries is not repeated, because repeating it would loop. A candidate that
-runs out of repairs answers with what it has.
-
-Reductions this section triggers are measured inside it, so `repair_ns`
-answers what the repair machinery actually costs rather than what its
-bookkeeping costs.
-
-### Digest — naming the schedule
-
-Two candidates that reduce to the same plan get the same name. The digest is
-how the search recognises a plan it has already measured, and it is what the
-shared record carries so a caller can tell whether two searches agree.
-
-### Place — measuring whether the layout fits
-
-Occupancy and extent are different questions. The reducer answers occupancy:
-how many bytes are live at an instant. Placement answers extent: how many
-bytes the address assignment spans once every lease has a fixed offset. The
-extent is the constraint the machine actually imposes, and it is the more
-expensive of the two to answer, so the search answers it as rarely as it can.
-
-The shared best-placed record is what makes that affordable. A plan no better
-than one already placed cannot become the answer, so it is never measured:
-`admits()` is a single atomic read, and the measurement behind it happens only
-for plans that could still win. Every plan that could still win *is* measured,
-though — skipping on any other ground can leave a candidate with no placed
-plan, and such a candidate has no answer to give.
-
-A plan whose layout fits is offered to the shared record and kept as this
-candidate's answer if it beats what the candidate already placed.
-
-A plan whose layout overruns the pool is answered where the miss is before
-anything is given up. The placement leaves behind which lease set the
-extent, and the leases live at the same time are what held it up, so the
-candidate delays one fetch by a task: the fetch whose destination *is* the
-extent-setting lease, past the leases that end by where it would then
-begin, or a fetch whose destination the extent-setting lease overlaps, past
-that lease's end — whichever frees the most bytes. A fetch destination is
-dated from its trigger task's end, so one task later shortens the lease from
-the front and nothing else moves. The delay is recorded as a trigger
-constraint, so it is never repeated and never reaches the consumer, and it
-counts against `max_repair_attempts` like every other change; the candidate
-then emits, simulates and measures again, and the trajectory marks the step
-the move followed.
-
-Two conditions keep this to the misses it can answer. A delay is taken only
-when what it frees is at least the overrun: a lease can drop by at most the
-bytes it stops overlapping, so a smaller move cannot close the miss. And a
-delay is taken after another only when the last one made the extent fall;
-a move that did not is the sign the packing has other reasons, and the
-plan gives capacity back instead.
-
-Only when no such delay exists does the plan give back what it overran,
-bounded by `capacity_refinement_bytes`, express that smaller capacity to the
-reducer as uniform pressure, and plan again from the base residency — the
-answer in the wrong currency, since a layout miss is fragmentation between a
-few leases and the reducer pays for capacity in cuts. Capacity is a
-property of the plan, so it travels with the plan and never changes what the
-simulator or the caller's budget is. [Capacity
-refinement](physical-admission.md#capacity-refinement) is where that trade is
-laid out.
-
-### Settle — deciding what to answer with
-
-A plan that never waited for memory is finished, and so is a plan whose
-candidate has run out of repairs. Either way the candidate answers. Deciding
-that is choosing an answer, so it is reported as `select_ns` — the same
-section the problem level uses for adopting its winner.
-
-With a pool to place into, the answer is the best plan whose layout fit — not
-the fastest plan simulated, because a plan that cannot be placed cannot run
-and offering it only pushes the rejection to a layer that would have to walk
-capacity down to escape it. A candidate that placed nothing reports
-`unplaceable`. Without a pool the candidate answers with its fastest plan.
-
-### Select — adopting the winner and materialising it
-
-Whatever the shared record holds at the end is the plan the search selected:
-selection reads the record rather than ranking the candidates a second time,
-because the record already owns a copy of the plan it names. A problem's
-winner is the plan to beat it was handed unless a candidate did strictly
-better; a tie keeps the plan in hand, so an answer changes only for a reason.
-The planner decodes that one indexed schedule, evaluates its physical
-admission once more, and materialises the full `SimulationResult` — at the
-caller's full capacity, which is the machine the plan will actually run on. A
-plan built against a reduced capacity was *chosen* on how it behaves there,
-but the reported timeline and the certificate measure the real machine.
-Asked to keep its resolutions, the planner materialises every other
-problem's selected schedule the same way, so each is reported beside the
-answer and the planning store can file it there.
-
-### Teardown
-
-Releasing everything the evaluation held. Small, and named so that the time
-it takes is attributed rather than left in the residual.
-
-## Trajectories
-
-With `record_reduction_steps` set, each candidate records the cycle rather
-than only its outcome: one `ReductionStep` per plan it held, carrying that
-plan's makespan, the bytes its layout needed, the capacity it was built
-against, the objects the reducer cut to reach it, the repair count, and what
-became of it — simulated, measured, placed, refined, best so far, the
-answer, or a plan a fetch was moved after. The steps in order are the search itself, which is what "why is this
-plan slower than the one at a larger budget" is really asking about.
-
-## Pseudocode
-
-The first two lines are the expansion; everything after them is the search
-over what it produced.
-
-```text
-PressureFit(program, initial, final, machine, options, admission):
-    resolved = ordered_resolutions(program, options.resolution_options)
-    require some selection's anchor/output floor to fit
-    best_placed = shared record, empty
-
-    for each resolved program:                 # all in one call, in order
-      prepare: problem = compile_indexed_problem(resolved, machine, admission)
-               seed    = required_anchor_hulls(problem), greedily extended
-      setup:   facts, workspace = schedule_facts(problem), allocate()
-      if the caller handed in a plan for this resolved program:
-               measure it here, and offer it to best_placed if it places
-
-      for strategy in options.residency_strategies:
-        reduce: base = reduce_until_analytic_pressure_fits(seed, strategy)
-
-        for fetch_rule, coalesced in options.fetch_rules x coalescing_modes:
-          residency, capacity, placed = base, machine.object_capacity, none
-          loop:                                # the candidate cycle
-            emit:     schedule = emit_actions(residency, fetch_rule,
-                                              coalesced, recorded_constraints)
-                      stop if a recorded constraint cannot hold
-            simulate: result = simulate(schedule, admit(schedule))
-            repair:   if admission refused, or it did not simulate:
-                          move the fetch, else add the measured deficit at the
-                          failing boundary and reduce; continue, or stop
-            digest:   name = schedule_digest(schedule)
-            place:    if best_placed.admits(result.makespan) and name is new:
-                          extent = place_lifetimes(result)
-                          if extent fits the pool:
-                              best_placed.offer(name, schedule)
-                              placed = better_of(placed, result)
-                          else if a fetch overlapping the extent can move,
-                               frees at least the overrun, and the last
-                               move made the extent fall:
-                              record its delay; continue     # emit again
-                          else:
-                              capacity -= min(overrun, refinement)
-                              residency = reduce(seed, strategy, given_back)
-                              continue
-            settle:   if result never waited for memory, or no repairs remain:
-                          answer with placed, or unplaceable
-                      otherwise keep the plan and repair again
-
-    select: return materialize(best_placed.read(), at machine.object_capacity)
-```
+PressureFit searches for a memory schedule for a fixed task order. It starts
+with objects resident between their required uses, cuts residency where memory
+is over budget, turns the resulting gaps into transfers, and measures the
+schedule. Admission, simulation, and placement can send it back to change a
+transfer or make more room. The answer is the fastest valid plan it found.
+
+This page describes the algorithm. The surrounding planner contract is in
+[plan search](search.md), the option types are in the
+[Python API](../python/api/neutral.md), and the
+[C API](../c/pressurefit.md) describes the indexed interface.
 
 ## Built-in candidate policies
 
-The three candidate axes have separate responsibilities:
+A **candidate** is one resolved program plus a residency strategy and fetch
+rule:
 
-1. The residency strategy decides which optional object-boundary cells to
-   remove and therefore which residency gaps exist.
-2. The fetch-trigger rule decides when each gap's already-required return is
-   enqueued; it does not decide whether the gap exists.
-3. Coalescing optionally removes a clean release/fetch pair at one boundary.
-
-No row in the tables below dominates another. PressureFit emits the resulting
-schedule, applies physical admission when configured, and lets the simulator
-measure the combined compute, lane, readiness and capacity effect.
-
-### Residency strategies
-
-| Strategy | Cut score | Early-fetch headroom | Effect on PressureFit behavior |
-|---|---|---:|---|
-| `headroom-stall` | Minimize estimated exposed stall first | Yes | Charges each fetched span one boundary early, so it cuts more or differently to leave room for early destination reservations: residency and transfer traffic traded for fewer admission conflicts and less readiness stall. |
-| `headroom-transfer` | Prefer cuts that avoid write-back before other tie-breaks | Yes | The same early-fetch charge with the stall estimate out of first position, so it favors clean releases and lower eviction work over local overlap. |
-| `tight-stall` | Minimize estimated exposed stall first | No | Fits only the current logical residency/output pressure. It may retain more useful residency, but trigger-time fetch reservations can then expose pressure that admission or simulation must repair. |
-| `tight-transfer` | Prefer cuts that avoid write-back before other tie-breaks | No | Tight accounting with the transfer-oriented cut order: less eviction traffic, more risk that the gaps or fetch timing expose stall or trigger-time pressure. |
-| `relaxed-stall` (not in the default portfolio) | Minimize estimated exposed stall first | No | The same reduction controls as `tight-stall`, so it produces no distinct pressure behavior. It stays a separate candidate identity in diagnostics. |
-
-Headroom accounting charges a fetched residency span one boundary earlier
-than its logical entry. It is conservative boundary accounting, not a transfer
-start prediction. The transfer lane and exact destination lifetime remain the
-simulator and admission model's responsibility.
-
-### Fetch-trigger rules
-
-| Rule | Mechanical behavior | Expected pressure/latency tradeoff |
+| Choice | Where it acts | What it decides |
 |---|---|---|
-| `packed-fifo` | Work backward from consumer deadlines while packing each device's single fetch lane; earlier fetches account for the residual occupancy later packed work leaves. | Lane utilization and overlap across the whole reload set. It may enqueue a destination earlier than capacity permits, so admission can delay it or force another cut. |
-| `packed-fit` | Packed FIFO triggers, then implicated ones moved later until their early destination occupancy fits analytic capacity. | Less trigger-time capacity pressure than unconstrained packing, at the cost of lead time and possibly consumer stall. |
-| `interval-entry` (not in the default portfolio) | Extend each later residency span toward earlier boundaries while exact analytic capacity fits, then place fetches with packed FIFO. | Spends idle object capacity on transfer lead time: latency hidden, destinations resident longer. |
-| `latest-safe` | Subtract each fetch's duration from its ideal consumer deadline independently and take the latest boundary no later than that. | Least early residency per object, but no joint packing: individually safe choices can queue behind one another and stall a consumer. |
-| `demand` | Trigger at the final legal enqueue boundary, normally immediately before the first consumer. | Least pre-consumer occupancy and usually capacity-friendly, but exposes most or all fetch latency when the object is not already ready. |
+| Residency strategy | Initial reduction and every reduction requested by a repair | How to account for resident bytes, and which legal cut to make at an over-budget boundary. |
+| Fetch rule | Schedule emission, after reduction has chosen the resident spans | At which legal task boundary to enqueue each required fetch. |
 
-These rules choose enqueue boundaries, not wire start timestamps. The fetch
-lane remains FIFO, and destination capacity is reserved at the trigger even if
-earlier lane work delays the copy.
+The four distinct residency strategies are **names for combinations of two
+independent controls**. They are not four different reduction algorithms.
+The default search uses the two stall strategies and four fetch rules below:
+**eight policies per resolution**. All use the split eviction/fetch exposure
+score and the fixed `E, writeback, -slack, -size` ranking, with stable identity
+tie breaks. Scoring is part of the algorithm, not another policy option.
 
-### Coalescing mode
-
-| Mode | Mechanical behavior | Impact |
+| Memory accounting / Cut ranking | Estimated exposed stall first | Write-back requirement first |
 |---|---|---|
-| Ordinary | Preserve every release, eviction, and fetch implied by the residency spans. | Represents the transition plan literally and may expose a redundant clean release/fetch pair at one boundary. |
-| Coalesced | Remove a release and fetch for the same clean alias at the same trigger boundary. Eviction/fetch pairs remain. | Retains the already-current execution copy across that boundary, avoiding needless queue work and transfer latency without hiding a required write-back. |
+| Charge the span without an extra boundary before its start | `tight-stall` | `tight-transfer` |
+| Also charge one boundary before a fetched span starts | `headroom-stall` | `headroom-transfer` |
 
-## Guarantees and limits
+The first control changes which boundaries appear over budget. The second
+changes which cut wins at the chosen boundary. Both feed the same greedy
+reducer. The suffix `transfer` means “omit the stall estimate from the ranking”;
+it does **not** mean “minimize total transferred bytes.” The exact accounting
+and ranking are defined below.
 
-PressureFit guarantees:
+The fetch rules use the same spans but choose different enqueue boundaries:
 
-- anchor-preserving residency plans;
-- deterministic candidate identity, ordering, and tie-breaking;
-- exact task-local workspace accounting in analytic boundary capacity;
-- a simulator-valid returned schedule;
-- physical-admission validity when an admission topology is supplied;
-- structured evidence for candidate work, repairs, rejection, and selection.
+| Fetch rule | Trigger selection | What it accounts for |
+|---|---|---|
+| `demand` | Last legal boundary before the consumer | Legal ordering only. |
+| `latest-safe` | Latest legal boundary allowing this fetch to finish by its ideal deadline | This fetch's estimated duration, considered independently. |
+| `packed-fifo` | Pack fetch durations backward from their deadlines, then map starts to legal boundaries | Other fetches competing for the same FIFO lane. |
+| `packed-fit` | Start with `packed-fifo`, then delay selected fetches at over-budget boundaries | Packed timing plus analytic memory occupied by early fetch destinations. |
 
-It does not guarantee:
+For example, `headroom-stall/packed-fit` means: reduce with the extra
+boundary charge and stall-first ranking; emit with packed fetches followed by
+the capacity pass. A repair can change
+the spans or constrain the triggers, so it can invoke these policies again.
 
-- a global minimum over arbitrary residency intervals or transfer triggers;
-- exhaustive selection of large program-alternative products;
-- feasibility after runtime behavior violates the admitted allocation
-  contract.
+## Inputs
 
-`PlanInfeasibleError` means a necessary-condition preflight failed, or
-every candidate across every resolved program was rejected without a
-remaining repair path. It does not prove that no schedule outside the
-resolved programs searched exists. `PlanSearchExhaustedError` means at
-least one repairable path reached its configured repair ceiling, so even
-infeasibility across those resolved programs was not established.
+PressureFit consumes a [program](program.md), declared initial and final
+residency, machine capacities and bandwidths, and `SearchOptions`. Task facts
+include inputs, outputs, mutations, dependencies, profiled runtimes, and
+workspace. Alias facts include sizes, access/write histories, and whether a
+spill copy may be retained. Names and framework-specific metadata do not
+affect the search.
+
+Optional `AdmissionFacts` describe physical allocation and storage ownership,
+pool capacity, and alignment. The physical pool capacity and the logical
+object capacity offered to the reducer are separate quantities. A caller can
+also supply an incumbent plan to beat.
+
+## Current algorithm
+
+A resolved program fixes the program's [task alternatives](program.md#task-alternatives).
+PressureFit expands the configured resolutions, orders them by descending
+share of groups choosing recomputation (ties retain expansion order), and
+evaluates each policy combination for each one. Different task orderings or microbatch geometries
+are different input programs, chosen by the surrounding caller.
+
+## Pseudocode
+
+```text
+PressureFit(program, machine, options, optional_admission, optional_incumbent):
+    problems = prepare configured resolutions of program
+    discard resolutions whose required memory floor cannot fit
+    measure the incumbent, if present, at this capacity
+
+    for each (problem, strategy, fetch_rule):
+        # This whole tuple is one worker job, including its base reduction.
+        policy = (strategy, fetch_rule)
+        candidate_answer = EvaluateCandidate(problem, policy)
+        retain the best valid answer for this problem
+
+    select the best answer across problems and the eligible incumbent
+    materialize its schedule and full simulation at the caller's capacity
+
+EvaluateCandidate(problem, policy):
+    extra_pressure = 0
+    trigger_constraints = empty
+    best_answer = none
+    residency = Reduce(problem.seed, policy.strategy, extra_pressure)
+
+    while residency is feasible:
+        schedule = Emit(residency, policy.fetch_rule)
+        apply recorded trigger_constraints; stop if they cannot hold
+        result = Simulate(schedule, optional physical admission)
+
+        if admission or simulation failed:
+            try a legal fetch move; otherwise add measured boundary pressure
+            if no repair is possible or its attempt limit is reached: stop
+            if pressure changed: residency = Reduce(seed, strategy, extra_pressure)
+            continue
+
+        if physical placement is required:
+            if this schedule can improve the placement bound:
+                measure the fixed-offset layout
+                if it fits: retain it if better than best_answer
+                else if a useful layout-driven fetch delay is available:
+                    record the delay; continue
+                else:
+                    add uniform pressure for the layout overrun
+                    clear trigger_constraints for the new capacity round
+                    residency = Reduce(seed, strategy, extra_pressure)
+                    continue
+        else:
+            retain this simulated plan if better than best_answer
+
+        if result did not wait for memory, or no further repair is possible:
+            stop
+        repair the measured memory shortfall, moving a fetch or adding pressure
+        if pressure changed: residency = Reduce(seed, strategy, extra_pressure)
+
+    return best_answer, or a failure if no acceptable plan was found
+```
+
+Each reduction starts again from the seed with the current pressure inputs.
+Fetch-only repairs reuse the current residency. A candidate keeps its best
+acceptable schedule, so its answer may come from an earlier iteration rather
+than the last one it explored. The detailed repair and placement rules appear
+after the policy definitions.
+
+## Mathematical formulation
+
+### Tasks, boundaries, and the seed
+
+For one resolved program, tasks are numbered $0,\ldots,n-1$. Boundary $-1$
+is before task 0; boundary $i$ is after task $i$. Task $i$ consumes inputs at
+boundary $i-1$ and publishes outputs at boundary $i$.
+
+An **alias bundle** is a set of logical objects sharing storage. Memory is
+counted once per bundle. Let $s_a$ be alias $a$'s size and $H_a$ its required
+residency anchors: input/mutation boundaries, output/mutation boundaries, and
+required initial or final device residency. The seed is one inclusive span
+per alias with any anchors:
+
+$$
+R_a^0=[\min H_a,\max H_a].
+$$
+
+A residency $R_a$ is an ordered list of inclusive spans. Cuts preserve every
+anchor. A normal cut removes a whole available anchor-free run within a span.
+A cut can also split a span immediately after an anchor whose last associated
+access has completed. This second operation changes the span segmentation
+without removing any covered boundary; it creates a legal departure/re-entry
+point. The distinction matters when replaying cuts.
+
+The implementation and trace arrays use **positions** $p=b+1$: position 0 is
+before task 0. Cut endpoints in the trace retain the signed boundary notation.
+See [trace positions and semantic labels](../python/pressurefit-trace.md#semantic-labels-and-positions).
+
+### Prepare — deriving the residency problem
+
+Preparation derives anchor lists, fresh-output reservations, access/write
+lists, boundary capacities, and estimated transfer durations. It checks that
+required inputs, outputs, and workspace can coexist. A failing resolution is
+reported separately; other resolutions can still be searched.
+
+Objects smaller than `minimum_object_bytes_evict_eligible` are assigned to a
+[resident slice](fixed-placement.md#the-resident-slice). Its capacity is
+reserved before reduction. These objects have fixed fetch triggers, are not
+cut, and are excluded from the reducer's variable pressure sum.
+
+Initial residency remains the caller's actual state. An input initially in
+spill memory requires an ordinary fetch. A zero-duration control task in
+generated training programs supplies an action boundary before the first
+computation; there is no free promotion of spill inputs to device memory.
+
+The heuristic clock uses profiled task runtimes $c_i$:
+
+$$
+T_{-1}=0,\qquad T_i=\sum_{j=0}^{i}c_j.
+$$
+
+$T_i$ is the ideal end of task $i$, before transfer or capacity stalls. The
+estimated duration of a fetch of alias $a$ is
+
+$$
+f_a=\left\lceil\frac{10^9s_a}{\max(B_{\mathrm{fetch,solo}},B_{\mathrm{fetch,concurrent}})}\right\rceil.
+$$
+
+The eviction estimate $v_a$ uses the corresponding eviction bandwidths.
+Durations are in nanoseconds. Route latency is excluded from these estimates.
+These are local estimates; simulation measures the resulting schedule with
+its actual lane contention and task readiness.
+
+## Reduce — choosing what stays resident
+
+The equations describe pressure on a given device. The reducer maintains
+separate pressure and capacity for each device and cuts aliases on the
+selected device. Device indices are omitted below for readability.
+
+### Control 1: how residency counts toward memory pressure
+
+For a span $[s,e]$, the `tight` control begins charging at $s$. The `headroom`
+control begins at $s-1$ if $s>-1$ and the alias is not produced at $s$:
+
+$$
+\operatorname{chargedStart}(a,[s,e],h)=
+\begin{cases}
+s-1,& h=1,\ s>-1,\ \text{and the span needs a fetch},\\
+s,& \text{otherwise}.
+\end{cases}
+$$
+
+Here $h=1$ selects `headroom`, and $h=0$ selects `tight`. For example, a
+fetched span beginning at boundary 4 starts contributing bytes at boundary 4
+under `tight`, and at boundary 3 under `headroom`.
+
+**Headroom is one extra boundary of memory accounting.** It does not choose a
+fetch trigger, estimate how many boundaries a transfer takes, or guarantee
+room for the entire early fetch. The fetch rule may enqueue much earlier;
+admission and simulation still check the resulting reservations.
+
+Both controls use the same end adjustment: do not charge the span's final
+boundary $e$ when $e\geq0$, final device residency is not required, and no
+access associated with that span remains after $e$. The object can depart
+before the next task is admitted. Otherwise charge through $e$.
+
+Fresh outputs are reserved at the boundary **before** their producing task,
+even though their residency anchor is after that task. Let $U_a(R,h)$ be the
+union of alias $a$'s charged spans and these output-reservation boundaries.
+Overlaps count once. If $\mathcal A_c$ contains this device's cuttable aliases, analytic
+pressure is
+
+$$
+M_b(R,h)=\sum_{a\in\mathcal A_c}s_a\,\mathbf 1[b\in U_a(R,h)]+X_b.
+$$
+
+$X_b$ is additional pressure accumulated by repairs, initially zero. If $C$
+is the object capacity left after reserving the resident slice, the boundary
+capacity is
+
+$$
+C_b=
+\begin{cases}
+C-w_{b+1},& b+1<n,\\
+C,& b=n-1,
+\end{cases}
+$$
+
+where $w_i$ is task $i$'s workspace, or zero for a task on another device.
+This charges workspace only where that
+task needs it. The reducer seeks $M_b\leq C_b$ at every boundary. Physical
+fragmentation, transfer lifetimes, and exact lane timing require later checks.
+
+### Choosing the boundary and applying cuts
+
+```text
+Reduce(seed, strategy, extra_pressure):
+    R = copy(seed)
+    compute pressure using strategy's tight/headroom control
+    while some boundary is over capacity:
+        b = boundary with greatest (pressure[b] - capacity[b])
+            breaking ties by earlier boundary
+        legal = active cuts that relieve b while preserving all anchors
+        if legal is empty: return analytically infeasible
+        cut = lexicographic minimum under strategy's cut ranking at b
+        apply cut to R; update that alias's pressure contribution
+        refresh which cuts for that alias remain available
+    return R
+```
+
+For multiple devices, boundary selection breaks equal excesses by boundary,
+then device priority, then device index. The implementation uses a pressure
+heap and a segment tree of cuts covering each boundary. The slack
+ranking examines every active entry at the chosen boundary: both exposure
+and slack depend on that boundary, so a zero exposure score alone does not
+justify stopping. This selects the exact minimum without a dense
+alias-by-boundary score cache.
+
+### Control 2: which legal cut wins
+
+Write a cut as $(a,\ell,u)$: it removes boundaries $\ell$ through $u$ of alias
+$a$. A pure span break has $\ell=u+1$ and length zero. Define:
+
+| Quantity | Definition |
+|---|---|
+| $W$ | 0 for an initial-prefix cut (already in spill). Otherwise 1 if no spill copy may be retained, or a declared write occurred by departure boundary $\ell-1$; otherwise 0. |
+| $D$ | Ideal **completion** of the last task accessing the alias on the cut's left; 0 when there is no prior use. Input and produced-output anchors both use their actual task identity. |
+| $N$ | Ideal **start** of the first task accessing the alias on the cut's right; timeline end when only final device residency remains. |
+| $B,F$ | Ideal begin and finish of the task immediately after the selected pressure boundary. At the terminal boundary both equal timeline end. |
+
+The eviction and fetch have different overlap windows:
+
+$$
+S_{\mathrm{evict}}=\max(0,B-D),\qquad
+S_{\mathrm{fetch}}=\max(0,N-F).
+$$
+
+$$
+E_{\mathrm{evict}}=W\max(0,v_a-S_{\mathrm{evict}}),\qquad
+E_{\mathrm{fetch}}=\max(0,f_a-S_{\mathrm{fetch}}).
+$$
+
+$$
+E=E_{\mathrm{evict}}+E_{\mathrm{fetch}}.
+$$
+
+Eviction can overlap compute after the prior use finishes and before memory
+is needed for the pressure task. A clean release has zero eviction cost.
+Fetch overlap starts after that pressure task finishes. These separate
+`max(0, ...)` terms prevent unused time on one side from canceling a real
+delay on the other. The same cut can therefore have different scores at
+different pressure boundaries.
+
+This is a local estimate without queue contention. It neither simulates all
+transfers nor maintains the emitter's refreshed-spill-copy history. In
+particular, $W$ remains a conservative write-back flag; the emitter decides
+the actual departure action. The score does not add a hard fetch-trigger
+constraint: fetch rules can still choose earlier legal triggers, and the
+existing simulator/placement/repair loop checks their memory effects.
+
+The ranking also compares **signed slack**:
+
+$$
+\sigma=S_{\mathrm{evict}}-Wv_a+S_{\mathrm{fetch}}-f_a.
+$$
+
+Slack is maximized. It is not clamped: positive spare time
+and negative deficits remain distinguishable. Unlike $E$, slack can let
+surplus overlap on one transfer offset a deficit on the other, which is why
+it only breaks ties after $E$. Clean releases set $Wv_a=0$ but retain the
+eviction-side window in the requested formula. Queue contention is absent
+from both metrics.
+
+The keys rank **lexicographically, ascending**. The first differing
+component decides; these terms are not added or weighted:
+
+$$
+K_{\mathrm{stall}}=(E,\ W,\ -\sigma,\ -s_a,\ a,\ \ell).
+$$
+
+$$
+K_{\mathrm{transfer}}=(W,\ -\sigma,\ -s_a,\ a,\ \ell).
+$$
+
+If the whole tuple ties, the lower internal cut ID wins. Thus `stall` prefers
+less estimated exposed time first; `transfer` skips that comparison. Both
+then prefer no write-back, more signed slack, larger size, lower alias index,
+and earlier cut start, in that order. The size term favors more relief per
+cut, not fewer bytes transferred.
+
+The signed slack calculation uses a wide exact integer representation; it
+neither overflows nor saturates to fit a signed 64-bit value. This ranking is
+fixed for every reduction and candidate. Transfer strategies omit only the
+leading exposure term; all other priorities remain the same.
+
+The trace records the winning tuple and up to three next-ranked legal cuts
+at the chosen boundary. It also records the three largest boundary excesses
+before the cut. These answer different questions: **where pressure was worst**
+and **why this cut won there**.
+
+## Emit — turning spans into transfers
+
+A gap between spans creates a departure and a later fetch unless the later
+span begins with production. A current, retained spill copy permits release;
+otherwise a value needed again requires eviction. The emitter tracks writes
+since the spill copy was refreshed. Final residency determines whether the
+last span is retained, released, or evicted.
+
+### Legal fetch windows
+
+For reload $r$ of alias $a$, let $[E_r,L_r]$ be its inclusive legal trigger
+window and $e_r$ the later span's entry boundary.
+
+- $L_r$ is the boundary immediately before the span's first consumer. For a
+  span with no task consumer, it is the terminal task boundary.
+- The first fetch has $E_r=0$. After a departure at boundary $p$, emission
+  uses $E_r=p+1$.
+- Resident-slice objects have $E_r=L_r$ at their previously fixed trigger.
+
+An empty window is infeasible. A first consumer at task 0 has no preceding
+action boundary; a spill input therefore needs the control-task arrangement
+described above.
+
+Every rule chooses a trigger $k_r\in[E_r,L_r]$. This is an **enqueue boundary**,
+not an exact wire-start timestamp. The fetch lane is FIFO, and destination
+memory is reserved at the trigger even if the copy must wait behind others.
+The heuristic consumer deadline is $T_{L_r}$.
+
+Define the common helper
+
+$$
+\operatorname{Latest}(E,L,t)=
+\begin{cases}
+\max\{i\in[E,L]:T_i\leq t\},& \text{if this set is nonempty},\\
+E,& \text{otherwise}.
+\end{cases}
+$$
+
+The fallback picks the earliest legal boundary even when there is insufficient
+lead time. “Safe” in the rule name is an estimate, not a feasibility guarantee.
+
+### `demand`
+
+$$
+k_r=L_r.
+$$
+
+The fetch is enqueued as late as legality allows. This limits early destination
+occupancy, but usually exposes the transfer to its consumer.
+
+### `latest-safe`
+
+Each reload is considered independently:
+
+$$
+k_r=\operatorname{Latest}(E_r,L_r,\max(0,T_{L_r}-f_a)).
+$$
+
+There is no accounting for another fetch occupying the lane. Two reloads can
+each appear to meet a deadline and still queue behind each other.
+
+### `packed-fifo`
+
+Process reloads in descending latest-trigger order, breaking ties by descending
+alias index, then ascending original emission ordinal. Pack a separate time
+cursor for each device's fetch lane:
+
+```text
+packed_start[device] = infinity
+for r in sort(reloads, key=(-latest_trigger, -alias, ordinal)):
+    finish  = min(T[L_r], packed_start[device(r)])
+    desired = max(0, finish - fetch_duration[r])
+    k_r     = Latest(E_r, L_r, desired)
+    packed_start[device(r)] = max(T[k_r], desired)
+```
+
+The last line preserves a desired start lying between task boundaries; it
+does not round the packing cursor all the way back to the chosen trigger.
+This rule accounts for other planned fetch durations, but it does not check
+destination capacity while choosing triggers.
+
+For example, suppose legal boundary times are 0, 5, 10, and 15, and two fetches
+each take 8 time units with deadline 15. `latest-safe` chooses time 5 for both.
+Packing chooses time 5 for the first processed fetch and time 0 for the next,
+creating more lead time at the cost of earlier destination occupancy.
+
+### `packed-fit`
+
+First run `packed-fifo`. Then add early fetch destinations to the analytic
+pressure and move selected triggers later. For one device, let
+
+$$
+A_{r,b}=\mathbf 1[k_r\leq b<e_r\ \text{and alias }a(r)\text{ is not logically resident at }b].
+$$
+
+The capacity pass uses
+
+$$
+P_b=M_b(R,h)\big|_{X_b=0}+\sum_r s_{a(r)}A_{r,b}.
+$$
+
+It uses the strategy's span charges and fresh-output reservations, without
+the reducer's accumulated repair pressure $X_b$.
+
+```text
+for b in task boundaries 0 .. n-1, ascending:
+    while P[b] > C[b]:
+        movable = reloads with A[r,b] = 1 and k_r < L_r
+        if movable is empty: break
+        r = first by (entry boundary descending, size descending,
+                      alias descending, packed-array index ascending)
+        new_trigger = min(b + 1, L_r)
+        remove r's early destination charges before new_trigger
+        k_r = new_trigger
+```
+
+This pass does not repack the lane after delaying a fetch. It can leave a
+boundary over capacity when no trigger can move, and a delay can expose
+consumer stall. Admission, simulation, and repair decide what follows.
+
+### Repair constraints
+
+After emission, recorded repair constraints can move triggers within their
+legal bounds. A schedule that cannot honor them stops that trajectory. Thus
+the final trigger need not be the fetch rule's initial choice.
+
+## Simulate and repair
+
+Simulation measures the emitted schedule, including task readiness, transfer
+lanes, and capacity waits. With admission facts, physical admission runs
+inside this step: it derives allocation lifetimes, reservations, retirements,
+and causal reuse using the production memory-pool policy. See
+[simulation](simulation.md) and [physical admission](physical-admission.md).
+
+A schedule can finish while waiting for device memory. That gives a valid
+makespan and a measured shortfall worth trying to remove. An impossible
+initial state, spill-pool overflow, or deadlock can instead fail simulation.
+
+For a repairable **admission failure**, try:
+
+1. Advance a fetch to a compatible release boundary.
+2. Otherwise delay a fetch toward its consumer.
+3. Otherwise add the measured deficit at the failing boundary to $X_b$ and
+   reduce again from the seed.
+
+For a repairable **simulation capacity failure or capacity wait**, try a
+fetch delay, then a boundary-pressure repair. Repeated failures at the same
+task and time can double the pressure request, up to the whole allocation
+request. If the escalated request cannot be reduced, it is taken back and the
+plain deficit is tried. Fetch moves and pressure repair attempts are bounded
+by `max_repair_attempts`; non-capacity contradictions are rejected directly.
+
+These operations explain why a trace contains several reductions and several
+emitted schedules. A pressure repair reruns the greedy reducer; a trigger
+repair can produce a new schedule without making a new cut. The trajectory
+is not guaranteed to improve makespan at every step.
+
+## Place — measuring whether the layout fits
+
+Occupancy and address extent are different: even when live bytes fit, a fixed
+offset assignment can extend beyond the physical pool because of overlapping
+lifetimes and fragmentation. Placement measures that extent.
+
+The placement gate skips a schedule that cannot beat an already placed plan.
+Normally the bound is shared across candidates and resolutions. With
+`deterministic=True`, the gate consults only this candidate's own placed
+plans. A schedule whose layout fits is eligible to become the answer.
+
+When the layout overruns the pool, PressureFit first tries delaying a fetch
+whose destination contributes to the overrun. The move must free at least the
+overrun, remain before its consumer, and, after a previous such move, follow
+an actual reduction in measured extent. Otherwise it refines capacity.
+
+For overrun $o$ and configured refinement increment $q$, the give-back is
+
+$$
+\delta=
+\begin{cases}
+\min(o,q),& q>0,\\
+o,& q=0.
+\end{cases}
+$$
+
+The candidate reduces its recorded planning capacity by $\delta$, adds
+$\delta$ to every boundary's extra pressure, clears the fetch constraints,
+and reduces again. This is a
+separate capacity-refinement round, counted by `capacity_refinements`. It
+does not change the caller's physical budget. See
+[capacity refinement](physical-admission.md#capacity-refinement).
+
+## Settle and select
+
+With placement, a candidate answers with its fastest placed schedule; without
+placement, with its fastest valid simulated schedule. It can restore an
+earlier answer after a later repair fails or makes the plan slower. A
+candidate that never obtained an acceptable answer reports failure.
+
+Each resolved problem retains its best candidate. Equal makespans favor the
+earlier candidate ordinal; a valid incumbent wins a tie against a newly
+generated candidate. Across resolutions, equal makespans favor the earlier
+resolution. The shared best-placed record supplies the placement bound; the
+per-problem results retain the schedules from which the final answer is
+materialized.
+
+The selected schedule is simulated again at the caller's full capacity. Its
+reported task/transfer timeline is therefore for the machine that will run
+it, even if the search selected it during a reduced-capacity round. Requested
+per-resolution answers are materialized the same way.
+
+PressureFit finds the best plan reached by this bounded search. It does not
+exhaust all task selections, possible cuts, or trigger assignments.
+
+## Output
+
+`ProgramPlanResult` contains the chosen task selections, memory schedule,
+full simulation, search diagnostics, and resident-slice information. It also
+preserves the program, residency declarations, machine configuration, search
+options, and any admission/placement facts needed to explain the answer.
+Requested per-resolution results accompany the overall winner.
+
+If no candidate answers and at least one exhausted its repair budget, the
+search raises `PlanSearchExhaustedError`. Otherwise a failed preflight or no
+acceptable candidate raises `PlanInfeasibleError`, with available failure
+details and diagnostics. A search failure does not prove that every possible
+schedule is infeasible.
+
+## Options and execution
+
+| PressureFit option | Default | Role |
+|---|---|---|
+| `resolution_options` | Shares 0, 0.25, 0.5, 0.75, 1 | Which task-alternative resolutions to search. |
+| `residency_strategies` | `headroom-stall`, `tight-stall` | Memory accounting and cut ranking. |
+| `fetch_rules` | `packed-fifo`, `packed-fit`, `latest-safe`, `demand` | Fetch-trigger assignment. |
+| `max_repair_attempts` | 256 | Bound fetch/pressure repair attempts. |
+| `capacity_refinement_bytes` | 256 MiB | Bound the give-back in each layout-capacity round; zero takes the whole overrun. |
+| `record_reduction_steps` | `False` | Save schedule-level search steps in diagnostics. |
+
+The default portfolio has $2\times4=8$ plain policies per resolved program.
+Five distinct resolutions therefore produce 40 candidate jobs. The two
+`transfer` strategies are available as explicit alternatives to the default
+stall-first strategies.
+
+### Workers and the unit of work
+
+One worker job evaluates one **(resolved program, policy)** pair, including
+its own base reduction. Prepared problem facts are shared; workspaces are
+reused by workers. Base reductions are not shared across fetch-rule
+candidates, even when their residency strategy matches.
+
+`workers` controls a per-call pool, independently of the number of resolved
+programs. In ordinary mode, workers observe the shared placement bound at
+different times; this can change the explored trajectories. `deterministic`
+removes that dependency from each candidate's placement gate and makes its
+outcome reproducible across worker counts. The incumbent can still win the
+final comparison.
+
+## Diagnostics and cut traces
+
+Ordinary diagnostics include all evaluated resolutions and candidate outcomes,
+repair and placement counters, schedule digests, section timings, and elapsed
+start/end times. `record_reduction_steps` adds one record per schedule-level
+step: makespan, planning capacity, required layout bytes, repair count, and
+what happened to the plan.
+
+`SearchOptions.trace_directory` adds the detailed
+[PressureFit cut trace](../python/pressurefit-trace.md). The normal API finds
+the winner first and reruns that candidate deterministically for recording.
+Explicit resolution/policy pairs can request more candidates without changing
+the selected plan or its cache key. Each trace includes:
+
+- the seed and every cut, with enough pressure updates to replay the spans;
+- winning and rejected cut rankings, and the top three over-budget boundaries;
+- links between reductions, emitted-plan steps, and the kept answer;
+- task profile durations and the returned plan's task timings;
+- alias members and optional semantic object/task labels for later analysis.
+
+Semantic names such as forward stage, microbatch, parameter path, or activation
+origin are annotations. They do not enter policy decisions. Stage summaries
+can be derived from task timings; cut order is the planner's decision order,
+not the execution timeline.
+
+The disjoint timing sections are `prepare`, `setup`, `reduce`, `emit`,
+`simulate`, `repair`, `digest`, `place`, `select`, and `teardown`, plus
+`residual_ns`. Initial reduction is charged to `reduce`; reductions requested
+by repairs are charged to `repair`. `admit_ns` is nested inside `simulate_ns`.
+Summed worker time can exceed elapsed call time. The
+[C diagnostics reference](../c/pressurefit.md#diagnostics) gives the exact
+counter definitions.
 
 ## Implementation map
 
-| Layer | Responsibility |
+Paths below are relative to `csrc/src/planner/search/algorithms/pressurefit/`:
+
+| Component | Source |
 |---|---|
-| `shadowspill.planner.search.algorithms.pressurefit` | The search object: input validation, expanding the program into resolved programs and ordering them, and the admission facts stamped onto the answer. It hands every resolution to one call and owns no threads. |
-| `…pressurefit.search` | Projecting each resolution into the planner ABI, the preflight that drops the ones that cannot fit, and merging the results into one answer. |
-| `csrc/src/planner/search/algorithms/pressurefit/problem/` | Compiling one indexed problem from the projected arrays: its buffers, the facts derived from the program, the residency floor, the initial placement. |
-| `csrc/src/planner/search/algorithms/pressurefit/residency/` | Indexed anchor geometry, pressure accounting, legal cuts, scoring, and reduction. |
-| `csrc/src/planner/search/algorithms/pressurefit/schedule/` | Gap transitions, fetch-window placement, action emission, and trigger constraints. |
-| `csrc/src/planner/search/algorithms/pressurefit/candidates/` | The candidate cycle and its stages (`search.c`), the worker pool and the (resolved program, candidate) tasks it hands out (`workers.c`, `candidates.c`), the plan one residency becomes (`plan.c`), the repairs (`repair.c`), the memo tables (`memo.c`), the reused buffers (`workspace.c`), and section timing (`diagnostics.c`). |
-| `csrc/src/planner/search/algorithms/pressurefit/best_placed.c` | The shared record of the best plan the search has placed. |
-| `csrc/src/planner/admission/` | Physical allocation and causal-reuse admission. |
-| `shadowspill.simulator` / `csrc/src/simulator` | Independent schedule replay and makespan authority. |
+| Anchors, seed, task clock, transfer estimates, resident slice | `problem/` |
+| Strategy-to-control mapping | `candidates/plan.c` |
+| Boundary selection and pressure accounting | `residency/heap.c`, `residency/spans.c` |
+| Legal cuts and lexicographic ranking | `residency/cuts.c` |
+| Fetch windows and departures | `schedule/emit.c` |
+| Latest-safe and packed triggers | `schedule/triggers.c` |
+| Packed-fit capacity pass | `schedule/clamp.c` |
+| Candidate cycle, repairs, capacity refinement, kept answer | `candidates/search.c` |
+| Per-candidate jobs and per-problem winner | `candidates/workers.c` |
 
-The production path requires the C planner and simulator and fails closed on a
-missing or ABI-incompatible library. Readable Python
-implementations live only under `reference/python/pressurefit`,
-`reference/python/admission` and `reference/python/simulator`; they are
-differential-test oracles and never silently replace the library.
-
-Previous: [Graph-pair selection](graph-pair-selection.md). Next: [Physical
-admission and offset handling](physical-admission.md).
+Python resolution expansion and final materialization live in
+`src/shadowspill/planner/search/algorithms/pressurefit/search.py`.

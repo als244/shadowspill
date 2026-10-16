@@ -6,6 +6,11 @@ field-by-field workflows use [Interpreting a PlanReport](../plan-report.md) and
 its [field reference](../plan-report-fields.md), and [Interpreting StepResult
 diagnostics](../step-diagnostics.md).
 
+PressureFit also supports opt-in [cut-by-cut search traces](../pressurefit-trace.md)
+through `SearchOptions.trace_directory`. The reader in
+`shadowspill.diagnostics.pressurefit_trace` exposes reduction replay, ranked
+alternatives, the top three over-budget boundaries, and semantic label joins.
+
 ## Plan report
 
 Every planned callable exposes a `PlanReport` through `.plan_report`. It is the

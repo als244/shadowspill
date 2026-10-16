@@ -70,6 +70,11 @@ checkpoint/restore protocol. The repeatable `--planning-spill-budget-gib
 IDENTITY=GIB` option forwards a per-cell planning budget; the retained Qwen
 setup plans against 100 GiB inside its 112-GiB pool.
 
+PressureFit uses the fixed `E, writeback, -slack, -size` cut ranking with
+separately clamped eviction/fetch exposure. Each cell searches the default
+eight strategy/fetch policies per resolution. Saved plan records retain the
+complete request and selected policy.
+
 With checkpointing, the protocol checkpoints the planned callable, performs
 and diagnoses one warm step, restores the checkpoint, then measures three
 groups of four steps. Without it, the warm step is kept rather than restored

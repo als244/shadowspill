@@ -467,6 +467,7 @@ path, so there is no registry to reserve anything in.
 | `options` | `OptionRecord` | This search's own options, carried into the plan key whole and read by nothing outside the search. |
 | `__init__(options=None)` | method | Build the search with its own record; `None` means its defaults. Every search is constructed this way, which is what lets an archived plan be handed the search that made it. |
 | `named(name)` | `staticmethod` | The subclass registered under `name`, which defining it registered. Raises `KeyError`, naming the searches it knows, when the defining module has not been imported. |
+| `record_trace(...)` | method | Record a requested diagnostic trace after planning, including cache hits. Takes `result`, `options`, optional `admission`, `placement`, and `progress`; returns `None`. The base implementation raises `NotImplementedError`. |
 | `preflight(...)` | method | Refuse a machine no schedule can fit, before a search is paid for. Takes `program`, `initial_residency`, `final_residency=()`, `config`, `admission=None` and `generic`, and returns `None`. Defaults to saying nothing, which is always correct. |
 | `__call__(...)` | abstract | Answer with a `ProgramPlanResult`. The only method a subclass must write. |
 
@@ -482,11 +483,23 @@ return.
 The whole of what one planning call is told about searching, in one argument so
 neither half can be set without the other being visible.
 
+`trace_directory: str | None = None` requests an optional search recording.
+PressureFit obtains the ordinary answer, then reruns its winning candidate
+with tracing, including on cache hits. `trace_candidates:
+tuple[tuple[str, str], ...] | None = None` instead names explicit
+`(selection_id, candidate_id)` pairs to record. Both fields are excluded from
+`to_dict()`, stored requests and plan keys, like `workers`; deserialization
+leaves them `None`. This currently requires a single device and
+`generic.deterministic=True`. The returned plan is unchanged. See
+[cut traces](../pressurefit-trace.md) for recording, replay and semantic labels.
+
 | field | type | default | meaning |
 |---|---|---|---|
 | `generic` | `GenericPlanningOptions` | all defaults | What any search understands. |
 | `algorithm` | `SearchAlgorithm` \| `None` | `None` | The search itself, holding its own options. `None` runs the one that ships. |
 | `workers` | `int` | `0` | Threads the search may use; `0` is every logical CPU, `1` forces serial. |
+| `trace_directory` | `str` \| `None` | `None` | Output root for a requested search recording; excluded from plan identity. |
+| `trace_candidates` | `tuple[tuple[str, str], ...]` \| `None` | `None` | Explicit `(selection_id, candidate_id)` pairs; requires `trace_directory`. `None` records the answering pair. |
 
 `generic` and `algorithm` are both part of the plan key. **`workers` is
 not** -- it says how much machine to spend, not what to decide, so two runs
@@ -636,10 +649,19 @@ is a plan for a different program.
 | `resolution_options` | `tuple[Fraction, ...]` | `DEFAULT_RESOLUTION_OPTIONS` | Which resolved programs exist: the shares of flexible alternative groups to recompute, as exact fractions, one resolved program per share. |
 | `residency_strategies` | `tuple[str, ...]` | `("headroom-stall", "tight-stall")` | Which residency policies the candidate set is built from. |
 | `fetch_rules` | `tuple[str, ...]` | `("packed-fifo", "packed-fit", "latest-safe", "demand")` | Which fetch orderings the candidate set is built from. |
-| `evaluate_coalesced` | `bool` | `True` | Also evaluate the coalesced form of each candidate. |
 | `max_repair_attempts` | `int` | `256` | How many monotonic repairs one candidate may make before answering with the best plan it reached. |
 | `capacity_refinement_bytes` | `int` | `256 MiB` | How much capacity a plan gives back at a time when its layout does not fit. Zero hands back the whole shortfall, which converges in the fewest rounds; a smaller step overshoots less, because the layout's extent does not shrink byte for byte with the capacity. |
 | `record_reduction_steps` | `bool` | `False` | Record each candidate's reduction trajectory, one `ReductionStep` per plan it held. |
+
+The fixed stall key is `E, writeback, -slack, -size`, followed by stable
+alias/start/cut-ID tie breaks. Transfer strategies omit only `E`. Signed slack
+is `Se - w*Te + Sf - Tf`; it is maximized without clamping. The
+[PressureFit formulation](../../architecture/pressurefit.md#control-2-which-legal-cut-wins)
+defines the two overlap windows and exposure components. The default two
+residency strategies and four fetch rules give eight policies per resolution.
+Scoring and ranking are fixed parts of the algorithm. Serialized options with
+unsupported fields are rejected rather than silently interpreted as a different
+planning request.
 
 `resolution_options` takes `Fraction` values, integers or strings such as
 `"3/8"`, sorted and deduplicated on the way in. It lives here rather than on the

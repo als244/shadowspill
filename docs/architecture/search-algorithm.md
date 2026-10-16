@@ -14,7 +14,7 @@ repository is a first-class one.
 | | |
 |---|---|
 | `SearchAlgorithm` | The search itself, holding the options it was built with. Subclass this. |
-| `SearchOptions` | What one planning call is told about searching: `generic`, the `algorithm` instance, and `workers`. |
+| `SearchOptions` | What one planning call is told about searching: `generic`, the `algorithm` instance, `workers`, and optional diagnostic tracing. |
 
 They compose one way only:
 
@@ -132,6 +132,16 @@ Raise `PlanInfeasibleError` when no schedule fits, and
 [Plan search](search.md#what-a-search-answers-with) says why a caller needs
 the two kept apart.
 
+### `record_trace(...) -> None`
+
+An optional diagnostic hook called after the ordinary planning result is
+available, including on a plan-store hit. It receives that `result`, the
+caller's `SearchOptions`, and optional `admission`, `placement`, and `progress`.
+The base implementation raises `NotImplementedError`; algorithms need only
+override it when they support requested tracing. It must preserve the original
+answer and its planning identity. PressureFit reruns selected candidates and
+checks their outcomes against the ordinary search; see [cut traces](../python/pressurefit-trace.md).
+
 ## Defaults
 
 `SearchOptions()` with nothing named runs the search that ships, built
@@ -140,6 +150,11 @@ CPU, and is **not** part of the plan key: it says how much machine to spend
 rather than what to decide, so two runs at different worker counts ask the
 same question and read back the same answer. The plan report records what
 was used.
+
+`trace_directory` and `trace_candidates` default to `None`. They request
+diagnostic output and are excluded from serialized search options and plan
+keys. An algorithm that does not implement `record_trace` refuses such a
+request instead of silently omitting the recording.
 
 `GenericPlanningOptions` is what you are handed as `generic`:
 

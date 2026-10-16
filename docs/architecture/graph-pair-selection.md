@@ -62,8 +62,8 @@ selection  {g0: save, g1: recompute, g2: save} one option, every group
 ```
 
 Two neighbouring terms are deliberately outside the family. A **candidate
-policy** is what a search varies *within* one problem — a residency strategy,
-fetch rule and coalescing mode in [the search that
+policy** is what a search varies *within* one problem — a residency strategy
+and fetch rule in [the search that
 ships](pressurefit.md#built-in-candidate-policies) — so a plan is chosen by a
 selection and a policy together, and "selection" alone never means the policy.
 **Recomputation** keeps its own name wherever it is the subject: a graph pair

@@ -37,6 +37,13 @@ lowered with, since a different walk is a different program. It contains:
 - `transfer_capabilities_json`, the calibration the program was measured under;
 - `phase_timings_ns`, `store_directories` and `cache_artifacts`.
 
+`semantic_labels_json` contains optional frontend annotations keyed by task
+and object ID: stage/microbatch provenance, parameter paths, gradient and
+optimizer names, and output origins. `to_dict()` serializes it as
+`semantic_labels`; old archives without it read as `{}`. These labels are
+excluded from `digest`, like timing/cache evidence. They can enrich
+[PressureFit trace analysis](../pressurefit-trace.md#semantic-labels-and-positions).
+
 `StepProgram.digest` identifies planning content rather than how long or where
 it was produced. `to_json()` and `from_json()` carry it as a portable corpus.
 

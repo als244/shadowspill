@@ -169,6 +169,8 @@ Task-oriented pages: how to do something, and how to read what comes back.
   admission.
 - [PlanReport field reference](python/plan-report-fields.md) — every field of
   every record the planning report carries, and what it holds.
+- [PressureFit cut traces](python/pressurefit-trace.md) — record and replay
+  residency cuts, compare ranked alternatives, and render their trajectory.
 - [Interpreting StepResult diagnostics](python/step-diagnostics.md) — task and
   transfer instants, host boundaries, allocator evidence, and simulator
   reconciliation, with a complete field reference.

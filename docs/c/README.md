@@ -18,7 +18,7 @@ the inventory and the reference index.
 | Pool memory | [`runtime/pool_memory.h`](../../csrc/include/shadowspill/runtime/pool_memory.h) | [Pool memory contract](pool-memory.md) | Where a pool's region comes from: the acquire/release pair a kind of memory implements, and why nothing reads through the address it returns |
 | SSD extension | [`ssd.h`](../../csrc/include/shadowspill/ssd.h), [`runtime/library.h`](../../csrc/include/shadowspill/runtime/library.h) | [SSD pool and lanes](ssd.md) | Extension registration, temporary direct-I/O storage, bounded host staging, stream ordering, cleanup and calibration |
 | Planner | [`planner.h`](../../csrc/include/shadowspill/planner.h) | [Planner API](planner.md) | The planning question in indexed form and the certification a schedule passes whichever search found it: exact schedule admission, the admission operations a schedule implies, the lease lifetimes those resolve to, and fixed-offset placement |
-| PressureFit | [`pressurefit/pressurefit.h`](../../csrc/include/shadowspill/pressurefit/pressurefit.h) | [PressureFit API](pressurefit.md) | The search that ships: its options and the three policy axes, its result and per-candidate diagnostics, its preflight, and the shared placed-plan record |
+| PressureFit | [`pressurefit/pressurefit.h`](../../csrc/include/shadowspill/pressurefit/pressurefit.h) | [PressureFit API](pressurefit.md) | The search that ships: residency/fetch policies, fixed cut scoring, tracing, per-candidate diagnostics, preflight, and the shared placed-plan record |
 | Simulator | [`simulator.h`](../../csrc/include/shadowspill/simulator.h) | [Simulator API](simulator.md) | The one call that times an already selected schedule, and the intervals, peaks, stalls and capacity shortfalls it reports |
 | PyTorch adapter | [`pytorch_adapter.h`](../../csrc/adapter/pytorch/include/shadowspill/pytorch_adapter.h) | [PyTorch adapter](pytorch-adapter.md) | Only what needs PyTorch: bootstrap and the physical ledger, the pluggable-allocator callbacks, storage validation, and the stream-wrapping task boundaries |
 
@@ -88,7 +88,7 @@ consumes them immediately after, from schedule admission through admission
 operations and lease lifetimes to placement.
 
 `pressurefit/pressurefit.h` sits beside it and holds one search's own surface,
-in the order a caller meets it: the three policy axes, the options naming them,
+in the order a caller meets it: policy codes, options,
 the preflight, the result and its per-candidate diagnostics, then the calls and
 the shared placed-plan record. A search implemented elsewhere would ship a
 header of the same shape and reuse `planner.h` unchanged, which is what keeps

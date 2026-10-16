@@ -14,6 +14,7 @@ How to use the system and how to read what it produces.
 - [Errors, failures, and cleanup](failures.md)
 - [Interpreting a PlanReport](plan-report.md)
 - [PlanReport field reference](plan-report-fields.md)
+- [PressureFit cut traces](pressurefit-trace.md)
 - [Interpreting StepResult diagnostics](step-diagnostics.md)
 - [program and annotated-plan JSON](planning-json.md)
 - [Figures over a step search](plots.md)

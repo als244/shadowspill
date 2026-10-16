@@ -46,7 +46,7 @@ Beside them it carries how many task-alternative groups recompute out of how
 many, the traffic the simulation ran in each direction, the per-direction
 bandwidths it planned against, per-phase planning wall time, and
 `selected_candidate` — the winning candidate's residency strategy, fetch rule,
-coalescing, the repairs it had spent when it placed the plan it answers with,
+the repairs it had spent when it placed the plan it answers with,
 and what placing cost: the fastest plan it simulated whose layout did not fit,
 how many such plans it measured, and the answer over that plan. One means
 placing cost nothing; well above one means the search gave up plans it liked
@@ -265,15 +265,18 @@ search invocation
     └── candidate-policy evaluation
         ├── residency strategy
         ├── fetch-trigger rule
-        ├── coalescing mode
         ├── outcome
         ├── repair counts
         ├── work counts and section timing
         └── reduction trajectory (when recorded)
 ```
 
-A candidate policy is the combination of residency strategy, fetch rule, and
-coalescing mode. A resolved program is a complete selection of one option
+A candidate policy combines a residency strategy and fetch rule. PressureFit
+searches eight policies per resolution by default: two residency strategies
+and four fetch rules. Every candidate uses the same fixed split eviction/fetch
+exposure score and `E, writeback, -slack, -size` ranking. A transfer strategy
+omits the leading exposure term.
+A resolved program is a complete selection of one option
 from every task-alternative group. One policy can therefore be evaluated in many
 problems.
 

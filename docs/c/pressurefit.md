@@ -19,8 +19,15 @@ The framework-neutral problem formulation and complete algorithm are in the
 
 ## Data model
 
+Every candidate uses the split eviction/fetch exposure estimate and the fixed
+lexicographic cut ranking: exposure, writeback, descending signed slack,
+descending size, then stable alias/start/cut-ID tie breaks. Transfer strategies
+omit exposure. The [formulas](../architecture/pressurefit.md#control-2-which-legal-cut-wins)
+define both overlap windows and the unclamped signed slack; neither the score
+nor the ranking is a configurable search axis.
+
 `ShadowSpillPressureFitOptions` selects residency strategies, fetch rules,
-coalescing modes, repair limit, how much capacity a plan
+repair limit, how much capacity a plan
 gives back at a time when its layout does not fit
 (`capacity_refinement_bytes`, zero for the whole shortfall), whether each
 candidate records its reduction trajectory (`record_reduction_steps`), how many
@@ -33,16 +40,25 @@ request, zero for none): those stay resident from first to last access, take
 static homes in a resident slice whose size is reserved at preparation out of
 the capacity handed to the reducer, and are fetched at a trigger chosen once.
 
-The three policy axes are supplied as explicit `uint8_t` arrays with counts, so
-a caller evaluates exactly the combinations it asks for; their product is the
-candidate count per problem. Their values are
-`ShadowSpillPressureFitResidencyStrategy`
-(`SHADOWSPILL_PRESSUREFIT_RESIDENCY_` then `HEADROOM_STALL`,
-`HEADROOM_TRANSFER`, `TIGHT_STALL`, `TIGHT_TRANSFER` or `RELAXED_STALL`),
-`ShadowSpillPressureFitFetchRule` (`SHADOWSPILL_PRESSUREFIT_FETCH_` then
-`PACKED_FIFO`, `PACKED_FIT`, `INTERVAL_ENTRY`, `LATEST_SAFE` or `DEMAND`), and,
-for coalescing, 0 plain and 1 coalesced. What each one does to a plan is
-tabulated in [PressureFit](../architecture/pressurefit.md).
+`trace_directory` is an optional `const char *` naming an existing directory.
+NULL disables cut tracing. A non-NULL value records every candidate evaluated
+by this C call in an exclusive `.pftrace` file, starting before its base
+reduction and including step/answer links. Only single-device problems are
+supported. Open/write/close errors fail the search. Python's normal planning
+API selects the winner before invoking this recording pass; the C API records
+the explicit policy arrays supplied to it. See the [trace format and reader](../python/pressurefit-trace.md).
+
+The two policy axes are supplied as explicit `uint8_t` arrays with counts;
+their product is the candidate count per problem. The residency values use
+`SHADOWSPILL_PRESSUREFIT_RESIDENCY_` followed by `HEADROOM_STALL`,
+`HEADROOM_TRANSFER`, `TIGHT_STALL`, or `TIGHT_TRANSFER`. Fetch values use
+`SHADOWSPILL_PRESSUREFIT_FETCH_` followed by `PACKED_FIFO`, `PACKED_FIT`,
+`LATEST_SAFE`, or `DEMAND`.
+
+The four residency strategies combine two independent controls: whether to
+charge a boundary before fetched spans, and whether exposure leads the cut
+ranking. To match Python's portfolio, supply the two stall strategies and all
+four fetch rules: eight candidates per problem. See the [policy definitions](../architecture/pressurefit.md#built-in-candidate-policies).
 
 Initial residency is the caller's actual declaration. A fresh invocation has
 no plan-owned device values. A zero-duration control task supplies a boundary
@@ -73,7 +89,7 @@ under `deterministic` the record is not consulted and the incumbent bounds
 nothing, though it still wins unless a candidate beats it.
 
 The candidate diagnostic is where the detail is: a
-`ShadowSpillPressureFitCandidateStatus`, the three policy codes that produced
+`ShadowSpillPressureFitCandidateStatus`, the two policy codes that produced
 it, its own repair, work and section counters, the placement counters, the
 schedule digest, its own span, and the boundary a failure stopped at — task,
 alias, device, location, boundary, time, and the capacity, used, requested and
@@ -132,7 +148,7 @@ needed more contiguous pool than the pool has.
   the shared record of the best plan any caller has actually placed; candidates
   offer their placed plans into it internally. `read()` copies out a
   `ShadowSpillPressureFitBestPlacedRecord`: the makespan, the object capacity
-  that plan was built against, how much capacity it gave back, the three policy
+  that plan was built against, how much capacity it gave back, the two policy
   codes, and the schedule digest. A `makespan_ns` of zero means nothing has
   been placed. The object also keeps its own copy of the plan, replaced in
   place when a better one arrives, so the record never names a plan nobody
@@ -192,8 +208,8 @@ holds exactly, at every level. The one exception is `admit_ns`, which is
 nested *inside* `simulate_ns` rather than beside it, because admission runs
 as part of simulating; it is excluded from the identity above for that
 reason. `prepare_ns` is a problem-level section only — preparing the problem
-happens once, before any candidate exists. `reduce_ns` covers a strategy's
-base reduction; a reduction a repair forces is charged to `repair_ns`, which
+happens once, before any candidate exists. `reduce_ns` covers each candidate's
+own base reduction; a reduction a repair forces is charged to `repair_ns`, which
 is what pays for it.
 
 What each section covers is walked through stage by stage in
@@ -213,7 +229,7 @@ origin, so two candidates ran at the same time exactly when their spans
 overlap, and a problem spans its candidates. Both are zero for a candidate no
 worker reached.
 
-`ShadowSpillPressureFitRepairDiagnostics` categorizes each monotonic repair by
+`ShadowSpillPressureFitRepairDiagnostics` categorizes each repair by
 whether it advances or delays a fetch or addresses a pressure boundary, and by
 which of the two rejections asked for it: an admission refusal or a simulated
 one. Candidate, problem, and aggregate Python diagnostics preserve these
@@ -228,7 +244,9 @@ capacity it was built against, the repair count reaching it, the simulation
 status, how many capacity boundaries it came up short at, and a `flags` word
 of `ShadowSpillPressureFitReductionStepFlags` saying what happened to it —
 whether it was simulated, measured for layout, placed, triggered a refinement,
-was at some point the best plan, or is the answer the candidate returned.
+was at some point the best plan, or followed a fetch move. With cut tracing
+enabled, the recording pass also marks the step the candidate returned with
+`SHADOWSPILL_STEP_ANSWER` and writes its explicit answer-step link.
 `cut_offset`/`cut_count` index the candidate's flat `cut_aliases` array, naming
 the objects the reducer cut to reach that step.
 
@@ -252,5 +270,7 @@ All problem input arrays are borrowed. Each problem result owns its selected
 schedule and candidate array until
 `shadowspill_pressurefit_result_destroy()` releases them, including when the
 call reports a failure: problems that completed still hold theirs. Calls with
-distinct inputs and results are independent; the search performs no I/O and
-owns no global mutable state beyond a best-placed record a caller passes it.
+distinct inputs and results are independent. With `trace_directory == NULL`,
+the search performs no I/O; an enabled tracer writes its candidate files to
+that directory. The search owns no global mutable state beyond a best-placed
+record a caller passes it.

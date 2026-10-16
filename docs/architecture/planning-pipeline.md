@@ -126,9 +126,11 @@ different search without changing. The two levels stay separate in the
 diagnostics, so a report says which assignment won and what it cost to find
 out.
 
-[PressureFit](pressurefit.md), the search that ships, evaluates residency,
-eviction, fetch-trigger and coalescing candidates within each resolved
-program, against logical object capacity after provider, fixed-service and
+[PressureFit](pressurefit.md), the search that ships, evaluates eight policies
+per resolved program by default: two residency strategies and four fetch rules,
+using split eviction/fetch exposure and `E, writeback, -slack, -size` cut ranking.
+Search uses
+logical object capacity after provider, fixed-service and
 allocator allowances. It requires the C planner and simulator and fails closed
 on a missing or ABI-incompatible library.
 
