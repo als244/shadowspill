@@ -1,7 +1,7 @@
 /* Moving one fetch within a schedule that already exists. */
 #include "internal.h"
 
-int shadowspill_schedule_action_compare(const void *left_value, const void *right_value) {
+static int action_compare(const void *left_value, const void *right_value) {
     const Action *left = left_value;
     const Action *right = right_value;
     if (left->trigger != right->trigger) {
@@ -10,13 +10,37 @@ int shadowspill_schedule_action_compare(const void *left_value, const void *righ
     if (left->kind != right->kind) {
         return left->kind < right->kind ? -1 : 1;
     }
+    if (left->next_consumer != right->next_consumer) {
+        return left->next_consumer < right->next_consumer ? -1 : 1;
+    }
     if (left->alias != right->alias) {
         return left->alias < right->alias ? -1 : 1;
     }
     return 0;
 }
 
-static int sort_storage_actions(ShadowSpillScheduleStorage *storage) {
+void shadowspill_schedule_sort_actions(
+    const ShadowSpillScheduleFacts *facts,
+    Action *actions,
+    uint32_t count
+) {
+    /* Trigger quantization and repair can put different deadlines on one
+     * boundary. Preserve consumer urgency in that boundary's FIFO queue;
+     * alias order is only a deterministic final tie break. No-consumer
+     * fetches (for final residency) follow fetches needed by compute. */
+    for (uint32_t index = 0U; index < count; ++index) {
+        Action *action = &actions[index];
+        action->next_consumer = action->kind == SHADOWSPILL_MEMORY_FETCH
+            ? shadowspill_schedule_next_input_consumer(facts, action->alias, action->trigger)
+            : UINT32_MAX;
+    }
+    qsort(actions, count, sizeof(*actions), action_compare);
+}
+
+static int sort_storage_actions(
+    const ShadowSpillScheduleFacts *facts,
+    ShadowSpillScheduleStorage *storage
+) {
     Action *actions = malloc(
         (storage->value.action_count == 0U ? 1U :
             (size_t)storage->value.action_count) * sizeof(*actions)
@@ -31,7 +55,7 @@ static int sort_storage_actions(ShadowSpillScheduleStorage *storage) {
             .kind = storage->value.action_kinds[index],
         };
     }
-    qsort(actions, storage->value.action_count, sizeof(*actions), shadowspill_schedule_action_compare);
+    shadowspill_schedule_sort_actions(facts, actions, storage->value.action_count);
     for (uint32_t index = 0U; index < storage->value.action_count; ++index) {
         storage->value.action_trigger_tasks[index] = actions[index].trigger;
         storage->value.action_aliases[index] = actions[index].alias;
@@ -156,7 +180,7 @@ int shadowspill_delay_indexed_fetch(
             .maximum_trigger = UINT32_MAX,
         };
     }
-    return sort_storage_actions(storage) == 0 ? 1 : -1;
+    return sort_storage_actions(facts, storage) == 0 ? 1 : -1;
 }
 
 int shadowspill_advance_indexed_fetch_to_release(
@@ -276,7 +300,7 @@ int shadowspill_advance_indexed_fetch_to_release(
             .maximum_trigger = selected_trigger,
         };
     }
-    return sort_storage_actions(storage) == 0 ? 1 : -1;
+    return sort_storage_actions(facts, storage) == 0 ? 1 : -1;
 }
 
 int shadowspill_apply_fetch_trigger_constraints(
@@ -331,7 +355,7 @@ int shadowspill_apply_fetch_trigger_constraints(
             changed = 1;
         }
     }
-    if (changed != 0 && sort_storage_actions(storage) != 0) {
+    if (changed != 0 && sort_storage_actions(facts, storage) != 0) {
         return -1;
     }
     return 0;

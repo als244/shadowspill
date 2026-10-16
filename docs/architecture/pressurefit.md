@@ -378,6 +378,13 @@ last span is retained, released, or evicted.
 
 ### Legal fetch windows
 
+Actions are emitted in ascending trigger order, with releases before evictions
+and fetches. Fetches sharing a trigger are ordered by their **earliest next input
+consumer**, then alias index. A fetch required only for final residency follows
+fetches needed by tasks. This ordering also applies after repair moves a trigger.
+The FIFO copy lane therefore preserves consumer urgency when several desired
+start times map to the same task boundary.
+
 For reload $r$ of alias $a$, let $[E_r,L_r]$ be its inclusive legal trigger
 window and $e_r$ the later span's entry boundary.
 

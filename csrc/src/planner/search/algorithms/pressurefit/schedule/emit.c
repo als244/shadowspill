@@ -312,7 +312,7 @@ static int choose_triggers(
 }
 
 /* Both move lists become one list, ordered by the boundary each fires on. */
-static int build_actions(Emission *emission) {
+static int build_actions(const ShadowSpillScheduleFacts *facts, Emission *emission) {
     if (emission->reload_count > UINT32_MAX - emission->departure_count) {
         return -1;
     }
@@ -349,11 +349,10 @@ static int build_actions(Emission *emission) {
             return -1;
         }
     }
-    qsort(
+    shadowspill_schedule_sort_actions(
+        facts,
         emission->actions,
-        emission->action_count,
-        sizeof(*emission->actions),
-        shadowspill_schedule_action_compare
+        emission->action_count
     );
     return 0;
 }
@@ -419,7 +418,7 @@ int shadowspill_emit_indexed_schedule(
     if (choose_triggers(
             facts, residency, fetch_rule, fetch_headroom, &emission
         ) != 0 ||
-        build_actions(&emission) != 0 ||
+        build_actions(facts, &emission) != 0 ||
         shadowspill_schedule_copy_actions(
             emission.actions, emission.action_count, storage
         ) != 0) {

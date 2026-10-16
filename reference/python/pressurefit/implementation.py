@@ -39,7 +39,7 @@ from shadowspill.simulator import (
     SimulationResult,
 )
 
-from .actions import emit_schedule
+from .actions import action_priority, emit_schedule
 from .facts import PlanningFacts, build_facts
 from .residency import (
     Cut,
@@ -289,12 +289,12 @@ def _delay_fetch(
         actions[selected_index],
         trigger_task_id=facts.tasks[target].task_id,
     )
-    kind_order = {"release": 0, "evict": 1, "fetch": 2}
     actions.sort(
-        key=lambda action: (
+        key=lambda action: action_priority(
+            facts,
             facts.task_index[action.trigger_task_id],
-            kind_order[action.kind.value],
             facts.alias_index[action.alias_group_id],
+            action.kind,
         )
     )
     repaired = replace(schedule, actions=tuple(actions))

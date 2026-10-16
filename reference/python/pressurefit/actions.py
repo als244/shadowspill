@@ -34,6 +34,22 @@ class Departure:
     kind: MemoryActionKind
 
 
+def action_priority(facts, trigger, alias, kind):
+    """Same-boundary fetches serve the earliest next consumer first."""
+    kind_order = {
+        MemoryActionKind.RELEASE: 0,
+        MemoryActionKind.EVICT: 1,
+        MemoryActionKind.FETCH: 2,
+    }
+    consumer = len(facts.tasks)
+    if kind is MemoryActionKind.FETCH:
+        consumers = facts.input_tasks[alias]
+        i = bisect_right(consumers, trigger)
+        if i < len(consumers):
+            consumer = consumers[i]
+    return trigger, kind_order[kind], consumer, alias
+
+
 def _events_in_span(
     facts: PlanningFacts, alias: int, span: Span
 ) -> tuple[tuple[int, int], ...]:
@@ -394,11 +410,6 @@ def emit_schedule(
         actions_by_task.setdefault(triggers[reload], []).append(
             (reload.alias, MemoryActionKind.FETCH)
         )
-    kind_order = {
-        MemoryActionKind.RELEASE: 0,
-        MemoryActionKind.EVICT: 1,
-        MemoryActionKind.FETCH: 2,
-    }
     actions = tuple(
         MemoryAction(
             facts.tasks[task].task_id,
@@ -407,7 +418,8 @@ def emit_schedule(
         )
         for task in sorted(actions_by_task)
         for alias, kind in sorted(
-            actions_by_task[task], key=lambda item: (kind_order[item[1]], item[0])
+            actions_by_task[task],
+            key=lambda item: action_priority(facts, task, item[0], item[1]),
         )
     )
     schedule = MemorySchedule(

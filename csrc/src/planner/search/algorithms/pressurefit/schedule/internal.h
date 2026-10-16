@@ -45,6 +45,7 @@ typedef struct ReloadRank {
 typedef struct Action {
     uint32_t trigger;
     uint32_t alias;
+    uint32_t next_consumer;
     uint8_t kind;
 } Action;
 
@@ -128,7 +129,11 @@ int shadowspill_schedule_clamp_triggers_to_fit(
     int fetch_headroom
 );
 
-int shadowspill_schedule_action_compare(const void *left_value, const void *right_value);
+void shadowspill_schedule_sort_actions(
+    const ShadowSpillScheduleFacts *facts,
+    Action *actions,
+    uint32_t count
+);
 
 int shadowspill_schedule_copy_actions(
     const Action *actions,

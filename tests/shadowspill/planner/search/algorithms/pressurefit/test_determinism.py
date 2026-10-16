@@ -137,7 +137,7 @@ def test_direct_required_floor_matches_minimal_residency_sweep() -> None:
         (
             2,
             224,
-            "16f321ea8f1fe9ed0220e614159a66343941b48bc7f267f45b49f9be778c9048",
+            "8930d44dacbbcab9e299071ee903033cd084c9c02e7d73166c69cb4c57b7766c",
             118_000,
             "tight-stall/packed-fit",
             26,
@@ -153,7 +153,7 @@ def test_direct_required_floor_matches_minimal_residency_sweep() -> None:
         (
             10,
             500,
-            "0700d4949f29fe0c3758d9d84ff3a035597a0a709eee2d01d64fabd388a6edb6",
+            "7d4b160615a1fa712d13437dd5246d947d00b7a71bc7ce287077a9bc1031c54d",
             310_000,
             "headroom-stall/packed-fifo",
             104,
