@@ -28,12 +28,26 @@ typedef struct ResidencyCut {
 
 typedef struct CutScore {
     uint64_t exposed_ns;
-    int64_t values[7];
+    int64_t values[4];
+    uint64_t evict_exposed_ns;
+    uint64_t fetch_exposed_ns;
+    /* Exact signed Se + Sf - wTe - Tf: high * 2^64 + low. The sum of
+       two uint64 windows and two durations needs more than 64 bits. */
+    int64_t slack_high;
+    uint64_t slack_low;
 } CutScore;
+
+typedef struct CutTiming {
+    uint64_t prior_use_end_ns;
+    uint64_t next_use_begin_ns;
+    uint64_t evict_ns;
+    uint64_t fetch_ns;
+} CutTiming;
 
 typedef struct IndexedCut {
     ResidencyCut cut;
     CutScore score;
+    CutTiming timing;
     uint32_t first_boundary;
     uint32_t last_boundary;
 } IndexedCut;
@@ -41,8 +55,8 @@ typedef struct IndexedCut {
 /* Every legal cut of the seed, and where each one helps.
  *
  * A cut relieves every boundary in [first_boundary, last_boundary]. The
- * cuts relieving a boundary are kept in score order so the best is the
- * first one still available, and they are kept once per node of a segment
+ * cuts relieving a boundary are kept in stable tie-break order. They are
+ * kept once per node of a segment
  * tree over the boundaries rather than once per boundary: a cut is recorded
  * on the O(log n) nodes that exactly cover its range, and the cuts that
  * relieve a boundary are the ones on the nodes from its leaf to the root.
@@ -99,8 +113,18 @@ int shadowspill_residency_compare_score(
 
 CutScore shadowspill_residency_score_cut(
     const ShadowSpillPressureFitResidencyProblem *problem,
-    const ResidencyCut *cut,
-    int minimize_transfer
+    const ResidencyCut *cut
+);
+
+CutTiming shadowspill_residency_cut_timing(
+    const ShadowSpillPressureFitResidencyProblem *problem, const ResidencyCut *cut
+);
+
+/* Boundary is a position: task boundary is about to start. At the terminal
+ * position both task clocks equal the end of the compute timeline. */
+CutScore shadowspill_residency_score_at(
+    const ShadowSpillPressureFitResidencyProblem *problem,
+    const IndexedCut *cut, uint32_t boundary, int minimize_transfer
 );
 
 int shadowspill_residency_candidate_cut(

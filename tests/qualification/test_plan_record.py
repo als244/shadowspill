@@ -40,9 +40,8 @@ def _result() -> ProgramPlanResult:
     initial, final = exact_capacity_residency()
     result = PressureFit(
         PressureFitOptions(
-            residency_strategies=("relaxed-stall",),
+            residency_strategies=("tight-stall",),
             fetch_rules=("latest-safe",),
-            evaluate_coalesced=False,
         )
     )(
         program,
@@ -64,7 +63,7 @@ def test_record_contains_complete_request_and_expected_result() -> None:
     algorithm = record["request"]["search_options"]["algorithm"]  # type: ignore[index]
     assert algorithm["options"]["fetch_rules"] == ["latest-safe"]
     assert record["expected"]["schedule"] == result.schedule.to_dict()  # type: ignore[index]
-    assert record["expected"]["simulation"]["makespan_ns"] == 5_000  # type: ignore[index]
+    assert record["expected"]["simulation"]["makespan_ns"] == 4_000  # type: ignore[index]
     assert record["request"]["admission"] is None  # type: ignore[index]
 
 
@@ -77,7 +76,6 @@ def test_record_carries_the_physical_pressurefit_call_boundary() -> None:
         PressureFitOptions(
             residency_strategies=("tight-stall",),
             fetch_rules=("latest-safe",),
-            evaluate_coalesced=False,
         )
     )(
         program,

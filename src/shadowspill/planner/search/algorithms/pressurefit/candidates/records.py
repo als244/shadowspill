@@ -20,12 +20,10 @@ _STRATEGY_CODE = {
     "headroom-transfer": 1,
     "tight-stall": 2,
     "tight-transfer": 3,
-    "relaxed-stall": 4,
 }
 _RULE_CODE = {
     "packed-fifo": 0,
     "packed-fit": 1,
-    "interval-entry": 2,
     "latest-safe": 3,
     "demand": 4,
 }
@@ -49,7 +47,6 @@ class CCandidateDiagnostic:
     status: int
     strategy: str
     rule: str
-    coalesced: bool
     repairs: PlanningRepairDiagnostics
     work: PlanningWorkDiagnostics
     simulation_status: int
@@ -94,8 +91,7 @@ class CCandidateDiagnostic:
 
     @property
     def candidate_id(self) -> str:
-        suffix = "-coalesced" if self.coalesced else ""
-        return f"{self.strategy}/{self.rule}{suffix}"
+        return f"{self.strategy}/{self.rule}"
 
     @property
     def repair_attempts(self) -> int:

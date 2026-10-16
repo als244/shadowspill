@@ -63,79 +63,17 @@ uint32_t shadowspill_schedule_next_input_consumer(
 }
 
 int shadowspill_schedule_copy_actions(
-    const ShadowSpillScheduleFacts *facts,
-    const Action *actions,
-    uint32_t action_count,
-    int coalesced,
-    ShadowSpillScheduleStorage *storage
+    const Action *actions, uint32_t action_count, ShadowSpillScheduleStorage *storage
 ) {
     if (shadowspill_schedule_reserve_actions(storage, action_count) != 0) {
         return -1;
     }
-    if (coalesced == 0) {
-        for (uint32_t index = 0U; index < action_count; ++index) {
-            storage->value.action_trigger_tasks[index] = actions[index].trigger;
-            storage->value.action_aliases[index] = actions[index].alias;
-            storage->value.action_kinds[index] = actions[index].kind;
-        }
-        storage->value.action_count = action_count;
-        return 0;
+    for (uint32_t index = 0U; index < action_count; ++index) {
+        storage->value.action_trigger_tasks[index] = actions[index].trigger;
+        storage->value.action_aliases[index] = actions[index].alias;
+        storage->value.action_kinds[index] = actions[index].kind;
     }
-
-    uint8_t *masks = calloc(
-        facts->alias_count == 0U ? 1U : facts->alias_count,
-        sizeof(*masks)
-    );
-    uint32_t *touched = malloc(
-        (facts->alias_count == 0U ? 1U : (size_t)facts->alias_count) *
-        sizeof(*touched)
-    );
-    if (masks == NULL || touched == NULL) {
-        free(masks);
-        free(touched);
-        return -1;
-    }
-
-    uint32_t output = 0U;
-    uint32_t begin = 0U;
-    while (begin < action_count) {
-        uint32_t end = begin + 1U;
-        while (end < action_count && actions[end].trigger == actions[begin].trigger) {
-            ++end;
-        }
-        uint32_t touched_count = 0U;
-        for (uint32_t index = begin; index < end; ++index) {
-            uint8_t kind = actions[index].kind;
-            if (kind != SHADOWSPILL_MEMORY_RELEASE &&
-                kind != SHADOWSPILL_MEMORY_FETCH) {
-                continue;
-            }
-            uint32_t alias = actions[index].alias;
-            if (masks[alias] == 0U) {
-                touched[touched_count++] = alias;
-            }
-            masks[alias] |= kind == SHADOWSPILL_MEMORY_RELEASE ? 1U : 2U;
-        }
-        for (uint32_t index = begin; index < end; ++index) {
-            uint8_t kind = actions[index].kind;
-            if ((kind == SHADOWSPILL_MEMORY_RELEASE ||
-                 kind == SHADOWSPILL_MEMORY_FETCH) &&
-                masks[actions[index].alias] == 3U) {
-                continue;
-            }
-            storage->value.action_trigger_tasks[output] = actions[index].trigger;
-            storage->value.action_aliases[output] = actions[index].alias;
-            storage->value.action_kinds[output] = kind;
-            ++output;
-        }
-        for (uint32_t index = 0U; index < touched_count; ++index) {
-            masks[touched[index]] = 0U;
-        }
-        begin = end;
-    }
-    storage->value.action_count = output;
-    free(masks);
-    free(touched);
+    storage->value.action_count = action_count;
     return 0;
 }
 
@@ -241,7 +179,6 @@ int shadowspill_advance_indexed_fetch_to_release(
         !shadowspill_alias_may_cut(facts->problem->residency, alias)) {
         return 0;
     }
-
     const uint32_t consumer = shadowspill_schedule_next_input_consumer(
         facts, alias, current_trigger
     );
@@ -297,7 +234,6 @@ int shadowspill_advance_indexed_fetch_to_release(
         (latest_write != UINT32_MAX && minimum_trigger < latest_write)) {
         return 0;
     }
-
     uint32_t selected_trigger = UINT32_MAX;
     uint32_t selected_alias = UINT32_MAX;
     uint64_t selected_size = UINT64_MAX;

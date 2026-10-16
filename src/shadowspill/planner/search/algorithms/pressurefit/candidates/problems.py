@@ -30,12 +30,10 @@ _STRATEGY_CODE = {
     "headroom-transfer": 1,
     "tight-stall": 2,
     "tight-transfer": 3,
-    "relaxed-stall": 4,
 }
 _RULE_CODE = {
     "packed-fifo": 0,
     "packed-fit": 1,
-    "interval-entry": 2,
     "latest-safe": 3,
     "demand": 4,
 }
@@ -122,17 +120,12 @@ def _problem_options(
     rules = (ctypes.c_uint8 * len(rule_names))(
         *(_RULE_CODE[value] for value in rule_names)
     )
-    # The library takes the modes as a list like the other two axes; the
-    # option a caller sets is the bool.
-    mode_values = (0, 1) if search_options.evaluate_coalesced else (0,)
-    modes = (ctypes.c_uint8 * len(mode_values))(*mode_values)
     compiled = CPressureFitOptions(
         residency_strategies=strategies,
         residency_strategy_count=len(strategy_names),
         fetch_rules=rules,
         fetch_rule_count=len(rule_names),
-        coalescing_modes=modes,
-        coalescing_mode_count=len(mode_values),
+
         max_repair_attempts=search_options.max_repair_attempts,
         capacity_refinement_bytes=search_options.capacity_refinement_bytes,
         record_reduction_steps=int(search_options.record_reduction_steps),
@@ -140,7 +133,7 @@ def _problem_options(
         deterministic=int(generic.deterministic),
         minimum_object_bytes_evict_eligible=generic.minimum_object_bytes_evict_eligible,
     )
-    return compiled, (strategies, rules, modes)
+    return compiled, (strategies, rules)
 
 
 def validate_program_problem(

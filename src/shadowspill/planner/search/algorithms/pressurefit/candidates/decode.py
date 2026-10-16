@@ -54,12 +54,10 @@ _STRATEGY_CODE = {
     "headroom-transfer": 1,
     "tight-stall": 2,
     "tight-transfer": 3,
-    "relaxed-stall": 4,
 }
 _RULE_CODE = {
     "packed-fifo": 0,
     "packed-fit": 1,
-    "interval-entry": 2,
     "latest-safe": 3,
     "demand": 4,
 }
@@ -357,7 +355,7 @@ def _decode_problem_result(
                     status=int(value.status),
                     strategy=strategy,
                     rule=rule,
-                    coalesced=bool(value.coalesced),
+
                     repairs=_decode_repairs(value.repairs),
                     work=_decode_work(value.work),
                     simulation_status=int(value.simulation_status),

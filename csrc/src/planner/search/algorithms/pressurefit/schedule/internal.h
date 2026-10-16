@@ -131,10 +131,8 @@ int shadowspill_schedule_clamp_triggers_to_fit(
 int shadowspill_schedule_action_compare(const void *left_value, const void *right_value);
 
 int shadowspill_schedule_copy_actions(
-    const ShadowSpillScheduleFacts *facts,
     const Action *actions,
     uint32_t action_count,
-    int coalesced,
     ShadowSpillScheduleStorage *storage
 );
 

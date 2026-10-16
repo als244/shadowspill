@@ -1,6 +1,7 @@
 /* What a refused plan asks for: analytic pressure where the simulation
  * stalled, and fetch moves where the admission could not place it. */
 #include "internal.h"
+#include "../trace.h"
 
 void shadowspill_candidate_copy_simulation_error(
     ShadowSpillPressureFitCandidateDiagnostic *diagnostic,
@@ -108,6 +109,13 @@ int shadowspill_candidate_add_repair_pressure(
         workspace->extra_pressure[position] += excess;
     }
     workspace->last_pressure_position = position;
+    if (workspace->trace != NULL) {
+        const uint64_t reason[] = {1U, failure->status,
+            failure->error_task, failure->error_alias, failure->error_location,
+            failure->error_requested_bytes, failure->error_used_bytes,
+            capacity, shortfall};
+        memcpy(workspace->trace->reason, reason, sizeof(reason));
+    }
     return 1;
 }
 
@@ -244,8 +252,6 @@ int shadowspill_candidate_add_admission_repair_pressure(
         &pressure_index,
         &alias
     );
-    (void)task;
-    (void)alias;
     if (boundary <= 0 ||
         pressure_index >= problem->residency->boundary_count) {
         return boundary;
@@ -293,6 +299,14 @@ int shadowspill_candidate_add_admission_repair_pressure(
         workspace->extra_pressure[position] = UINT64_MAX;
     } else {
         workspace->extra_pressure[position] += pressure_increment;
+    }
+    if (workspace->trace != NULL) {
+        const uint64_t reason[] = {2U, SHADOWSPILL_STATUS_REPLAY_INFEASIBLE,
+            task, alias, SHADOWSPILL_MEMORY_DEVICE,
+            failure->error_requested_bytes,
+            problem->context.admission->pool_capacity_bytes - failure->error_free_bytes,
+            problem->context.admission->pool_capacity_bytes, required_reduction};
+        memcpy(workspace->trace->reason, reason, sizeof(reason));
     }
     return 1;
 }
@@ -361,15 +375,13 @@ int shadowspill_candidate_reduce_repaired_candidate(
 void shadowspill_candidate_initialize_diagnostic(
     ShadowSpillPressureFitCandidateDiagnostic *diagnostic,
     uint8_t strategy,
-    uint8_t rule,
-    uint8_t coalesced
+    uint8_t rule
 ) {
     memset(diagnostic, 0, sizeof(*diagnostic));
     diagnostic->repairs_at_best = UINT32_MAX;
     diagnostic->status = SHADOWSPILL_PRESSUREFIT_CANDIDATE_INTERNAL_ERROR;
     diagnostic->residency_strategy = strategy;
     diagnostic->fetch_rule = rule;
-    diagnostic->coalesced = coalesced;
     diagnostic->simulation_status = SHADOWSPILL_STATUS_OK;
     diagnostic->error_task = SHADOWSPILL_SIMULATOR_NO_INDEX;
     diagnostic->error_alias = SHADOWSPILL_SIMULATOR_NO_INDEX;

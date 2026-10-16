@@ -96,6 +96,17 @@ add_test(
   COMMAND shadowspill_pressurefit_canary
 )
 
+add_executable(
+  shadowspill_pressurefit_score_canary
+  planner/search/algorithms/pressurefit/score_canary.c
+  ${PROJECT_SOURCE_DIR}/csrc/src/planner/search/algorithms/pressurefit/residency/cuts.c
+  ${PROJECT_SOURCE_DIR}/csrc/src/planner/search/algorithms/pressurefit/residency/lists.c
+)
+target_include_directories(shadowspill_pressurefit_score_canary PRIVATE
+  ${PROJECT_SOURCE_DIR}/csrc/include ${PROJECT_SOURCE_DIR}/csrc/src)
+target_link_libraries(shadowspill_pressurefit_score_canary PRIVATE shadowspill_build_options)
+add_test(NAME shadowspill_pressurefit_score_canary COMMAND shadowspill_pressurefit_score_canary)
+
 add_executable(shadowspill_runtime_canary runtime/runtime_canary.c)
 target_link_libraries(
   shadowspill_runtime_canary

@@ -5,6 +5,7 @@ them in ``decode``, and describing a problem to the search in ``problems``.
 """
 
 import ctypes
+import os
 
 from shadowspill.ir import (
     MemoryActionKind,
@@ -46,12 +47,10 @@ _STRATEGY_CODE = {
     "headroom-transfer": 1,
     "tight-stall": 2,
     "tight-transfer": 3,
-    "relaxed-stall": 4,
 }
 _RULE_CODE = {
     "packed-fifo": 0,
     "packed-fit": 1,
-    "interval-entry": 2,
     "latest-safe": 3,
     "demand": 4,
 }
@@ -85,6 +84,7 @@ def evaluate_program_problems(
     *,
     workers: int = 0,
     best_placed: int = 0,
+    trace_directory: str | None = None,
 ) -> tuple[CProblemResult | None, ...]:
     """Evaluate several resolved programs on one set of worker threads.
 
@@ -104,6 +104,9 @@ def evaluate_program_problems(
         generic, search_options, best_placed=best_placed
     )
     problem_options.workers = workers
+    if trace_directory is not None:
+        problem_options.trace_directory = os.fsencode(trace_directory)
+        problem_options.record_reduction_steps = 1
     compiled = (CIndexedProblem * len(problems))()
     # Held until the call returns: the library borrows every array in them.
     buffers: list[object] = []

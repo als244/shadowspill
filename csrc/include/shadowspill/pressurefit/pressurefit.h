@@ -34,12 +34,10 @@ typedef enum ShadowSpillPressureFitResidencyStrategy {
     SHADOWSPILL_PRESSUREFIT_RESIDENCY_HEADROOM_TRANSFER = 1,
     SHADOWSPILL_PRESSUREFIT_RESIDENCY_TIGHT_STALL = 2,
     SHADOWSPILL_PRESSUREFIT_RESIDENCY_TIGHT_TRANSFER = 3,
-    SHADOWSPILL_PRESSUREFIT_RESIDENCY_RELAXED_STALL = 4,
 } ShadowSpillPressureFitResidencyStrategy;
 typedef enum ShadowSpillPressureFitFetchRule {
     SHADOWSPILL_PRESSUREFIT_FETCH_PACKED_FIFO = 0,
     SHADOWSPILL_PRESSUREFIT_FETCH_PACKED_FIT = 1,
-    SHADOWSPILL_PRESSUREFIT_FETCH_INTERVAL_ENTRY = 2,
     SHADOWSPILL_PRESSUREFIT_FETCH_LATEST_SAFE = 3,
     SHADOWSPILL_PRESSUREFIT_FETCH_DEMAND = 4,
 } ShadowSpillPressureFitFetchRule;
@@ -48,11 +46,6 @@ typedef struct ShadowSpillPressureFitOptions {
     uint32_t residency_strategy_count;
     const uint8_t *fetch_rules;
     uint32_t fetch_rule_count;
-    /* Which coalescing modes to evaluate: 0 plain, 1 coalesced. A list like
-       the two axes above, so a caller evaluates exactly the combinations it
-       asks for; the product of the three counts is the candidate count. */
-    const uint8_t *coalescing_modes;
-    uint32_t coalescing_mode_count;
     uint32_t max_repair_attempts;
     /* How much capacity a plan gives back at a time when its layout does
        not fit; zero hands back exactly what it overran. */
@@ -80,6 +73,11 @@ typedef struct ShadowSpillPressureFitOptions {
        stay resident from their first to their last access. Zero makes every
        alias eligible. */
     uint64_t minimum_object_bytes_evict_eligible;
+    /* Optional existing output directory. Records every candidate evaluated
+       by this call. NULL performs no trace work. Files are created exclusively;
+       write/open failures fail the search rather than silently lose data.
+       Tracing requires exactly one device. */
+    const char *trace_directory;
 } ShadowSpillPressureFitOptions;
 typedef enum ShadowSpillPressureFitPreflightFailureKind {
     SHADOWSPILL_PRESSUREFIT_PREFLIGHT_NONE = 0,
@@ -233,7 +231,6 @@ typedef struct ShadowSpillPressureFitCandidateDiagnostic {
     uint8_t status;
     uint8_t residency_strategy;
     uint8_t fetch_rule;
-    uint8_t coalesced;
     ShadowSpillPressureFitRepairDiagnostics repairs;
     ShadowSpillPressureFitWorkDiagnostics work;
     uint32_t simulation_status;
@@ -384,7 +381,6 @@ typedef struct ShadowSpillPressureFitBestPlacedRecord {
     uint64_t capacity_given_back_bytes;
     uint8_t residency_strategy;
     uint8_t fetch_rule;
-    uint8_t coalesced;
     uint8_t schedule_digest[SHADOWSPILL_PLANNER_DIGEST_BYTES];
 } ShadowSpillPressureFitBestPlacedRecord;
 SHADOWSPILL_API ShadowSpillPressureFitBestPlaced *shadowspill_pressurefit_best_placed_create(void);

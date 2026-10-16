@@ -71,12 +71,11 @@ typedef struct ScheduleMemoEntry {
     uint64_t hash;
     Fingerprint residency;
     uint8_t rule;
-    uint8_t coalesced;
     uint8_t fetch_headroom;
     ShadowSpillIndexedSchedule schedule;
 } ScheduleMemoEntry;
 
-/* The last few emitted schedules, by (residency, rule, coalescing, headroom).
+/* The last few emitted schedules, by (residency, rule, headroom).
  *
  * Re-emission hits are recency-local: a candidate that keeps its residency
  * while it adjusts placement asks for the same schedule again within a few
@@ -208,6 +207,7 @@ typedef struct CandidateWorkspace {
     uint32_t *cut_scratch;
     uint64_t cut_scratch_capacity;
     uint64_t cut_scratch_count;
+    ShadowSpillPressureFitTrace *trace;
 } CandidateWorkspace;
 
 /*
@@ -249,7 +249,7 @@ typedef struct CandidateSearch {
     ShadowSpillPressureFitResidencyOptions reduce_options;
     uint8_t strategy;
     uint8_t rule;
-    uint8_t coalesced;
+
     /* Whether there is a pool to place into at all. Without one the
      * candidate answers with its fastest plan, which is what a caller that
      * supplied no topology can be told. */
@@ -349,7 +349,7 @@ int shadowspill_candidate_fingerprint_equal(Fingerprint left, Fingerprint right)
 uint64_t shadowspill_candidate_hash_bytes(uint64_t hash, const void *data, size_t size);
 uint64_t shadowspill_candidate_hash_bytes_high(uint64_t hash, const void *data, size_t size);
 int shadowspill_candidate_simulate_cached( const ShadowSpillPressureFitProblem *problem, CandidateWorkspace *workspace, ShadowSpillSimulationResult *result, ShadowSpillStatus *admission_status, ShadowSpillAdmissionReplayResult *admission_result, ShadowSpillAdmissionAnnotation *admission_error_annotation, SimulationMemoEntry **selected_entry );
-int shadowspill_candidate_emit_cached( const ShadowSpillScheduleFacts *facts, CandidateWorkspace *workspace, const ShadowSpillResidency *residency, uint8_t rule, uint8_t coalesced, uint8_t fetch_headroom );
+int shadowspill_candidate_emit_cached( const ShadowSpillScheduleFacts *facts, CandidateWorkspace *workspace, const ShadowSpillResidency *residency, uint8_t rule, uint8_t fetch_headroom );
 void shadowspill_candidate_free_indexed_schedule(ShadowSpillIndexedSchedule *schedule);
 int shadowspill_candidate_simulation_workspace_reserve_transfers( SimulationWorkspace *workspace, uint32_t capacity );
 int shadowspill_candidate_placement_reserve( PlacementWorkspace *workspace, uint64_t operations, uint64_t leases, uint32_t aliases, uint32_t allocation_slots );
@@ -389,9 +389,9 @@ int shadowspill_candidate_advance_admission_fetch( const ShadowSpillScheduleFact
 int shadowspill_candidate_add_admission_repair_pressure( const ShadowSpillPressureFitProblem *problem, CandidateWorkspace *workspace, const ShadowSpillPressureFitResidencyOptions *options, const ShadowSpillAdmissionReplayResult *failure, ShadowSpillAdmissionAnnotation annotation, const ShadowSpillIndexedSchedule *schedule );
 void shadowspill_candidate_copy_admission_error( const ShadowSpillPressureFitProblem *problem, const ShadowSpillIndexedSchedule *schedule, const ShadowSpillAdmissionReplayResult *failure, ShadowSpillAdmissionAnnotation annotation, ShadowSpillPressureFitCandidateDiagnostic *diagnostic );
 int shadowspill_candidate_reduce_repaired_candidate( const ShadowSpillPressureFitProblem *problem, CandidateWorkspace *workspace, const ShadowSpillPressureFitResidencyOptions *options, uint8_t strategy, ShadowSpillPressureFitCandidateDiagnostic *diagnostic );
-void shadowspill_candidate_initialize_diagnostic( ShadowSpillPressureFitCandidateDiagnostic *diagnostic, uint8_t strategy, uint8_t rule, uint8_t coalesced );
+void shadowspill_candidate_initialize_diagnostic( ShadowSpillPressureFitCandidateDiagnostic *diagnostic, uint8_t strategy, uint8_t rule );
 int shadowspill_candidate_may_repair_again( const ShadowSpillPressureFitOptions *candidate_options, const ShadowSpillPressureFitCandidateDiagnostic *diagnostic );
-int shadowspill_candidate_evaluate_candidate( const ShadowSpillPressureFitProblem *problem, const ShadowSpillScheduleFacts *facts, const ShadowSpillPressureFitOptions *candidate_options, CandidateWorkspace *workspace, uint8_t strategy, uint8_t rule, uint8_t coalesced, ShadowSpillPressureFitCandidateDiagnostic *diagnostic );
+int shadowspill_candidate_evaluate_candidate( const ShadowSpillPressureFitProblem *problem, const ShadowSpillScheduleFacts *facts, const ShadowSpillPressureFitOptions *candidate_options, CandidateWorkspace *workspace, uint8_t strategy, uint8_t rule, ShadowSpillPressureFitCandidateDiagnostic *diagnostic );
 int shadowspill_candidate_adopt_selected_schedule( ShadowSpillPressureFitResult *result, ShadowSpillScheduleStorage *selected );
 int shadowspill_candidate_evaluate_incumbent(SearchWorker *worker, uint32_t index);
 void *shadowspill_candidate_worker_main(void *argument);

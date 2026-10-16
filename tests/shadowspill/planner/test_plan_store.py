@@ -43,9 +43,8 @@ FEW_CANDIDATES = SearchOptions(
     generic=GenericPlanningOptions(minimum_object_bytes_evict_eligible=0),
     algorithm=PressureFit(
         PressureFitOptions(
-            residency_strategies=("relaxed-stall",),
+            residency_strategies=("tight-stall",),
             fetch_rules=("latest-safe",),
-            evaluate_coalesced=False,
         )
     ),
 )
@@ -343,7 +342,6 @@ def test_a_store_holding_a_worse_plan_answers_with_the_better_plan_in_hand(
     poor_search = PressureFitOptions(
         residency_strategies=("headroom-stall",),
         fetch_rules=("demand",),
-        evaluate_coalesced=False,
     )
     cache = PlanStore(tmp_path / "poor")
     unaided = cache.resolve(

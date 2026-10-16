@@ -67,7 +67,7 @@ class PlanSummary:
         default_factory=lambda: MappingProxyType({})
     )
     #: The candidate whose plan was selected: its residency strategy,
-    #: fetch rule, coalescing, the repairs it had spent when it placed that
+    #: fetch rule, the repairs it had spent when it placed that
     #: plan (``repairs_at_best``), the fastest plan it could not place
     #: (``best_unplaced_makespan_ns``, ``unplaced_plans``) and
     #: ``placement_gap``, the answer over that plan.
@@ -247,7 +247,6 @@ def summarize_selected_plan(
                 selected = {
                     "residency_strategy": candidate.residency_strategy,
                     "fetch_rule": candidate.fetch_rule,
-                    "coalesced": candidate.coalesced,
                     "repairs_at_best": candidate.repairs_at_best,
                     "best_unplaced_makespan_ns": candidate.best_unplaced_makespan_ns,
                     "unplaced_plans": candidate.unplaced_plans,

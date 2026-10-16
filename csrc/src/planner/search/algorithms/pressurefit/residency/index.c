@@ -33,7 +33,8 @@ static int append_indexed_cut(
     }
     index->cuts[index->cut_count++] = (IndexedCut){
         .cut = cut,
-        .score = shadowspill_residency_score_cut(problem, &cut, 0),
+        .score = shadowspill_residency_score_cut(problem, &cut),
+        .timing = shadowspill_residency_cut_timing(problem, &cut),
         .first_boundary = first_boundary,
         .last_boundary = last_boundary,
     };

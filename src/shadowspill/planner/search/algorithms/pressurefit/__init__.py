@@ -207,6 +207,23 @@ class PressureFit(SearchAlgorithm):
             )
         )
 
+    def record_trace(
+        self,
+        result: ProgramPlanResult,
+        *,
+        options: SearchOptions,
+        admission: AdmissionFacts | None = None,
+        placement: AdmissionFacts | None = None,
+        progress: Callable[[str], None] | None = None,
+    ) -> None:
+        """Rerun the selected policies and stream their exact cut histories."""
+        from .tracing import record_plan_trace
+
+        record_plan_trace(
+            result, options=options, admission=admission,
+            placement=placement, progress=progress,
+        )
+
     def __call__(
         self,
         program: ShadowSpillProgram,

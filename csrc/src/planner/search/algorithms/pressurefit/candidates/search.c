@@ -1,5 +1,6 @@
 /* The stages one candidate walks, and the loop that walks them. */
 #include "internal.h"
+#include "../trace.h"
 
 static void search_begin(
     CandidateSearch *search,
@@ -9,7 +10,6 @@ static void search_begin(
     CandidateWorkspace *workspace,
     uint8_t strategy,
     uint8_t rule,
-    uint8_t coalesced,
     ShadowSpillPressureFitCandidateDiagnostic *diagnostic
 ) {
     memset(search, 0, sizeof(*search));
@@ -25,7 +25,6 @@ static void search_begin(
     search->diagnostic = diagnostic;
     search->strategy = strategy;
     search->rule = rule;
-    search->coalesced = coalesced;
     search->placing = problem->context.placement != NULL;
     search->pressure_cells = (uint64_t)problem->residency->device_count *
         problem->residency->boundary_count;
@@ -38,7 +37,7 @@ static void search_begin(
         : problem->context.placement->object_capacity_bytes;
     shadowspill_candidate_residency_options(workspace, strategy, &search->reduce_options);
 
-    shadowspill_candidate_initialize_diagnostic(diagnostic, strategy, rule, coalesced);
+    shadowspill_candidate_initialize_diagnostic(diagnostic, strategy, rule);
     memset(
         workspace->extra_pressure,
         0,
@@ -65,6 +64,9 @@ static void set_answer(
 /* Answer with a plan the search set aside. The caller reads the answer from
  * the live schedule, so the kept plan has to move back into it. */
 static int answer_with_kept(CandidateSearch *search, uint64_t makespan_ns) {
+    if (search->workspace->trace != NULL) {
+        search->workspace->trace->answer_step = search->workspace->trace->kept_step;
+    }
     set_answer(search->diagnostic, makespan_ns, search->best_digest);
     if (shadowspill_schedule_storage_copy(
             &search->workspace->schedule, &search->workspace->best
@@ -87,14 +89,24 @@ static int answer_or_stop(CandidateSearch *search) {
 }
 
 static StageOutcome search_done(CandidateSearch *search, int answer) {
+    if (answer > 0 && search->workspace->trace != NULL) {
+        ShadowSpillPressureFitTrace *trace = search->workspace->trace;
+        if (trace->answer_step == UINT64_MAX) { trace->answer_step = trace->current_step; }
+        if (trace->answer_step < search->diagnostic->step_count) {
+            search->diagnostic->steps[trace->answer_step].flags |= SHADOWSPILL_STEP_ANSWER;
+        }
+    }
     search->answer = answer;
     return STAGE_DONE;
 }
 
 /* Add a step to the trajectory, when the caller asked for one. */
 static int record_search_step(CandidateSearch *search) {
-    if (search->options->record_reduction_steps == 0U) {
+    if (search->options->record_reduction_steps == 0U && search->workspace->trace == NULL) {
         return 0;
+    }
+    if (search->workspace->trace != NULL) {
+        shadowspill_candidate_trace_step(search->workspace->trace, search->diagnostic->step_count);
     }
     const uint32_t cuts_before = search->diagnostic->cut_count;
     if (shadowspill_candidate_drain_cuts(search->diagnostic, search->workspace) != 0) {
@@ -120,7 +132,7 @@ static int record_search_step(CandidateSearch *search) {
 static void mark_search_step(
     CandidateSearch *search, uint32_t flags, uint64_t required_bytes
 ) {
-    if (search->options->record_reduction_steps != 0U) {
+    if (search->options->record_reduction_steps != 0U || search->workspace->trace != NULL) {
         shadowspill_candidate_mark_last_step(search->diagnostic, flags, required_bytes);
     }
 }
@@ -146,12 +158,11 @@ static void trace_reduction(const CandidateSearch *search) {
     }
     fprintf(
         stderr,
-        "reduction-trace resolved=%llu strategy=%u rule=%u coalesced=%u "
+        "reduction-trace resolved=%llu strategy=%u rule=%u "
         "step=%llu status=%d makespan=%llu shortfalls=%u actions=%u\n",
         (unsigned long long)(uintptr_t)search->problem,
         search->strategy,
         search->rule,
-        search->coalesced,
         (unsigned long long)shadowspill_candidate_repair_total(&search->diagnostic->repairs),
         (int)search->simulation_status,
         (unsigned long long)search->simulation.makespan_ns,
@@ -192,12 +203,11 @@ static void trace_repair(const CandidateSearch *search) {
     }
     fprintf(
         stderr,
-        "repair-trace strategy=%u rule=%u coalesced=%u attempt=%llu status=%d "
+        "repair-trace strategy=%u rule=%u attempt=%llu status=%d "
         "makespan=%llu fetch_bytes=%llu evict_bytes=%llu actions=%u time=%llu "
         "used=%llu requested=%llu capacity=%llu\n",
         search->strategy,
         search->rule,
-        search->coalesced,
         (unsigned long long)shadowspill_candidate_repair_total(&search->diagnostic->repairs),
         (int)search->simulation_status,
         (unsigned long long)search->simulation.makespan_ns,
@@ -214,18 +224,11 @@ static void trace_repair(const CandidateSearch *search) {
 /* Turn the current residency into an ordered schedule. */
 static StageOutcome search_emit(CandidateSearch *search) {
     CandidateWorkspace *workspace = search->workspace;
-    if (search->rule == SHADOWSPILL_PRESSUREFIT_FETCH_INTERVAL_ENTRY &&
-        shadowspill_extend_interval_entries(
-            &search->facts, &workspace->resident
-        ) != 0) {
-        return search_done(search, -1);
-    }
     if (shadowspill_candidate_emit_cached(
             &search->facts,
             workspace,
             &workspace->resident,
             search->rule,
-            search->coalesced,
             search->reduce_options.fetch_headroom
         ) != 0) {
         return search_done(search, -1);
@@ -413,7 +416,6 @@ static StageOutcome search_keep_placed(CandidateSearch *search) {
         .capacity_given_back_bytes = search->workspace->plan_capacity_given_back,
         .residency_strategy = search->strategy,
         .fetch_rule = search->rule,
-        .coalesced = search->coalesced,
     };
     memcpy(
         record.schedule_digest,
@@ -442,6 +444,9 @@ static StageOutcome search_keep_placed(CandidateSearch *search) {
         return search_done(search, -1);
     }
     memcpy(search->best_digest, schedule_name(search), sizeof(search->best_digest));
+    if (search->workspace->trace != NULL) {
+        search->workspace->trace->kept_step = search->workspace->trace->current_step;
+    }
     return STAGE_NEXT;
 }
 
@@ -481,6 +486,11 @@ static StageOutcome search_refine_capacity(
         return search_done(search, -1);
     }
     workspace->fetch_constraint_count = 0U;
+    if (workspace->trace != NULL) {
+        const uint64_t reason[] = {3U, 0U, UINT64_MAX, UINT64_MAX,
+            SHADOWSPILL_MEMORY_DEVICE, required_bytes, 0U, pool_bytes, shortfall};
+        memcpy(workspace->trace->reason, reason, sizeof(reason));
+    }
     if (shadowspill_candidate_reduce_repaired_candidate(
             search->problem,
             workspace,
@@ -676,6 +686,9 @@ static StageOutcome search_settle(CandidateSearch *search) {
                 schedule_name(search),
                 sizeof(search->best_digest)
             );
+            if (search->workspace->trace != NULL) {
+                search->workspace->trace->kept_step = search->workspace->trace->current_step;
+            }
         }
         present_shortfall_as_error(search);
         return STAGE_NEXT;
@@ -782,6 +795,9 @@ static StageOutcome search_repair(CandidateSearch *search) {
                 ] -= asked_beyond_shortfall;
                 search->failure_repeats = 0U;
                 ++diagnostic->escalations_taken_back;
+                if (search->workspace->trace != NULL) {
+                    search->workspace->trace->reason[0] = 4U;
+                }
                 reduced = shadowspill_candidate_reduce_repaired_candidate(
                     search->problem,
                     search->workspace,
@@ -829,7 +845,6 @@ int shadowspill_candidate_evaluate_candidate(
     CandidateWorkspace *workspace,
     uint8_t strategy,
     uint8_t rule,
-    uint8_t coalesced,
     ShadowSpillPressureFitCandidateDiagnostic *diagnostic
 ) {
     CandidateSearch search;
@@ -841,7 +856,6 @@ int shadowspill_candidate_evaluate_candidate(
         workspace,
         strategy,
         rule,
-        coalesced,
         diagnostic
     );
 
@@ -910,4 +924,3 @@ int shadowspill_candidate_adopt_selected_schedule(
     selected->final_capacity = 0U;
     return 0;
 }
-

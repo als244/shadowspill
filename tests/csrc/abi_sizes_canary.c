@@ -11,6 +11,7 @@
 #include <stdlib.h>
 
 #include <shadowspill/pytorch_adapter.h>
+#include <shadowspill/pressurefit/pressurefit.h>
 #include <shadowspill/runtime.h>
 #include <shadowspill/simulator.h>
 
@@ -19,6 +20,7 @@
     printf("%s %llu\n", #name, (unsigned long long)(name))
 
 int main(void) {
+    REPORT(ShadowSpillPressureFitOptions);
     REPORT(ShadowSpillPytorchPoolConfig);
     REPORT(ShadowSpillPytorchRouteConfig);
     REPORT(ShadowSpillPytorchAdapterConfig);

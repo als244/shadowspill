@@ -16,6 +16,7 @@ from pathlib import Path
 
 import pytest
 
+from shadowspill.planner.search.algorithms.pressurefit.capi import CPressureFitOptions
 from shadowspill.runtime import abi
 from shadowspill.schema import ARTIFACT_VERSION
 from shadowspill.simulator.capi import CDevice
@@ -26,6 +27,7 @@ _HEADERS = ROOT / "csrc" / "include" / "shadowspill"
 
 #: Each ctypes structure and the C struct it mirrors.
 _MIRRORS = {
+    "ShadowSpillPressureFitOptions": CPressureFitOptions,
     "ShadowSpillPytorchPoolConfig": abi.PoolConfig,
     "ShadowSpillPytorchRouteConfig": abi.RouteConfig,
     "ShadowSpillPytorchAdapterConfig": abi.AdapterConfig,

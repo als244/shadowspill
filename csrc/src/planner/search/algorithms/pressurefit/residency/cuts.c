@@ -2,63 +2,109 @@
 #include "internal.h"
 
 int shadowspill_residency_compare_score(
-    const CutScore *left,
-    const CutScore *right,
-    int minimize_transfer
+    const CutScore *left, const CutScore *right, int minimize_transfer
 ) {
     if (!minimize_transfer && left->exposed_ns != right->exposed_ns) {
         return left->exposed_ns < right->exposed_ns ? -1 : 1;
     }
-    for (uint32_t index = 0U; index < 7U; ++index) {
-        if (left->values[index] == right->values[index]) {
-            continue;
+    for (uint32_t index = 0U; index < 4U; ++index) {
+        if (index == 1U) {
+            /* Maximize signed slack after writeback, without narrowing it. */
+            if (left->slack_high != right->slack_high) {
+                return left->slack_high > right->slack_high ? -1 : 1;
+            }
+            if (left->slack_low != right->slack_low) {
+                return left->slack_low > right->slack_low ? -1 : 1;
+            }
         }
-        return left->values[index] < right->values[index] ? -1 : 1;
+        if (left->values[index] != right->values[index]) {
+            return left->values[index] < right->values[index] ? -1 : 1;
+        }
     }
     return 0;
 }
 
 CutScore shadowspill_residency_score_cut(
-    const ShadowSpillPressureFitResidencyProblem *problem,
-    const ResidencyCut *cut,
-    int minimize_transfer
+    const ShadowSpillPressureFitResidencyProblem *problem, const ResidencyCut *cut
 ) {
-    uint32_t alias = cut->alias;
-    int32_t departure = cut->start - 1;
-    int32_t entry = cut->end + 1;
-    int writeback = problem->alias_retain_spill_copy[alias] == 0U;
-    if (!writeback && departure >= -1) {
-        writeback = shadowspill_written_by(problem, alias, (uint32_t)(departure + 1));
-    }
-    uint64_t fetch_ns = problem->fetch_runtime_ns[alias];
-    uint64_t evict_ns = writeback ? problem->evict_runtime_ns[alias] : 0U;
-    uint64_t departure_ns =
-        departure >= 0 ? problem->task_ideal_end_ns[departure] : 0U;
-    int32_t last_task = (int32_t)problem->boundary_count - 2;
-    int32_t deadline_task = entry + 1;
-    if (deadline_task > last_task) {
-        deadline_task = last_task;
-    }
-    uint64_t deadline_ns = deadline_task > 0
-        ? problem->task_ideal_end_ns[deadline_task - 1]
-        : 0U;
-    uint64_t finish_ns = departure_ns + evict_ns + fetch_ns;
-    uint64_t exposed_ns = finish_ns > deadline_ns ? finish_ns - deadline_ns : 0U;
-    int64_t length = cut->end >= cut->start
-        ? (int64_t)cut->end - cut->start + 1
-        : 0;
-    CutScore score = {
-        .exposed_ns = minimize_transfer ? 0U : exposed_ns,
-        .values = {
-            writeback,
-            cut->start <= -1 ? -1 : 0,
-            -(int64_t)problem->first_input_task[alias],
-            -(int64_t)problem->alias_size_bytes[alias],
-            -length,
-            (int64_t)alias,
-            (int64_t)cut->start,
-        },
+    const uint32_t alias = cut->alias;
+    /* A prefix cut leaves an already-spilled object in spill. Writeback is
+     * conservative: earlier cuts do not refresh the retained-copy history. */
+    const int writeback = cut->start >= 0 &&
+        (problem->alias_retain_spill_copy[alias] == 0U ||
+         shadowspill_written_by(problem, alias, (uint32_t)cut->start));
+    return (CutScore){
+        /* Exposure and slack are evaluated at the selected boundary. */
+        .values = {writeback, -(int64_t)problem->alias_size_bytes[alias],
+                   (int64_t)alias, (int64_t)cut->start},
     };
+}
+
+CutTiming shadowspill_residency_cut_timing(
+    const ShadowSpillPressureFitResidencyProblem *problem, const ResidencyCut *cut
+) {
+    const uint32_t alias = cut->alias;
+    const uint32_t begin = problem->anchor_offsets[alias];
+    const uint32_t end = problem->anchor_offsets[alias + 1U];
+    const uint32_t tasks = problem->boundary_count - 1U;
+    CutTiming timing = {
+        .next_use_begin_ns = tasks == 0U ? 0U : problem->task_ideal_end_ns[tasks - 1U],
+        .fetch_ns = problem->fetch_runtime_ns[alias],
+    };
+    /* Input anchors sit before their task; produced-output anchors sit after
+     * it. Read the task identity, rather than subtracting one from a cell. */
+    if (cut->start >= 0) {
+        uint32_t anchor = shadowspill_anchor_lower_bound(
+            problem->anchor_positions, begin, end, (uint32_t)cut->start + 1U);
+        while (anchor > begin) {
+            const uint32_t task = problem->anchor_tasks[--anchor];
+            if (task != UINT32_MAX) {
+                timing.prior_use_end_ns = problem->task_ideal_end_ns[task];
+                break;
+            }
+        }
+        if (problem->alias_retain_spill_copy[alias] == 0U ||
+            shadowspill_written_by(problem, alias, (uint32_t)cut->start)) {
+            timing.evict_ns = problem->evict_runtime_ns[alias];
+        }
+    }
+    uint32_t anchor = shadowspill_anchor_lower_bound(
+        problem->anchor_positions, begin, end, (uint32_t)(cut->end + 2));
+    for (; anchor < end; ++anchor) {
+        const uint32_t task = problem->anchor_earliest[anchor];
+        if (task != UINT32_MAX) {
+            timing.next_use_begin_ns = task == 0U ? 0U : problem->task_ideal_end_ns[task - 1U];
+            break;
+        }
+    }
+    return timing;
+}
+
+CutScore shadowspill_residency_score_at(
+    const ShadowSpillPressureFitResidencyProblem *problem,
+    const IndexedCut *cut, uint32_t boundary, int minimize_transfer
+) {
+    CutScore score = cut->score;
+    const uint32_t tasks = problem->boundary_count - 1U;
+    const uint64_t begin = boundary == 0U ? 0U : problem->task_ideal_end_ns[boundary - 1U];
+    const uint64_t end = boundary < tasks ? problem->task_ideal_end_ns[boundary] : begin;
+    const CutTiming *timing = &cut->timing;
+    const uint64_t evict_slack = begin > timing->prior_use_end_ns
+        ? begin - timing->prior_use_end_ns : 0U;
+    const uint64_t fetch_slack = timing->next_use_begin_ns > end
+        ? timing->next_use_begin_ns - end : 0U;
+    score.evict_exposed_ns = timing->evict_ns > evict_slack
+        ? timing->evict_ns - evict_slack : 0U;
+    score.fetch_exposed_ns = timing->fetch_ns > fetch_slack
+        ? timing->fetch_ns - fetch_slack : 0U;
+    score.exposed_ns = UINT64_MAX - score.evict_exposed_ns < score.fetch_exposed_ns
+        ? UINT64_MAX : score.evict_exposed_ns + score.fetch_exposed_ns;
+    const uint64_t windows = evict_slack + fetch_slack;
+    const uint64_t transfers = timing->evict_ns + timing->fetch_ns;
+    score.slack_low = windows - transfers;
+    score.slack_high = (int64_t)(windows < evict_slack) -
+        (int64_t)(transfers < timing->evict_ns) - (int64_t)(windows < transfers);
+    if (minimize_transfer) { score.exposed_ns = 0U; }
     return score;
 }
 
@@ -145,14 +191,9 @@ int shadowspill_residency_same_cut(const ResidencyCut *left, const ResidencyCut 
         left->end == right->end;
 }
 
-/* The best cut still available at one boundary.
- *
- * The cuts relieving the boundary sit on the nodes from its leaf to the
- * root, each node's in score order behind a cursor that has passed the
- * cuts gone inactive. The answer is the best of the nodes' first available
- * cuts, ties to the lower cut id, which is the order one merged list would
- * have had; the cursors move only past inactive cuts, so a cut is skipped
- * at a node exactly when it would have been skipped in that list. */
+/* Exposure and slack both depend on the selected boundary. Examine every
+ * active cut on its covering nodes; zero exposure alone cannot settle ties.
+ * The sparse index retains O(cuts log boundaries) storage. */
 int shadowspill_residency_select_cut(
     const ShadowSpillPressureFitResidencyProblem *problem,
     uint32_t device,
@@ -168,6 +209,7 @@ int shadowspill_residency_select_cut(
     const uint32_t *refs = index->refs[minimize_transfer != 0];
     const uint64_t device_base = (uint64_t)device * index->node_count;
     uint32_t best = UINT32_MAX;
+    CutScore best_score = {0};
     for (uint32_t node = index->leaf_base + boundary_index; node >= 1U; node >>= 1U) {
         const uint64_t slot = device_base + node;
         const uint64_t begin = index->node_offsets[slot];
@@ -177,22 +219,21 @@ int shadowspill_residency_select_cut(
             ++ref;
         }
         cursors[slot] = (uint32_t)(ref - begin);
-        if (ref == end) {
-            continue;
-        }
-        const uint32_t cut_id = refs[ref];
-        if (best == UINT32_MAX) {
-            best = cut_id;
-            continue;
-        }
-        const int comparison = shadowspill_residency_compare_score(
-            &index->cuts[cut_id].score, &index->cuts[best].score, minimize_transfer
-        );
-        if (comparison < 0 || (comparison == 0 && cut_id < best)) {
-            best = cut_id;
+        for (; ref < end; ++ref) {
+            const uint32_t cut_id = refs[ref];
+            if (active[cut_id] == 0U) { continue; }
+            const CutScore score = shadowspill_residency_score_at(
+                problem, &index->cuts[cut_id], boundary_index, minimize_transfer);
+            const int comparison = best == UINT32_MAX ? -1 :
+                shadowspill_residency_compare_score(
+                    &score, &best_score, minimize_transfer);
+            if (comparison < 0 || (comparison == 0 && cut_id < best)) {
+                best = cut_id;
+                best_score = score;
+            }
+
         }
     }
-    (void)problem;
     if (best == UINT32_MAX) {
         return 0;
     }

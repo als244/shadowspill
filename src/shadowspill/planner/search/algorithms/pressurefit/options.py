@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from collections.abc import Mapping
+from dataclasses import dataclass, fields
 from fractions import Fraction
 from typing import ClassVar
 
@@ -18,13 +19,11 @@ RESIDENCY_STRATEGIES = (
     "headroom-transfer",
     "tight-stall",
     "tight-transfer",
-    "relaxed-stall",
 )
 #: The fetch-trigger rules PressureFit knows how to build a candidate for.
 FETCH_RULES = (
     "packed-fifo",
     "packed-fit",
-    "interval-entry",
     "latest-safe",
     "demand",
 )
@@ -61,9 +60,6 @@ class PressureFitOptions(OptionRecord):
         "latest-safe",
         "demand",
     )
-    #: Try a coalesced variant of every candidate as well, which doubles the
-    #: candidate set.
-    evaluate_coalesced: bool = True
     #: How many monotonic repairs one candidate may make before it answers
     #: with the best plan it reached. Raising it buys quality where memory is
     #: tightest and costs planning time, which is what the workers pay for.
@@ -110,8 +106,6 @@ class PressureFitOptions(OptionRecord):
             raise ValueError("max_repair_attempts must be a non-negative integer")
         if not isinstance(self.record_reduction_steps, bool):
             raise ValueError("record_reduction_steps must be a boolean")
-        if not isinstance(self.evaluate_coalesced, bool):
-            raise ValueError("evaluate_coalesced must be a boolean")
         # Normalized here rather than at the point of use, so what the plan
         # key records is exactly what is planned.
         object.__setattr__(
@@ -119,6 +113,15 @@ class PressureFitOptions(OptionRecord):
             "resolution_options",
             validate_resolution_options(self.resolution_options),
         )
+
+    @classmethod
+    def from_dict(cls, record: Mapping[str, object]) -> PressureFitOptions:
+        unknown = set(record) - {"kind", *(field.name for field in fields(cls))}
+        if unknown:
+            raise ValueError(
+                f"unsupported PressureFit options: {', '.join(sorted(unknown))}"
+            )
+        return super(PressureFitOptions, cls).from_dict(record)
 
 
 __all__ = ["FETCH_RULES", "RESIDENCY_STRATEGIES", "PressureFitOptions"]

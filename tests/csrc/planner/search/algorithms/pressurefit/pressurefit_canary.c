@@ -66,10 +66,7 @@ int main(void) {
     const uint8_t problem_rules[] = {SHADOWSPILL_PRESSUREFIT_FETCH_LATEST_SAFE};
     /* Plain emission only. All three axes are lists, and the candidate count
      * is their product, so leaving this one empty asks for no candidates. */
-    const uint8_t problem_modes[] = {0U};
     const ShadowSpillPressureFitOptions problem_options = {
-        .coalescing_modes = problem_modes,
-        .coalescing_mode_count = 1U,
         .residency_strategies = problem_strategies,
         .residency_strategy_count = 1U,
         .fetch_rules = problem_rules,

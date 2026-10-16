@@ -11,7 +11,6 @@ from reference.python.pressurefit.residency import (
     _pressure_by_device,
     _required_floor_pressure,
     boundary_bytes,
-    extend_interval_entries,
     reduce_pressure,
     seed_residency,
 )
@@ -43,11 +42,11 @@ def test_candidate_parallelism_preserves_the_complete_result(workers: int) -> No
 
     assert (
         result.schedule.digest
-        == "c530d01e90dab80c7396fcc61e679341df07b746310c95f8e885d94ffd512e30"
+        == "f7443cc16b764df6e26ae980807157ff6d7f6bb12c28139ee048ea19d4322060"
     )
-    assert result.diagnostics.selected_makespan_ns == 5_000
-    # two strategies, four rules, two coalescing modes
-    assert result.diagnostics.candidate_evaluation_count == 16
+    assert result.diagnostics.selected_makespan_ns == 4_000
+    # Two residency strategies and four fetch rules.
+    assert result.diagnostics.candidate_evaluation_count == 8
 
 
 def test_names_do_not_affect_schedule_geometry_or_makespan() -> None:
@@ -124,44 +123,6 @@ def test_direct_required_floor_matches_minimal_residency_sweep() -> None:
     assert _required_floor_pressure(facts) == _pressure_by_device(facts, minimal)
 
 
-def test_interval_extension_matches_scalar_admission() -> None:
-    program = training_chain_program(10)
-    initial = training_chain_initial(10)
-    selected_config = training_chain_config(500)
-    facts = build_facts(program, (), initial, (), selected_config)
-    seed = seed_residency(facts)
-    plan = reduce_pressure(facts, selected_config, seed, "tight-stall")
-
-    scalar = plan
-    for alias in range(len(facts.alias_ids)):
-        span_index = 1
-        while span_index < len(scalar.spans[alias]):
-            span = scalar.spans[alias][span_index]
-            previous = scalar.spans[alias][span_index - 1]
-            candidate_start = span.start - 1
-            if candidate_start <= previous.end:
-                span_index += 1
-                continue
-            spans = list(scalar.spans)
-            alias_spans = list(spans[alias])
-            alias_spans[span_index] = Span(candidate_start, span.end)
-            spans[alias] = tuple(alias_spans)
-            proposed = ResidencyPlan(tuple(spans), scalar.anchors)
-            device_id = facts.alias_devices[alias]
-            if (
-                boundary_bytes(facts, proposed, candidate_start, device_id)
-                <= facts.object_capacity_by_boundary[device_id][candidate_start + 1]
-            ):
-                scalar = proposed
-                continue
-            span_index += 1
-
-    assert extend_interval_entries(facts, plan) == scalar
-
-
-# Initial residency stays exactly as declared. A zero-work start task provides
-# the first ordinary fetch boundary. These artifacts agree with the readable
-# Python planner and include the entry transfers in candidate evaluation.
 @pytest.mark.parametrize(
     ("layers", "capacity", "digest", "makespan_ns", "candidate", "actions"),
     (

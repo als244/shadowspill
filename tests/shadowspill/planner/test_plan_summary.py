@@ -36,7 +36,6 @@ def test_summary_parts_identify_to_the_simulated_step() -> None:
     assert dict(summary.selected_candidate) == {
         "residency_strategy": summary.selected_candidate["residency_strategy"],
         "fetch_rule": summary.selected_candidate["fetch_rule"],
-        "coalesced": summary.selected_candidate["coalesced"],
         "repairs_at_best": None,
         "best_unplaced_makespan_ns": None,
         "unplaced_plans": 0,

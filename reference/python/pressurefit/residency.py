@@ -318,30 +318,37 @@ def _cut_score(
     config: SimulationConfig,
     cut: Cut,
     score_kind: str,
+    boundary: int,
 ) -> tuple[int, ...]:
-    departure = cut.start - 1
-    entry = cut.end + 1
-    writeback = int(_writeback_required(facts, cut))
     fetch_ns = _transfer_runtime_ns(facts, config, cut.alias, to_device=True)
+    writeback = int(cut.start >= 0 and _writeback_required(facts, cut))
     evict_ns = (
         _transfer_runtime_ns(facts, config, cut.alias, to_device=False)
         if writeback
         else 0
     )
-    departure_time = facts.task_ideal_end_ns[departure] if departure >= 0 else 0
-    deadline_task = min(entry + 1, len(facts.tasks) - 1)
-    deadline = facts.task_ideal_end_ns[deadline_task - 1] if deadline_task > 0 else 0
-    exposed = max(departure_time + evict_ns + fetch_ns - deadline, 0)
-    first_use_task = facts.first_input_tasks[cut.alias]
-    common = (
-        writeback,
-        -int(cut.start <= -1),
-        -first_use_task,
-        -facts.alias_sizes[cut.alias],
-        -cut.length,
-        cut.alias,
-        cut.start,
+    previous = [
+        task
+        for position, task in facts.access_events[cut.alias]
+        if position < cut.start
+    ]
+    following = [
+        task for position, task in facts.access_events[cut.alias] if position > cut.end
+    ]
+    prior_end = facts.task_ideal_end_ns[max(previous)] if previous else 0
+    next_task = min(following) if following else len(facts.tasks)
+    next_begin = facts.task_ideal_end_ns[next_task - 1] if next_task else 0
+    current_begin = facts.task_ideal_end_ns[boundary] if boundary >= 0 else 0
+    current_end = (
+        facts.task_ideal_end_ns[boundary + 1]
+        if boundary + 1 < len(facts.tasks)
+        else current_begin
     )
+    se = max(0, current_begin - prior_end)
+    sf = max(0, next_begin - current_end)
+    exposed = min((1 << 64) - 1, max(0, evict_ns - se) + max(0, fetch_ns - sf))
+    slack = se - evict_ns + sf - fetch_ns
+    common = (writeback, -slack, -facts.alias_sizes[cut.alias], cut.alias, cut.start)
     if score_kind == "min-stall":
         return (exposed, *common)
     return common
@@ -379,7 +386,7 @@ def reduce_pressure(
     strategy: str,
     *,
     extra_pressure: dict[tuple[str, int], int] | None = None,
-    score_cache: dict[tuple[Cut, str], tuple[int, ...]] | None = None,
+    score_cache: dict[tuple[Cut, str, int], tuple[int, ...]] | None = None,
 ) -> ResidencyPlan:
     """Greedily remove anchor-free residency until analytic capacity fits."""
 
@@ -444,14 +451,14 @@ def reduce_pressure(
                 ),
             )
 
-        def score(cut: Cut) -> tuple[int, ...]:
+        def score(cut: Cut, boundary: int = boundary) -> tuple[int, ...]:
             if score_cache is None:
-                return _cut_score(facts, config, cut, score_kind)
-            key = (cut, score_kind)
+                return _cut_score(facts, config, cut, score_kind, boundary)
+            key = (cut, score_kind, boundary)
             cached = score_cache.get(key)
             if cached is not None:
                 return cached
-            value = _cut_score(facts, config, cut, score_kind)
+            value = _cut_score(facts, config, cut, score_kind, boundary)
             score_cache[key] = value
             return value
 
@@ -466,49 +473,6 @@ def reduce_pressure(
             pressure,
             fetch_headroom=fetch_headroom,
         )
-
-
-def extend_interval_entries(
-    facts: PlanningFacts,
-    plan: ResidencyPlan,
-) -> ResidencyPlan:
-    """Move later entries earlier only while exact analytic pressure fits."""
-
-    current = plan
-    pressure = {
-        device_id: list(values)
-        for device_id, values in _pressure_by_device(facts, current).items()
-    }
-    for alias in range(len(facts.alias_ids)):
-        span_index = 1
-        while span_index < len(current.spans[alias]):
-            span = current.spans[alias][span_index]
-            previous = current.spans[alias][span_index - 1]
-            candidate_start = span.start - 1
-            if candidate_start <= previous.end:
-                span_index += 1
-                continue
-            spans = list(current.spans)
-            alias_spans = list(spans[alias])
-            alias_spans[span_index] = Span(candidate_start, span.end)
-            spans[alias] = tuple(alias_spans)
-            proposed = ResidencyPlan(tuple(spans), current.anchors)
-            device_id = facts.alias_devices[alias]
-            task = candidate_start + 1
-            reserved = (
-                0 <= task < len(facts.output_reservations)
-                and alias in facts.output_reservations[task]
-            )
-            added = 0 if reserved else facts.alias_sizes[alias]
-            if (
-                pressure[device_id][candidate_start + 1] + added
-                <= facts.object_capacity_by_boundary[device_id][candidate_start + 1]
-            ):
-                current = proposed
-                pressure[device_id][candidate_start + 1] += added
-                continue
-            span_index += 1
-    return current
 
 
 def _required_floor_pressure(facts: PlanningFacts) -> dict[str, tuple[int, ...]]:
@@ -577,7 +541,6 @@ __all__ = [
     "Span",
     "assert_required_floor",
     "boundary_bytes",
-    "extend_interval_entries",
     "reduce_pressure",
     "seed_residency",
     "strategy_object_capacity",

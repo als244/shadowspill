@@ -76,6 +76,7 @@ void shadowspill_residency_reset_residency_result(ShadowSpillPressureFitResidenc
         .residency = result->residency,
         .cut_aliases = result->cut_aliases,
         .cut_capacity = result->cut_capacity,
+        .trace = result->trace,
     };
     *result = borrowed;
     result->error_device = UINT32_MAX;
@@ -108,7 +109,7 @@ int shadowspill_residency_valid_problem(
         problem->anchor_earliest != NULL && problem->anchor_flags != NULL &&
         problem->reserved_offsets != NULL && problem->reserved_positions != NULL &&
         problem->write_offsets != NULL && problem->write_boundaries != NULL &&
-        problem->first_input_task != NULL && problem->fetch_runtime_ns != NULL &&
+        problem->fetch_runtime_ns != NULL &&
         problem->evict_runtime_ns != NULL && problem->task_ideal_end_ns != NULL &&
         problem->device_capacity_bytes != NULL &&
         problem->boundary_capacity_bytes != NULL &&

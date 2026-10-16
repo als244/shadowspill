@@ -50,7 +50,7 @@ def _diagnostics() -> PlanningDiagnostics:
     )
     selection_id = "stage_0=recompute"
     candidate = CandidateDiagnostic(
-        candidate_id="tight-transfer/latest-safe-coalesced",
+        candidate_id="tight-transfer/latest-safe",
         selection_id=selection_id,
         status="valid",
         makespan_ns=1_000,
@@ -118,7 +118,6 @@ def test_search_diagnostics_round_trip_preserves_hierarchy() -> None:
     candidate = restored.resolved_programs[0].candidate_evaluations[0]
     assert candidate.residency_strategy == "tight-transfer"
     assert candidate.fetch_rule == "latest-safe"
-    assert candidate.coalesced
     assert candidate.steps[0].cut_aliases == (3, 7)
     assert candidate.steps[0].answer
     sections = restored.work.sections

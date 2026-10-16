@@ -43,6 +43,7 @@ add_library(
   src/planner/search/algorithms/pressurefit/candidates/memo.c
   src/planner/search/algorithms/pressurefit/candidates/workspace.c
   src/planner/search/algorithms/pressurefit/candidates/diagnostics.c
+  src/planner/search/algorithms/pressurefit/candidates/trace.c
   src/planner/search/algorithms/pressurefit/problem/buffers.c
   src/planner/search/algorithms/pressurefit/problem/facts.c
   src/planner/search/algorithms/pressurefit/problem/floor.c

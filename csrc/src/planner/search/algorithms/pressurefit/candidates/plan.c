@@ -1,5 +1,6 @@
 /* One residency turned into a plan: reduced, emitted, placed, simulated. */
 #include "internal.h"
+#include "../trace.h"
 
 int shadowspill_candidate_simulate_schedule(
     const ShadowSpillPressureFitProblem *problem,
@@ -315,6 +316,7 @@ static ShadowSpillStatus reduce(
 ) {
     *result = (ShadowSpillPressureFitResidencyResult){
         .residency = residency,
+        .trace = workspace->trace,
         /* Records what this reduction gives up, when anyone is recording.
          * Several reductions can run before the record is drained, so each
          * appends after the last rather than from the start. A full scratch
@@ -325,12 +327,11 @@ static ShadowSpillStatus reduce(
         .cut_capacity =
             workspace->cut_scratch_capacity - workspace->cut_scratch_count,
     };
-    const ShadowSpillStatus reduced = shadowspill_pressurefit_reduce_residency_reusing(
-        problem->residency,
-        options,
-        result,
-        workspace->residency_workspace
-    );
+    const ShadowSpillStatus reduced = workspace->trace == NULL
+        ? shadowspill_pressurefit_reduce_residency_reusing(
+            problem->residency, options, result, workspace->residency_workspace)
+        : shadowspill_candidate_trace_reduce(
+            problem->residency, options, result, workspace->residency_workspace);
     workspace->cut_scratch_count += result->cut_count;
     return reduced;
 }
@@ -377,4 +378,3 @@ ShadowSpillStatus shadowspill_candidate_reduce_residency(
     };
     return status;
 }
-

@@ -181,8 +181,18 @@ def test_corpus_round_trip_keeps_plan_axes_separate(tmp_path: Path) -> None:
         step_program,
         phase_timings_ns=(("capture", 2), ("total", 3)),
         store_directories=(("root", "/different/cache"),),
+        semantic_labels_json=json.dumps(
+            {"objects": {"state_object": {"label": "parameter weight"}}}
+        ),
     )
     assert different_evidence.digest == step_program.digest
+    restored_labels = StepProgram.from_json(different_evidence.to_json())
+    assert json.loads(restored_labels.semantic_labels_json) == json.loads(
+        different_evidence.semantic_labels_json
+    )
+    old_record = different_evidence.to_dict()
+    del old_record["semantic_labels"]
+    assert StepProgram.from_dict(old_record).semantic_labels_json == "{}"
     identity = ProgramCaseIdentity("llama3", "mlops", 4_096, 1_024, 2)
     saved = save_step_program(
         tmp_path / "corpus",

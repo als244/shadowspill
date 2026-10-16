@@ -45,7 +45,6 @@ from .residency import (
     Cut,
     ResidencyPlan,
     assert_required_floor,
-    extend_interval_entries,
     reduce_pressure,
     seed_residency,
 )
@@ -62,24 +61,16 @@ class _SelectionProblem:
     selection_id: str
     facts: PlanningFacts
     seed: ResidencyPlan
-    cut_scores: dict[tuple[Cut, str], tuple[int, ...]] = field(
+    cut_scores: dict[tuple[Cut, str, int], tuple[int, ...]] = field(
         default_factory=dict,
         compare=False,
         repr=False,
     )
-    interval_plans: dict[
-        tuple[str, tuple[tuple[str, int, int], ...]], ResidencyPlan
-    ] = field(
-        default_factory=dict,
-        compare=False,
-        repr=False,
-    )
-    schedule_cache: dict[tuple[ResidencyPlan, str, bool, bool], MemorySchedule] = field(
+    schedule_cache: dict[tuple[ResidencyPlan, str, bool], MemorySchedule] = field(
         default_factory=dict, compare=False, repr=False
     )
     simulation_cache: dict[
-        MemorySchedule,
-        SimulationResult | _CachedSimulationFailure,
+        MemorySchedule, SimulationResult | _CachedSimulationFailure
     ] = field(default_factory=dict, compare=False, repr=False)
 
 
@@ -129,12 +120,10 @@ class _CandidateSpec:
     problem: _SelectionProblem
     strategy: str
     fetch_rule: str
-    coalesced: bool
 
     @property
     def candidate_id(self) -> str:
-        suffix = "-coalesced" if self.coalesced else ""
-        return f"{self.strategy}/{self.fetch_rule}{suffix}"
+        return f"{self.strategy}/{self.fetch_rule}"
 
 
 @dataclass(frozen=True, slots=True)
@@ -402,13 +391,6 @@ def _evaluate_candidate(
 
     while True:
         try:
-            pressure_key = tuple(
-                sorted(
-                    (device_id, boundary, value)
-                    for (device_id, boundary), value in extra_pressure.items()
-                )
-            )
-            residency_key = (spec.strategy, pressure_key)
             residency_started = time.perf_counter_ns()
             residency = reduce_pressure(
                 facts,
@@ -419,17 +401,10 @@ def _evaluate_candidate(
                 score_cache=spec.problem.cut_scores,
             )
             reduce_ns += time.perf_counter_ns() - residency_started
-            if spec.fetch_rule == "interval-entry":
-                extended = spec.problem.interval_plans.get(residency_key)
-                if extended is None:
-                    extended = extend_interval_entries(facts, residency)
-                    spec.problem.interval_plans[residency_key] = extended
-                residency = extended
             fetch_headroom = spec.strategy.startswith("headroom")
             schedule_key = (
                 residency,
                 spec.fetch_rule,
-                spec.coalesced,
                 fetch_headroom,
             )
             schedule = spec.problem.schedule_cache.get(schedule_key)
@@ -440,7 +415,6 @@ def _evaluate_candidate(
                     config,
                     residency,
                     spec.fetch_rule,
-                    coalesced=spec.coalesced,
                     fetch_headroom=fetch_headroom,
                 )
                 emit_ns += time.perf_counter_ns() - schedule_started
@@ -628,21 +602,11 @@ def _candidate_specs(
 ) -> tuple[_CandidateSpec, ...]:
     specs: list[_CandidateSpec] = []
     ordinal = 0
-    coalescing = (False, True) if algorithm_options.evaluate_coalesced else (False,)
     for problem in problems:
         for strategy in algorithm_options.residency_strategies:
             for rule in algorithm_options.fetch_rules:
-                for coalesced in coalescing:
-                    specs.append(
-                        _CandidateSpec(
-                            ordinal,
-                            problem,
-                            strategy,
-                            rule,
-                            coalesced,
-                        )
-                    )
-                    ordinal += 1
+                specs.append(_CandidateSpec(ordinal, problem, strategy, rule))
+                ordinal += 1
     return tuple(specs)
 
 

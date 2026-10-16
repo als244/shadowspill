@@ -108,8 +108,7 @@ static void emission_destroy(Emission *emission) {
 /*
  * A span whose object is not produced at its entry has to be fetched before
  * its first use. The window runs from just after the previous departure to
- * the boundary before that use; coalescing lets the fetch share the previous
- * release's boundary rather than starting after it.
+ * the boundary before that use. A fetch starts after the previous departure.
  *
  * Returns -2 when no boundary in that window can carry the fetch, which is a
  * fact about the residency rather than a failure to allocate.
@@ -118,7 +117,6 @@ static int plan_span_reload(
     const ShadowSpillScheduleFacts *facts,
     uint32_t alias,
     Span span,
-    int coalesced,
     int has_previous_departure,
     Departure previous_departure,
     Emission *emission
@@ -141,10 +139,6 @@ static int plan_span_reload(
     uint32_t earliest = 0U;
     if (has_previous_departure != 0) {
         earliest = previous_departure.trigger + 1U;
-        if (coalesced != 0 &&
-            previous_departure.kind == SHADOWSPILL_MEMORY_RELEASE) {
-            earliest = previous_departure.trigger;
-        }
     }
     /* An alias the reducer may not cut is fetched at the trigger its resident
      * slice was sized for, so no rule moves it. */
@@ -238,7 +232,6 @@ static int collect_alias_transitions(
     const ShadowSpillScheduleFacts *facts,
     const ShadowSpillResidency *residency,
     uint32_t alias,
-    int coalesced,
     Emission *emission
 ) {
     const ShadowSpillPressureFitResidencyProblem *problem = facts->problem->residency;
@@ -262,7 +255,6 @@ static int collect_alias_transitions(
             facts,
             alias,
             span,
-            coalesced,
             has_previous_departure,
             previous_departure,
             emission
@@ -396,12 +388,11 @@ int shadowspill_emit_indexed_schedule(
     const ShadowSpillScheduleFacts *facts,
     const ShadowSpillResidency *residency,
     uint8_t fetch_rule,
-    int coalesced,
     int fetch_headroom,
     ShadowSpillScheduleStorage *storage
 ) {
     if (facts == NULL || residency == NULL || storage == NULL ||
-        fetch_rule > SHADOWSPILL_PRESSUREFIT_FETCH_DEMAND) {
+        fetch_rule > SHADOWSPILL_PRESSUREFIT_FETCH_DEMAND || fetch_rule == 2U) {
         return -1;
     }
     shadowspill_schedule_storage_clear(storage);
@@ -417,7 +408,7 @@ int shadowspill_emit_indexed_schedule(
             continue;
         }
         const int collected = collect_alias_transitions(
-            facts, residency, alias, coalesced, &emission
+            facts, residency, alias, &emission
         );
         if (collected != 0) {
             emission_destroy(&emission);
@@ -430,7 +421,7 @@ int shadowspill_emit_indexed_schedule(
         ) != 0 ||
         build_actions(&emission) != 0 ||
         shadowspill_schedule_copy_actions(
-            facts, emission.actions, emission.action_count, coalesced, storage
+            emission.actions, emission.action_count, storage
         ) != 0) {
         emission_destroy(&emission);
         return -1;

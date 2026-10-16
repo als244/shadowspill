@@ -25,6 +25,7 @@ from shadowspill.planner import (
 )
 from shadowspill.planner.program import ShadowSpillPlanningProblem
 from shadowspill.pytorch.capture.retention import MEMORY_BOUND_FLOPS_PER_BYTE
+from shadowspill.pytorch.diagnostics.semantics import training_semantic_labels
 from shadowspill.pytorch.distributed._preparation import (
     collective_identity,
     collective_misses,
@@ -368,6 +369,7 @@ def _public_step_program(
         ),
         unique_profile_count=profiled.profiles.unique_keys,
         captured_stage_count=sum(len(item.stages) for item in captured.partitioned),
+        semantic_labels_json=json.dumps(training_semantic_labels(programs.lowered)),
     )
 
 

@@ -262,7 +262,6 @@ def print_breakdown(
         print(
             f"  chosen candidate   {chosen['residency_strategy']} /"
             f" {chosen['fetch_rule']}"
-            f"{' / coalesced' if chosen['coalesced'] else ''}"
             f"   {repairs} repairs to its plan"
             if repairs is not None
             else ""

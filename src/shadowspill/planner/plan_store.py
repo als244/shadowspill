@@ -1143,7 +1143,7 @@ def resolve_plan(
             **_incumbent_field(incumbent),
         }
     )
-    return plans.resolve(
+    lookup = plans.resolve(
         program,
         initial_residency=initial_residency,
         final_residency=final_residency,
@@ -1155,3 +1155,12 @@ def resolve_plan(
         incumbent=incumbent,
         keep_resolutions=keep_resolutions,
     )
+    if chosen.trace_directory is not None:
+        algorithm.record_trace(
+            lookup.result,
+            options=chosen,
+            admission=admission,
+            placement=placement,
+            progress=progress,
+        )
+    return lookup

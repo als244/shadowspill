@@ -12,11 +12,11 @@ static int multiply_u32(uint32_t left, uint32_t right, uint32_t *result) {
 }
 
 static int strategy_valid(uint8_t strategy) {
-    return strategy <= SHADOWSPILL_PRESSUREFIT_RESIDENCY_RELAXED_STALL;
+    return strategy <= SHADOWSPILL_PRESSUREFIT_RESIDENCY_TIGHT_TRANSFER;
 }
 
 static int rule_valid(uint8_t rule) {
-    return rule <= SHADOWSPILL_PRESSUREFIT_FETCH_DEMAND;
+    return rule <= SHADOWSPILL_PRESSUREFIT_FETCH_DEMAND && rule != 2U;
 }
 
 /* The plan to beat indexes this problem's aliases and tasks, and names
@@ -70,15 +70,8 @@ static int problem_valid(
         problem->context.simulation->task_count == 0U ||
         options->residency_strategies == NULL ||
         options->residency_strategy_count == 0U ||
-        options->fetch_rules == NULL || options->fetch_rule_count == 0U ||
-        options->coalescing_modes == NULL ||
-        options->coalescing_mode_count == 0U) {
+        options->fetch_rules == NULL || options->fetch_rule_count == 0U) {
         return 0;
-    }
-    for (uint32_t index = 0U; index < options->coalescing_mode_count; ++index) {
-        if (options->coalescing_modes[index] > 1U) {
-            return 0;
-        }
     }
     for (uint32_t index = 0U; index < options->residency_strategy_count;
          ++index) {
@@ -131,7 +124,7 @@ void shadowspill_pressurefit_result_destroy(
  * Evaluating several resolved programs on one set of worker threads.
  *
  * The unit of work is a candidate of a problem -- one residency strategy, one
- * fetch rule, one coalescing mode -- and every such unit of every problem
+ * fetch rule -- and every such unit of every problem
  * competes for the same workers. Worker count and problem count are
  * independent: asking for eight workers gets eight threads whether there is
  * one problem or five, which is the whole reason this takes a list. ("Pool"
@@ -284,11 +277,9 @@ ShadowSpillStatus shadowspill_pressurefit_evaluate_resolved(
             options->residency_strategy_count,
             options->fetch_rule_count,
             &per_problem
-        ) != 0 ||
-        multiply_u32(per_problem, options->coalescing_mode_count, &per_problem) != 0) {
+        ) != 0) {
         return SHADOWSPILL_STATUS_INVALID_ARGUMENT;
     }
-
     const uint64_t started = shadowspill_monotonic_ns();
     ProgramSearch search = {
         .options = options,
@@ -300,7 +291,6 @@ ShadowSpillStatus shadowspill_pressurefit_evaluate_resolved(
         return SHADOWSPILL_STATUS_INTERNAL_FAILURE;
     }
     atomic_init(&search.next_task, 0U);
-
     const ShadowSpillStatus prepared = prepare_problems(
         &search, problems, problem_count, per_problem, results
     );
@@ -351,7 +341,6 @@ ShadowSpillStatus shadowspill_pressurefit_evaluate_resolved(
         (void)pthread_join(threads[index], NULL);
     }
     free(threads);
-
     int failed = 0;
     for (uint32_t index = 0U; index < worker_count; ++index) {
         failed |= workers[index].failed;

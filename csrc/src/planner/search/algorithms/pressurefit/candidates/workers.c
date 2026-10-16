@@ -1,5 +1,6 @@
 /* The worker pool, and the (problem, candidate) tasks it hands out. */
 #include "internal.h"
+#include "../trace.h"
 
 static uint32_t problem_of_task(
     const ProgramSearch *search, uint32_t task, uint32_t *candidate
@@ -105,24 +106,26 @@ static int worker_evaluate_task(SearchWorker *worker, uint32_t task) {
     SearchedProblem *problem = &search->problems[index];
     CandidateWorkspace *workspace = &worker->workspace;
     const ShadowSpillPressureFitOptions *options = search->options;
-
-    const uint32_t modes = options->coalescing_mode_count;
     const uint32_t rules = options->fetch_rule_count;
-    const uint8_t mode = options->coalescing_modes[candidate % modes];
-    const uint8_t rule = options->fetch_rules[(candidate / modes) % rules];
-    const uint8_t strategy =
-        options->residency_strategies[candidate / (modes * rules)];
-
+    const uint8_t rule = options->fetch_rules[candidate % rules];
+    const uint8_t strategy = options->residency_strategies[candidate / rules];
     ShadowSpillPressureFitCandidateDiagnostic *diagnostic =
         &problem->result->candidates[candidate];
-    shadowspill_candidate_initialize_diagnostic(diagnostic, strategy, rule, mode);
+    shadowspill_candidate_initialize_diagnostic(diagnostic, strategy, rule);
 
     /* Everything from here on is this candidate's, the base reduction
      * included: it is work a worker does for this task and nobody else's. */
     const ShadowSpillPressureFitWorkDiagnostics before = shadowspill_candidate_workspace_work(workspace);
     const uint64_t started = shadowspill_monotonic_ns();
 
-    /* This strategy's base residency, from this worker's own memo. */
+    if (options->trace_directory != NULL) {
+        workspace->trace = shadowspill_candidate_trace_open(
+            options->trace_directory, index, strategy, rule,
+            problem->problem->residency, workspace->seed);
+        if (workspace->trace == NULL) { return -1; }
+    }
+
+    /* This candidate's base reduction, including its full cut history. */
     const uint64_t pressure_cells =
         (uint64_t)problem->problem->residency->device_count *
         problem->problem->residency->boundary_count;
@@ -148,12 +151,20 @@ static int worker_evaluate_task(SearchWorker *worker, uint32_t task) {
     if (base_status == SHADOWSPILL_STATUS_ANALYTIC_INFEASIBLE) {
         shadowspill_candidate_copy_analytic_error(diagnostic, &base);
         finish_task(diagnostic, search, workspace, before, started);
+        if (workspace->trace != NULL) {
+            const int closed = shadowspill_candidate_trace_close(workspace->trace, diagnostic);
+            workspace->trace = NULL;
+            if (closed != 0) { return -1; }
+        }
         return 0;
     }
     if (base_status != SHADOWSPILL_STATUS_OK) {
+        if (workspace->trace != NULL) {
+            (void)shadowspill_candidate_trace_close(workspace->trace, diagnostic);
+            workspace->trace = NULL;
+        }
         return -1;
     }
-
     const int valid = shadowspill_candidate_evaluate_candidate(
         problem->problem,
         &problem->facts,
@@ -161,10 +172,14 @@ static int worker_evaluate_task(SearchWorker *worker, uint32_t task) {
         workspace,
         strategy,
         rule,
-        mode,
         diagnostic
     );
     finish_task(diagnostic, search, workspace, before, started);
+    if (workspace->trace != NULL) {
+        const int closed = shadowspill_candidate_trace_close(workspace->trace, diagnostic);
+        workspace->trace = NULL;
+        if (closed != 0) { return -1; }
+    }
     if (valid < 0) {
         return -1;
     }
@@ -314,4 +329,3 @@ void shadowspill_candidate_program_search_destroy(
     }
     free(search->problems);
 }
-

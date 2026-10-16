@@ -120,6 +120,18 @@ class SearchAlgorithm(ABC):
         search with no cheap way to tell should not pretend otherwise.
         """
 
+    def record_trace(
+        self,
+        result: ProgramPlanResult,
+        *,
+        options: SearchOptions,
+        admission: AdmissionFacts | None = None,
+        placement: AdmissionFacts | None = None,
+        progress: Callable[[str], None] | None = None,
+    ) -> None:
+        """Record an explicitly requested search trace, including on cache hits."""
+        raise NotImplementedError(f"{self.name} does not support search tracing")
+
     @abstractmethod
     def __call__(
         self,
@@ -203,8 +215,37 @@ class SearchOptions:
     generic: GenericPlanningOptions = field(default_factory=GenericPlanningOptions)
     algorithm: SearchAlgorithm | None = None
     workers: int = 0
+    #: Optional diagnostic output; excluded from the request and plan key.
+    trace_directory: str | None = None
+    #: (selection_id, candidate_id) pairs; None records the answering pair.
+    trace_candidates: tuple[tuple[str, str], ...] | None = None
 
     def __post_init__(self) -> None:
+        if self.trace_directory is not None and (
+            not isinstance(self.trace_directory, str)
+            or not self.trace_directory
+            or "\x00" in self.trace_directory
+        ):
+            raise ValueError("trace_directory must be a non-empty path or None")
+        if self.trace_candidates is not None:
+            if self.trace_directory is None:
+                raise ValueError("trace_candidates requires trace_directory")
+            if (
+                not isinstance(self.trace_candidates, tuple)
+                or not self.trace_candidates
+            ):
+                raise ValueError("trace_candidates must be a non-empty tuple of pairs")
+            for pair in self.trace_candidates:
+                if (
+                    not isinstance(pair, tuple)
+                    or len(pair) != 2
+                    or any(not isinstance(value, str) or not value for value in pair)
+                ):
+                    raise ValueError(
+                        "trace_candidates entries must be identifier pairs"
+                    )
+            if len(set(self.trace_candidates)) != len(self.trace_candidates):
+                raise ValueError("trace_candidates must not contain duplicate pairs")
         if not isinstance(self.generic, GenericPlanningOptions):
             raise TypeError("generic must be a GenericPlanningOptions")
         if self.algorithm is not None and not isinstance(

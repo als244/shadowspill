@@ -71,9 +71,8 @@ def _config() -> SimulationConfig:
 def test_pressurefit_never_creates_actions_for_shared_aliases() -> None:
     result = PressureFit(
         PressureFitOptions(
-            residency_strategies=("relaxed-stall",),
+            residency_strategies=("tight-stall",),
             fetch_rules=("latest-safe",),
-            evaluate_coalesced=False,
         )
     )(
         _program(),

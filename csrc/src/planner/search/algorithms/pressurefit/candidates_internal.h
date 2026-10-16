@@ -113,16 +113,10 @@ int shadowspill_best_placed_offer(
     const ShadowSpillScheduleStorage *plan
 );
 
-int shadowspill_extend_interval_entries(
-    const ShadowSpillScheduleFacts *facts,
-    ShadowSpillResidency *residency
-);
-
 int shadowspill_emit_indexed_schedule(
     const ShadowSpillScheduleFacts *facts,
     const ShadowSpillResidency *residency,
     uint8_t fetch_rule,
-    int coalesced,
     int fetch_headroom,
     ShadowSpillScheduleStorage *storage
 );

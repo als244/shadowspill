@@ -55,6 +55,9 @@ class StepProgram:
     transfer_capabilities_json: str
     unique_profile_count: int
     captured_stage_count: int
+    #: Optional frontend names, joined by task/object ID by analysis tools.
+    #: Excluded from the planning-content digest; older archives have none.
+    semantic_labels_json: str = "{}"
 
     def __post_init__(self) -> None:
         if self.problem.role != "step":
@@ -62,6 +65,8 @@ class StepProgram:
         parsed = json.loads(self.transfer_capabilities_json)
         if not isinstance(parsed, dict):
             raise ValueError("transfer capabilities must encode a JSON object")
+        if not isinstance(json.loads(self.semantic_labels_json), dict):
+            raise ValueError("semantic labels must encode a JSON object")
 
     @property
     def digest(self) -> str:
@@ -90,6 +95,7 @@ class StepProgram:
 
     def to_dict(self) -> dict[str, object]:
         return {
+            "semantic_labels": json.loads(self.semantic_labels_json),
             "schema": _STEP_PROGRAM_SCHEMA,
             "identity": {
                 "signature_digests": list(self.signature_digests),
@@ -246,6 +252,11 @@ class StepProgram:
             captured_stage_count=_integer(
                 profiling.get("captured_stage_count"),
                 "step_program.profiling.captured_stage_count",
+            ),
+            semantic_labels_json=_canonical_json(
+                _mapping(
+                    data.get("semantic_labels", {}), "step_program.semantic_labels"
+                )
             ),
         )
 

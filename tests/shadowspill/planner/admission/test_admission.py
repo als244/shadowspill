@@ -624,7 +624,6 @@ def test_search_repairs_fragmented_fetch_at_its_trigger_boundary() -> None:
             PressureFitOptions(
                 residency_strategies=("tight-stall",),
                 fetch_rules=("latest-safe",),
-                evaluate_coalesced=False,
                 max_repair_attempts=1,
             )
         )(
@@ -646,7 +645,6 @@ def test_search_repairs_fragmented_fetch_at_its_trigger_boundary() -> None:
         PressureFitOptions(
             residency_strategies=("tight-stall",),
             fetch_rules=("latest-safe",),
-            evaluate_coalesced=False,
         )
     )(
         program,

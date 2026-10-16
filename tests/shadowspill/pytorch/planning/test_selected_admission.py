@@ -55,9 +55,8 @@ def _selected():  # type: ignore[no-untyped-def]
     initial, final = exact_capacity_residency()
     return PressureFit(
         PressureFitOptions(
-            residency_strategies=("relaxed-stall",),
+            residency_strategies=("tight-stall",),
             fetch_rules=("latest-safe",),
-            evaluate_coalesced=False,
         )
     )(
         exact_capacity_program(),

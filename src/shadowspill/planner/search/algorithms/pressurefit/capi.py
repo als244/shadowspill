@@ -25,7 +25,6 @@ class CPressureFitBestPlacedRecord(ctypes.Structure):
         ("capacity_given_back_bytes", ctypes.c_uint64),
         ("residency_strategy", ctypes.c_uint8),
         ("fetch_rule", ctypes.c_uint8),
-        ("coalesced", ctypes.c_uint8),
         ("schedule_digest", ctypes.c_uint8 * 32),
     ]
 
@@ -36,8 +35,6 @@ class CPressureFitOptions(ctypes.Structure):
         ("residency_strategy_count", ctypes.c_uint32),
         ("fetch_rules", ctypes.POINTER(ctypes.c_uint8)),
         ("fetch_rule_count", ctypes.c_uint32),
-        ("coalescing_modes", ctypes.POINTER(ctypes.c_uint8)),
-        ("coalescing_mode_count", ctypes.c_uint32),
         ("max_repair_attempts", ctypes.c_uint32),
         ("capacity_refinement_bytes", ctypes.c_uint64),
         ("record_reduction_steps", ctypes.c_uint8),
@@ -45,6 +42,7 @@ class CPressureFitOptions(ctypes.Structure):
         ("workers", ctypes.c_uint32),
         ("deterministic", ctypes.c_uint8),
         ("minimum_object_bytes_evict_eligible", ctypes.c_uint64),
+        ("trace_directory", ctypes.c_char_p),
     ]
 
 
@@ -119,7 +117,6 @@ class CPressureFitCandidateDiagnostic(ctypes.Structure):
         ("status", ctypes.c_uint8),
         ("residency_strategy", ctypes.c_uint8),
         ("fetch_rule", ctypes.c_uint8),
-        ("coalesced", ctypes.c_uint8),
         ("repairs", CPressureFitRepairDiagnostics),
         ("work", CPressureFitWorkDiagnostics),
         ("simulation_status", ctypes.c_uint32),

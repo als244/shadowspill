@@ -73,7 +73,6 @@ static ShadowSpillStatus prepare_problem(
         .write_boundaries = prepared->sparse.write_boundaries,
         .alias_evict_eligible = prepared->evict_eligible,
         .fixed_fetch_trigger = prepared->fixed_fetch_trigger,
-        .first_input_task = prepared->first_input_task,
         .fetch_runtime_ns = prepared->fetch_runtime_ns,
         .evict_runtime_ns = prepared->evict_runtime_ns,
         .task_ideal_end_ns = prepared->task_ideal_end_ns,

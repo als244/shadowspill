@@ -10,7 +10,6 @@ from .counters import (
     ReductionStep,
 )
 from .json import (
-    _boolean,
     _mapping,
     _optional_integer,
     _optional_string,
@@ -34,7 +33,7 @@ class CandidateDiagnostic:
     """One candidate policy evaluated in one resolved program.
 
     ``candidate_id`` identifies only the reusable policy: residency strategy,
-    fetch rule, and coalescing mode.  ``selection_id`` is the parent-problem
+    and fetch rule.  ``selection_id`` is the parent-problem
     reference and is deliberately not part of candidate-policy identity.
     """
 
@@ -81,13 +80,11 @@ class CandidateDiagnostic:
     steps: tuple[ReductionStep, ...] = ()
     residency_strategy: str = field(init=False)
     fetch_rule: str = field(init=False)
-    coalesced: bool = field(init=False)
 
     def __post_init__(self) -> None:
-        strategy, rule, coalesced = _parse_candidate_id(self.candidate_id)
+        strategy, rule = _parse_candidate_id(self.candidate_id)
         object.__setattr__(self, "residency_strategy", strategy)
         object.__setattr__(self, "fetch_rule", rule)
-        object.__setattr__(self, "coalesced", coalesced)
 
     def to_dict(self) -> dict[str, object]:
         return {
@@ -95,7 +92,6 @@ class CandidateDiagnostic:
                 "candidate_id": self.candidate_id,
                 "residency_strategy": self.residency_strategy,
                 "fetch_rule": self.fetch_rule,
-                "coalesced": self.coalesced,
             },
             "outcome": {
                 "status": self.status,
@@ -213,14 +209,10 @@ class CandidateDiagnostic:
                 policy.get("fetch_rule"),
                 f"{path}.candidate_policy.fetch_rule",
             ),
-            "coalesced": _boolean(
-                policy.get("coalesced"), f"{path}.candidate_policy.coalesced"
-            ),
         }
         expected_policy = {
             "residency_strategy": result.residency_strategy,
             "fetch_rule": result.fetch_rule,
-            "coalesced": result.coalesced,
         }
         if declared_policy != expected_policy:
             raise ValueError(

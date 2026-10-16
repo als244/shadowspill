@@ -42,9 +42,8 @@ FEW_CANDIDATES = SearchOptions(
     generic=GenericPlanningOptions(minimum_object_bytes_evict_eligible=0),
     algorithm=PressureFit(
         PressureFitOptions(
-            residency_strategies=("relaxed-stall",),
+            residency_strategies=("tight-stall",),
             fetch_rules=("latest-safe",),
-            evaluate_coalesced=False,
         )
     ),
 )
@@ -67,16 +66,18 @@ def test_exact_capacity_schedule_uses_one_legal_round_trip() -> None:
         generic=FEW_CANDIDATES.generic,
     )
 
+    # More fetch slack favors retained, whose next requirement is final residency.
+    # Its return can overlap task2 while later remains available for that task.
     assert tuple(
         (action.trigger_task_id, action.alias_group_id, action.kind)
         for action in result.schedule.actions
     ) == (
-        ("task0", "later", MemoryActionKind.EVICT),
+        ("task0", "retained", MemoryActionKind.EVICT),
         ("task1", "temporary", MemoryActionKind.RELEASE),
-        ("task1", "later", MemoryActionKind.FETCH),
+        ("task1", "retained", MemoryActionKind.FETCH),
         ("task2", "later", MemoryActionKind.RELEASE),
     )
-    assert result.simulation.makespan_ns == 5_000
+    assert result.simulation.makespan_ns == 4_000
     assert result.simulation.device_peak("cuda_0").total_bytes == 122
     assert result.simulation.spill_peak_bytes == 61
 
@@ -102,9 +103,8 @@ def test_latest_safe_fetch_accounts_for_transfer_duration() -> None:
     )
     result = PressureFit(
         PressureFitOptions(
-            residency_strategies=("relaxed-stall",),
+            residency_strategies=("tight-stall",),
             fetch_rules=("latest-safe",),
-            evaluate_coalesced=False,
         )
     )(
         program,
@@ -148,9 +148,8 @@ def test_demand_fetch_uses_final_legal_boundary() -> None:
     )
     result = PressureFit(
         PressureFitOptions(
-            residency_strategies=("relaxed-stall",),
+            residency_strategies=("tight-stall",),
             fetch_rules=("demand",),
-            evaluate_coalesced=False,
         )
     )(
         program,

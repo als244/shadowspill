@@ -35,13 +35,9 @@ __all__ = [
 ]
 
 
-def _parse_candidate_id(value: str) -> tuple[str, str, bool]:
-    coalesced = value.endswith("-coalesced")
-    base = value[: -len("-coalesced")] if coalesced else value
-    strategy, separator, rule = base.partition("/")
-    if not separator:
-        return "unknown", "unknown", coalesced
-    return strategy, rule, coalesced
+def _parse_candidate_id(value: str) -> tuple[str, str]:
+    strategy, separator, rule = value.partition("/")
+    return (strategy, rule) if separator else ("unknown", "unknown")
 
 
 def without_measurements(value: object) -> object:

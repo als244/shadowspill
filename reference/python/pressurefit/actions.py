@@ -309,7 +309,6 @@ def emit_schedule(
     plan: ResidencyPlan,
     fetch_rule: str,
     *,
-    coalesced: bool,
     fetch_headroom: bool = False,
 ) -> MemorySchedule:
     """Emit one immutable schedule without changing any task boundary."""
@@ -339,11 +338,6 @@ def emit_schedule(
                 earliest = 0
                 if previous_departure is not None:
                     earliest = previous_departure.trigger + 1
-                    if (
-                        coalesced
-                        and previous_departure.kind is MemoryActionKind.RELEASE
-                    ):
-                        earliest = previous_departure.trigger
                 if latest < earliest:
                     raise PlanInfeasibleError(
                         f"alias {facts.alias_ids[alias]!r} has no legal fetch "
@@ -416,23 +410,6 @@ def emit_schedule(
             actions_by_task[task], key=lambda item: (kind_order[item[1]], item[0])
         )
     )
-    if coalesced:
-        release_keys = {
-            (action.trigger_task_id, action.alias_group_id)
-            for action in actions
-            if action.kind is MemoryActionKind.RELEASE
-        }
-        fetch_keys = {
-            (action.trigger_task_id, action.alias_group_id)
-            for action in actions
-            if action.kind is MemoryActionKind.FETCH
-        }
-        coalesced_keys = release_keys & fetch_keys
-        actions = tuple(
-            action
-            for action in actions
-            if (action.trigger_task_id, action.alias_group_id) not in coalesced_keys
-        )
     schedule = MemorySchedule(
         initial_residency=_initial_schedule(facts),
         actions=actions,

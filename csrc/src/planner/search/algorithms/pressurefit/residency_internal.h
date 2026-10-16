@@ -33,13 +33,11 @@ typedef struct ShadowSpillPressureFitResidencyProblem {
     uint32_t alias_count;
     uint32_t boundary_count;
     uint32_t device_count;
-
     const uint64_t *alias_size_bytes;
     const uint32_t *alias_device;
     const uint8_t *alias_retain_spill_copy;
     const int8_t *initial_location;
     const int8_t *final_location;
-    const uint32_t *first_input_task;
     const uint64_t *fetch_runtime_ns;
     const uint64_t *evict_runtime_ns;
     const uint64_t *task_ideal_end_ns;
@@ -166,6 +164,8 @@ typedef struct ShadowSpillPressureFitResidencyOptions {
     const uint64_t *extra_pressure_bytes;
 } ShadowSpillPressureFitResidencyOptions;
 
+typedef struct ShadowSpillPressureFitTrace ShadowSpillPressureFitTrace;
+
 typedef struct ShadowSpillPressureFitResidencyResult {
     uint32_t status;
     uint32_t error_device;
@@ -180,6 +180,7 @@ typedef struct ShadowSpillPressureFitResidencyResult {
     uint32_t *cut_aliases;
     uint64_t cut_capacity;
     uint64_t cut_count;
+    ShadowSpillPressureFitTrace *trace;
 } ShadowSpillPressureFitResidencyResult;
 
 static inline uint64_t shadowspill_boundary_capacity(

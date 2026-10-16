@@ -344,6 +344,7 @@ def run_problems(
     *,
     workers: int = 0,
     best: BestPlaced | None = None,
+    trace_directory: str | None = None,
 ) -> tuple[CProblemResult | None, ...]:
     """Evaluate every resolved program in the planner, on its worker threads.
 
@@ -367,6 +368,8 @@ def run_problems(
         algorithm_options,
         workers=workers,
         best_placed=0 if best is None else best.handle,
+        trace_directory=trace_directory,
+
     )
 
 

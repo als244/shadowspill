@@ -98,13 +98,11 @@ static uint32_t hash_index_next(const HashIndex *index, uint32_t slot) {
 static uint64_t schedule_memo_hash(
     Fingerprint residency,
     uint8_t rule,
-    uint8_t coalesced,
     uint8_t fetch_headroom
 ) {
     uint64_t hash = UINT64_C(1469598103934665603);
     hash = shadowspill_candidate_hash_bytes(hash, &residency, sizeof(residency));
     hash = shadowspill_candidate_hash_bytes(hash, &rule, sizeof(rule));
-    hash = shadowspill_candidate_hash_bytes(hash, &coalesced, sizeof(coalesced));
     return shadowspill_candidate_hash_bytes(hash, &fetch_headroom, sizeof(fetch_headroom));
 }
 
@@ -169,7 +167,6 @@ static ScheduleMemoEntry *find_schedule_memo(
     CandidateWorkspace *workspace,
     Fingerprint residency,
     uint8_t rule,
-    uint8_t coalesced,
     uint8_t fetch_headroom,
     uint64_t hash
 ) {
@@ -177,7 +174,6 @@ static ScheduleMemoEntry *find_schedule_memo(
     for (uint32_t index = 0U; index < cache->count; ++index) {
         ScheduleMemoEntry *entry = &cache->entries[index];
         if (entry->hash == hash && entry->rule == rule &&
-            entry->coalesced == coalesced &&
             entry->fetch_headroom == fetch_headroom &&
             shadowspill_candidate_fingerprint_equal(entry->residency, residency)) {
             return entry;
@@ -411,7 +407,6 @@ static ScheduleMemoEntry *append_schedule_memo(
     CandidateWorkspace *workspace,
     Fingerprint residency,
     uint8_t rule,
-    uint8_t coalesced,
     uint8_t fetch_headroom,
     uint64_t hash
 ) {
@@ -431,7 +426,6 @@ static ScheduleMemoEntry *append_schedule_memo(
     entry->residency = residency;
     entry->rule = rule;
     entry->hash = hash;
-    entry->coalesced = coalesced;
     entry->fetch_headroom = fetch_headroom;
     return entry;
 }
@@ -441,20 +435,17 @@ int shadowspill_candidate_emit_cached(
     CandidateWorkspace *workspace,
     const ShadowSpillResidency *residency,
     uint8_t rule,
-    uint8_t coalesced,
     uint8_t fetch_headroom
 ) {
     uint64_t hash = schedule_memo_hash(
         workspace->current_residency,
         rule,
-        coalesced,
         fetch_headroom
     );
     ScheduleMemoEntry *entry = find_schedule_memo(
         workspace,
         workspace->current_residency,
         rule,
-        coalesced,
         fetch_headroom,
         hash
     );
@@ -472,7 +463,6 @@ int shadowspill_candidate_emit_cached(
             facts,
             residency,
             rule,
-            coalesced != 0U,
             fetch_headroom != 0U,
             &workspace->schedule
         ) != 0) {
@@ -483,7 +473,6 @@ int shadowspill_candidate_emit_cached(
         workspace,
         workspace->current_residency,
         rule,
-        coalesced,
         fetch_headroom,
         hash
     ) == NULL

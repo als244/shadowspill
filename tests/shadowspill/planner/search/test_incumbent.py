@@ -41,7 +41,6 @@ ONE_POOR_CANDIDATE = SearchOptions(
         PressureFitOptions(
             residency_strategies=("tight-stall",),
             fetch_rules=("demand",),
-            evaluate_coalesced=False,
         )
     ),
 )
