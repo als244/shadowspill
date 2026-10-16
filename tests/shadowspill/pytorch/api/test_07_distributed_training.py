@@ -7,11 +7,22 @@ import os
 import socket
 import subprocess
 import sys
+import warnings
 
 import pytest
 import torch
 
 pytestmark = [pytest.mark.fresh_process, pytest.mark.cuda]
+
+
+def _nvml_lists_every_gpu():
+    """Each rank's runtime identifies its GPU through NVML before allocating.
+    One GPU in a failed state makes NVML's listing fail for the whole node."""
+    if torch.version.hip:
+        return True
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        return torch.cuda._raw_device_uuid_nvml() is not None
 
 
 @pytest.mark.parametrize(
@@ -36,6 +47,10 @@ pytestmark = [pytest.mark.fresh_process, pytest.mark.cuda]
 def test_distributed_training_matches_combined_reference(tmp_path, arguments):
     if torch.cuda.device_count() < 2:
         pytest.skip("requires two separate visible devices")
+    if not _nvml_lists_every_gpu():
+        pytest.skip(
+            "a GPU on this node is in a failed state: NVML cannot list the GPUs"
+        )
     with socket.socket() as listener:
         listener.bind(("127.0.0.1", 0))
         port = listener.getsockname()[1]
