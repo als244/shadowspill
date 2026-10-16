@@ -57,6 +57,7 @@ shadowspill_add_pytorch_canary(state_import_export 90)
 shadowspill_add_pytorch_canary(mutation 90)
 shadowspill_add_pytorch_canary(training 120)
 shadowspill_add_pytorch_canary(step_archive 120)
+shadowspill_add_pytorch_canary(planning_residue 120)
 
 # Installing the allocator needs a process where CUDA has not been
 # initialized, so exactly one of these can run per pytest process; in the

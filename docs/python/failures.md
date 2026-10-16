@@ -76,7 +76,8 @@ If any phase fails, `plan_step()`, `plan_forward()`, or `build_step_programs()`:
 
 1. retains the original exception and traceback;
 2. records any allocator failure already latched by the C adapter;
-3. aborts a partially admitted runtime plan;
+3. aborts a partially admitted runtime plan, first taking back any workspace
+   its own scopes left behind and reporting it as a `RuntimeWarning`;
 4. restores persistent object identities; and
 5. attaches independent cleanup failures as exception notes instead of
    replacing the primary cause.

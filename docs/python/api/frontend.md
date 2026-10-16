@@ -304,11 +304,13 @@ storage rather than reading whatever now lives there. The runtime half reclaims
 the leases, in bytes, which is what it owns; a lease the framework has not freed
 keeps its pointer indexed, so the free that eventually arrives still resolves.
 
-`reclaim_plan_scoped_residue(runtime, plan_handle)` runs both, and a closing
-planned callable calls it as one of its cleanup steps: it names the residue,
-reclaims it, and reports what it took in a `RuntimeWarning` rather than
-raising, since a kernel is entitled to keep state between tasks and what is
-wanted during teardown is visibility. Setting
+`reclaim_plan_scoped_residue(runtime, plan_handle)` runs both. A closing
+planned callable calls it as one of its cleanup steps, and a planning call's
+plan runs it as the plan ends: `build_step_programs()` once its programs are
+built, and any planning call that fails. It names the residue, reclaims it,
+and reports what it took in a `RuntimeWarning` rather than raising, since a
+kernel is entitled to keep state between tasks -- a cache of tensors keyed by
+its arguments, say -- and what is wanted during teardown is visibility. Setting
 `SHADOWSPILL_REPORT_LIVE_ALLOCATIONS` to a non-empty value adds a second
 `RuntimeWarning` carrying `describe_live_allocations()` for the whole execution
 pool, emitted before anything is released, so the residue can be read against the
@@ -956,7 +958,9 @@ Captures, compiles, profiles and lowers a reusable step, and returns one
 materialization and one profiling; the orderings differ only in the walk the
 lowering emits, and `None` builds the depth-first ordering alone. It runs no
 search and leaves no active callable: temporary compilation and
-materialization state is released before it returns. Because it writes no
+materialization state is released before it returns, and its plan takes back
+what its own scopes allocated, as a closing callable's does
+([above](#what-a-closing-plan-leaves-behind)). Because it writes no
 plans it takes no plan-store arguments; pass a result to `plan_program()`,
 which plans it and does take them, repeatedly and with different budgets and
 bandwidths if wanted.

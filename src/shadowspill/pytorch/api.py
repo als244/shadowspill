@@ -84,12 +84,14 @@ def _surface_failed_plan(
         operation=operation,
         synchronize_unlatched=False,
     )
+    # The failure's frames let go of their tensors before the plan ends, so the
+    # ranges its close reclaims are the ones something else still holds.
+    _clear_failure_frame_locals(error)
     _cleanup_failed_plan(
         runtime,
         planning_started=planning_started,
         error=error,
     )
-    _clear_failure_frame_locals(error)
     # With the failure's tensors released, the slabs planning borrowed can go
     # back now; any still in use go back at the next call.
     take_back_lent_slabs(runtime)

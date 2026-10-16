@@ -4,7 +4,8 @@ Nothing a plan's own scopes allocated outlives the plan. `plan_scoped_residue`
 names what still does -- the range, the scope that made it, the object occupying
 it and where that object is referenced from -- and `force_release_plan_scope`
 reclaims it; `reclaim_plan_scoped_residue` is the two together as a closing
-callable runs them, reporting rather than raising.
+plan runs them -- a callable's close, or the end of a planning call that left
+no callable -- reporting rather than raising.
 """
 
 from __future__ import annotations
@@ -151,7 +152,7 @@ def force_release_plan_scope(runtime: Runtime, plan_handle: int) -> tuple[int, i
 
 def reclaim_plan_scoped_residue(runtime: Runtime, plan_handle: int) -> None:
     """Reclaim what one plan's own scopes allocated and nobody released, as a
-    closing callable does.
+    closing plan does.
 
     The contract is that nothing a plan's own scopes allocated outlives the
     plan. Anything that does is named here, with the object occupying it and
@@ -167,7 +168,7 @@ def reclaim_plan_scoped_residue(runtime: Runtime, plan_handle: int) -> None:
     if os.environ.get("SHADOWSPILL_REPORT_LIVE_ALLOCATIONS"):
         held = describe_live_allocations(runtime, _execution_pool(runtime))
         warnings.warn(
-            f"the execution pool holds {len(held)} range(s) as this callable"
+            f"the execution pool holds {len(held)} range(s) as this plan"
             " closes:\n  " + "\n  ".join(held),
             RuntimeWarning,
             stacklevel=3,
@@ -177,7 +178,7 @@ def reclaim_plan_scoped_residue(runtime: Runtime, plan_handle: int) -> None:
         return
     detached, reclaimed = force_release_plan_scope(runtime, plan_handle)
     warnings.warn(
-        f"closing this callable reclaimed {reclaimed} allocation(s) that its"
+        f"closing this plan reclaimed {reclaimed} allocation(s) that its"
         f" own scopes made and nothing released, detaching {detached}"
         " storage(s) first:\n  " + "\n  ".join(survivors),
         RuntimeWarning,

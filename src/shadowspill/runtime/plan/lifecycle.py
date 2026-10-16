@@ -25,6 +25,7 @@ from ..configuration import (
     resolve_execution_budget,
     resolve_execution_device,
 )
+from ..residue import reclaim_plan_scoped_residue
 from ..topology import MemoryPool, RuntimeRoute, TransferCapabilities
 from .lending import lend_reserved_slabs, require_lent_slabs_back, take_back_lent_slabs
 
@@ -239,16 +240,38 @@ def release_plan(runtime: Runtime, plan_handle: int) -> None:
 
 
 def abort_plan(runtime: Runtime, plan_handle: int | None = None) -> None:
-    """Release cold-path task records after a failed planning call."""
+    """End a planning call's plan: after a build that leaves no callable, or
+    after a failed planning call.
+
+    The ranges the plan's own scopes made come back first, as they do when a
+    callable closes. A kernel may keep a value it made while a task ran -- a
+    cache of its last results, keyed by its arguments -- and nothing evicts it
+    until the kernel is called again with other arguments. A plan that closed
+    without taking such a range back would leave it in the device pool, owned
+    by no plan, where a later plan's layout cannot have that part of the pool.
+    """
 
     with runtime._lock:
         target = runtime._planning_plan_handle if plan_handle is None else plan_handle
         if target is None or runtime._planning_plan_handle != target:
             raise RuntimeError("Runtime planning ownership underflow")
+    # Outside the lock, as a callable's close does: naming what occupies a range
+    # walks the frontend's objects. A failure here must not keep the plan open,
+    # so it is raised once the plan is closed.
+    residue_error: BaseException | None = None
+    try:
+        reclaim_plan_scoped_residue(runtime, target)
+    except BaseException as error:
+        residue_error = error
+    with runtime._lock:
+        if runtime._planning_plan_handle != target:
+            raise RuntimeError("Runtime planning ownership underflow")
         try:
             _close_and_destroy_plan(target)
         except BaseException as error:
             runtime._unusable_reason = f"execution-plan rollback failed: {error}"
+            if residue_error is not None:
+                error.add_note(f"Reclaiming the plan's residue failed: {residue_error}")
             raise
         finally:
             runtime._planning_plan_handle = None
@@ -257,6 +280,8 @@ def abort_plan(runtime: Runtime, plan_handle: int | None = None) -> None:
     # What the failed planning still holds keeps a slab lent until the next
     # call or admission takes it back.
     take_back_lent_slabs(runtime)
+    if residue_error is not None:
+        raise residue_error
 
 
 def wait_plan_idle(plan_handle: int) -> None:
