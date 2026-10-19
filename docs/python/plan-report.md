@@ -32,13 +32,14 @@ planning worked under, the profiling and selection evidence, and the detailed
 `diagnostics`.
 
 Its `summary` is a derived `PlanSummary`, the plan's promise in a dozen
-numbers, and the fastest way to read a plan. Its four time components
+numbers, and the fastest way to read a plan. Its five time components
 identify:
 
 ```text
 simulated_step_seconds = unconstrained_step_seconds     the compute floor
                        + recomputation_overhead_seconds paid to recompute
-                       + idle_seconds                   waiting inside the step
+                       + task_contention_seconds        added inside task intervals
+                       + idle_seconds                   waiting outside task intervals
                        + terminal_writeback_seconds     the tail after it
 ```
 
@@ -85,7 +86,7 @@ The top-level fields are grouped below.
 | Identity | `mode`, `capture_identity`, `program.digest` | Planning mode and content identities. |
 | Selected plan | `execution_plan` | The plan every call runs. |
 | Prediction | `predicted_makespan_ns`, `predicted_device_peak_bytes`, `predicted_spill_peak_bytes` | Simulator result after physical admission. |
-| Promise | `summary` | The derived `PlanSummary` described above: the simulated step split into its four parts, the graph-pair selection counts, the scheduled traffic and the bandwidths behind it, planning wall time by phase, and the winning candidate. |
+| Promise | `summary` | The derived `PlanSummary` described above: the simulated step split into its five parts, the graph-pair selection counts, the scheduled traffic and the bandwidths behind it, planning wall time by phase, and the winning candidate. |
 | Capacity | `execution_pool`, `spill_pool`, public and callable budgets, shared bytes, `fixed_slab_bytes`, `requested_dynamic_scratch_reserve_bytes` | Pool selection, runtime-global sharing, process-persistent deductions, and requested scratch floor. |
 | Transfers | `fetch_profile`, `evict_profile`, `transfer_actions`, `transfer_bytes_fetched`, `transfer_bytes_evicted` | Calibration consumed by planning and selected traffic. |
 | Profiling | `task_profiles`, profile hit/miss counts, allocation-probe counts | Deduplicated structural measurements and their provenance. |
@@ -352,7 +353,7 @@ handling](../architecture/physical-admission.md) to interpret the certificate.
 ## Exporting diagnostic evidence
 
 `PlanDiagnostics.as_dict()` returns a JSON-friendly value with schema
-`shadowspill.plan_diagnostics/v1`:
+`shadowspill.plan_diagnostics/v2`:
 
 ```python
 import json

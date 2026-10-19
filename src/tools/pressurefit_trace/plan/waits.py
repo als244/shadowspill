@@ -181,13 +181,15 @@ class TaskWaits:
             ),
             "upstream_storage_dependencies": upstream,
             "lane_predecessors": ahead,
-            "lane_predecessor_bytes": sum(self.data.actions[i]["bytes"] for i in ahead),
+            "lane_predecessor_bytes": sum(
+                self.data.actions[i]["transfer_bytes"] for i in ahead
+            ),
             "unrelated_lane_predecessor_bytes": sum(
-                self.data.actions[i]["bytes"] for i in ahead if i not in direct
+                self.data.actions[i]["transfer_bytes"] for i in ahead if i not in direct
             ),
             "later_use_lane_predecessors": later,
             "later_use_predecessor_bytes": sum(
-                self.data.actions[i]["bytes"] for i in later
+                self.data.actions[i]["transfer_bytes"] for i in later
             ),
             "evidence": (
                 "saved input aliases, transfer timings, and admission reuse edges"

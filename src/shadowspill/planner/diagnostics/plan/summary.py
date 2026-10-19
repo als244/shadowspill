@@ -18,9 +18,9 @@ class PlanSummary:
 
     Only quantities that exist nowhere else on the report live here;
     budgets, transfer totals, and calibration stay on their canonical
-    fields and profiles. The four time parts identify exactly:
+    fields and profiles. The five time parts identify exactly:
     ``simulated_step_seconds == unconstrained_step_seconds +
-    recomputation_overhead_seconds + idle_seconds +
+    recomputation_overhead_seconds + task_contention_seconds + idle_seconds +
     terminal_writeback_seconds``. The unconstrained step charges every
     task-alternative group its cheapest option and no waiting at all — the
     compute floor the geometry admits. A group counts as a recomputation
@@ -74,6 +74,9 @@ class PlanSummary:
     selected_candidate: Mapping[str, object] = field(
         default_factory=lambda: MappingProxyType({})
     )
+    #: Extra time inside task intervals above their isolated profiles:
+    #: compute/transfer interference and waiting for shared resources.
+    task_contention_seconds: float = 0.0
 
     @property
     def fetch_blended_bandwidth_bytes_per_second(self) -> float | None:
@@ -104,6 +107,7 @@ class PlanSummary:
             "simulated_step_seconds": self.simulated_step_seconds,
             "unconstrained_step_seconds": self.unconstrained_step_seconds,
             "recomputation_overhead_seconds": self.recomputation_overhead_seconds,
+            "task_contention_seconds": self.task_contention_seconds,
             "idle_seconds": self.idle_seconds,
             "terminal_writeback_seconds": self.terminal_writeback_seconds,
             "recomputing_group_count": self.recomputing_group_count,
@@ -171,6 +175,7 @@ class PlanSummary:
             simulated_step_seconds=number("simulated_step_seconds"),
             unconstrained_step_seconds=number("unconstrained_step_seconds"),
             recomputation_overhead_seconds=number("recomputation_overhead_seconds"),
+            task_contention_seconds=number("task_contention_seconds"),
             idle_seconds=number("idle_seconds"),
             terminal_writeback_seconds=number("terminal_writeback_seconds"),
             recomputing_group_count=count("recomputing_group_count"),
@@ -217,6 +222,9 @@ def summarize_selected_plan(
     chosen = {item.group_id: item.option_id for item in result.selections}
     floor_ns = costs.floor_ns
     selected_ns = costs.selected_ns(chosen)
+    scheduled_task_ns = sum(
+        item.end_ns - item.start_ns for item in result.simulation.task_intervals
+    )
     span_ns = max(item.end_ns for item in result.simulation.task_intervals)
     makespan_ns = result.simulation.makespan_ns
     fetched = 0
@@ -262,7 +270,8 @@ def summarize_selected_plan(
         simulated_step_seconds=makespan_ns / 1e9,
         unconstrained_step_seconds=floor_ns / 1e9,
         recomputation_overhead_seconds=(selected_ns - floor_ns) / 1e9,
-        idle_seconds=(span_ns - selected_ns) / 1e9,
+        task_contention_seconds=(scheduled_task_ns - selected_ns) / 1e9,
+        idle_seconds=(span_ns - scheduled_task_ns) / 1e9,
         terminal_writeback_seconds=(makespan_ns - span_ns) / 1e9,
         recomputing_group_count=costs.recomputing(chosen),
         task_alternative_group_count=len(result.selections),

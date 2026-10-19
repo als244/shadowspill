@@ -102,9 +102,9 @@ Derived on access, not stored: `program`, `search_result`,
 
 ## PlanSummary
 
-`report.summary`. What the selected plan promises, in one place. The four
+`report.summary`. What the selected plan promises, in one place. The five
 parts add up: `simulated_step_seconds` equals `unconstrained_step_seconds`
-plus `recomputation_overhead_seconds` plus `idle_seconds` plus
+plus `recomputation_overhead_seconds` plus `task_contention_seconds` plus `idle_seconds` plus
 `terminal_writeback_seconds`.
 
 | Field | Meaning |
@@ -112,7 +112,8 @@ plus `recomputation_overhead_seconds` plus `idle_seconds` plus
 | `simulated_step_seconds` | The simulated makespan of one step. |
 | `unconstrained_step_seconds` | The compute floor: every task-alternative group at its cheapest option, and no waiting. |
 | `recomputation_overhead_seconds` | What the chosen options cost above that floor. |
-| `idle_seconds` | Time the step spends waiting rather than computing. |
+| `task_contention_seconds` | Time added inside task intervals above isolated profiles, from compute/transfer interference or waiting for shared resources. |
+| `idle_seconds` | Time outside task intervals before the last task finishes, including initial and inter-task readiness waits. |
 | `terminal_writeback_seconds` | The tail after the last task, writing back what the step produced. |
 | `recomputing_group_count` | Groups whose chosen option costs strictly more compute than that group's cheapest. |
 | `task_alternative_group_count` | Task-alternative groups in the program, forced ones included. |

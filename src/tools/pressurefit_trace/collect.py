@@ -24,7 +24,10 @@ import numpy as np
 from shadowspill.diagnostics.pressurefit_trace import PressureFitTrace, read_manifest
 from shadowspill.planner import GenericPlanningOptions, SearchOptions, plan_program
 from shadowspill.planner.annotated_plan import AnnotatedProgramPlan
-from shadowspill.planner.program_inputs import ShadowSpillPlanningProblem
+from shadowspill.planner.program_inputs import (
+    ShadowSpillPlanningProblem,
+    TransferBandwidths,
+)
 
 
 def write(path, value):
@@ -204,6 +207,25 @@ def execution_budget(dump, *, execution_gib=None, physical_gib=None):
     return execution, physical
 
 
+def transfer_bandwidths(value):
+    """Parse decimal GB/s without changing the captured transfer latencies."""
+    try:
+        rates = tuple(int(float(part.strip()) * 1e9) for part in value.split(","))
+        if len(rates) == 2:
+            rates = (rates[0], rates[0], rates[1], rates[1])
+        if len(rates) != 4:
+            raise ValueError("expected two or four rates")
+        return TransferBandwidths(
+            *rates,
+            provenance=f"tools.pressurefit_trace plan --transfer-bandwidths {value}",
+        )
+    except (ValueError, OverflowError) as error:
+        raise argparse.ArgumentTypeError(
+            "use positive finite GB/s rates: FETCH,EVICT or "
+            "FETCH_SOLO,FETCH_CONCURRENT,EVICT_SOLO,EVICT_CONCURRENT"
+        ) from error
+
+
 def plan(args):
     source = args.input.resolve()
     dump = json.loads((source / "dump.json").read_text())
@@ -233,6 +255,7 @@ def plan(args):
                 problem,
                 execution_budget=execution,
                 spill_budget=spill,
+                transfer_bandwidths=args.transfer_bandwidths,
                 search_options=options,
                 artifact_store=output / "artifact_store",
                 verbose=True,
@@ -278,6 +301,11 @@ def plan(args):
                     "execution_budget_bytes": execution,
                     "physical_budget_bytes": physical,
                     "spill_budget_bytes": spill,
+                    "transfer_bandwidths_override": (
+                        args.transfer_bandwidths.to_dict()
+                        if args.transfer_bandwidths is not None
+                        else None
+                    ),
                     "search_options": options.to_dict(),
                 },
                 indent=2,
@@ -335,6 +363,7 @@ def trace(args):
             problem,
             execution_budget=plans["execution_budget_bytes"],
             spill_budget=plans["spill_budget_bytes"],
+            transfer_bandwidths=reference.transfer_bandwidths,
             search_options=options,
             artifact_store=planning / "artifact_store",
             verbose=True,
@@ -363,6 +392,7 @@ def trace(args):
                     "physical_budget_bytes": plans.get("physical_budget_bytes"),
                     "execution_budget_bytes": plans["execution_budget_bytes"],
                     "spill_budget_bytes": plans["spill_budget_bytes"],
+                    "transfer_bandwidths": reference.transfer_bandwidths.to_dict(),
                 },
             )
         record = {
@@ -517,6 +547,13 @@ def add_commands(modes):
         help="Physical device cap; subtract the captured runtime/headroom carve-out",
     )
     planning.add_argument("--spill-gib", type=float)
+    planning.add_argument(
+        "--transfer-bandwidths",
+        type=transfer_bandwidths,
+        help="Override decimal GB/s: FETCH,EVICT or "
+        "FETCH_SOLO,FETCH_CONCURRENT,EVICT_SOLO,EVICT_CONCURRENT; "
+        "retain captured task profiles and transfer latencies",
+    )
     planning.add_argument("--workers", type=int, default=0)
     planning.set_defaults(run=plan)
     tracing = modes.add_parser(

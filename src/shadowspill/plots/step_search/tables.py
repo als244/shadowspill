@@ -63,11 +63,16 @@ def raw_data(root: Path, report: StepSearchReport, series: Series) -> tuple[Path
                 else float(report.metadata.get("units_per_step", 1)) / step,
                 None if summary is None else summary.unconstrained_step_seconds,
                 None if summary is None else summary.recomputation_overhead_seconds,
+                None if summary is None else summary.task_contention_seconds,
                 None if summary is None else summary.idle_seconds,
                 None if summary is None else summary.terminal_writeback_seconds,
                 None
                 if summary is None
-                else summary.recomputation_overhead_seconds + summary.idle_seconds,
+                else (
+                    summary.recomputation_overhead_seconds
+                    + summary.task_contention_seconds
+                    + summary.idle_seconds
+                ),
                 None
                 if summary is None or step is None
                 else summary.unconstrained_step_seconds / step,
@@ -143,6 +148,7 @@ def raw_data(root: Path, report: StepSearchReport, series: Series) -> tuple[Path
                 "simulated_units_per_second",
                 "unconstrained_seconds",
                 "recomputation_overhead_seconds",
+                "task_contention_seconds",
                 "idle_seconds",
                 "terminal_writeback_seconds",
                 "wasted_seconds",

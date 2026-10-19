@@ -46,6 +46,7 @@ def test_summary_parts_identify_to_the_simulated_step() -> None:
     reassembled = (
         summary.unconstrained_step_seconds
         + summary.recomputation_overhead_seconds
+        + summary.task_contention_seconds
         + summary.idle_seconds
         + summary.terminal_writeback_seconds
     )
@@ -55,6 +56,34 @@ def test_summary_parts_identify_to_the_simulated_step() -> None:
     # the chosen option is never strictly costlier than the cheapest.
     assert summary.recomputing_group_count == 0
     assert summary.recomputation_overhead_seconds == 0.0
+
+
+def test_contention_inside_a_task_is_not_reported_as_idle() -> None:
+    from dataclasses import replace
+
+    import pytest
+
+    result = representative_result()
+    baseline = summarize_selected_plan(result)
+    *earlier, last = result.simulation.task_intervals
+    # Shared-resource contention extends the final task without changing
+    # its input-readiness wait or the isolated profile's work.
+    simulation = replace(
+        result.simulation,
+        task_intervals=(*earlier, replace(last, end_ns=last.end_ns + 100)),
+        makespan_ns=result.simulation.makespan_ns + 100,
+    )
+    summary = summarize_selected_plan(replace(result, simulation=simulation))
+    assert summary.idle_seconds == baseline.idle_seconds
+    assert summary.task_contention_seconds == pytest.approx(100e-9)
+    assert summary.simulated_step_seconds == pytest.approx(
+        summary.unconstrained_step_seconds
+        + summary.recomputation_overhead_seconds
+        + summary.task_contention_seconds
+        + summary.idle_seconds
+        + summary.terminal_writeback_seconds
+    )
+    assert PlanSummary.from_dict(summary.as_dict()) == summary
 
 
 def test_recompute_fraction_is_guarded_against_empty_selections() -> None:

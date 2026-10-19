@@ -51,11 +51,13 @@ def _waste_segments(
             scale = item.step_seconds if share else 1.0
             # With the compute the three partition the step exactly: the
             # cheapest graphs with no waiting, the compute recomputation
-            # adds, and everything the step was not computing -- stalls and
-            # the terminal writeback, which the simulator prices inside the
-            # same makespan. Without it the bar is the last two alone.
+            # adds, and waiting plus contention inside running tasks. The
+            # terminal writeback is included in that last part. Without the
+            # compute floor the bar is the last two alone.
             stalled = (
-                item.summary.idle_seconds + item.summary.terminal_writeback_seconds
+                item.summary.idle_seconds
+                + item.summary.task_contention_seconds
+                + item.summary.terminal_writeback_seconds
             )
             parts = [
                 (item.summary.recomputation_overhead_seconds, 1.0),
@@ -154,12 +156,12 @@ def _waste_legend(
         [
             Patch(facecolor="0.35", alpha=1.0, label="Effective Compute (Lower)"),
             Patch(facecolor="0.35", alpha=0.62, label="Recomputation (Middle)"),
-            Patch(facecolor="0.35", alpha=0.30, label="Stalled (Upper)"),
+            Patch(facecolor="0.35", alpha=0.30, label="Wait + Contention (Upper)"),
         ]
         if include_compute
         else [
             Patch(facecolor="0.35", alpha=1.0, label="Recomputation (Lower)"),
-            Patch(facecolor="0.35", alpha=0.45, label="Stalled (Upper)"),
+            Patch(facecolor="0.35", alpha=0.45, label="Wait + Contention (Upper)"),
             Patch(facecolor="none", edgecolor="none", label="Makespan"),
         ]
     )

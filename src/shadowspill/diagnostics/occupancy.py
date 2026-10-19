@@ -22,6 +22,10 @@ records as no lease of the output's own -- is the output's from that
 task's start. The same walk gives the compute, fetch and evict lanes as
 intervals, for the pages this module writes.
 
+Transfer recipes distinguish full execution objects, owned spill storage, and
+CPU-copy payload. Collective and other timed phases occupy lane time without
+adding CPU-copy bytes.
+
 With a traced step's diagnostics the walk also runs on the device's clock:
 the spill pool and the lanes from the traced tasks and transfers, and the
 execution pool with each lease placed at the device times of the events
@@ -44,6 +48,8 @@ from itertools import pairwise
 from pathlib import Path
 from typing import Any
 from urllib.parse import quote, unquote
+
+from shadowspill.schema import ARTIFACT_VERSION
 
 GIB = float(1 << 30)
 
@@ -305,6 +311,8 @@ class ProgramFacts:
     """
 
     alias_size: dict[str, int]
+    alias_spill_size: dict[str, int]
+    alias_copy_bytes: dict[tuple[str, str], int]
     retained: set[str]
     objects: dict[str, ObjectFacts]
     #: Per alias group, its generations in production order: ``(producer
@@ -456,6 +464,27 @@ class ProgramFacts:
             alias_size={
                 group["alias_group_id"]: int(group["size_bytes"])
                 for group in program["alias_groups"]
+            },
+            alias_spill_size={
+                group["alias_group_id"]: int(
+                    (group.get("transfer") or {}).get(
+                        "spill_size_bytes", group["size_bytes"]
+                    )
+                )
+                for group in program["alias_groups"]
+            },
+            alias_copy_bytes={
+                (group["alias_group_id"], direction): (
+                    sum(
+                        int(phase["bytes"])
+                        for phase in group["transfer"][direction]
+                        if phase["kind"] == "copy"
+                    )
+                    if group.get("transfer")
+                    else int(group["size_bytes"])
+                )
+                for group in program["alias_groups"]
+                for direction in ("fetch", "evict")
             },
             retained={
                 group["alias_group_id"]
@@ -648,7 +677,12 @@ def spill_occupancy(
         if start_ns is not None:
             intervals.append(
                 _interval(
-                    facts, clock, alias_id, start_ns, end_ns, facts.alias_size[alias_id]
+                    facts,
+                    clock,
+                    alias_id,
+                    start_ns,
+                    end_ns,
+                    facts.alias_spill_size[alias_id],
                 )
             )
 
@@ -666,7 +700,9 @@ def spill_occupancy(
                 "fetch" if kind == "fetch" else "evict",
                 start_ns,
                 end_ns,
-                facts.alias_size[alias_id],
+                facts.alias_copy_bytes[
+                    (alias_id, "fetch" if kind == "fetch" else "evict")
+                ],
                 alias_id,
                 None if holder is None else holder.object_id,
                 UNATTRIBUTED if holder is None else holder.category,
@@ -1025,7 +1061,7 @@ def program_path_for(selection_path: Path, selection: Mapping[str, Any]) -> Path
     """Where the store keeps the program a selection was made for."""
 
     digest = str(selection["program_digest"])
-    # <store>/v1/planning/results/<xx>/<key>/selection.json -> <store>/v1/planning
+    # <store>/vN/planning/results/<xx>/<key>/selection.json -> <store>/vN/planning
     planning = selection_path.resolve().parents[3]
     return planning / "programs" / digest[:2] / digest / "program.json"
 
@@ -1731,7 +1767,7 @@ def stored_plans(run_root: Path) -> list[StoredPlan]:
     store = run_root / "plan_store"
     if recorded_store is not None and Path(recorded_store).is_dir():
         store = Path(recorded_store)
-    results = store / "v1" / "planning" / "results"
+    results = store / f"v{ARTIFACT_VERSION}" / "planning" / "results"
     for path in sorted(results.glob("*/*/selection.json")):
         selection = _stored_selection(path, layout=False)
         simulation = selection.get("simulation_result")

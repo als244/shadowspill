@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import shutil
 import subprocess
+from dataclasses import replace
 from itertools import pairwise
 from types import SimpleNamespace
 
@@ -61,6 +62,83 @@ def test_saved_plan_occupancy_and_physical_offsets_survive_loading(data):
     assert data.execution.peak == data.occupancy.execution.peak()[0]
     assert data.spill.peak == data.occupancy.spill.peak()[0]
     assert data.end_ns == data.simulation["makespan_ns"]
+
+
+@pytest.fixture(scope="module")
+def sharded_data():
+    from shadowspill.ir import (
+        AliasGroupSpec,
+        MemoryLocation,
+        ObjectSpec,
+        ResidencySpec,
+        ResourceKind,
+        ResourceSpec,
+        TaskProfile,
+        TaskSpec,
+        TransferPhase,
+        TransferSpec,
+    )
+    from shadowspill.planner import TaskAdmissionSpec
+
+    source = _pressurefit_program()
+    recipe = TransferSpec(
+        4,
+        (
+            TransferPhase("copy", 4),
+            TransferPhase("timed", duration_ns=100, resource="collective"),
+        ),
+        (
+            TransferPhase("timed", duration_ns=50, resource="collective"),
+            TransferPhase("copy", 4),
+        ),
+    )
+    source = replace(
+        source,
+        program=replace(
+            source.program,
+            alias_groups=tuple(
+                AliasGroupSpec(a, "cuda_0", 32, transfer=recipe) for a in ("a", "b")
+            ),
+            objects=tuple(ObjectSpec(a, a, 0, 32) for a in ("a", "b")),
+            profiles=(*source.program.profiles, TaskProfile("empty", 0, 0, "abi")),
+            tasks=(
+                TaskSpec(
+                    "entry", ResourceSpec("cuda_0", ResourceKind.CONTROL), "empty"
+                ),
+                replace(
+                    source.program.tasks[0], inputs=("a", "b"), dependencies=("entry",)
+                ),
+            ),
+        ),
+        initial_residency=tuple(
+            ResidencySpec(a, MemoryLocation.SPILL) for a in ("a", "b")
+        ),
+        final_residency=tuple(
+            ResidencySpec(a, MemoryLocation.SPILL) for a in ("a", "b")
+        ),
+        admission_facts=replace(
+            source.admission_facts,
+            tasks=(TaskAdmissionSpec("entry"), TaskAdmissionSpec("task")),
+        ),
+    )
+    return PlanData(json.loads(plan_program(source, verbose=False).to_json()))
+
+
+def test_sharded_transfers_count_cpu_payload_and_preserve_full_gpu_objects(
+    sharded_data,
+):
+    data = sharded_data
+    assert {a["bytes"] for a in data.transfers} == {32}
+    assert {a["transfer_bytes"] for a in data.transfers} == {4}
+    assert data.pending_bytes.peak == 4
+    assert data.execution.peak == 64
+    assert data.spill.peak == data.simulation["spill_peak_bytes"] == 8
+    assert {p["bytes"] for p in data.leases} == {32}
+    assert {t.bytes for t in data.occupancy.transfers} == {4}
+    assert data.task_detail(1)["input_fetch_bytes"] == 64
+    first = next(a for a in data.transfers if a["kind"] == "fetch")
+    # The saved lane interval includes the timed phase after the 4-byte copy.
+    assert first["transfer"]["end_ns"] - first["transfer"]["start_ns"] == 4100
 
 
 def test_replay_explains_conflict_alignment_reuse_and_resident_slice():
@@ -249,8 +327,8 @@ def test_backlog_bars_are_proportional_to_bytes_not_objects(data):
     from tools.pressurefit_trace.plan.render_common import ROLE_COLOR
 
     pending = [
-        {"bytes": 2**20, "role": "parameter"},
-        {"bytes": 2 * 2**20, "role": "gradient"},
+        {"bytes": 8 * 2**20, "transfer_bytes": 2**20, "role": "parameter"},
+        {"bytes": 2 * 2**20, "transfer_bytes": 2 * 2**20, "role": "gradient"},
     ]
     data.queue = lambda direction, instant: pending if direction == "fetch" else []
     data.pending_bytes = EventSeries.build([(0, 10, 3 * 2**20, "fetch")], 10)
@@ -316,6 +394,7 @@ def waiting_example():
             "index": i,
             "alias_group_id": alias,
             "bytes": size,
+            "transfer_bytes": size,
             "kind": "fetch",
             "boundary": 1,
             "trigger_ns": 0,
@@ -342,6 +421,7 @@ def waiting_example():
 
 def test_task_wait_separates_inputs_from_later_needed_copies_ahead():
     data = waiting_example()
+    data.actions[0]["transfer_bytes"] = 16
     waits = TaskWaits(data, {})
     detail = waits.detail(1)
     assert detail["stall_ns"] == 15
@@ -349,7 +429,7 @@ def test_task_wait_separates_inputs_from_later_needed_copies_ahead():
         {"action": 1, "relation": "required_input", "purposes": []}
     ]
     assert detail["lane_predecessors"] == [0]
-    assert detail["later_use_predecessor_bytes"] == 128
+    assert detail["later_use_predecessor_bytes"] == 16
     assert detail["input_fetch_bytes"] == 64
 
 

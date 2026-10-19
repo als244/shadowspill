@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 import textwrap
 from pathlib import Path
 
@@ -42,6 +43,7 @@ ROLE_NAMES = {
     WORKSPACE: "Task workspace",
 }
 LANE_COLOR = {"fetch": "#6aa9ff", "evict": "#f0af60"}
+_CARD_WORD_BREAKS = re.compile(r"(\s+|(?<=[A-Za-z_][._]))")
 
 
 def truncate(value, length=45):
@@ -243,19 +245,21 @@ class PlanCanvas:
             return renderer.get_text_width_height_descent(text, font, False)[0]
 
         paragraphs = str(value).splitlines()
+
+        def wrapped_lines(width):
+            wrapper = textwrap.TextWrapper(width=width, break_on_hyphens=False)
+            # Tensor paths can wrap at a namespace/field separator, keeping
+            # names such as weight intact. Decimal numbers remain together.
+            wrapper.wordsep_simple_re = _CARD_WORD_BREAKS
+            return [
+                line for paragraph in paragraphs for line in wrapper.wrap(paragraph)
+            ]
+
         while wrap > 8 and any(
-            measured_width(line) > ax.bbox.width * 0.86
-            for paragraph in paragraphs
-            for line in textwrap.wrap(paragraph, wrap, break_on_hyphens=False)
+            measured_width(line) > ax.bbox.width * 0.86 for line in wrapped_lines(wrap)
         ):
             wrap -= 1
-        lines = "\n".join(
-            line
-            for paragraph in paragraphs
-            for line in textwrap.wrap(
-                paragraph, wrap, break_long_words=True, break_on_hyphens=False
-            )
-        )
+        lines = "\n".join(wrapped_lines(wrap))
         if "$" in str(value):
             lines = str(value)
         label = ax.text(

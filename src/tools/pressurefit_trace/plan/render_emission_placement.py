@@ -164,7 +164,12 @@ class EmissionPlacementRenderer(PlanCanvas):
             size=17,
         )
         y = self.card_text(side, y - 0.01, a["label"], size=15, color=color, wrap=30)
-        y = self.card_text(side, y, byte_label(a["bytes"]), size=13, color=MUTED)
+        size_label = byte_label(a["bytes"])
+        if a["transfer"] is not None and a["transfer_bytes"] != a["bytes"]:
+            size_label = (
+                f"GPU {size_label} · CPU transfer {byte_label(a['transfer_bytes'])}"
+            )
+        y = self.card_text(side, y, size_label, size=13, color=MUTED)
         if a["kind"] == "release":
             reason = (
                 "Current spill copy retained."
@@ -174,7 +179,7 @@ class EmissionPlacementRenderer(PlanCanvas):
         elif a["kind"] == "evict":
             reason = (
                 "Write back this value; keep the source allocated "
-                "until copying completes."
+                "until the transfer completes."
             )
         else:
             reason = (

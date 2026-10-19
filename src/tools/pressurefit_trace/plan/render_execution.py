@@ -59,7 +59,7 @@ class ExecutionRenderer(PlanCanvas):
             (0.07, 0.36, 0.63, 0.115),
             xlim=(lo / 1e9, hi / 1e9),
             ylim=(0, ceiling),
-            ylabel="Waiting GiB",
+            ylabel="Queued host GiB",
         )
         for col, direction in enumerate(series.names):
             queue.step(
@@ -91,14 +91,14 @@ class ExecutionRenderer(PlanCanvas):
         y = self.card_text(
             side,
             y - 0.035,
-            "Backlog is the total bytes triggered and waiting to start copying.",
+            "Backlog counts CPU transfer bytes waiting for the transfer to start.",
             size=12,
             color=MUTED,
         )
         self.card_text(
             side,
             y - 0.025,
-            "Solid bars: active copying\nRed hatch: compute waiting",
+            "Solid bars: transfer in progress\nRed hatch: compute waiting",
             size=12,
         )
 
@@ -109,7 +109,7 @@ class ExecutionRenderer(PlanCanvas):
         scale = max(1, int(self.data.pending_bytes.values.max(initial=0)))
         for direction in ("fetch", "evict"):
             pending = self.data.queue(direction, instant)
-            total = sum(a["bytes"] for a in pending)
+            total = sum(a["transfer_bytes"] for a in pending)
             side.text(
                 0.065,
                 y,
@@ -131,7 +131,7 @@ class ExecutionRenderer(PlanCanvas):
             )
             by_role = {}
             for a in pending:
-                by_role[a["role"]] = by_role.get(a["role"], 0) + a["bytes"]
+                by_role[a["role"]] = by_role.get(a["role"], 0) + a["transfer_bytes"]
             side.add_patch(
                 Rectangle(
                     (0.065, y - bar_y),
@@ -233,10 +233,15 @@ class ExecutionRenderer(PlanCanvas):
             y = self.card_text(side, y - 0.01, reason, size=12)
             # The last completion explains when the task can start. Earlier
             # required transfers remain outlined in the lanes as well.
+            size_label = byte_label(critical["bytes"])
+            if critical["transfer_bytes"] != critical["bytes"]:
+                size_label = (
+                    f"GPU {size_label} · CPU {byte_label(critical['transfer_bytes'])}"
+                )
             y = self.card_text(
                 side,
                 y,
-                f"Last blocker · {byte_label(critical['bytes'])}",
+                f"Last blocker · {size_label}",
                 size=11,
                 color=MUTED,
             )
@@ -268,8 +273,8 @@ class ExecutionRenderer(PlanCanvas):
                 y = self.card_text(
                     side,
                     y,
-                    f"{byte_label(detail['later_use_predecessor_bytes'])} for later "
-                    "tasks copied first.",
+                    f"{byte_label(detail['later_use_predecessor_bytes'])} of CPU "
+                    "transfers for later tasks went first.",
                     size=11,
                     color=MUTED,
                 )
@@ -277,7 +282,7 @@ class ExecutionRenderer(PlanCanvas):
                 y = self.card_text(
                     side,
                     y,
-                    "Earlier copies occupy the fetch lane until "
+                    "Earlier transfers occupy this lane until "
                     f"{t['start_ns'] / 1e9:.4f} s.",
                     size=11,
                     color=MUTED,

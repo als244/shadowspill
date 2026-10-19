@@ -48,7 +48,11 @@ class GeometryPoint:
 
     @property
     def wasted_seconds(self) -> float:
-        return self.summary.recomputation_overhead_seconds + self.summary.idle_seconds
+        return (
+            self.summary.recomputation_overhead_seconds
+            + self.summary.task_contention_seconds
+            + self.summary.idle_seconds
+        )
 
 
 Series = tuple[tuple[tuple[str, int], tuple[GeometryPoint, ...]], ...]

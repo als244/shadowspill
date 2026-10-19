@@ -9,7 +9,7 @@ label that would not fit.
 from __future__ import annotations
 
 import math
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from pathlib import Path
 
 from matplotlib.axes import Axes
@@ -44,14 +44,19 @@ def line_figure(
     title: str,
     ylabel: str,
     budgets_gib: list[float],
-    series: dict[str, list[float]],
+    series: Mapping[str, Sequence[float | None]],
     *,
     percent: bool = False,
 ) -> Path:
     figure = Figure(figsize=(6.4, 4.0), dpi=150)
     axes = figure.subplots()
     for label, values in series.items():
-        axes.plot(budgets_gib, values, marker="o", label=label)
+        axes.plot(
+            budgets_gib,
+            [math.nan if value is None else value for value in values],
+            marker="o",
+            label=label,
+        )
     budget_ticks(axes, budgets_gib)
     axes.set_title(title)
     axes.set_xlabel("Execution Budget (GiB)")

@@ -268,6 +268,7 @@ class Renderer:
         self,
         data: Trajectory,
         *,
+        title=None,
         width=1920,
         context=3,
         focus_rows=7,
@@ -276,6 +277,7 @@ class Renderer:
         focus_mode="cut",
     ):
         self.data, self.context, self.focus_rows = data, context, focus_rows
+        self.title = title
         self.pressure_scale = pressure_scale
         self.focus_mode = focus_mode
         self.composition = PressureComposition(
@@ -479,8 +481,9 @@ class Renderer:
             focus = [selected]
 
         context = d.collection_context or {}
-        if context:
-            parts = [context["workload"]] if context.get("workload") else []
+        if context or self.title:
+            workload = self.title or context.get("workload")
+            parts = [workload] if workload else []
             metadata = context.get("metadata", {})
             if metadata.get("trainable", {}).get("mode") == "full":
                 parts.append("full training")
@@ -517,7 +520,7 @@ class Renderer:
         )
         self.label(
             0.035,
-            0.879 if context else 0.914,
+            0.879 if context or self.title else 0.914,
             "  ·  ".join(policy),
             fontsize=10.5,
             color=MUTED,
@@ -595,7 +598,8 @@ class Renderer:
         strip_points = self.tasks.get_position().width * self.fig.get_figwidth() * 72
         occupied, narrow = [], []
         task_labels = set(range(lo, hi))
-        if journey and hi - lo > 12:
+        wide_journey = journey and hi - lo > 12
+        if wide_journey:
             task_labels = {i for i in (prior_use, next_use, position) if i is not None}
         for i in range(lo, hi):
             color = "#97512b" if d.tasks[i].get("phase") == "forward" else "#553c53"
@@ -610,7 +614,7 @@ class Renderer:
             if recompute_end > d.edges[i]:
                 # Floating labels for nearby tiny tasks must not cover the
                 # recompute interval or its R marker.
-                if recompute_end > xmin and d.edges[i] < xmax:
+                if i in task_labels and recompute_end > xmin and d.edges[i] < xmax:
                     occupied.append(
                         (
                             max(0, (d.edges[i] - xmin) / (xmax - xmin)),
@@ -632,7 +636,10 @@ class Renderer:
                     label_width = (
                         3.5 * max(map(len, label.splitlines())) + 4
                     ) / strip_points
-                    if (recompute_end - d.edges[i]) / (xmax - xmin) >= label_width:
+                    if (
+                        not wide_journey
+                        and (recompute_end - d.edges[i]) / (xmax - xmin) >= label_width
+                    ):
                         self.tasks.text(
                             midpoint,
                             0.5,
@@ -652,7 +659,10 @@ class Renderer:
             label_midpoint = (recompute_end + d.edges[i + 1]) / 2
             center = (label_midpoint - xmin) / (xmax - xmin)
             label_width = (4 * max(map(len, label.splitlines())) + 6) / strip_points
-            if (d.edges[i + 1] - recompute_end) / (xmax - xmin) >= label_width:
+            if (
+                not wide_journey
+                and (d.edges[i + 1] - recompute_end) / (xmax - xmin) >= label_width
+            ):
                 self.tasks.text(
                     label_midpoint,
                     0.5,
@@ -666,10 +676,24 @@ class Renderer:
             else:
                 narrow.append((center, label, label_width))
                 occupied.append((center - 8 / strip_points, center + 8 / strip_points))
-        for center, label, label_width in narrow:
+        ordered_centers, label_scale = None, 1.0
+        if wide_journey and narrow:
+            # Only the prior use, focused task, and next use are labeled here.
+            # Keep their R/B labels in time order even at the viewport edges.
+            widths = np.asarray([item[2] for item in narrow])
+            gap = 5 / strip_points
+            label_scale = min(1, 1 / (widths.sum() + gap * (len(widths) - 1)))
+            ordered_centers = spaced_labels(
+                [item[0] for item in narrow], widths * label_scale, gap * label_scale
+            )
+        for label_index, (center, label, label_width) in enumerate(narrow):
             gaps = free_label_intervals(occupied)
             fits = [(a, b) for a, b in gaps if b - a >= label_width]
-            if fits:
+            if ordered_centers is not None:
+                label_center = ordered_centers[label_index]
+                label_width *= label_scale
+                size = 8 * label_scale
+            elif fits:
                 label_center = min(
                     (
                         np.clip(center, a + label_width / 2, b - label_width / 2)
@@ -1283,6 +1307,7 @@ def render_frame(
     data,
     output,
     *,
+    title=None,
     reduction,
     cut,
     width=1920,
@@ -1311,6 +1336,7 @@ def render_frame(
         )
     renderer = Renderer(
         data,
+        title=title,
         width=width,
         context=context,
         focus_rows=focus_rows,
@@ -1343,6 +1369,7 @@ def render_movie(
     data,
     output,
     *,
+    title=None,
     reductions,
     width=1920,
     fps=30,
@@ -1390,6 +1417,7 @@ def render_movie(
     output.parent.mkdir(parents=True, exist_ok=True)
     renderer = Renderer(
         data,
+        title=title,
         width=width,
         context=context,
         focus_rows=focus_rows,
@@ -1685,6 +1713,7 @@ def render_movie(
                 process.wait()
             plt.close(renderer.fig)
     report = {
+        "title": title,
         "width": width,
         "height": height,
         "quality": quality,

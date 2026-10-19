@@ -198,6 +198,10 @@ class PlanData:
                     "label": label,
                     "role": role,
                     "bytes": self.facts.alias_size[action["alias_group_id"]],
+                    # GPU residency can hold a full object while the host
+                    # copy carries only its owned shard. Timed collective
+                    # phases are included in the transfer interval, not bytes.
+                    "transfer_bytes": int(transfer["bytes"]) if transfer else 0,
                 }
             )
         if any(transfers.values()):
@@ -229,7 +233,7 @@ class PlanData:
                 (
                     a["trigger_ns"],
                     a["transfer"]["start_ns"],
-                    a["bytes"],
+                    a["transfer_bytes"],
                     a["transfer"]["direction"],
                 )
                 for a in self.transfers
@@ -374,7 +378,8 @@ class PlanData:
             "pending_peak_count": self.pending_count.peak,
             "pending_peak_bytes": self.pending_bytes.peak,
             "pending_definition": (
-                "triggered but not started; excludes copying transfers; "
+                "host-copy bytes triggered but not started; excludes active "
+                "transfer recipes (including their timed phases); "
                 "includes admission/dependency waits"
             ),
             "metadata": self.metadata,

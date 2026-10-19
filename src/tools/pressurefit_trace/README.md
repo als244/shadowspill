@@ -122,6 +122,7 @@ and automatic example-selection options apply only to `render`.
 
 | Argument | Default | Meaning |
 | --- | --- | --- |
+| `--title` | Recorded workload | Override the workload label, for example to distinguish measured bandwidth from a simulated bandwidth assumption. |
 | `--axis compute` / `--axis task` | `compute` | Cumulative profiled seconds, or equal-width tasks with task indices. Changes drawing coordinates only. |
 | `--pressure-scale` | `adaptive` | Shrink the pressure y-axis as cuts approach the budget, keeping zero and the flat budget line visible. `fixed` retains one scale. |
 | `--pressure-view` | `total` | Include the fixed resident pool by role. `reducer` omits it from both usage and budget. Both views include task workspace as a separate layer beneath a flat budget; boundary excess and decisions are identical. |
@@ -421,14 +422,35 @@ to the captured budgets; `--execution-gib` and `--spill-gib` override them.
 `--execution-gib` is usable planner capacity. To specify a physical device cap
 like quickstart's budget, use `--physical-gib` instead: it subtracts the captured
 runtime/headroom carve-out. The two execution-budget options are mutually
-exclusive. One capture can feed several independent physical-budget searches:
+exclusive. Capture with a pool at least as large as the largest intended device
+budget: the saved problem rejects execution budgets above the pool used for
+profiling. Increasing `--physical-gib` does not enlarge that profiling contract.
+Within that ceiling, one capture can feed several independent budget searches:
 
 ```sh
 python -m tools.pressurefit_trace plan runs/example/dump \
     --physical-gib 7 --spill-gib 128 --output runs/example/budget_7/plans
 python -m tools.pressurefit_trace plan runs/example/dump \
     --physical-gib 16 --spill-gib 128 --output runs/example/budget_16/plans
+
+# Reuse the compute profiles, but search against hypothetical transfer rates.
+# Each direction retains 450 decimal GB/s when both lanes copy simultaneously.
+python -m tools.pressurefit_trace plan runs/example/dump \
+    --physical-gib 16 --spill-gib 128 --transfer-bandwidths 450,450 \
+    --output runs/example/budget_16_450gbps/plans
+python -m tools.pressurefit_trace trace runs/example/budget_16_450gbps/plans \
+    --output runs/example/budget_16_450gbps/traces
 ```
+
+`--transfer-bandwidths` changes planning and simulation; it does not run a GPU
+copy at that speed or alter the captured compute profiles. The two-number form
+sets fetch and eviction rates, including concurrent operation. Four numbers
+set fetch solo/concurrent and eviction solo/concurrent separately; for example,
+`450,225,450,225` models an aggregate 450 GB/s link shared equally while both
+lanes copy. Transfer latencies retain the captured values. The saved plan records
+the effective calibration, and `trace` reuses it when recording the winner, so
+the cut trajectory corresponds to the hypothetical plan rather than the capture's
+original transfer rates. This records planner decisions, not measured execution.
 
 If capture exhausts device capacity while profiling a geometry, it uses the
 normal search's typed out-of-memory detection and rollback validation,
@@ -454,6 +476,7 @@ Collection arguments:
 | `plan` | `--physical-gib` | Physical execution cap; subtract the capture's runtime/headroom carve-out. |
 | `plan` | `--execution-gib` | Usable planner execution capacity; mutually exclusive with `--physical-gib`. Without either, retain captured budgets. |
 | `plan` | `--spill-gib` | Override the captured spill capacity. |
+| `plan` | `--transfer-bandwidths` | Optional decimal GB/s override: `FETCH,EVICT` or `FETCH_SOLO,FETCH_CONCURRENT,EVICT_SOLO,EVICT_CONCURRENT`. Compute profiles and transfer latencies stay as captured. |
 | `plan` | `--workers` | CPU planning workers; `0` (default) delegates worker selection to the planner. |
 | `trace` | `input`, `--output` | Planning directory and required fresh trace collection directory. |
 | `trace` | `--programs winner\|all` | Record the winning program (default) or every feasible program. |
@@ -470,12 +493,302 @@ the program digest. It supplies the movie's workload, budget, ordering and
 microbatch labels. Each movie also names its recompute share and current
 reduction, independently of whether it displays all reductions or only the answer.
 
+## Every ordering and recompute resolution
+
+The matrix workflow keeps each resolved program's best policy from a saved
+collection. It reproduces the source search, retains the individual schedules,
+certifies each layout, and records a separate winning cut trace for each case.
+It preserves infeasible combinations and their candidate failure reasons in
+`matrix.json`; those cases have no successful execution movie.
+The cut trace retains the search simulation. Plan videos use the certified
+simulation with address-reuse dependencies; if timings change during
+certification, the matrix preserves both `search_makespan_ns` and `makespan_ns`.
+
+```sh
+python -m tools.pressurefit_trace.matrix prepare runs/example/plans \
+    --dump runs/example/dump --output runs/example/matrix --workers 4
+
+python -m tools.pressurefit_trace.matrix render runs/example/matrix \
+    --output runs/example/matrix_videos --jobs 6 \
+    --title 'Example model · Measured bandwidth' \
+    --resolution 4k --quality best --fps 30 --motion-fps 30 \
+    --publish-to "$HOME/Desktop/Example videos"
+```
+
+Both commands resume completed work. `prepare` checks the saved schedules and
+simulated makespans against the source diagnostics. `render` records the renderer
+source hashes and options and refuses to mix changed configurations in one output
+directory. Use a fresh output directory for a different render configuration.
+Jobs run in separate processes; on Linux they divide the available CPU affinity.
+A failed movie does not stop the other jobs, and a later invocation retries it.
+
+The default output includes cut trajectories, emission/placement, and execution,
+arranged as `seqs_N/order_ORDER/recompute_FRACTION/`. Each MP4 is checked against
+its report and fully decoded before publication. Publication copies are verified
+by SHA-256. `README.md` is a live linked index; `progress.json` records running,
+failed, and complete movies. Encoded review frames are extracted beside each
+movie for human inspection; successful decoding alone is not a visual review.
+
+| Command | Argument | Meaning/default |
+| --- | --- | --- |
+| `prepare` | `planning`, `--output` | Source collection with `plans.json`, and resumable matrix directory. |
+| `prepare` | `--dump` | Capture directory; use this when the original capture moved to another machine. |
+| `prepare` | `--workers` | CPU planning workers, default `4`. Source searches must be deterministic. |
+| `render` | `matrix`, `--output` | Prepared matrix directory and resumable video directory. |
+| `render` | `--publish-to` | Optional library directory receiving each verified video and a linked index. |
+| `render` | `--videos` | One or more of `cuts`, `emission-placement`, `execution`; default all three. |
+| `render` | `--jobs` | Concurrent video processes, default `4`. |
+| `render` | `--title` | Workload title; each video's ordering, geometry and resolution remain visible. |
+| `render` | `--resolution`, `--quality` | Default `4k`, `best`; same choices as the individual renderers. |
+| `render` | `--fps`, `--motion-fps` | Output rate and distinct plan-animation states per second; default `30` each. |
+| `render` | `--emission-timing` | Explain, motion, build, sweep, hold seconds; default `15,12,30,50,8`. |
+| `render` | `--execution-timing` | The same five durations; default `18,15,30,60,8`. |
+| `render` | `--cut-options-json` | Extra cut-render CLI settings as a JSON object, for example `'{"explain-seconds":20,"detail-at":"1,50,200"}'`. Defaults to the cut renderer's teaching pace and automatic examples. |
+
+## A browsable video library
+
+`library.py` builds one offline catalog for published movies from multiple runs.
+It produces a searchable HTML index, README results tables, CSV/JSON exports,
+and a video page plus README for every configuration. It also indexes a running
+matrix, including queued movies and infeasible cases. It does not render or move
+movies and does not change the saved plans.
+
+```sh
+python -m tools.pressurefit_trace.library runs/library_sources.json \
+    --output "$HOME/Desktop/Example videos"
+
+# Refresh every 30 seconds until all matrix movies reach a final status.
+python -m tools.pressurefit_trace.library runs/library_sources.json \
+    --output "$HOME/Desktop/Example videos" --watch 30
+```
+
+Open the output's `index.html` directly in a browser; no server, external fonts,
+network connection, or JavaScript framework is required. Search and filter by
+model/budget, choose winners or the full matrix, and sort by simulated throughput.
+Refresh the browser page to see newly published movies. The generator leaves the
+batch renderer's matrix `README.md` alone; intermediate folders get `CONTENTS.md`.
+
+| Argument | Meaning |
+| --- | --- |
+| `config` | JSON source configuration with `schema: 1`; example below. |
+| `--output` | Library root, containing the already published MP4 files. |
+| `--watch SECONDS` | Optional polling interval, at least 1 second. Rebuilds indexes and exits once all requested matrix movies are complete or failed. Without this flag, builds once. |
+
+Input paths (`winner`, `plan`, `sources[].path`, `matrix`, `progress`) are absolute
+or relative to the configuration JSON. Output paths (`directory`, `videos[].path`)
+are relative to the library root. Each entry needs a unique ID and page directory.
+Supply workload dimensions explicitly; the catalog never infers tokens per step
+from a filename or video duration.
+
+```json
+{
+  "schema": 1,
+  "title": "Example videos",
+  "notes": ["Saved simulation using measured task profiles."],
+  "entries": [{
+    "id": "example-16-measured",
+    "model": "Example model",
+    "training": "Full-model training",
+    "sequence_length": 4096,
+    "tokens_per_step": 65536,
+    "budget_gib": 16,
+    "spill_gib": 128,
+    "transfer": "Measured bandwidth",
+    "category": "Winner",
+    "featured": true,
+    "directory": "Example model/16 GiB/Measured bandwidth",
+    "winner": "example/winner.json",
+    "plan": "example/plans/program_0000.plan.json",
+    "videos": [{
+      "kind": "execution",
+      "path": "Example model/16 GiB/Measured bandwidth/execution_4k.mp4",
+      "seconds": 124,
+      "width": 3840,
+      "height": 2160,
+      "decode": "passed"
+    }],
+    "sources": [{"label": "Run", "path": "example"}]
+  }],
+  "matrices": [{
+    "id": "example-16-matrix",
+    "matrix": "example/matrix",
+    "progress": "example/matrix_videos/progress.json",
+    "directory": "Example model/16 GiB/All orderings and resolutions",
+    "defaults": {
+      "model": "Example model",
+      "training": "Full-model training",
+      "sequence_length": 4096,
+      "tokens_per_step": 65536,
+      "budget_gib": 16,
+      "spill_gib": 128,
+      "transfer": "Measured bandwidth"
+    }
+  }]
+}
+```
+
+Entries accept `facts` for explicit metadata overrides (geometry, ordering,
+resolution, policy, reduction counts). The saved plan's **certified simulation**
+always supplies execution statistics when `plan` is provided. For cut-only
+archives, supply the recorded trace makespan in `facts.makespan_ns` and identify
+`facts.timing_basis`; missing metrics remain blank. `category` is `Winner`,
+`Earlier cut`, or `Archive`; generated matrix entries use `Matrix`. Keep different
+planner versions in separate entries, even if their movies share a folder.
+
+`videos[].kind` is `cuts`, `cuts-task`, `emission-placement`, or `execution`;
+optional `label` overrides the displayed title. A video becomes clickable only
+when its status is `complete` and the published file exists. Static entries may
+provide duration, dimensions, SHA-256, and decode evidence from their validation
+reports. Matrix entries obtain those values from `progress.json`. The catalog
+does not substitute file existence for decoding or visual review. Matrices can
+override the default three 4K filenames with a `video_files` mapping from video
+kind to filename, matching the batch's requested video types.
+
+Throughput is `tokens_per_step / (makespan_ns / 1e9)`, labeled simulated tokens/s.
+An optional `measurement` object adds actual training throughput alongside it:
+
+```json
+"measurement": {
+  "step_seconds": 20.0,
+  "aggregation": "Median of steps 2-6, using the slowest rank in each step across 8 ranks",
+  "useful_tflops_per_gpu": 300.0
+}
+```
+
+These example values must be replaced with validated measurements of this exact
+plan. Include the raw measurement directory in `sources`. The catalog computes
+measured tokens/s from `tokens_per_step` and measured seconds, and simulation
+error as `simulated_seconds / measured_seconds - 1`. The timing aggregation is
+required; missing measurements stay blank. Measurements never replace the
+simulation used for the video. Useful TFLOP/s/GPU is optional and must use the
+workload's documented FLOP count.
+
+The CSV retains both `search_makespan_ns` and certified `makespan_ns` when they
+differ. Task waits sum `start_ns - ready_ns`; final transfer drain is excluded.
+Compute time sums compute task durations, and execution peak includes workspace.
+Infeasible configurations retain failure details and have no throughput value.
+Reduction indices in JSON/CSV are zero-based; displayed reduction numbers are
+one-based. Plan summaries are cached by file path, size, and modification time.
+
+Each configuration's `Data/` contains named symlinks to its saved inputs. These
+are convenient entry points, not additional data copies. Preserve their targets
+when relocating the library, or copy with symlinks dereferenced. Keep source
+configuration, videos, cache, indexes, and generated results outside Git (for
+example under `runs/` or a Desktop library). Only the generic generator belongs
+in the repository.
+
+## Executed winners and hypothetical host bandwidth
+
+For distributed quickstart runs, opt in to the observers before starting the
+search. Each process uses its own directory; install the search-input observer
+only on the reporting rank:
+
+```python
+from tools.pressurefit_trace.winner_capture import install as capture_winners
+from tools.pressurefit_trace.search_capture import install as capture_search
+
+capture_winners(rank_output / "winners")
+if rank == 0:
+    capture_search(rank_output / "search-inputs")
+```
+
+The winner observer saves the exact admitted program, schedule, physical layout,
+semantic names and the native search input. The search observer saves the
+verified distributed problems, including conservative cross-rank profiles,
+collective timing and allocation requirements. Both write outside measured
+training steps. Export errors are recorded and must be resolved before using
+the export; they do not change benchmark feasibility.
+
+The launcher also records actually executed plans in `executed/<budget>bytes.json`
+(candidate, ordering, capture identity, physical/logical budgets and completed
+step times), archives `report.winner_plans` in `search-winners/`, and writes
+`search-inputs/metadata.json` after search with `complete: true`, an optional
+`physical_to_execution_bytes` mapping, and `global_tokens_per_step`.
+The rank directory is the source argument for offline replanning below.
+
+Prepare only the plans that actually completed the benchmark, then render all
+three views. The cuts show the answering reduction; all timings and example
+selection remain configurable through the batch renderer:
+
+```sh
+python -m tools.pressurefit_trace.winners RUN/quickstart \
+  --output RUN/winner-videos-inputs --rank 0 --workload 'Example model'
+python -m tools.pressurefit_trace.matrix render RUN/winner-videos-inputs \
+  --output RUN/videos --publish-to '/path/to/Video Library/Example model' \
+  --resolution 4k --quality best --jobs 2
+```
+
+On the original GPU environment, capture separate Nsight Systems reports of the
+already benchmarked winners. The replay requires matching program, schedule,
+layout and capture identities. It reuses the search report and stored incumbent;
+profiler timings are not throughput measurements:
+
+Replay restores the winner's recorded timing model instead of replanning with
+new collective/profiling measurements. Before doing so, it checks that the fresh
+capture has the same executable structure, tensor/storage facts, residency,
+transfer operations and resource order. Workspace and scratch must still fit
+the saved admission. A change to measured durations alone is allowed; a change
+to operations, bytes or memory requirements is rejected. Each rank retains a
+`replay-contract.json` record, and the final program/schedule/layout/capture
+identity checks still apply before capture begins.
+
+```sh
+python -m tools.pressurefit_trace.profile_winners RUN/quickstart \
+  --output RUN/nsys --world-size 8 --warmup-steps 3 --capture-steps 3 \
+  --gpu-metrics-frequency 10000 --nsys /path/to/nsys
+```
+
+`--budget-gib` limits capture to one executed winner. Each attempt retains its
+command, logs, `.nsys-rep`, SQLite export and validation. Validation requires CUDA
+kernels on every GPU, device metrics, semantic task/transfer NVTX and step ranges
+from every rank. Resume checks identities and hashes before skipping a capture.
+GPU metrics require permission on the allocated node.
+Capture boundaries coordinate over a CPU/Gloo group. The command disables
+Nsight's synchronous flush inside `cudaProfilerStop`; Nsight still flushes at
+collection end. This avoids a documented multi-context profiler-stop hang
+without changing the captured schedule or excluding GPU metrics. Validation
+also requires every requested captured step from every rank.
+
+Repeat the entire saved planning search without importing PyTorch or executing
+training:
+
+```sh
+python -m tools.pressurefit_trace.replan RUN/quickstart/rank-00000 \
+  --output RUN/simulated-300GBps --host-gbps 300 --jobs 3 --workers 4 --plots
+```
+
+`--host-gbps` is decimal GB/s **per direction**, both alone and during simultaneous
+fetch/evict. Only copy rates change. Shard sizes, GPU memory sizes, calibrated
+collective durations/resources, task profiles, overlap costs and launch latencies
+stay unchanged. All saved microbatches, orderings, budgets, resolutions and
+policies are searched again, carrying smaller-budget incumbents as in quickstart.
+Uncaptured geometries retain their capture failure. Missing or unverified
+distributed inputs fail explicitly. Separate plan/artifact stores, `search.json`,
+`winners.json`, self-contained winner plans and `RESULTS.md` make the experiment
+reproducible. A different bandwidth requires a different output directory.
+`--plots` also saves the normal search figures and their raw plotting data.
+`--jobs` runs independent geometry/ordering searches in separate CPU processes
+(default 1). Each process uses `--workers` planner workers and walks budgets in
+order, preserving smaller-budget incumbents. Parallel runs keep resumable stores
+under `geometry-search/`; their results merge in the original search order, so
+completion order does not change winner tie-breaking.
+
 ## Code map and validation
 
 ```text
 pressurefit_trace/
   __main__.py                 capture, trace analysis, and cut-video CLI
   collect.py                  dump / plan / trace / export
+  matrix.py                   retain and trace each resolution's best policy
+  render_batch.py             resumable matrix rendering and verified copies
+  winner_capture.py           opt-in exact admitted-plan export
+  search_capture.py           opt-in verified distributed search input export
+  winners.py                  prepare executed winners for the three video types
+  profile_winners.py          exact-plan Nsight replay with metrics/NVTX checks
+  replan.py                   CPU-only search with hypothetical host-copy rates
+  library.py                  indexed results, configuration pages, live progress
+  library_html.py             offline HTML views
+  library_assets/             local stylesheet and search/player controls
   data.py, pressure.py         cut replay geometry and memory accounting
   explain.py                  cut selection formulas and alternatives
   render.py                   cut-trajectory renderer and encoding

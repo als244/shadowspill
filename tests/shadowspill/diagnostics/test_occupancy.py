@@ -24,6 +24,7 @@ from shadowspill.diagnostics.occupancy import (
     write_pages,
 )
 from shadowspill.planner.admission.layout.model import PURPOSES, FixedLayoutPlacements
+from shadowspill.schema import ARTIFACT_VERSION, artifact_schema
 
 MIB = 1 << 20
 S = 1_000_000_000  # nanoseconds in a second
@@ -42,7 +43,7 @@ def _program() -> dict:
     """
 
     return {
-        "schema": "shadowspill.program/v1",
+        "schema": artifact_schema("program"),
         "devices": [
             {"device_id": "cuda_0", "index": 0, "kind": "cuda", "process_id": "p"}
         ],
@@ -764,10 +765,22 @@ def test_pages_are_written_per_view_with_the_data_inline(tmp_path: Path) -> None
 def test_the_program_is_found_beside_the_selection_in_the_store(tmp_path: Path) -> None:
     digest = "ab" + "0" * 62
     selection_path = (
-        tmp_path / "v1" / "planning" / "results" / "cd" / "cdef" / "selection.json"
+        tmp_path
+        / f"v{ARTIFACT_VERSION}"
+        / "planning"
+        / "results"
+        / "cd"
+        / "cdef"
+        / "selection.json"
     )
     assert program_path_for(selection_path, {"program_digest": digest}) == (
-        tmp_path / "v1" / "planning" / "programs" / "ab" / digest / "program.json"
+        tmp_path
+        / f"v{ARTIFACT_VERSION}"
+        / "planning"
+        / "programs"
+        / "ab"
+        / digest
+        / "program.json"
     )
 
 
@@ -787,7 +800,7 @@ def test_a_run_gets_pages_for_every_plan_and_both_clocks_for_a_budget_that_ran(
     digest = selection["program_digest"]
     run.mkdir(parents=True)
     store = tmp_path / "separate_store" if external_store else run / "plan_store"
-    planning = store / "v1" / "planning"
+    planning = store / f"v{ARTIFACT_VERSION}" / "planning"
     (planning / "programs" / digest[:2] / digest).mkdir(parents=True)
     (planning / "programs" / digest[:2] / digest / "program.json").write_text(
         json.dumps(_program())
@@ -996,7 +1009,7 @@ def test_a_traced_step_is_filed_under_the_budget_that_ran_it(
     gib = 1 << 30
     small, large = gib + 14 * MIB, 2 * gib + 14 * MIB
     run = tmp_path / "run"
-    planning = run / "plan_store" / "v1" / "planning"
+    planning = run / "plan_store" / f"v{ARTIFACT_VERSION}" / "planning"
     selection = _selection()
     digest = selection["program_digest"]
     (planning / "programs" / digest[:2] / digest).mkdir(parents=True)

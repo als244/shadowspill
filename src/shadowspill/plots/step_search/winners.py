@@ -99,7 +99,8 @@ def winner_figures(
                 "Recomputation": [
                     item.recomputation_overhead_seconds for item in summaries
                 ],
-                "Stalled": [
+                "Task Contention": [item.task_contention_seconds for item in summaries],
+                "Waiting": [
                     item.idle_seconds + item.terminal_writeback_seconds
                     for item in summaries
                 ],
@@ -119,7 +120,11 @@ def winner_figures(
                     item.recomputation_overhead_seconds / step
                     for item, step in zip(summaries, steps, strict=True)
                 ],
-                "Stalled": [
+                "Task Contention": [
+                    item.task_contention_seconds / step
+                    for item, step in zip(summaries, steps, strict=True)
+                ],
+                "Waiting": [
                     (item.idle_seconds + item.terminal_writeback_seconds) / step
                     for item, step in zip(summaries, steps, strict=True)
                 ],

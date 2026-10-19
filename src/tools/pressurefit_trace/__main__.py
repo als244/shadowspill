@@ -87,6 +87,7 @@ def run_render(args):
     result = render_movie(
         data,
         args.output,
+        title=args.title,
         reductions=reductions,
         width=output_width(args),
         fps=args.fps,
@@ -129,6 +130,7 @@ def run_frame(args):
     render_frame(
         data,
         args.output,
+        title=args.title,
         reduction=rid,
         cut=cut,
         width=output_width(args),
@@ -172,6 +174,10 @@ def build_parser():
             help="Output directory (analyze), PNG path (frame), or MP4 path (render)",
         )
     for command in (frame, render):
+        command.add_argument(
+            "--title",
+            help="Workload label in the header; defaults to recorded workload",
+        )
         command.add_argument(
             "--focus-mode",
             choices=("cut", "boundary"),

@@ -147,6 +147,9 @@ def _run_entries(
                     simulated_step_seconds=_float(row, "simulated_step_seconds"),
                     measured_step_seconds=_float(row, "measured_step_seconds"),
                     profiled_task_seconds=_float(row, "profiled_task_seconds"),
+                    simulated_task_contention_seconds=float(
+                        row.get("simulated_task_contention_seconds", 0.0)
+                    ),
                     real_task_seconds=_float(row, "real_task_seconds"),
                     simulated_idle_seconds=_float(row, "simulated_idle_seconds"),
                     real_idle_seconds=_float(row, "real_idle_seconds"),

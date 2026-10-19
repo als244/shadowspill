@@ -26,7 +26,7 @@ _GIB = 1 << 30
 class RunBudgetOutcome:
     """A budget's simulated invocation, traced invocation, and measured cycles.
 
-    The trace and simulation each split into entry delay, useful compute,
+    The trace and simulation each split into entry delay, task execution,
     recomputation, inter-task idle, and terminal transfers. Those disjoint parts
     sum to the corresponding invocation. Median whole-cycle time additionally
     includes caller work and is used separately for throughput.
@@ -62,6 +62,8 @@ class RunBudgetOutcome:
     #: between; keeping all of them here is what says whether a budget was steady
     #: or erratic, which a median cannot.
     step_seconds: tuple[float, ...] = ()
+    #: Added time inside simulated task intervals above isolated profiles.
+    simulated_task_contention_seconds: float = 0.0
 
     @property
     def relative_error(self) -> float:
@@ -106,7 +108,11 @@ class RunBudgetOutcome:
             self.real_entry_delay_seconds
             if measured
             else self.simulated_entry_delay_seconds,
-            (self.real_task_seconds if measured else self.profiled_task_seconds)
+            (
+                self.real_task_seconds
+                if measured
+                else self.profiled_task_seconds + self.simulated_task_contention_seconds
+            )
             - self.recomputation_seconds,
             self.recomputation_seconds,
             self.real_idle_seconds if measured else self.simulated_idle_seconds,
@@ -193,6 +199,7 @@ def write_run_tables(
                 "trace_relative_error",
                 "terminal_tail_seconds",
                 "real_terminal_tail_seconds",
+                "simulated_task_contention_seconds",
             )
         )
         writer.writerows(
@@ -214,6 +221,7 @@ def write_run_tables(
                 item.trace_relative_error,
                 item.terminal_tail_seconds,
                 item.real_terminal_tail_seconds,
+                item.simulated_task_contention_seconds,
             )
             for item in ordered
         )
@@ -338,7 +346,7 @@ def _fidelity(path: Path, ordered: Sequence[RunBudgetOutcome]) -> Path:
     colors = ("tab:green", "tab:blue", "tab:purple", "tab:orange", "tab:brown")
     component_labels = (
         "Entry Delay",
-        "Effective Compute",
+        "Task Execution (excl. Recompute)",
         "Recompute",
         "Inter-task Idle",
         "Terminal Transfers",

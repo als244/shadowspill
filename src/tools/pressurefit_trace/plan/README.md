@@ -188,12 +188,18 @@ Other transfers are dimmed, even when they have the same role/color as an input.
 Same-lane predecessors are distinguished from the task's actual dependencies.
 Where applicable, analysis also identifies copies needed only by later tasks.
 
-Copy bars use the saved simulator's start/end timestamps. A dashed connector
+Transfer bars use the saved simulator's start/end timestamps. For sharded
+transfers, each bar covers the complete recipe, including collective or zeroing
+phases. Saved simulation intervals do not expose individual phase timestamps,
+so the renderer does not invent copy/collective boundaries. A dashed connector
 and boundary label show the last blocker's trigger-to-start wait. **Displayed
 backlog is byte-based**: GiB histories and byte-proportional role stacks, with
 a shared scale for both lanes. Counts remain available only in analysis.
-Pending bytes include transfers whose triggers have fired but whose copies
-have not started; copying transfers are excluded. This is an
+Pending bytes count the CPU-copy payload of transfers whose triggers have fired
+but whose recipes have not started; active recipes are excluded. A sharded
+transfer therefore contributes its owned CPU shard, while GPU occupancy,
+placement, and task input sizes still count the full GPU object. Action details
+show both sizes when they differ. This is an
 outstanding-transfer backlog, including admission/dependency waits where
 present, not a measurement of the runtime worker's queue length. Saved stall
 reasons distinguish `lane-busy` from other causes. No separate successful
