@@ -1,0 +1,26 @@
+<!doctype html>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>MoE layer benchmark</title>
+<style>
+body { max-width:1200px; margin:40px auto; padding:0 24px;
+       font-family:Georgia,serif; color:#14263f; background:#f7f9fc }
+h1 { font-weight:normal }
+.plots { display:grid; grid-template-columns:1fr 1fr; gap:20px }
+img { width:100%; background:white }
+table { border-collapse:collapse; width:100%; background:white; margin-top:28px }
+th,td { text-align:left; padding:10px; border-bottom:1px solid #e3e8ef }
+a { color:#3268db }
+p { line-height:1.6 }
+@media(max-width:800px) { .plots { grid-template-columns:1fr } }
+</style>
+<h1>MoE layer · Router and expert FFNs</h1>
+<p>Router + expert FFNs. Forward/backward throughput per GPU; real top-k routing.<br>
+DP is single-GPU compute. EP includes dispatch/combine.
+No optimizer or DP gradient synchronization.</p>
+<p><a href="README.md">Method and formulas</a> · <a href="results.csv">CSV</a> ·
+<a href="manifest.json">Configuration and source hashes</a></p>
+<p>Four-panel summary: <a href="figures/moe-layer-four-panel.png">PNG</a> ·
+<a href="figures/moe-layer-four-panel.pdf">PDF</a> ·
+<a href="figures/moe-layer-four-panel.svg">SVG</a></p>
+<div class="plots">
