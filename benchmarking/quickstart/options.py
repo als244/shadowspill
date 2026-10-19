@@ -331,6 +331,22 @@ def _parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--host-headroom-gib", type=float, default=2)
     parser.add_argument(
+        "--transfer-shard-size",
+        type=int,
+        help=(
+            "DP presets and supporting factories: store CPU parameter shards "
+            "across this many "
+            "ranks (must divide world size); fetch a shard then all-gather "
+            "full GPU weights; requires --distributed"
+        ),
+    )
+    parser.add_argument(
+        "--shard-gradients",
+        action=argparse.BooleanOptionalAction,
+        default=False,
+        help="reduce-scatter intermediate gradient evictions into owned CPU shards",
+    )
+    parser.add_argument(
         "--symmetric-planning",
         action=argparse.BooleanOptionalAction,
         default=None,
@@ -710,6 +726,17 @@ def parse_arguments() -> tuple[argparse.ArgumentParser, argparse.Namespace]:
         )
     if arguments.model is not None and arguments.factory is not None:
         parser.error("choose a text preset or --factory")
+    if arguments.transfer_shard_size is not None:
+        if not arguments.distributed:
+            parser.error("--transfer-shard-size requires --distributed")
+        if arguments.transfer_shard_size < 2:
+            parser.error("--transfer-shard-size must be at least 2")
+        if arguments.symmetric_planning is False:
+            parser.error("transfer sharding requires symmetric planning")
+        if arguments.remote_spill or arguments.ssd_spill or arguments.ssd_image:
+            parser.error("transfer sharding currently requires pinned-host spill")
+    elif arguments.shard_gradients:
+        parser.error("--shard-gradients requires --transfer-shard-size")
     # An unspecified placement is the library's to choose. Resolving it here
     # rather than defaulting the flag keeps one answer to the question: a change
     # to the library default reaches this tour, and the banner reports what the

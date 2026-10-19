@@ -503,8 +503,10 @@ for a run made before the pages existed.
    every other budget's bar reduction order: a run that disagrees is a
    correctness signal, not a measurement. Optimizer state is allocated and
    filled before the first step rather than created by it, so every step
-   runs the same plan, and the reported step is the median of every step
-   after the first),
+   runs the same plan. Preparation also collects unreachable capture and
+   compiler objects before timing; normal garbage collection remains enabled.
+   The reported median excludes the first step and the final traced step
+   when enough steps are available),
    then **the traced step versus simulation**, using the fields defined
    in the [StepResult diagnostics guide](../docs/python/step-diagnostics.md).
    The boundary behavior it reports — scheduled entry fetches and the
@@ -513,7 +515,8 @@ for a run made before the pages existed.
 5. **Where the time went.** The command's own wall time by category —
    runtime calibration, model construction and import, the geometry
    builds split by frontend phase, the searches, per-budget
-   run planning, step execution, figures, and the unattributed rest — so
+   run planning, pre-step garbage collection, step execution, figures, and
+   the unattributed rest — so
    the cost of what you just watched is never a mystery.
 6. **Where the host memory went.** The spill arena, the peak and exit
    resident bytes, and the cgroup ceiling in force with how much of it
@@ -566,25 +569,42 @@ runner accepts the same override as `run(..., symmetric_planning=True)`.
 See [verified symmetric planning](../docs/python/api/distributed.md#verified-symmetric-planning)
 for the checks, work assignment, and artifact records.
 
-The distributed path uses the same model-independent planner as `Trainer`. Its
-separate-device qualification is in progress. Launch one process per GPU:
+The distributed path uses the same model-independent planner as `Trainer`.
+Launch one process per GPU, with each process seeing its GPU as `cuda:0`:
 
 ```bash
-torchrun --standalone --nproc-per-node=2 -m benchmarking.quickstart mlops_llama3 \
+torchrun --standalone --nproc-per-node=2 -m benchmarking.rank_device \
+  -m benchmarking.quickstart mlops_llama3 \
   --distributed --sequence-length 1024 --sequences-per-step 16 \
   --search-budget-gib 12,16 --run-budget-gib 12,16 --spill-gib 40 \
   --steps 5 --plots --resolution-plans --output-dir runs/llama_dp
 ```
 
+`benchmarking.rank_device` selects the process's GPU from the launcher's
+`CUDA_VISIBLE_DEVICES` mask before importing the workload. It preserves global
+and local rank identities. Giving every compiler the same logical device label
+avoids device-ordinal differences in compiled temporary allocations; sharded
+transfers still require matching allocation contracts across ranks. UUID masks
+and a scheduler's existing one-GPU-per-process mask are supported. A Python
+script can replace `-m benchmarking.quickstart` when using a custom entrypoint.
+
 Budgets and `sequences-per-step` are per rank. The text recipe produces distinct
 rank inputs and scales summed token losses by the total token count across the
 whole update. Generic factories define their own objective normalization.
+For each requested physical cap, all ranks use the smallest remaining execution
+capacity after accelerator context memory and external headroom. This keeps search and
+run budget keys identical when profiling tools or context sizes differ by rank.
 
 Gloo is initialized first for combined host-memory admission. The text recipe
 then creates its NCCL group after Runtime installation and declares replicated
 parameters. `--host-headroom-gib` (default 2 per rank) and
 `--preparation-timeout` (default 1800 seconds) are configurable. Data-parallel
 optimizer state and optional masters are sharded by default.
+
+Preparation timeout includes peers waiting for CPU search to finish. Deep
+orderings can take much longer than the orderings assigned to other ranks;
+for large sweeps, use a larger bound such as `--preparation-timeout 7200`.
+This does not change the planner's search budget or measured step timings.
 
 Reports, figures, traces and stdout logs live in `<output-dir>/rank-00000/`, etc.
 Stores use `<output-dir>/artifact_store/rank-00000/` and
@@ -600,6 +620,37 @@ rebuild the model and its registered parameter ownership. The existing `context`
 field can manage factory-created groups/resources. The factory is called after
 Runtime installation. `--distributed` initializes only the CPU control group for
 a custom factory; that factory owns its accelerator communication groups and mathematical scaling.
+
+The [Quack EP text factory](../workloads/recipes/text/expert_parallel.py) supports
+`qwen3moe`, `qwen35moe`, and `olmoe` with full-model training. It defaults to BF16
+compute and FP32 masters, gradients, and optimizer moments. Precision settings
+for this factory belong in `--factory-args` under `model_dtype`, `master_dtype`,
+`grad_dtype`, and `opt_state_dtype`.
+
+```bash
+torchrun --standalone --nproc-per-node=8 -m benchmarking.quickstart \
+  --distributed --factory workloads.recipes.text.expert_parallel:experiment \
+  --factory-args '{"model":"qwen3moe","sequence_length":4096,"sequences_per_step":64,"sequences_per_microbatch":16}' \
+  --search-budget-gib 20,30,40,50,60,77 --spill-gib 96 \
+  --orderings factors --resolution-options quarters --search-workers 4 \
+  --plots --timelines --output-dir runs/qwen_ep8_t64k_search
+```
+
+This example searches one 64K-token microbatch geometry at 2M global tokens per
+step. Quack/MoonEP's communication buffer requires an exact microbatch token
+count. Run a separate search for each `sequences_per_microbatch`, compare the
+best simulated plans at each requested physical budget across those reports,
+then execute only the overall winners. `--run-budget-gib` selects execution
+budgets; omitting it when search budgets are given performs search only.
+
+All ranks process distinct input sequences. Expert parameters are unique to
+their owning EP rank, while attention, router, and other nonexpert parameters
+remain replicas. The objective is normalized once by the global token count.
+Masters and optimizer moments follow each parameter's replica ownership.
+Computation-weight/gradient transfer sharding is disabled for this factory;
+do not combine it with `--transfer-shard-size` or `--shard-gradients`.
+`config_overrides` accepts model configuration fields for small qualification
+cases; full-size GPU qualification should precede a benchmark campaign.
 
 The Python interface accepts an already-created Gloo group:
 
@@ -660,7 +711,19 @@ targeting flags are rejected there rather than ignored. `--lora-rank`,
 `--lora-alpha` and `--lora-dtype` do reach a factory: given with `--factory`,
 each is passed to it as `lora_rank`, `lora_alpha` or `lora_dtype` beside
 `--factory-args`, and a factory that does not take those names is refused.
-The [GLM factory](../workloads/mlops/glm53_flash/quickstart.py) takes all three.
+The [GLM-5.3-Flash factory](../workloads/mlops/glm53_flash/quickstart.py) and
+[GLM-5.3 factory](../workloads/mlops/glm53/quickstart.py) take all three. Both
+default to rank-16 BF16 LoRA factors, alpha 32, FP32 accumulated gradients,
+and BF16 Adam moments.
+
+For data-parallel text presets and supporting factories, `--distributed
+--transfer-shard-size N --shard-gradients` enables local weight/gradient spill
+sharding. The factory receives `transfer_shard_size` and `shard_gradients` and
+owns its process groups. Unsupported or duplicate arguments fail explicitly.
+Spill pools remain per rank: four `--spill-gib 128` pools need 512 GiB of host
+memory, plus setup and runtime headroom. See the
+[GLM distributed example](../workloads/mlops/glm53_flash/README.md#generic-quickstart-and-training-sweeps)
+and [ownership API](../docs/python/api/distributed.md#computation-weight-and-gradient-spill-sharding).
 
 `--ssd-spill DIRECTORY` selects an ordinary temporary SSD pool instead of pinned
 host memory. The directory must already exist on the intended local SSD;

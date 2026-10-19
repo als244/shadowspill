@@ -159,6 +159,66 @@ def test_borrowed_buffer_and_precision_are_shared_options(architecture, fake_ep)
     assert all(kind == "close" for kind, _ in fake_ep.events)
 
 
+@pytest.mark.parametrize("router_dtype", [torch.bfloat16, torch.float32])
+def test_fp32_gradient_request_reaches_router(architecture, fake_ep, router_dtype):
+    cls, config = architecture
+    model = cls(
+        config,
+        ep_group=object(),
+        token_capacity=256,
+        device="cuda:0",
+        parameter_device="cpu",
+        dtype=torch.bfloat16,
+        router_dtype=router_dtype,
+        weight_grad_dtype=torch.float32,
+    )
+    assert all(layer.config.router_dtype == router_dtype for layer in fake_ep.layers)
+    assert all(
+        layer.config.router_weight_grad_dtype == torch.float32
+        for layer in fake_ep.layers
+    )
+    model.close()
+
+
+def test_parallel_routing_keeps_fp32_logits(monkeypatch):
+    from mlops.expert_parallel.quack import router
+
+    from workloads.mlops._expert_parallel import parallel_forward
+
+    def route(logits, top_k, normalize):
+        selected, ids = logits.topk(top_k, dim=-1)
+        weights = (
+            selected.softmax(-1) if normalize else logits.softmax(-1).gather(1, ids)
+        )
+        return weights, ids, torch.bincount(ids.flatten(), minlength=logits.shape[1])
+
+    monkeypatch.setattr(router, "route_op", route)
+    generator = torch.Generator().manual_seed(88)
+    hidden = torch.randn(2, 5, 16, generator=generator).bfloat16()
+    weight = torch.randn(7, 16, generator=generator).bfloat16()
+
+    class Experts:
+        config = SimpleNamespace(
+            model_dim=16,
+            top_k=2,
+            renormalize_topk=True,
+            router_weight_grad_dtype=torch.float32,
+        )
+        router_weight = weight
+
+        def __call__(self, value, *, expert_ids, routing_weights):
+            self.ids, self.weights = expert_ids, routing_weights
+            return value
+
+    experts = Experts()
+    _, counts, sums = parallel_forward(experts, hidden)
+    expected_logits = hidden.float().flatten(0, 1) @ weight.float().t()
+    selected, ids = expected_logits.topk(2, dim=-1)
+    torch.testing.assert_close(experts.weights, selected.softmax(-1))
+    torch.testing.assert_close(sums, expected_logits.softmax(-1).sum(0))
+    torch.testing.assert_close(counts, torch.bincount(ids.flatten(), minlength=7))
+
+
 @pytest.mark.parametrize("borrowed", [False, True])
 def test_constructor_failure_releases_only_owned_resources(
     architecture, fake_ep, borrowed

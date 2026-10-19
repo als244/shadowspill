@@ -1,11 +1,11 @@
 """Building a model as structure only, and giving it its first values.
 
 A run can build its model on meta, declaring shapes and dtypes without values.
-The generic trainer's fresh initializer currently materializes ordinary CPU
-storage before the backend imports it. ShadowSpill then copies state into its
-pinned pool; direct pool or streaming initialization is not implied by this helper.
-Callers with tight host-memory limits can initialize once and supply file-backed
-values instead.
+ShadowSpill imports that structure into its pool before running the initializer.
+When a value is not directly addressable, including sharded CPU state, setup
+stages only the storage roots used by the current operation and writes mutations
+back to their owned pool ranges. Initializers should visit individual tensors
+instead of passing the whole model to a bulk operation.
 """
 
 from __future__ import annotations

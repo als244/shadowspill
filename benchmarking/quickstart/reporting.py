@@ -227,16 +227,15 @@ def print_breakdown(
     )
     print()
     print(f"  where the simulated {simulated:.3f} s goes")
-    # `PlanSummary` identifies the step in four parts exactly; the terminal
-    # writeback folds in with the idle because the simulator prices it inside
-    # the same makespan. That is the same three the figures draw, so the
-    # console and the plots partition the step the same way, and the shares
-    # sum to the whole rather than to whatever is left over.
+    # Contention extends task intervals; it is not inter-task idle. Terminal
+    # writeback is waiting within the same makespan. These four displayed
+    # parts account for the full step without calling active compute a stall.
     for label, value in (
         ("effective compute", summary.unconstrained_step_seconds),
         ("recomputation", summary.recomputation_overhead_seconds),
+        ("task contention", summary.task_contention_seconds),
         (
-            "stalled",
+            "waiting",
             summary.idle_seconds + summary.terminal_writeback_seconds,
         ),
     ):
@@ -321,10 +320,13 @@ def print_breakdown(
 
 
 def _task_duration_delta(record: TaskRecord) -> float:
-    """How much longer the task's kernels ran than the profile priced."""
+    """How much longer the task ran than its simulated interval."""
 
     measured = record.compute_finished_at_seconds - record.compute_started_at_seconds
-    return measured - record.expected_profile_seconds
+    predicted = (
+        record.simulated_finished_at_seconds - record.simulated_started_at_seconds
+    )
+    return measured - predicted
 
 
 def _transfer_duration_delta(record: TransferRecord) -> float:

@@ -20,13 +20,14 @@ GIB = 1 << 30
 
 
 def _factory_arguments(parser, factory, arguments):
-    """The factory's keyword arguments: --factory-args, plus the LoRA flags given.
+    """Factory arguments, including explicitly selected LoRA and sharding flags.
 
     A factory decides its own trainability, so --lora and its targeting flags
     stay with the text presets. Rank, alpha and factor dtype are the knobs a
     LoRA recipe exposes under the same names whatever the model, so those
     three reach a factory that takes them -- and one that does not is refused
-    rather than left to ignore a setting the request records.
+    rather than left to ignore a setting the request records. Explicit transfer
+    sharding flags follow the same contract; the factory owns group construction.
     """
 
     given = {
@@ -35,6 +36,13 @@ def _factory_arguments(parser, factory, arguments):
             ("lora_rank", arguments.lora_rank),
             ("lora_alpha", arguments.lora_alpha),
             ("lora_dtype", arguments.lora_dtype),
+            ("transfer_shard_size", arguments.transfer_shard_size),
+            (
+                "shard_gradients",
+                arguments.shard_gradients
+                if arguments.transfer_shard_size is not None
+                else None,
+            ),
         )
         if value is not None
     }
@@ -48,7 +56,7 @@ def _factory_arguments(parser, factory, arguments):
     missing = sorted(name for name in given if name not in parameters)
     if missing and not variadic:
         parser.error(
-            f"{arguments.factory} does not take {', '.join(missing)}; the LoRA"
+            f"{arguments.factory} does not take {', '.join(missing)}; quickstart"
             " flags reach a factory only under those names"
         )
     twice = sorted(set(given) & set(arguments.factory_args))

@@ -5,7 +5,6 @@ from __future__ import annotations
 import argparse
 import functools
 import inspect
-from contextlib import contextmanager
 from dataclasses import dataclass, replace
 from typing import Any, cast
 
@@ -302,23 +301,20 @@ def recipe(parser, arguments):
             },
         }
         if arguments.distributed:
-            import torch.distributed as dist
+            from .distributed import data_parallel_groups
 
-            from shadowspill.pytorch import Distributed
-
-            group = dist.new_group(backend="nccl", device_id=device)
-
-            @contextmanager
-            def resources():
-                try:
-                    yield
-                finally:
-                    dist.destroy_process_group(group)
-
-            experiment["distributed"] = Distributed(
-                group, timeout=arguments.preparation_timeout
+            specification, resources = data_parallel_groups(
+                device=device,
+                shard_size=arguments.transfer_shard_size,
+                shard_gradients=arguments.shard_gradients,
+                timeout=arguments.preparation_timeout,
             )
+            experiment["distributed"] = specification
             experiment["context"] = resources
+            experiment["metadata"]["transfer_shard_size"] = (
+                arguments.transfer_shard_size
+            )
+            experiment["metadata"]["shard_gradients"] = arguments.shard_gradients
         return experiment
 
     defaults = {

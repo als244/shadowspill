@@ -179,6 +179,20 @@ def plan_budgets(runtime: Runtime, request: Request) -> Budgets:
     fixed = (
         execution_pool.physical_capacity or execution_pool.capacity
     ) - execution_pool.capacity
+    if runtime.control_group is not None:
+        # A CUDA context or profiler can consume different amounts on each
+        # rank. Every participant must search and run the same budget keys;
+        # otherwise one rank can skip a budget while peers enter its collectives.
+        requested = (tuple(request.search_budgets), tuple(request.run_budgets))
+        peers: list[Any] = [None] * torch.distributed.get_world_size(
+            runtime.control_group
+        )
+        torch.distributed.all_gather_object(
+            peers, (requested, fixed), group=runtime.control_group
+        )
+        if any(values != requested for values, _ in peers):
+            raise ValueError("distributed quickstart ranks requested different budgets")
+        fixed = max(headroom for _, headroom in peers)
     planned = {
         item: item - fixed
         for item in dict.fromkeys([*request.search_budgets, *request.run_budgets])
@@ -535,6 +549,13 @@ class Tour:
             return diagnostics_handle
 
         training.prepare_runtime_trace()
+        # Capture and compilation leave large unreachable graph cycles. Retire
+        # them during preparation so a later generation-2 collection does not
+        # pause one rank in the middle of a timed distributed step. Ordinary
+        # garbage collection remains enabled throughout execution.
+        cleanup_started = time.perf_counter()
+        gc.collect()
+        self.ledger.charge("pre-step garbage collection", cleanup_started)
         if arguments.steps > 1:
             print(rule("Steps"))
             for step in range(1, arguments.steps):
@@ -706,6 +727,9 @@ class Tour:
                 measured_step_seconds=median_step,
                 step_seconds=walls,
                 profiled_task_seconds=step_summary.profiled_task_seconds,
+                simulated_task_contention_seconds=(
+                    step_summary.simulated_task_contention_seconds
+                ),
                 real_task_seconds=step_summary.real_task_event_seconds,
                 simulated_idle_seconds=(step_summary.simulated_inter_task_idle_seconds),
                 real_idle_seconds=step_summary.real_inter_task_idle_seconds,

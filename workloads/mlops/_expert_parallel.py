@@ -8,7 +8,6 @@ from contextlib import ExitStack, contextmanager, nullcontext
 
 import torch
 from torch import nn
-from torch.nn import functional as F
 
 
 class _ExpertFactory:
@@ -119,7 +118,9 @@ def expert_construction(
             model_dim=config.d_model,
             expert_hidden_dim=config.d_ff_expert,
             router_dtype=router_dtype or dtype,
-            router_weight_grad_dtype=router_dtype or dtype,
+            router_weight_grad_dtype=(
+                torch.float32 if router_dtype == torch.float32 else weight_grad_dtype
+            ),
             weight_grad_dtype=weight_grad_dtype,
             compute_precision=compute_precision,
             **transport,
@@ -172,11 +173,15 @@ def close_experts(layers, *, destroy_buffer):
 def parallel_forward(experts, hidden):
     """Routed output, assignment counts, and probability sums without host reads."""
     from mlops.expert_parallel.quack.router import route_op
+    from mlops.kernels.router import routed_logits
 
     c = experts.config
     flat = hidden.reshape(-1, c.model_dim)
-    router = experts.router_weight
-    logits = F.linear(flat.to(router.dtype), router).float()
+    logits = routed_logits(
+        flat,
+        experts.router_weight,
+        weight_grad_dtype=c.router_weight_grad_dtype,
+    )
     weights, ids, counts = route_op(logits, c.top_k, c.renormalize_topk)
     routed = experts(flat, expert_ids=ids, routing_weights=weights)
     return routed.reshape_as(hidden), counts, logits.softmax(-1).sum(0)

@@ -3,12 +3,139 @@ from __future__ import annotations
 import json
 from types import SimpleNamespace
 
+import pytest
 import torch
 
 from benchmarking.quickstart.options import _parser, _reproduced_arguments
 from benchmarking.quickstart.storage import prepare_run_root
 from shadowspill.planner.program_inputs import TransferBandwidths
 from shadowspill.pytorch import StepSearchReport
+
+
+def sharded_factory(*, device, transfer_shard_size=None, shard_gradients=False):
+    return (device, transfer_shard_size, shard_gradients)
+
+
+@pytest.mark.parametrize("local_fixed", [1 << 30, (1 << 30) + (32 << 20)])
+def test_distributed_budgets_use_the_smallest_available_slab(monkeypatch, local_fixed):
+    from benchmarking.quickstart.runner import plan_budgets
+
+    group = object()
+    runtime = SimpleNamespace(
+        control_group=group,
+        pools={
+            "execution": SimpleNamespace(
+                physical_capacity=70 << 30, capacity=(70 << 30) - local_fixed
+            )
+        },
+    )
+    request = SimpleNamespace(
+        search_budgets=[16 << 30, 70 << 30], run_budgets=[70 << 30]
+    )
+    monkeypatch.setattr(torch.distributed, "get_world_size", lambda _: 2)
+
+    def exchange(peers, value, *, group):
+        requested, _ = value
+        peers[:] = [(requested, 1 << 30), (requested, (1 << 30) + (32 << 20))]
+
+    monkeypatch.setattr(torch.distributed, "all_gather_object", exchange)
+    budgets = plan_budgets(runtime, request)
+    assert budgets.search == [(15 << 30) - (32 << 20), (69 << 30) - (32 << 20)]
+    assert budgets.run == budgets.search[-1:]
+    assert all(value <= runtime.pools["execution"].capacity for value in budgets.search)
+
+
+def test_distributed_budget_mismatch_is_rejected_before_search(monkeypatch):
+    from benchmarking.quickstart.runner import plan_budgets
+
+    runtime = SimpleNamespace(
+        control_group=object(),
+        pools={
+            "execution": SimpleNamespace(physical_capacity=8 << 30, capacity=7 << 30)
+        },
+    )
+    request = SimpleNamespace(search_budgets=[8 << 30], run_budgets=[8 << 30])
+    monkeypatch.setattr(torch.distributed, "get_world_size", lambda _: 2)
+
+    def exchange(peers, value, *, group):
+        peers[:] = [value, (((7 << 30,), (7 << 30,)), 1 << 30)]
+
+    monkeypatch.setattr(torch.distributed, "all_gather_object", exchange)
+    with pytest.raises(ValueError, match="requested different budgets"):
+        plan_budgets(runtime, request)
+
+
+def test_sharding_flags_reach_supporting_factories(monkeypatch):
+    from benchmarking.quickstart import cli
+    from benchmarking.quickstart.options import parse_arguments
+
+    monkeypatch.setattr(cli, "resolve_device", lambda _: torch.device("cuda:0"))
+    monkeypatch.setattr(
+        "sys.argv",
+        [
+            "quickstart",
+            "--factory",
+            f"{__name__}:sharded_factory",
+            "--distributed",
+            "--transfer-shard-size",
+            "4",
+            "--shard-gradients",
+        ],
+    )
+    parser, arguments = parse_arguments()
+    _, setup = cli.resolve_request(parser, arguments)
+    assert setup(device="cuda:0") == ("cuda:0", 4, True)
+    arguments.factory_args = {"transfer_shard_size": 2}
+    with pytest.raises(SystemExit):
+        cli.resolve_request(parser, arguments)
+
+
+def test_glm_dp_objective_is_scaled_once_and_data_differs_between_ranks(monkeypatch):
+    from contextlib import nullcontext
+
+    from workloads.mlops.glm53_flash import quickstart as glm
+    from workloads.recipes.text import distributed
+
+    monkeypatch.setattr(torch.distributed, "is_initialized", lambda: True)
+    monkeypatch.setattr(torch.distributed, "get_world_size", lambda: 4)
+    specification = object()
+    requested = []
+
+    def groups(**kwargs):
+        requested.append(kwargs)
+        return specification, nullcontext
+
+    monkeypatch.setattr(distributed, "data_parallel_groups", groups)
+    recipes = []
+    for rank in (0, 1):
+        monkeypatch.setattr(torch.distributed, "get_rank", lambda rank=rank: rank)
+        recipes.append(
+            glm.experiment(
+                device="cuda:0",
+                tiny=True,
+                sequence_length=16,
+                sequences_per_step=4,
+                sequences_per_microbatch=(1, 2),
+                transfer_shard_size=2,
+                shard_gradients=True,
+            )
+        )
+    assert requested[0]["shard_size"] == 2
+    assert requested[0]["shard_gradients"] is True
+    assert recipes[0]["distributed"] is specification
+    assert not torch.equal(
+        recipes[0]["candidates"]["1"][0][0], recipes[1]["candidates"]["1"][0][0]
+    )
+    for recipe in recipes:
+        parameter = torch.tensor(2.0, requires_grad=True)
+        model = SimpleNamespace(
+            loss=lambda *args, value=parameter, **kwargs: value.square()
+        )
+        loss = recipe["objective"](model, *recipe["candidates"]["1"][0])
+        loss.backward()
+        torch.testing.assert_close(parameter.grad, torch.tensor(4.0 / (64 * 4)))
+        with recipe["context"]():
+            pass
 
 
 def test_distributed_outputs_and_reproduction_keep_stores_per_rank(
