@@ -211,7 +211,8 @@ class TaskProfileCatalog:
         )
         key = (
             f"{compatibility_digest}:{measurement.runtime_ns}:"
-            f"{measurement.workspace_charged_bytes}:{extra_workspace}"
+            f"{measurement.workspace_charged_bytes}:{extra_workspace}:"
+            f"{measurement.resource_phases!r}:{measurement.overlap_costs!r}"
         )
         existing = self._profile_by_key.get(key)
         if existing is not None:
@@ -224,6 +225,8 @@ class TaskProfileCatalog:
                 measurement.runtime_ns,
                 measurement.workspace_charged_bytes + extra_workspace,
                 compatibility_digest,
+                measurement.resource_phases,
+                measurement.overlap_costs,
             )
         )
         return profile_id

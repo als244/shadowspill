@@ -252,6 +252,11 @@ class ExecutionTiming:
         begin_runtime_trace(
             self._bridge, step_id=step_number, origin=timing.origin_event
         )
+        from .collectives import begin_collective_trace
+
+        timing.collect_collectives = begin_collective_trace(
+            self._bridge, timing, capacity=self._trace_capacities.events
+        )
 
     @property
     def prior_invocation_drain_seconds(self) -> float:
@@ -299,6 +304,13 @@ class ExecutionTiming:
             return
         stream = timing.stream or _handle(torch.cuda.current_stream())
         wait_for_stream(self._runtime_handle, stream)
+        if timing.collect_collectives is not None:
+            with suppress(BaseException):
+                try:
+                    self._bridge.wait_runtime_idle()
+                finally:
+                    timing.collect_collectives()
+            timing.collect_collectives = None
         with suppress(BaseException):
             end_and_read_runtime_trace(self._bridge)
         self.armed = None

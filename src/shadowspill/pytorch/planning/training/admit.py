@@ -148,6 +148,22 @@ def admit_training_plan(
             spill_pool_id=memory.spill.pool_id,
             slab_owner=memory.slab_owner,
         )
+        bound = distributed_preparation()
+        if bound is not None and bound.specification.shard_gradients:
+            import torch
+
+            for gradient in programs.lowered.gradients:
+                transfer = bound.gradient_transfers.get(gradient.parameter_name)
+                if transfer is None:
+                    continue
+                descriptor = transfer.descriptor()
+                try:
+                    bridge.objects.register_placeholder(
+                        bridge.objects.alias_for_object(gradient.gradient_object_id),
+                        transfer_address=descriptor,
+                    )
+                finally:
+                    torch.ops.shadowspill._close_sharded_transfer(descriptor)
         with timer.measure("plan_adoption"):
             materialized.state.adopt_execution_plan(
                 bridge,
@@ -173,6 +189,9 @@ def admit_training_plan(
                     plan.schedule,
                     dynamic_task_allocations=(
                         admitted.admission.persistent_allocation_policies()
+                    ),
+                    anonymous_allocation_bytes=(
+                        admitted.admission.anonymous_allocation_bytes()
                     ),
                 ),
                 memory_envelopes=admitted.admission.envelopes_by_task(),

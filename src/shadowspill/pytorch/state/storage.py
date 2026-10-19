@@ -10,6 +10,7 @@ from dataclasses import dataclass
 from typing import Any
 
 import torch
+import torch.distributed as dist
 
 from shadowspill.pytorch.representations import (
     map_tensor,
@@ -90,7 +91,11 @@ def import_tensors(
     try:
         # Only a storage that still stands apart from its object is copied
         # into it; one adopted from the pool is already where it belongs.
-        separate = [item for item in created if item.frontend_storage_is_separate]
+        separate = [
+            item
+            for item in created
+            if item.frontend_storage_is_separate and item.sharding is None
+        ]
         if release_source and separate and selected_pool.addressable:
             # The bytes are in the pool now, so the frontend's own copy is
             # redundant: point each storage at its lease and free what it held.
@@ -116,6 +121,16 @@ def import_tensors(
                     [item.anchor for item in payloads]
                 )
             for item in payloads:
+                item.frontend_storage_is_separate = False
+                item.unbacked = True
+        sharded = [item for item in created if item.sharding is not None]
+        if sharded:
+            if not release_source:
+                raise ValueError("sharded state import requires release_source=True")
+            torch.ops.shadowspill._release_cpu_storages(
+                [item.anchor for item in sharded]
+            )
+            for item in sharded:
                 item.frontend_storage_is_separate = False
                 item.unbacked = True
         state = PersistentState(
@@ -292,6 +307,12 @@ def register_tensor_storages(
         allow_in_progress_plan=_allow_in_progress_plan,
     )
     roots = _storage_roots(tensors)
+    from shadowspill.pytorch.distributed import current
+    from shadowspill.pytorch.distributed._backing_storage import storage_layout
+    from shadowspill.pytorch.distributed._ownership import storage_parameter_names
+
+    bound = current()
+    parameter_names = {} if bound is None else storage_parameter_names(bound.parameters)
     object_ids = reserve_persistent_object_ids(
         runtime,
         len(roots),
@@ -303,7 +324,32 @@ def register_tensor_storages(
         for anchor, views in roots:
             object_id = next(pending)
             size_bytes = int(anchor.untyped_storage().nbytes())
+            selected = {}
+            for view in views:
+                name = parameter_names.get(view.name)
+                if bound is not None and name in bound.transfer_sharding:
+                    selected[name] = bound.transfer_sharding[name]
+            sharding = None
+            if selected:
+                assert bound is not None
+                records = [layout.record() for layout in selected.values()]
+                if any(record != records[0] for record in records):
+                    raise ValueError(
+                        "views of one storage require the same sharding layout"
+                    )
+                if not selected_pool.addressable:
+                    raise ValueError("transfer sharding requires a pinned-host pool")
+                sharding = storage_layout(
+                    bound,
+                    next(iter(selected)),
+                    size_bytes,
+                    max(view.tensor.element_size() for view in views),
+                )
             placed = _placement(views, placements)
+            if sharding is not None and placed is not None:
+                raise ValueError(
+                    "full-tensor pool images cannot bind transfer sharding"
+                )
             if placed is not None:
                 _require_status(
                     register_placed_object(
@@ -316,22 +362,42 @@ def register_tensor_storages(
                     f"adopt persistent object {object_id} at offset {placed}",
                 )
             else:
-                _require_status(
-                    register_object(
+                descriptor = 0 if sharding is None else sharding.descriptor()
+                source = anchor
+                try:
+                    if sharding is not None and _initialize:
+                        full = (
+                            torch.empty(0, dtype=torch.uint8)
+                            .set_(anchor.untyped_storage(), 0, (size_bytes,), (1,))
+                            .clone()
+                        )
+                        dist.broadcast(
+                            full,
+                            src=dist.get_process_group_ranks(sharding.host_group)[0],
+                            group=sharding.host_group,
+                        )
+                        source = sharding.owned(full)
+                    status = register_object(
                         runtime,
                         object_id,
-                        size_bytes,
+                        size_bytes if sharding is None else sharding.execution_bytes,
                         pool_id=selected_pool.pool_id,
                         retain_spill_copy=True,
                         initially_resident=True,
                         source_address=(
-                            int(anchor.untyped_storage().data_ptr())
+                            int(source.untyped_storage().data_ptr())
                             if _initialize
                             else 0
                         ),
-                    ),
-                    f"import persistent object {object_id}",
-                )
+                        transfer_address=descriptor,
+                        source_size_bytes=None
+                        if sharding is None
+                        else sharding.shard_bytes,
+                    )
+                    _require_status(status, f"import persistent object {object_id}")
+                finally:
+                    if descriptor:
+                        torch.ops.shadowspill._close_sharded_transfer(descriptor)
             snapshot = _object_location_snapshot(
                 runtime._runtime_handle, object_id, selected_pool.pool_id
             )
@@ -350,6 +416,7 @@ def register_tensor_storages(
                     anchor=anchor,
                     views=views,
                     frontend_storage_is_separate=True,
+                    sharding=sharding,
                 )
             )
         return tuple(created)
@@ -484,16 +551,7 @@ def export_tensors(
         for item in state.storages
     ]
     for item, owner in zip(state.storages, owners, strict=True):
-        _require_status(
-            runtime_library().shadowspill_read_object(
-                runtime._runtime_handle,
-                item.current_object_id,
-                item.pool_id,
-                int(owner.untyped_storage().data_ptr()),
-                item.size_bytes,
-            ),
-            f"export persistent object {item.current_object_id}",
-        )
+        owner.copy_(_storage_bytes(item, runtime=runtime))
     if state.storages:
         torch.ops.shadowspill._export_cpu_storages(
             [item.anchor for item in state.storages], owners
@@ -586,6 +644,28 @@ def _storage_bytes(
         owner = torch.empty(item.size_bytes, dtype=torch.uint8, device="cpu")
     if owner.dtype is not torch.uint8 or owner.numel() < item.size_bytes:
         raise ValueError("state read buffer is smaller than the stored object")
+    sharding = item.sharding
+    if sharding is not None:
+        shard = torch.empty(sharding.shard_bytes, dtype=torch.uint8)
+        _require_status(
+            runtime_library().shadowspill_read_object(
+                runtime._runtime_handle,
+                item.current_object_id,
+                item.pool_id,
+                shard.data_ptr(),
+                sharding.shard_bytes,
+            ),
+            f"read persistent shard {item.current_object_id}",
+        )
+        full = (
+            owner[: sharding.execution_bytes]
+            if owner.numel() >= sharding.execution_bytes
+            else torch.empty(sharding.execution_bytes, dtype=torch.uint8)
+        )
+        dist.all_gather_into_tensor(full, shard, group=sharding.host_group)
+        if owner.numel() < sharding.execution_bytes:
+            owner[: item.size_bytes].copy_(full[: item.size_bytes])
+        return owner
     _require_status(
         runtime_library().shadowspill_read_object(
             runtime._runtime_handle,
@@ -597,6 +677,30 @@ def _storage_bytes(
         f"read persistent object {item.current_object_id}",
     )
     return owner
+
+
+def _write_storage_bytes(
+    runtime: Runtime,
+    item: PersistentStorage,
+    owner: torch.Tensor,
+    *,
+    synchronize: bool = False,
+) -> None:
+    sharding = item.sharding
+    if sharding is not None:
+        owner = (
+            sharding.synchronize_owned(owner) if synchronize else sharding.owned(owner)
+        )
+    _require_status(
+        runtime_library().shadowspill_write_object(
+            runtime._runtime_handle,
+            item.current_object_id,
+            item.pool_id,
+            owner.data_ptr(),
+            item.size_bytes if sharding is None else sharding.shard_bytes,
+        ),
+        f"write persistent object {item.current_object_id}",
+    )
 
 
 def read_tensor_value(runtime: Runtime, tensor: torch.Tensor) -> torch.Tensor:
@@ -637,15 +741,12 @@ def refresh_persistent_state(runtime: Runtime, target: object) -> None:
 
 def _refresh_storage(runtime: Runtime, item: PersistentStorage) -> None:
     if item.frontend_storage_is_separate:
-        _require_status(
-            runtime_library().shadowspill_write_object(
-                runtime._runtime_handle,
-                item.current_object_id,
-                item.pool_id,
-                int(item.anchor.untyped_storage().data_ptr()),
-                item.size_bytes,
+        _write_storage_bytes(
+            runtime,
+            item,
+            torch.empty(0, dtype=torch.uint8).set_(
+                item.anchor.untyped_storage(), 0, (item.size_bytes,), (1,)
             ),
-            f"refresh persistent object {item.current_object_id}",
         )
 
 
@@ -669,7 +770,7 @@ def adopt_persistent_tensor(
         alias_id,
         current_object_id=item.current_object_id,
         pool_id=item.pool_id,
-        size_bytes=item.size_bytes,
+        size_bytes=item.execution_bytes,
         pool_pointer=item.pool_pointer,
     )
     return item
@@ -740,6 +841,15 @@ def host_views_while_planning(runtime: Runtime, target: object) -> Iterator[None
 def _restore_host_views(runtime: Runtime, state: PersistentState) -> None:
     for item in state.storages:
         if not item.frontend_storage_is_separate:
+            continue
+        if item.sharding is not None:
+            owner = torch.empty(0, dtype=torch.uint8).set_(
+                item.anchor.untyped_storage(),
+                0,
+                (item.size_bytes,),
+                (1,),
+            )
+            _storage_bytes(item, runtime=runtime, owner=owner)
             continue
         _require_status(
             runtime_library().shadowspill_read_object(

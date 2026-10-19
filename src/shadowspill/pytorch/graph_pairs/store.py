@@ -55,6 +55,7 @@ class _Form:
     gradient_dtype: torch.dtype | None
     accumulating: bool
     round_accumulation_once: bool
+    gradient_padding: tuple[tuple[int, int], ...] = ()
 
 
 class GraphPairStore:
@@ -125,7 +126,19 @@ class GraphPairStore:
             "objective_connected_outputs",
             validate_graph_pair_variants(variants),
         )
-        form = _Form(gradient_dtype, accumulating, round_accumulation_once)
+        from shadowspill.pytorch.distributed import current
+
+        bound = current()
+        padding = []
+        if bound is not None and bound.specification.shard_gradients:
+            for position, provenance in enumerate(example.stage.input_provenance):
+                name = (provenance.source or "").removeprefix("model.")
+                layout = bound.transfer_sharding.get(name)
+                if layout is not None:
+                    padding.append((position, layout.group.size()))
+        form = _Form(
+            gradient_dtype, accumulating, round_accumulation_once, tuple(padding)
+        )
         self._keys_seen.add(key)
         existing = self._pairs.get(key)
         if existing is None:
@@ -175,7 +188,9 @@ class GraphPairStore:
 
         derived = self._derived.get((key, form))
         if derived is None:
-            derived = pairs.with_gradient_dtype(form.gradient_dtype)
+            derived = pairs.with_gradient_dtype(
+                form.gradient_dtype, gradient_padding=dict(form.gradient_padding)
+            )
             if form.accumulating:
                 accumulating = derived.accumulating_variants(
                     round_accumulation_once=form.round_accumulation_once

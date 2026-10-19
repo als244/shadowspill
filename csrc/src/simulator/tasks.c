@@ -191,6 +191,9 @@ int shadowspill_try_launch_tasks(
             work->lane_heads[word] &= ~(UINT64_C(1) << bit);
             work->active_tasks[word] |= UINT64_C(1) << bit;
             state->start_ns = work->now_ns;
+            state->remaining_work_ns = program->task_runtime_ns[task];
+            state->progress_ns = work->now_ns;
+            state->work_rate = 1.0;
             if (shadowspill_add_overflow_u64(
                     work->now_ns,
                     program->task_runtime_ns[task],
@@ -198,6 +201,7 @@ int shadowspill_try_launch_tasks(
                 )) {
                 state->end_ns = UINT64_MAX;
             }
+            shadowspill_start_task_phases(program, work, task);
             shadowspill_update_peaks(program, work);
             changed = 1;
         }

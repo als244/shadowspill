@@ -6,6 +6,7 @@ schedules are reconstructed and admitted against each receiving rank's facts.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import time
 from dataclasses import replace
@@ -19,7 +20,7 @@ from shadowspill.planner.serialization.simulation_result import simulation_resul
 from shadowspill.store import atomic_text
 
 from . import current
-from ._symmetry import Symmetry, _digest, verify
+from ._symmetry import Symmetry, verify
 
 
 def shared_problem(
@@ -58,7 +59,16 @@ def shared_problem(
         fetch_latency_ns=device.fetch_latency_ns,
         evict_latency_ns=device.evict_latency_ns,
     )
-    return replace(problem, program=shared.program), transfer, shared, evidence
+    return (
+        replace(
+            problem,
+            program=shared.program,
+            admission_facts=replace(problem.admission_facts, tasks=shared.facts.tasks),
+        ),
+        transfer,
+        shared,
+        evidence,
+    )
 
 
 def received_plan(shared, payload, problem, budgets, transfer):
@@ -79,8 +89,15 @@ def received_plan(shared, payload, problem, budgets, transfer):
     )
 
 
-def pack(record: FixedLayoutSelection | AnnotatedProgramPlan) -> dict:
-    """Portable logical schedules and evidence, without compiled code or bindings."""
+def pack(
+    record: FixedLayoutSelection | AnnotatedProgramPlan, *, compact_facts: bool = False
+) -> dict:
+    """Portable schedules; verified peers can reference their local facts.
+
+    Persisted records remain self-contained. On the wire, the capacity and a
+    device-independent digest identify the already verified allocation facts,
+    avoiding a second copy of every task's allocation steps on every rank.
+    """
     result = (
         certified_result(record.result, record.admission)
         if isinstance(record, FixedLayoutSelection)
@@ -104,7 +121,14 @@ def pack(record: FixedLayoutSelection | AnnotatedProgramPlan) -> dict:
         "simulation": simulation_result_value(result.simulation),
         "diagnostics": result.diagnostics.to_dict(),
         "resident_slice": result.resident_slice.to_dict(),
-        "facts": facts.to_dict(),
+        "facts": (
+            {
+                "reference": replace(facts, device_id="local").digest,
+                "object_capacity_bytes": facts.object_capacity_bytes,
+            }
+            if compact_facts
+            else facts.to_dict()
+        ),
         "scratch": layout.scratch_reserve_bytes,
         "resolutions": [
             {
@@ -127,9 +151,12 @@ def record_plan(store, record) -> str | None:
     program = record.result.program
     store.archive_program(program)
     payload = {"version": 1, "program": program.digest, "plan": pack(record)}
-    identity = _digest(payload)
+    encoded = json.dumps(
+        payload, sort_keys=True, separators=(",", ":"), allow_nan=False
+    )
+    identity = hashlib.sha256(encoded.encode()).hexdigest()
     path = store.planning / "distributed" / "plans" / f"{identity}.json"
-    atomic_text(path, json.dumps(payload, sort_keys=True, separators=(",", ":")))
+    atomic_text(path, encoded)
     store.record(
         category="planning",
         kind="distributed_plan",

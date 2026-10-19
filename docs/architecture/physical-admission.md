@@ -201,7 +201,7 @@ runs.
 A hand-authored logical `ShadowSpillProgram` can still be planned and simulated
 without an `AdmissionFacts`. It becomes executable only after a frontend
 provides complete physical evidence. The serialized facts use the
-`shadowspill.admission_facts/v1` schema; anything else is rejected.
+`shadowspill.admission_facts/v2` schema; anything else is rejected.
 
 ### What every problem embeds
 

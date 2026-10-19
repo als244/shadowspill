@@ -52,7 +52,27 @@ enum {
     SHADOWSPILL_STALL_SPILL_CAPACITY = 1U << 3U,
     SHADOWSPILL_STALL_MEMORY_REUSE = 1U << 4U,
     SHADOWSPILL_STALL_LANE_BUSY = 1U << 5U,
+    SHADOWSPILL_STALL_TRANSFER_RESOURCE = 1U << 6U,
 };
+
+enum {
+    SHADOWSPILL_TRANSFER_PHASE_COPY = 0,
+    SHADOWSPILL_TRANSFER_PHASE_TIMED = 1,
+};
+
+typedef struct ShadowSpillTransferPhase {
+    uint32_t kind;
+    uint32_t resource;
+    uint64_t bytes;
+    uint64_t duration_ns;
+    uint32_t submission_ordered;
+} ShadowSpillTransferPhase;
+
+typedef struct ShadowSpillTaskResourcePhase {
+    uint64_t duration_ns;
+    /* NO_INDEX is computation; other values share the transfer resource table. */
+    uint32_t resource;
+} ShadowSpillTaskResourcePhase;
 
 typedef struct ShadowSpillSimulationDevice {
     uint64_t capacity_bytes;
@@ -117,7 +137,41 @@ typedef struct ShadowSpillSimulationProgram {
     const uint32_t *reuse_predecessor_actions;
     const uint32_t *reuse_successor_tasks;
     const uint32_t *reuse_successor_actions;
+    /* Optional location-specific sizes and ordered transfer recipes. Empty
+       rows retain the ordinary single-copy behavior. Rows are alias*2+direction.
+       Timed phases serialize by resource; host copy bandwidth is occupied only
+       during COPY phases. Device/source leases span the complete recipe. */
+    const uint64_t *alias_spill_size_bytes;
+    uint32_t transfer_phase_count;
+    uint32_t transfer_resource_count;
+    const uint32_t *alias_transfer_offsets;
+    const ShadowSpillTransferPhase *transfer_phases;
+    /* Optional sequential task phases. Empty rows use task_runtime_ns as
+       computation. Nonempty rows must sum to that runtime. Resource phases
+       join the same task-boundary submission order as ordered transfers. */
+    uint32_t task_phase_count;
+    const uint32_t *task_phase_offsets;
+    const ShadowSpillTaskResourcePhase *task_phases;
+    /* Pre-interpolated paired progress rates, indexed profile*category_count+c.
+       A NO_INDEX transfer category is unmodeled. Rates are finite in (0,1].
+       Zero categories disables overlap accounting and needs no pointers. */
+    uint32_t overlap_category_count;
+    uint32_t overlap_profile_count;
+    const uint32_t *task_overlap_profiles;
+    const uint32_t *transfer_overlap_categories;
+    const double *task_overlap_rates;
+    const double *transfer_overlap_rates;
 } ShadowSpillSimulationProgram;
+
+/* Optimistic isolated recipe time used by heuristics, including every timed
+   phase. Candidate simulation separately accounts for resource queue waits. */
+SHADOWSPILL_API int shadowspill_transfer_duration_ns(
+    const ShadowSpillSimulationProgram *program,
+    uint32_t alias,
+    uint8_t direction,
+    uint64_t copy_rate_bytes_per_second,
+    uint64_t *duration_ns
+);
 
 typedef struct ShadowSpillTaskInterval {
     uint32_t task;

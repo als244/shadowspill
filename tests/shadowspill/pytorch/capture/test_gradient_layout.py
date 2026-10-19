@@ -55,3 +55,56 @@ def test_channels_last_activation_keeps_its_canonical_memory_format():
     expected = torch.autograd.grad(function(x), x, dy)[0]
     torch.testing.assert_close(got, expected)
     assert got.is_contiguous(memory_format=torch.channels_last)
+
+
+@pytest.mark.parametrize("transpose", [False, True])
+def test_shard_padding_is_in_the_backward_contract_and_preserved_by_accumulation(
+    transpose,
+):
+    x = torch.randn(3, 5)
+    if transpose:
+        x = x.T
+    x.requires_grad_()
+
+    def function(value):
+        return value.square().sum()
+
+    pair = capture_graph_pair(
+        make_fx(function)(x),
+        (x,),
+        original_output=function(x),
+        input_provenance=(TaskInputProvenance(TaskInputRole.PARAMETER),),
+    )
+    variant = GraphPairVariant("save", 1.0, pair).with_gradient_dtype(
+        torch.float32,
+        gradient_padding={0: 4},
+    )
+    forward = variant.pair.forward.graph_module(x)
+    arguments = (*forward[1:], torch.ones_like(forward[0]))
+    got = variant.pair.backward.graph_module(*arguments)[0]
+    torch.testing.assert_close(got, torch.autograd.grad(function(x), x)[0])
+    assert got.shape == x.shape
+    assert got.untyped_storage().nbytes() == 16 * 4
+    from shadowspill.pytorch.compilation.compiler import compile_artifact
+
+    compiled = compile_artifact(
+        variant.pair.backward,
+        device_ordinal=0,
+        representative_arguments=arguments,
+    )
+    (compiled_output,) = compiled()
+    torch.testing.assert_close(compiled_output, got)
+    view = compiled.manifest.storage_contract.output_views[0]
+    allocation = next(
+        item
+        for item in compiled.manifest.root_allocations
+        if item.root_id == view.root_id
+    )
+    assert allocation.requested_bytes == 16 * 4
+
+    accumulating = variant.accumulating().pair.backward
+    prior = torch.ones(16).as_strided(got.shape, got.stride())
+    output = accumulating.graph_module(*arguments, prior)[0]
+    torch.testing.assert_close(output, got + 1)
+    assert output.data_ptr() == prior.data_ptr()
+    assert accumulating.example_arguments[-1].untyped_storage().nbytes() == 16 * 4

@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import ctypes
+import gc
 import sys
 import tempfile
+import weakref
 from pathlib import Path
 
 import torch
@@ -29,7 +31,11 @@ from shadowspill.pytorch.profiling.profiler.measurement import (
     measure_task,
 )
 from shadowspill.runtime.abi import AdapterStatistics, runtime_library
-from shadowspill.runtime.bootstrap import install_runtime
+from shadowspill.runtime.bootstrap import (
+    RuntimeInstallError,
+    install_runtime,
+    validate_dynamic_execution_reservation,
+)
 from shadowspill.task.profiling import ProfilingOptions
 from tests.integration.pytorch.runtime_helpers import two_pool_topology
 
@@ -179,6 +185,36 @@ def main() -> int:
         raise AssertionError("one-time workspace was charged to every task invocation")
     retained.clear()
     profiler.boundary.drain(profiler.boundary.stream(), problem="lazy cache release")
+    phase("unreachable-profiling-cycle")
+    references = []
+
+    def leave_cycle() -> None:
+        temporary = torch.empty(128 << 20, dtype=torch.uint8, device="cuda:0")
+        references.append(weakref.ref(temporary))
+        frame = [temporary]
+        frame.append(frame)
+
+    was_enabled = gc.isenabled()
+    gc.disable()
+    try:
+        profiler.boundary.invoke(leave_cycle, profiler.boundary.stream())
+        assert references[0]() is not None
+        try:
+            validate_dynamic_execution_reservation(
+                installed, reserved_bytes=installed.fixed_execution_bytes
+            )
+        except RuntimeInstallError as error:
+            assert "exceed the admitted slab reserve" in str(error)
+        else:
+            raise AssertionError("uncollected GPU cycle was not charged to the pool")
+        profiler.release_host_memory()
+        assert references[0]() is None
+        validate_dynamic_execution_reservation(
+            installed, reserved_bytes=installed.fixed_execution_bytes
+        )
+    finally:
+        if was_enabled:
+            gc.enable()
     return 0
 
 

@@ -109,7 +109,8 @@ static int handle_newly_published_submission(ShadowSpillRuntime *runtime) {
     int fetches_published = 1;
     for (uint32_t index = 0U; index < record->action_count; ++index) {
         ShadowSpillQueuedAction *action = &record->queued_actions[index];
-        if (action->kind != SHADOWSPILL_RUNTIME_FETCH) {
+        if (action->kind != SHADOWSPILL_RUNTIME_FETCH &&
+            action->collective_sequence == 0U) {
             continue;
         }
         ShadowSpillObject *object = action->object;

@@ -35,7 +35,7 @@ def shared_residency_footprint(program: ShadowSpillProgram) -> SharedResidencyFo
             continue
         by_device[alias.device_id] += alias.size_bytes
         if alias.retain_spill_copy:
-            spill_bytes += alias.size_bytes
+            spill_bytes += alias.spill_size_bytes
         aliases.append(alias.alias_group_id)
     return SharedResidencyFootprint(
         tuple(by_device.items()),

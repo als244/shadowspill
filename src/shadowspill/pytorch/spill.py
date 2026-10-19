@@ -9,12 +9,16 @@ handed over must be host memory, and only the framework can say whether it is.
 
 from __future__ import annotations
 
-from typing import cast
+from typing import TYPE_CHECKING, cast
 
 import torch
 
 from shadowspill.errors import PlanningError
 from shadowspill.runtime.failures import RuntimeExecutionError
+
+if TYPE_CHECKING:
+    from shadowspill.pytorch.state.records import PersistentStorage
+    from shadowspill.runtime.plan.objects import PlanObjects
 
 
 def _host_bytes(
@@ -39,12 +43,50 @@ def register_spill_tensor(
 
 def write_spill_tensor(objects: object, alias_id: str, tensor: torch.Tensor) -> None:
     address, size = _host_bytes(tensor, "runtime input payload", RuntimeExecutionError)
+    item = _sharded_storage(objects, alias_id)
+    if item is not None:
+        from shadowspill.pytorch.state.storage import _write_storage_bytes
+
+        _write_storage_bytes(
+            cast("PlanObjects", objects).runtime, item, _bytes_view(tensor)
+        )
+        return
     objects.write_spill_bytes(alias_id, address=address, size=size)  # type: ignore[attr-defined]
 
 
 def read_spill_tensor(objects: object, alias_id: str, tensor: torch.Tensor) -> None:
     address, size = _host_bytes(tensor, "writeback destination", RuntimeExecutionError)
+    item = _sharded_storage(objects, alias_id)
+    if item is not None:
+        from shadowspill.pytorch.state.storage import _storage_bytes
+
+        _storage_bytes(
+            item,
+            runtime=cast("PlanObjects", objects).runtime,
+            owner=_bytes_view(tensor),
+        )
+        return
     objects.read_spill_bytes(alias_id, address=address, size=size)  # type: ignore[attr-defined]
+
+
+def _bytes_view(tensor: torch.Tensor) -> torch.Tensor:
+    return torch.empty(0, dtype=torch.uint8).set_(
+        tensor.untyped_storage(), 0, (tensor.untyped_storage().nbytes(),), (1,)
+    )
+
+
+def _sharded_storage(objects: object, alias_id: str) -> PersistentStorage | None:
+    from shadowspill.pytorch.state.registry import registry_for
+
+    runtime = getattr(objects, "runtime", None)
+    if runtime is None:
+        return None
+    if not cast("PlanObjects", objects).requires_storage(alias_id):
+        return None
+    item = registry_for(runtime).runtime_object(
+        cast("PlanObjects", objects).runtime_object_id(alias_id)
+    )
+    return item if item is not None and item.sharding is not None else None
 
 
 def spill_view(objects: object, alias_id: str) -> torch.Tensor | None:
@@ -56,6 +98,8 @@ def spill_view(objects: object, alias_id: str) -> torch.Tensor | None:
     out then.
     """
 
+    if _sharded_storage(objects, alias_id) is not None:
+        return None
     location = objects.spill_location(alias_id)  # type: ignore[attr-defined]
     if location is None:
         return None

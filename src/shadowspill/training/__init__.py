@@ -1,6 +1,6 @@
 """Generic training and forward execution for ordinary PyTorch models."""
 
-from shadowspill.pytorch.distributed import Distributed
+from shadowspill.pytorch.distributed import Distributed, TransferSharding
 
 from ._model import reset_parameters
 from .forward import Forward
@@ -12,5 +12,6 @@ __all__ = [
     "Forward",
     "StepResult",
     "Trainer",
+    "TransferSharding",
     "reset_parameters",
 ]

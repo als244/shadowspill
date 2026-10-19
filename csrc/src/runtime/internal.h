@@ -101,6 +101,8 @@ struct ShadowSpillRuntime {
     ShadowSpillActionQueue actions;
     _Atomic(ShadowSpillTaskRecord *) worker_submission;
     _Atomic uint64_t next_worker_submission_sequence;
+    uint64_t next_collective_sequence;
+    uint64_t submitted_collective_sequence;
 
     _Atomic uint64_t next_plan_id;
     _Atomic uint64_t next_allocation_id;
@@ -146,6 +148,8 @@ struct ShadowSpillRuntime {
     uint8_t trace_origin_present;
     ShadowSpillRuntimeFailure failure;
 };
+
+void shadowspill_trace_action_context(const ShadowSpillQueuedAction *action);
 
 static inline void shadowspill_cpu_relax(void) {
 #if defined(__x86_64__) || defined(__i386__)

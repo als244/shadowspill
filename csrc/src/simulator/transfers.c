@@ -58,7 +58,7 @@ static int try_start_direction(
             }
         }
         transfer->state = SHADOWSPILL_TRANSFER_ACTIVE;
-        shadowspill_start_transfer_timing(program, transfer, work->now_ns);
+        shadowspill_start_transfer_timing(program, work, transfer, work->now_ns);
         *active = (int32_t)index;
         *cursor = index + 1U;
         shadowspill_update_peaks(program, work);
@@ -309,7 +309,7 @@ static int submit_release(
         program->alias_retain_spill_copy[of->alias] == 0U) {
         of->state->spill_allocated = 0U;
         of->state->spill_ready = 0U;
-        work->spill_bytes -= program->alias_size_bytes[of->alias];
+        work->spill_bytes -= shadowspill_alias_spill_bytes(program, of->alias);
     }
     if (program->use_admission_accounting != 0U &&
         !shadowspill_apply_physical_delta(
@@ -391,7 +391,7 @@ static int submit_departure(
     if (of->state->spill_allocated == 0U) {
         if (shadowspill_add_overflow_u64(
                 work->spill_bytes,
-                program->alias_size_bytes[of->alias],
+                shadowspill_alias_spill_bytes(program, of->alias),
                 &total
             )) {
             shadowspill_set_capacity_error(
@@ -404,7 +404,7 @@ static int submit_departure(
                 SHADOWSPILL_MEMORY_SPILL,
                 program->spill_capacity_bytes,
                 work->spill_bytes,
-                program->alias_size_bytes[of->alias]
+                shadowspill_alias_spill_bytes(program, of->alias)
             );
             return 0;
         }
@@ -425,7 +425,7 @@ static int submit_departure(
                 of->device,
                 program->spill_capacity_bytes,
                 work->spill_bytes,
-                program->alias_size_bytes[of->alias]
+                shadowspill_alias_spill_bytes(program, of->alias)
             );
             *deferred = 1;
             return 1;
@@ -636,6 +636,22 @@ static int append_transfer_interval(
         return 0;
     }
     const ShadowSpillTransferState *transfer = &work->transfers[transfer_index];
+    uint64_t copy_bytes = program->alias_size_bytes[transfer->alias];
+    if (transfer->phase_end != 0U) {
+        const uint32_t begin = program->alias_transfer_offsets[
+            transfer->alias * 2U + transfer->direction
+        ];
+        if (begin < transfer->phase_end) {
+            copy_bytes = 0U;
+            for (uint32_t index = begin; index < transfer->phase_end; ++index) {
+                const ShadowSpillTransferPhase *phase = &program->transfer_phases[index];
+                if (phase->kind == SHADOWSPILL_TRANSFER_PHASE_COPY &&
+                    shadowspill_add_overflow_u64(copy_bytes, phase->bytes, &copy_bytes)) {
+                    return 0;
+                }
+            }
+        }
+    }
     result->transfer_intervals[result->transfer_interval_count++] =
         (ShadowSpillTransferInterval){
             .alias = transfer->alias,
@@ -647,7 +663,7 @@ static int append_transfer_interval(
             .ready_ns = transfer->ready_ns,
             .start_ns = transfer->start_ns,
             .end_ns = transfer->end_ns,
-            .bytes = program->alias_size_bytes[transfer->alias],
+            .bytes = copy_bytes,
             .stall_mask = transfer->stall_mask,
         };
     return 1;
@@ -665,6 +681,9 @@ int shadowspill_complete_transfer(
         : &work->active_evict[device];
     uint32_t index = (uint32_t)*active;
     ShadowSpillTransferState *transfer = &work->transfers[index];
+    if (shadowspill_advance_transfer_phase(program, work, transfer)) {
+        return 1;
+    }
     ShadowSpillAliasState *state = &work->aliases[transfer->alias];
     uint64_t size = program->alias_size_bytes[transfer->alias];
     const uint8_t kind = program->action_kinds[index];
@@ -710,7 +729,7 @@ int shadowspill_complete_transfer(
         if (program->alias_retain_spill_copy[transfer->alias] == 0U) {
             state->spill_allocated = 0U;
             state->spill_ready = 0U;
-            work->spill_bytes -= program->alias_size_bytes[transfer->alias];
+            work->spill_bytes -= shadowspill_alias_spill_bytes(program, transfer->alias);
         }
     } else {
         /* The copy carries the version it started from. A write that

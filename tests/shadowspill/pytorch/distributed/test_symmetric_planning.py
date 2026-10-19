@@ -27,6 +27,8 @@ from shadowspill.ir import (
     TaskAlternativeOption,
     TaskProfile,
     TaskSpec,
+    TransferPhase,
+    TransferSpec,
 )
 from shadowspill.planner import GenericPlanningOptions, SearchOptions
 from shadowspill.planner.admission import (
@@ -199,7 +201,10 @@ def test_symmetry_preserves_rank_local_abi_and_device_binding():
     ).requirements(None, None)
 
 
-def test_received_plan_uses_normal_admission_for_shared_residency(tmp_path):
+@pytest.mark.parametrize("compact_facts", [False, True])
+def test_received_plan_uses_normal_admission_for_shared_residency(
+    tmp_path, compact_facts
+):
     value = problem()
     group = value.program.task_alternative_groups[0]
     value = replace(
@@ -231,9 +236,50 @@ def test_received_plan_uses_normal_admission_for_shared_residency(tmp_path):
     selected = _Planner(None, None, tmp_path, None, "contribute", False).plan(
         value, 288, 1024
     )
-    received = contract(value).receive(pack(selected))
+    received = contract(value).receive(pack(selected, compact_facts=compact_facts))
     assert received.facts == selected.effective_facts
     assert received.admission.simulation == selected.simulation
+
+
+@pytest.mark.parametrize("difference", ["workspace", "alignment", "pool", "capacity"])
+def test_compact_received_plan_rejects_changed_allocation_facts(tmp_path, difference):
+    value = problem()
+    selected = _Planner(None, None, tmp_path, None, "contribute", False).plan(
+        value, 288, 1024
+    )
+    payload = pack(selected, compact_facts=True)
+    local = contract(value)
+    if difference == "capacity":
+        payload["facts"]["object_capacity_bytes"] -= 8
+    else:
+        facts = local.facts
+        if difference == "workspace":
+            facts = replace(
+                facts,
+                tasks=(
+                    *facts.tasks[:-1],
+                    replace(facts.tasks[-1], workspace_extents=(16,)),
+                ),
+            )
+        elif difference == "alignment":
+            facts = replace(facts, minimum_alignment=16)
+        else:
+            facts = replace(facts, pool_capacity_bytes=264)
+        local = replace(local, facts=facts)
+    with pytest.raises(ValueError, match="verified allocation contract"):
+        local.receive(payload)
+
+
+def test_compact_plan_keeps_persisted_facts_self_contained(tmp_path):
+    value = problem()
+    selected = _Planner(None, None, tmp_path, None, "contribute", False).plan(
+        value, 288, 1024
+    )
+    compact = pack(selected, compact_facts=True)
+    assert "tasks" not in compact["facts"]
+    assert contract(value).receive(compact).facts.tasks is value.admission_facts.tasks
+    full = pack(selected)
+    assert AdmissionFacts.from_dict(full["facts"]) == selected.effective_facts
 
 
 def distributed_worker(rank, root, failure):
@@ -307,6 +353,88 @@ def distributed_worker(rank, root, failure):
             bound.control.agree(
                 "test/selection",
                 [item.to_dict() for item in selected.result.selections],
+            )
+
+            # Different capacities reject sharing before the candidate search.
+            # Local shard groups have independent collective calibrations;
+            # the shared plan must use the slowest matching phase everywhere.
+            transferred = replace(
+                local.program.alias_groups[0],
+                transfer=TransferSpec(
+                    32,
+                    (
+                        TransferPhase("copy", bytes=32),
+                        TransferPhase(
+                            "timed",
+                            duration_ns=10 + rank * 10,
+                            resource="sharded-collectives",
+                            submission_ordered=True,
+                        ),
+                    ),
+                    (TransferPhase("copy", bytes=32),),
+                ),
+            )
+            phased = replace(
+                contract(local),
+                program=replace(
+                    local.program,
+                    alias_groups=(transferred,),
+                ),
+            )
+            shared, evidence = verify(phased)
+            assert shared is not None
+            assert shared.program.alias_groups[0].transfer.fetch[1].duration_ns == 20
+            assert evidence["mode"] == "symmetric"
+
+            # Autotuned kernels can use different temporary sizes without
+            # changing outputs, allocation order, or the task's peak workspace.
+            task = local.admission_facts.tasks[-1]
+            varied = replace(
+                local,
+                program=replace(
+                    local.program,
+                    profiles=tuple(
+                        replace(profile, runtime_ns=500)
+                        if profile.profile_id == "save"
+                        else profile
+                        for profile in local.program.profiles
+                    ),
+                ),
+                admission_facts=replace(
+                    local.admission_facts,
+                    tasks=(
+                        *local.admission_facts.tasks[:-1],
+                        replace(
+                            task,
+                            allocation_steps=(
+                                TaskAllocationStep(
+                                    1, TaskAllocationStepKind.ALLOCATE, rank + 1
+                                ),
+                                TaskAllocationStep(1, TaskAllocationStepKind.RELEASE),
+                                *task.allocation_steps,
+                            ),
+                        ),
+                    ),
+                ),
+            )
+            shared, evidence = verify(contract(varied))
+            assert shared is not None
+            assert shared.facts.tasks[-1].allocation_steps[0].charged_bytes == 2
+            assert evidence["allocation_policy"].startswith("max_anonymous")
+            varied_plan = planner.plan(varied, 288, 1024)
+            assert varied_plan.result.selections[0].option_id == "recompute"
+            assert (
+                varied_plan.effective_facts.tasks[-1].allocation_steps[0].charged_bytes
+                == 2
+            )
+            planner.prepare_geometry((varied,), ((288, 1024),), incumbents=True)
+            shared_answer = planner.answer(varied, 288, 1024, None)
+            assert shared_answer.plan is not None
+            assert (
+                shared_answer.plan.effective_facts.tasks[-1]
+                .allocation_steps[0]
+                .charged_bytes
+                == 2
             )
 
             # Different capacities reject sharing before the candidate search.
@@ -394,3 +522,27 @@ def test_shared_search_with_real_cpu_processes(failure):
         finally:
             for path in Path(root).glob("failure-rank-*.txt"):
                 print(path.read_text())
+
+
+def test_reconciliation_rejects_combined_workspace_peak():
+    from shadowspill.pytorch.distributed._allocation_symmetry import reconcile
+
+    task = TaskAdmissionSpec(
+        "task",
+        workspace_extents=(2, 6),
+        allocation_steps=(
+            TaskAllocationStep(0, TaskAllocationStepKind.ALLOCATE, 6),
+            TaskAllocationStep(1, TaskAllocationStepKind.ALLOCATE, 2),
+            TaskAllocationStep(0, TaskAllocationStepKind.RELEASE),
+            TaskAllocationStep(1, TaskAllocationStepKind.RELEASE),
+        ),
+    )
+    facts = AdmissionFacts("cuda_0", 16, 16, 1, (task,))
+
+    class Peers:
+        def exchange(self, label, value):
+            if label.endswith("allocation_structure"):
+                return [value, value]
+            return [value, {"vectors": [(2, 6)], "indices": [0]}]
+
+    assert reconcile(facts, Peers()) is None

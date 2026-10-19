@@ -395,7 +395,7 @@ int shadowspill_action_finish_locked(
             caller_handoff
                 ? action->caller_handoff_lease->allocation_id
                 : object->allocation_id,
-            object->size_bytes,
+            shadowspill_object_spill_bytes(object),
             action->kind == SHADOWSPILL_RUNTIME_FETCH
                 ? SHADOWSPILL_TRANSFER_FETCH
                 : SHADOWSPILL_TRANSFER_EVICT,

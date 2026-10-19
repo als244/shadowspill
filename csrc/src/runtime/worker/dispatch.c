@@ -22,9 +22,17 @@ static int submit_transfer_copy(
         runtime,
         action->trace_label == NULL ? fallback : action->trace_label
     );
-    const int status = route->operations->copy(
-        route->lane, destination, source, bytes, &action->lane_handle
-    );
+    shadowspill_trace_action_context(action);
+    const int status = action->object->has_transfer
+        ? (route->operations->copy_transformed == NULL ? -1
+           : route->operations->copy_transformed(
+               route->lane, &action->object->transfer,
+               destination, source, &action->lane_handle
+           ))
+        : route->operations->copy(
+            route->lane, destination, source, bytes, &action->lane_handle
+        );
+    shadowspill_trace_action_context(NULL);
     shadowspill_profiler_range_end(runtime, range);
     return status;
 }
@@ -154,7 +162,7 @@ int shadowspill_action_dispatch_evict_locked(
     const uint64_t object_id = object->object_id;
     const uint64_t object_generation = object->generation;
     const uint64_t allocation_id = allocation->allocation_id;
-    const uint64_t bytes = object->size_bytes;
+    const uint64_t bytes = shadowspill_object_spill_bytes(object);
     void *execution_pointer = allocation->pointer;
     int spill_lease_created = 0;
     if (spill->lease == NULL) {
@@ -355,7 +363,7 @@ int shadowspill_action_dispatch_fetch_locked(
     const uint64_t previous_generation = object->generation;
     const uint64_t authoritative_version = object->authoritative_version;
     const uint64_t spill_version = spill->version;
-    const uint64_t bytes = object->size_bytes;
+    const uint64_t bytes = shadowspill_object_spill_bytes(object);
     ShadowSpillMemoryLease *allocation = action->destination_lease;
     if (acquire_reserved_destination(runtime, action) != 0) {
         shadowspill_action_latch_failure(

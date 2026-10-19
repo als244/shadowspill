@@ -84,6 +84,7 @@ def admit_forward_plan(
         execution_plan.program,
         execution_plan.schedule,
         dynamic_task_allocations=(selected_admission.persistent_allocation_policies()),
+        anonymous_allocation_bytes=selected_admission.anonymous_allocation_bytes(),
     )
     bridge = RuntimeBridge(
         memory.runtime,

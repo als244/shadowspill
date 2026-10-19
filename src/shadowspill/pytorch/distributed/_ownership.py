@@ -63,6 +63,25 @@ def members(group: dist.ProcessGroup | None) -> tuple[int, ...]:
     )
 
 
+def storage_parameter_names(parameters: Sequence[Parameter]) -> dict[str, str]:
+    """Map physical component names and tied aliases to logical parameters.
+
+    Transfer ownership belongs to a parameter, including all the data and scale
+    tensors of a frozen compressed representation. Pool registration operates
+    on those component tensors instead of the storage-less wrapper.
+    """
+    return {
+        ".".join((alias, *path)): parameter.name
+        for parameter in parameters
+        for alias in parameter.aliases
+        for path in (
+            tuple(component[0] for component in parameter.components)
+            if parameter.components
+            else ((),)
+        )
+    }
+
+
 def validate_parameter_storage(model: nn.Module) -> None:
     """Reject ambiguous updates through distinct overlapping Parameters.
 
@@ -263,6 +282,7 @@ def synchronize_initial(
     control: Control,
     *,
     chunk_bytes: int = 16 << 20,
+    skip_names: frozenset[str] = frozenset(),
 ) -> None:
     """Synchronize replicas with bounded CPU tiles through the control group.
 
@@ -278,6 +298,8 @@ def synchronize_initial(
                 unique[(tuple(item["replicas"]), item["name"])] = item
     named = dict(model.named_parameters())
     for (replicas, name), item in sorted(unique.items()):
+        if name in skip_names:
+            continue
         components = item.get("components", (((), item["shape"], item["dtype"]),))
         for path, shape, dtype_name in components:
             dtype = getattr(torch, dtype_name.removeprefix("torch."))

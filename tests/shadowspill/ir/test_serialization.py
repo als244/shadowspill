@@ -1,7 +1,7 @@
 from __future__ import annotations
 
-import importlib
 import json
+import subprocess
 import sys
 from dataclasses import replace
 from pathlib import Path
@@ -140,17 +140,22 @@ def test_canonical_ir_matches_frozen_identity_artifact() -> None:
 
 
 def test_ir_import_does_not_load_framework_or_backends() -> None:
-    for name in tuple(sys.modules):
-        if name == "shadowspill.ir" or name.startswith("shadowspill.ir."):
-            del sys.modules[name]
-    before = set(sys.modules)
-
-    importlib.import_module("shadowspill.ir")
-
-    imported = set(sys.modules) - before
-    assert "torch" not in imported
-    assert "mlops" not in imported
-    assert not any(name.startswith("shadowspill.runtime") for name in imported)
+    # Reimporting only the IR in this process creates duplicate dataclass types
+    # while already-imported frontend modules retain the original classes.
+    # A fresh interpreter also catches imports hidden by the test runner's cache.
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            "import sys; import shadowspill.ir; "
+            "assert 'torch' not in sys.modules; "
+            "assert 'mlops' not in sys.modules; "
+            "assert not any(n.startswith('shadowspill.runtime') for n in sys.modules)",
+        ],
+        capture_output=True,
+        text=True,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
 
 
 def test_a_program_digest_is_computed_once_and_a_copy_computes_its_own() -> None:

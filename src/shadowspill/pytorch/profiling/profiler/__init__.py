@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import gc
 import time
 from collections.abc import Callable, Iterator, Sequence
 from contextlib import contextmanager
@@ -287,6 +288,11 @@ class TaskProfiler:
 
         self.release_saved_values()
         self._saved_value_producers.clear()
+        # Compiler/provider frames can form cycles that retain disposable
+        # task tensors after their direct owners are released. Collect those
+        # before the caller drains retirements and checks its persistent slab
+        # reservation; reachable provider state remains subject to that check.
+        gc.collect()
         torch._C._host_emptyCache()
 
     def take_compiled_tasks(

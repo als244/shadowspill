@@ -11,14 +11,19 @@ from collections.abc import Iterable, Iterator, Mapping
 from contextlib import contextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass
-from typing import Any
+from dataclasses import field as dataclass_field
+from typing import TYPE_CHECKING, Any
 
 import torch.distributed as dist
 from torch import nn
 
+from ._backing import TransferSharding, resolve_backing, validate_backing
 from ._control import Control
 from ._groups import Bindings
 from ._ownership import Parameter, members, resolve, synchronize_initial, validate
+
+if TYPE_CHECKING:
+    from shadowspill.runtime import Runtime
 
 _INHERIT = object()
 _CURRENT: ContextVar[BoundDistributed | None] = ContextVar(
@@ -40,6 +45,11 @@ class Distributed:
     Each model collective must finish before its task completes. Runtime tasks
     and transfers do not enter the preparation control channel.
 
+    ``transfer_sharding`` separately partitions spilled computation weights;
+    ``shard_gradients=True`` also partitions spilled gradient accumulators.
+    These groups do not replace parameter replicas: ``shard_optimizer`` on the
+    training API still partitions masters and optimizer state over those replicas.
+
     ``symmetric_planning=True`` verifies matching planning memory contracts,
     shares conservative timing estimates and divides CPU search work among
     participants. Mismatches fall back to independent local searches. Each
@@ -60,7 +70,12 @@ class Distributed:
             tuple[Iterable[nn.Parameter | str], dist.ProcessGroup | None]
         ] = (),
         sync_initial_state: bool = True,
-        symmetric_planning: bool = False,
+        symmetric_planning: bool | None = None,
+        transfer_sharding: TransferSharding | None = None,
+        transfer_sharding_overrides: Iterable[
+            tuple[Iterable[nn.Parameter | str], TransferSharding | None]
+        ] = (),
+        shard_gradients: bool = False,
         timeout: float | None = None,
     ) -> None:
         self.group = group
@@ -74,13 +89,36 @@ class Distributed:
             (tuple(parameters), group) for parameters, group in gradient_overrides
         )
         self.sync_initial_state = sync_initial_state
-        self.symmetric_planning = symmetric_planning
+        self.transfer_sharding = transfer_sharding
+        if not isinstance(shard_gradients, bool):
+            raise TypeError("shard_gradients must be a bool")
+        self.shard_gradients = shard_gradients
+        self.transfer_sharding_overrides = tuple(
+            (tuple(parameters), layout)
+            for parameters, layout in transfer_sharding_overrides
+        )
+        if transfer_sharding is not None and not isinstance(
+            transfer_sharding, TransferSharding
+        ):
+            raise TypeError("transfer_sharding must be TransferSharding or None")
+        has_backing = transfer_sharding is not None or any(
+            layout is not None for _, layout in self.transfer_sharding_overrides
+        )
+        if shard_gradients and not has_backing:
+            raise ValueError("gradient sharding requires explicit sharding groups")
+        self.symmetric_planning = (
+            has_backing if symmetric_planning is None else symmetric_planning
+        )
+        if has_backing and not self.symmetric_planning:
+            raise ValueError(
+                "transfer sharding requires coordinated symmetric planning"
+            )
         self.timeout = 1800.0 if timeout is None else timeout
         if self.timeout <= 0:
             raise ValueError("distributed preparation timeout must be positive")
         if not isinstance(sync_initial_state, bool):
             raise TypeError("sync_initial_state must be a bool")
-        if not isinstance(symmetric_planning, bool):
+        if not isinstance(self.symmetric_planning, bool):
             raise TypeError("symmetric_planning must be a bool")
 
     def _bind(
@@ -112,6 +150,24 @@ class Distributed:
 
         records, parameter_groups = control.run("ownership/describe", describe)
         validate(control, records)
+        sharding = control.run(
+            "sharding/describe",
+            lambda: resolve_backing(
+                model, records, self.transfer_sharding, self.transfer_sharding_overrides
+            ),
+        )
+        validate_backing(control, records, sharding)
+        if self.shard_gradients:
+            for record in records:
+                if (
+                    record.requires_grad
+                    and record.name in sharding
+                    and (record.replicas != record.contributions)
+                ):
+                    raise ValueError(
+                        "sharded gradients require unreduced contributions from "
+                        f"the parameter's replicas: {record.name}"
+                    )
 
         def bind_groups() -> Bindings:
             declared = dict(self.groups)
@@ -127,6 +183,13 @@ class Distributed:
                 (f"gradient_override/{index}", group)
                 for index, (_, group) in enumerate(self.gradient_overrides)
             )
+            for name, layout in sorted(sharding.items()):
+                automatic.extend(
+                    (
+                        (f"sharding/{name}/shards", layout.group),
+                        (f"sharding/{name}/owners", layout.replica_group),
+                    )
+                )
             for name, group in automatic:
                 if group is not None and id(group) not in existing:
                     if name in declared:
@@ -138,7 +201,14 @@ class Distributed:
             return Bindings(declared)
 
         bindings = control.run("groups/bind", bind_groups)
-        return BoundDistributed(self, control, records, parameter_groups, bindings)
+        return BoundDistributed(
+            self,
+            control,
+            records,
+            parameter_groups,
+            bindings,
+            transfer_sharding=sharding,
+        )
 
 
 @dataclass
@@ -152,6 +222,13 @@ class BoundDistributed:
     groups: Bindings
     initialized: bool = False
     shard_optimizer: bool = True
+    transfer_sharding: Mapping[str, TransferSharding] = dataclass_field(
+        default_factory=dict
+    )
+    transfer_calibration: dict[tuple[Any, ...], dict[str, Any]] = dataclass_field(
+        default_factory=dict
+    )
+    gradient_transfers: dict[str, Any] = dataclass_field(default_factory=dict)
 
     @contextmanager
     def activate(self) -> Iterator[BoundDistributed]:
@@ -164,9 +241,18 @@ class BoundDistributed:
         finally:
             _CURRENT.reset(token)
 
-    def synchronize_initial(self, model: nn.Module) -> None:
+    def synchronize_initial(
+        self, model: nn.Module, *, runtime: Runtime | None = None
+    ) -> None:
         if self.specification.sync_initial_state:
-            synchronize_initial(model, self.parameters, self.control)
+            skipped: frozenset[str] = frozenset()
+            if runtime is not None and self.transfer_sharding:
+                from ._backing_storage import synchronize_state
+
+                skipped = synchronize_state(self, model, runtime)
+            synchronize_initial(
+                model, self.parameters, self.control, skip_names=skipped
+            )
 
     def checkpoint_layout(self) -> dict[str, Any]:
         return {
@@ -175,6 +261,17 @@ class BoundDistributed:
             "parameters": [value.record() for value in self.parameters],
             "groups": self.groups.aliases,
             "shard_optimizer": self.shard_optimizer,
+            "shard_gradients": self.specification.shard_gradients,
+            **(
+                {
+                    "transfer_sharding": {
+                        name: layout.record()
+                        for name, layout in self.transfer_sharding.items()
+                    }
+                }
+                if self.transfer_sharding
+                else {}
+            ),
         }
 
     def close(self) -> None:
@@ -190,4 +287,4 @@ def borrowed_group_memo() -> dict[int, Any]:
     return {} if bound is None else bound.groups.copy_memo()
 
 
-__all__ = ["Distributed"]
+__all__ = ["Distributed", "TransferSharding"]

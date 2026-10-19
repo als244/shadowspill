@@ -29,6 +29,39 @@ When `use_admission_accounting` is set, physical deltas replace synthetic
 workspace accounting. Fetch destination bytes are charged at action trigger
 and released or published at the declared completion transition.
 
+### Task phases and measured overlap
+
+ABI 3 adds optional timing tables. Empty tables preserve isolated task timing.
+`task_phase_offsets[task:task+2]` selects sequential
+`ShadowSpillTaskResourcePhase` records. Their durations must sum to
+`task_runtime_ns[task]`; an empty row treats the entire task as computation.
+`resource=SHADOWSPILL_SIMULATOR_NO_INDEX` means computation. A named resource
+uses the same index space as transfer recipes and reserves that queue only
+during that phase. The task retains its outputs and workspace while waiting.
+Its collective phases precede actions triggered by its completion; departures
+precede fetches within a boundary. A waiting collective is not active compute.
+
+`transfer_overlap_categories` maps each timed transfer phase to a measured
+category, or `NO_INDEX` for unmodeled work. `task_overlap_profiles` selects a
+row from the two `overlap_profile_count * overlap_category_count` rate tables.
+Each rate is a finite fraction of isolated progress in `(0, 1]`. During an
+overlap lasting `dt`, remaining isolated work decreases by `rate * dt`.
+Outside overlap the rate returns to one. Completion times are recalculated
+when either participant starts or stops; queued work does not consume progress.
+Rates do not scale workspace, payload size, or host-copy bandwidth.
+
+The Python projection interpolates measured message sizes before entering C;
+native search reuses compact per-profile tables across all candidates. With
+multiple simultaneous modeled transfers or compute lanes, the evaluator uses
+the minimum applicable pair rate. This is a pairwise approximation, not a
+calibrated model of arbitrary multiway interference. Task phases on different
+resource IDs can overlap; phases on the same ID serialize.
+
+These fields carry measurements supplied by the frontend. The simulator does
+not fit a multiplier from an observed step duration or infer rates from a
+model name. Artifact version 2 includes this timing contract in program and
+plan identity; older cached artifacts require their matching software version.
+
 ## Output
 
 `ShadowSpillSimulationResult` reports status, structured infeasibility fields,
@@ -76,6 +109,13 @@ so a truncated list is distinguishable from a complete one, and a null buffer
 counts without storing.
 
 ## Functions
+
+`shadowspill_transfer_duration_ns()` returns the isolated directional cost of
+an alias's transfer recipe: copy-phase bytes at the calibrated solo rate plus
+timed-phase durations. PressureFit uses this same cost in exposed-transfer and
+slack scoring. Simulation additionally models phase resource contention and
+copy-lane concurrency. `ShadowSpillTransferPhase` describes each copy or timed
+phase; physical spill size is independent of the alias's full execution size.
 
 `shadowspill_simulate(const ShadowSpillSimulationProgram *program,
 ShadowSpillSimulationResult *result)` validates and evaluates one indexed

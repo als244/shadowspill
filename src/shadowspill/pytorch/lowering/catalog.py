@@ -15,6 +15,7 @@ from shadowspill.ir import (
     ObjectSpec,
     Persistence,
     SharedResidencyPolicy,
+    TransferSpec,
 )
 from shadowspill.pytorch.accelerator import DEVICE_TYPE
 from shadowspill.pytorch.capture.live_storage import (
@@ -139,6 +140,7 @@ class ObjectCatalog:
         self._tensor_keepalive: list[torch.Tensor] = []
         self._alias_by_storage: dict[int, str] = {}
         self._alias_sizes: dict[str, int] = {}
+        self._alias_transfers: dict[str, TransferSpec] = {}
         self._retain_spill: set[str] = set()
         self._shared_residency: dict[str, SharedResidencyPolicy] = {}
         self._object_by_key: dict[_TensorKey, str] = {}
@@ -159,6 +161,7 @@ class ObjectCatalog:
         result._tensor_keepalive = list(self._tensor_keepalive)
         result._alias_by_storage = dict(self._alias_by_storage)
         result._alias_sizes = dict(self._alias_sizes)
+        result._alias_transfers = dict(self._alias_transfers)
         result._retain_spill = set(self._retain_spill)
         result._shared_residency = dict(self._shared_residency)
         result._object_by_key = dict(self._object_by_key)
@@ -470,6 +473,7 @@ class ObjectCatalog:
                 size_bytes,
                 retain_spill_copy=alias_group_id in self._retain_spill,
                 shared_residency=self._shared_residency.get(alias_group_id),
+                transfer=self._alias_transfers.get(alias_group_id),
             )
             for alias_group_id, size_bytes in self._alias_sizes.items()
         )
@@ -498,6 +502,10 @@ def register_model_state(
 
     registrations: list[RegistrationBinding] = []
     parameter_objects: dict[str, str] = {}
+    from shadowspill.pytorch.distributed import current
+    from shadowspill.pytorch.distributed._backing_storage import storage_layout
+
+    bound = current()
     checkpoint_names = set(model.state_dict(keep_vars=True))
     for name, parameter in model.named_parameters(remove_duplicate=False):
         for path, component in tensor_components(parameter):
@@ -509,6 +517,17 @@ def register_model_state(
             )
             registrations.append(RegistrationBinding(name, object_id, True, path))
             parameter_objects.setdefault(name, object_id)
+            if bound is not None and name in bound.transfer_sharding:
+                layout = storage_layout(
+                    bound,
+                    name,
+                    int(component.untyped_storage().nbytes()),
+                    component.element_size(),
+                )
+                if layout is not None:
+                    alias = catalog._record(object_id).alias_group_id
+                    catalog._alias_sizes[alias] = layout.execution_bytes
+                    catalog._alias_transfers[alias] = layout.transfer
     for name, buffer in model.named_buffers(remove_duplicate=False):
         for path, component in tensor_components(buffer):
             object_id = catalog.add(

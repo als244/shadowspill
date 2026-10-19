@@ -43,6 +43,23 @@ from .manifest import _make_manifest
 # the padding it exists to prevent.
 _PINNED_OUTPUT_LAYOUT: Mapping[str, Any] = {"shape_padding": False}
 
+
+def task_compiler_patches() -> dict[str, Any]:
+    """Keep transfer-sharded tasks on a common instruction-order policy.
+
+    Independent peak-memory reordering can generate different temporary
+    allocation sequences for otherwise identical rank-local task graphs.
+    Shared transfer schedules require one verified allocation contract. Keep
+    the compiler's baseline order in that mode; kernel autotuning is unchanged.
+    """
+    from shadowspill.pytorch.distributed import current
+
+    patches = dict(_PINNED_OUTPUT_LAYOUT)
+    bound = current()
+    if bound is not None and bound.transfer_sharding:
+        patches["reorder_for_peak_memory"] = False
+    return patches
+
 _GRAPH_LOWERING_CAPTURE_LOCK = threading.Lock()
 _COMPILATION_PHASE_ORDER = (
     "shadowspill_compiler_input_setup",

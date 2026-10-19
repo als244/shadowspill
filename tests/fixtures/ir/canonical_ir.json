@@ -1,8 +1,8 @@
 {
-  "program_digest": "c38a4128126bdacbad7b63d3db5f8c7b64c77e13ab1f8704a65c20eb867f9d78",
-  "schedule_digest": "5e94f75d47a0a63185daedd3c50cce122be9568e090dc8d910f8ea5313c0003e",
-  "execution_plan_digest": "46c2ca4f68105c3f4fe3b3a0e523e9dcf457561f1b2fa39250d17bdac3afa0c8",
-  "scheduling_digest": "06f965e9b3a506f8d512c8e16cb15ff593e47766d7606c33d4d6c30a7d5598ee",
+  "program_digest": "07d5f80ee65263894576d88c5636bf8e543436d0a692d8b1ee5818b0996d7c59",
+  "schedule_digest": "471739e97ece44a234c3946298d73dc15731ae271a8fb5da06f6f91d273c4aad",
+  "execution_plan_digest": "8d3c1d7fc491726702d45439a2bebd326ac2b8d6a8f2318384e8d76f2a246ab3",
+  "scheduling_digest": "fd95e807dfa3a368ccde676e5d26b510fb614987bbd53dfba5b3899752025396",
   "device_ids": [
     "cuda_0"
   ],

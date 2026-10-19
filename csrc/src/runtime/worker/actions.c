@@ -179,6 +179,11 @@ static int handle_transfer_locked(
     ShadowSpillQueuedAction *action
 ) {
     ShadowSpillObject *object = action->object;
+    if (action->collective_sequence != 0U && action->collective_sequence !=
+        runtime->submitted_collective_sequence + 1U) {
+        pthread_mutex_unlock(&object->lock);
+        return 0;
+    }
     ShadowSpillObjectLocation *spill =
         shadowspill_plan_spill_location(
             action->plan_owner, object
@@ -224,6 +229,7 @@ static int handle_transfer_locked(
     }
     const int trigger_complete =
         action->kind == SHADOWSPILL_RUNTIME_FETCH ||
+        action->collective_sequence != 0U ||
         shadowspill_event_lease_is_complete(action->trigger_event);
     if (!trigger_complete) {
         pthread_mutex_unlock(&object->lock);
@@ -342,6 +348,9 @@ static int handle_transfer_locked(
         return 0;
     }
     if (dispatched != 0) {
+        if (action->collective_sequence != 0U) {
+            runtime->submitted_collective_sequence = action->collective_sequence;
+        }
         shadowspill_transfer_queue_publish_inflight(queue, action);
     }
     pthread_mutex_unlock(&object->lock);

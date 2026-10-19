@@ -138,7 +138,9 @@ def _shared_candidates[R: (FixedLayoutSelection, AnnotatedProgramPlan)](
                 results.append({"choices": key, **record})
             else:
                 held[key] = record
-                results.append({"choices": key, "plan": pack(record)})
+                results.append(
+                    {"choices": key, "plan": pack(record, compact_facts=True)}
+                )
         return results
 
     payloads = control.run("selection/shared_search", search_owned)

@@ -113,6 +113,7 @@ class RuntimeFailureDiagnostics:
     reason_name: str = ""
     refused_action: str | None = None
     object_state: str | None = None
+    pool_id: int | None = None
 
     @property
     def is_allocator_oom(self) -> bool:
@@ -144,7 +145,12 @@ class RuntimeFailureDiagnostics:
             "operation": self.operation,
             "status": self.status,
             "status_name": self.status_name,
+            "reason": self.reason,
+            "reason_name": self.reason_name,
+            "refused_action": self.refused_action,
+            "object_state": self.object_state,
             "device_ordinal": self.device_ordinal,
+            "pool_id": self.pool_id,
             "requested_bytes": self.requested_bytes,
             "free_bytes": self.free_bytes,
             "largest_free_range_bytes": self.largest_free_range_bytes,
@@ -234,6 +240,11 @@ def read_allocator_failure(
         reason=int(failure.runtime.reason),
         reason_name=_reason_name(int(failure.runtime.reason)),
         device_ordinal=int(failure.device_ordinal),
+        pool_id=(
+            None
+            if int(failure.runtime.pool_id) == (1 << 32) - 1
+            else int(failure.runtime.pool_id)
+        ),
         requested_bytes=requested,
         free_bytes=int(failure.runtime.free_bytes),
         largest_free_range_bytes=int(failure.runtime.largest_free_range_bytes),
@@ -317,6 +328,12 @@ def allocator_oom_error(
         )
     else:
         lines.append(f"operation: {diagnostics.operation}")
+    if diagnostics.pool_id is not None:
+        lines.append(f"pool: {diagnostics.pool_id}")
+    if diagnostics.refused_action is not None:
+        lines.append(f"refused_action: {diagnostics.refused_action}")
+    if diagnostics.object_state is not None:
+        lines.append(f"object_state: {diagnostics.object_state}")
     lines.extend(
         (
             f"device: {diagnostics.device_ordinal}",
@@ -351,6 +368,8 @@ def generic_runtime_error(
         )
     elif diagnostics.task_id is not None:
         lines.append(f"runtime_task: {diagnostics.task_id}")
+    if diagnostics.pool_id is not None:
+        lines.append(f"pool: {diagnostics.pool_id}")
     if diagnostics.reason_name:
         lines.append(f"reason: {diagnostics.reason_name}")
     if diagnostics.refused_action is not None:

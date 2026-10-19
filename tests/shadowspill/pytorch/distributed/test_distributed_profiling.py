@@ -18,6 +18,7 @@ from shadowspill.pytorch.distributed._profiling import (
     phase,
 )
 from shadowspill.pytorch.profiling.profiler.measurement import (
+    timing_batch,
     warm_persistent_allocations,
 )
 from shadowspill.pytorch.profiling.runner import profile_unique_artifacts
@@ -114,6 +115,18 @@ def worker(rank, root):
             value = torch.tensor(rank + 1)
             dist.all_reduce(value)
             assert int(value) == 3 and bound.control.sequence == sequence
+            # Different rank timings still choose the same fixed burst count.
+            before = count
+            burst = timing_batch(collective)
+            assert burst is not None
+            sequence = bound.control.sequence
+            values = burst()
+            assert len(values) == 128 and count - before == 129
+            assert bound.control.sequence - sequence == 2
+            # Suppression is scoped; a later ordinary call coordinates again.
+            sequence = bound.control.sequence
+            collective()
+            assert bound.control.sequence - sequence == 2
     finally:
         bound.close()
         dist.destroy_process_group()

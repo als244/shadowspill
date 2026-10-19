@@ -81,6 +81,7 @@ def plan_forward_program(
             program,
             lowered=replace(program.lowered, program=shared.program),
             simulation_config=shared.config,
+            admission=shared.facts,
         )
         selected, _, _, decision = choose(
             shared.program,

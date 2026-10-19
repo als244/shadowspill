@@ -32,6 +32,11 @@ typedef struct ShadowSpillTaskState {
     uint64_t start_ns;
     uint64_t end_ns;
     uint32_t stall_mask;
+    long double remaining_work_ns;
+    double work_rate;
+    uint64_t progress_ns;
+    uint32_t task_phase_index;
+    uint8_t task_phase_waiting;
 } ShadowSpillTaskState;
 
 typedef struct ShadowSpillTransferState {
@@ -52,6 +57,14 @@ typedef struct ShadowSpillTransferState {
     uint64_t remaining_fraction; /* billionths of a byte */
     uint64_t progress_ns;
     uint64_t rate_bytes_per_second;
+    uint32_t phase_index;
+    uint32_t phase_end;
+    uint8_t timed_phase;
+    uint8_t awaiting_resource_order;
+    uint64_t resource_order;
+    long double remaining_work_ns;
+    double work_rate;
+    uint64_t work_progress_ns;
 } ShadowSpillTransferState;
 
 typedef struct ShadowSpillSimulationWork {
@@ -96,12 +109,37 @@ typedef struct ShadowSpillSimulationWork {
        should the retry be allowed to change when a transfer starts. */
     uint32_t submission_deferred;
     uint32_t pending_transfers;
+    uint64_t *transfer_resource_free_ns;
+    uint64_t *transfer_resource_completed;
+    uint64_t *task_phase_orders;
 } ShadowSpillSimulationWork;
+
+static inline uint64_t shadowspill_alias_spill_bytes(
+    const ShadowSpillSimulationProgram *program, uint32_t alias
+) {
+    return program->alias_spill_size_bytes == NULL
+        ? program->alias_size_bytes[alias] : program->alias_spill_size_bytes[alias];
+}
+
+int shadowspill_order_resource_phases(const ShadowSpillSimulationProgram *, ShadowSpillSimulationWork *);
+int shadowspill_phase_task_free(const ShadowSpillSimulationProgram *, const ShadowSpillSimulationWork *, uint32_t);
+int shadowspill_computing_task(const ShadowSpillSimulationProgram *, const ShadowSpillTaskState *, uint32_t);
+void shadowspill_start_task_phases(const ShadowSpillSimulationProgram *, ShadowSpillSimulationWork *, uint32_t);
+int shadowspill_advance_task_phase(const ShadowSpillSimulationProgram *, ShadowSpillSimulationWork *, uint32_t);
+void shadowspill_refresh_task_phases(const ShadowSpillSimulationProgram *, ShadowSpillSimulationWork *);
+void shadowspill_refresh_contention(const ShadowSpillSimulationProgram *, ShadowSpillSimulationWork *);
 
 void shadowspill_start_transfer_timing(
     const ShadowSpillSimulationProgram *program,
+    ShadowSpillSimulationWork *work,
     ShadowSpillTransferState *transfer,
     uint64_t now
+);
+
+int shadowspill_advance_transfer_phase(
+    const ShadowSpillSimulationProgram *program,
+    ShadowSpillSimulationWork *work,
+    ShadowSpillTransferState *transfer
 );
 
 void shadowspill_refresh_transfer_rates(

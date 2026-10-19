@@ -46,6 +46,7 @@ _STALL_REASONS = (
     (1 << 3, "host-capacity"),
     (1 << 4, "memory-reuse"),
     (1 << 5, "lane-busy"),
+    (1 << 6, "transfer-resource"),
 )
 _VIOLATION_REASONS = (
     "initial-device-capacity",

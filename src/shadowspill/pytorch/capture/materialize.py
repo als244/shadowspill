@@ -37,3 +37,24 @@ def _memory_format(name: str) -> torch.memory_format:
 
 
 MATERIALIZE_GRADIENT = torch.ops.shadowspill.materialize_gradient.default
+
+
+def _padded_view(value: torch.Tensor, elements: int) -> torch.Tensor:
+    owner = value.new_empty((elements,))
+    return owner.as_strided(value.shape, value.stride())
+
+
+@torch.library.custom_op("shadowspill::pad_gradient_storage", mutates_args=())
+def pad_gradient_storage(value: torch.Tensor, elements: int) -> torch.Tensor:
+    """Keep the logical gradient shape while allocating equal-shard padding."""
+    result = _padded_view(value, elements)
+    result.copy_(value)
+    return result
+
+
+@pad_gradient_storage.register_fake
+def _fake_pad(value: torch.Tensor, elements: int) -> torch.Tensor:
+    return _padded_view(value, elements)
+
+
+PAD_GRADIENT_STORAGE = torch.ops.shadowspill.pad_gradient_storage.default

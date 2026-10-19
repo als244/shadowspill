@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
 import torch
 import torch.nn as nn
 from torch.utils._pytree import tree_flatten
@@ -12,6 +14,9 @@ from shadowspill.errors import (
 )
 from shadowspill.pipeline.common import round_up
 from shadowspill.pytorch.representations import tensor_components
+
+if TYPE_CHECKING:
+    from shadowspill.runtime import Runtime
 
 _MIB = 1 << 20
 _SPILL_LEEWAY_MINIMUM = 256 * _MIB
@@ -39,8 +44,14 @@ def estimate_spill_reservation(
     model: nn.Module,
     example_inputs: object,
     spill_budget: int,
+    *,
+    runtime: Runtime | None = None,
 ) -> int:
-    """Conservatively validate that spill storage can hold state and inputs."""
+    """Validate state/input capacity using the registered spill representation."""
+
+    from shadowspill.pytorch.state.registry import registry_for
+
+    registry = None if runtime is None else registry_for(runtime)
 
     tensors = [
         tensor
@@ -56,7 +67,12 @@ def estimate_spill_reservation(
         component for value in tensors for _, component in tensor_components(value)
     ):
         storage = tensor.untyped_storage()
-        unique[(tensor.device.type, storage._cdata)] = int(storage.nbytes())
+        item = None if registry is None else registry.storage(storage._cdata)
+        unique[(tensor.device.type, storage._cdata)] = (
+            item.sharding.shard_bytes
+            if item is not None and item.sharding is not None
+            else int(storage.nbytes())
+        )
     base = sum(unique.values())
     requested = round_up(
         base + max(_SPILL_LEEWAY_MINIMUM, base // 10),

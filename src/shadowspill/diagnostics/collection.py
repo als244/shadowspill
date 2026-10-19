@@ -126,6 +126,7 @@ def collect_step_diagnostics(
         timelines=timelines,
         allocator=_build_allocator_trace(evidence),
         runtime=runtime,
+        collectives=timing.collectives,
     )
 
 
@@ -154,6 +155,9 @@ def _resolve_trace_evidence(
     runtime.frontend.synchronize(int(runtime._installed.admission.device_ordinal))
     # Terminal transfers must be included in the same invocation trace.
     bridge.wait_runtime_idle()
+    if timing.collect_collectives is not None:
+        timing.collectives = timing.collect_collectives()
+        timing.collect_collectives = None
     runtime_trace = end_and_read_runtime_trace(bridge)
     statistics_before = timing.statistics_before
     if statistics_before is None:
@@ -746,7 +750,8 @@ def _build_step_summary(
         )
         for phase in phases
     )
-    simulated_idle = max(0.0, simulated_span_seconds - profiled_task_seconds)
+    simulated_task_seconds = sum(item.end_ns - item.start_ns for item in selected) / 1e9
+    simulated_idle = max(0.0, simulated_span_seconds - simulated_task_seconds)
     real_idle = max(0.0, real_span_seconds - real_task_seconds)
     readiness, dispatch, initial_readiness = _idle_composition(tasks)
     leads = [
@@ -807,6 +812,7 @@ def _build_step_summary(
         phase_comparisons=phase_comparisons,
         trace_complete=not (
             runtime.event_overflow
+            or not timing.collectives.complete
             or runtime.allocation_event_overflow
             or not all_transfers_timed
         ),

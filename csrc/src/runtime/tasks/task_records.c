@@ -352,6 +352,13 @@ static int bind_task_actions(
         if (object == NULL) {
             return -1;
         }
+        if (description->actions[index].kind == SHADOWSPILL_RUNTIME_WRITE_BACK &&
+            object->has_transfer && (object->transfer.collective_directions & 2U) != 0U) {
+            /* Collective eviction conversions can reduce in place. Retaining
+               that execution copy would expose a partially reduced value. */
+            shadowspill_object_release(object);
+            return -1;
+        }
         char *trace_label = shadowspill_copy_action_trace_label(
             &description->actions[index], record->task_id, object->size_bytes
         );

@@ -38,6 +38,25 @@ from shadowspill.task.profiling import ProfilingOptions
 from tests.shadowspill.runtime._timing import TimingLibrary, install
 
 
+def test_compiler_rounding_policy_changes_profile_and_manifest_identity(monkeypatch):
+    from torch._inductor import config as inductor_config
+
+    from shadowspill.pytorch.profiling import environment as environment_module
+
+    monkeypatch.setattr(
+        torch.cuda,
+        "get_device_properties",
+        lambda _: SimpleNamespace(name="test", major=9, minor=0),
+    )
+    monkeypatch.setattr(environment_module, "provider_version", lambda: "test")
+    monkeypatch.setattr(environment_module, "distributed_preparation", lambda: None)
+    with inductor_config.patch(emulate_precision_casts=False):
+        fused = profile_environment(device_ordinal=0, provider_id="test")
+    with inductor_config.patch(emulate_precision_casts=True):
+        rounded = profile_environment(device_ordinal=0, provider_id="test")
+    assert fused.compiler_id != rounded.compiler_id
+
+
 class _Add(nn.Module):
     def forward(self, left: torch.Tensor, right: torch.Tensor) -> torch.Tensor:
         return left + right
@@ -481,3 +500,30 @@ def test_measurement_releases_device_examples_between_structural_contracts(
     assert stale_frames
     assert not stale_frames[0].example_arguments  # type: ignore[attr-defined]
     assert profiler.executables.get(artifact).example_arguments == ()
+
+
+def test_profiler_cleanup_releases_unreachable_tensor_cycles(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    profiler = _profiler()
+    was_enabled = gc.isenabled()
+    gc.disable()
+    try:
+        tensor = torch.ones(8)
+        reference = weakref.ref(tensor)
+        frame: list[object] = [tensor]
+        frame.append(frame)
+        del tensor, frame
+        assert reference() is not None
+
+        # Host-cache cleanup must follow collection, so pinned allocations
+        # released by collected frames are included in that cleanup too.
+        def empty_host_cache() -> None:
+            assert reference() is None
+
+        monkeypatch.setattr(torch._C, "_host_emptyCache", empty_host_cache)
+        profiler.release_host_memory()
+        assert reference() is None
+    finally:
+        if was_enabled:
+            gc.enable()

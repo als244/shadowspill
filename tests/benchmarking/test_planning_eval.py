@@ -58,7 +58,7 @@ _CONFIG = (
     / "benchmarking"
     / "planning_eval"
     / "configs"
-    / "full_search_frontier_v1.json"
+    / "full_search_frontier_v2.json"
 )
 
 

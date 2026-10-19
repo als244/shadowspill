@@ -87,6 +87,7 @@ def plan_training_programs(
             programs,
             lowered=replace(programs.lowered, program=shared.program),
             simulation_config=shared.config,
+            admission=shared.facts,
         )
 
     def attempt(

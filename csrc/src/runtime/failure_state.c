@@ -178,9 +178,31 @@ void shadowspill_latch_task_failure(
     uint64_t allocation_id,
     uint64_t requested_bytes
 ) {
-    latch_failure(
+    shadowspill_latch_task_pool_failure(
         runtime,
         shadowspill_current_allocation_pool(runtime),
+        status,
+        reason,
+        task_id,
+        object_id,
+        allocation_id,
+        requested_bytes
+    );
+}
+
+void shadowspill_latch_task_pool_failure(
+    ShadowSpillRuntime *runtime,
+    ShadowSpillMemoryPool *pool,
+    ShadowSpillStatus status,
+    ShadowSpillFailureReason reason,
+    uint64_t task_id,
+    uint64_t object_id,
+    uint64_t allocation_id,
+    uint64_t requested_bytes
+) {
+    latch_failure(
+        runtime,
+        pool,
         status,
         reason,
         task_id,

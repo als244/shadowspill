@@ -11,8 +11,10 @@ class ProfilingOptions:
     """Initialization counts and sustained-task timing budgets.
 
     Duration targets count device-event time from the exact task. Wall limits
-    bound additional repetitions and are checked between invocations, never
+    bound additional repetitions and are checked between sampling bursts, never
     interrupting an invocation or skipping the minimum measurement count.
+    Distributed runs agree on short fixed-count bursts to avoid a host barrier
+    between every sample; each invocation still drains its allocation scope.
     Zero duration targets disable their corresponding time floor.
     """
 

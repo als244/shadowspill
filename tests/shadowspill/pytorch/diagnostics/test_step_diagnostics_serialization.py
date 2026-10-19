@@ -147,6 +147,7 @@ def test_step_diagnostics_torch_serialization_round_trips() -> None:
         "timelines",
         "allocator",
         "runtime",
+        "collectives",
     }
     timelines = payload["timelines"]
     assert isinstance(timelines, dict)

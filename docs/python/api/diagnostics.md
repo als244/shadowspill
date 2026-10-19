@@ -77,8 +77,8 @@ returns the model's own output and carries nothing else back.
 `DiagnosticsHandle` for a traced one; resolving the handle returns
 `StepDiagnostics` and may wait for recorded events.
 
-`StepDiagnostics` has six views: `summary`, `tasks`, `transfers`, `timelines`,
-`allocator` and `runtime`.
+`StepDiagnostics` has seven views: `summary`, `tasks`, `transfers`, `timelines`,
+`allocator`, `runtime`, and `collectives`.
 
 `StepTimingSummary` is the reconciliation, and it carries the traced step's
 cycle, head and exposed tail beside the selected span ([timing](timing.md)):
@@ -108,6 +108,31 @@ the allocator's own pool read before and after the step; `runtime` is a
 the runtime's counter deltas, terminal queue state, trace capacity and overflow
 flags, and the raw runtime event records. Both are reached through
 `StepDiagnostics` rather than imported from `shadowspill.pytorch`.
+
+`collectives` is a `CollectiveTrace` with a bounded sequence of `CollectiveRecord`
+values. A distributed GPU trace automatically captures NCCL collectives issued
+by tasks and by sharded transfers, including optimizer gradient reduction and
+weight publication. Each record includes:
+
+- `issued_at_ns`: host submission time mapped to the invocation origin;
+- `started_at_ns` and `finished_at_ns`: NCCL GPU event times on that same axis;
+- operation, group identity, global membership, local rank, and collective sequence;
+- per-rank input/output bytes, task/execution identity, and, for transfers, the
+  object, alias, action ordinal, and fetch/evict source.
+
+Start follows the collective stream's prior work and input waits. The measured
+interval includes peer waits inside the collective. Host completion polling is
+not used as GPU completion time. Input/output bytes describe payloads, not total
+network traffic. Collective durations are already included in their enclosing
+task or transfer and must not be added again.
+
+Tracing retains NCCL event references until diagnostics are resolved. The
+callback is removed after the invocation; PyTorch keeps event timing enabled
+on process groups that have been traced. `dropped`, `errors`, and
+`missing_timings` make incomplete capture explicit and also clear
+`summary.trace_complete`. Missing timestamps are `None`. Records are included
+in serialized step JSON, including when the allocator/runtime ledgers are saved
+separately. CPU control-group collectives are outside this GPU timeline.
 
 Every record on this page lives in `shadowspill.diagnostics`, which names no
 framework: reading a stored step's diagnostics costs no framework import.
@@ -184,6 +209,19 @@ subject is what a machine did.
 
 The [figures guide](../plots.md) describes the tree, what each figure
 represents, and the conventions they share.
+
+## Runtime failures
+
+`RuntimeExecutionError.diagnostics` retains structured failure details when
+the native runtime supplied them. `pool_id` identifies the pool whose allocation
+failed; it can differ from the task's execution pool when an eviction needs
+spill storage. `requested_bytes`, `free_bytes`, and `largest_free_range_bytes`
+refer to that pool. A transfer with a sharded spill representation reports the
+shard's requested bytes when its spill reservation fails.
+
+Out-of-memory messages include the refused action and object state when the
+frontend can resolve them, along with the semantic task and pool identifier.
+`diagnostics.as_dict()` retains these fields for programmatic analysis.
 
 ## Defaults and overhead
 

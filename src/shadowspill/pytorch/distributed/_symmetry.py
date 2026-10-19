@@ -10,13 +10,18 @@ from __future__ import annotations
 import hashlib
 import json
 from dataclasses import asdict, dataclass, replace
-from typing import Any
+from typing import Any, cast
 
 from shadowspill.ir import (
     MemorySchedule,
     ResidencySpec,
     ShadowSpillProgram,
     TaskAlternativeChoice,
+    TaskOverlapCost,
+    TaskProfile,
+    TaskResourcePhase,
+    TransferPhase,
+    TransferSpec,
 )
 from shadowspill.planner.admission import AdmissionFacts
 from shadowspill.planner.admission.refinement import (
@@ -68,14 +73,26 @@ class Symmetry:
     final: tuple[ResidencySpec, ...]
     scratch: int
 
-    def requirements(self, extra: Any, incumbent: ProgramPlanResult | None) -> dict:
-        program = self.program.to_dict()
+    def requirements(
+        self, extra: Any, incumbent: ProgramPlanResult | None
+    ) -> dict[str, str]:
+        program = cast(dict[str, Any], self.program.to_dict())
         for device in program["devices"]:
             device.update(process_id="local", index=0)
         for profile in program["profiles"]:
             profile.pop("runtime_ns")
             profile.pop("compatibility_digest")
-        machine = _simulation_config_to_dict(self.config)
+            for phase in profile["resource_phases"]:
+                phase.pop("duration_ns")
+            for cost in profile["overlap_costs"]:
+                cost.pop("task_rate")
+                cost.pop("transfer_rate")
+        for alias in program["alias_groups"]:
+            if transfer := alias.get("transfer"):
+                for direction in ("fetch", "evict"):
+                    for phase in transfer[direction]:
+                        phase.pop("duration_ns")
+        machine = cast(dict[str, Any], _simulation_config_to_dict(self.config))
         for device in machine["devices"]:
             for name in (
                 "fetch_solo_bandwidth_bytes_per_second",
@@ -88,7 +105,6 @@ class Symmetry:
                 device.pop(name)
         values = {
             "program": program,
-            "allocation_contract": self.facts.to_dict(),
             "machine_capacity": machine,
             "residency": [
                 [item.to_dict() for item in values]
@@ -105,7 +121,16 @@ class Symmetry:
                 "config": _simulation_config_to_dict(incumbent.simulation_config),
             },
         }
-        return {key: _digest(_device(value, "local")) for key, value in values.items()}
+        signatures = {
+            key: _digest(_device(value, "local")) for key, value in values.items()
+        }
+        # AdmissionFacts already hashes every allocation field as compact
+        # columns. Reuse that exact identity instead of expanding millions of
+        # steps into temporary dictionaries just to hash them again.
+        signatures["allocation_contract"] = replace(
+            self.facts, device_id="local"
+        ).digest
+        return signatures
 
     def subset(self, program: ShadowSpillProgram) -> Symmetry:
         tasks = {task.task_id for task in program.tasks}
@@ -118,10 +143,22 @@ class Symmetry:
             ),
         )
 
-    def receive(self, payload: dict) -> FixedLayoutSelection:
+    def receive(self, payload: dict[str, Any]) -> FixedLayoutSelection:
         """Rebind a verified candidate and certify its schedule on this rank."""
         value = _device(payload, self.facts.device_id)
-        facts = AdmissionFacts.from_dict(value["facts"])
+        supplied = value["facts"]
+        if "reference" in supplied:
+            capacity = supplied.get("object_capacity_bytes")
+            if (
+                set(supplied) != {"reference", "object_capacity_bytes"}
+                or type(capacity) is not int
+            ):
+                raise ValueError("invalid shared allocation contract reference")
+            facts = replace(self.facts, object_capacity_bytes=capacity)
+            if replace(facts, device_id="local").digest != supplied["reference"]:
+                raise ValueError("shared plan changes the verified allocation contract")
+        else:
+            facts = AdmissionFacts.from_dict(supplied)
         if (
             replace(facts, object_capacity_bytes=self.facts.object_capacity_bytes)
             != self.facts
@@ -196,14 +233,16 @@ class Symmetry:
 
 
 def verify(
-    local: Symmetry, *, extra=None, incumbent=None
-) -> tuple[Symmetry | None, dict]:
+    local: Symmetry, *, extra: Any = None, incumbent: ProgramPlanResult | None = None
+) -> tuple[Symmetry | None, dict[str, Any]]:
     bound = current()
     assert bound is not None
     control = bound.control
     enabled = bound.specification.symmetric_planning
     control.agree("symmetry/enabled", enabled)
     if not enabled:
+        if bound.transfer_sharding:
+            raise ValueError("transfer sharding requires a common symmetric schedule")
         return None, {"mode": "independent", "reason": "disabled"}
     signature = local.requirements(extra, incumbent)
     values = control.exchange("symmetry/requirements", signature)
@@ -212,22 +251,112 @@ def verify(
         for key in signature
         if any(value[key] != values[0][key] for value in values)
     ]
+    allocation_policy = "identical"
+    if differing == ["allocation_contract"]:
+        from ._allocation_symmetry import reconcile
+
+        merged = reconcile(local.facts, control)
+        if merged is not None:
+            local = replace(local, facts=merged)
+            signature = local.requirements(extra, incumbent)
+            differing = []
+            allocation_policy = "max_anonymous_allocation_bytes_same_workspace_peak"
     if differing or len(local.config.devices) != 1:
         reason = ", ".join(differing) or "multiple local devices"
+        if bound.transfer_sharding:
+            raise ValueError(
+                f"transfer sharding cannot use independent schedules: {reason}"
+            )
         print(f"ShadowSpill: symmetric planning fallback ({reason}).", flush=True)
         return None, {"mode": "independent", "reason": reason, "requirements": values}
     timings = control.exchange(
         "symmetry/timings",
         {
-            "tasks": [profile.runtime_ns for profile in local.program.profiles],
+            "tasks": [
+                {
+                    "runtime_ns": profile.runtime_ns,
+                    "resource_phases": [
+                        item.to_dict() for item in profile.resource_phases
+                    ],
+                    "overlap_costs": [item.to_dict() for item in profile.overlap_costs],
+                }
+                for profile in local.program.profiles
+            ],
+            "transfers": [
+                None
+                if alias.transfer is None
+                else {
+                    direction: [
+                        phase.duration_ns
+                        for phase in getattr(alias.transfer, direction)
+                    ]
+                    for direction in ("fetch", "evict")
+                }
+                for alias in local.program.alias_groups
+            ],
             "device": asdict(local.config.devices[0]),
         },
     )
+
+    def transfer_cost(index: int, transfer: TransferSpec) -> TransferSpec:
+        def phases(
+            direction: str, original: tuple[TransferPhase, ...]
+        ) -> tuple[TransferPhase, ...]:
+            return tuple(
+                replace(
+                    phase,
+                    duration_ns=max(
+                        value["transfers"][index][direction][phase_index]
+                        for value in timings
+                    ),
+                )
+                for phase_index, phase in enumerate(original)
+            )
+
+        return replace(
+            transfer,
+            fetch=phases("fetch", transfer.fetch),
+            evict=phases("evict", transfer.evict),
+        )
+
+    def task_cost(index: int, profile: TaskProfile) -> TaskProfile:
+        rows = [value["tasks"][index] for value in timings]
+        # Keep a coherent phase decomposition from the slowest complete task.
+        # Taking the max of every segment could invent a duration no rank saw.
+        slowest = max(rows, key=lambda row: row["runtime_ns"])
+        costs = tuple(
+            TaskOverlapCost(
+                item.timing_class,
+                item.bytes,
+                min(row["overlap_costs"][j]["task_rate"] for row in rows),
+                min(row["overlap_costs"][j]["transfer_rate"] for row in rows),
+            )
+            for j, item in enumerate(profile.overlap_costs)
+        )
+        return replace(
+            profile,
+            runtime_ns=slowest["runtime_ns"],
+            resource_phases=tuple(
+                TaskResourcePhase.from_value(item, "symmetry.resource_phases")
+                for item in slowest["resource_phases"]
+            ),
+            overlap_costs=costs,
+        )
+
     program = replace(
         local.program,
         profiles=tuple(
-            replace(profile, runtime_ns=max(value["tasks"][index] for value in timings))
+            task_cost(index, profile)
             for index, profile in enumerate(local.program.profiles)
+        ),
+        alias_groups=tuple(
+            alias
+            if alias.transfer is None
+            else replace(
+                alias,
+                transfer=transfer_cost(index, alias.transfer),
+            )
+            for index, alias in enumerate(local.program.alias_groups)
         ),
     )
     cost = {}
@@ -245,7 +374,11 @@ def verify(
     evidence = {
         "mode": "symmetric",
         "requirements": signature,
-        "timing_policy": "max_task_time_min_bandwidth_max_latency",
+        "timing_policy": (
+            "slowest_task_coherent_phases_min_progress_"
+            "max_transfer_time_min_bandwidth_max_latency"
+        ),
+        "allocation_policy": allocation_policy,
         "local_programs": control.exchange("symmetry/programs", local.program.digest),
     }
     return replace(local, program=program, config=config), evidence

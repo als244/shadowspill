@@ -77,6 +77,7 @@ ShadowSpillStatus shadowspill_simulate(
             break;
         }
         shadowspill_refresh_transfer_rates(program, &work);
+        shadowspill_refresh_contention(program, &work);
         uint64_t next = shadowspill_next_event_time(program, &work);
         if (next == UINT64_MAX) {
             shadowspill_report_deadlock(program, &work, result);

@@ -99,6 +99,30 @@ def test_planning_admission_helpers_reject_invalid_values() -> None:
         estimate_spill_reservation(model, [torch.ones(2)], 1)
 
 
+def test_spill_admission_counts_shards_and_shared_input_storage_once(monkeypatch):
+    from shadowspill.pytorch.state import registry
+
+    model = nn.Module()
+    model.weight = nn.Parameter(torch.empty(2 << 30, device="meta"))
+    model.tied = model.weight
+    identity = model.weight.untyped_storage()._cdata
+    registered = SimpleNamespace(sharding=SimpleNamespace(shard_bytes=2 << 30))
+    monkeypatch.setattr(
+        registry,
+        "registry_for",
+        lambda _: SimpleNamespace(
+            storage=lambda key: registered if key == identity else None
+        ),
+    )
+    inputs = torch.empty(16 << 20, dtype=torch.uint8, device="meta")
+    requested = estimate_spill_reservation(
+        model, (inputs, inputs[8:]), 3 << 30, runtime=object()
+    )
+    assert requested == (2 << 30) + (16 << 20) + (256 << 20)
+    with pytest.raises(AdmissionError, match="spill-pool budget"):
+        estimate_spill_reservation(model, (inputs,), 3 << 30)
+
+
 def test_pressurefit_infeasibility_is_structured_for_plan_callers() -> None:
     internal = PlanInfeasibleError(
         "task cannot fit",

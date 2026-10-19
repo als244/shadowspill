@@ -215,5 +215,8 @@ void shadowspill_object_release(ShadowSpillObject *object) {
     }
     free(object->locations);
     pthread_mutex_destroy(&object->lock);
+    if (object->has_transfer) {
+        object->transfer.release(object->transfer.context);
+    }
     free(object);
 }

@@ -432,6 +432,98 @@ done:
     return result;
 }
 
+static void transfer_context_noop(void *context) {
+    (void)context;
+}
+
+static int unexpected_transfer(
+    void *context,
+    const ShadowSpillBackend *backend,
+    ShadowSpillBackendStream stream,
+    uint8_t fetch,
+    void *destination,
+    const void *source
+) {
+    (void)context;
+    (void)backend;
+    (void)stream;
+    (void)fetch;
+    (void)destination;
+    (void)source;
+    return -1;
+}
+
+static int failed_evict_reports_destination_pool(uint64_t spill_bytes) {
+    ShadowSpillBackend mock = {0};
+    const ShadowSpillMockBackendConfig mock_config = {0};
+    if (shadowspill_mock_backend_create(&mock_config, &mock) != 0) {
+        return -1;
+    }
+    ShadowSpillRuntime *runtime = NULL;
+    ShadowSpillBackendStream stream = 0U;
+    ShadowSpillAllocation allocation = {0};
+    const ShadowSpillObjectTransfer transfer = {
+        .spill_size_bytes = spill_bytes,
+        .retain = transfer_context_noop,
+        .release = transfer_context_noop,
+        .enqueue = unexpected_transfer,
+    };
+    const ShadowSpillObjectDescription object = {
+        .object_id = 8U,
+        .size_bytes = 32U,
+        .transfer = spill_bytes == 32U ? NULL : &transfer,
+    };
+    const ShadowSpillRuntimeAction evict = {
+        .object_id = object.object_id,
+        .kind = SHADOWSPILL_RUNTIME_EVICT,
+    };
+    const ShadowSpillTaskDescription task = {
+        .task_id = 82U,
+        .actions = &evict,
+        .action_count = 1U,
+    };
+    int result = 0;
+    if (shadowspill_test_create_runtime(
+            &mock, 128U, spill_bytes / 2U, 1U, 1000U, &runtime
+        ) != SHADOWSPILL_STATUS_OK ||
+        mock.create_stream(mock.state, &stream) != 0 ||
+        shadowspill_register_object(runtime, &object) != SHADOWSPILL_STATUS_OK ||
+        shadowspill_memory_pool_allocate(
+            runtime, 0U, object.size_bytes, 1U, stream, &allocation
+        ) != SHADOWSPILL_STATUS_OK ||
+        shadowspill_test_publish_initial(
+            runtime, object.object_id, allocation.pointer, NULL
+        ) != SHADOWSPILL_STATUS_OK ||
+        shadowspill_test_admit_task(runtime, &task) != SHADOWSPILL_STATUS_OK ||
+        shadowspill_test_before_task(
+            runtime, task.task_id, stream, NULL, 0U
+        ) != SHADOWSPILL_STATUS_OK ||
+        shadowspill_test_after_task(runtime, task.task_id, stream) !=
+            SHADOWSPILL_STATUS_NO_PROGRESS) {
+        result = -1;
+        goto done;
+    }
+    ShadowSpillRuntimeFailure failure = {0};
+    if (shadowspill_runtime_failure(runtime, &failure) != SHADOWSPILL_STATUS_OK ||
+        failure.pool_id != 1U || failure.task_id != task.task_id ||
+        failure.object_id != object.object_id ||
+        failure.requested_bytes != spill_bytes ||
+        failure.free_bytes != spill_bytes / 2U ||
+        failure.largest_free_range_bytes != spill_bytes / 2U) {
+        fprintf(stderr, "eviction destination: pool=%u requested=%llu free=%llu\n",
+                failure.pool_id, (unsigned long long)failure.requested_bytes,
+                (unsigned long long)failure.free_bytes);
+        result = -1;
+    }
+done:
+    shadowspill_test_destroy_runtime(runtime);
+    if (stream != 0U) {
+        (void)mock.destroy_stream(mock.state, stream);
+    }
+    shadowspill_backend_destroy(&mock);
+    return result;
+}
+
 /*
  * A failure latched by anything - including the worker thread - stops the
  * runtime. The next task must not start on it, and must hear the reason.
@@ -555,6 +647,8 @@ int main(void) {
     REQUIRE_FAILURE_CANARY(worker_submission_failure_reaches_dispatcher());
     REQUIRE_FAILURE_CANARY(failed_task_retirement_recovery());
     REQUIRE_FAILURE_CANARY(failed_fetch_reports_trigger_reservation_oom());
+    REQUIRE_FAILURE_CANARY(failed_evict_reports_destination_pool(32U));
+    REQUIRE_FAILURE_CANARY(failed_evict_reports_destination_pool(8U));
     REQUIRE_FAILURE_CANARY(a_latched_failure_refuses_the_next_task());
     REQUIRE_FAILURE_CANARY(after_task_reports_a_failure_latched_while_it_ran());
     return EXIT_SUCCESS;

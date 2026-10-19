@@ -14,6 +14,8 @@ from shadowspill.pytorch.representations import is_wrapper
 from ._optimizer import UpdateLayout
 
 if TYPE_CHECKING:
+    from shadowspill.runtime import Runtime
+
     from . import BoundDistributed
 
 
@@ -149,10 +151,20 @@ def fill_parameter(
 def initializers(
     weights: Mapping[str, nn.Parameter],
     layouts: Mapping[str, UpdateLayout],
+    *,
+    runtime: Runtime | None = None,
 ) -> dict[str, Callable[[torch.Tensor], None]]:
     def make(name: str) -> Callable[[torch.Tensor], None]:
         def initialize(destination: torch.Tensor) -> None:
-            fill_parameter(destination, weights[name], layouts[name])
+            source: torch.Tensor = weights[name]
+            if runtime is not None:
+                from shadowspill.pytorch.state.storage import read_tensor_value
+
+                # Every sharding member participates once, including ranks whose
+                # global optimizer shard is empty. The subsequent slice/chunk
+                # loop may differ across ranks and must not issue collectives.
+                source = read_tensor_value(runtime, source)
+            fill_parameter(destination, source, layouts[name])
 
         return initialize
 

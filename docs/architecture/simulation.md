@@ -94,10 +94,43 @@ Runtime calibration already measures both rates for pinned host, network, and
 SSD routes. Planning coarsens both measurements independently and includes all
 four in configuration, plan keys, reusable artifacts, and distributed symmetric
 planning (which takes each rate's minimum across ranks). Without a reverse
-calibration, the concurrent input equals the measured solo rate. This model does
-not add compute/transfer contention, cross-device contention, or SSD cache-state
-prediction. Search heuristics use the faster rate as a lower bound until a
+calibration, the concurrent input equals the measured solo rate. The copy-rate
+model does not infer compute interference, cross-device contention, or SSD
+cache-state prediction. Search heuristics use the faster rate as a lower bound until a
 concrete schedule can be scored with the event simulation.
+
+## Measured compute and collective interference
+
+Programs may additionally supply task resource phases and paired overlap costs.
+A task phase either computes or occupies a named queue, such as a communicator.
+An optimizer therefore reserves that queue only during its measured collective
+segments. Those segments share submission order with transfer collectives;
+waiting for the queue retains task memory but consumes no compute work.
+
+An overlap sample gives two progress rates: task and timed transfer. While the
+operations overlap for `dt`, each completes `rate * dt` of its isolated work.
+It resumes rate one when the other operation completes. The model changes
+timing, not object sizes, sharded host payloads, or copy bandwidth. Missing
+samples retain isolated timing. Task phases, rates, and message sizes are
+serialized with the program and affect every candidate's simulation.
+
+The PyTorch sharding frontend collects these fields during preparation. Internal
+collectives are measured separately from uninstrumented task duration, and their
+median segment proportions are normalized to that duration. Paired probes use
+actual program message sizes and borrowed groups, with extra buffers bounded by
+available profiling memory. Large-message probes repeat the task in a bounded
+sequence, draining each call's workspace before the next, so complete copies
+can be observed within the compute window. Rejected or unidentifiable measurements do not become
+arbitrarily small progress rates. The [distributed API](../python/api/distributed.md)
+describes the sampling policy and its limits.
+
+Calibration must measure the actual compiled task and communication operation
+independently of the training step being predicted. Pairwise rates approximate
+contention; they do not explain arbitrary multiway kernel interference, rank
+arrival skew, or host submission delays. The implementation uses the minimum
+applicable rate when more than one modeled peer is active. See the
+[neutral timing API](../python/api/neutral.md) and
+[native tables](../c/simulator.md#task-phases-and-measured-overlap) for the contract.
 
 ## Trigger-time capacity
 

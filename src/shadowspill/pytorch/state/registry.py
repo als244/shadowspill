@@ -22,6 +22,20 @@ class PersistentStateRegistry:
         self._lock = threading.RLock()
         self._states: dict[int, PersistentState] = {}
         self._storages: dict[int, PersistentStorage] = {}
+        self._runtime_objects: dict[int, PersistentStorage] = {}
+
+    def runtime_object(self, identity: int) -> PersistentStorage | None:
+        """Find a persistent representation by the runtime's object identity."""
+        with self._lock:
+            item = self._runtime_objects.get(identity)
+            if item is not None and item.current_object_id == identity:
+                return item
+            # Reindex a legacy rekey once; normal plan adoption keeps IDs stable.
+            for item in self._storages.values():
+                if item.current_object_id == identity:
+                    self._runtime_objects[identity] = item
+                    return item
+            return None
 
     def storage(self, identity: int) -> PersistentStorage | None:
         """Find the authoritative object behind a frontend storage view."""
@@ -52,6 +66,9 @@ class PersistentStateRegistry:
             self._storages.update(
                 (item.storage_identity, item) for item in state.storages
             )
+            self._runtime_objects.update(
+                (item.current_object_id, item) for item in state.storages
+            )
 
     def remove(self, target: object) -> PersistentState:
         with self._lock:
@@ -61,6 +78,12 @@ class PersistentStateRegistry:
             release_persistent_state(self.runtime)
             for item in state.storages:
                 self._storages.pop(item.storage_identity, None)
+            removed = {id(item) for item in state.storages}
+            self._runtime_objects = {
+                key: item
+                for key, item in self._runtime_objects.items()
+                if id(item) not in removed
+            }
             return state
 
     def values(self) -> tuple[PersistentState, ...]:

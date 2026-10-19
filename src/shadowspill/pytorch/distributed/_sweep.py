@@ -149,7 +149,8 @@ class _SharedSweep:
                     plan = answer.plan or local.plan(problem, *budget)
                     self.held[index, budget] = plan
                     row.update(
-                        plan=pack(plan), inherited=answer.answered_with_incumbent
+                        plan=pack(plan, compact_facts=True),
+                        inherited=answer.answered_with_incumbent,
                     )
                     if carried is None or answer.makespan_ns < carried.makespan_ns:
                         carried = _Carried(*budget, answer.makespan_ns, plan)

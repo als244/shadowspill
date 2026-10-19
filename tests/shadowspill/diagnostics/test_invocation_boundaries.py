@@ -12,7 +12,8 @@ from .test_idle_composition import _task
 from .test_timelines import _ORIGIN_NS, _event, _interval, _record
 
 
-def test_summary_components_include_entry_and_terminal_once() -> None:
+@pytest.mark.parametrize("contention_ns", [0, 40_000_000])
+def test_summary_components_include_entry_and_terminal_once(contention_ns: int) -> None:
     tasks = (
         replace(
             _task(1, reached=0.01, started=0.05, finished=0.16),
@@ -29,7 +30,9 @@ def test_summary_components_include_entry_and_terminal_once() -> None:
             start_ns=20_000_000, end_ns=120_000_000, stall_ns=20_000_000
         ),
         "task_000002": SimpleNamespace(
-            start_ns=150_000_000, end_ns=350_000_000, stall_ns=30_000_000
+            start_ns=150_000_000,
+            end_ns=350_000_000 + contention_ns,
+            stall_ns=30_000_000,
         ),
     }
     lanes = {
@@ -46,6 +49,7 @@ def test_summary_components_include_entry_and_terminal_once() -> None:
         dispatch_call_finished_ns=1,
         prior_invocation_drain_ns=0,
         trace_setup_ns=0,
+        collectives=SimpleNamespace(complete=True),
     )
     runtime = SimpleNamespace(event_overflow=False, allocation_event_overflow=False)
     summary = _build_step_summary(
@@ -58,6 +62,13 @@ def test_summary_components_include_entry_and_terminal_once() -> None:
     )  # type: ignore[arg-type]
     assert summary.simulated_entry_delay_seconds == pytest.approx(0.02)
     assert summary.simulated_inter_task_readiness_wait_seconds == pytest.approx(0.03)
+    assert summary.simulated_inter_task_idle_seconds == pytest.approx(0.03)
+    assert summary.simulated_task_contention_seconds == pytest.approx(
+        contention_ns / 1e9
+    )
+    assert summary.task_prediction_delta_seconds == pytest.approx(
+        0.04 - contention_ns / 1e9
+    )
     assert summary.entry_delay_seconds == pytest.approx(0.05)
     assert summary.real_terminal_tail_seconds == pytest.approx(0.07)
     assert summary.real_invocation_seconds == pytest.approx(0.50)
@@ -72,7 +83,7 @@ def test_summary_components_include_entry_and_terminal_once() -> None:
     assert sum(
         (
             summary.simulated_entry_delay_seconds,
-            summary.profiled_task_seconds,
+            summary.simulated_task_seconds,
             summary.simulated_inter_task_idle_seconds,
             summary.simulator_terminal_tail_seconds,
         )

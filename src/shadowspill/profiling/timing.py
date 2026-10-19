@@ -52,6 +52,7 @@ def condition_task(
     options: ProfilingOptions,
     clock: Callable[[], int] = time.perf_counter_ns,
     continue_while: Callable[[bool, bool], bool] | None = None,
+    sample_many: Callable[[], Sequence[int]] | None = None,
 ) -> TimingWindow:
     """Sustain the exact initialized task before its measurement window."""
 
@@ -61,8 +62,9 @@ def condition_task(
     gpu_ns = iterations = 0
     elapsed = 0
     while _continue(gpu_ns < target, elapsed < limit, continue_while):
-        gpu_ns += _sample(sample)
-        iterations += 1
+        batch = _samples(sample, sample_many)
+        gpu_ns += sum(batch)
+        iterations += len(batch)
         elapsed = clock() - began
     return TimingWindow(gpu_ns, elapsed, iterations, gpu_ns >= target)
 
@@ -73,6 +75,7 @@ def collect_timing_samples(
     options: ProfilingOptions,
     clock: Callable[[], int] = time.perf_counter_ns,
     continue_while: Callable[[bool, bool], bool] | None = None,
+    sample_many: Callable[[], Sequence[int]] | None = None,
 ) -> TimingObservation:
     """Meet the sample count and device-time floor, bounded by wall time."""
 
@@ -82,9 +85,9 @@ def collect_timing_samples(
     samples: list[int] = []
     gpu_ns = 0
     while True:
-        value = _sample(sample)
-        samples.append(value)
-        gpu_ns += value
+        batch = _samples(sample, sample_many)
+        samples.extend(batch)
+        gpu_ns += sum(batch)
         elapsed = clock() - began
         if len(samples) < options.minimum_samples:
             continue
@@ -109,6 +112,17 @@ def _sample(sample: Callable[[], int]) -> int:
     if type(duration) is not int or duration < 0:
         raise ValueError("task timing must be a non-negative integer in nanoseconds")
     return duration
+
+
+def _samples(
+    sample: Callable[[], int], many: Callable[[], Sequence[int]] | None
+) -> tuple[int, ...]:
+    if many is None:
+        return (_sample(sample),)
+    values = tuple(many())
+    if not values or any(type(value) is not int or value < 0 for value in values):
+        raise ValueError("task timing batch must contain non-negative integer samples")
+    return values
 
 
 def _continue(

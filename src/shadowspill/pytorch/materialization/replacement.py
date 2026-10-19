@@ -120,7 +120,7 @@ class MaterializedState:
         # those roots; later aliases read back any preceding partial updates.
         for name, source in values.items():
             owners = {}
-            for alias_id in aliases_by_name[name]:
+            for alias_id in sorted(aliases_by_name[name]):
                 owner = spill_view(self.bridge.objects, alias_id)
                 if owner is None:
                     owner = self._read_model_aliases(aliases={alias_id})[alias_id]
@@ -179,8 +179,8 @@ class MaterializedState:
     ) -> dict[str, torch.Tensor]:
         self.bridge.wait_runtime_idle()
         owners = self._empty_model_aliases(aliases=aliases)
-        for alias_id, owner in owners.items():
-            read_spill_tensor(self.bridge.objects, alias_id, owner)
+        for alias_id in sorted(owners):
+            read_spill_tensor(self.bridge.objects, alias_id, owners[alias_id])
         return owners
 
     @staticmethod

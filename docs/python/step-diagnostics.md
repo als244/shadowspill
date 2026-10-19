@@ -38,7 +38,7 @@ own profiler but does not create `StepDiagnostics`.
 | `step_number` | Completed optimizer-step count. |
 | `diagnostics` | `None`, or a deferred `DiagnosticsHandle` for a traced call. |
 
-The resolved `StepDiagnostics` has six views, in two tiers. The first tier
+The resolved `StepDiagnostics` has seven views, in two tiers. The first tier
 is the reference for reading the step against its plan:
 
 | View | Purpose |
@@ -55,9 +55,10 @@ produced it:
 |---|---|
 | `allocator` | The ordered allocation and free ledger, and the pool's geometry before and after the step. |
 | `runtime` | Runtime counter deltas, terminal queue state, trace capacity and overflow, and the raw runtime event records. |
+| `collectives` | GPU collective issue/start/finish times, group membership, per-rank input/output bytes, and task or transfer links. |
 
-`StepDiagnostics.as_dict()` renders exactly these six under
-`shadowspill.step_diagnostics/v1`; see [Exporting diagnostics](#exporting-diagnostics).
+`StepDiagnostics.as_dict()` renders these seven under
+`shadowspill.step_diagnostics/v2`; see [Exporting diagnostics](#exporting-diagnostics).
 
 The sections below follow that shape, one per view, and each names every
 field the view carries:
@@ -75,7 +76,9 @@ StepDiagnostics
 │       └── summary                  LaneSummary
 │           └── lane_statistics      what the lane itself counted
 ├── allocator                        AllocatorTrace
-└── runtime                          RuntimeTrace
+├── runtime                          RuntimeTrace
+└── collectives                      CollectiveTrace
+    └── records[]                    CollectiveRecord
 ```
 
 The planning-side equivalent is the
@@ -163,8 +166,11 @@ selected-task span = sum of selected task-event durations
 | Field | Interpretation |
 |---|---|
 | `profiled_task_seconds` | Sum of isolated task profiles selected by the plan. |
+| `simulated_task_seconds` | Sum of simulated task intervals, including contention inside them. |
+| `simulated_task_contention_seconds` | Simulated task intervals minus isolated profiles. |
 | `real_task_event_seconds` | Sum of compute-stream intervals measured in the real step. |
 | `task_event_delta_seconds` | Real task-event sum minus profiled sum. |
+| `task_prediction_delta_seconds` | Real task-event sum minus simulated task intervals. |
 | `simulated_inter_task_idle_seconds` | Idle between simulated selected task intervals. |
 | `real_inter_task_idle_seconds` | Idle between real selected task events. |
 | `inter_task_idle_delta_seconds` | Real idle sum minus simulated idle sum. |
@@ -468,10 +474,35 @@ outside the bound, so a trace can still fill: treat any overflow as incomplete
 evidence. The recorded capacities are authoritative for a specific result, and
 `summary.trace_complete` gives the combined verdict.
 
+## Collectives
+
+Distributed GPU invocations traced with `runtime_trace=True` capture collectives
+on the task thread and the transfer worker. `collectives.records` includes
+all-gather, reduce-scatter, and all-reduce phases, including the matching-owner
+reduction used when gradient spill sharding has multiple local groups.
+
+`issued_at_ns`, `started_at_ns`, and `finished_at_ns` share the invocation
+origin. Issue is sampled on the host; start/finish come from the collective's
+own GPU events. This separates queued time from execution and avoids treating a
+late host completion notification as device work. The execution interval can
+include waiting for another rank inside the collective.
+
+These clocks are aligned within each rank's invocation. Separate ranks do not
+share a globally synchronized timestamp origin; use group membership and
+collective sequence numbers to match their records.
+
+Every record names its group, membership, rank and sequence, its per-rank
+`input_bytes`/`output_bytes`, and its task. Transfer phases also name their alias,
+runtime object, and action ordinal. Their durations are subintervals of the
+existing task/transfer durations. The [diagnostic API](api/diagnostics.md)
+describes completeness flags and tracing overhead. The structured records are
+kept in the step JSON so later timeline renderers can use them without rerunning
+the model.
+
 ## Exporting diagnostics
 
 `StepDiagnostics.as_dict()` returns a JSON-friendly value with schema
-`shadowspill.step_diagnostics/v1` and exactly the six views above:
+`shadowspill.step_diagnostics/v2` and the seven views above:
 
 ```python
 import json
@@ -494,7 +525,7 @@ thousand tasks records millions of events. A step file keeps them beside
 itself instead. `shadowspill.diagnostics.step_file.write_step_diagnostics(path,
 diagnostics)` writes that dictionary to `path` and the ledgers to
 `<name>.events.npz` next to it, one column per field as the runtime recorded
-it, under the schema `shadowspill.step_events/v1`; `read_step_events(path)`
+it, under the schema `shadowspill.step_events/v2`; `read_step_events(path)`
 decodes them back into the `RuntimeTraceEvent` and `CapturedAllocationEvent`
 records the live trace produced.
 

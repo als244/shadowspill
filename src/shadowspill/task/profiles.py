@@ -7,6 +7,11 @@ import json
 import math
 from dataclasses import dataclass, field
 
+from shadowspill.ir.program.timing import (
+    TaskOverlapCost,
+    TaskResourcePhase,
+    validate_task_timing,
+)
 from shadowspill.schema import artifact_schema
 
 from .allocations import (
@@ -29,6 +34,8 @@ PROFILE_SCHEMA = artifact_schema("pytorch.profile")
 _TASK_MEASUREMENT_FIELDS = frozenset(
     {
         "runtime_ns",
+        "resource_phases",
+        "overlap_costs",
         "workspace_requested_bytes",
         "workspace_charged_bytes",
         "workspace_extent_bytes",
@@ -106,6 +113,8 @@ class ProfileEnvironment:
     compiler_id: str
     provider_id: str
     export_bypass_key: str | None = None
+    communication_timing_digest: str | None = None
+    timing_policy: str = "batched-events+batched-collective-phases+paired-progress/v3"
 
     def identity(self) -> dict[str, object]:
         return {
@@ -116,6 +125,12 @@ class ProfileEnvironment:
             "compiler_id": self.compiler_id,
             "provider_id": self.provider_id,
             "export_bypass_key": self.export_bypass_key,
+            "timing_policy": self.timing_policy,
+            **(
+                {"communication_timing_digest": self.communication_timing_digest}
+                if self.communication_timing_digest is not None
+                else {}
+            ),
         }
 
 
@@ -157,6 +172,8 @@ class TaskMeasurement:
     #: the contract gives up its span rather than an allocation being
     #: looked for that was never made.
     off_device_output_leaves: tuple[int, ...] = ()
+    resource_phases: tuple[TaskResourcePhase, ...] = ()
+    overlap_costs: tuple[TaskOverlapCost, ...] = ()
 
     @property
     def dynamic_scratch_maximum_requested_bytes(self) -> int:
@@ -199,6 +216,7 @@ class TaskMeasurement:
         )
 
     def __post_init__(self) -> None:
+        validate_task_timing(self.runtime_ns, self.resource_phases, self.overlap_costs)
         values = (
             self.runtime_ns,
             self.workspace_requested_bytes,
@@ -327,6 +345,8 @@ class TaskMeasurement:
     def to_dict(self) -> dict[str, object]:
         return {
             "runtime_ns": self.runtime_ns,
+            "resource_phases": [item.to_dict() for item in self.resource_phases],
+            "overlap_costs": [item.to_dict() for item in self.overlap_costs],
             "workspace_requested_bytes": self.workspace_requested_bytes,
             "workspace_charged_bytes": self.workspace_charged_bytes,
             "workspace_extent_bytes": list(self.workspace_extent_bytes),
@@ -368,6 +388,14 @@ class TaskMeasurement:
         try:
             return cls(
                 runtime_ns=int(value["runtime_ns"]),
+                resource_phases=tuple(
+                    TaskResourcePhase.from_value(item, "measurement.resource_phases")
+                    for item in value["resource_phases"]
+                ),
+                overlap_costs=tuple(
+                    TaskOverlapCost.from_value(item, "measurement.overlap_costs")
+                    for item in value["overlap_costs"]
+                ),
                 workspace_requested_bytes=int(value["workspace_requested_bytes"]),
                 workspace_charged_bytes=int(value["workspace_charged_bytes"]),
                 workspace_extent_bytes=tuple(

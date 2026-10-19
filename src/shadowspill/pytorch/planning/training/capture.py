@@ -170,7 +170,9 @@ def _prepare_training_inputs(
     cpu_inputs = tuple(
         tuple(representative_cpu_inputs(microbatch)) for microbatch in example_inputs
     )
-    estimate_spill_reservation(model, cpu_inputs, memory.spill_budget)
+    estimate_spill_reservation(
+        model, cpu_inputs, memory.spill_budget, runtime=memory.runtime
+    )
     workloads = repeated_profiling_metadata(
         profiling_metadata,
         repetitions=len(example_inputs),

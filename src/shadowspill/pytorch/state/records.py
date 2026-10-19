@@ -3,8 +3,12 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from typing import TYPE_CHECKING
 
 import torch
+
+if TYPE_CHECKING:
+    from shadowspill.pytorch.distributed._backing_storage import ShardedStorage
 
 
 @dataclass(frozen=True, slots=True)
@@ -35,6 +39,13 @@ class PersistentStorage:
     # Metadata-only CPU storages retain shape/alias identity and reject value
     # access. Their authoritative bytes exist solely in the runtime pool.
     unbacked: bool = False
+    sharding: ShardedStorage | None = None
+
+    @property
+    def execution_bytes(self) -> int:
+        return (
+            self.size_bytes if self.sharding is None else self.sharding.execution_bytes
+        )
 
     @property
     def storage_identity(self) -> int:

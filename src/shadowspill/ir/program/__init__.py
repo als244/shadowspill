@@ -47,9 +47,12 @@ from .specs import (
     MutationSpec,
     ObjectSpec,
     ResourceSpec,
+    TaskOverlapCost,
     TaskProfile,
+    TaskResourcePhase,
     TaskSpec,
 )
+from .transfers import TransferPhase, TransferSpec
 
 PROGRAM_SCHEMA = artifact_schema("program")
 
@@ -227,7 +230,6 @@ class ShadowSpillProgram:
         return selected
 
 
-
 def _without_inactive_dependencies(task: TaskSpec, active: set[str]) -> TaskSpec:
     """The task with its dependencies on inactive tasks dropped: the task
     itself when it has none, which is every task of a program without
@@ -239,6 +241,7 @@ def _without_inactive_dependencies(task: TaskSpec, active: set[str]) -> TaskSpec
     if len(dependencies) == len(task.dependencies):
         return task
     return replace(task, dependencies=dependencies)
+
 
 __all__ = [
     "AliasGroupSpec",
@@ -254,8 +257,12 @@ __all__ = [
     "TaskAlternativeChoice",
     "TaskAlternativeGroup",
     "TaskAlternativeOption",
+    "TaskOverlapCost",
     "TaskProfile",
+    "TaskResourcePhase",
     "TaskSpec",
+    "TransferPhase",
+    "TransferSpec",
     "ValidationError",
     "canonical_index",
 ]

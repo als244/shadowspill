@@ -8,12 +8,19 @@ from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from typing import TYPE_CHECKING
 
+from shadowspill.ir import TaskOverlapCost, TaskResourcePhase
 from shadowspill.profiling.timing import (
     TimingObservation,
     collect_timing_samples,
     condition_task,
 )
-from shadowspill.pytorch.distributed._profiling import all_ready, continue_timing, phase
+from shadowspill.pytorch.distributed import current as distributed_preparation
+from shadowspill.pytorch.distributed._profiling import (
+    all_ready,
+    continue_timing,
+    invocation_batch,
+    phase,
+)
 from shadowspill.runtime.telemetry import (
     AllocationTelemetryError,
     TaskWorkspaceProfile,
@@ -26,7 +33,9 @@ from shadowspill.task.profiles import TaskMeasurement
 from shadowspill.task.profiling import ProfilingOptions, TimingWindow
 
 from ..executables import ProfileExecutable
+from .collectives import measured_resource_phases
 from .contract import ProbedPath, probe_allocation_paths, validate_allocation_contract
+from .overlap import measured_overlap_costs
 from .workspace import (
     WorkspaceObservation,
     audit_workspace_retention,
@@ -123,14 +132,25 @@ def measure_task(
                     stabilization_iterations=profiler.options.stabilization_iterations,
                 )
         with timed(phases, "task_conditioning"):
+            sample_many = timing_batch(sample)
             conditioning = condition_task(
-                sample, options=profiler.options, continue_while=continue_timing
+                sample,
+                options=profiler.options,
+                continue_while=continue_timing,
+                sample_many=sample_many,
             )
         with timed(phases, "timing_samples"):
             timing = collect_timing_samples(
-                sample, options=profiler.options, continue_while=continue_timing
+                sample,
+                options=profiler.options,
+                continue_while=continue_timing,
+                sample_many=sample_many,
             )
         boundary.require_idle(problem="timing measurement")
+        with timed(phases, "task_collective_timing"):
+            resource_phases = measured_resource_phases(
+                boundary, source, stream, round(statistics.median(timing.samples))
+            )
         audited = time.perf_counter_ns()
         observation = audit_workspace_retention(
             observe_current, boundary.requested_allocated_bytes
@@ -147,6 +167,15 @@ def measure_task(
                     path_probes=path_probes,
                 )
             )
+        with timed(phases, "task_overlap_timing"):
+            overlap_costs = measured_overlap_costs(
+                boundary,
+                source,
+                stream,
+                round(statistics.median(timing.samples)),
+                workspace,
+                task_has_collectives=bool(resource_phases),
+            )
     finally:
         if isinstance(source.task, ProfileExecutable):
             profiler.executables.release_occurrence_values(source.task)
@@ -162,7 +191,29 @@ def measure_task(
         profiling_options=profiler.options,
         conditioning=conditioning,
         warmup_persistent=tuple(warmup_persistent),
+        resource_phases=resource_phases,
+        overlap_costs=overlap_costs,
     )
+
+
+def timing_batch(sample: Callable[[], int]) -> Callable[[], tuple[int, ...]] | None:
+    """Bound control-plane pauses to between approximately 100-ms GPU bursts.
+
+    All ranks agree on a fixed count using the slowest initial sample. Each
+    call still drains its allocator scope; only Gloo coordination moves outside
+    the burst. This also preserves collective order for tasks using NCCL.
+    """
+    bound = distributed_preparation()
+    if bound is None:
+        return None
+    estimate = max(bound.control.exchange("timing/batch-estimate", sample()))
+    count = max(1, min(128, 100_000_000 // max(1, estimate)))
+
+    def run() -> tuple[int, ...]:
+        with invocation_batch():
+            return tuple(sample() for _ in range(count))
+
+    return run
 
 
 def warm_persistent_allocations(
@@ -216,6 +267,8 @@ def task_measurement(
     profiling_options: ProfilingOptions,
     conditioning: TimingWindow,
     warmup_persistent: tuple[int, ...] = (),
+    resource_phases: tuple[TaskResourcePhase, ...] = (),
+    overlap_costs: tuple[TaskOverlapCost, ...] = (),
 ) -> TaskMeasurement:
     """Assemble the record the profile store keeps for one task.
 
@@ -233,6 +286,8 @@ def task_measurement(
     fixed_extents = warmup_persistent + workspace.persistent_extent_bytes
     return TaskMeasurement(
         runtime_ns=round(statistics.median(timing.samples)),
+        resource_phases=resource_phases,
+        overlap_costs=overlap_costs,
         workspace_requested_bytes=workspace.peak_requested_bytes,
         workspace_charged_bytes=workspace.peak_charged_bytes,
         workspace_extent_bytes=workspace.peak_extent_bytes,

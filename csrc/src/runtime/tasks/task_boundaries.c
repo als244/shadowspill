@@ -113,7 +113,7 @@ static ShadowSpillStatus try_reserve_action_destination_locked(
             : shadowspill_memory_pool_reserve_lease_locked(
                 pool,
                 action->destination_lease,
-                action->object->size_bytes,
+                shadowspill_object_spill_bytes(action->object),
                 pool->minimum_alignment,
                 SHADOWSPILL_MEMORY_BEST_FIT_LOW
             );
@@ -123,7 +123,7 @@ static ShadowSpillStatus try_reserve_action_destination_locked(
                 : shadowspill_memory_pool_reserve_causal_successor_locked(
                     pool,
                     action->destination_lease,
-                    action->object->size_bytes,
+                    shadowspill_object_spill_bytes(action->object),
                     pool->minimum_alignment
                 );
             if (successor_status != 0) {
@@ -233,25 +233,27 @@ static ShadowSpillStatus reserve_action_destination(
     if (status != SHADOWSPILL_STATUS_OK) {
         release_reserved_destination(runtime, action);
         if (status == SHADOWSPILL_STATUS_OUT_OF_MEMORY) {
-            shadowspill_latch_task_failure(
+            shadowspill_latch_task_pool_failure(
                 runtime,
+                pool,
                 SHADOWSPILL_STATUS_NO_PROGRESS,
                 SHADOWSPILL_FAILURE_REASON_POOL_EXHAUSTED,
                 action->task_id,
                 action->object->object_id,
                 SHADOWSPILL_RUNTIME_NO_ID,
-                action->object->size_bytes
+                shadowspill_object_pool_bytes(action->object, pool)
             );
             return SHADOWSPILL_STATUS_NO_PROGRESS;
         }
-        shadowspill_latch_task_failure(
+        shadowspill_latch_task_pool_failure(
             runtime,
+            pool,
             status,
             SHADOWSPILL_FAILURE_REASON_TASK_BOUNDARY_REJECTED,
             action->task_id,
             action->object->object_id,
             SHADOWSPILL_RUNTIME_NO_ID,
-            action->object->size_bytes
+            shadowspill_object_pool_bytes(action->object, pool)
         );
         return status;
     }
@@ -261,7 +263,7 @@ static ShadowSpillStatus reserve_action_destination(
         action->task_id,
         action->object->object_id,
         action->object->allocation_id,
-        action->object->size_bytes,
+        shadowspill_object_pool_bytes(action->object, pool),
         action->kind,
         action->destination_lease->offset
     );
@@ -606,6 +608,28 @@ static void publish_action_batch_locked(
 ) {
     if (batch->head == NULL) {
         return;
+    }
+    /* A destination may reuse bytes released by this batch. Submit the
+       collective write-backs first, then the collective fetches, preserving
+       each directional FIFO. This order is independent of event poll timing. */
+    for (uint8_t direction = 2U; direction > 0U; --direction) {
+        for (ShadowSpillQueuedAction *item = batch->head; item != NULL;
+             item = item->next) {
+            if (direction == 2U) {
+                item->collective_sequence = 0U;
+            }
+            const uint8_t bit = item->kind == SHADOWSPILL_RUNTIME_FETCH ? 1U
+                : item->kind == SHADOWSPILL_RUNTIME_EVICT ||
+                  (item->kind == SHADOWSPILL_RUNTIME_WRITE_BACK && !item->skips_copy)
+                    ? 2U : 0U;
+            if (bit == direction && item->object->has_transfer &&
+                (item->object->transfer.collective_directions & bit) != 0U) {
+                item->collective_sequence = ++runtime->next_collective_sequence;
+            }
+            if (item == batch->tail) {
+                break;
+            }
+        }
     }
     (void)atomic_fetch_add_explicit(
         &record->plan_owner->pending_actions,

@@ -26,6 +26,8 @@ from ..validation import (
     require_tuple,
 )
 from .enums import ObjectRole, Persistence, ResourceKind, SharedResidencyPolicy
+from .timing import TaskOverlapCost, TaskResourcePhase, validate_task_timing
+from .transfers import TransferSpec
 
 PROGRAM_SCHEMA = artifact_schema("program")
 
@@ -105,12 +107,18 @@ class AliasGroupSpec:
     initial_version: int = 0
     retain_spill_copy: bool = False
     shared_residency: SharedResidencyPolicy | None = None
+    transfer: TransferSpec | None = None
 
     def __post_init__(self) -> None:
         require_identifier(self.alias_group_id, "alias_group.alias_group_id")
         require_identifier(self.device_id, "alias_group.device_id")
         require_non_negative(self.size_bytes, "alias_group.size_bytes")
         require_non_negative(self.initial_version, "alias_group.initial_version")
+        require(
+            self.transfer is None or isinstance(self.transfer, TransferSpec),
+            "alias_group.transfer",
+            "invalid transfer specification",
+        )
         require(
             isinstance(self.retain_spill_copy, bool),
             "alias_group.retain_spill_copy",
@@ -123,6 +131,12 @@ class AliasGroupSpec:
             "invalid shared residency policy",
         )
 
+    @property
+    def spill_size_bytes(self) -> int:
+        return (
+            self.size_bytes if self.transfer is None else self.transfer.spill_size_bytes
+        )
+
     def to_dict(self) -> dict[str, JsonValue]:
         return {
             "alias_group_id": self.alias_group_id,
@@ -133,6 +147,7 @@ class AliasGroupSpec:
                 None if self.shared_residency is None else self.shared_residency.value
             ),
             "size_bytes": self.size_bytes,
+            **({} if self.transfer is None else {"transfer": self.transfer.to_dict()}),
         }
 
     @classmethod
@@ -168,6 +183,11 @@ class AliasGroupSpec:
                 f"{path}.retain_spill_copy",
             ),
             shared_residency=shared_residency,
+            transfer=(
+                None
+                if data.get("transfer") is None
+                else TransferSpec.from_value(data["transfer"], f"{path}.transfer")
+            ),
         )
 
 
@@ -244,12 +264,15 @@ class TaskProfile:
     runtime_ns: int
     workspace_bytes: int
     compatibility_digest: str
+    resource_phases: tuple[TaskResourcePhase, ...] = ()
+    overlap_costs: tuple[TaskOverlapCost, ...] = ()
 
     def __post_init__(self) -> None:
         require_identifier(self.profile_id, "profile.profile_id")
         require_non_negative(self.runtime_ns, "profile.runtime_ns")
         require_non_negative(self.workspace_bytes, "profile.workspace_bytes")
         require_identifier(self.compatibility_digest, "profile.compatibility_digest")
+        validate_task_timing(self.runtime_ns, self.resource_phases, self.overlap_costs)
 
     def to_dict(self) -> dict[str, JsonValue]:
         return {
@@ -257,6 +280,8 @@ class TaskProfile:
             "profile_id": self.profile_id,
             "runtime_ns": self.runtime_ns,
             "workspace_bytes": self.workspace_bytes,
+            "resource_phases": [item.to_dict() for item in self.resource_phases],
+            "overlap_costs": [item.to_dict() for item in self.overlap_costs],
         }
 
     @classmethod
@@ -275,6 +300,20 @@ class TaskProfile:
             compatibility_digest=expect_string(
                 field(data, "compatibility_digest", path),
                 f"{path}.compatibility_digest",
+            ),
+            resource_phases=tuple(
+                TaskResourcePhase.from_value(item, f"{path}.resource_phases[{index}]")
+                for index, item in enumerate(
+                    expect_list(
+                        data.get("resource_phases", []), f"{path}.resource_phases"
+                    )
+                )
+            ),
+            overlap_costs=tuple(
+                TaskOverlapCost.from_value(item, f"{path}.overlap_costs[{index}]")
+                for index, item in enumerate(
+                    expect_list(data.get("overlap_costs", []), f"{path}.overlap_costs")
+                )
             ),
         )
 

@@ -7,6 +7,46 @@
 #include <stdlib.h>
 #include <string.h>
 
+static _Thread_local const ShadowSpillQueuedAction *trace_action;
+
+void shadowspill_trace_action_context(const ShadowSpillQueuedAction *action) {
+    trace_action = action;
+}
+
+int shadowspill_trace_context(
+    ShadowSpillRuntime *runtime, ShadowSpillTraceContext *context
+) {
+    if (context == NULL || !shadowspill_lane_trace_active(runtime)) {
+        return 0;
+    }
+    const ShadowSpillQueuedAction *action = trace_action;
+    *context = (ShadowSpillTraceContext){
+        .task_id = action != NULL ? action->task_id : shadowspill_current_task_id(runtime),
+        .object_id = action != NULL ? action->object->object_id : SHADOWSPILL_RUNTIME_NO_ID,
+        .action_ordinal = action != NULL ? action->action_ordinal : SHADOWSPILL_RUNTIME_NO_ID,
+        .issued_at_ns = shadowspill_lane_origin_instant(runtime, shadowspill_monotonic_ns()),
+        .source = action == NULL ? 0U : action->kind == SHADOWSPILL_RUNTIME_FETCH ? 1U : 2U,
+    };
+    return 1;
+}
+
+int shadowspill_trace_event_instant(
+    ShadowSpillRuntime *runtime, ShadowSpillBackendEvent event, uint64_t *instant_ns
+) {
+    if (instant_ns == NULL || !shadowspill_lane_trace_active(runtime) ||
+        !runtime->trace_origin_present || event == 0U) {
+        return -1;
+    }
+    int reached = 0;
+    if (runtime->backend.query_event(runtime->backend.state, event, &reached) != 0 ||
+        !reached) {
+        return -1;
+    }
+    return runtime->backend.elapsed_nanoseconds(
+        runtime->backend.state, runtime->trace_origin_event, event, instant_ns
+    );
+}
+
 void shadowspill_trace_append_stamped_enabled(
     ShadowSpillRuntime *runtime,
     ShadowSpillTraceEventKind kind,

@@ -13,6 +13,7 @@ import json
 import math
 import os
 import time
+from contextlib import ExitStack
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
@@ -107,6 +108,8 @@ def run(args):
     faulthandler.dump_traceback_later(600, repeat=True)
     rank, world = int(os.environ["RANK"]), int(os.environ["WORLD_SIZE"])
     local_rank = int(os.environ["LOCAL_RANK"])
+    if args.transfer_shard_size is not None:
+        args.symmetric_planning = True
     assert world >= 2, "This test requires separate devices and processes."
     output = args.out.resolve()
     rank_dir = output / f"rank-{rank:05d}"
@@ -176,9 +179,29 @@ def run(args):
                 name=gpu.name,
                 uuid=str(gpu.uuid),
             )
-            group = dist.new_group(
-                backend="nccl", device_id=backend.device, timeout=timedelta(seconds=300)
-            )
+            resources = ExitStack()
+            if args.transfer_shard_size is not None:
+                from workloads.recipes.text.distributed import data_parallel_groups
+
+                distributed, managed = data_parallel_groups(
+                    device=backend.device,
+                    shard_size=args.transfer_shard_size,
+                    shard_gradients=args.shard_gradients,
+                    timeout=300,
+                )
+                resources.enter_context(managed())
+            else:
+                group = dist.new_group(
+                    backend="nccl",
+                    device_id=backend.device,
+                    timeout=timedelta(seconds=300),
+                )
+                resources.callback(dist.destroy_process_group, group)
+                distributed = Distributed(
+                    group,
+                    timeout=300,
+                    symmetric_planning=args.symmetric_planning,
+                )
             try:
                 optimizer = torch.optim.AdamW
                 optimizer_args = dict(
@@ -209,11 +232,7 @@ def run(args):
                         optimizer=optimizer,
                         optimizer_args=optimizer_args,
                         backend=backend,
-                        distributed=Distributed(
-                            group,
-                            timeout=300,
-                            symmetric_planning=args.symmetric_planning,
-                        ),
+                        distributed=distributed,
                         grad_dtype=torch.float32,
                         master_dtype=torch.float32 if args.masters else None,
                         shard_optimizer=args.sharded,
@@ -441,6 +460,8 @@ def run(args):
                     precision=args.precision,
                     masters=args.masters,
                     shard_optimizer=args.sharded,
+                    transfer_shard_size=args.transfer_shard_size,
+                    shard_gradients=args.shard_gradients,
                     optimizer=args.optimizer,
                     variant=args.variant,
                     stochastic=args.stochastic,
@@ -462,7 +483,7 @@ def run(args):
                     )
                 log("passed")
             finally:
-                dist.destroy_process_group(group)
+                resources.close()
     finally:
         dist.destroy_process_group()
         faulthandler.cancel_dump_traceback_later()
@@ -477,6 +498,8 @@ if __name__ == "__main__":
     parser.add_argument("--diagnostics", action="store_true")
     parser.add_argument("--parameter-metrics", action="store_true")
     parser.add_argument("--symmetric-planning", action="store_true")
+    parser.add_argument("--transfer-shard-size", type=int)
+    parser.add_argument("--shard-gradients", action="store_true")
     parser.add_argument(
         "--optimizer", choices=("torch", "mlops", "matrix"), default="torch"
     )

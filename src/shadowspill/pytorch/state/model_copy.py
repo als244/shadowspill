@@ -31,7 +31,12 @@ def copy_model_with_runtime_storages(
     memo: dict[int, object] = borrowed_group_memo()
     imported: list[PersistentStorage] = []
     for storage in storages:
-        owner = _runtime_owner(storage) if addressable else _unbacked_owner(storage)
+        directly_addressable = addressable and storage.sharding is None
+        owner = (
+            _runtime_owner(storage)
+            if directly_addressable
+            else _unbacked_owner(storage)
+        )
         views: list[TensorView] = []
         for source_view in storage.views:
             source = source_view.tensor
@@ -44,12 +49,13 @@ def copy_model_with_runtime_storages(
                     stride=source_view.stride,
                     storage_offset=source_view.storage_offset,
                     requires_grad=source_view.requires_grad,
+                    name=source_view.name,
                 )
             )
         storage.anchor = owner
         storage.views = tuple(views)
         storage.frontend_storage_is_separate = False
-        storage.unbacked = not addressable
+        storage.unbacked = not directly_addressable
         imported.append(storage)
 
     def empty_leaf(value: torch.Tensor) -> torch.Tensor:

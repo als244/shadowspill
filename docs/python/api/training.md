@@ -6,6 +6,10 @@ It has no model catalog or text-input convention. Optional recipes under
 [planning API](frontend.md) remains available for direct runtime ownership and
 custom execution loops.
 
+`TransferSharding` is also exported from `shadowspill.training`. It configures
+local weight/gradient spill sharding independently of global optimizer/master
+ownership; see [distributed ownership](distributed.md).
+
 ## Trainer
 
 `Trainer` prepares one objective and one optimizer update. One item from the

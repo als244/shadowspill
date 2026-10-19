@@ -116,6 +116,140 @@ count examples, valid tokens, weighted observations, or another application-defi
 quantity. For a microbatch mean, multiply by its contribution weight divided by
 the global normalizer. The generic trainer does not infer this from tensor shapes.
 
+## Computation-weight and gradient spill sharding
+
+`TransferSharding` describes the CPU representation of computation weights and,
+when `shard_gradients=True`, gradient accumulators. It is independent of the
+optimizer ownership described below. Keep `Distributed.group` and the parameter
+replica group equal to the full data-parallel group; select a smaller local
+group through `transfer_sharding`.
+
+Frozen tensor representations inherit this layout for every physical component,
+including compressed data and quantization scales. CPU admission counts those
+components' physical shards; GPU placement still reserves their full padded
+execution storage.
+
+Gradient reduce-scatter reuses the source allocation, so intermediate gradient
+offloads use eviction. A retained write-back with a collective eviction callback
+is rejected at task admission.
+
+| State | Ownership control | Typical per-rank persistent storage |
+| --- | --- | --- |
+| Computation weights in the spill pool | `TransferSharding.group` | Weight bytes / local shard-group size |
+| Gradients in the spill pool | The same group, enabled by `shard_gradients` | Gradient bytes / local shard-group size |
+| FP32 masters and optimizer moments | `shard_optimizer=True`, over parameter replicas | State bytes / full replica-group size |
+| Computation weights and gradients used by a task | Full execution tensor | Full tensor bytes |
+
+Shard sizes include alignment/tail padding. For example, four data-parallel
+ranks can use local shard groups `[0, 1]` and `[2, 3]` while masters and optimizer
+moments remain partitioned across `[0, 1, 2, 3]`. Each local shard group holds one
+complete set of CPU weight/gradient shards. The optimizer has one globally
+partitioned set of masters/moments; it is not replicated once per local shard group.
+
+```python
+from shadowspill.training import TransferSharding, Distributed, Trainer
+
+# Groups are caller-created. Every process creates them in the same order.
+# For rank 0 in this four-rank example:
+# dp_group: [0, 1, 2, 3] (NCCL)
+# local_shards: [0, 1] (NCCL), local_host: [0, 1] (Gloo)
+# matching_owners: [0, 2] (NCCL)
+distributed = Distributed(
+    dp_group,
+    transfer_sharding=TransferSharding(
+        group=local_shards,
+        replica_group=matching_owners,
+        host_group=local_host,
+    ),
+    shard_gradients=True,
+)
+# Supply distributed=distributed, shard_optimizer=True, and (if desired)
+# master_dtype=torch.float32 to Trainer or the training planning API.
+```
+
+`replica_group` here means corresponding shard owners in different local shard
+groups, not the full data-parallel group. In the example, rank 1 uses `[1, 3]`.
+With one local shard group spanning all parameter replicas, it is `None`.
+`transfer_sharding_overrides` can select layouts by parameter names or objects.
+All shard groups for a parameter must have equal sizes, partition its replicas,
+and agree on corresponding owners. The current gradient protocol requires
+unreduced contributions from all of that parameter's replicas; it rejects
+gradient overrides that have already reduced those contributions.
+
+A weight fetch copies the owned CPU shard and then all-gathers the execution
+tensor within its backing group. A gradient eviction reduce-scatters local
+contributions within that group, SUM-reduces the result across corresponding
+owners, and copies only the owned shard to the CPU. These phases run through the
+transfer lane; object readiness/reuse waits for the whole sequence. The simulator
+prices the host-copy bytes and calibrated collective duration as separate phases.
+
+Profiling also measures interference when transfer sharding is configured. It
+observes each task's internal NCCL intervals and reserves the shared collective
+queue only for those segments. For tasks without internal collectives, paired
+probes run the compiled task alone and alongside the actual sharding operations.
+Small, middle, and large message sizes come from the program's execution objects.
+The extra probe buffer must fit beside the task's measured workspace. When a
+copy is large relative to a task, the probe uses up to eight task calls, draining
+each call's allocator scope before the next. Communication is submitted first
+for these sequences, providing complete overlapping copies without retaining
+multiple task workspaces. At most 128 copies are submitted per sample.
+
+The simulator uses separate compute and collective progress rates during actual
+overlap. Calibration compares copies wholly inside the compute interval;
+post-task tail delays and unstable or nonphysical estimates are excluded. At
+least three consistent trials are required. Equal-size groups use conservative
+shared overlap envelopes while retaining their separate isolated transfer costs.
+Missing measurements retain isolated timing. These pairwise rates approximate
+GPU contention; they do not model arbitrary multiway interference or every
+rank-arrival delay. Compare predictions with measured steps when qualifying a
+sharded configuration; no full-step multiplier is fitted.
+
+Distributed task conditioning and sampling use agreed fixed-count bursts of
+roughly 100 ms, capped at 128 calls. Allocation scopes still drain after each
+call. Host control collectives occur between bursts so they do not repeatedly
+interrupt the sustained workload being measured.
+
+Profile and planning cache identities include NCCL version, communicator resource
+settings and stream priority, plus NCCL environment overrides. Changing a group's
+CTA limits or policy therefore requires fresh costs even when its membership is
+unchanged. The task measurement policy also participates in the cache key, so
+old isolated-only profiles cannot bypass the new probes. Moving a diagnostic
+output file alone does not invalidate profiles.
+
+### Repeated gradient evictions and optimizer steps
+
+Let $G$ be the gradient accumulated before an eviction and let $\Delta_r$ be
+rank $r$'s contribution from the next set of microbatches. CPU shard copies in
+different backing groups contain the same global $G$. On reload, exactly one
+matching owner restores each element of $G$; the other owners start from zero.
+The full GPU gradient buffer is zeroed before its owned carry is restored.
+Consequently, the next two-level SUM gives
+
+$$
+G_{\mathrm{next}} = G + \sum_{r=0}^{D-1} \Delta_r,
+$$
+
+where $D$ is the parameter's full replica count. Restoring $G$ in every backing
+group would incorrectly multiply it by the number of groups. Reduce-scatter
+reuses the existing full GPU gradient buffer for its output shard; no second
+full gradient buffer is retained for the carry.
+
+At the optimizer boundary, the remaining sparse carry and local contributions
+are SUM-reduced into the optimizer's independently sized ownership slices. Each
+owned master/moment element is updated once per training step. Intermediate
+gradient evictions do not advance the optimizer step counter or apply weight
+decay. Updated computation weights are cast and gathered across parameter
+replicas before their local backing shards are stored. Neither reduction adds
+division by the local group size or number of backing groups: objective
+normalization remains the caller's single global normalizer.
+
+Text quickstart exposes `--transfer-shard-size N` and `--shard-gradients` (or
+`--no-shard-gradients`). It creates contiguous local shard groups and matching
+owner groups across them. `N` must divide the data-parallel world size.
+These options leave optimizer/master ownership over the full replica group.
+Sharded transfers currently require pinned host spill memory and coordinated
+symmetric planning, so every member submits compatible collective sequences.
+
 ## Optimizer tasks
 
 Pass a local optimizer. ShadowSpill inserts the gradient SUM and updated-weight
@@ -184,7 +318,8 @@ processes recreate their groups; live process-group handles are not checkpointed
 ## Verified symmetric planning
 
 Opt in with `Distributed(group, symmetric_planning=True)`. The default is
-`False`, preserving independent local searches. This option applies to
+`False` without transfer sharding; specifying transfer sharding enables and
+requires it. This option applies to
 `plan_step_search`, `plan_step`/Trainer, and `plan_forward`/Forward.
 
 All ranks still capture and profile their own tasks, including communication.
@@ -193,10 +328,26 @@ dependencies, sizes, aliasing, mutations, allocation traces, initial/final
 residency, effective capacities, alignment, and scratch reservations. Local
 device ordinals and compiled-code digests may differ; executable code and
 allocator bindings are never shared. Unequal requirements produce a visible
-fallback message and use the existing per-rank search.
+fallback message and use the existing per-rank search, or fail preparation when
+transfer sharding requires a common schedule.
+
+Transfer-sharded compilation uses Inductor's baseline instruction order instead
+of its independent peak-memory reordering pass. This avoids that pass selecting
+different temporary allocation sequences across ranks; kernel autotuning remains
+enabled. The effective ordering policy is part of the profile cache identity.
+The agreement and physical-admission checks still apply to the measured result.
+
+Autotuned kernels may use different anonymous temporary sizes on different
+ranks. When allocation/reuse order, output ownership, capacities and workspace
+peaks agree, shared placement reserves the maximum observed size of each such
+temporary. The combined maxima must preserve the verified workspace peak;
+otherwise sharing is refused. Runtime slots retain the certified offsets and
+dependencies but use each rank's exact local allocation sizes and checks.
+Original profiles are retained, and the planning evidence records this
+reconciliation under `allocation_policy`.
 
 For a verified problem, planning uses the maximum measured duration of each
-task profile, minimum fetch/eviction bandwidths, and maximum transfer latencies
+task profile and transfer phase, minimum fetch/eviction bandwidths, and maximum transfer latencies
 across participants. Original local profiling artifacts remain available.
 
 - A sweep assigns each ordering's complete budget sequence to one rank. Budgets
@@ -207,6 +358,13 @@ across participants. Original local profiling artifacts remain available.
   A forward-only plan has one candidate, searched by one rank.
 - Every received schedule is checked and physically admitted using local facts.
   The selected task sequence stays common; this adds no execution-time barriers.
+
+Search-result messages reference the verified allocation facts by a
+device-independent digest and the selected object capacity. Receivers reuse
+their existing immutable task allocation records only when that digest matches,
+then perform the usual schedule validation, placement admission, and simulation
+replay. This avoids transmitting and reconstructing large allocation traces for
+every ordering on every rank. Saved plan artifacts still contain the full facts.
 
 The number of independent orderings/candidates limits parallelism. This reduces
 duplicated CPU search; it does not remove capture or profiling on each device.
@@ -270,3 +428,35 @@ Rank-local parameters and buffers keep their local values. Optional masters and
 optimizer state are initialized only for each rank's owned shards. For a pool
 that cannot be directly addressed by this process, synchronized host views are
 published back to the pool before import returns.
+
+When initializing sharded backing from a checkpoint, a whole-tensor copy from
+ordinary CPU storage publishes its bytes directly. It does not read the old
+destination or allocate a second full-sized destination buffer. The host-group
+leader scatters the owned shards, including zero tail padding, instead of
+broadcasting a complete tensor to every rank. Partial writes and copies from
+an alias still read the previous storage contents. If one shard group covers
+the entire replica control group, its authoritative shards already define one
+shared value; initial synchronization does not reconstruct and repartition it.
+Multiple shard groups still synchronize their values across replicas.
+
+Checkpoint loaders can also avoid constructing the same source tensor on every
+rank. Inside the initializer, `initialize_storage_(destination, fill)` allocates
+scratch only on a whole sharded storage's host-group leader, calls `fill(scratch)`
+there, and scatters the owned shards. Other ranks neither read the checkpoint
+payload nor allocate that full scratch tensor. The callback must overwrite its
+scratch completely and must not contain collectives or depend on executing on
+every rank. A source-read error is propagated to all members before publication.
+Ordinary random initialization can keep using its existing tensor operations.
+
+```python
+from shadowspill.pytorch import initialize_storage_
+
+def initialize(model):
+    initialize_storage_(model.weight, lambda value: value.copy_(read_weight()))
+```
+
+This helper takes a physical CPU tensor; compressed wrappers expose their data
+and scale tensors separately. Partial views and nonsharded state use ordinary
+copy semantics, preserving untouched storage. The GLM checkpoint loader accepts
+an optional `write_tensor` callback with this signature, and both GLM quickstart
+recipes use it. Cross-group replica synchronization still runs after import.

@@ -113,6 +113,19 @@ def materialize_training_state(
             }
             if prepared is not None:
                 from shadowspill.pytorch.distributed import _shards
+                from shadowspill.pytorch.distributed._backing_storage import (
+                    prepare_gradient_transfers,
+                )
+
+                if (
+                    prepared.specification.shard_gradients
+                    and parameter_metrics is not None
+                ):
+                    raise ValueError(
+                        "full-gradient parameter observations are not yet supported "
+                        "with shard-carried gradients"
+                    )
+                prepare_gradient_transfers(prepared, model, grad_dtype=grad_dtype)
 
                 layouts = _shards.parameter_layouts(
                     prepared,
@@ -147,7 +160,7 @@ def materialize_training_state(
             # masters go in with it, starting at their weights.
             weights = dict(model.named_parameters())
             if layouts is not None:
-                starts = _shards.initializers(weights, layouts)
+                starts = _shards.initializers(weights, layouts, runtime=runtime)
             with timer.measure("optimizer_state_install"):
                 install_declared_optimizer_state(
                     optimizer_parameters,

@@ -140,7 +140,7 @@ static int report_unsubmitted_action(
                 SHADOWSPILL_MEMORY_SPILL,
                 program->spill_capacity_bytes,
                 work->spill_bytes,
-                program->alias_size_bytes[alias]
+                shadowspill_alias_spill_bytes(program, alias)
             );
             return 1;
         }
@@ -191,7 +191,7 @@ static int report_stalled_transfer(
             uint64_t total = 0U;
             if (shadowspill_add_overflow_u64(
                     work->spill_bytes,
-                    program->alias_size_bytes[alias],
+                    shadowspill_alias_spill_bytes(program, alias),
                     &total
                 ) || total > program->spill_capacity_bytes) {
                 shadowspill_set_capacity_error(
@@ -204,7 +204,7 @@ static int report_stalled_transfer(
                     SHADOWSPILL_MEMORY_SPILL,
                     program->spill_capacity_bytes,
                     work->spill_bytes,
-                    program->alias_size_bytes[alias]
+                    shadowspill_alias_spill_bytes(program, alias)
                 );
                 return 1;
             }

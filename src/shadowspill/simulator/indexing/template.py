@@ -26,11 +26,13 @@ from shadowspill.status import ABI_VERSION
 from ..capi import (
     CDevice,
     CProgram,
+    CTransferPhase,
 )
 from ..model import (
     SimulationConfig,
 )
 from .arrays import _Arena
+from .timing import timing_tables
 
 
 @dataclass(frozen=True, slots=True)
@@ -231,6 +233,41 @@ def index_simulation_template(
     empty_u8 = arena.u8(())
     empty_u64 = arena.u64(())
     empty_i64 = arena.i64(())
+    resources: dict[str, int] = {}
+    phase_offsets = [0]
+    phases = []
+    logical_phases = []
+    for alias in program.alias_groups:
+        for direction in ("fetch", "evict"):
+            recipe = (
+                ()
+                if alias.transfer is None or alias.shared_residency is not None
+                else getattr(alias.transfer, direction)
+            )
+            for phase in recipe:
+                logical_phases.append(phase)
+                resource = (
+                    0
+                    if phase.resource is None
+                    else resources.setdefault(phase.resource, len(resources))
+                )
+                phases.append(
+                    CTransferPhase(
+                        int(phase.kind == "timed"),
+                        resource,
+                        phase.bytes,
+                        phase.duration_ns,
+                        int(phase.submission_ordered),
+                    )
+                )
+            phase_offsets.append(len(phases))
+    c_phases = arena.keep((CTransferPhase * len(phases))(*phases))
+    timing = timing_tables(
+        tuple(profiles[item.profile_id] for item in tasks),
+        tuple(logical_phases),
+        resources,
+        arena,
+    )
     c_program = CProgram(
         abi_version=ABI_VERSION,
         device_count=len(device_ids),
@@ -304,6 +341,17 @@ def index_simulation_template(
         reuse_predecessor_actions=empty_u32,
         reuse_successor_tasks=empty_u32,
         reuse_successor_actions=empty_u32,
+        alias_spill_size_bytes=arena.u64(
+            tuple(
+                0 if item.shared_residency is not None else item.spill_size_bytes
+                for item in program.alias_groups
+            )
+        ),
+        transfer_phase_count=len(phases),
+        transfer_resource_count=len(resources),
+        alias_transfer_offsets=arena.u32(tuple(phase_offsets)),
+        transfer_phases=c_phases,
+        **timing,
     )
     return IndexedSimulationTemplate(
         c_program,

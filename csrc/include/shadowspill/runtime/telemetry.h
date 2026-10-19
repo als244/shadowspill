@@ -148,6 +148,29 @@ SHADOWSPILL_API ShadowSpillStatus shadowspill_trace_read(
     uint64_t allocation_event_capacity
 );
 
+/* Context for frontend-owned activities (for example collectives). A transfer
+ * names its trigger task and object; a task activity names the current task.
+ * source: 0 = task, 1 = fetch, 2 = evict/write-back. IDs use NO_ID when absent.
+ * Querying is read-only and returns zero outside an active trace. */
+typedef struct ShadowSpillTraceContext {
+    uint64_t task_id;
+    uint64_t object_id;
+    uint64_t action_ordinal;
+    uint64_t issued_at_ns;
+    uint8_t source;
+} ShadowSpillTraceContext;
+
+SHADOWSPILL_API int shadowspill_trace_context(
+    ShadowSpillRuntime *runtime, ShadowSpillTraceContext *context
+);
+
+/* A completed, caller-owned timing event on the active backend, measured from
+ * the trace's origin. Does not wait or retain the event. A frontend must only
+ * pass an event compatible with this backend, on the same device. */
+SHADOWSPILL_API int shadowspill_trace_event_instant(
+    ShadowSpillRuntime *runtime, ShadowSpillBackendEvent event, uint64_t *instant_ns
+);
+
 /* ------------------------------------------------------------------------
  * Waiting, recovery and inspection
  *

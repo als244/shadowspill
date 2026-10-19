@@ -328,3 +328,32 @@ def test_profile_catalog_unions_cpu_outputs_once_across_occurrences():
         assert observed is first
     assert catalog.copy().contract(artifact) is first
     assert measurements.scans == 1
+
+
+def test_measured_resource_timing_survives_store_and_lowering():
+    from dataclasses import replace
+
+    from torch.fx.experimental.proxy_tensor import make_fx
+
+    from shadowspill.ir.program.timing import TaskOverlapCost, TaskResourcePhase
+    from shadowspill.pytorch.capture.artifacts import capture_inference_artifact
+    from shadowspill.pytorch.lowering.profiles import TaskProfileCatalog
+
+    with FakeTensorMode():
+        inputs = (torch.empty(4, device="cuda"),)
+        graph = make_fx(lambda x: (x + 1,))(*inputs)
+        artifact = capture_inference_artifact(graph_module=graph, example_inputs=inputs)
+    measurement = replace(
+        _measurement(artifact),
+        runtime_ns=100,
+        samples_ns=(100,),
+        resource_phases=(TaskResourcePhase(40), TaskResourcePhase(60, "nccl")),
+        overlap_costs=(TaskOverlapCost("gather", 1024, 0.7, 0.5),),
+    )
+    restored = TaskMeasurement.from_dict(measurement.to_dict())
+    catalog = TaskProfileCatalog({artifact.compatibility_digest: restored})
+    identity = catalog.profile_id(artifact, extra_workspace=256)
+    profile = next(item for item in catalog.profiles if item.profile_id == identity)
+    assert profile.resource_phases == measurement.resource_phases
+    assert profile.overlap_costs == measurement.overlap_costs
+    assert profile.workspace_bytes == measurement.workspace_charged_bytes + 256

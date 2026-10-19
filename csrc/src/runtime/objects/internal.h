@@ -31,6 +31,8 @@ struct ShadowSpillObject {
     ShadowSpillRuntime *runtime;
     uint64_t object_id;
     uint64_t size_bytes;
+    uint8_t has_transfer;
+    ShadowSpillObjectTransfer transfer;
     _Atomic uint32_t references;
     _Atomic uint32_t owners;
     _Atomic uint8_t registration_owned;
@@ -61,6 +63,17 @@ struct ShadowSpillObject {
     struct ShadowSpillObject *id_index_next;
 };
 
+static inline uint64_t shadowspill_object_spill_bytes(const ShadowSpillObject *object) {
+    return object->has_transfer ? object->transfer.spill_size_bytes : object->size_bytes;
+}
+
+static inline uint64_t shadowspill_object_pool_bytes(
+    const ShadowSpillObject *object, const ShadowSpillMemoryPool *pool
+) {
+    return pool->kind == SHADOWSPILL_POOL_DEVICE
+        ? object->size_bytes : shadowspill_object_spill_bytes(object);
+}
+
 struct ShadowSpillObjectHandle {
     ShadowSpillRuntime *runtime;
     ShadowSpillObject *object;
@@ -86,6 +99,7 @@ struct ShadowSpillQueuedAction {
     uint64_t action_ordinal;
     uint64_t activation_generation;
     uint64_t completed_generation;
+    uint64_t collective_sequence;
     uint8_t kind;
     uint8_t state;
     ShadowSpillMemoryLease *destination_lease;

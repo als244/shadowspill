@@ -69,6 +69,7 @@ from .state import (
     import_model_state_from_file,
     import_optimizer_state,
     import_optimizer_state_from_file,
+    initialize_storage_,
     read_model_state,
     read_optimizer_state,
     release_model_state,
@@ -144,6 +145,7 @@ __all__ = [
     "import_model_state_from_file",
     "import_optimizer_state",
     "import_optimizer_state_from_file",
+    "initialize_storage_",
     "plan_forward",
     "plan_step",
     "plan_step_search",
@@ -156,5 +158,7 @@ __all__ = [
 ]
 
 from .distributed import Distributed as Distributed
+from .distributed import TransferSharding as TransferSharding
 
 __all__.append("Distributed")
+__all__.append("TransferSharding")

@@ -140,7 +140,7 @@ class TrainingMaterializedState(MaterializedState):
             registrations.setdefault(alias_id, []).append(item)
         for ordinal, (alias_id, items) in enumerate(registrations.items()):
             owner = torch.empty(
-                self._planning_cpu_owners[alias_id].numel(),
+                self._alias_sizes[alias_id],
                 dtype=torch.uint8,
                 device=self.device,
             )
@@ -436,7 +436,7 @@ class TrainingMaterializedState(MaterializedState):
         self.bridge.wait_runtime_idle()
         owners: dict[str, torch.Tensor] = {}
         aliases = self._model_aliases if aliases is None else aliases
-        for alias_id in aliases:
+        for alias_id in sorted(aliases):
             view = spill_view(self.bridge.objects, alias_id)
             if view is not None:
                 owners[alias_id] = view
@@ -620,7 +620,7 @@ class TrainingMaterializedState(MaterializedState):
             self._persistent_aliases.add(alias_id)
             self._planning_cpu_owners[alias_id] = persistent.anchor
         owner = torch.empty(
-            source.untyped_storage().nbytes(),
+            self._alias_sizes[alias_id],
             dtype=torch.uint8,
             device=self.device,
         )

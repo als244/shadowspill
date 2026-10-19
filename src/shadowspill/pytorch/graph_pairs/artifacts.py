@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass, replace
 
 import torch
@@ -11,6 +12,7 @@ from shadowspill.pytorch.capture.aot import (
     accumulate_gradient_outputs,
     cast_gradient_outputs,
     materialize_gradient_outputs,
+    pad_gradient_outputs,
 )
 from shadowspill.pytorch.capture.artifacts import (
     AotGraphPair,
@@ -54,7 +56,12 @@ class GraphPairVariant:
             raise ValueError("graph-pair memory budget must be between zero and one")
         object.__setattr__(self, "memory_budget", float(self.memory_budget))
 
-    def with_gradient_dtype(self, dtype: torch.dtype | None) -> GraphPairVariant:
+    def with_gradient_dtype(
+        self,
+        dtype: torch.dtype | None,
+        *,
+        gradient_padding: Mapping[int, int] | None = None,
+    ) -> GraphPairVariant:
         """Return this variant with its parameter gradients produced at ``dtype``.
 
         ``None`` leaves each at the dtype of its parameter. Its accumulating
@@ -73,6 +80,14 @@ class GraphPairVariant:
             backward,
             tuple(sorted(_produced_output_leaves(backward))),
             memory_formats=_activation_gradient_formats(self.pair, leaves),
+        )
+        backward = pad_gradient_outputs(
+            backward,
+            {
+                index: size
+                for index, size in (gradient_padding or {}).items()
+                if index in leaves
+            },
         )
         return (
             self
@@ -143,12 +158,20 @@ class TaskGraphPairs:
                 return item
         raise KeyError(option_id)
 
-    def with_gradient_dtype(self, dtype: torch.dtype | None) -> TaskGraphPairs:
+    def with_gradient_dtype(
+        self,
+        dtype: torch.dtype | None,
+        *,
+        gradient_padding: Mapping[int, int] | None = None,
+    ) -> TaskGraphPairs:
         """Every variant with its parameter gradients produced at ``dtype``."""
 
         return replace(
             self,
-            variants=tuple(item.with_gradient_dtype(dtype) for item in self.variants),
+            variants=tuple(
+                item.with_gradient_dtype(dtype, gradient_padding=gradient_padding)
+                for item in self.variants
+            ),
         )
 
     def accumulating_variants(

@@ -25,6 +25,7 @@ class ObjectDescription(ctypes.Structure):
         ("initial_pool_id", ctypes.c_uint32),
         ("retain_spill_copy", ctypes.c_uint8),
         ("initially_resident", ctypes.c_uint8),
+        ("transfer", ctypes.c_void_p),
     ]
 
 

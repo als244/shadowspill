@@ -85,6 +85,7 @@ int shadowspill_complete_events(
             uint32_t task = word * 64U + bit;
             active &= active - 1U;
             if (work->tasks[task].end_ns == work->now_ns &&
+                !shadowspill_advance_task_phase(program, work, task) &&
                 !shadowspill_complete_task(program, work, result, task)) {
                 return 0;
             }

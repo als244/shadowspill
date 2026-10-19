@@ -9,52 +9,6 @@ int shadowspill_problem_add_u64(uint64_t left, uint64_t right, uint64_t *result)
     return 0;
 }
 
-/* Return ceil(numerator * 1e9 / denominator) without overflowing uint64_t. */
-static int transfer_duration_ns(
-    uint64_t numerator,
-    uint64_t denominator,
-    uint64_t *result
-) {
-    const uint64_t scale = UINT64_C(1000000000);
-    if (denominator == 0U) {
-        return -1;
-    }
-    uint64_t whole = numerator / denominator;
-    uint64_t remainder = numerator % denominator;
-    if (whole > UINT64_MAX / scale) {
-        return -1;
-    }
-    uint64_t quotient = 0U;
-    uint64_t fractional_remainder = 0U;
-    uint64_t highest_bit = UINT64_C(1) << 29U;
-    for (uint64_t bit = highest_bit; bit != 0U; bit >>= 1U) {
-        if (quotient > UINT64_MAX / 2U) {
-            return -1;
-        }
-        quotient *= 2U;
-        if (fractional_remainder >= denominator - fractional_remainder) {
-            fractional_remainder -= denominator - fractional_remainder;
-            ++quotient;
-        } else {
-            fractional_remainder *= 2U;
-        }
-        if ((scale & bit) == 0U) {
-            continue;
-        }
-        if (fractional_remainder >= denominator - remainder) {
-            fractional_remainder -= denominator - remainder;
-            ++quotient;
-        } else {
-            fractional_remainder += remainder;
-        }
-    }
-    if (fractional_remainder != 0U) {
-        ++quotient;
-    }
-    uint64_t duration = whole * scale;
-    /* Keep heuristic transfer costs consistent with bandwidth-only simulation. */
-    return shadowspill_problem_add_u64(duration, quotient, result);
-}
 
 int shadowspill_problem_program_problem_valid(
     const ShadowSpillIndexedProblem *problem,
@@ -520,15 +474,15 @@ ShadowSpillStatus shadowspill_problem_finalize_alias_facts(
     for (uint32_t alias = 0U; alias < program->alias_count; ++alias) {
         uint32_t device = program->alias_device[alias];
         if (device >= program->device_count ||
-            transfer_duration_ns(
-                program->alias_size_bytes[alias],
+            shadowspill_transfer_duration_ns(
+                program, alias, SHADOWSPILL_TRANSFER_FETCH,
                 (program->devices[device].fetch_solo_bandwidth_bytes_per_second > program->devices[device].fetch_concurrent_bandwidth_bytes_per_second
                     ? program->devices[device].fetch_solo_bandwidth_bytes_per_second
                     : program->devices[device].fetch_concurrent_bandwidth_bytes_per_second),
                 &prepared->fetch_runtime_ns[alias]
             ) != 0 ||
-            transfer_duration_ns(
-                program->alias_size_bytes[alias],
+            shadowspill_transfer_duration_ns(
+                program, alias, SHADOWSPILL_TRANSFER_EVICT,
                 (program->devices[device].evict_solo_bandwidth_bytes_per_second > program->devices[device].evict_concurrent_bandwidth_bytes_per_second
                     ? program->devices[device].evict_solo_bandwidth_bytes_per_second
                     : program->devices[device].evict_concurrent_bandwidth_bytes_per_second),

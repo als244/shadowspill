@@ -65,6 +65,8 @@ def register_object(
     retain_spill_copy: bool,
     initially_resident: bool,
     source_address: int = 0,
+    transfer_address: int = 0,
+    source_size_bytes: int | None = None,
 ) -> int:
     """Register one runtime object, and populate it when a source is given.
 
@@ -78,6 +80,7 @@ def register_object(
         initial_pool_id=pool_id,
         retain_spill_copy=int(retain_spill_copy),
         initially_resident=int(initially_resident),
+        transfer=transfer_address,
     )
     status = int(
         runtime_library().shadowspill_register_object(
@@ -88,7 +91,11 @@ def register_object(
         return status
     return int(
         runtime_library().shadowspill_write_object(
-            runtime._runtime_handle, object_id, pool_id, source_address, size_bytes
+            runtime._runtime_handle,
+            object_id,
+            pool_id,
+            source_address,
+            size_bytes if source_size_bytes is None else source_size_bytes,
         )
     )
 

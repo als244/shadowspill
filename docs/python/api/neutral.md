@@ -35,7 +35,9 @@ importing a framework.
 Logical program values:
 
 - `ShadowSpillProgram`, `TaskSpec`, `TaskProfile`
+- `TaskResourcePhase`, `TaskOverlapCost`
 - `ObjectSpec`, `ObjectRole`, `Persistence`, `AliasGroupSpec`, `MutationSpec`
+- `TransferSpec`, `TransferPhase`
 - `SharedResidencyPolicy`
 - `SharedResidencyFootprint`, `shared_residency_footprint()`
 - `ResourceSpec`, `ResourceKind`, `DeviceSpec`
@@ -46,6 +48,46 @@ Scheduling and execution values:
 - `MemorySchedule`, `MemoryAction`, `MemoryActionKind`, `MemoryLocation`
 - `ResidencySpec`
 - `ExecutionPlan`, `EntrypointSpec`, `PhysicalAdmission`, `PlanPrediction`
+
+An alias can carry `TransferSpec(spill_size_bytes, fetch, evict)`. Its ordinary
+`size_bytes` remains the full execution allocation. Each directional recipe is
+a nonempty tuple of `TransferPhase` values: `kind="copy"` consumes calibrated
+host-link bandwidth for `bytes`; `kind="timed"` consumes a named serial `resource`
+for `duration_ns`. A timed phase with `submission_ordered=True` follows trigger
+order (departures before fetches at the same boundary); each recipe supports at
+most one such phase. Fetch readiness and eviction source release occur only
+after the whole recipe. Recipes affect planning and simulation; the execution
+adapter must implement the same physical conversion.
+Ordered eviction recipes require `EVICT`; retained `WRITE_BACK` is rejected
+because collective conversions can overwrite their source during reduction.
+
+`TaskProfile.resource_phases` optionally splits a task into sequential
+`TaskResourcePhase(duration_ns, resource=None)` measurements. `None` is
+computation; a resource name occupies the corresponding transfer queue. Phase
+durations must sum to `runtime_ns`. This represents an optimizer's computation
+and collectives separately, so only its collective intervals reserve the
+communicator. Waiting preserves task workspace and does not count as compute.
+
+`TaskProfile.overlap_costs` optionally contains
+`TaskOverlapCost(timing_class, bytes, task_rate, transfer_rate)` samples.
+A timed `TransferPhase.timing_class` selects compatible samples. The class
+should identify the operation and communication configuration; its byte
+definition must match the transfer phase's `bytes`. Rates in `(0, 1]` express
+isolated work completed per unit wall time while the two operations overlap.
+Unmatched phases use rate one. Message-size interpolation uses `log(1 + bytes)`
+and clamps outside the measured size range. Neither byte accounting nor copy
+bandwidth changes. See the [native timing semantics](../../c/simulator.md#task-phases-and-measured-overlap)
+for shared resources and the limits of pairwise interference modeling.
+
+Both fields are serialized and included in program identity. PyTorch
+`TaskMeasurement` carries the same fields into lowering and its profile store.
+Symmetric planning uses the complete phase decomposition of the slowest task
+profile and the minimum measured progress rates across ranks. Measurements
+must come from independent preparation probes; there is no automatic
+step-duration multiplier or model-specific correction. Empty measurements
+retain isolated timing. Artifact version 2 and native ABI 3 carry this contract.
+The PyTorch transfer-sharding frontend now measures these costs during profiling;
+its measurement-policy identity prevents reuse of prior isolated-only profiles.
 
 Indexed compiled projections:
 

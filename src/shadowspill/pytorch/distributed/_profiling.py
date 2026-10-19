@@ -14,6 +14,7 @@ from . import current
 _PHASE: ContextVar[tuple[str, ...]] = ContextVar(
     "shadowspill_profile_phase", default=()
 )
+_BATCH: ContextVar[bool] = ContextVar("shadowspill_profile_batch", default=False)
 
 
 @contextmanager
@@ -49,6 +50,9 @@ def continue_timing(needed: bool, allowed: bool) -> bool:
 @contextmanager
 def invocation() -> Iterator[None]:
     """The caller drains device work before leaving this scope."""
+    if _BATCH.get():
+        yield
+        return
     bound = current()
     if bound is not None:
         bound.control.agree(label("invoke/begin"), None)
@@ -60,6 +64,17 @@ def invocation() -> Iterator[None]:
         raise
     if bound is not None:
         bound.control.exchange(label("invoke/complete"), True)
+
+
+@contextmanager
+def invocation_batch() -> Iterator[None]:
+    """Coordinate one fixed-count burst while retaining per-call GPU drains."""
+    with invocation():
+        token = _BATCH.set(True)
+        try:
+            yield
+        finally:
+            _BATCH.reset(token)
 
 
 @dataclass(frozen=True)

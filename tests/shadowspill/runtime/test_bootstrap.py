@@ -142,7 +142,7 @@ def test_declarative_adapter_abi_has_expected_c_layout() -> None:
     # 672 rather than 664: it embeds BackendStatistics, which grew by one.
     assert ctypes.sizeof(AdapterStatistics) == 672
     assert ctypes.sizeof(ObjectBinding) == 40
-    assert ctypes.sizeof(ObjectDescription) == 32
+    assert ctypes.sizeof(ObjectDescription) == 40
     assert ctypes.sizeof(ObjectUpdate) == 16
     assert ctypes.sizeof(RuntimeAction) == 24
     assert ctypes.sizeof(FixedPlacementDescription) == 56

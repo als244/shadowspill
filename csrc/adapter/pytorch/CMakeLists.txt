@@ -65,11 +65,19 @@ if(NOT CMAKE_CUDA_COMPILER AND "$ENV{CUDACXX}" STREQUAL "")
 endif()
 find_package(Torch QUIET)
 if(Torch_FOUND)
-  target_sources(shadowspill_pytorch PRIVATE storage/cpu.cpp storage/device.cpp)
+  # CUDA toolkits do not own NCCL. Prefer the headers shipped beside the torch
+  # wheel over a system toolkit's unconfigured nccl.h template.
+  find_path(SHADOWSPILL_NCCL_INCLUDE_DIR nccl.h
+    HINTS "${TORCH_INSTALL_PREFIX}/../nvidia/nccl/include" "$ENV{NCCL_ROOT}/include"
+    REQUIRED)
+  file(GLOB SHADOWSPILL_TORCH_CUDA_HEADERS "${TORCH_INSTALL_PREFIX}/../nvidia/*/include")
+  target_include_directories(shadowspill_pytorch SYSTEM BEFORE PRIVATE
+    ${SHADOWSPILL_NCCL_INCLUDE_DIR} ${SHADOWSPILL_TORCH_CUDA_HEADERS})
+  target_sources(shadowspill_pytorch PRIVATE storage/cpu.cpp storage/device.cpp storage/sharded.cpp telemetry/collectives.cpp profiling/collectives.cpp)
   target_link_libraries(shadowspill_pytorch PRIVATE ${TORCH_LIBRARIES})
   target_compile_definitions(
     shadowspill_pytorch
-    PRIVATE SHADOWSPILL_PYTORCH_STORAGE_ADAPTER=1
+    PRIVATE SHADOWSPILL_PYTORCH_STORAGE_ADAPTER=1 USE_C10D_NCCL
   )
   if(TORCH_CXX_FLAGS)
     separate_arguments(

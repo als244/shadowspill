@@ -519,6 +519,7 @@ class MaterializedForwardState(MaterializedState):
         if alias_id in self._model_aliases:
             self._registered_model_aliases.add(alias_id)
         owner, representative = self._build_device_views(
+            alias_id,
             values,
             registration_by_id,
         )
@@ -615,12 +616,12 @@ class MaterializedForwardState(MaterializedState):
 
     def _build_device_views(
         self,
+        alias_id: str,
         values: list[_MaterializationEntry],
         registration_by_id: dict[int, _Registration],
     ) -> tuple[torch.Tensor, torch.Tensor]:
-        source = values[0][0]
         owner = torch.empty(
-            source.untyped_storage().nbytes(), dtype=torch.uint8, device=self.device
+            self._alias_sizes[alias_id], dtype=torch.uint8, device=self.device
         )
         views: dict[int, torch.Tensor] = {}
         for source_tensor, root_position in values:

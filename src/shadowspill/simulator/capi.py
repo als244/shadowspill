@@ -24,6 +24,23 @@ class CDevice(ctypes.Structure):
     ]
 
 
+class CTransferPhase(ctypes.Structure):
+    _fields_ = [
+        ("kind", ctypes.c_uint32),
+        ("resource", ctypes.c_uint32),
+        ("bytes", ctypes.c_uint64),
+        ("duration_ns", ctypes.c_uint64),
+        ("submission_ordered", ctypes.c_uint32),
+    ]
+
+
+class CTaskResourcePhase(ctypes.Structure):
+    _fields_ = [
+        ("duration_ns", ctypes.c_uint64),
+        ("resource", ctypes.c_uint32),
+    ]
+
+
 class CProgram(ctypes.Structure):
     _fields_ = [
         ("abi_version", ctypes.c_uint32),
@@ -74,6 +91,20 @@ class CProgram(ctypes.Structure):
         ("reuse_predecessor_actions", ctypes.POINTER(ctypes.c_uint32)),
         ("reuse_successor_tasks", ctypes.POINTER(ctypes.c_uint32)),
         ("reuse_successor_actions", ctypes.POINTER(ctypes.c_uint32)),
+        ("alias_spill_size_bytes", ctypes.POINTER(ctypes.c_uint64)),
+        ("transfer_phase_count", ctypes.c_uint32),
+        ("transfer_resource_count", ctypes.c_uint32),
+        ("alias_transfer_offsets", ctypes.POINTER(ctypes.c_uint32)),
+        ("transfer_phases", ctypes.POINTER(CTransferPhase)),
+        ("task_phase_count", ctypes.c_uint32),
+        ("task_phase_offsets", ctypes.POINTER(ctypes.c_uint32)),
+        ("task_phases", ctypes.POINTER(CTaskResourcePhase)),
+        ("overlap_category_count", ctypes.c_uint32),
+        ("overlap_profile_count", ctypes.c_uint32),
+        ("task_overlap_profiles", ctypes.POINTER(ctypes.c_uint32)),
+        ("transfer_overlap_categories", ctypes.POINTER(ctypes.c_uint32)),
+        ("task_overlap_rates", ctypes.POINTER(ctypes.c_double)),
+        ("transfer_overlap_rates", ctypes.POINTER(ctypes.c_double)),
     ]
 
 

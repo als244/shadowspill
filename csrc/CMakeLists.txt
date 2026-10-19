@@ -13,6 +13,8 @@ add_library(
   src/simulator/admission.c
   src/simulator/diagnostics.c
   src/simulator/events.c
+  src/simulator/contention.c
+  src/simulator/task_phases.c
   src/simulator/memory.c
   src/simulator/schedule_check.c
   src/simulator/simulator.c

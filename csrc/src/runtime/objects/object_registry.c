@@ -22,7 +22,10 @@ static ShadowSpillStatus register_object(
         description->object_id == SHADOWSPILL_RUNTIME_NO_ID ||
         description->retain_spill_copy > 1U ||
         description->initially_resident > 1U ||
-        (placed && !description->initially_resident)) {
+        (placed && !description->initially_resident) ||
+        (description->transfer != NULL &&
+         (description->transfer->retain == NULL || description->transfer->release == NULL ||
+          description->transfer->enqueue == NULL))) {
         return SHADOWSPILL_STATUS_INVALID_ARGUMENT;
     }
     pthread_mutex_lock(&runtime->mutex);
@@ -62,6 +65,10 @@ static ShadowSpillStatus register_object(
     }
     created->object_id = description->object_id;
     created->size_bytes = description->size_bytes;
+    created->has_transfer = description->transfer != NULL;
+    if (created->has_transfer) {
+        created->transfer = *description->transfer;
+    }
     created->authoritative_version = description->initial_version;
     created->retain_spill_copy = description->retain_spill_copy;
     created->allocation_id = SHADOWSPILL_RUNTIME_NO_ID;
@@ -93,7 +100,7 @@ static ShadowSpillStatus register_object(
             reserve_status = shadowspill_memory_pool_adopt_borrowed_lease_locked(
                 initial_pool,
                 initial_lease,
-                description->size_bytes,
+                shadowspill_object_pool_bytes(created, initial_pool),
                 initial_pool->minimum_alignment,
                 offset
             );
@@ -101,7 +108,7 @@ static ShadowSpillStatus register_object(
             reserve_status = shadowspill_memory_pool_reserve_lease_locked(
                 initial_pool,
                 initial_lease,
-                description->size_bytes,
+                shadowspill_object_pool_bytes(created, initial_pool),
                 1U,
                 SHADOWSPILL_MEMORY_FIRST_FIT
             );
@@ -151,6 +158,9 @@ static ShadowSpillStatus register_object(
         free(created);
         status = SHADOWSPILL_STATUS_INVALID_STATE;
         goto done;
+    }
+    if (created->has_transfer) {
+        created->transfer.retain(created->transfer.context);
     }
     ++runtime->registered_objects;
 
@@ -303,7 +313,9 @@ ShadowSpillStatus shadowspill_write_object(
     if (status != SHADOWSPILL_STATUS_OK) {
         goto done;
     }
-    if (object == NULL || bytes != object->size_bytes ||
+    if (object == NULL || bytes != shadowspill_object_pool_bytes(
+            object, shadowspill_runtime_pool(runtime, pool_id)
+        ) ||
         shadowspill_object_location(object, pool_id)->lease == NULL ||
         object->residency != SHADOWSPILL_OBJECT_SPILL_ONLY ||
         object->allocation_id != SHADOWSPILL_RUNTIME_NO_ID) {
@@ -369,7 +381,9 @@ ShadowSpillStatus shadowspill_read_object(
        copy", so a caller could not read state that was also on the device --
        which a checkpoint has to be able to do without first giving up residency
        to get at it. */
-    if (object == NULL || bytes != object->size_bytes ||
+    if (object == NULL || bytes != shadowspill_object_pool_bytes(
+            object, shadowspill_runtime_pool(runtime, pool_id)
+        ) ||
         location->lease == NULL || !location->current ||
         location->version != object->authoritative_version) {
         status = SHADOWSPILL_STATUS_INVALID_STATE;

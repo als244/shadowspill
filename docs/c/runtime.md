@@ -396,6 +396,10 @@ Runtime tracing uses:
 - `shadowspill_trace_end()`
 - `shadowspill_trace_read()`, which fills a `ShadowSpillTraceSummary` beside
   the events and, with null arrays, reports the counts alone
+- `shadowspill_trace_context()`, which reports the calling thread's task or
+  transfer trigger, object, action ordinal, and issue time while a trace is active
+- `shadowspill_trace_event_instant()`, which places a completed frontend-owned
+  backend timing event on the trace's origin axis without waiting or retaining it
 
 Neither ring grows from a hot path, and neither may grow while a session is
 active. Both are diagnostic and a step never depends on either: a ring that
@@ -549,6 +553,10 @@ something names the scope that made it.
 `ShadowSpillRuntimeFailure`: the status, a `ShadowSpillFailureReason`, the
 pool, task, object and allocation it names, and, for an allocation-contract
 break, the expected and actual operation at that step.
+For a transfer-destination reservation failure, the pool and free-range fields
+describe the destination: execution for a fetch, spill for an eviction or
+write-back. Requested bytes use that pool's representation size, including a
+sharded spill representation, rather than always using the full execution copy.
 `shadowspill_runtime_recover_no_progress()` clears a latched NO_PROGRESS
 allocation failure -- and nothing else, since every other failure stays
 latched -- so the worker can drain what it already owns and objects and pool

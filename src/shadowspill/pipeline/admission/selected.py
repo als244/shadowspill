@@ -61,6 +61,18 @@ class SelectedAdmission:
     def envelopes_by_task(self) -> dict[str, TaskMemoryEnvelope]:
         return dict(self.task_envelopes)
 
+    def anonymous_allocation_bytes(self) -> dict[tuple[str, int], int]:
+        """Exact local temporary sizes within a possibly larger shared layout."""
+        return {
+            (task_id, step.allocation_ordinal): step.charged_bytes
+            for task_id, envelope in self.task_envelopes
+            if envelope.allocation_contract is not None
+            for step in envelope.allocation_contract.steps
+            if step.operation is TaskAllocationOperation.ALLOCATE
+            and not step.output_leaf_indices
+            and not step.persistent_after_task
+        }
+
     def persistent_allocation_policies(
         self,
     ) -> tuple[DynamicTaskAllocationPolicy, ...]:

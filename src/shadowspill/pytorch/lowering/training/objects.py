@@ -190,6 +190,14 @@ def _register_gradients(
         gradient_id = inventory.add(
             gradient, role=ObjectRole.GRADIENT, persistence=Persistence.STEP
         )
+        from shadowspill.pytorch.distributed import current
+
+        bound = current()
+        if bound is not None and name in bound.gradient_transfers:
+            transfer = bound.gradient_transfers[name]
+            alias = inventory._record(gradient_id).alias_group_id
+            inventory._alias_sizes[alias] = transfer.execution_bytes
+            inventory._alias_transfers[alias] = transfer.transfer
         results.append(GradientBinding(name, parameter_id, gradient_id))
     return tuple(results)
 

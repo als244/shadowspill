@@ -72,12 +72,13 @@ static int pinned_host_device_wait(ShadowSpillLane *lane, ShadowSpillBackendEven
         : -1;
 }
 
-static int pinned_host_device_copy(
+static int pinned_host_device_copy_impl(
     ShadowSpillLane *lane,
     void *destination,
     const void *source,
     uint64_t bytes,
-    uint64_t *handle
+    uint64_t *handle,
+    const ShadowSpillObjectTransfer *transfer
 ) {
     PinnedHostDeviceLane *self = (PinnedHostDeviceLane *)lane;
     const ShadowSpillBackend *backend = lane->backend;
@@ -114,7 +115,12 @@ static int pinned_host_device_copy(
         }
     }
 
-    const int failed = lane->to_kind == SHADOWSPILL_POOL_DEVICE
+    const int failed = transfer != NULL
+        ? transfer->enqueue(
+              transfer->context, backend, lane->stream,
+              lane->to_kind == SHADOWSPILL_POOL_DEVICE, destination, source
+          )
+        : lane->to_kind == SHADOWSPILL_POOL_DEVICE
         ? backend->copy_host_to_device(
               backend->state, destination, source, bytes, lane->stream
           )
@@ -141,6 +147,22 @@ static int pinned_host_device_copy(
     shadowspill_lane_counted(&lane->chunks, 1U);
     shadowspill_lane_counted(&lane->bytes, bytes);
     return 0;
+}
+
+static int pinned_host_device_copy(
+    ShadowSpillLane *lane, void *destination, const void *source,
+    uint64_t bytes, uint64_t *handle
+) {
+    return pinned_host_device_copy_impl(lane, destination, source, bytes, handle, NULL);
+}
+
+static int pinned_host_device_copy_transformed(
+    ShadowSpillLane *lane, const ShadowSpillObjectTransfer *transfer,
+    void *destination, const void *source, uint64_t *handle
+) {
+    return pinned_host_device_copy_impl(
+        lane, destination, source, transfer->spill_size_bytes, handle, transfer
+    );
 }
 
 static int pinned_host_device_signal(
@@ -214,6 +236,7 @@ static void pinned_host_device_destroy(ShadowSpillLane *lane) {
 static const ShadowSpillLaneOperations pinned_host_device_operations = {
     .wait = pinned_host_device_wait,
     .copy = pinned_host_device_copy,
+    .copy_transformed = pinned_host_device_copy_transformed,
     .signal = pinned_host_device_signal,
     .synchronize = pinned_host_device_synchronize,
     .transfer = pinned_host_device_transfer,

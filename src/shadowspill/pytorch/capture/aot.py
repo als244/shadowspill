@@ -42,7 +42,7 @@ from shadowspill.task.inputs import TaskInputRole
 from .accumulate import ACCUMULATE_MATMUL, ADDING_INTO
 from .effects import normalize_export_effects
 from .functional import functionalize_logical_export
-from .materialize import MATERIALIZE_GRADIENT
+from .materialize import MATERIALIZE_GRADIENT, PAD_GRADIENT_STORAGE
 from .torch_deprecations import copy_graph_module, quiet_leaf_spec_deprecation
 
 
@@ -923,7 +923,13 @@ def accumulate_gradient_outputs(
             prior = graph.placeholder(f"shadowspill_prior_grad_{leaf}")
         prior.meta = dict(produced.meta)
         with fake_mode if fake_mode is not None else nullcontext():
-            _record_value(prior, torch.zeros_like(value))
+            extent = value.untyped_storage().nbytes() // value.element_size()
+            if extent > value.numel():
+                owner = value.new_zeros((extent,))
+                prior_value = owner.as_strided(value.shape, value.stride())
+            else:
+                prior_value = torch.zeros_like(value)
+            _record_value(prior, prior_value)
         anchor = prior
         adding = _add_in_multiply(
             graph, produced, prior, outputs, fake_mode, round_accumulation_once
@@ -1054,6 +1060,46 @@ def materialize_gradient_outputs(
         with mode if mode is not None else nullcontext():
             _record_value(node, produced.meta["val"].clone(memory_format=memory_format))
         leaves[index] = node
+    output.args = (tuple(leaves),)
+    graph.lint()
+    graph_module.recompile()
+    return GraphArtifact.capture(
+        kind="backward",
+        graph_module=graph_module,
+        example_inputs=backward.example_arguments,
+        input_provenance=backward.input_provenance,
+    )
+
+
+def pad_gradient_outputs(
+    backward: GraphArtifact, multiples: Mapping[int, int]
+) -> GraphArtifact:
+    """Declare shard padding in the measured backward allocation contract."""
+    if not multiples:
+        return backward
+    graph_module = copy_graph_module(backward.graph_module)
+    graph = graph_module.graph
+    output = next(node for node in graph.nodes if node.op == "output")
+    leaves = list(output.args[0])
+    mode = detect_fake_mode(backward.example_arguments)
+    changed = False
+    for index, multiple in multiples.items():
+        produced = leaves[index]
+        if produced is None:
+            continue
+        value = produced.meta["val"]
+        elements = value.untyped_storage().nbytes() // value.element_size()
+        padded = (elements + multiple - 1) // multiple * multiple
+        if padded == elements:
+            continue
+        with graph.inserting_before(output):
+            node = graph.call_function(PAD_GRADIENT_STORAGE, args=(produced, padded))
+        with mode if mode is not None else nullcontext():
+            _record_value(node, PAD_GRADIENT_STORAGE(value, padded))
+        leaves[index] = node
+        changed = True
+    if not changed:
+        return backward
     output.args = (tuple(leaves),)
     graph.lint()
     graph_module.recompile()

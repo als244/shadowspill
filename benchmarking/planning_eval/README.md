@@ -19,7 +19,7 @@ host with more cores finishes sooner.
 
 ```bash
 PYTHONUNBUFFERED=1 python -m benchmarking.planning_eval.evaluate \
-  --config benchmarking/planning_eval/configs/full_search_frontier_v1_repairs256.json \
+  --config benchmarking/planning_eval/configs/full_search_frontier_v2_repairs256.json \
   --corpus-dir benchmarking/datasets/input_programs/full_model_program_corpus_<rev> \
   --output-dir benchmarking/planning_eval/results/full_search_frontier_<rev>_repairs256 \
   --artifact-store benchmarking/planning_eval/planning_caches/frontier_<rev>

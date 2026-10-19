@@ -66,7 +66,7 @@ def prepared[**P, R](
                 and not bound.initialized
                 and not any(p.is_meta for p in model.parameters())
             ):
-                bound.synchronize_initial(model)
+                bound.synchronize_initial(model, runtime=runtime)
                 bound.initialized = True
             result = function(*args, **kwargs)
             if isinstance(result, nn.Module):
@@ -75,7 +75,7 @@ def prepared[**P, R](
                     from shadowspill.pytorch.state.initialization import pool_values
 
                     with pool_values(runtime):
-                        bound.synchronize_initial(result)
+                        bound.synchronize_initial(result, runtime=runtime)
                     if bound.specification.sync_initial_state:
                         from shadowspill.pytorch.state.storage import (
                             refresh_persistent_state,
@@ -137,11 +137,18 @@ def collective_identity(local: dict[str, Any]) -> dict[str, Any]:
     bound = current()
     if bound is None:
         return local
+    from ._timing_identity import communication_timing_identity
+
     state = {
         "rank": bound.control.rank,
         "parameters": [value.record() for value in bound.parameters],
         "groups": bound.groups.aliases,
+        "communication_timing": communication_timing_identity(bound),
         "shard_optimizer": bound.shard_optimizer,
+        "shard_gradients": bound.specification.shard_gradients,
+        "transfer_sharding": {
+            name: layout.record() for name, layout in bound.transfer_sharding.items()
+        },
     }
     peers = bound.control.exchange(
         "archive/identity", {"local": local, "distributed": state}

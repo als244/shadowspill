@@ -42,7 +42,7 @@ def test_candidate_parallelism_preserves_the_complete_result(workers: int) -> No
 
     assert (
         result.schedule.digest
-        == "f7443cc16b764df6e26ae980807157ff6d7f6bb12c28139ee048ea19d4322060"
+        == "813b405ee06e26b5fab177d0ef8b5fd616c80c543ca8be5367f1d3b050f0696d"
     )
     assert result.diagnostics.selected_makespan_ns == 4_000
     # Two residency strategies and four fetch rules.
@@ -129,7 +129,7 @@ def test_direct_required_floor_matches_minimal_residency_sweep() -> None:
         (
             1,
             224,
-            "2b2c8a40cd0bf39928f6e58fd0027b105be9a406f22797ef141f60a2b08b327a",
+            "a78ee7e9eb2735d48a9f4258ce83c4ac0b7828a3d70484ec763a3540bf0e8052",
             64_000,
             "tight-stall/packed-fit",
             15,
@@ -137,7 +137,7 @@ def test_direct_required_floor_matches_minimal_residency_sweep() -> None:
         (
             2,
             224,
-            "8930d44dacbbcab9e299071ee903033cd084c9c02e7d73166c69cb4c57b7766c",
+            "482d8535003d3322d5bcaba539d27bcaff32b902ca83b6a61bf8f8d378c3fb06",
             118_000,
             "tight-stall/packed-fit",
             26,
@@ -145,7 +145,7 @@ def test_direct_required_floor_matches_minimal_residency_sweep() -> None:
         (
             5,
             800,
-            "90f81d896f3470ac31857ae278365418352cc36e2aab4974fe717386de81f9d6",
+            "3a6e465132cb17bfe4dfaf414ceaa1d017028cbfb69b6388edcc8a3c4fa75ab9",
             164_000,
             "headroom-stall/packed-fifo",
             41,
@@ -153,7 +153,7 @@ def test_direct_required_floor_matches_minimal_residency_sweep() -> None:
         (
             10,
             500,
-            "7d4b160615a1fa712d13437dd5246d947d00b7a71bc7ce287077a9bc1031c54d",
+            "37b58d44a2ebd53c31a6ff6b8d7bd8ad77ec5bf646673aac255c774c468bcdbd",
             310_000,
             "headroom-stall/packed-fifo",
             104,

@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from dataclasses import replace
 
+import pytest
+
 from shadowspill.ir import (
     AliasGroupSpec,
     MemoryAction,
@@ -35,6 +37,70 @@ from shadowspill.pytorch.planning.admission import build_fixed_layout_admission
 from shadowspill.runtime.fixed_layout import RuntimePlacementKind
 from shadowspill.simulator import SimulationConfig, simulate
 from tests.shadowspill.planner._examples import COMPUTE, DEVICE
+
+
+def test_rank_local_temporary_uses_certified_slot_without_enlarging_it():
+    program = ShadowSpillProgram(
+        devices=(DEVICE,),
+        alias_groups=(AliasGroupSpec("alias_000000", "cuda_0", 8),),
+        objects=(ObjectSpec("object_000000", "alias_000000", 0, 8),),
+        profiles=(TaskProfile("profile", 10, 16, "abi"),),
+        tasks=(TaskSpec("task_000000", COMPUTE, "profile", inputs=("object_000000",)),),
+    )
+    resident = (ResidencySpec("alias_000000", MemoryLocation.DEVICE),)
+    schedule = MemorySchedule(
+        initial_residency=resident, actions=(), final_residency=resident
+    )
+    config = SimulationConfig.single_device(
+        "cuda_0",
+        device_capacity_bytes=64,
+        spill_capacity_bytes=64,
+        fetch_solo_bandwidth_bytes_per_second=1_000_000_000,
+        fetch_concurrent_bandwidth_bytes_per_second=1_000_000_000,
+        evict_solo_bandwidth_bytes_per_second=1_000_000_000,
+        evict_concurrent_bandwidth_bytes_per_second=1_000_000_000,
+    )
+    facts = AdmissionFacts(
+        "cuda_0",
+        64,
+        64,
+        1,
+        (
+            TaskAdmissionSpec(
+                "task_000000",
+                workspace_extents=(16,),
+                allocation_steps=(
+                    TaskAllocationStep(0, TaskAllocationStepKind.ALLOCATE, 16),
+                    TaskAllocationStep(0, TaskAllocationStepKind.RELEASE),
+                ),
+            ),
+        ),
+    )
+    admission = build_fixed_layout_admission(
+        _selected(program, schedule, config), facts
+    )
+    shared = project_runtime_fixed_layout(admission.layout, program, schedule)
+    local = project_runtime_fixed_layout(
+        admission.layout,
+        program,
+        schedule,
+        anonymous_allocation_bytes={("task_000000", 0): 8},
+    )
+    assert local.slice_bytes == shared.slice_bytes
+    assert local.dependencies == shared.dependencies
+    for smaller, larger in zip(local.placements, shared.placements, strict=True):
+        assert smaller.offset == larger.offset
+        if smaller.kind is RuntimePlacementKind.TASK_ALLOCATION:
+            assert smaller.bytes == 8 and larger.bytes == 16
+        else:
+            assert smaller == larger
+    with pytest.raises(ValueError, match="exceeds its certified slot"):
+        project_runtime_fixed_layout(
+            admission.layout,
+            program,
+            schedule,
+            anonymous_allocation_bytes={("task_000000", 0): 32},
+        )
 
 
 def _selected(

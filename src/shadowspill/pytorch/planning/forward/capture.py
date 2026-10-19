@@ -147,7 +147,9 @@ def _prepare_forward_inputs(
     representative_inputs = representative_cpu_inputs(resolved_inputs)
     signature = capture_input_signature(representative_inputs)
     cpu_inputs = tuple(representative_inputs)
-    estimate_spill_reservation(model, cpu_inputs, memory.spill_budget)
+    estimate_spill_reservation(
+        model, cpu_inputs, memory.spill_budget, runtime=memory.runtime
+    )
     return (
         signature,
         cpu_inputs,

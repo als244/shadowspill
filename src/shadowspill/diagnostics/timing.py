@@ -8,7 +8,7 @@ when the device got there.
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 
 from shadowspill.ir import MemoryAction
@@ -17,6 +17,8 @@ from shadowspill.runtime.abi import AdapterStatistics
 from shadowspill.runtime.timing import Marker
 from shadowspill.simulator import SimulationResult
 from shadowspill.task.entrypoints import TaskEntrypoint
+
+from .collectives import CollectiveTrace
 
 
 @dataclass(slots=True)
@@ -76,6 +78,8 @@ class ArmedExecutionTiming:
     timeline: InvocationTimeline | None = None
     simulation: SimulationResult | None = None
     trace_setup_ns: int = 0
+    collect_collectives: Callable[[], CollectiveTrace] | None = None
+    collectives: CollectiveTrace = field(default_factory=CollectiveTrace)
     #: Every read and write of each alias group by the selected tasks, as
     #: (execution ordinal, is_write) in execution order: what a transfer's
     #: record uses to name the task whose result it carries and the task

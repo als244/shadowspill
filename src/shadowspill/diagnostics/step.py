@@ -1,6 +1,7 @@
 """Immutable evidence for one traced step: summary, timelines, allocator, runtime.
 
-Every time here is seconds. Two clocks appear, and every field says which:
+Times here are seconds; the collective ledger retains integer nanoseconds.
+Two clocks appear, and every field says which:
 
 - the device timeline, read from timing events measured against the step's
   origin event on the compute stream. Task markers and transfer intervals
@@ -16,12 +17,14 @@ coordinates, so entry delay and accumulated dispatch drift stay visible.
 from __future__ import annotations
 
 from collections.abc import Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 from shadowspill.runtime.abi.statistics import LaneStatistics
 from shadowspill.runtime.telemetry import CapturedAllocationEvent
 from shadowspill.runtime.trace import RuntimeTraceEvent
 from shadowspill.schema import artifact_schema
+
+from .collectives import CollectiveTrace
 
 
 @dataclass(frozen=True, slots=True)
@@ -304,8 +307,8 @@ def _lane_statistics_as_dict(
         return None
     timed = bool(statistics.timed)
     result: dict[str, object] = {}
-    for field in LaneStatistics._fields_:
-        name = field[0]
+    for member in LaneStatistics._fields_:
+        name = member[0]
         if name == "timed":
             result[name] = timed
             continue
@@ -558,9 +561,29 @@ class StepTimingSummary:
     phase_comparisons: tuple[PhaseTimingComparison, ...]
     trace_complete: bool
 
+    @property
+    def simulated_task_seconds(self) -> float:
+        """Selected task intervals, including modeled contention within them."""
+        return (
+            self.simulated_selected_span_seconds
+            - self.simulated_inter_task_idle_seconds
+        )
+
+    @property
+    def simulated_task_contention_seconds(self) -> float:
+        return self.simulated_task_seconds - self.profiled_task_seconds
+
+    @property
+    def task_prediction_delta_seconds(self) -> float:
+        """Real task events minus the simulator's task intervals."""
+        return self.real_task_event_seconds - self.simulated_task_seconds
+
     def as_dict(self) -> dict[str, object]:
         return {
             "profiled_task_seconds": self.profiled_task_seconds,
+            "simulated_task_seconds": self.simulated_task_seconds,
+            "simulated_task_contention_seconds": self.simulated_task_contention_seconds,
+            "task_prediction_delta_seconds": self.task_prediction_delta_seconds,
             "real_task_event_seconds": self.real_task_event_seconds,
             "task_event_delta_seconds": self.task_event_delta_seconds,
             "simulated_inter_task_idle_seconds": (
@@ -622,6 +645,7 @@ class StepDiagnostics:
     timelines: Timelines
     allocator: AllocatorTrace
     runtime: RuntimeTrace
+    collectives: CollectiveTrace = field(default_factory=CollectiveTrace)
 
     def as_dict(self, *, events: bool = True) -> dict[str, object]:
         """Serialize every view. Without `events`, the two event ledgers --
@@ -637,6 +661,7 @@ class StepDiagnostics:
             "timelines": self.timelines.as_dict(),
             "allocator": self.allocator.as_dict(events=events),
             "runtime": self.runtime.as_dict(events=events),
+            "collectives": self.collectives.as_dict(),
         }
 
 

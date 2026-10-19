@@ -9,10 +9,10 @@ to any stored structure moves them all together.
 
 | Python value | Schema | Boundary |
 |---|---|---|
-| `ShadowSpillProgram` | `shadowspill.program/v1` | Framework-neutral logical tasks, objects, costs, sharing policies, and task alternatives. |
-| `ShadowSpillPlanningProblem` | `shadowspill.plan_program/v1` | One program plus residency, machine inputs, and admission topology. It carries no search options: a program is a problem, and how to search it is the caller's. |
-| `StepProgram` | `shadowspill.step_program/v1` | Complete PyTorch capture and profile result, as the step's `ShadowSpillPlanningProblem`. |
-| `AnnotatedProgramPlan` | `shadowspill.annotated_program_plan/v1` | The winning plan, physical admission, and simulator evidence for one budget/bandwidth point. |
+| `ShadowSpillProgram` | `shadowspill.program/v2` | Framework-neutral logical tasks, objects, costs, sharing policies, and task alternatives. |
+| `ShadowSpillPlanningProblem` | `shadowspill.plan_program/v2` | One program plus residency, machine inputs, and admission topology. It carries no search options: a program is a problem, and how to search it is the caller's. |
+| `StepProgram` | `shadowspill.step_program/v2` | Complete PyTorch capture and profile result, as the step's `ShadowSpillPlanningProblem`. |
+| `AnnotatedProgramPlan` | `shadowspill.annotated_program_plan/v2` | The winning plan, physical admission, and simulator evidence for one budget/bandwidth point. |
 
 Each one round-trips through `to_json()` and `from_json()`:
 
@@ -62,7 +62,7 @@ An abridged `ShadowSpillProgram` has this shape:
 
 ```json
 {
-  "schema": "shadowspill.program/v1",
+  "schema": "shadowspill.program/v2",
   "devices": [
     {"device_id": "device_0", "process_id": "process_0", "kind": "accelerator", "index": 0}
   ],
@@ -157,11 +157,11 @@ the IR permits more than two options.
 `plan_program()`:
 
 ```text
-shadowspill.plan_program/v1
+shadowspill.plan_program/v2
 ├── role
 ├── program
 │   ├── digest
-│   └── value                 complete shadowspill.program/v1
+│   └── value                 complete shadowspill.program/v2
 ├── residency
 │   ├── initial
 │   └── final
@@ -177,7 +177,7 @@ shadowspill.plan_program/v1
 | `residency.initial`, `residency.final` | Required alias-group location/version at the phase boundaries. |
 | `capacity_contract` | Source/max execution and spill budgets plus fixed, object, and dynamic-scratch deductions. |
 | `simulation_config` | Logical device object capacity, spill capacity, directional bandwidth, and latency. |
-| `admission_facts` | Current-schema (`shadowspill.admission_facts/v1`) per-task allocation traces, derived anonymous peaks, ownership transitions, handoffs, and physical capacity. |
+| `admission_facts` | Current-schema (`shadowspill.admission_facts/v2`) per-task allocation traces, derived anonymous peaks, ownership transitions, handoffs, and physical capacity. |
 
 Residency entries identify `alias_group_id` and `location` (`device` or `host`,
 the schema-v1 spelling of the spill pool
@@ -210,7 +210,7 @@ A training `StepProgram` holds the one problem every invocation of the step
 runs:
 
 ```text
-shadowspill.step_program/v1
+shadowspill.step_program/v2
 ├── identity
 │   ├── signature_digests
 │   └── program_digest
@@ -240,7 +240,7 @@ runtime calibration matrix captured during program construction.
 An annotated plan is one admitted planning point:
 
 ```text
-shadowspill.annotated_program_plan/v1
+shadowspill.annotated_program_plan/v2
 ├── source_program
 ├── memory_budgets
 ├── transfer_bandwidths
@@ -284,7 +284,7 @@ shadowspill.annotated_program_plan/v1
 | `initial_residency`, `final_residency` | Selected boundary state. |
 | `search_options` | Everything the search was told: `generic`, and the `algorithm` that ran with its own `options`. `workers` is absent, since it changes how long an answer takes rather than which answer is right. |
 | `resident_slice` | The slice reserved for the objects `minimum_object_bytes_evict_eligible` kept resident: its `bytes`, the sum of the static homes their leases take, and the `aliases` it holds; empty when it kept none. |
-| `schedule` | `shadowspill.memory_schedule/v1` with ordered actions. |
+| `schedule` | `shadowspill.memory_schedule/v2` with ordered actions. |
 | `selections` | One chosen option per task-alternative group. |
 
 The schedule contains `initial_residency`, ordered `actions`, and
@@ -415,7 +415,7 @@ from the start.
 | Key | Meaning |
 |---|---|
 | `effective_facts` | Capacity-adjusted topology used by the accepted attempt. |
-| `fixed_layout` | Complete `shadowspill.fixed_physical_layout/v1` certificate. |
+| `fixed_layout` | Complete `shadowspill.fixed_physical_layout/v2` certificate. |
 | `fixed_layout_digest` | Integrity identity of that certificate. |
 | `attempts` | Ordered capacity-refinement trials and optional search diagnostics. |
 

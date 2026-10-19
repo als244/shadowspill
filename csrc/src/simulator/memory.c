@@ -72,6 +72,14 @@ int shadowspill_allocate_work(
         program->action_count == 0U ? 1U : program->action_count,
         sizeof(*work->transfers)
     );
+    work->transfer_resource_free_ns = calloc(
+        program->transfer_resource_count == 0U ? 1U : program->transfer_resource_count,
+        sizeof(*work->transfer_resource_free_ns)
+    );
+    work->transfer_resource_completed = calloc(
+        program->transfer_resource_count == 0U ? 1U : program->transfer_resource_count,
+        sizeof(*work->transfer_resource_completed)
+    );
     const uint32_t edges =
         program->reuse_dependency_count == 0U ? 1U : program->reuse_dependency_count;
     work->task_reuse_offsets =
@@ -112,7 +120,9 @@ int shadowspill_allocate_work(
         work->alias_final_required == NULL ||
         work->lane_successors == NULL || work->lane_heads == NULL ||
         work->active_tasks == NULL ||
-        work->transfers == NULL || work->active_fetch == NULL ||
+        work->transfers == NULL || work->transfer_resource_free_ns == NULL ||
+        work->transfer_resource_completed == NULL ||
+        work->active_fetch == NULL ||
         work->task_reuse_offsets == NULL || work->task_reuse_predecessors == NULL ||
         work->action_reuse_offsets == NULL ||
         work->action_reuse_predecessors == NULL ||
@@ -160,7 +170,7 @@ int shadowspill_allocate_work(
             work->lane_successors[predecessor] = task;
         }
     }
-    return 1;
+    return shadowspill_order_resource_phases(program, work);
 }
 
 void shadowspill_free_work(ShadowSpillSimulationWork *work) {
@@ -172,6 +182,9 @@ void shadowspill_free_work(ShadowSpillSimulationWork *work) {
     free(work->alias_last_reader);
     free(work->alias_final_required);
     free(work->transfers);
+    free(work->transfer_resource_free_ns);
+    free(work->transfer_resource_completed);
+    free(work->task_phase_orders);
     free(work->task_reuse_offsets);
     free(work->task_reuse_predecessors);
     free(work->action_reuse_offsets);
@@ -253,7 +266,7 @@ int shadowspill_initialize_memory(
             state->spill_ready = 1U;
             if (shadowspill_add_overflow_u64(
                     work->spill_bytes,
-                    program->alias_size_bytes[alias],
+                    shadowspill_alias_spill_bytes(program, alias),
                     &work->spill_bytes
                 )) {
                 shadowspill_set_error(
@@ -295,7 +308,7 @@ int shadowspill_initialize_memory(
                 state->spill_allocated = 1U;
                 if (shadowspill_add_overflow_u64(
                         work->spill_bytes,
-                        program->alias_size_bytes[alias],
+                        shadowspill_alias_spill_bytes(program, alias),
                         &work->spill_bytes
                     )) {
                     shadowspill_set_error(

@@ -28,7 +28,7 @@ from shadowspill.pytorch.capture.storage import (
 from shadowspill.task.manifest import ExecutableTaskManifest
 
 from .cache import _fx_graph_cache_key, _load_cached_manifest
-from .compiler import _PINNED_OUTPUT_LAYOUT, _record_compilation_phase
+from .compiler import _record_compilation_phase, task_compiler_patches
 from .functional import functional_task
 
 
@@ -118,7 +118,7 @@ def _invoke_explicit_compiler(
         with (
             V.set_fake_mode(fake_mode),
             tracing(TracingContext(fake_mode)),
-            inductor_config.patch(dict(_PINNED_OUTPUT_LAYOUT)),
+            inductor_config.patch(task_compiler_patches()),
         ):
             compiler = cast(Callable[..., object], compile_fx_forward)
             return compiler(

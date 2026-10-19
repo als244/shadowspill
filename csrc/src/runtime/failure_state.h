@@ -39,6 +39,18 @@ void shadowspill_latch_task_failure(
     uint64_t requested_bytes
 );
 
+/* A transfer destination can differ from its task's allocation pool. */
+void shadowspill_latch_task_pool_failure(
+    ShadowSpillRuntime *runtime,
+    struct ShadowSpillMemoryPool *pool,
+    ShadowSpillStatus status,
+    ShadowSpillFailureReason reason,
+    uint64_t task_id,
+    uint64_t object_id,
+    uint64_t allocation_id,
+    uint64_t requested_bytes
+);
+
 void shadowspill_latch_task_envelope_failure(
     ShadowSpillRuntime *runtime,
     uint64_t requested_bytes,

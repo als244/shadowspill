@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from collections.abc import Mapping
+from dataclasses import dataclass, replace
 
 from shadowspill.ir import (
     MemoryActionKind,
@@ -56,8 +57,14 @@ def project_runtime_fixed_layout(
     schedule: MemorySchedule,
     *,
     dynamic_task_allocations: tuple[DynamicTaskAllocationPolicy, ...] = (),
+    anonymous_allocation_bytes: Mapping[tuple[str, int], int] | None = None,
 ) -> RuntimeFixedLayout:
-    """Translate one layout without changing its placement or dependency policy."""
+    """Translate a layout, retaining its offsets, dependencies and reserved span.
+
+    A shared distributed certificate can reserve larger temporary allocations
+    than this rank's kernel uses. Bind those slots to the exact local size;
+    every byte the runtime may use still lies within the certified range.
+    """
 
     if layout.program_digest != program.digest:
         raise ValueError("fixed layout belongs to a different ShadowSpillProgram")
@@ -89,6 +96,21 @@ def project_runtime_fixed_layout(
             action_identities,
         ),
     ]
+    if anonymous_allocation_bytes:
+        sizes = {
+            (canonical_index(task, "task_"), ordinal): size
+            for (task, ordinal), size in anonymous_allocation_bytes.items()
+        }
+        for index, placement in enumerate(placements):
+            if placement.kind is not RuntimePlacementKind.TASK_ALLOCATION:
+                continue
+            size = sizes.get((placement.task_id, placement.ordinal), placement.bytes)
+            if not 0 < size <= placement.bytes:
+                raise ValueError(
+                    "local temporary allocation exceeds its certified slot"
+                )
+            if size != placement.bytes:
+                placements[index] = replace(placement, bytes=size)
     dependencies = _runtime_dependencies(
         layout,
         action_identities,

@@ -132,6 +132,29 @@ typedef struct ShadowSpillAllocation {
     void *pointer;
 } ShadowSpillAllocation;
 
+/* Adapter-owned representation conversion. The runtime copies this descriptor
+   and retains its context until the object is destroyed. enqueue must submit
+   every phase on, or joined back to, the supplied lane stream before returning.
+   It must not call Python or wait for work that requires the runtime worker.
+   A lane explicitly opts into this contract; ordinary copies are unchanged. */
+typedef struct ShadowSpillObjectTransfer {
+    uint64_t spill_size_bytes;
+    /* Bit 0: fetch, bit 1: eviction. These callbacks contain collectives.
+       Task batches submit them in deterministic eviction-then-fetch order
+       before acknowledging the boundary to the compute dispatcher.
+       Collective eviction callbacks require EVICT: retained WRITE_BACK is
+       rejected because the conversion may reduce into its source allocation. */
+    uint8_t collective_directions;
+    void *context;
+    void (*retain)(void *context);
+    void (*release)(void *context);
+    int (*enqueue)(
+        void *context, const ShadowSpillBackend *backend,
+        ShadowSpillBackendStream stream, uint8_t fetch,
+        void *destination, const void *source
+    );
+} ShadowSpillObjectTransfer;
+
 typedef struct ShadowSpillObjectDescription {
     uint64_t object_id;
     uint64_t size_bytes;
@@ -139,6 +162,7 @@ typedef struct ShadowSpillObjectDescription {
     uint32_t initial_pool_id;
     uint8_t retain_spill_copy;
     uint8_t initially_resident;
+    const ShadowSpillObjectTransfer *transfer;
 } ShadowSpillObjectDescription;
 
 typedef struct ShadowSpillObjectBinding {

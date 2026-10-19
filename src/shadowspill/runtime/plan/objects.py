@@ -320,7 +320,7 @@ class PlanObjects:
             consistency=consistency_code,
         )
 
-    def register_placeholder(self, alias_id: str) -> None:
+    def register_placeholder(self, alias_id: str, *, transfer_address: int = 0) -> None:
         """Register a logical alias bundle before its first production."""
 
         if alias_id in self._registered:
@@ -339,6 +339,7 @@ class PlanObjects:
                 pool_id=self.spill_pool_id,
                 retain_spill_copy=False,
                 initially_resident=False,
+                transfer_address=transfer_address,
             ),
             "register placeholder object",
         )

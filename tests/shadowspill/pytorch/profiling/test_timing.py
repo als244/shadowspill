@@ -164,3 +164,36 @@ def test_measurement_persists_policy_and_timing_evidence() -> None:
         timing_unstable=True,
     )
     assert TaskMeasurement.from_dict(record.to_dict()) == record
+
+
+def test_sampling_bursts_count_individual_device_samples_and_finish_the_burst():
+    clock = Clock(device_ns=10, wall_ns=20)
+    options = ProfilingOptions(
+        conditioning_seconds=50e-9,
+        conditioning_wall_seconds=1,
+        minimum_samples=5,
+        measurement_seconds=0,
+    )
+
+    def batch():
+        return tuple(clock.sample() for _ in range(3))
+
+    warm = condition_task(
+        clock.sample, options=options, clock=clock, sample_many=batch
+    )
+    assert warm == TimingWindow(60, 120, 6, True)
+    measured = collect_timing_samples(
+        clock.sample, options=options, clock=clock, sample_many=batch
+    )
+    assert measured.samples == (10,) * 6
+    assert measured.window == TimingWindow(60, 120, 6, True)
+
+
+@pytest.mark.parametrize("batch", [(), (1, -1), (True,), (1.0,)])
+def test_invalid_sampling_burst_is_rejected(batch):
+    with pytest.raises(ValueError, match="batch"):
+        collect_timing_samples(
+            lambda: 1,
+            options=ProfilingOptions(minimum_samples=1),
+            sample_many=lambda: batch,
+        )

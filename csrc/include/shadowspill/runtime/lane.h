@@ -37,6 +37,7 @@ extern "C" {
  */
 
 typedef struct ShadowSpillRuntime ShadowSpillRuntime;
+typedef struct ShadowSpillObjectTransfer ShadowSpillObjectTransfer;
 
 /*
  * One lane, made per route at create.
@@ -252,6 +253,16 @@ typedef struct ShadowSpillLaneOperations {
         void *destination,
         const void *source,
         uint64_t bytes,
+        uint64_t *handle
+    );
+
+    /* Optional representation conversion on this lane's stream. A lane that
+       omits this entry cannot serve objects with a transfer descriptor. */
+    int (*copy_transformed)(
+        ShadowSpillLane *lane,
+        const ShadowSpillObjectTransfer *transfer,
+        void *destination,
+        const void *source,
         uint64_t *handle
     );
 
