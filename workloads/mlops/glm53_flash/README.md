@@ -44,6 +44,13 @@ with GLMCheckpoint(checkpoint_directory, gemm_precision="bf16") as source:
 
 The initializer also works with ordinary allocated CPU tensors. It has no runtime or pool dependency. A temporary SSD spill pool still contains an execution copy of the imported state; directly using existing safetensors extents as a read-only pool is a separate, unimplemented storage capability.
 
+For sharded checkpoint loading, quickstart supplies ShadowSpill's
+`initialize_storage_` as `load_into(..., write_tensor=...)`. Each direct-copy
+physical tensor is read and assembled only by its shard-group leader, then
+distributed into owned shards. The loader's default still fills ordinary CPU
+tensors independently. LoRA factor initialization retains its RNG sequence;
+expert representation conversions retain their per-expert path.
+
 The original Z.ai release uses block FP8. The RedHatAI release mixes 1x16 NVFP4 routed experts with BF16 dense projections and FP8 auxiliary MTP weights. The importer resolves formats per projection and excludes MTP. The experts' activation global scales are read past: the FP8 forms quantize their activations per row per call. Vision is optional; text-only construction leaves its tensors unread.
 
 ## CLI
@@ -158,9 +165,9 @@ The direct importer can declare a frozen compressed base with trainable factors:
 
 ```python
 model = source.build_model(
-    lora_rank=32,
+    lora_rank=16,
     lora_alpha=32,
-    lora_factor_dtype=torch.float32,
+    lora_factor_dtype=torch.bfloat16,
     lora_head=False,
 )
 ```
@@ -334,7 +341,8 @@ Factory arguments: `checkpoint` or `tiny`; `sequence_length`;
 `sequences_per_step`; `sequences_per_microbatch`; `lora_rank`;
 `lora_alpha`; `lora_dtype`; `lora_head`; `grad_dtype`; `opt_state_dtype`;
 `opt_state_rounding`; `gemm_precision`; `expert_storage`; `layer_limit`;
-`head_chunk_size`; `partition`; `seed`. The quickstart flags `--lora-rank`, `--lora-alpha` and `--lora-dtype`
+`head_chunk_size`; `partition`; `seed`; `transfer_shard_size`; `shard_gradients`;
+`preparation_timeout`. The quickstart flags `--lora-rank`, `--lora-alpha` and `--lora-dtype`
 reach the factory under the first three of those LoRA names.
 `--minimum-evict-kib 128` is the forward CLI's small-object policy for this
 checkpoint's many scales.
@@ -343,7 +351,9 @@ The optimizer is `mlops.optim.AdamW`, as in the other mlops recipes: one fused
 update per parameter, reading each gradient at `grad_dtype`, the dtype the step
 accumulates it in, and keeping its moments at `opt_state_dtype` (BF16 by
 default, rounded stochastically; `opt_state_rounding` names another rounding).
-Precision defaults and supported recipes are stated in the function signature.
+The quickstart defaults are rank-16 BF16 factors, alpha 32, FP32 accumulated
+gradients, and BF16 Adam moments. The same training recipe serves
+[GLM-5.3](../glm53/README.md), with separate architecture and checkpoint mappings.
 The checkpoint path rejects unsupported low-precision dense GEMMs immediately;
 its experts compute at their storage's precision (`expert_storage`). The small
 random fixture's experts are bf16, or with `gemm_precision="fp8"` block-scaled
@@ -352,8 +362,42 @@ that is not the full checkpoint's quantization recipe.
 
 Each candidate uses the same generated token/target sequence, split into
 microbatches. The objective sums token losses and divides by tokens per step.
-All candidates therefore describe the same update. This recipe is single-process;
-it does not construct distributed groups or imply distributed GLM qualification.
+All candidates therefore describe the same update. Under `torchrun` with
+`--distributed`, the recipe gives each rank distinct data, divides its objective
+by the global token count, and creates data-parallel groups. `sequences_per_step`
+is per rank. Optimizer reduction sums these contributions; do not divide by the
+world size again.
+
+`--transfer-shard-size N --shard-gradients` enables computation-weight and
+gradient spill sharding. A wrapped frozen weight's data and scale tensors inherit
+its sharding layout. Master/optimizer ownership remains independent and uses the
+full replica group. See the [distributed API](../../../docs/python/api/distributed.md).
+This enables distributed setup; full-checkpoint distributed GLM training still
+requires qualification.
+
+For example, eight ranks, local sharding over all eight, and a fixed 8K-token
+microbatch per rank:
+
+```bash
+torchrun --standalone --nproc-per-node=8 -m benchmarking.rank_device \
+  -m benchmarking.quickstart \
+  --factory workloads.mlops.glm53_flash.quickstart:experiment \
+  --factory-args '{"checkpoint":"/local/models/GLM-5.3-Flash","expert_storage":"fp8_block","sequence_length":4096,"sequences_per_step":64,"sequences_per_microbatch":[2]}' \
+  --distributed --transfer-shard-size 8 --shard-gradients \
+  --search-budget-gib 70 --run-budget-gib 70 --spill-gib 96 \
+  --steps 5 --output-dir /local/results/glm-dp-sharded
+```
+
+That example uses the factory's rank-16 BF16 LoRA defaults. Its original FP8
+checkpoint model occupies about 303 GiB including factors, before gradients,
+optimizer state and activations. Eight 96 GiB spill pools allocate 768 GiB of host
+memory in total; reserve additional memory for initialization, compilation and
+runtime metadata. The example budgets are starting points, not a feasibility or
+throughput result. Each rank still needs a complete stage's execution tensors on
+GPU even though its CPU pool stores only shards.
+The launcher isolates one GPU per process before importing the workload, so all
+ranks compile against logical `cuda:0` while retaining their distributed rank
+identities and distinct physical GPUs.
 
 To use `plan_step_search` directly, build/import the factory's model with its
 optional `initialize` callback, then pass its `objective`, `optimizer`,

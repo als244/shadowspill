@@ -10,6 +10,7 @@ from mlops import (
     sparse_latent_attention,
 )
 from mlops.lora import LoRALinear
+from mlops.sequential_moe.precision.linear import FrozenLinear, FrozenLoRALinear
 from torch import nn
 from torch.nn import functional as F
 
@@ -146,11 +147,16 @@ class SparseMLA(nn.Module):
         )
         latent = self.kv_a_layernorm(self.kv_a_proj_with_mqa(x))
         indices = self.indexer(x, q_residual, boundaries)
-        wk, wv = self.kv_b_proj.weight.reshape(
+        weight = (
+            self.kv_b_proj.materialize_weight()
+            if isinstance(self.kv_b_proj, FrozenLinear)
+            else self.kv_b_proj.weight
+        )
+        wk, wv = weight.reshape(
             c.num_attention_heads, -1, c.kv_lora_rank
         ).split((c.qk_nope_head_dim, c.v_head_dim), dim=1)
         q_latent = torch.einsum("thd,hdl->thl", query, wk)
-        if isinstance(self.kv_b_proj, LoRALinear):
+        if isinstance(self.kv_b_proj, (LoRALinear, FrozenLoRALinear)):
             a = self.kv_b_proj.lora_a.to(x.dtype)
             bk, bv = (
                 self.kv_b_proj.lora_b.to(x.dtype)
@@ -165,7 +171,7 @@ class SparseMLA(nn.Module):
             q_latent, latent, indices, scale=c.qk_nope_head_dim**-0.5
         )
         value = torch.einsum("thl,hdl->thd", attended, wv)
-        if isinstance(self.kv_b_proj, LoRALinear):
+        if isinstance(self.kv_b_proj, (LoRALinear, FrozenLoRALinear)):
             value = value + scale * torch.einsum(
                 "thr,hdr->thd", F.linear(attended, a), bv
             )

@@ -148,6 +148,11 @@ class GLMCheckpoint:
     it may be closed immediately afterwards. Vision is optional; MTP is excluded.
     """
 
+    source_prefix = "model.language_model."
+    config_from_metadata = staticmethod(from_huggingface)
+    source_name = staticmethod(source_name)
+    model_type = LanguageModel
+
     def __init__(self, directory, *, gemm_precision="bf16", expert_storage=None):
         if expert_storage not in (None, *EXPERT_STORAGES):
             raise ValueError(f"expert_storage must be one of {EXPERT_STORAGES}")
@@ -212,7 +217,7 @@ class GLMCheckpoint:
             "up_proj": (h, d),
             "down_proj": (d, h),
         }
-        source = "model.language_model." + name + ".experts"
+        source = self.source_prefix + name + ".experts"
         experts = [(index, f"{source}.{index}") for index in range(c.num_local_experts)]
         for kind in ("w13", "w2"):
             specs = [
@@ -310,11 +315,11 @@ class GLMCheckpoint:
         """Declare final shapes/dtypes on meta and validate every copy up front."""
         if self.inventory is not None:
             raise RuntimeError("Use a fresh GLMCheckpoint to build another model")
-        c = from_huggingface(self.metadata, gemm_precision=self.gemm_precision)
+        c = self.config_from_metadata(self.metadata, gemm_precision=self.gemm_precision)
         # The routed experts' checkpoint format chooses their default storage:
         # dense stays bf16, compressed (FP8, NVFP4) becomes one-copy block FP8.
         first = c.first_k_dense_replace
-        prefix = f"model.language_model.layers.{first}.mlp.experts.0"
+        prefix = f"{self.source_prefix}layers.{first}.mlp.experts.0"
         _, spec = self.weights.projection(
             prefix + ".gate_proj", (c.moe_intermediate_size, c.hidden_size), meta=True
         )
@@ -322,7 +327,7 @@ class GLMCheckpoint:
         storage = self.expert_storage or (
             "bf16" if spec.format in DENSE else "fp8_block"
         )
-        c = from_huggingface(
+        c = self.config_from_metadata(
             self.metadata,
             expert_storage=storage,
             gemm_precision=self.gemm_precision,
@@ -338,13 +343,13 @@ class GLMCheckpoint:
         vision = (
             VisionConfig.from_huggingface(self.metadata) if include_vision else None
         )
-        model = LanguageModel(c, device="meta", vision_config=vision)
+        model = self.model_type(c, device="meta", vision_config=vision)
 
         # Replace quantized dense projections with component-bearing modules.
         for name, module in list(model.named_modules()):
             if not isinstance(module, (nn.Linear, LoRALinear)):
                 continue
-            prefix = source_name(name + ".weight").removesuffix(".weight")
+            prefix = self.source_name(name + ".weight").removesuffix(".weight")
             parts, spec = self.weights.projection(
                 prefix, tuple(module.weight.shape), meta=True
             )
@@ -383,7 +388,7 @@ class GLMCheckpoint:
                 continue
             if name.endswith(".self_attn.conv1d.weight"):
                 width = value.shape[0] // 3
-                prefix = source_name(name).removesuffix("conv1d.weight")
+                prefix = self.source_name(name).removesuffix("conv1d.weight")
                 for i, letter in enumerate(("q", "k", "v")):
                     self.copies.append(
                         Copy(
@@ -394,7 +399,7 @@ class GLMCheckpoint:
                         )
                     )
             else:
-                source = source_name(name.removesuffix(".compute"))
+                source = self.source_name(name.removesuffix(".compute"))
                 self.copies.append(Copy(name, source))
         for copy in self.copies:
             source = self.weights.source.tensor(copy.source, meta=True)
@@ -428,8 +433,8 @@ class GLMCheckpoint:
             for key in self.weights.files
             if key.startswith(
                 (
-                    "model.language_model.embed_tokens.",
-                    "model.language_model.norm.",
+                    self.source_prefix + "embed_tokens.",
+                    self.source_prefix + "norm.",
                     "lm_head.",
                 )
             )
@@ -438,7 +443,7 @@ class GLMCheckpoint:
             required.update(
                 key
                 for key in self.weights.files
-                if key.startswith(f"model.language_model.layers.{i}.")
+                if key.startswith(f"{self.source_prefix}layers.{i}.")
             )
         if include_vision:
             required.update(
@@ -473,11 +478,18 @@ class GLMCheckpoint:
         return model
 
     @torch.no_grad()
-    def load_into(self, model, *, progress=None, adopted=frozenset()):
+    def load_into(
+        self, model, *, progress=None, adopted=frozenset(), write_tensor=None
+    ):
         """Fill supplied state in place; retain no tensor payload between copies.
 
         ``adopted`` names state a pool image already holds; those copies are
         skipped and the rest, LoRA factors included, is written as usual.
+        ``write_tensor(destination, fill)`` may execute a physical checkpoint
+        read only on a storage's owner and distribute it. The default writes
+        ordinary tensors without requiring a runtime. LoRA initialization keeps
+        its existing RNG sequence; representation conversions use the ordinary
+        per-expert path.
         """
         if self.inventory is None:
             raise RuntimeError("Call build_model() before loading")
@@ -506,33 +518,50 @@ class GLMCheckpoint:
         done = 0
         for destination, copies in grouped.items():
             target = targets[destination]
-            if len(copies) == 1 and copies[0].start is None and copies[0].index is None:
-                staging = target
-            else:
+            joined = not (
+                len(copies) == 1 and copies[0].start is None and copies[0].index is None
+            )
+            if joined:
                 # Assemble joined gate/up and Q/K/V rows, and a layer's expert
                 # bank, before publishing: each destination is written once,
                 # even to an SSD pool. Scratch is one joined projection or one
                 # component of one layer's bank.
                 _check_rows(destination, copies, tuple(target.shape))
-                staging = torch.empty(
-                    tuple(target.shape), dtype=target.dtype, device="cpu"
+
+            filled = False
+
+            def fill(staging, selected=tuple(copies), name=destination, before=done):
+                nonlocal filled
+                filled = True
+                for index, copy in enumerate(selected, start=1):
+                    source = self.weights.source.tensor(copy.source)
+                    if copy.reciprocal:
+                        if not bool(torch.isfinite(source).all() & (source > 0).all()):
+                            raise ValueError(
+                                f"Invalid NVFP4 global scale: {copy.source}"
+                            )
+                        source = source.reciprocal()
+                    view = copy.view({name: staging})
+                    view.copy_(source)
+                    del source, view
+                    self.weights.source.release_pages(copy.source)
+                    if progress is not None:
+                        progress(before + index, total, copy.source)
+
+            if write_tensor is None:
+                staging = (
+                    torch.empty(tuple(target.shape), dtype=target.dtype, device="cpu")
+                    if joined else target
                 )
-            for copy in copies:
-                source = self.weights.source.tensor(copy.source)
-                if copy.reciprocal:
-                    if not bool(torch.isfinite(source).all() & (source > 0).all()):
-                        raise ValueError(f"Invalid NVFP4 global scale: {copy.source}")
-                    source = source.reciprocal()
-                view = copy.view({destination: staging})
-                view.copy_(source)
-                del source, view
-                self.weights.source.release_pages(copy.source)
-                done += 1
-                if progress is not None:
-                    progress(done, total, copy.source)
-            if staging is not target:
-                target.copy_(staging)
-            del staging
+                fill(staging)
+                if staging is not target:
+                    target.copy_(staging)
+                del staging
+            else:
+                write_tensor(target, fill)
+            done += len(copies)
+            if progress is not None and not filled:
+                progress(done, total, copies[-1].source)
         # Banks that change form: decoded and quantized an expert at a time,
         # on the GPU when there is one, into host staging written once.
         device = (

@@ -208,13 +208,20 @@ temporary runtime copy.
 
 Its architecture has 45 layers: 34 KDA, 11 NoPE sparse-MLA, mHC streams, three
 initial dense MLPs, then 288 routed experts/top-8 plus a shared expert.
-This checkpoint integration has its own text/image forward-validation CLI; it
-is not yet a supplied quickstart/trainer preset. Complete text forwards for both
+This checkpoint integration has its own text/image forward-validation CLI and a
+[quickstart factory](mlops/glm53_flash/quickstart.py), including data-parallel
+group construction and optional local transfer sharding. Complete text forwards for both
 checkpoints and the checkpoint vision encoders execute through SSD-backed plans.
 Reduced-model LoRA updates and selected-state checkpoint replay are also tested.
 See the workload README for numerical limits and the current image/text status;
 full-model LoRA training and checkpoint-specific low-precision GEMMs remain
 unqualified.
+
+The normal [GLM-5.3 workload](mlops/glm53/README.md) has a separate 78-layer
+architecture with positional sparse MLA, shared attention indices, ordinary
+residuals, and 256-expert MoE layers. Both quickstarts share rank-16 BF16 LoRA,
+FP32 gradients, BF16 Adam moments, and optional weight/gradient transfer
+sharding. Normal-model full-checkpoint training qualification is in progress.
 
 ## Dtypes and optimizer state
 

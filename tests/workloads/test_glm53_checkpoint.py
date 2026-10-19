@@ -35,36 +35,49 @@ OPTIONS = {"expert_storage", "gemm_precision", "lora_rank", "lora_alpha", "lora_
 
 def _text_config(config):
     values = {}
-    for field in fields(Config):
+    for field in fields(config):
         value = getattr(config, field.name)
-        if field.name not in OPTIONS and isinstance(value, (bool, int, float, str)):
+        if field.name not in OPTIONS and isinstance(
+            value, (bool, int, float, str, tuple)
+        ):
             values[field.name] = value
     values["n_routed_experts"] = config.num_local_experts
     return values
 
 
-def _write(directory, *, fp8_experts):
+def _write(
+    directory,
+    *,
+    fp8_experts,
+    config=CONFIG,
+    model_type=LanguageModel,
+    name_for=source_name,
+    prefix="model.language_model",
+    nested=True,
+):
     """The checkpoint of a random model; returns its expert weights per layer
     as ``{layer: (w13 [E, 2I, H], w2 [E, H, I])}`` in fp32 as stored (FP8
     experts dequantized), and the model."""
     torch.manual_seed(0)
-    model = LanguageModel(CONFIG, device="cpu")
+    model = model_type(config, device="cpu")
     tensors, experts = {}, {}
     for name, value in physical_state(model).items():
         value = value.detach()
         if name.endswith((".mlp.w13", ".mlp.w2")):
             continue
         if name.endswith(".self_attn.conv1d.weight"):
-            prefix = source_name(name).removesuffix("conv1d.weight")
+            projection_prefix = name_for(name).removesuffix("conv1d.weight")
             for letter, part in zip("qkv", value.chunk(3), strict=True):
-                tensors[prefix + letter + "_conv1d.weight"] = part.contiguous()
+                tensors[projection_prefix + letter + "_conv1d.weight"] = (
+                    part.contiguous()
+                )
             continue
-        tensors[source_name(name)] = value.contiguous()
-    width = CONFIG.moe_intermediate_size
+        tensors[name_for(name)] = value.contiguous()
+    width = config.moe_intermediate_size
     for index, layer in enumerate(model.layers):
         if not hasattr(layer.mlp, "w13"):
             continue
-        prefix = f"model.language_model.layers.{index}.mlp.experts"
+        expert_prefix = f"{prefix}.layers.{index}.mlp.experts"
         stored = []
         for weight in (layer.mlp.w13.detach(), layer.mlp.w2.detach()):
             if fp8_experts:
@@ -74,14 +87,14 @@ def _write(directory, *, fp8_experts):
                 stored.append((weight, None, weight.float()))
         (gate_up, gate_up_scale, w13), (down, down_scale, w2) = stored
         experts[index] = (w13, w2)
-        for expert in range(CONFIG.num_local_experts):
+        for expert in range(config.num_local_experts):
             projections = {
                 "gate_proj": (gate_up[expert, :width], gate_up_scale, 0),
                 "up_proj": (gate_up[expert, width:], gate_up_scale, 1),
                 "down_proj": (down[expert], down_scale, None),
             }
             for projection, (weight, scale, half) in projections.items():
-                key = f"{prefix}.{expert}.{projection}"
+                key = f"{expert_prefix}.{expert}.{projection}"
                 tensors[key + ".weight"] = weight.contiguous()
                 if scale is not None:
                     blocks = scale[expert]
@@ -89,14 +102,16 @@ def _write(directory, *, fp8_experts):
                         blocks = blocks.chunk(2)[half]
                     tensors[key + ".weight_scale_inv"] = blocks.contiguous()
     safetensors_torch.save_file(tensors, str(directory / "model.safetensors"))
-    text = _text_config(CONFIG)
+    text = _text_config(config)
     if fp8_experts:
         text["quantization_config"] = {
             "quant_method": "fp8",
             "fmt": "e4m3",
             "weight_block_size": [128, 128],
         }
-    (directory / "config.json").write_text(json.dumps({"text_config": text}))
+    (directory / "config.json").write_text(
+        json.dumps({"text_config": text} if nested else text)
+    )
     return experts, model
 
 
@@ -127,11 +142,12 @@ def _materialized(model):
 
 
 def _load(directory, **options):
+    writer = options.pop("write_tensor", None)
     with GLMCheckpoint(
         directory, expert_storage=options.pop("storage", None)
     ) as source:
         model = _materialized(source.build_model(**options))
-        source.load_into(model)
+        source.load_into(model, write_tensor=writer)
         return model, source.inventory
 
 
@@ -154,12 +170,19 @@ def test_a_dense_checkpoint_loads_exactly_into_bf16_banks(tmp_path):
         assert torch.equal(mlp.w13.float(), w13) and torch.equal(mlp.w2.float(), w2)
 
 
-def test_an_fp8_checkpoint_keeps_its_blocks_byte_for_byte_by_default(tmp_path):
+@pytest.mark.parametrize("use_writer", [False, True])
+def test_an_fp8_checkpoint_keeps_its_blocks_byte_for_byte_by_default(
+    tmp_path, use_writer
+):
     from mlops.block_fp8 import BlockFP8Weight
+
+    from shadowspill.pytorch import initialize_storage_
 
     experts, _ = _write(tmp_path, fp8_experts=True)
     # One copy by default: no second, transposed copy of a compressed base.
-    model, inventory = _load(tmp_path)
+    model, inventory = _load(
+        tmp_path, write_tensor=initialize_storage_ if use_writer else None
+    )
     assert inventory["expert_storage"] == "fp8_block"
     assert inventory["checkpoint_expert_format"] == "fp8"
     assert inventory["converted_expert_banks"] == 0
