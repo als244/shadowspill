@@ -58,7 +58,7 @@ torchrun --standalone --nproc-per-node=8 -m baselines.fsdp2.train \
 | `--allocator-cap-gib` | Optional PyTorch caching-allocator limit; excludes external allocations |
 | `--cpu-threads` | Intra-op CPU threads per rank, including offloaded optimizer work; single-case default 1 |
 | `--learning-rate`, `--weight-decay`, `--seed` | Explicit optimizer and synthetic-data initialization settings |
-| `--nsys-capture` | Bracket measured steps with CUDA profiler start/stop; profiled timings are not throughput results |
+| `--nsys-capture` | Bracket measured steps with Nsight profiler start/stop; profiled timings are not throughput results |
 | `--tiny --verify-reference` | Small numerical qualification; never use its timings as full-model performance |
 | `--output` | New case directory; existing rank directories are never overwritten |
 
@@ -133,7 +133,7 @@ substantially increase GPU memory. CPU offload also consumes host memory.
 | `--resume` | Continue the identical matrix, code, dependencies, and Python environment |
 | `--retry-failed` | With resume, retry OOM/error/timeout/interrupted cases in new attempt directories |
 | `--case-timeout` | Wall-clock seconds per case, including setup/compilation; default 3,600 |
-| `--continue-on-error` | Continue after non-OOM failures. Default stops for diagnosis; CUDA OOM cases are recorded and skipped |
+| `--continue-on-error` | Continue after non-OOM failures. Default stops for diagnosis; device OOM cases are recorded and skipped |
 | `--limit` | Maximum new attempts in this invocation, useful for bring-up |
 
 Completed cases are skipped on resume. Failed cases retain exact settings,

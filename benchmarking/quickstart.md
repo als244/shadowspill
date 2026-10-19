@@ -570,7 +570,7 @@ See [verified symmetric planning](../docs/python/api/distributed.md#verified-sym
 for the checks, work assignment, and artifact records.
 
 The distributed path uses the same model-independent planner as `Trainer`.
-Launch one process per GPU, with each process seeing its GPU as `cuda:0`:
+Launch one process per GPU, with each process seeing its GPU as logical device 0:
 
 ```bash
 torchrun --standalone --nproc-per-node=2 -m benchmarking.rank_device \

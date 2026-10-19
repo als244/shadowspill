@@ -4,17 +4,18 @@ Benchmark the **router and expert FFNs** from one Qwen3-30B-A3B layer:
 hidden width 2048, expert width 768, 128 experts, top-8 routing. No attention,
 normalization, loss head, optimizer, checkpoint loading, or ShadowSpill runtime.
 
-The default sweep runs all SonicMoE cases on one GPU first, then QuackMoE with
-eight-way expert parallelism: 4K, 8K, 16K, 32K, 64K, and 128K tokens **per rank**;
-BF16 and FP8; full training and rank-16 LoRA. This produces 48 measurements and
-four plots, with one DP and one EP curve per plot. DP here means local compute
-on one replicated model; its inter-rank gradient synchronization is excluded.
+The default sweep runs all SonicMoE cases in one process on a single device
+first, then QuackMoE with eight-way expert parallelism: 4K, 8K, 16K, 32K, 64K,
+and 128K tokens **per rank**; BF16 and FP8; full training and rank-16 LoRA. This
+produces 48 measurements and four plots, with one DP and one EP curve per plot.
+DP here means local compute on one replicated model; its inter-rank gradient
+synchronization is excluded.
 
 ## Run and reproduce
 
 Use an environment containing the MLOps SonicMoE, Quack and MoonEP dependencies.
 Launch from the repository root inside an allocated node with eight H100 GPUs.
-The launcher selects each worker's device before importing CUDA kernel packages.
+The launcher selects each worker's device before importing the kernel packages.
 
 ```sh
 python -m baselines.moe_layer.sweep --output runs/moe-layer

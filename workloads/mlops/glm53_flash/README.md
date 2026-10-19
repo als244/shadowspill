@@ -395,9 +395,9 @@ memory in total; reserve additional memory for initialization, compilation and
 runtime metadata. The example budgets are starting points, not a feasibility or
 throughput result. Each rank still needs a complete stage's execution tensors on
 GPU even though its CPU pool stores only shards.
-The launcher isolates one GPU per process before importing the workload, so all
-ranks compile against logical `cuda:0` while retaining their distributed rank
-identities and distinct physical GPUs.
+The launcher isolates each process on its own GPU before importing the workload,
+so all ranks compile against logical device 0 while retaining their distributed
+rank identities and distinct physical GPUs.
 
 To use `plan_step_search` directly, build/import the factory's model with its
 optional `initialize` callback, then pass its `objective`, `optimizer`,

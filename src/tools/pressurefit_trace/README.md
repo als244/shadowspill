@@ -739,8 +739,8 @@ python -m tools.pressurefit_trace.profile_winners RUN/quickstart \
 ```
 
 `--budget-gib` limits capture to one executed winner. Each attempt retains its
-command, logs, `.nsys-rep`, SQLite export and validation. Validation requires CUDA
-kernels on every GPU, device metrics, semantic task/transfer NVTX and step ranges
+command, logs, `.nsys-rep`, SQLite export and validation. Validation requires kernel
+records on every GPU, device metrics, semantic task/transfer NVTX and step ranges
 from every rank. Resume checks identities and hashes before skipping a capture.
 GPU metrics require permission on the allocated node.
 Capture boundaries coordinate over a CPU/Gloo group. The command disables

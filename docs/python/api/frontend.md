@@ -422,6 +422,18 @@ write a converted checkpoint first. For SSD pools, initialization still writes
 the runtime's temporary pool copy; checkpoint files are not currently used as
 read-only pool extents.
 
+Inside such an initializer, `initialize_storage_(destination, fill)` fills one
+physical CPU tensor through a scratch tensor that `fill` must overwrite
+completely. For a whole storage whose backing is sharded across a host group,
+the scratch is allocated and `fill` is called only on the group's leader, and
+each rank's owned shards are scattered from there, so a checkpoint is read once
+per storage rather than once per rank; `fill` must therefore contain no
+collectives and must not rely on running on every rank. Nonsharded tensors and
+partial views keep ordinary copy semantics, and a failed fill is reported to
+every group member before any shard is published. The
+[distributed page](distributed.md#initial-replica-synchronization-and-mapped-checkpoints)
+shows it inside a sharded checkpoint loader.
+
 <!-- source-signature: src/shadowspill/pytorch/state/model.py:import_model_state_from_file -->
 ```text
 import_model_state_from_file(
