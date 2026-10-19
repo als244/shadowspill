@@ -1,0 +1,28 @@
+{
+  "schema_version": 1,
+  "defaults": {
+    "tiny": true,
+    "verify_reference": true,
+    "sequence_length": 64,
+    "global_tokens": 2048,
+    "microbatch_tokens": 64,
+    "warmup_steps": 1,
+    "steps": 2,
+    "cpu_threads": 2
+  },
+  "cases": [
+    {"recompute": 0},
+    {"recompute": 1, "forward_prefetch": 1, "backward_prefetch": 1},
+    {
+      "recompute": 0.5,
+      "forward_prefetch": 2,
+      "backward_prefetch": 2,
+      "gradient_sync": "last-microbatch",
+      "reshard_after_forward": false,
+      "reshard_after_backward": false
+    },
+    {"offload": "cpu", "recompute": 1, "forward_prefetch": 1, "backward_prefetch": 1},
+    {"offload": "cpu", "pin_memory": false, "recompute": 0, "gradient_sync": "last-microbatch"},
+    {"offload": "cpu", "recompute": 1, "forward_prefetch": 2, "backward_prefetch": 2, "reshard_after_backward": false}
+  ]
+}

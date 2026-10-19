@@ -1,0 +1,13 @@
+{
+  "repository": "https://github.com/NVIDIA-NeMo/Automodel",
+  "commit": "b203f3f9f9f3140c660942a088ff36bbc3a5e856",
+  "source_url": "https://raw.githubusercontent.com/NVIDIA-NeMo/Automodel/b203f3f9f9f3140c660942a088ff36bbc3a5e856/examples/llm_benchmark/qwen/qwen3_moe_30b_te_deepep.yaml",
+  "sha256": "96f71db51d613719e4cc5a22d4316abc57469774e2e329ea6f2f5e2acc87dbfe",
+  "local_file": "qwen3_moe_30b_te_deepep.upstream.yaml",
+  "strategy": "fsdp2",
+  "expert_parallel_size": 8,
+  "kernel_backend": "Transformer Engine",
+  "dispatcher": "DeepEP",
+  "fake_balanced_gate": true,
+  "modified": false
+}
