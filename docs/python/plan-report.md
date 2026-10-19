@@ -353,7 +353,7 @@ handling](../architecture/physical-admission.md) to interpret the certificate.
 ## Exporting diagnostic evidence
 
 `PlanDiagnostics.as_dict()` returns a JSON-friendly value with schema
-`shadowspill.plan_diagnostics/v2`:
+`shadowspill.plan_diagnostics/v1`:
 
 ```python
 import json

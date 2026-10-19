@@ -13,7 +13,7 @@ from __future__ import annotations
 
 from typing import Final
 
-ARTIFACT_VERSION: Final = 2
+ARTIFACT_VERSION: Final = 1
 
 
 def artifact_schema(kind: str) -> str:

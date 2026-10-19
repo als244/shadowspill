@@ -85,7 +85,7 @@ Symmetric planning uses the complete phase decomposition of the slowest task
 profile and the minimum measured progress rates across ranks. Measurements
 must come from independent preparation probes; there is no automatic
 step-duration multiplier or model-specific correction. Empty measurements
-retain isolated timing. Artifact version 2 and native ABI 3 carry this contract.
+retain isolated timing. The artifact schema and the native ABI carry this contract.
 The PyTorch transfer-sharding frontend now measures these costs during profiling;
 its measurement-policy identity prevents reuse of prior isolated-only profiles.
 

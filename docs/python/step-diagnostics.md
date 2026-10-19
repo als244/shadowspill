@@ -58,7 +58,7 @@ produced it:
 | `collectives` | GPU collective issue/start/finish times, group membership, per-rank input/output bytes, and task or transfer links. |
 
 `StepDiagnostics.as_dict()` renders these seven under
-`shadowspill.step_diagnostics/v2`; see [Exporting diagnostics](#exporting-diagnostics).
+`shadowspill.step_diagnostics/v1`; see [Exporting diagnostics](#exporting-diagnostics).
 
 The sections below follow that shape, one per view, and each names every
 field the view carries:
@@ -502,7 +502,7 @@ the model.
 ## Exporting diagnostics
 
 `StepDiagnostics.as_dict()` returns a JSON-friendly value with schema
-`shadowspill.step_diagnostics/v2` and the seven views above:
+`shadowspill.step_diagnostics/v1` and the seven views above:
 
 ```python
 import json
@@ -525,7 +525,7 @@ thousand tasks records millions of events. A step file keeps them beside
 itself instead. `shadowspill.diagnostics.step_file.write_step_diagnostics(path,
 diagnostics)` writes that dictionary to `path` and the ledgers to
 `<name>.events.npz` next to it, one column per field as the runtime recorded
-it, under the schema `shadowspill.step_events/v2`; `read_step_events(path)`
+it, under the schema `shadowspill.step_events/v1`; `read_step_events(path)`
 decodes them back into the `RuntimeTraceEvent` and `CapturedAllocationEvent`
 records the live trace produced.
 

@@ -59,8 +59,8 @@ resource IDs can overlap; phases on the same ID serialize.
 
 These fields carry measurements supplied by the frontend. The simulator does
 not fit a multiplier from an observed step duration or infer rates from a
-model name. Artifact version 2 includes this timing contract in program and
-plan identity; older cached artifacts require their matching software version.
+model name. The artifact identity includes this timing contract in program and
+plan identity, so a cached artifact made without it is not reused.
 
 ## Output
 

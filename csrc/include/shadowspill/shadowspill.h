@@ -36,11 +36,11 @@ extern "C" {
  * compiled separately against a contract, and can genuinely differ from the
  * library they load into.
  */
-#define SHADOWSPILL_ABI_VERSION 3U
+#define SHADOWSPILL_ABI_VERSION 1U
 
 /* The one version every stored artifact carries; mirrored by
  * shadowspill.schema.ARTIFACT_VERSION and folded into the schedule digest. */
-#define SHADOWSPILL_ARTIFACT_VERSION 2U
+#define SHADOWSPILL_ARTIFACT_VERSION 1U
 
 /* The version the loaded library was built with. */
 SHADOWSPILL_API uint32_t shadowspill_abi_version(void);

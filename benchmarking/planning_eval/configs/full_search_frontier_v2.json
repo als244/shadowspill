@@ -1,5 +1,5 @@
 {
-  "schema": "shadowspill.search_frontier_config/v2",
+  "schema": "shadowspill.search_frontier_config/v1",
   "name": "full-search-frontier-v1",
   "expected_programs": 168,
   "expected_points_per_program": 15,
