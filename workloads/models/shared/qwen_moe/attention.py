@@ -21,15 +21,12 @@ class RMSNorm(nn.Module):
         nn.init.constant_(self.weight, 0.0 if self.zero_centered else 1.0)
 
     def forward(self, value):
-        if not self.zero_centered:
-            return mlops.rms_norm(value, self.weight, self.epsilon)
         # Qwen3.5 multiplies the normalized FP32 value by (1 + weight)
-        # before casting. Llama-style norm casts before that multiply.
-        source = value.float()
-        normalized = source * torch.rsqrt(
-            source.square().mean(-1, keepdim=True) + self.epsilon
+        # before casting, the operation's zero-centered mode; Llama-style
+        # norm casts before that multiply.
+        return mlops.rms_norm(
+            value, self.weight, self.epsilon, zero_centered=self.zero_centered
         )
-        return (normalized * (1 + self.weight.float())).to(value.dtype)
 
 
 class Attention(nn.Module):
