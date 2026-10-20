@@ -1,173 +1,104 @@
-# FSDP2 with the existing MLOps Qwen model
+# FSDP2 over the catalog models
 
-Run from the repository root using an environment with the same PyTorch/MLOps
-versions as the comparison. No ShadowSpill runtime is used. The model, actual
-top-k routing, auxiliary loss, and chunked language-model head come from
-`workloads/models/qwen3moe/implementations/mlops.py` and its existing implementation.
+Native PyTorch FSDP2 (`fully_shard`) over any catalog model, full or LoRA,
+with the shared objective, geometry, precision contract and result row of
+`baselines/common`. No ShadowSpill runtime is used: the trainer refuses to
+finish if `shadowspill` was imported. Run from the repository root in the
+`baselines` environment (`baselines/scripts/setup.sh`).
 
-The trainer and sweep driver have passed a single-GPU numerical matrix covering
-no/partial/full recomputation, CPU offload with/without pinned memory, prefetch,
-both synchronization modes, and resharding controls. Multi-GPU qualification is
-still required before accepting full-model baseline measurements.
-
-Run the small numerical check first:
+One case:
 
 ```bash
-torchrun --standalone --nproc-per-node=8 -m baselines.fsdp2.train \
-  --tiny --verify-reference --sequence-length 64 --global-tokens 2048 \
-  --microbatch-tokens 64 --recompute 1 --warmup-steps 1 --steps 2 \
-  --output runs/baselines/fsdp2/qualification-recompute
+torchrun --standalone --nproc-per-node=1 -m baselines.fsdp2.train \
+  --output /mnt/storage/research/shadowspill/baselines/round1/fsdp2/llama3-8b-r100 \
+  --model llama3-8b --tier rtx5090 --tokens-per-microbatch 8192 \
+  --recompute 1 --activation-offload none --offload none
 ```
 
-This compares loss, FP32 gradients, masters, and both AdamW moments against an
-unsharded eager reference across multiple accumulation microbatches and updates.
-The reference shares MLOps kernels; it checks FSDP reduction/accumulation and
-optimizer ownership, not independent kernel mathematics. Each update starts
-from identical master values and rotary buffers; independent optimizer moments
-carry across updates. Re-aligning the already-checked master values prevents
-tiny CPU/fused-Adam rounding differences from crossing BF16 rounding boundaries
-and changing routing in subsequent steps. Qualification runs are marked as
-unsuitable for throughput reporting.
-
-After qualification, one full-model case is:
+The tiny qualification matrix, every family against an eager reference:
 
 ```bash
-torchrun --standalone --nproc-per-node=8 -m baselines.fsdp2.train \
-  --sequence-length 4096 --global-tokens 2097152 \
-  --microbatch-tokens 16384 --recompute 1 \
-  --warmup-steps 3 --steps 5 \
-  --output runs/baselines/fsdp2/qwen30b/16K-recompute100
+python -m baselines.sweep --harness fsdp2 \
+  --config baselines/fsdp2/configs/qualification.json \
+  --output /mnt/storage/research/shadowspill/baselines/dev/fsdp2-qualification --gpus 1
 ```
 
-| Argument | Meaning |
+A throughput matrix, resumable, with the same manifest:
+
+```bash
+python -m baselines.sweep --harness fsdp2 \
+  --config baselines/fsdp2/configs/rtx5090_llama3-8b.json \
+  --output /mnt/storage/research/shadowspill/baselines/round1/fsdp2/llama3-8b --gpus 1
+```
+
+## What a case names
+
+| Flags | Meaning |
 |---|---|
-| `--microbatch-tokens` | Tokens per microbatch per rank; must divide the global update across ranks |
-| `--gradient-accumulation` | Optional explicit microbatches per update; otherwise derived from global tokens. Inconsistent values are rejected |
-| `--global-tokens` | Tokens across all ranks per optimizer update, default 2,097,152 |
-| `--sequence-length` | Independent sequence length, default 4,096 |
-| `--recompute` | Fraction of evenly distributed layers checkpointed, from 0 to 1 |
-| `--offload {none,cpu}` | Native FSDP2 offload of parameter shards, gradients, and optimizer state. CPU mode runs standard single-tensor AdamW on CPU; GPU mode uses fused AdamW |
-| `--[no-]pin-memory` | Pin offloaded CPU shards; default on, applicable only to CPU offload |
-| `--forward-prefetch N` | Explicit lookahead in transformer blocks; default 0 leaves native demand-driven forward behavior |
-| `--backward-prefetch auto` or `N` | Native reverse-order backward prefetch, or explicit depth at least 1. Default `auto` |
-| `--gradient-sync {per-microbatch,last-microbatch}` | Reduce each microbatch into owned FP32 shards (default), or keep full gradients and reduce on the final microbatch |
-| `--[no-]reshard-after-forward` | Release each block's gathered weights after forward, or keep them through backward |
-| `--[no-]reshard-after-backward` | Reshard between accumulation microbatches, default on. Always reshard on the final backward before optimizer updates |
-| `--compile-blocks` | Enable `torch.compile` on each FSDP block; default off until GPU qualification |
+| `--model`, `--implementation`, `--mode`, `--lora JSON`, `--model-config JSON` | The catalog model (`workloads/models/catalog.py`), its `pytorch` or `mlops` implementation, `full` or `lora` training with `configure_lora`'s options, and field overrides on the entry's configuration (`baselines.common.models`) |
+| `--sequence-length`, `--tokens-per-microbatch`, `--tokens-per-step` or `--tier` | One update's geometry: `tokens_per_step = world_size * tokens_per_microbatch * accumulation`, in whole sequences; a geometry that does not divide is refused (`baselines.common.geometry`) |
+| `--model-dtype`, `--master-dtype`, `--grad-dtype`, `--opt-state-dtype`, `--parameter-rounding`, `--opt-state-rounding`, `--round-accumulation-once` | The precision contract the quickstart names (`baselines.common.precision`); what FSDP2 cannot honor is refused, never substituted: see below |
+| `--data DIR` | A corpus `baselines/scripts/prepare_corpus.py` wrote; each rank reads one contiguous window per step, disjoint across ranks and steps until the corpus wraps. Without it, synthetic tokens distinct per rank from `--seed` |
+| `--recompute F` | Fraction of whole transformer blocks checkpointed, spread evenly, from 0 to 1 |
+| `--activation-offload {none,cpu,overlapped}` | `cpu` wraps every block in PyTorch's `offload_wrapper` (`save_on_cpu`, pinned, synchronous copies); `overlapped` is torchtune's stream-overlapped `OffloadActivations`, vendored as `offload_overlapped.py` with its license, entered at the first block and left after the last so the embedding and head stay on the device. Both compose with `--recompute`: a checkpointed block offloads its input, and recomputation stays on the device |
+| `--offload {none,cpu}`, `--[no-]pin-memory` | FSDP2's `CPUOffloadPolicy`: parameter shards, gradients and optimizer state on the host, the optimizer step on CPU |
+| `--forward-prefetch N`, `--backward-prefetch auto\|N` | Explicit lookahead in blocks; `0` leaves native forward behavior, backward depth zero is not an off switch and is refused |
+| `--gradient-sync {per-microbatch,last-microbatch}` | Reduce each microbatch into the owned shards, or keep full gradients and reduce on the last |
+| `--[no-]reshard-after-forward`, `--[no-]reshard-after-backward` | Release each block's gathered weights after forward; reshard between accumulation microbatches (the final backward always reshards) |
+| `--compile-blocks` | `torch.compile` on every block |
+| `--allocator-cap-gib G` | A PyTorch caching-allocator limit; NCCL and other external allocations are outside it |
+| `--float8` | torchao Float8 training, tensorwise scaling with the Float8 all-gather, on every block linear the kernels take; the head stays as it is. Full mode on bfloat16 weights |
+| `--optimizer {adamw,adamw8bit,adamw4bit,cpu-offload}` | Fused torch AdamW, torchao's 8-bit or 4-bit AdamW (their state is in low-bit blocks, so `--opt-state-dtype none`), or torchao's `CPUOffloadOptimizer` stepping on the host with the shards on the device |
+| `--qlora-nf4` | LoRA with the frozen weight of every adapted linear quantized to NF4 (torchao); the model is materialized on the host, quantized, then sharded |
 | `--warmup-steps`, `--steps` | Excluded warmups and measured complete optimizer updates |
-| `--allocator-cap-gib` | Optional PyTorch caching-allocator limit; excludes external allocations |
-| `--cpu-threads` | Intra-op CPU threads per rank, including offloaded optimizer work; single-case default 1 |
-| `--learning-rate`, `--weight-decay`, `--seed` | Explicit optimizer and synthetic-data initialization settings |
-| `--nsys-capture` | Bracket measured steps with Nsight profiler start/stop; profiled timings are not throughput results |
-| `--tiny --verify-reference` | Small numerical qualification; never use its timings as full-model performance |
-| `--output` | New case directory; existing rank directories are never overwritten |
+| `--learning-rate`, `--weight-decay`, `--seed`, `--cpu-threads` | Optimizer settings, the data and initialization seed, intra-op threads per rank |
+| `--verify-reference` | Tiny models: compare every update's loss, gradients, masters and both AdamW moments to an unsharded eager copy; never a throughput result |
+| `--nsys-capture` | Bracket the measured steps with the profiler; not a throughput result |
 
-Global update geometry is always checked:
+## Precision
 
-```text
-global_tokens = world_size * microbatch_tokens * gradient_accumulation
-```
+FSDP2 keeps a trained weight's shard at the dtype it was materialized at,
+the master when one is kept, and sums gradients into that shard; AdamW keeps
+its moments at it. So `--grad-dtype` and `--opt-state-dtype` must be the
+stepped dtype (`float32` with masters, the model dtype without), or
+`parameter`, or `none`. The default is bfloat16 compute with float32 masters,
+gradients and moments. `--master-dtype none` with a bfloat16 model steps the
+weights themselves; `--parameter-rounding stochastic` then uses torchao's
+AdamW, which rounds the bfloat16 update stochastically. A float16 model would
+need loss scaling the harness does not do, and `--round-accumulation-once`
+is not available: both are refused. `mlops.dispatch.set_weight_gradient_dtype`
+makes the MLOps kernels produce weight gradients at the stepped dtype.
 
-Changing accumulation independently requires setting `--global-tokens` to the
-matching value; the harness never silently changes the amount of training work.
-For eight GPUs and 2,097,152 tokens, 4K/8K/16K/32K/64K/128K microbatches require
-64/32/16/8/4/2 accumulation microbatches respectively.
-
-The current public PyTorch API treats an empty backward-prefetch list as
-**default prefetch**, not disabled prefetch. Accordingly, backward depth zero
-is rejected rather than mislabeled as an off switch. Forward zero disables
-explicit lookahead but retains native stream overlap. The root FSDP unit owns
-embedding/head parameters and retains their gathered copy through backward.
-
-## Sweep harness
-
-The example matrix has six microbatch sizes, five whole-block recomputation
-fractions, and two offload modes (60 cases). Inspect its expanded commands first:
-
-```bash
-python -m baselines.sweep --harness fsdp2 \
-  --config baselines/fsdp2/configs/qwen30b.json \
-  --gpus 8 --output runs/baselines/fsdp2/qwen30b --dry-run
-```
-
-Run or resume exactly that manifest:
-
-```bash
-python -m baselines.sweep --harness fsdp2 \
-  --config baselines/fsdp2/configs/qwen30b.json \
-  --gpus 8 --output runs/baselines/fsdp2/qwen30b --resume
-```
-
-Use `configs/qualification.json` for the six-case tiny numerical matrix first.
-The sweep (`baselines/sweep.py`, shared by every harness) launches a fresh
-single-node `torchrun` for each configuration, with automatic worker restarts
-disabled, and reads the `row.json` the trainer's first rank writes. Launch it
-inside the GPU allocation, preferably from tmux. It does not reserve GPUs itself.
-
-Configuration JSON has `schema_version: 1`, a `defaults` mapping, and either a
-Cartesian `grid` or explicit `cases` list. Keys use the CLI names with underscores.
-Every trainer control above can be a grid axis. For example:
-
-```json
-{
-  "schema_version": 1,
-  "defaults": {"microbatch_tokens": 16384, "recompute": 1},
-  "grid": {
-    "offload": ["none", "cpu"],
-    "forward_prefetch": [0, 1, 2],
-    "backward_prefetch": ["auto", 1, 2],
-    "reshard_after_forward": [true, false]
-  }
-}
-```
-
-An `allocator_cap_gib` grid can add memory limits. They remain allocator caps,
-not guarantees on NCCL/external memory or a replacement for ShadowSpill's pool
-budget. `last-microbatch` synchronization and retaining gathered parameters can
-substantially increase GPU memory. CPU offload also consumes host memory.
-
-| Sweep argument | Meaning |
-|---|---|
-| `--config`, `--output`, `--gpus` | Matrix, isolated output root, and GPUs on one node |
-| `--python` | Python interpreter for torchrun, default the launcher's interpreter |
-| `--dry-run` | Save expanded configs, exact commands, provenance, and index; no GPU launch |
-| `--resume` | Continue the identical matrix, code, dependencies, and Python environment |
-| `--retry-failed` | With resume, retry OOM/error/timeout/interrupted cases in new attempt directories |
-| `--case-timeout` | Wall-clock seconds per case, including setup/compilation; default 3,600 |
-| `--continue-on-error` | Continue after non-OOM failures. Default stops for diagnosis; device OOM cases are recorded and skipped |
-| `--limit` | Maximum new attempts in this invocation, useful for bring-up |
-
-Completed cases are skipped on resume. Failed cases retain exact settings,
-tracebacks, command, and logs; nothing silently changes the batch or policy.
-An output lock prevents concurrent launchers from using the same sweep root.
-Code/environment changes require a new output root, preserving earlier evidence.
+## What a run writes
 
 ```text
 output/
-  README.md             # linked configuration/results table
-  manifest.json         # full settings, source hashes and Python dependencies
-  results.json          # machine-readable outcomes and comparable metrics
-  cases/case-NNNN-HASH/
-    config.json
-    command.txt
-    attempt-001/
-      command.txt
-      console.log
-      outcome.json
-      results.json      # only after all ranks finish
-      rank-00000/       # request, result or failure; one directory per rank
+  rank-NNNNN/request.json   # the case as described, the hardware, the resolved precision,
+                            # checkpointed layers, the model summary, the corpus
+  rank-NNNNN/result.json    # cycles, losses, peaks, evidence; or failure.json
+  results.json              # every rank's measurements (first rank)
+  row.json                  # the shared result row (first rank)
 ```
 
-Parameters are created on meta, sharded before materialization, and initialized
-in place on GPU or CPU as requested. Compute buffers remain on GPU. By default,
-gradients reduce-scatter after every microbatch and accumulate in FP32 owned
-shards, avoiding the full-model gradients that deferred synchronization retains.
-FP32 moments and master shards are checked after the first optimizer update.
+A sweep adds `cases/<case>/attempt-NNN/` around that, `manifest.json`,
+`results.json` and a `README.md` index (`baselines/sweep.py`), and the report
+reads the rows (`baselines/report.py`).
 
-Each case saves `rank-XXXXX/request.json`, `result.json` or `failure.json`, and an
-all-rank `results.json`. Useful TFLOP/s uses the same Qwen shape-based count as
-the existing ShadowSpill sweep and excludes recompute/optimizer/communication.
-All measured losses must be finite. The summary requires every expected rank and
-every measured update. Setup time, GPU allocated/reserved peaks, and host peak
-RSS are retained separately from timed complete optimizer steps. Summed peak
-RSS is a sum of per-process high-water marks, not a simultaneous node measurement.
+## Measurement
+
+Every rank's cycle times are kept; a step's time is the slowest rank's and
+the result is the median over measured steps. Useful TFLOP/s per GPU uses
+the convention of `baselines.common.models.useful_flops_per_token`, counted
+from the model as built: recomputation, the optimizer and communication are
+not credited. Peaks are PyTorch allocator measurements of the binding rank,
+and the host peak is the sum of the ranks' high-water marks. The tiny
+qualification and profiled runs are rows whose measurement is not a
+throughput result. Every measured loss must be finite, and the first rank's
+summary requires every rank and every measured step.
+
+Parameters are created on meta, sharded before materialization, and
+initialized in place on the device or the host as `--offload` asks; compute
+buffers stay on the device. By default gradients reduce-scatter after every
+microbatch and accumulate in owned shards at the stepped dtype. The first
+update checks the shards, their gradients and the moments against the
+contract with plain AdamW.

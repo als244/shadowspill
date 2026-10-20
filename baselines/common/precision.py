@@ -21,7 +21,9 @@ from dataclasses import asdict, dataclass, replace
 
 DTYPES = ("bfloat16", "float16", "float32")
 ROUNDINGS = ("nearest", "stochastic")
-_FIELDS = (
+
+#: The fields of a request, in the order the flags take them.
+FIELDS = (
     "model_dtype",
     "master_dtype",
     "grad_dtype",
@@ -94,15 +96,15 @@ class Precision:
 
     def describe(self) -> str:
         values = self.resolved()
-        return ", ".join(f"{name}={values[name]}" for name in _FIELDS)
+        return ", ".join(f"{name}={values[name]}" for name in FIELDS)
 
     @classmethod
     def from_arguments(cls, arguments: argparse.Namespace) -> Precision:
-        return cls(**{name: getattr(arguments, name) for name in _FIELDS})
+        return cls(**{name: getattr(arguments, name) for name in FIELDS})
 
     @classmethod
     def from_dict(cls, value: dict[str, object]) -> Precision:
-        unknown = set(value) - set(_FIELDS)
+        unknown = set(value) - set(FIELDS)
         if unknown:
             raise ValueError(f"unknown precision fields: {sorted(unknown)}")
         return cls(**value)  # type: ignore[arg-type]
@@ -110,7 +112,7 @@ class Precision:
     def arguments(self) -> list[str]:
         """The flags that reproduce this request through ``add_arguments``."""
         result = []
-        for name in _FIELDS:
+        for name in FIELDS:
             value = getattr(self, name)
             flag = "--" + name.replace("_", "-")
             if name == "round_accumulation_once":
@@ -238,7 +240,7 @@ def add_arguments(
 
 
 def with_changes(precision: Precision, **changes: object) -> Precision:
-    unknown = set(changes) - set(_FIELDS)
+    unknown = set(changes) - set(FIELDS)
     if unknown:
         raise ValueError(f"unknown precision fields: {sorted(unknown)}")
     return replace(precision, **changes)  # type: ignore[arg-type]
@@ -246,6 +248,7 @@ def with_changes(precision: Precision, **changes: object) -> Precision:
 
 __all__ = [
     "DTYPES",
+    "FIELDS",
     "ROUNDINGS",
     "Capabilities",
     "Precision",

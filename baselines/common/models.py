@@ -88,13 +88,18 @@ class ModelRequest:
     def build(self, *, dtype: str) -> Any:
         """The model on ``meta`` at ``dtype``, with LoRA applied in that mode
         so the trainable set is fixed before any harness shards or
-        materializes it."""
+        materializes it; the factors are created at ``dtype`` too, unless
+        the LoRA options say otherwise, so they follow the same precision
+        contract as every other trained weight."""
 
+        lora = None
+        if self.mode == "lora":
+            lora = {"factor_dtype": dtype, **self.lora}
         return catalog.build_on_meta(
             self.model,
             self.implementation,
             dtype=dtype,
-            lora=dict(self.lora) if self.mode == "lora" else None,
+            lora=lora,
             **dict(self.config),
         )
 

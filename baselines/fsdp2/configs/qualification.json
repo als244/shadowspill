@@ -1,28 +1,32 @@
 {
   "schema_version": 1,
   "defaults": {
-    "tiny": true,
     "verify_reference": true,
     "sequence_length": 64,
-    "global_tokens": 2048,
-    "microbatch_tokens": 64,
+    "tokens_per_step": 1024,
+    "tokens_per_microbatch": 128,
     "warmup_steps": 1,
     "steps": 2,
     "cpu_threads": 2
   },
   "cases": [
-    {"recompute": 0},
-    {"recompute": 1, "forward_prefetch": 1, "backward_prefetch": 1},
-    {
-      "recompute": 0.5,
-      "forward_prefetch": 2,
-      "backward_prefetch": 2,
-      "gradient_sync": "last-microbatch",
-      "reshard_after_forward": false,
-      "reshard_after_backward": false
-    },
-    {"offload": "cpu", "recompute": 1, "forward_prefetch": 1, "backward_prefetch": 1},
-    {"offload": "cpu", "pin_memory": false, "recompute": 0, "gradient_sync": "last-microbatch"},
-    {"offload": "cpu", "recompute": 1, "forward_prefetch": 2, "backward_prefetch": 2, "reshard_after_backward": false}
+    {"model": "llama3-tiny", "recompute": 0},
+    {"model": "llama3-tiny", "recompute": 1, "activation_offload": "cpu",
+     "forward_prefetch": 1, "backward_prefetch": 1},
+    {"model": "llama3-tiny", "recompute": 0.5, "activation_offload": "overlapped",
+     "gradient_sync": "last-microbatch", "reshard_after_forward": false,
+     "reshard_after_backward": false},
+    {"model": "llama3-tiny", "offload": "cpu", "recompute": 1},
+    {"model": "llama3-tiny", "offload": "cpu", "pin_memory": false, "recompute": 0,
+     "gradient_sync": "last-microbatch"},
+    {"model": "llama3-tiny", "mode": "lora", "lora": {"rank": 4}, "recompute": 1},
+    {"model": "llama3-tiny", "implementation": "pytorch", "recompute": 1},
+    {"model": "llama3-tiny", "model_config": {"tied_embeddings": true}, "recompute": 1},
+    {"model": "llama3-tiny", "master_dtype": null, "grad_dtype": null,
+     "opt_state_dtype": "parameter", "recompute": 1},
+    {"model": "qwen35-tiny", "recompute": 1},
+    {"model": "olmoe-tiny", "recompute": 1},
+    {"model": "qwen3moe-tiny", "recompute": 1},
+    {"model": "qwen35moe-tiny", "recompute": 0.5, "offload": "cpu"}
   ]
 }

@@ -10,7 +10,7 @@ import pytest
 
 from baselines.common import write_json
 from baselines.common.results import memory_peaks, row, summarize_cycles, varied
-from baselines.fsdp2.settings import Settings, add_arguments
+from baselines.fsdp2.settings import Settings, add_arguments, from_namespace
 from baselines.sweep import (
     classify,
     expand,
@@ -21,14 +21,28 @@ from baselines.sweep import (
     run_case,
 )
 
+#: A tiny case and the eight-GPU Qwen3-30B-A3B pretraining case.
+TINY = {
+    "model": "llama3-tiny",
+    "sequence_length": 64,
+    "tokens_per_step": 2048,
+    "tokens_per_microbatch": 64,
+}
+BIG = {"model": "qwen3moe-30b-a3b", "tokens_per_step": 2097152}
+
 
 def test_grid_keeps_global_step_constant_and_roundtrips_every_control():
     cases = expand(
         {
             "schema_version": 1,
-            "defaults": {"forward_prefetch": 2, "backward_prefetch": "2"},
+            "defaults": {
+                "model": "qwen3moe-30b-a3b",
+                "tokens_per_step": 2097152,
+                "forward_prefetch": 2,
+                "backward_prefetch": "2",
+            },
             "grid": {
-                "microbatch_tokens": [4096, 131072],
+                "tokens_per_microbatch": [4096, 131072],
                 "offload": ["none", "cpu"],
                 "gradient_sync": ["per-microbatch", "last-microbatch"],
             },
@@ -40,20 +54,16 @@ def test_grid_keeps_global_step_constant_and_roundtrips_every_control():
     parser = argparse.ArgumentParser()
     add_arguments(parser)
     for _, settings in cases:
-        assert (
-            settings.microbatch_tokens * settings.gradient_accumulation * 8 == 2097152
-        )
-        assert (
-            Settings.from_dict(vars(parser.parse_args(settings.arguments())))
-            == settings
-        )
+        accumulation = settings.describe(8)["geometry"]["accumulation"]
+        assert settings.tokens_per_microbatch * accumulation * 8 == 2097152
+        assert from_namespace(parser.parse_args(settings.arguments())) == settings
 
 
 @pytest.mark.parametrize(
     "override",
     [
-        {"gradient_accumulation": 1},
-        {"microbatch_tokens": 5000},
+        {"tokens_per_step": 2097152 + 1},
+        {"tokens_per_microbatch": 5000},
         {"backward_prefetch": 0},
         {"forward_prefetch": -1},
         {"offload": "typo"},
@@ -66,23 +76,28 @@ def test_grid_keeps_global_step_constant_and_roundtrips_every_control():
 )
 def test_invalid_controls_are_rejected_before_launch(override):
     with pytest.raises(ValueError):
-        expand({"schema_version": 1, "cases": [override]}, 8, Settings)
+        expand({"schema_version": 1, "defaults": BIG, "cases": [override]}, 8, Settings)
 
 
 def test_duplicate_effective_cases_run_once():
-    specification = {"schema_version": 1, "cases": [{}, {"gradient_accumulation": 64}]}
+    cases = [{}, {"tokens_per_step": None, "tier": "h100x8"}]
+    specification = {"schema_version": 1, "defaults": BIG, "cases": cases}
     assert len(expand(specification, 8, Settings)) == 1
 
 
 def test_unknown_knob_is_not_silently_ignored():
     with pytest.raises(ValueError, match="unknown"):
-        expand({"schema_version": 1, "grid": {"prefetch_typo": [1]}}, 8, Settings)
+        expand(
+            {"schema_version": 1, "defaults": BIG, "grid": {"prefetch_typo": [1]}},
+            8,
+            Settings,
+        )
 
 
 def test_a_harness_is_its_settings_module():
     module = harness_module("fsdp2")
     assert module.Settings is Settings
-    command = module.command("py", 2, Settings(), "out")
+    command = module.command("py", 2, Settings(**TINY), "out")
     assert command[:10] == [
         "py",
         "-m",
@@ -95,31 +110,25 @@ def test_a_harness_is_its_settings_module():
         "--output",
         "out",
     ]
-    assert command[10:] == Settings().arguments()
+    assert command[10:] == Settings(**TINY).arguments()
     with pytest.raises(ValueError, match="no harness"):
         harness_module("nonesuch")
 
 
 def test_settings_describe_the_model_geometry_precision_and_configuration():
-    settings = Settings(
-        tiny=True, sequence_length=64, global_tokens=2048, microbatch_tokens=64
-    )
+    settings = Settings(**TINY)
     description = settings.describe(2)
-    assert description["model"] == {
-        "model": "qwen3moe-tiny",
-        "implementation": "mlops",
-        "mode": "full",
-    }
+    assert description["model"]["model"] == "llama3-tiny"
     assert description["geometry"]["accumulation"] == 16
     assert description["precision"]["master_dtype"] == "float32"
     assert "recompute" in description["configuration"]
-    assert "global_tokens" not in description["configuration"]
+    assert "tokens_per_step" not in description["configuration"]
 
 
 def completed_attempt(attempt, settings, world_size=2, status="completed"):
     description = settings.describe(world_size)
     measurement = summarize_cycles(
-        [[1, 10], [10, 1]], global_tokens=settings.global_tokens
+        [[1, 10], [10, 1]], global_tokens=settings.tokens_per_step
     )
     measurement["performance_result"] = True
     peaks = {
@@ -141,7 +150,7 @@ def completed_attempt(attempt, settings, world_size=2, status="completed"):
 
 
 def test_result_uses_slowest_rank_per_cycle(tmp_path):
-    settings = Settings(steps=2).normalized(2)
+    settings = Settings(**TINY, steps=2).normalized(2)
     completed_attempt(tmp_path, settings)
     outcome = classify(tmp_path, 0, 2, settings)
     assert outcome["status"] == "completed"
@@ -162,7 +171,7 @@ def test_result_uses_slowest_rank_per_cycle(tmp_path):
     ],
 )
 def test_partial_or_changed_runs_are_not_results(tmp_path, problem):
-    settings = Settings(steps=2).normalized(2)
+    settings = Settings(**TINY, steps=2).normalized(2)
     if problem == "other_configuration":
         completed_attempt(tmp_path, dataclasses.replace(settings, offload="cpu"))
     elif problem == "other_world":
@@ -179,19 +188,19 @@ def test_partial_or_changed_runs_are_not_results(tmp_path, problem):
 
 def test_oom_distinct_from_generic_rank_failure(tmp_path):
     write_json(tmp_path / "rank-00001/failure.json", {"status": "cuda_out_of_memory"})
-    settings = Settings().normalized(2)
+    settings = Settings(**TINY).normalized(2)
     assert classify(tmp_path, 1, 2, settings)["status"] == "cuda_out_of_memory"
 
 
 def test_a_failed_attempt_gets_a_row_from_the_launcher(tmp_path):
-    settings = Settings().normalized(2)
+    settings = Settings(**TINY).normalized(2)
     write_json(tmp_path / "rank-00000/request.json", {"hardware": {"host": "h"}})
     manifest = {"source": {"git_head": "x"}, "environment": {"python": "3"}}
     outcome = {"status": "cuda_out_of_memory", "failures": [{"rank": 1}]}
     value = failure_row(tmp_path, outcome, settings, 2, "fsdp2", manifest)
     assert value["status"] == "cuda_out_of_memory"
     assert value["hardware"] == {"host": "h"}
-    assert value["model"]["model"] == "qwen3moe-30b-a3b"
+    assert value["model"]["model"] == "llama3-tiny"
     assert value["failure"]["failures"] == [{"rank": 1}]
     assert value["provenance"]["source"] == {"git_head": "x"}
 
@@ -212,7 +221,7 @@ def test_timeout_terminates_child_and_preserves_log(tmp_path):
             "import time; print('started', flush=True); time.sleep(60)",
         ],
         attempt,
-        Settings(),
+        Settings(**TINY),
         1,
         0.5,
     )
@@ -228,7 +237,7 @@ def test_varied_keys_are_the_columns_of_the_index():
 
 def test_dry_run_and_resume_refuse_different_settings(tmp_path):
     config, output = tmp_path / "config.json", tmp_path / "sweep"
-    write_json(config, {"schema_version": 1, "cases": [{}]})
+    write_json(config, {"schema_version": 1, "defaults": BIG, "cases": [{}]})
     argv = [
         "--harness",
         "fsdp2",
@@ -245,10 +254,12 @@ def test_dry_run_and_resume_refuse_different_settings(tmp_path):
     main([*argv, "--resume"])
     manifest = json.loads((output / "manifest.json").read_text())
     assert manifest["harness"] == "fsdp2"
-    assert manifest["cases"][0]["settings"]["gradient_accumulation"] == 64
+    assert manifest["cases"][0]["settings"]["tokens_per_step"] == 2097152
     with pytest.raises(SystemExit):
         main([*argv[:-3], "4", "--dry-run", "--resume"])
-    write_json(config, {"schema_version": 1, "cases": [{"recompute": 0}]})
+    write_json(
+        config, {"schema_version": 1, "defaults": BIG, "cases": [{"recompute": 0}]}
+    )
     with pytest.raises(SystemExit):
         main([*argv, "--resume"])
     with pytest.raises(SystemExit):
