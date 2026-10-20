@@ -27,14 +27,13 @@ this one.
 ## Shared layer
 
 `baselines/common/` is what every harness shares and no training system owns:
-`geometry` (one optimizer update's shape and the tokens per update of each
-hardware tier), `precision` (the dtype contract mirroring the quickstart's
-flags, and the refusal of a combination a harness cannot honor), `models` (the
-catalog model a harness builds, full or LoRA, with the shared objective and the
-useful work a step performs), `results` (the result row schema and the
-measurement contract), `provenance` (sources, packages, hardware and the
-kernels that ran) and `data` (synthetic tokens per rank, or windows of a
-pre-tokenized corpus).
+`geometry` (one optimizer update's shape), `precision` (the dtype contract
+mirroring the quickstart's flags, and the refusal of a combination a harness
+cannot honor), `models` (the catalog model a harness builds, full or LoRA,
+with the shared objective and the useful work a step performs), `results`
+(the result row schema and the measurement contract), `provenance` (sources,
+packages, hardware and the kernels that ran) and `data` (synthetic tokens per
+rank, or windows of a pre-tokenized corpus).
 
 ## Precision
 
@@ -66,7 +65,18 @@ name of an environment beside the running one), resuming any sweep whose
 manifest exists and continuing past failures, then draws the report over
 every sweep into `<dir>/report`; `experiment.json` records the spec and
 each sweep's outcome. `baselines/experiments/` holds the specs of the
-rounds; `--dry-run` writes the plan and the commands without launching.
+rounds; `--dry-run` runs each sweep's own dry run, which expands and
+validates every case and writes its command, and launches nothing.
+
+An experiment compares its harnesses on one model, geometry and precision
+contract, so the spec's `settings` name them once: the catalog model, the
+sequence length and tokens per update chosen for that model on that
+hardware, the dtypes every harness honors, and the run's warmup, measured
+steps and threads. Every case of every sweep takes them, and a matrix that
+names one of them itself is refused; a harness's matrix holds only what is
+its own, its offloads, recompute, prefetch or budgets. The matrix each
+sweep runs, its own with the settings in its defaults, is written to
+`<dir>/matrices/<sweep>.json`.
 
 ## Reports
 

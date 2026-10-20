@@ -5,8 +5,9 @@
         [--retry-failed] [--continue-on-error] [--case-timeout SECONDS] \\
         [--limit N]
 
-A matrix names ``defaults`` and either a Cartesian ``grid`` or explicit
-``cases`` over the harness's settings. Every case is normalized, refused if
+A matrix names ``defaults`` and either a Cartesian ``grid``, or a list of
+grids whose cases are their union, or explicit ``cases`` over the harness's
+settings. Every case is validated, refused if
 invalid, and named by a digest of what runs, so two spellings of one
 configuration are one case. Each attempt of a case is its own process under
 ``cases/<name>/attempt-NNN/`` with its command, its console log and, when it
@@ -19,7 +20,7 @@ every case, and a resume must match it exactly, so the rows under one output
 are comparable.
 
 A harness is the module ``baselines.<harness>.settings``: its ``Settings``
-(``from_dict``, ``as_dict``, ``normalized``, ``arguments`` and
+(``from_dict``, ``as_dict``, ``validate``, ``arguments`` and
 ``describe``), its ``command`` and the ``SOURCE_PATHS`` whose digests
 identify its code.
 """
@@ -79,7 +80,7 @@ def digest(value):
 
 
 def expand(specification, world_size, settings_type):
-    """``[(name, settings)]`` for a matrix: normalized, refused if invalid,
+    """``[(name, settings)]`` for a matrix: validated, refused if invalid,
     and deduplicated by what runs."""
 
     unknown = set(specification) - {"schema_version", "defaults", "grid", "cases"}
@@ -92,13 +93,19 @@ def expand(specification, world_size, settings_type):
     if "cases" in specification:
         overrides = specification["cases"]
     else:
-        grid = specification.get("grid", {})
-        if not isinstance(grid, dict) or any(
-            not isinstance(values, list) or not values for values in grid.values()
+        grids = specification.get("grid", {})
+        grids = grids if isinstance(grids, list) else [grids]
+        if not grids or any(
+            not isinstance(grid, dict)
+            or any(
+                not isinstance(values, list) or not values for values in grid.values()
+            )
+            for grid in grids
         ):
             raise ValueError("each grid axis must be a nonempty list")
         overrides = [
             dict(zip(grid, values, strict=True))
+            for grid in grids
             for values in itertools.product(*grid.values())
         ]
     if not isinstance(overrides, list) or not overrides:
@@ -106,7 +113,7 @@ def expand(specification, world_size, settings_type):
     result, seen = [], set()
     for override in overrides:
         settings = settings_type.from_dict({**defaults, **override})
-        settings = settings.normalized(world_size)
+        settings.validate(world_size)
         identity = digest(settings.as_dict())[:12]
         if identity in seen:
             continue

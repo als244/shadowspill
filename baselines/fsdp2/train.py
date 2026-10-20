@@ -2,7 +2,7 @@
 
     torchrun --standalone --nproc-per-node=N -m baselines.fsdp2.train \\
         --output DIR --model NAME --tokens-per-microbatch T \\
-        (--tokens-per-step S | --tier NAME) [--mode full|lora] ...
+        --tokens-per-step S [--mode full|lora] ...
 
 The settings are ``baselines.fsdp2.settings``; what the harness cannot honor
 is refused before the process group exists. Every rank writes

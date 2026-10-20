@@ -14,8 +14,8 @@ One case:
 ```bash
 torchrun --standalone --nproc-per-node=1 -m baselines.shadowspill.train \
   --output /mnt/storage/research/shadowspill/baselines/round1/shadowspill/llama3-8b-e16 \
-  --model llama3-8b --tier rtx5090 --tokens-per-microbatch 8192 \
-  --execution-gib 16 --spill-gib 96
+  --model llama3-8b --tokens-per-step 65536 --tokens-per-microbatch 8192 \
+  --execution-gib 16 --spill-gib 128
 ```
 
 The tiny qualification matrix and a throughput matrix run through the

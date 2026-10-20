@@ -11,7 +11,7 @@ One case:
 ```bash
 torchrun --standalone --nproc-per-node=1 -m baselines.fsdp2.train \
   --output /mnt/storage/research/shadowspill/baselines/round1/fsdp2/llama3-8b-r100 \
-  --model llama3-8b --tier rtx5090 --tokens-per-microbatch 8192 \
+  --model llama3-8b --tokens-per-step 65536 --tokens-per-microbatch 8192 \
   --recompute 1 --activation-offload none --offload none
 ```
 
@@ -37,7 +37,7 @@ python -m baselines.sweep --harness fsdp2 \
 | Flags | Meaning |
 |---|---|
 | `--model`, `--implementation`, `--mode`, `--lora JSON`, `--model-config JSON` | The catalog model (`workloads/models/catalog.py`), its `pytorch` or `mlops` implementation, `full` or `lora` training with `configure_lora`'s options, and field overrides on the entry's configuration (`baselines.common.models`) |
-| `--sequence-length`, `--tokens-per-microbatch`, `--tokens-per-step` or `--tier` | One update's geometry: `tokens_per_step = world_size * tokens_per_microbatch * accumulation`, in whole sequences; a geometry that does not divide is refused (`baselines.common.geometry`) |
+| `--sequence-length`, `--tokens-per-step`, `--tokens-per-microbatch` | One update's geometry: `tokens_per_step = world_size * tokens_per_microbatch * accumulation`, in whole sequences; a geometry that does not divide is refused (`baselines.common.geometry`) |
 | `--model-dtype`, `--master-dtype`, `--grad-dtype`, `--opt-state-dtype`, `--parameter-rounding`, `--opt-state-rounding`, `--round-accumulation-once` | The precision contract the quickstart names (`baselines.common.precision`); what FSDP2 cannot honor is refused, never substituted: see below |
 | `--data DIR` | A corpus `baselines/scripts/prepare_corpus.py` wrote; each rank reads one contiguous window per step, disjoint across ranks and steps until the corpus wraps. Without it, synthetic tokens distinct per rank from `--seed` |
 | `--checkpoint DIR` | A local Hugging Face checkpoint of the model, read through the family's `checkpoint.py` after the shards are materialized: every rank reads the whole tensors and keeps its rows, a checkpoint whose configuration is not the catalog entry's is refused, and keys the model does not take fail the run. Without it, the initialized weights |

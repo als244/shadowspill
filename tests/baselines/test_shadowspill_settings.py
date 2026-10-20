@@ -31,7 +31,8 @@ def test_flags_round_trip_every_setting():
             "opt_state_rounding": "stochastic",
             "round_accumulation_once": True,
         }
-    ).normalized(2)
+    )
+    settings.validate(2)
     parser = argparse.ArgumentParser()
     add_arguments(parser)
     assert from_namespace(parser.parse_args(settings.arguments())) == settings
@@ -50,7 +51,7 @@ def test_a_recompute_fraction_is_refused():
         parser.parse_args([*Settings.from_dict(BASE).arguments(), "--recompute", "0.5"])
     )
     with pytest.raises(ValueError, match="planner decides"):
-        given.normalized(1)
+        given.validate(1)
 
 
 @pytest.mark.parametrize(
@@ -65,7 +66,7 @@ def test_a_recompute_fraction_is_refused():
 )
 def test_invalid_settings_are_refused(override):
     with pytest.raises(ValueError):
-        Settings.from_dict({**BASE, **override}).normalized(1)
+        Settings.from_dict({**BASE, **override}).validate(1)
 
 
 def test_an_unnamed_rounding_is_rounding_to_nearest():

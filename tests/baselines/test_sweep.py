@@ -79,8 +79,29 @@ def test_invalid_controls_are_rejected_before_launch(override):
         expand({"schema_version": 1, "defaults": BIG, "cases": [override]}, 8, Settings)
 
 
+def test_a_list_of_grids_runs_their_union():
+    specification = {
+        "schema_version": 1,
+        "defaults": TINY,
+        "grid": [
+            {"recompute": [0], "activation_offload": ["none"]},
+            {"recompute": [0.5, 1], "activation_offload": ["none", "cpu"]},
+        ],
+    }
+    cases = [settings for _, settings in expand(specification, 1, Settings)]
+    assert [(case.recompute, case.activation_offload) for case in cases] == [
+        (0, "none"),
+        (0.5, "none"),
+        (0.5, "cpu"),
+        (1, "none"),
+        (1, "cpu"),
+    ]
+    with pytest.raises(ValueError, match="nonempty"):
+        expand({**specification, "grid": []}, 1, Settings)
+
+
 def test_duplicate_effective_cases_run_once():
-    cases = [{}, {"tokens_per_step": None, "tier": "h100x8"}]
+    cases = [{}, {"tokens_per_step": 2097152}]
     specification = {"schema_version": 1, "defaults": BIG, "cases": cases}
     assert len(expand(specification, 8, Settings)) == 1
 
@@ -150,7 +171,8 @@ def completed_attempt(attempt, settings, world_size=2, status="completed"):
 
 
 def test_result_uses_slowest_rank_per_cycle(tmp_path):
-    settings = Settings(**TINY, steps=2).normalized(2)
+    settings = Settings(**TINY, steps=2)
+    settings.validate(2)
     completed_attempt(tmp_path, settings)
     outcome = classify(tmp_path, 0, 2, settings)
     assert outcome["status"] == "completed"
@@ -171,7 +193,8 @@ def test_result_uses_slowest_rank_per_cycle(tmp_path):
     ],
 )
 def test_partial_or_changed_runs_are_not_results(tmp_path, problem):
-    settings = Settings(**TINY, steps=2).normalized(2)
+    settings = Settings(**TINY, steps=2)
+    settings.validate(2)
     if problem == "other_configuration":
         completed_attempt(tmp_path, dataclasses.replace(settings, offload="cpu"))
     elif problem == "other_world":
@@ -188,12 +211,14 @@ def test_partial_or_changed_runs_are_not_results(tmp_path, problem):
 
 def test_oom_distinct_from_generic_rank_failure(tmp_path):
     write_json(tmp_path / "rank-00001/failure.json", {"status": "cuda_out_of_memory"})
-    settings = Settings(**TINY).normalized(2)
+    settings = Settings(**TINY)
+    settings.validate(2)
     assert classify(tmp_path, 1, 2, settings)["status"] == "cuda_out_of_memory"
 
 
 def test_a_failed_attempt_gets_a_row_from_the_launcher(tmp_path):
-    settings = Settings(**TINY).normalized(2)
+    settings = Settings(**TINY)
+    settings.validate(2)
     write_json(tmp_path / "rank-00000/request.json", {"hardware": {"host": "h"}})
     manifest = {"source": {"git_head": "x"}, "environment": {"python": "3"}}
     outcome = {"status": "cuda_out_of_memory", "failures": [{"rank": 1}]}

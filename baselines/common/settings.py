@@ -20,19 +20,14 @@ from typing import Any
 from baselines.common import geometry as geometry_flags
 from baselines.common import models as model_flags
 from baselines.common import precision as precision_flags
-from baselines.common.geometry import TIER_TOKENS_PER_STEP, Geometry, recompute_layers
+from baselines.common.geometry import Geometry, recompute_layers
 from baselines.common.models import ModelRequest
 from baselines.common.precision import Capabilities, Precision
 
 #: The fields a row records as the model, the geometry and the precision;
 #: every other field is the configuration.
 MODEL_FIELDS = ("model", "implementation", "mode", "lora", "model_config")
-GEOMETRY_FIELDS = (
-    "sequence_length",
-    "tokens_per_step",
-    "tokens_per_microbatch",
-    "tier",
-)
+GEOMETRY_FIELDS = ("sequence_length", "tokens_per_step", "tokens_per_microbatch")
 PRECISION_FIELDS = precision_flags.FIELDS
 
 HELP = {
@@ -69,7 +64,6 @@ class Settings:
     sequence_length: int = geometry_flags.SEQUENCE_LENGTH
     tokens_per_step: int | None = None
     tokens_per_microbatch: int = 4096
-    tier: str | None = None
     # The precision contract.
     model_dtype: str = "bfloat16"
     master_dtype: str | None = "float32"
@@ -132,22 +126,11 @@ class Settings:
         )
 
     def geometry(self, world_size) -> Geometry:
-        tokens_per_step = self.tokens_per_step
-        if self.tier is not None:
-            if self.tier not in TIER_TOKENS_PER_STEP:
-                raise ValueError(f"unknown tier {self.tier!r}")
-            tier_tokens = TIER_TOKENS_PER_STEP[self.tier]
-            if tokens_per_step is None:
-                tokens_per_step = tier_tokens
-            elif tokens_per_step != tier_tokens:
-                raise ValueError(
-                    f"tokens_per_step {tokens_per_step} contradicts tier {self.tier}"
-                )
-        if tokens_per_step is None:
-            raise ValueError("a case names tokens_per_step or a tier")
+        if self.tokens_per_step is None:
+            raise ValueError("a case names its tokens_per_step")
         return Geometry(
             self.sequence_length,
-            tokens_per_step,
+            self.tokens_per_step,
             self.tokens_per_microbatch,
             world_size,
         )
@@ -207,14 +190,6 @@ class Settings:
 
     def harness_validation(self, request, geometry, precision) -> None:
         """A harness's own rules, after the shared ones."""
-
-    def normalized(self, world_size):
-        """These settings with the tier resolved into tokens_per_step; settings
-        that cannot run at this world size are refused."""
-        geometry = self.validate(world_size)
-        return dataclasses.replace(
-            self, tokens_per_step=geometry.tokens_per_step, tier=None
-        )
 
     def describe(self, world_size):
         """The model, geometry, precision and configuration a row records."""

@@ -1,11 +1,12 @@
-"""The geometry of one optimizer update, and the tier each round starts from.
+"""The geometry of one optimizer update.
 
 An update is ``tokens_per_step`` tokens across every rank, consumed as
 ``world_size`` ranks times ``accumulation`` microbatches of
 ``tokens_per_microbatch`` tokens each, in whole sequences of
-``sequence_length``. A harness never changes any of these to make a
-configuration fit: a geometry that does not divide is refused, and one that
-does not fit the device is a row that says so.
+``sequence_length``. An experiment chooses them for its model, sequence
+length and hardware together. A harness never changes any of these to make
+a configuration fit: a geometry that does not divide is refused, and one
+that does not fit the device is a row that says so.
 """
 
 from __future__ import annotations
@@ -14,17 +15,8 @@ import argparse
 import math
 from dataclasses import asdict, dataclass
 
-#: The sequence length every round uses unless a scenario names another.
+#: The sequence length of a case that names none.
 SEQUENCE_LENGTH = 4_096
-
-#: Tokens per optimizer update each hardware tier starts from: a 32 GB device
-#: at the top of the range a single consumer GPU trains at, one H100, and
-#: an eight-H100 node.
-TIER_TOKENS_PER_STEP = {
-    "rtx5090": 131_072,
-    "h100": 262_144,
-    "h100x8": 2_097_152,
-}
 
 
 def accumulation_steps(global_tokens, sequence_length, microbatch_tokens, world_size):
@@ -96,30 +88,9 @@ class Geometry:
             "tokens_per_rank_per_step": self.tokens_per_rank_per_step,
         }
 
-    @classmethod
-    def tier(
-        cls,
-        name: str,
-        *,
-        tokens_per_microbatch: int,
-        world_size: int = 1,
-        sequence_length: int = SEQUENCE_LENGTH,
-    ) -> Geometry:
-        """The tier's tokens per update at the given microbatch."""
-        if name not in TIER_TOKENS_PER_STEP:
-            raise ValueError(
-                f"unknown tier {name!r}; tiers are {', '.join(TIER_TOKENS_PER_STEP)}"
-            )
-        return cls(
-            sequence_length,
-            TIER_TOKENS_PER_STEP[name],
-            tokens_per_microbatch,
-            world_size,
-        )
-
 
 def add_arguments(parser: argparse.ArgumentParser) -> None:
-    """The geometry flags every harness takes, with the tier default."""
+    """The geometry flags every harness takes."""
 
     parser.add_argument(
         "--sequence-length",
@@ -130,9 +101,8 @@ def add_arguments(parser: argparse.ArgumentParser) -> None:
     parser.add_argument(
         "--tokens-per-step",
         type=int,
-        default=None,
-        help="tokens per optimizer update across every rank; --tier's value"
-        " when not given",
+        required=True,
+        help="tokens per optimizer update across every rank",
     )
     parser.add_argument(
         "--tokens-per-microbatch",
@@ -140,34 +110,14 @@ def add_arguments(parser: argparse.ArgumentParser) -> None:
         required=True,
         help="tokens per microbatch per rank, in whole sequences",
     )
-    parser.add_argument(
-        "--tier",
-        choices=tuple(TIER_TOKENS_PER_STEP),
-        default=None,
-        help="the hardware tier whose tokens per update to use when"
-        " --tokens-per-step is not given",
-    )
 
 
 def from_arguments(arguments: argparse.Namespace, world_size: int) -> Geometry:
-    """The geometry the flags describe; a step total needs one of its two
-    flags, and both together must agree."""
+    """The geometry the flags describe."""
 
-    tokens_per_step = arguments.tokens_per_step
-    if arguments.tier is not None:
-        tier_tokens = TIER_TOKENS_PER_STEP[arguments.tier]
-        if tokens_per_step is None:
-            tokens_per_step = tier_tokens
-        elif tokens_per_step != tier_tokens:
-            raise ValueError(
-                f"--tokens-per-step {tokens_per_step} contradicts --tier"
-                f" {arguments.tier} ({tier_tokens})"
-            )
-    if tokens_per_step is None:
-        raise ValueError("--tokens-per-step or --tier is required")
     return Geometry(
         arguments.sequence_length,
-        tokens_per_step,
+        arguments.tokens_per_step,
         arguments.tokens_per_microbatch,
         world_size,
     )
@@ -175,7 +125,6 @@ def from_arguments(arguments: argparse.Namespace, world_size: int) -> Geometry:
 
 __all__ = [
     "SEQUENCE_LENGTH",
-    "TIER_TOKENS_PER_STEP",
     "Geometry",
     "accumulation_steps",
     "add_arguments",

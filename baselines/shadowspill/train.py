@@ -3,7 +3,7 @@
 
     torchrun --standalone --nproc-per-node=N -m baselines.shadowspill.train \\
         --output DIR --model NAME --tokens-per-microbatch T \\
-        (--tokens-per-step S | --tier NAME) --execution-gib G --spill-gib H ...
+        --tokens-per-step S --execution-gib G --spill-gib H ...
 
 The settings are ``baselines.shadowspill.settings``. Every rank writes
 ``rank-NNNNN/request.json`` as it starts, ``plan.json`` (and ``search.json``

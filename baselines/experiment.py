@@ -4,15 +4,21 @@ then the report over everything they wrote.
     python -m baselines.experiment --spec experiment.json [--output DIR] \\
         [--only NAME ...] [--limit N] [--dry-run] [--skip-report]
 
-A spec names the GPU count, the interpreter each harness runs in and the
-sweeps: each a harness, its matrix and optionally its own interpreter,
-timeout and name. Every sweep runs through ``baselines.sweep`` as its own
-process, with ``--resume`` once its manifest exists and
-``--continue-on-error``, into ``<output>/sweeps/<name>``, so an experiment
-interrupted anywhere resumes where it stopped; a sweep's console goes to
-``launcher.log`` beside its cases. ``experiment.json`` records the spec and
-every sweep's outcome. The report of ``baselines.report`` is then drawn over
-every sweep into ``<output>/report``.
+A spec names the GPU count, the interpreter each harness runs in, the
+settings every case of every sweep takes, and the sweeps: each a harness,
+its matrix and optionally its own interpreter, timeout and name. The
+settings are what the harnesses of one experiment share, the model, the
+geometry, the precision contract and the run's length; a sweep's matrix
+names only its harness's own settings, and one that names a shared setting
+is refused, so no harness runs another model, geometry or contract than the
+rest. Each sweep's matrix, with the settings in its defaults, is written to
+``<output>/matrices/<name>.json``. Every sweep runs through
+``baselines.sweep`` as its own process, with ``--resume`` once its manifest
+exists and ``--continue-on-error``, into ``<output>/sweeps/<name>``, so an
+experiment interrupted anywhere resumes where it stopped; a sweep's console
+goes to ``launcher.log`` beside its cases. ``experiment.json`` records the
+spec and every sweep's outcome. The report of ``baselines.report`` is then
+drawn over every sweep into ``<output>/report``.
 
 An interpreter is a path, or the name of an environment beside the running
 one: ``baselines`` is ``<prefix>/../baselines/bin/python``.
@@ -32,7 +38,15 @@ from pathlib import Path
 from baselines.common import write_json
 from baselines.common.provenance import ROOT
 
-SPEC_KEYS = {"schema_version", "output", "gpus", "python", "case_timeout", "sweeps"}
+SPEC_KEYS = {
+    "schema_version",
+    "output",
+    "gpus",
+    "python",
+    "case_timeout",
+    "settings",
+    "sweeps",
+}
 SWEEP_KEYS = {"name", "harness", "config", "python", "case_timeout"}
 
 
@@ -45,10 +59,39 @@ def interpreter(value: str) -> Path:
     return (Path(sys.prefix).resolve().parent / value / "bin" / "python").resolve()
 
 
+def matrix_source(sweep: dict) -> Path:
+    """The sweep's matrix file, from the repository root or as given."""
+
+    path = ROOT / sweep["config"]
+    return path if path.is_file() else Path(sweep["config"])
+
+
+def sweep_matrix(path: Path, settings: dict) -> dict:
+    """The sweep's matrix with the experiment's settings in its defaults; a
+    matrix that names one of them itself is refused."""
+
+    matrix = json.loads(Path(path).read_text())
+    cases = matrix.get("cases", [])
+    if not isinstance(matrix.get("defaults", {}), dict) or not all(
+        isinstance(case, dict) for case in cases
+    ):
+        raise ValueError(f"{path}: defaults and cases are mappings")
+    grids = matrix.get("grid", {})
+    named = set(matrix.get("defaults", {}))
+    for axes in [*(grids if isinstance(grids, list) else [grids]), *cases]:
+        named |= set(axes)
+    shared = sorted(named & set(settings))
+    if shared:
+        raise ValueError(
+            f"{path} names {', '.join(shared)}, which the experiment's settings set"
+        )
+    return {**matrix, "defaults": {**settings, **matrix.get("defaults", {})}}
+
+
 def load_spec(path: Path, output: Path | None = None) -> dict:
-    """The spec, checked: every sweep names a harness and a matrix, has a
-    name of its own, and an interpreter resolved from its own entry or the
-    harness's."""
+    """The spec, checked: every sweep names a harness and a matrix that
+    leaves the experiment's settings to it, has a name of its own, and an
+    interpreter resolved from its own entry or the harness's."""
 
     spec = json.loads(Path(path).read_text())
     unknown = set(spec) - SPEC_KEYS
@@ -63,6 +106,9 @@ def load_spec(path: Path, output: Path | None = None) -> dict:
     pythons = spec.get("python", {})
     if not isinstance(pythons, dict):
         raise ValueError("python maps a harness to its interpreter")
+    settings = spec.setdefault("settings", {})
+    if not isinstance(settings, dict):
+        raise ValueError("settings maps a case's field to its value")
     timeout = spec.get("case_timeout", 3600)
     if not isinstance(timeout, int | float) or timeout <= 0:
         raise ValueError("case_timeout must be positive")
@@ -83,17 +129,17 @@ def load_spec(path: Path, output: Path | None = None) -> dict:
             raise ValueError(f"no interpreter for harness {sweep['harness']!r}")
         sweep["python"] = str(interpreter(python))
         sweep.setdefault("case_timeout", timeout)
-        if (
-            not (ROOT / sweep["config"]).is_file()
-            and not Path(sweep["config"]).is_file()
-        ):
+        if not matrix_source(sweep).is_file():
             raise ValueError(f"no matrix at {sweep['config']}")
+        sweep_matrix(matrix_source(sweep), settings)
     return spec
 
 
-def sweep_command(spec: dict, sweep: dict, output: Path, *, limit: int | None = None):
-    """The sweep launcher's command line for one sweep, resuming when its
-    manifest exists."""
+def sweep_command(
+    spec: dict, sweep: dict, matrix: Path, output: Path, *, limit: int | None = None
+):
+    """The sweep launcher's command line for one sweep over its written
+    matrix, resuming when its manifest exists."""
 
     command = [
         sys.executable,
@@ -102,7 +148,7 @@ def sweep_command(spec: dict, sweep: dict, output: Path, *, limit: int | None = 
         "--harness",
         sweep["harness"],
         "--config",
-        str(sweep["config"]),
+        str(matrix),
         "--output",
         str(output),
         "--gpus",
@@ -156,7 +202,10 @@ def main(argv=None):
         "--limit", type=int, help="at most this many new attempts per sweep"
     )
     parser.add_argument(
-        "--dry-run", action="store_true", help="write the plan and the commands only"
+        "--dry-run",
+        action="store_true",
+        help="expand and validate every sweep's cases and write their commands;"
+        " launch nothing",
     )
     parser.add_argument("--skip-report", action="store_true")
     args = parser.parse_args(argv)
@@ -195,16 +244,20 @@ def main(argv=None):
                     {**sweep, "output": str(sweep_output), "status": "skipped"}
                 )
                 continue
-            command = sweep_command(spec, sweep, sweep_output, limit=args.limit)
+            matrix = output / "matrices" / f"{sweep['name']}.json"
+            write_json(matrix, sweep_matrix(matrix_source(sweep), spec["settings"]))
+            command = sweep_command(spec, sweep, matrix, sweep_output, limit=args.limit)
+            if args.dry_run:
+                # The sweep's own dry run expands and validates every case, so
+                # a matrix its harness refuses fails here, not mid-experiment.
+                command.append("--dry-run")
             started = datetime.datetime.now().astimezone().isoformat()
             print(f"{sweep['name']}: {shlex.join(command)}", flush=True)
-            returncode = run_process(
-                command, sweep_output / "launcher.log", args.dry_run
-            )
+            returncode = run_process(command, sweep_output / "launcher.log", False)
             status = (
-                "planned"
-                if args.dry_run
-                else ("completed" if returncode == 0 else "failed")
+                "failed"
+                if returncode != 0
+                else ("planned" if args.dry_run else "completed")
             )
             if status == "failed":
                 failed.append(sweep["name"])

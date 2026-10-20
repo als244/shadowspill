@@ -1,4 +1,4 @@
-"""The shape of one optimizer update, and the tier each round starts from."""
+"""The shape of one optimizer update."""
 
 import argparse
 
@@ -66,26 +66,13 @@ def test_a_geometry_that_does_not_divide_or_is_not_integral_is_refused(fields):
         Geometry(*fields)
 
 
-def test_tiers_fix_the_tokens_per_update():
-    assert Geometry.tier("rtx5090", tokens_per_microbatch=8192).accumulation == 16
-    assert Geometry.tier("h100", tokens_per_microbatch=16384).tokens_per_step == 262144
-    node = Geometry.tier("h100x8", tokens_per_microbatch=16384, world_size=8)
-    assert node.accumulation == 16
-    with pytest.raises(ValueError):
-        Geometry.tier("tpu", tokens_per_microbatch=8192)
-
-
 def parse(*argv):
     parser = argparse.ArgumentParser()
     geometry.add_arguments(parser)
     return parser.parse_args(argv)
 
 
-def test_flags_take_the_tier_or_an_explicit_step_total():
-    from_tier = geometry.from_arguments(
-        parse("--tokens-per-microbatch", "8192", "--tier", "rtx5090"), 1
-    )
-    assert from_tier == Geometry(4096, 131072, 8192)
+def test_the_flags_describe_the_geometry():
     explicit = geometry.from_arguments(
         parse(
             "--tokens-per-microbatch",
@@ -98,22 +85,12 @@ def test_flags_take_the_tier_or_an_explicit_step_total():
         2,
     )
     assert explicit == Geometry(2048, 65536, 8192, 2)
-    agreeing = parse(
-        "--tokens-per-microbatch",
-        "8192",
-        "--tier",
-        "h100",
-        "--tokens-per-step",
-        "262144",
+    default = geometry.from_arguments(
+        parse("--tokens-per-microbatch", "8192", "--tokens-per-step", "65536"), 1
     )
-    assert geometry.from_arguments(agreeing, 1).tokens_per_step == 262144
+    assert default == Geometry(geometry.SEQUENCE_LENGTH, 65536, 8192)
 
 
-def test_flags_need_a_step_total_and_may_not_contradict_the_tier():
-    with pytest.raises(ValueError):
-        geometry.from_arguments(parse("--tokens-per-microbatch", "8192"), 1)
-    contradiction = parse(
-        "--tokens-per-microbatch", "8192", "--tier", "h100", "--tokens-per-step", "1024"
-    )
-    with pytest.raises(ValueError):
-        geometry.from_arguments(contradiction, 1)
+def test_the_flags_need_a_step_total():
+    with pytest.raises(SystemExit):
+        parse("--tokens-per-microbatch", "8192")

@@ -2,7 +2,8 @@
   "schema_version": 1,
   "defaults": {
     "model": "qwen3moe-30b-a3b",
-    "tier": "h100x8",
+    "sequence_length": 4096,
+    "tokens_per_step": 2097152,
     "warmup_steps": 3,
     "steps": 5,
     "cpu_threads": 10,

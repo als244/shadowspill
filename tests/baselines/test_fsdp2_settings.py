@@ -30,7 +30,8 @@ def test_flags_round_trip_every_setting():
             "backward_prefetch": 2,
             "allocator_cap_gib": 20.5,
         }
-    ).normalized(2)
+    )
+    settings.validate(2)
     parser = argparse.ArgumentParser()
     add_arguments(parser)
     assert from_namespace(parser.parse_args(settings.arguments())) == settings
@@ -45,9 +46,9 @@ def test_gradients_default_to_float32_where_the_shared_default_is_the_model_dtyp
     parser = argparse.ArgumentParser()
     add_arguments(parser)
     assert parser.get_default("grad_dtype") == "float32"
-    Settings.from_dict(BASE).normalized(1)
+    Settings.from_dict(BASE).validate(1)
     with pytest.raises(Unsupported, match="grad_dtype must be float32"):
-        Settings.from_dict({**BASE, "grad_dtype": None}).normalized(1)
+        Settings.from_dict({**BASE, "grad_dtype": None}).validate(1)
 
 
 def test_describe_splits_model_geometry_precision_and_configuration():
@@ -67,17 +68,9 @@ def test_describe_splits_model_geometry_precision_and_configuration():
     assert "model_dtype" not in configuration
 
 
-def test_a_tier_resolves_to_its_tokens_per_step():
-    settings = Settings.from_dict(
-        {"model": "llama3-tiny", "tier": "rtx5090", "tokens_per_microbatch": 8192}
-    ).normalized(1)
-    assert settings.tokens_per_step == 131072 and settings.tier is None
-    with pytest.raises(ValueError):
-        Settings.from_dict(
-            {"model": "llama3-tiny", "tier": "rtx5090", "tokens_per_step": 1}
-        ).normalized(1)
-    with pytest.raises(ValueError):
-        Settings.from_dict({"model": "llama3-tiny"}).normalized(1)
+def test_a_case_names_its_tokens_per_step():
+    with pytest.raises(ValueError, match="tokens_per_step"):
+        Settings.from_dict({"model": "llama3-tiny"}).validate(1)
 
 
 @pytest.mark.parametrize(
@@ -104,7 +97,7 @@ def test_a_tier_resolves_to_its_tokens_per_step():
 )
 def test_invalid_settings_are_refused(override):
     with pytest.raises(ValueError):
-        Settings.from_dict({**BASE, **override}).normalized(1)
+        Settings.from_dict({**BASE, **override}).validate(1)
 
 
 @pytest.mark.parametrize(
@@ -130,7 +123,7 @@ def test_invalid_settings_are_refused(override):
 )
 def test_precision_outside_the_harness_is_refused(override):
     with pytest.raises(Unsupported):
-        Settings.from_dict({**BASE, **override}).normalized(1)
+        Settings.from_dict({**BASE, **override}).validate(1)
 
 
 def test_a_pure_bf16_case_steps_the_weights_themselves():
@@ -142,11 +135,13 @@ def test_a_pure_bf16_case_steps_the_weights_themselves():
             "opt_state_dtype": "parameter",
             "parameter_rounding": "stochastic",
         }
-    ).normalized(1)
+    )
+    settings.validate(1)
     assert settings.precision().resolved()["opt_state_dtype"] == "bfloat16"
     low_bit = Settings.from_dict(
         {**BASE, "optimizer": "adamw4bit", "opt_state_dtype": None}
-    ).normalized(1)
+    )
+    low_bit.validate(1)
     assert low_bit.describe(1)["precision"]["opt_state_dtype"] is None
 
 
@@ -171,14 +166,14 @@ def test_a_checkpoint_must_hold_the_requested_model(tmp_path):
         (8).to_bytes(8, "little") + b"{}      "
     )
     settings = Settings.from_dict({**BASE, "checkpoint": str(directory)})
-    settings.normalized(1)
+    settings.validate(1)
     with pytest.raises(ValueError, match="different"):
         Settings.from_dict(
             {**BASE, "model": "llama3-1b", "checkpoint": str(directory)}
-        ).normalized(1)
+        ).validate(1)
     with pytest.raises(ValueError, match="checkpoint directory"):
-        Settings.from_dict({**BASE, "checkpoint": str(tmp_path)}).normalized(1)
+        Settings.from_dict({**BASE, "checkpoint": str(tmp_path)}).validate(1)
     with pytest.raises(ValueError, match="initialization"):
         Settings.from_dict(
             {**BASE, "checkpoint": str(directory), "verify_reference": True}
-        ).normalized(1)
+        ).validate(1)
