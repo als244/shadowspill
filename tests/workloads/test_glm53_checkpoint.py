@@ -18,6 +18,7 @@ safetensors_torch = pytest.importorskip("safetensors.torch")
 
 from mlops.kernels.block_fp8 import dequantize_blocks, quantize_blocks  # noqa: E402
 
+from tests.precision import require_fp8_gemms  # noqa: E402
 from workloads.mlops.glm53_flash import Config, LanguageModel  # noqa: E402
 from workloads.mlops.glm53_flash.checkpoint import (  # noqa: E402
     GLMCheckpoint,
@@ -195,14 +196,8 @@ def test_an_fp8_checkpoint_keeps_its_blocks_byte_for_byte_by_default(
 
 @pytest.mark.parametrize("storage", ["fp8", "bf16"])
 def test_an_fp8_checkpoint_converts_to_the_other_storages(tmp_path, storage):
-    if (
-        storage == "fp8"
-        and torch.cuda.is_available()
-        and torch.cuda.get_device_capability() < (8, 9)
-    ):
-        pytest.skip(
-            "two-copy FP8 storage feeds E4M3 GEMMs, from compute capability 8.9"
-        )
+    if storage == "fp8":
+        require_fp8_gemms()
     experts, _ = _write(tmp_path, fp8_experts=True)
     model, inventory = _load(tmp_path, storage=storage)
     assert inventory["expert_storage"] == storage

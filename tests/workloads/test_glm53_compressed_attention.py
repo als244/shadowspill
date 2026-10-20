@@ -11,6 +11,7 @@ from mlops.lora import LoRAConfig
 from mlops.sequential_moe.precision.linear import FrozenLinear, FrozenLoRALinear
 from mlops.sequential_moe.precision.storage import pack
 
+from tests.precision import require_fp8_gemms
 from workloads.mlops.glm53_flash.attention import SparseMLA
 from workloads.mlops.glm53_flash.config import Config
 
@@ -46,6 +47,7 @@ def expanded(model, x):
 @pytest.mark.parametrize("lora", [False, True])
 @pytest.mark.parametrize("compiled", [False, True])
 def test_fp8_kv_projection_matches_expanded_attention_and_gradients(lora, compiled):
+    require_fp8_gemms()
     torch.manual_seed(418)
     model = SparseMLA(Config.tiny(hidden_size=128), "cuda")
     parts, spec = pack(model.kv_b_proj.weight.detach(), "fp8")
