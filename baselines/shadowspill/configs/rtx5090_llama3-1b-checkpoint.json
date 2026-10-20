@@ -1,0 +1,7 @@
+{
+  "schema_version": 1,
+  "defaults": {
+    "execution_gib": 16,
+    "spill_gib": 32
+  }
+}

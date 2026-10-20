@@ -1,0 +1,7 @@
+{
+  "schema_version": 1,
+  "defaults": {
+    "zero_stage": 1,
+    "recompute": 1
+  }
+}

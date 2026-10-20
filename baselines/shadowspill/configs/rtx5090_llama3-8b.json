@@ -1,16 +1,10 @@
 {
   "schema_version": 1,
   "defaults": {
-    "model": "llama3-8b",
-    "tier": "rtx5090",
-    "warmup_steps": 3,
-    "steps": 5,
-    "cpu_threads": 8,
-    "spill_gib": 96
+    "spill_gib": 128
   },
   "grid": {
     "tokens_per_microbatch": [4096, 8192, 16384],
-    "execution_gib": [8, 12, 16, 24],
-    "grad_dtype": ["bfloat16", "float32"]
+    "execution_gib": [8, 12, 16, 24]
   }
 }

@@ -1,0 +1,34 @@
+{
+  "schema_version": 1,
+  "gpus": 1,
+  "python": {"fsdp2": "baselines", "deepspeed": "baselines", "shadowspill": "shadowspill"},
+  "case_timeout": 3600,
+  "settings": {
+    "model": "llama3-1b",
+    "implementation": "mlops",
+    "mode": "full",
+    "checkpoint": "/mnt/storage/models/Llama-3.2-1B",
+    "data": "/mnt/storage/datasets/baselines/llama3",
+    "seed": 0,
+    "sequence_length": 4096,
+    "tokens_per_step": 32768,
+    "tokens_per_microbatch": 4096,
+    "model_dtype": "bfloat16",
+    "master_dtype": "float32",
+    "grad_dtype": "float32",
+    "opt_state_dtype": "float32",
+    "parameter_rounding": null,
+    "opt_state_rounding": null,
+    "round_accumulation_once": false,
+    "learning_rate": 1e-5,
+    "weight_decay": 0.01,
+    "warmup_steps": 1,
+    "steps": 50,
+    "cpu_threads": 8
+  },
+  "sweeps": [
+    {"harness": "fsdp2", "config": "baselines/fsdp2/configs/rtx5090_llama3-1b-checkpoint.json"},
+    {"harness": "deepspeed", "config": "baselines/deepspeed/configs/rtx5090_llama3-1b-checkpoint.json"},
+    {"harness": "shadowspill", "config": "baselines/shadowspill/configs/rtx5090_llama3-1b-checkpoint.json"}
+  ]
+}
