@@ -64,9 +64,9 @@ class MLP(nn.Module):
 class Block(nn.Module):
     def __init__(self, config: Config) -> None:
         super().__init__()
-        self.attn_norm = RMSNorm(config.d_model)
+        self.attn_norm = RMSNorm(config.d_model, epsilon=config.norm_epsilon)
         self.attn = Attention(config)
-        self.ffn_norm = RMSNorm(config.d_model)
+        self.ffn_norm = RMSNorm(config.d_model, epsilon=config.norm_epsilon)
         self.mlp = MLP(config)
 
     def forward(
@@ -88,10 +88,13 @@ class Model(nn.Module):
         self.config = config
         self.embed = nn.Embedding(config.vocab_size, config.d_model)
         self.rotary = RotaryEmbedding(
-            config.head_dim, base=config.rope_base, capacity=config.max_seq_len
+            config.head_dim,
+            base=config.rope_base,
+            capacity=config.max_seq_len,
+            scaling=config.rope_scaling,
         )
         self.blocks = nn.ModuleList(Block(config) for _ in range(config.n_layers))
-        self.final_norm = RMSNorm(config.d_model)
+        self.final_norm = RMSNorm(config.d_model, epsilon=config.norm_epsilon)
         self.lm_head = nn.Linear(config.d_model, config.vocab_size, bias=False)
         if config.tied_embeddings:
             self.lm_head.weight = self.embed.weight

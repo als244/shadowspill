@@ -52,6 +52,16 @@ through the constructor arguments the
 [model catalog](../../MODELS.md#expert-parallelism) describes. There is no
 pure-PyTorch implementation.
 
+## Checkpoint
+
+`checkpoint.py` reads a local Hugging Face Qwen 3 MoE checkpoint:
+`Qwen3MoECheckpoint(directory)` turns its `config.json` into this family's
+`Config` through `config.from_huggingface` and `load_into(model)` writes
+every parameter once, through a plain tensor or this rank's rows of an FSDP2
+shard. The expert banks are stacked from the per-expert projections as
+OLMoE's are, `w13` from each expert's gate then up projection and `w2` from
+its down projection; the router is `mlp.gate`.
+
 ## Construction
 
 ```python

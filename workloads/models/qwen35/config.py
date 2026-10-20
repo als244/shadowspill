@@ -3,7 +3,8 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, fields
+from typing import Any
 
 
 @dataclass(frozen=True, slots=True)
@@ -25,6 +26,10 @@ class Config:
     rope_base: float = 10_000_000.0
     tied_embeddings: bool = False
     max_seq_len: int = 131_072
+    norm_epsilon: float = 1e-5
+    #: The published models keep every RMSNorm weight but the linear
+    #: attention's as an offset from one.
+    zero_centered_norm: bool = False
 
     @property
     def attention_width(self) -> int:
@@ -119,6 +124,8 @@ PRESETS: Mapping[str, Config] = {
         vocab_size=248_320,
         tied_embeddings=True,
         max_seq_len=262_144,
+        norm_epsilon=1e-6,
+        zero_centered_norm=True,
     ),
     "9b": Config(
         n_layers=32,
@@ -135,6 +142,8 @@ PRESETS: Mapping[str, Config] = {
         lin_conv_kernel=4,
         d_ff=12_288,
         vocab_size=248_320,
+        norm_epsilon=1e-6,
+        zero_centered_norm=True,
     ),
     "27b": Config(
         n_layers=64,
@@ -152,5 +161,54 @@ PRESETS: Mapping[str, Config] = {
         d_ff=17_408,
         vocab_size=248_320,
         max_seq_len=262_144,
+        norm_epsilon=1e-6,
+        zero_centered_norm=True,
     ),
 }
+
+
+def from_huggingface(metadata: Mapping[str, Any], **overrides: Any) -> Config:
+    """The ``Config`` a Hugging Face Qwen 3.5 ``config.json`` describes: the
+    text decoder of the vision-language checkpoint, whose settings sit under
+    ``text_config``. ``max_seq_len`` stays this module's default unless
+    overridden."""
+
+    text = metadata.get("text_config", metadata)
+    kind = text.get("model_type", metadata.get("model_type"))
+    if kind not in ("qwen3_5", "qwen3_5_text"):
+        raise ValueError(f"not a Qwen 3.5 checkpoint: {kind!r}")
+    if text.get("attention_bias", False):
+        raise ValueError("Qwen 3.5 attention biases are not supported")
+    rope = text.get("rope_parameters") or {}
+    if rope.get("rope_type", "default") != "default":
+        raise ValueError(f"unsupported rope_parameters {rope!r}")
+    values = {
+        "n_layers": int(text["num_hidden_layers"]),
+        "d_model": int(text["hidden_size"]),
+        "full_attention_interval": int(text["full_attention_interval"]),
+        "n_heads": int(text["num_attention_heads"]),
+        "n_kv_heads": int(text["num_key_value_heads"]),
+        "head_dim": int(text["head_dim"]),
+        "partial_rotary_factor": float(
+            rope.get("partial_rotary_factor", text.get("partial_rotary_factor", 1.0))
+        ),
+        "lin_k_heads": int(text["linear_num_key_heads"]),
+        "lin_v_heads": int(text["linear_num_value_heads"]),
+        "lin_k_head_dim": int(text["linear_key_head_dim"]),
+        "lin_v_head_dim": int(text["linear_value_head_dim"]),
+        "lin_conv_kernel": int(text["linear_conv_kernel_dim"]),
+        "d_ff": int(text["intermediate_size"]),
+        "vocab_size": int(text["vocab_size"]),
+        "rope_base": float(
+            rope.get("rope_theta", text.get("rope_theta", 10_000_000.0))
+        ),
+        "tied_embeddings": bool(
+            text.get("tie_word_embeddings", metadata.get("tie_word_embeddings", False))
+        ),
+        "norm_epsilon": float(text.get("rms_norm_eps", 1e-6)),
+        "zero_centered_norm": True,
+    }
+    unknown = set(overrides) - {f.name for f in fields(Config)}
+    if unknown:
+        raise ValueError(f"unknown Qwen 3.5 fields {sorted(unknown)}")
+    return Config(**{**values, **overrides})

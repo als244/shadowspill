@@ -3,7 +3,8 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, fields
+from typing import Any
 
 
 @dataclass(frozen=True, slots=True)
@@ -41,3 +42,34 @@ PRESETS: Mapping[str, Config] = {
     "tiny": Config(2, 128, 4, 2, 32, 8, 2, 128, 512, max_seq_len=4_096),
     "7b-a1b": Config(16, 2_048, 16, 16, 128, 64, 8, 1_024, 50_304),
 }
+
+
+def from_huggingface(metadata: Mapping[str, Any], **overrides: Any) -> Config:
+    """The ``Config`` a Hugging Face OLMoE ``config.json`` describes; the
+    router's softmax-then-top-k without renormalization is the only routing
+    this family computes. ``max_seq_len`` stays this module's default
+    unless overridden."""
+
+    if metadata.get("model_type") != "olmoe":
+        raise ValueError(f"not an OLMoE checkpoint: {metadata.get('model_type')!r}")
+    expected = {"attention_bias": False, "norm_topk_prob": False, "rms_norm_eps": 1e-5}
+    for key, value in expected.items():
+        if metadata.get(key, value) != value:
+            raise ValueError(f"unsupported OLMoE {key}: {metadata[key]!r}")
+    heads = int(metadata["num_attention_heads"])
+    values = {
+        "n_layers": int(metadata["num_hidden_layers"]),
+        "d_model": int(metadata["hidden_size"]),
+        "n_heads": heads,
+        "n_kv_heads": int(metadata["num_key_value_heads"]),
+        "head_dim": int(metadata.get("head_dim") or metadata["hidden_size"] // heads),
+        "n_experts": int(metadata["num_experts"]),
+        "top_k": int(metadata["num_experts_per_tok"]),
+        "d_ff_expert": int(metadata["intermediate_size"]),
+        "vocab_size": int(metadata["vocab_size"]),
+        "rope_base": float(metadata.get("rope_theta", 10_000.0)),
+    }
+    unknown = set(overrides) - {f.name for f in fields(Config)}
+    if unknown:
+        raise ValueError(f"unknown OLMoE fields {sorted(unknown)}")
+    return Config(**{**values, **overrides})

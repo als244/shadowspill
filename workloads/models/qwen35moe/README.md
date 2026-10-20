@@ -40,6 +40,21 @@ through the constructor arguments the
 [model catalog](../../MODELS.md#expert-parallelism) describes. There is no
 pure-PyTorch implementation.
 
+## Checkpoint
+
+`checkpoint.py` reads a local Hugging Face Qwen 3.5 MoE checkpoint, the
+vision-language model whose text decoder's keys begin
+`model.language_model.` (the vision tower and the multi-token-prediction
+head are ignored): `Qwen35MoECheckpoint(directory)` turns the `text_config`
+into this family's `Config` through `config.from_huggingface` and
+`load_into(model)` writes every parameter once, through a plain tensor or
+this rank's rows of an FSDP2 shard. The attention and linear-attention
+parameters load as the dense Qwen 3.5 family's do; the routed experts are
+the checkpoint's fused banks, `mlp.experts.gate_up_proj` of shape
+`[E, 2I, H]` with each expert's gate rows before its up rows and
+`mlp.experts.down_proj` of `[E, H, I]`, which are `w13` and `w2` as they
+are; the shared expert's gate and up projections join as its `gate_up`.
+
 ## Construction
 
 ```python

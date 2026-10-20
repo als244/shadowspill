@@ -7,6 +7,9 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 
 from workloads.models.shared.qwen_moe.config import QwenMoEConfig
+from workloads.models.shared.qwen_moe.config import (
+    from_huggingface as _from_huggingface,
+)
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -54,3 +57,10 @@ PRESETS: Mapping[str, Config] = {
     ),
     "35b-a3b": Config(),
 }
+
+
+def from_huggingface(metadata, **overrides):
+    """The ``Config`` a Hugging Face ``config.json`` of this family describes."""
+    return _from_huggingface(
+        Config, metadata, ("qwen3_5_moe", "qwen3_5_moe_text"), **overrides
+    )

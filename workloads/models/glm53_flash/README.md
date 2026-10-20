@@ -288,8 +288,12 @@ from workloads.models.glm53_flash.partition import GLMStages
 # The same partition= argument works for plan_forward, plan_step,
 # build_step_programs and plan_step_search.
 with plan_forward(
-    model, example_inputs=inputs, runtime=runtime,
-    execution="execution", spill="spill", partition=GLMStages(),
+    model,
+    example_inputs=inputs,
+    runtime=runtime,
+    execution="execution",
+    spill="spill",
+    partition=GLMStages(),
 ) as forward:
     outputs = forward(inputs)
 ```

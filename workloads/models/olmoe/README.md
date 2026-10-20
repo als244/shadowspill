@@ -45,6 +45,17 @@ constructor arguments the
 [model catalog](../../MODELS.md#expert-parallelism) describes. Both expose
 `Model`.
 
+## Checkpoint
+
+`checkpoint.py` reads a local Hugging Face OLMoE checkpoint:
+`OLMoECheckpoint(directory)` turns its `config.json` into this family's
+`Config` through `config.from_huggingface` and `load_into(model)` writes
+every parameter once, through a plain tensor or this rank's rows of an FSDP2
+shard. The router is the checkpoint's `mlp.gate`; the expert banks are
+stacked from the per-expert projections, `w13_experts` from each expert's
+gate projection followed by its up projection and `w2_experts` from its down
+projection.
+
 ## Construction
 
 ```python

@@ -45,6 +45,18 @@ numerical authority; [implementations/mlops.py](implementations/mlops.py) is
 its state-dictionary-compatible twin on the operation library. Both expose
 `Model`.
 
+## Checkpoint
+
+`checkpoint.py` reads a local Hugging Face Llama 3 checkpoint:
+`Llama3Checkpoint(directory)` turns its `config.json` into this family's
+`Config` through `config.from_huggingface` (the rotary scaling of Llama 3.1
+and 3.2 included; `max_seq_len` stays the preset's rotary capacity unless
+overridden) and `load_into(model)` writes every parameter once from the
+memory-mapped safetensors shards, through a plain tensor or this rank's rows
+of an FSDP2 shard. The names map one to one, a tied head is written once
+from the embedding, and no projection is permuted: the rotary tables are
+computed, and the rotate-half convention matches the checkpoint's.
+
 ## Construction
 
 ```python

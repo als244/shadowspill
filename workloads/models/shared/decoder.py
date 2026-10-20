@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+import math
+from collections.abc import Mapping, Sequence
 from typing import NamedTuple
 
 import torch
@@ -13,12 +14,17 @@ SequenceLengths = Sequence[int] | torch.Tensor | None
 
 
 class RMSNorm(nn.Module):
-    """Last-dimension RMS normalization with FP32 reduction."""
+    """Last-dimension RMS normalization with FP32 reduction. A zero-centered
+    norm keeps its weight as an offset from one, as Qwen 3.5 does, and
+    multiplies by ``1 + weight`` in float32 before the cast."""
 
-    def __init__(self, width: int, *, epsilon: float = 1e-5) -> None:
+    def __init__(
+        self, width: int, *, epsilon: float = 1e-5, zero_centered: bool = False
+    ) -> None:
         super().__init__()
         self.weight = nn.Parameter(torch.empty(width))
         self.epsilon = float(epsilon)
+        self.zero_centered = bool(zero_centered)
         self.reset_parameters()
 
     def reset_parameters(self) -> None:
@@ -26,11 +32,13 @@ class RMSNorm(nn.Module):
         parameter already lives."""
 
         with torch.no_grad():
-            self.weight.fill_(1.0)
+            self.weight.fill_(0.0 if self.zero_centered else 1.0)
 
     def forward(self, value: torch.Tensor) -> torch.Tensor:
         source = value.float()
         scale = torch.rsqrt(source.square().mean(dim=-1, keepdim=True) + self.epsilon)
+        if self.zero_centered:
+            return (source * scale * (1 + self.weight.float())).to(value.dtype)
         return ((source * scale).to(value.dtype) * self.weight).to(value.dtype)
 
 
@@ -46,14 +54,42 @@ class GatedRMSNorm(RMSNorm):
         return (normalized.float() * F.silu(gate.float())).to(value.dtype)
 
 
+def llama3_frequencies(
+    frequency: torch.Tensor, scaling: Mapping[str, float]
+) -> torch.Tensor:
+    """Llama 3's rotary scaling: a wavelength beyond the original context
+    divided by ``low_freq_factor`` is slowed by ``factor``, one within the
+    context divided by ``high_freq_factor`` is kept, and the band between is
+    blended linearly in the ratio of the context to the wavelength."""
+
+    factor = float(scaling["factor"])
+    low = float(scaling["low_freq_factor"])
+    high = float(scaling["high_freq_factor"])
+    original = float(scaling["original_max_position_embeddings"])
+    wavelength = 2 * math.pi / frequency
+    slowed = torch.where(wavelength > original / low, frequency / factor, frequency)
+    smooth = (original / wavelength - low) / (high - low)
+    blended = (1 - smooth) * slowed / factor + smooth * slowed
+    medium = (wavelength <= original / low) & (wavelength >= original / high)
+    return torch.where(medium, blended, slowed)
+
+
 class RotaryEmbedding(nn.Module):
-    """Caller-owned, fixed-capacity FP32 rotary tables."""
+    """Caller-owned, fixed-capacity FP32 rotary tables, with Llama 3's
+    frequency scaling when a model asks for it."""
 
     # register_buffer leaves no type behind for the assignments in _apply.
     cosine: torch.Tensor
     sine: torch.Tensor
 
-    def __init__(self, width: int, *, base: float, capacity: int) -> None:
+    def __init__(
+        self,
+        width: int,
+        *,
+        base: float,
+        capacity: int,
+        scaling: Mapping[str, float] | None = None,
+    ) -> None:
         super().__init__()
         if width <= 0 or width % 2:
             raise ValueError("rotary width must be a positive even integer")
@@ -62,6 +98,7 @@ class RotaryEmbedding(nn.Module):
         self.width = int(width)
         self.base = float(base)
         self.capacity = int(capacity)
+        self.scaling = None if scaling is None else dict(scaling)
         table = torch.empty(capacity, width, dtype=torch.float32)
         self.register_buffer("cosine", table, persistent=False)
         self.register_buffer("sine", table.clone(), persistent=False)
@@ -79,6 +116,8 @@ class RotaryEmbedding(nn.Module):
             self.base
             ** (torch.arange(0, self.width, 2, dtype=torch.float32) / float(self.width))
         )
+        if self.scaling is not None:
+            frequency = llama3_frequencies(frequency, self.scaling)
         phase = torch.outer(torch.arange(self.capacity, dtype=torch.float32), frequency)
         doubled = torch.cat((phase, phase), dim=-1)
         with torch.no_grad():

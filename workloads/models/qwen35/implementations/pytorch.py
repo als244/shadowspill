@@ -262,8 +262,16 @@ class GatedAttention(nn.Module):
         self.wq = nn.Linear(config.d_model, 2 * config.attention_width, bias=False)
         self.wk = nn.Linear(config.d_model, config.key_value_width, bias=False)
         self.wv = nn.Linear(config.d_model, config.key_value_width, bias=False)
-        self.q_norm = RMSNorm(config.head_dim)
-        self.k_norm = RMSNorm(config.head_dim)
+        self.q_norm = RMSNorm(
+            config.head_dim,
+            epsilon=config.norm_epsilon,
+            zero_centered=config.zero_centered_norm,
+        )
+        self.k_norm = RMSNorm(
+            config.head_dim,
+            epsilon=config.norm_epsilon,
+            zero_centered=config.zero_centered_norm,
+        )
         self.wo = nn.Linear(config.attention_width, config.d_model, bias=False)
 
     def forward(
@@ -307,7 +315,7 @@ class GatedDeltaNet(nn.Module):
         )
         self.A_log = nn.Parameter(torch.empty(config.lin_v_heads))
         self.dt_bias = nn.Parameter(torch.empty(config.lin_v_heads))
-        self.lin_norm = GatedRMSNorm(config.lin_v_head_dim)
+        self.lin_norm = GatedRMSNorm(config.lin_v_head_dim, epsilon=config.norm_epsilon)
         self.w_out = nn.Linear(config.linear_value_width, config.d_model, bias=False)
         self.reset_parameters()
 
@@ -383,11 +391,19 @@ class Block(nn.Module):
     def __init__(self, config: Config, index: int) -> None:
         super().__init__()
         self.kind = config.layer_kind(index)
-        self.attn_norm = RMSNorm(config.d_model)
+        self.attn_norm = RMSNorm(
+            config.d_model,
+            epsilon=config.norm_epsilon,
+            zero_centered=config.zero_centered_norm,
+        )
         self.mixer: nn.Module = (
             GatedAttention(config) if self.kind == "full" else GatedDeltaNet(config)
         )
-        self.ffn_norm = RMSNorm(config.d_model)
+        self.ffn_norm = RMSNorm(
+            config.d_model,
+            epsilon=config.norm_epsilon,
+            zero_centered=config.zero_centered_norm,
+        )
         self.mlp = MLP(config)
 
     def forward(
@@ -419,7 +435,11 @@ class Model(nn.Module):
         self.blocks = nn.ModuleList(
             Block(config, index) for index in range(config.n_layers)
         )
-        self.final_norm = RMSNorm(config.d_model)
+        self.final_norm = RMSNorm(
+            config.d_model,
+            epsilon=config.norm_epsilon,
+            zero_centered=config.zero_centered_norm,
+        )
         self.lm_head = nn.Linear(config.d_model, config.vocab_size, bias=False)
         if config.tied_embeddings:
             self.lm_head.weight = self.embed.weight

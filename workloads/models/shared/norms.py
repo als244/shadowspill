@@ -8,12 +8,20 @@ import torch.nn as nn
 
 
 class RMSNorm(nn.Module):
-    """RMSNorm parameter container using the external optimized operation."""
+    """RMSNorm parameter container using the external optimized operation.
 
-    def __init__(self, width: int, *, epsilon: float = 1e-5) -> None:
+    A zero-centered norm keeps its weight as an offset from one, as Qwen 3.5
+    does: the normalized value is multiplied by ``1 + weight`` in float32
+    before the cast, so the stored weights are small and the scale is kept
+    at full precision."""
+
+    def __init__(
+        self, width: int, *, epsilon: float = 1e-5, zero_centered: bool = False
+    ) -> None:
         super().__init__()
         self.weight = nn.Parameter(torch.empty(width))
         self.epsilon = float(epsilon)
+        self.zero_centered = bool(zero_centered)
         self.reset_parameters()
 
     def reset_parameters(self) -> None:
@@ -21,10 +29,14 @@ class RMSNorm(nn.Module):
         parameter already lives."""
 
         with torch.no_grad():
-            self.weight.fill_(1.0)
+            self.weight.fill_(0.0 if self.zero_centered else 1.0)
 
     def forward(self, value: torch.Tensor) -> torch.Tensor:
-        return mlops.rms_norm(value, self.weight, self.epsilon)
+        if not self.zero_centered:
+            return mlops.rms_norm(value, self.weight, self.epsilon)
+        source = value.float()
+        scale = torch.rsqrt(source.square().mean(dim=-1, keepdim=True) + self.epsilon)
+        return (source * scale * (1 + self.weight.float())).to(value.dtype)
 
 
 class GatedRMSNorm(RMSNorm):

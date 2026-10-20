@@ -96,7 +96,9 @@ also depends on dtype, tensor representations, sharding, and runtime resources.
 
 Each family package under [models/](models/) has a README with its
 architecture, shapes, configuration fields, implementations and construction,
-and a checkpoint reader where one exists:
+and a checkpoint reader (`checkpoint.py`, a local Hugging Face checkpoint into
+the model, parameter by parameter, through `config.from_huggingface` and
+`load_into`):
 
 | Family | What it is |
 |---|---|
@@ -383,7 +385,7 @@ resources. Text `--distributed` presets use replicated data parallelism.
 
 | Path | Responsibility |
 |---|---|
-| [models/](models/) | One package per family: `config.py`, the checkpoint reader where one exists, a README and `implementations/` with one module per implementation |
+| [models/](models/) | One package per family: `config.py`, its `checkpoint.py` reading a local Hugging Face checkpoint, a README and `implementations/` with one module per implementation |
 | [models/shared/](models/shared/) | Code families share: reference decoder math, rotary tables, packing metadata and loss helpers, the mlops norm containers, the Gated DeltaNet mixer, EP construction, the Qwen mixture blocks and the GLM building blocks |
 | [models/shared/qwen_moe/](models/shared/qwen_moe/) | Initialization, mixers, experts and the decoder shared by the two Qwen MoE families |
 | [models/shared/expert_parallel.py](models/shared/expert_parallel.py) | Shared EP construction, ownership and routing helpers for all MLOps MoE models |

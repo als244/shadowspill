@@ -48,6 +48,20 @@ its state-dictionary-compatible twin on the operation library, whose DeltaNet
 mixer lives in [shared/delta_net.py](../shared/delta_net.py) because the Qwen
 mixture families use it too. Both expose `Model`.
 
+## Checkpoint
+
+`checkpoint.py` reads a local Hugging Face Qwen 3.5 checkpoint, the
+vision-language model whose text decoder's keys begin
+`model.language_model.` (the vision tower is ignored):
+`Qwen35Checkpoint(directory)` turns the `text_config` into this family's
+`Config` through `config.from_huggingface` and `load_into(model)` writes
+every parameter once, through a plain tensor or this rank's rows of an FSDP2
+shard. A full-attention block's query projection carries the attention gate,
+interleaved per head in the checkpoint and split into all queries then all
+gates here, so its rows are reordered on load; a linear-attention block's
+`w_qkvz` is `in_proj_qkv` followed by `in_proj_z` and its `w_ba` is
+`in_proj_b` followed by `in_proj_a`.
+
 ## Construction
 
 ```python
