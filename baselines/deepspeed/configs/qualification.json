@@ -179,6 +179,21 @@
       "recompute": 0,
       "deepcompile": true,
       "warmup_steps": 8
+    },
+    {
+      "model": "llama3-tiny",
+      "zero_stage": 2,
+      "recompute": 1,
+      "master_dtype": null,
+      "opt_state_dtype": "parameter"
+    },
+    {
+      "model": "llama3-tiny",
+      "zero_stage": 3,
+      "recompute": 1,
+      "offload_optimizer": "cpu",
+      "master_dtype": null,
+      "opt_state_dtype": "parameter"
     }
   ]
 }

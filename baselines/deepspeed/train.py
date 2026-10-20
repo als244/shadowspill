@@ -3,7 +3,7 @@ ShadowSpill.
 
     torchrun --standalone --nproc-per-node=N -m baselines.deepspeed.train \\
         --output DIR --model NAME --tokens-per-microbatch T \\
-        (--tokens-per-step S | --tier NAME) [--zero-stage 1|2|3] ...
+        --tokens-per-step S [--zero-stage 1|2|3] ...
 
 The settings are ``baselines.deepspeed.settings``. Every rank writes
 ``rank-NNNNN/request.json`` as it starts and ``result.json`` or
@@ -84,10 +84,10 @@ class Checkpointed(nn.Module):
 
 
 class DeepSpeedAccess(Access):
-    """Whole values through DeepSpeed's accessors: the float32 master of a
-    trained parameter, a gathered partitioned parameter otherwise, the
-    gradient as snapshotted before the step (DeepSpeed clears it in the
-    step), and the optimizer state."""
+    """Whole values through DeepSpeed's accessors: the master the optimizer
+    steps for a trained parameter, a gathered partitioned parameter
+    otherwise, the gradient as snapshotted before the step (DeepSpeed clears
+    it in the step), and the optimizer state."""
 
     def __init__(self, engine, device, *, gradients=True):
         super().__init__(engine.optimizer, device)
@@ -144,23 +144,41 @@ class DeepSpeedAccess(Access):
         return None if value is None else value.to(self.device)
 
 
-def precision_evidence(model, access):
-    """The masters and moments DeepSpeed keeps are float32; counts are the
-    evidence."""
+def precision_evidence(model, access, precision):
+    """The values DeepSpeed steps and its AdamW moments are at the dtypes the
+    contract resolves to, float32 where the optimizer keeps its own; counts
+    are the evidence."""
+
+    stepped = getattr(torch, precision.stepped_dtype)
+    moments = precision.resolved()["opt_state_dtype"]
+    moment_dtype = torch.float32 if moments == "default" else getattr(torch, moments)
+
+    def held(parameter, whole, key=None):
+        # ZeRO-1 and 2 gather a whole value into a float32 buffer whatever
+        # their fragment holds, so the dtype is the fragment's, on the rank
+        # that holds one; ZeRO-3's whole value keeps its dtype.
+        if not hasattr(parameter, "_hp_mapping"):
+            return whole
+        mapping = parameter._hp_mapping
+        return None if mapping is None else mapping.get_hp_fragment(key)
 
     counts = {"parameters": 0, "moment_elements": 0}
     for parameter in model.parameters():
         if not parameter.requires_grad:
             continue
         master = access.parameter(parameter)
-        if master.dtype != torch.float32:
-            raise ValueError(f"a master is {master.dtype}, not float32")
+        stored = held(parameter, master)
+        if stored is not None and stored.dtype != stepped:
+            raise ValueError(f"a master is {stored.dtype}, not {stepped}")
         counts["parameters"] += master.numel()
         for key in ("exp_avg", "exp_avg_sq"):
             value = access.state(parameter, key)
             if value is not None:
-                if value.dtype != torch.float32:
-                    raise ValueError(f"an AdamW moment is {value.dtype}")
+                stored = held(parameter, value, key)
+                if stored is not None and stored.dtype != moment_dtype:
+                    raise ValueError(
+                        f"an AdamW moment is {stored.dtype}, not {moment_dtype}"
+                    )
                 counts["moment_elements"] += value.numel()
     if not counts["moment_elements"]:
         raise ValueError("optimizer evidence is empty")
@@ -410,7 +428,7 @@ def main(argv=None):
                 losses.append(float(loss_sum.item()))
                 head_losses.append(float(head_sum.item()))
             if step == 0:
-                evidence = precision_evidence(model, access)
+                evidence = precision_evidence(model, access, precision)
             print(
                 f"rank={rank} step={step + 1} measured={measured} "
                 f"seconds={elapsed:.6f} loss={loss_sum.item():.6f}",

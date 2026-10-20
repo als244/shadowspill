@@ -12,7 +12,7 @@ One case:
 ```bash
 torchrun --standalone --nproc-per-node=1 -m baselines.deepspeed.train \
   --output /mnt/storage/research/shadowspill/baselines/round1/deepspeed/llama3-8b-z3 \
-  --model llama3-8b --tier rtx5090 --tokens-per-microbatch 8192 \
+  --model llama3-8b --tokens-per-step 65536 --tokens-per-microbatch 8192 \
   --zero-stage 3 --offload-optimizer cpu --recompute 1
 ```
 
@@ -77,12 +77,17 @@ graphs ran.
 DeepSpeed's bf16 and fp16 modes cast every parameter to the model dtype,
 the ones a model pins at float32 included (the row records which), and keep
 float32 masters in the ZeRO optimizer with float32 AdamW moments; fp16 runs
-under DeepSpeed's dynamic loss scaling. Gradients reduce and accumulate in
-the model dtype in stages 2 and 3, so those stages take `--grad-dtype` equal
-to the model dtype; stage 1's optimizer accumulates at float32 when
-`--grad-dtype float32` asks for it. A float32 model steps its weights
-themselves. Rounding choices, bfloat16 moments and masters other than
-float32 are refused.
+under DeepSpeed's dynamic loss scaling. A bfloat16 model with
+`--master-dtype none` steps bfloat16 values with bfloat16 moments and
+gradients instead, through DeepSpeed's `bf16_master_weights_and_grads` and
+`bf16_optimizer_states`: the ZeRO optimizer's partition of what it steps is
+bfloat16, and its CPU AdamW stores bfloat16 moments when the optimizer is
+offloaded. Gradients reduce and accumulate in the model dtype in stages 2
+and 3, so those stages take `--grad-dtype` equal to the model dtype; stage
+1's optimizer accumulates at float32 when `--grad-dtype float32` asks for
+it. A float32 model steps its weights themselves. Rounding choices, float32
+moments beside bfloat16 values, and a float16 model without float32
+masters are refused.
 
 Under DeepCompile the combinations qualified are a bfloat16 model with
 float32 masters and bfloat16 gradients, and a float32 model stepping its

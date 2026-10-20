@@ -6,8 +6,10 @@ at, the dtype of the masters, the dtype gradients are summed at, the dtype
 of the optimizer state, the two roundings, and whether a gradient
 accumulation rounds once. Each harness states what it honors as
 `Capabilities` and in its rules. A request it cannot honor is refused before
-launch, with the reason, and is never substituted. This page gives what
-each value means and what each harness does with it.
+launch, with the reason, and is never substituted. An experiment runs all
+its harnesses at one contract, named once in its spec
+([README.md](README.md#experiments)). This page gives what each value means
+and what each harness does with it.
 
 ## The contract
 
@@ -66,7 +68,7 @@ dtype; ZeRO-1 also takes float32. ShadowSpill takes any.
 | Harness | Model dtype | Masters | Optimizer state | Roundings |
 |---|---|---|---|---|
 | FSDP2 | `bfloat16` or `float32`; `float16` is refused (it would need loss scaling, which the harness does not do) | The float32 shards are the masters, or `none`, where shards at the model dtype are stepped in place; the parameters a model pins at float32 stay at their dtype beside the shards and step in their own group | AdamW's moments at the stepped dtype (`parameter` and `none` say the same); torchao's 8-bit and 4-bit AdamW keep their state in low-bit blocks (`none`) | `--parameter-rounding stochastic` steps bfloat16 weights in place with torchao's AdamW; no state rounding, no rounding once |
-| DeepSpeed | `bfloat16`, `float16` under dynamic loss scaling, or `float32`; every parameter is cast to the model dtype, the pinned ones included, and the row records which | float32, kept by the ZeRO optimizer; a float32 model steps its weights themselves (`none`) | float32 moments (DeepSpeed's fused AdamW, its CPU AdamW when offloaded) | None named: no rounding choices, no rounding once |
+| DeepSpeed | `bfloat16`, `float16` under dynamic loss scaling, or `float32`; every parameter is cast to the model dtype, the pinned ones included, and the row records which | float32, kept by the ZeRO optimizer, or `none`: a float32 model steps its weights themselves, and a bfloat16 model steps a bfloat16 partition of them with bfloat16 gradients (DeepSpeed's `bf16_master_weights_and_grads`) | float32 moments (DeepSpeed's fused AdamW, its CPU AdamW when offloaded); bfloat16 beside bfloat16 values (`bf16_optimizer_states`) | None named: no rounding choices, no rounding once |
 | ShadowSpill | Any of the three; `float16` with no loss scaling, as its quickstart takes it | Any dtype, or `none` | Any dtype, or `parameter` | Rounding to nearest unless a case names `stochastic`, ShadowSpill's own training default for bfloat16 moments; rounding an accumulation once |
 
 Under DeepCompile, DeepSpeed takes a bfloat16 model with float32 masters

@@ -35,7 +35,8 @@ def test_flags_round_trip_every_setting():
             "contiguous_checkpointing": True,
             "grad_dtype": "bfloat16",
         }
-    ).normalized(2)
+    )
+    settings.validate(2)
     parser = argparse.ArgumentParser()
     add_arguments(parser)
     assert from_namespace(parser.parse_args(settings.arguments())) == settings
@@ -75,7 +76,8 @@ def test_the_configuration_follows_the_settings():
             "deepcompile_offload": "activations",
             "warmup_steps": 8,
         }
-    ).normalized(1)
+    )
+    compiled.validate(1)
     config = deepspeed_config(compiled, geometry, compiled.precision())
     assert config["compile"] == {
         "deepcompile": True,
@@ -103,7 +105,7 @@ def test_the_configuration_follows_the_settings():
 )
 def test_invalid_settings_are_refused(override):
     with pytest.raises(ValueError):
-        Settings.from_dict({**BASE, **override}).normalized(1)
+        Settings.from_dict({**BASE, **override}).validate(1)
 
 
 @pytest.mark.parametrize(
@@ -113,8 +115,29 @@ def test_invalid_settings_are_refused(override):
         {"zero_stage": 2, "grad_dtype": "float32"},
         {"zero_stage": 3, "grad_dtype": "float32"},
         {"zero_stage": 2, "offload_param": "cpu"},
-        {"master_dtype": None, "grad_dtype": None, "opt_state_dtype": "parameter"},
         {"opt_state_dtype": "bfloat16"},
+        {"master_dtype": None, "opt_state_dtype": "float32"},
+        {"master_dtype": None, "opt_state_dtype": None},
+        {
+            "master_dtype": None,
+            "opt_state_dtype": "parameter",
+            "zero_stage": 1,
+            "grad_dtype": "float32",
+        },
+        {
+            "master_dtype": None,
+            "opt_state_dtype": "parameter",
+            "model_dtype": "float16",
+            "grad_dtype": "float16",
+        },
+        {
+            "master_dtype": None,
+            "opt_state_dtype": "parameter",
+            "deepcompile": True,
+            "warmup_steps": 8,
+            "recompute": 0,
+            "zero_stage": 3,
+        },
         {"grad_dtype": "float16"},
         {"parameter_rounding": "stochastic"},
         {"round_accumulation_once": True},
@@ -172,7 +195,27 @@ def test_invalid_settings_are_refused(override):
 )
 def test_what_deepspeed_cannot_honor_is_refused(override):
     with pytest.raises(Unsupported):
-        Settings.from_dict({**BASE, **override}).normalized(1)
+        Settings.from_dict({**BASE, **override}).validate(1)
+
+
+@pytest.mark.parametrize("moments", ["bfloat16", "parameter"])
+@pytest.mark.parametrize(
+    "zero", [{"zero_stage": 2}, {"zero_stage": 3, "offload_optimizer": "cpu"}]
+)
+def test_a_bfloat16_model_without_masters_steps_bfloat16_values(zero, moments):
+    settings = Settings.from_dict(
+        {**BASE, **zero, "master_dtype": None, "opt_state_dtype": moments}
+    )
+    settings.validate(1)
+    assert settings.precision().resolved()["opt_state_dtype"] == "bfloat16"
+    config = deepspeed_config(
+        settings, Geometry(64, 1024, 128, 1), settings.precision()
+    )
+    assert config["bf16"] == {
+        "enabled": True,
+        "bf16_master_weights_and_grads": True,
+        "bf16_optimizer_states": True,
+    }
 
 
 def test_deepcompile_takes_zero_one_without_accumulation():
@@ -185,7 +228,7 @@ def test_deepcompile_takes_zero_one_without_accumulation():
             "zero_stage": 1,
             "tokens_per_microbatch": 1024,
         }
-    ).normalized(1)
+    ).validate(1)
 
 
 def test_deepcompile_offloads_parameters_of_the_pytorch_implementation():
@@ -199,7 +242,7 @@ def test_deepcompile_offloads_parameters_of_the_pytorch_implementation():
             "implementation": "pytorch",
             "deepcompile_offload": "parameters",
         }
-    ).normalized(1)
+    ).validate(1)
 
 
 def test_a_float32_model_steps_its_weights():
@@ -211,7 +254,8 @@ def test_a_float32_model_steps_its_weights():
             "grad_dtype": None,
             "opt_state_dtype": "parameter",
         }
-    ).normalized(1)
+    )
+    settings.validate(1)
     config = deepspeed_config(
         settings, Geometry(64, 1024, 128, 1), settings.precision()
     )

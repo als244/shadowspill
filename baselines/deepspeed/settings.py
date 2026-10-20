@@ -43,15 +43,17 @@ DEEPCOMPILE_WARMUP_STEPS = 8
 #: What this harness honors of the precision contract. DeepSpeed's bf16 and
 #: fp16 modes cast every parameter and keep float32 masters in the ZeRO
 #: optimizer, whose AdamW moments are float32; fp16 runs under its dynamic
-#: loss scaling. Gradients reduce and accumulate in the model dtype; stage
-#: one's optimizer accumulates at float32 when asked, stages two and three
-#: do not. No rounding choices.
+#: loss scaling. Without masters a bf16 model steps bfloat16 values with
+#: bfloat16 moments (``bf16_master_weights_and_grads`` and
+#: ``bf16_optimizer_states``). Gradients reduce and accumulate in the model
+#: dtype; stage one's optimizer accumulates at float32 when asked, stages
+#: two and three do not. No rounding choices.
 CAPABILITIES = Capabilities(
     "deepspeed",
     model_dtypes=("bfloat16", "float16", "float32"),
     master_dtypes=(None, "float32"),
     grad_dtypes=(None, "float32", "bfloat16", "float16"),
-    opt_state_dtypes=(None, "parameter", "float32"),
+    opt_state_dtypes=(None, "parameter", "float32", "bfloat16"),
     parameter_roundings=(None,),
     opt_state_roundings=(None,),
     round_accumulation_once=False,
@@ -199,13 +201,31 @@ class Settings(common.Settings):
                     "DeepCompile takes bfloat16 and float32 models here; its float16"
                     " path under DeepSpeed's loss scaling is not qualified"
                 )
-        if precision.master_dtype is None and precision.model_dtype != "float32":
-            raise Unsupported(
-                "DeepSpeed keeps float32 masters in its bf16 and fp16 modes"
-            )
-        if precision.opt_state_dtype not in (None, "parameter", "float32"):
-            raise Unsupported("DeepSpeed's AdamW keeps float32 moments")
         resolved_grad = precision.grad_dtype or precision.model_dtype
+        moments = precision.resolved()["opt_state_dtype"]
+        if precision.master_dtype is None and precision.model_dtype == "float16":
+            raise Unsupported("DeepSpeed keeps float32 masters in its fp16 mode")
+        if precision.master_dtype is None and precision.model_dtype == "bfloat16":
+            if moments != "bfloat16":
+                raise Unsupported(
+                    "DeepSpeed steps bfloat16 values with bfloat16 moments here"
+                    " (bf16_optimizer_states); float32 moments beside them are"
+                    " not qualified"
+                )
+            if resolved_grad != "bfloat16":
+                raise Unsupported(
+                    "DeepSpeed's bfloat16 masters take bfloat16 gradients"
+                    " (bf16_master_weights_and_grads)"
+                )
+            if self.deepcompile:
+                raise Unsupported(
+                    "DeepCompile takes float32 masters under a bfloat16 model here;"
+                    " its bfloat16 masters are not qualified"
+                )
+        elif moments not in ("float32", "default"):
+            raise Unsupported(
+                "DeepSpeed's AdamW keeps float32 moments when it steps float32 values"
+            )
         if resolved_grad not in (precision.model_dtype, "float32"):
             raise Unsupported(
                 "DeepSpeed reduces gradients in the model dtype or float32"
@@ -272,6 +292,10 @@ def deepspeed_config(settings: Settings, geometry, precision) -> dict[str, Any]:
     }
     if precision.model_dtype == "bfloat16":
         config["bf16"] = {"enabled": True}
+        if precision.master_dtype is None:
+            config["bf16"].update(
+                bf16_master_weights_and_grads=True, bf16_optimizer_states=True
+            )
     elif precision.model_dtype == "float16":
         config["fp16"] = {"enabled": True, "loss_scale": 0, "initial_scale_power": 16}
     if (precision.grad_dtype or precision.model_dtype) == "float32" and (
