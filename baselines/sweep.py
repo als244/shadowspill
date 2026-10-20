@@ -44,7 +44,7 @@ from pathlib import Path
 from baselines.common import write_json
 from baselines.common.provenance import ROOT, environment_identity, source_identity
 from baselines.common.results import row as result_row
-from baselines.common.results import validate_row
+from baselines.common.results import validate_row, varied
 
 INDEX_COLUMNS = (
     "Status",
@@ -196,23 +196,6 @@ def failure_row(attempt, outcome, settings, world_size, harness, manifest):
         },
         failure=failure,
     )
-
-
-def varied(values_by_case):
-    """The keys whose values differ across the cases: the index's columns."""
-
-    keys = sorted({key for values in values_by_case.values() for key in values})
-    return [
-        key
-        for key in keys
-        if len(
-            {
-                json.dumps(values.get(key), sort_keys=True)
-                for values in values_by_case.values()
-            }
-        )
-        > 1
-    ]
 
 
 def _cell(value, form):

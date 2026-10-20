@@ -9,7 +9,7 @@ import sys
 import pytest
 
 from baselines.common import write_json
-from baselines.common.results import memory_peaks, row, summarize_cycles
+from baselines.common.results import memory_peaks, row, summarize_cycles, varied
 from baselines.fsdp2.settings import Settings, add_arguments
 from baselines.sweep import (
     classify,
@@ -19,7 +19,6 @@ from baselines.sweep import (
     latest,
     main,
     run_case,
-    varied,
 )
 
 

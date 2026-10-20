@@ -157,6 +157,24 @@ def memory_peaks(rank_results: list[Mapping[str, Any]]) -> dict[str, int]:
     }
 
 
+def varied(values_by_key: Mapping[Any, Mapping[str, Any]]) -> list[str]:
+    """The keys whose values differ across the given mappings: what
+    distinguishes one case from another in an index or a label."""
+
+    keys = sorted({key for values in values_by_key.values() for key in values})
+    return [
+        key
+        for key in keys
+        if len(
+            {
+                json.dumps(values.get(key), sort_keys=True)
+                for values in values_by_key.values()
+            }
+        )
+        > 1
+    ]
+
+
 def read_rows(root: Path, *, latest_attempts: bool = True) -> list[dict[str, Any]]:
     """Every row under ``root``: each ``row.json`` a harness or a sweep wrote.
     Where a case directory holds ``attempt-NNN`` directories, only its last

@@ -45,6 +45,17 @@ any other failure stops it for diagnosis unless `--continue-on-error`. A
 harness joins by exposing `Settings`, `command` and `SOURCE_PATHS` in
 `baselines/<name>/settings.py`.
 
+## Reports
+
+`python -m baselines.report <rows root> [<rows root> ...] --output <dir>` reads
+every `row.json` under the roots and draws, per model, training mode, device
+and world size, global tokens per second against peak device memory and
+against peak host memory: one point per completed throughput row, colored by
+harness, with each harness's Pareto frontier as a step whose points are
+labeled by the settings that vary among that harness's rows; out-of-memory
+rows are listed as the boundary. Figures are PNG, SVG and PDF with a table
+per figure, `rows.csv` of every point and `index.html` linking them.
+
 ## Implementations
 
 | Directory | Implementation | Status |
