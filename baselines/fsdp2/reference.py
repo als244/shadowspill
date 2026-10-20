@@ -4,20 +4,11 @@ ownership against an unsharded eager copy of the same catalog model."""
 from __future__ import annotations
 
 import math
-import re
 
 import torch
 import torch.distributed as dist
 
-from .model import TrainingModel, retie, shared_parameter_groups
-
-WRAPPERS = re.compile(r"(\._checkpoint_wrapped_module|\._orig_mod)+\.")
-
-
-def canonical_name(name):
-    """The name without the checkpoint, offload and compile wrappers, however
-    many of them enclose a block."""
-    return WRAPPERS.sub(".", name)
+from .model import TrainingModel, canonical_name, retie, shared_parameter_groups
 
 
 def dense(value, device):

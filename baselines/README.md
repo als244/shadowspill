@@ -1,14 +1,12 @@
 # Standalone training baselines
 
-This directory contains baselines that reuse workload definitions where useful
-and do not import or run ShadowSpill's planner, trainer, simulator, or allocator.
-Results, traces, checkouts, environments, and compiler caches belong under
-`runs/`, outside the tracked source files.
-
-The current target is Qwen3-30B-A3B full training on eight H100s: 4,096-token
-sequences and 2,097,152 global tokens per optimizer update. Every rank sees
-different synthetic inputs. No checkpoint download is needed for the FSDP2
-throughput baseline. Full-model multi-GPU qualification and performance measurements are still pending.
+This directory holds the training systems ShadowSpill is measured against,
+over the same model definitions (`workloads/models`), the same objective,
+geometry and precision contract, and one result row schema, so a report can
+draw every system's throughput against its memory on one figure. None of
+them imports or runs ShadowSpill's planner, trainer, simulator or allocator.
+Rows, traces and sweep outputs go under the output directory a sweep or a
+harness is given, outside the tracked source files.
 
 ## Environment
 
@@ -71,7 +69,7 @@ and a corpus whose vocabulary exceeds the model's is refused.
 | Directory | Implementation | Status |
 |---|---|---|
 | [`moe_layer/`](moe_layer/README.md) | One Qwen MoE router/expert layer: SonicMoE DP1 versus QuackMoE EP8; BF16/FP8 and full/LoRA | 48 H100 forward/backward cases validated; four-plot report and raw-sample audit complete |
-| [`fsdp2/`](fsdp2/README.md) | Native PyTorch FSDP2 over the existing MLOps Qwen model; local experts, no EP | Configurable sweep harness; six single-GPU numerical cases passed, multi-GPU qualification pending |
+| [`fsdp2/`](fsdp2/README.md) | Native PyTorch FSDP2 over any catalog model, full or LoRA, with recompute, both activation offloaders, CPU offload, the torchao scenarios, a corpus and a checkpoint; local experts, no EP | The tiny qualification matrix passes across the five families against the eager reference; multi-rank bring-up pending |
 | [`automodel/`](automodel/README.md) | Pinned NVIDIA NeMo AutoModel FSDP2 + EP8, TE/DeepEP | Derived-case generator ready; environment/GPU qualification pending |
 | [`megatron_core/`](megatron_core/README.md) | Official Qwen model through NVIDIA Megatron Bridge / Megatron-Core | Pinned model/recipe and topology-aware command generator; environment/GPU qualification pending |
 | [`references/`](references/automodel.json) | Unmodified NVIDIA AutoModel YAML, source commit and digest | Preserved for upstream reproduction |
@@ -91,15 +89,12 @@ notice, commit, and SHA256 are preserved in `references/`.
 - Record actual microbatch size, checkpointed layers, compilation, precision,
   optimizer settings, memory peaks, and failures. Do not silently lower a batch
   size or change a precision when a configuration fails.
-- FSDP2 uses FP32 master parameter shards, FP32 reduced/accumulated gradient
-  shards, and FP32 AdamW moments, with BF16 compute weights. Native autograd may
-  round individual weight-gradient outputs to BF16 before FSDP converts them to
-  FP32. This differs from a captured backward that retains FP32 outputs; the
-  runner records this distinction rather than claiming identical rounding.
+- Every harness exposes the precision contract of `baselines/common/precision.py`
+  and states what it honors; by default compute is bfloat16 with float32
+  masters, gradients and moments, and a request a harness cannot honor is
+  refused, never substituted.
+- Useful work is counted from the model as built by the convention in
+  `baselines/common/models.py`; recomputation, the optimizer and communication
+  are not credited.
 - A PyTorch allocator cap does not include NCCL or other external allocations.
   Label it as an allocator cap, rather than a certified total GPU-memory limit.
-
-Nsight collection covers the 20 and 77 GiB ShadowSpill winners. The single-layer
-MoE microbenchmark precedes full-model baseline GPU work.
-The previously prepared ShadowSpill EP campaign has been superseded and
-its automatic launch has been disabled.

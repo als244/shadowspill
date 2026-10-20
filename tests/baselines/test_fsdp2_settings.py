@@ -139,3 +139,37 @@ def test_a_pure_bf16_case_steps_the_weights_themselves():
         {**BASE, "optimizer": "adamw4bit", "opt_state_dtype": None}
     ).normalized(1)
     assert low_bit.describe(1)["precision"]["opt_state_dtype"] is None
+
+
+def test_a_checkpoint_must_hold_the_requested_model(tmp_path):
+    import json
+
+    directory = tmp_path / "checkpoint"
+    directory.mkdir()
+    tiny = {
+        "model_type": "llama",
+        "num_hidden_layers": 2,
+        "hidden_size": 128,
+        "num_attention_heads": 4,
+        "num_key_value_heads": 2,
+        "intermediate_size": 256,
+        "vocab_size": 512,
+        "rope_theta": 500000.0,
+        "tie_word_embeddings": False,
+    }
+    (directory / "config.json").write_text(json.dumps(tiny))
+    (directory / "model.safetensors").write_bytes(
+        (8).to_bytes(8, "little") + b"{}      "
+    )
+    settings = Settings.from_dict({**BASE, "checkpoint": str(directory)})
+    settings.normalized(1)
+    with pytest.raises(ValueError, match="different"):
+        Settings.from_dict(
+            {**BASE, "model": "llama3-1b", "checkpoint": str(directory)}
+        ).normalized(1)
+    with pytest.raises(ValueError, match="checkpoint directory"):
+        Settings.from_dict({**BASE, "checkpoint": str(tmp_path)}).normalized(1)
+    with pytest.raises(ValueError, match="initialization"):
+        Settings.from_dict(
+            {**BASE, "checkpoint": str(directory), "verify_reference": True}
+        ).normalized(1)

@@ -218,6 +218,7 @@ def main(argv=None):
         # MLOps imports may inspect CUDA; select this rank's device first.
         from baselines.fsdp2.model import (
             TrainingModel,
+            canonical_name,
             initialize,
             materialize,
             pinned_parameters,
@@ -290,12 +291,23 @@ def main(argv=None):
         materialization_device = (
             torch.device("cpu") if settings.offload == "cpu" else device
         )
+        checkpoint = None
+        if settings.checkpoint is not None:
+            checkpoint = request.checkpoint(settings.checkpoint)
+            record["checkpoint"] = {
+                "directory": str(Path(settings.checkpoint).resolve()),
+                "config": dataclasses.asdict(checkpoint.config),
+            }
         if settings.qlora_nf4:
             # NF4 quantizes real values: materialize and initialize on the
             # host first, quantize the frozen targets, then shard.
             model.to_empty(device="cpu")
             with torch.device("cpu"):
                 initialize(model)
+            if checkpoint is not None:
+                record["loaded"] = checkpoint.load_into(
+                    model.model, rename=canonical_name
+                )
             record["nf4_targets"] = quantize_frozen_targets(model.model)
         ignored = set(pinned) or None
         for block in blocks:
@@ -319,6 +331,18 @@ def main(argv=None):
             model.to_empty(device=materialization_device)
             with torch.device(materialization_device):
                 initialize(model)
+            if checkpoint is not None:
+                # Every rank reads the whole tensors and keeps its rows.
+                record["loaded"] = checkpoint.load_into(
+                    model.model, rename=canonical_name
+                )
+        if checkpoint is not None:
+            checkpoint.close()
+            if record["loaded"]["unused"]:
+                raise ValueError(
+                    "checkpoint keys the model did not take:"
+                    f" {record['loaded']['unused'][:5]}"
+                )
         # Offloaded shards live on the host; rotary tables and other compute
         # buffers, and the pinned parameters, belong on the accelerator.
         for module in model.modules():
@@ -515,6 +539,7 @@ def main(argv=None):
                         "checkpointed_layers": checkpointed,
                         "model_summary": record["summary"],
                         "corpus": record.get("corpus"),
+                        "checkpoint": record.get("checkpoint"),
                     },
                     measurement=summary,
                     memory=memory_peaks(all_ranks),

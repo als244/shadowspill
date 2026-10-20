@@ -3,6 +3,8 @@ so a case trains exactly what the quickstart measures."""
 
 from __future__ import annotations
 
+import re
+
 import torch
 from torch import nn
 
@@ -33,6 +35,15 @@ class TrainingModel(nn.Module):
             loss, metrics = result
             return loss, dict(metrics)
         return result, {}
+
+
+WRAPPERS = re.compile(r"(\._checkpoint_wrapped_module|\._orig_mod)+\.")
+
+
+def canonical_name(name: str) -> str:
+    """The name without the checkpoint, offload and compile wrappers,
+    however many of them enclose a block."""
+    return WRAPPERS.sub(".", name)
 
 
 def initialize(module: nn.Module) -> None:

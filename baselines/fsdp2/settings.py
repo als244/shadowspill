@@ -108,8 +108,9 @@ class Settings:
     parameter_rounding: str | None = None
     opt_state_rounding: str | None = None
     round_accumulation_once: bool = False
-    # The data.
+    # The data and the weights.
     data: str | None = None
+    checkpoint: str | None = None
     seed: int = 0
     # Memory mechanisms.
     recompute: float = 1.0
@@ -243,6 +244,12 @@ class Settings:
             raise ValueError("float8 and qlora_nf4 are exclusive")
         if self.data is not None and not (Path(self.data) / "meta.json").is_file():
             raise ValueError(f"{self.data} is not a corpus directory")
+        if self.checkpoint is not None:
+            if not (Path(self.checkpoint) / "config.json").is_file():
+                raise ValueError(f"{self.checkpoint} is not a checkpoint directory")
+            request.checkpoint(self.checkpoint).close()
+            if self.verify_reference:
+                raise ValueError("the reference check starts from an initialization")
         if min(self.steps, self.warmup_steps, self.cpu_threads) < 1:
             raise ValueError(
                 "warmup, measured steps, and CPU thread counts must be positive"
@@ -314,6 +321,8 @@ class Settings:
 
 HELP = {
     "data": "a corpus directory prepare_corpus wrote; synthetic tokens otherwise",
+    "checkpoint": "a local Hugging Face checkpoint of the model, read through"
+    " the family's checkpoint.py; initialized weights otherwise",
     "seed": "synthetic data and initialization seed",
     "recompute": "fraction of whole transformer blocks checkpointed, from 0 to 1",
     "activation_offload": "none; cpu, PyTorch's offload_wrapper per block;"
@@ -355,7 +364,7 @@ def add_arguments(parser):
             options["type"] = backward_prefetch
         elif name in ("allocator_cap_gib",):
             options["type"] = float
-        elif name in ("data",):
+        elif name in ("data", "checkpoint"):
             options["type"] = str
         else:
             options["type"] = type(value)

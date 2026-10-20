@@ -72,6 +72,36 @@ class ModelRequest:
     def entry(self) -> catalog.Entry:
         return catalog.entry(self.model)
 
+    def checkpoint(self, directory: str, **overrides: Any) -> Any:
+        """The family's reader open on a local Hugging Face checkpoint
+        (``workloads.models.<family>.checkpoint``), whose ``config`` must be
+        this request's configuration apart from the rotary capacity."""
+
+        import importlib
+        from dataclasses import replace
+
+        module = importlib.import_module(
+            f"workloads.models.{self.entry.family}.checkpoint"
+        )
+        readers = [
+            value
+            for name, value in vars(module).items()
+            if name.endswith("Checkpoint")
+            and isinstance(value, type)
+            and value.__module__ == module.__name__
+        ]
+        if len(readers) != 1:
+            raise ValueError(f"{self.entry.family} has no checkpoint reader")
+        config = self.entry.config(**dict(self.config))
+        reader = readers[0](directory, max_seq_len=config.max_seq_len, **overrides)
+        if replace(reader.config, max_seq_len=config.max_seq_len) != config:
+            reader.close()
+            raise ValueError(
+                f"{directory} holds a different {self.entry.family} than"
+                f" {self.model}: {reader.config} is not {config}"
+            )
+        return reader
+
     def spec(self, geometry: Geometry) -> Any:
         """The ``FullModelSpec`` of this model at the rank's geometry: the
         objective normalizes by the rank's tokens per update."""
