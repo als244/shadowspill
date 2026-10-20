@@ -23,12 +23,21 @@ from torch.distributed.fsdp import (
     fully_shard,
 )
 
-from baselines.common import (
-    recompute_layers,
-    summarize_cycles,
-    write_json,
+from baselines.common import recompute_layers, summarize_cycles, write_json
+from baselines.common.models import useful_flops_per_token
+from baselines.common.provenance import (
+    environment_identity,
+    hardware_identity,
+    source_identity,
 )
-from baselines.fsdp2.settings import Settings, add_arguments, configure_prefetch
+from baselines.common.results import memory_peaks
+from baselines.common.results import row as result_row
+from baselines.fsdp2.settings import (
+    SOURCE_PATHS,
+    Settings,
+    add_arguments,
+    configure_prefetch,
+)
 
 
 def parse(argv=None):
@@ -87,6 +96,7 @@ def main(argv=None):
         "torch": torch.__version__,
         "cuda": torch.version.cuda,
         "device": torch.cuda.get_device_name(device),
+        "hardware": hardware_identity(),
         "compute_dtype": "bfloat16",
         "parameter_shard_dtype": "float32",
         "gradient_reduction_and_accumulation_dtype": "float32",
@@ -131,6 +141,10 @@ def main(argv=None):
                 local_tokens_per_step=args.global_tokens // world,
                 sequence_length=args.sequence_length,
             )
+        useful = (
+            useful_flops_per_token(model.model, args.sequence_length)
+            * args.global_tokens
+        )
         if checkpointed:
             from torch.distributed.algorithms._checkpoint.checkpoint_wrapper import (
                 checkpoint_wrapper,
@@ -300,14 +314,12 @@ def main(argv=None):
         all_ranks = [None] * world
         dist.all_gather_object(all_ranks, result)
         if rank == 0:
-            useful = None
-            if not args.tiny and args.sequence_length == 4096:
-                useful = 50_128_722_346_000_000 * args.global_tokens / 2_097_152
             summary = summarize_cycles(
                 [row["cycles"] for row in all_ranks],
                 global_tokens=args.global_tokens,
                 useful_flops_per_step=useful,
             )
+            summary["performance_result"] = result["performance_result"]
             write_json(
                 args.output / "results.json",
                 {
@@ -316,11 +328,24 @@ def main(argv=None):
                     "request": request,
                     "ranks": all_ranks,
                     "useful_flops_per_step": useful,
-                    "flops_convention": (
-                        "same logical Qwen count as DP sweep; excludes "
-                        "recomputation, optimizer and communication"
-                    ),
+                    "flops_convention": "baselines.common.models"
+                    ".useful_flops_per_token",
                 },
+            )
+            write_json(
+                args.output / "row.json",
+                result_row(
+                    harness="fsdp2",
+                    status="completed",
+                    **settings.describe(world),
+                    hardware=request["hardware"],
+                    provenance={
+                        "source": source_identity(SOURCE_PATHS),
+                        "environment": environment_identity(sys.executable),
+                    },
+                    measurement=summary,
+                    memory=memory_peaks(all_ranks),
+                ),
             )
     except Exception as error:
         write_json(

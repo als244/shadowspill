@@ -32,6 +32,19 @@ measurement contract), `provenance` (sources, packages, hardware and the
 kernels that ran) and `data` (synthetic tokens per rank, or windows of a
 pre-tokenized corpus).
 
+## Sweeps
+
+`python -m baselines.sweep --harness <name> --config <matrix.json> --output <dir>
+--gpus <n>` runs a matrix of one harness's cases as independent, resumable
+processes on one node. `cases/<case>/attempt-NNN/` holds each attempt's
+command, console log and `row.json`; `manifest.json` records the harness, the
+sources, the environment and the cases, and a resume must match it;
+`README.md` indexes the latest outcome of every case. A case that runs out of
+device memory is a row on the frontier's boundary and the sweep continues;
+any other failure stops it for diagnosis unless `--continue-on-error`. A
+harness joins by exposing `Settings`, `command` and `SOURCE_PATHS` in
+`baselines/<name>/settings.py`.
+
 ## Implementations
 
 | Directory | Implementation | Status |

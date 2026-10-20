@@ -112,6 +112,22 @@ def test_device_peaks_are_the_binding_rank_and_host_peaks_are_summed():
     assert "sum" in combined["host_peak_rss_aggregation"]
 
 
+def test_read_rows_keeps_the_last_attempt_of_a_case(tmp_path):
+    case = tmp_path / "cases" / "case-0001-abc"
+    first = completed_row(
+        status="failed", measurement=None, memory=None, failure={"error": "x"}
+    )
+    write_json(case / "attempt-001" / "row.json", first)
+    write_json(case / "attempt-002" / "row.json", completed_row())
+    write_json(tmp_path / "standalone" / "row.json", completed_row())
+    assert [value["status"] for value in read_rows(tmp_path)] == [
+        "completed",
+        "completed",
+    ]
+    every = read_rows(tmp_path, latest_attempts=False)
+    assert [value["status"] for value in every] == ["failed", "completed", "completed"]
+
+
 def test_read_rows_collects_every_row_under_a_root_and_refuses_a_bad_one(tmp_path):
     first = completed_row()
     second = completed_row(status="cuda_out_of_memory", measurement=None, memory=None)

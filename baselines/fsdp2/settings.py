@@ -1,4 +1,4 @@
-"""Serializable FSDP2 case settings, shared by the trainer and sweep launcher."""
+"""Serializable FSDP2 case settings, shared by the trainer and the sweep."""
 
 from __future__ import annotations
 
@@ -6,7 +6,27 @@ import argparse
 import dataclasses
 import math
 
-from baselines.common import accumulation_steps, recompute_layers
+from baselines.common.geometry import Geometry, accumulation_steps, recompute_layers
+from baselines.common.precision import Precision
+
+#: The sources whose digests identify this harness in a manifest and a row.
+SOURCE_PATHS = (
+    "baselines/__init__.py",
+    "baselines/common",
+    "baselines/fsdp2",
+    "workloads/models",
+)
+
+#: What the harness builds, by its tiny switch.
+MODELS = {False: "qwen3moe-30b-a3b", True: "qwen3moe-tiny"}
+
+#: The settings a row records as geometry rather than configuration.
+GEOMETRY_FIELDS = (
+    "sequence_length",
+    "global_tokens",
+    "microbatch_tokens",
+    "gradient_accumulation",
+)
 
 
 def backward_prefetch(value):
@@ -115,6 +135,37 @@ class Settings:
             raise ValueError("reference validation requires tiny=true")
         return accumulation
 
+    def normalized(self, world_size):
+        """These settings with the derived accumulation filled in; settings
+        that cannot run at this world size are refused."""
+        return dataclasses.replace(
+            self, gradient_accumulation=self.validate(world_size)
+        )
+
+    def describe(self, world_size):
+        """The model, geometry, precision and configuration a row records."""
+        geometry = Geometry(
+            self.sequence_length,
+            self.global_tokens,
+            self.microbatch_tokens,
+            world_size,
+        )
+        configuration = {
+            name: value
+            for name, value in dataclasses.asdict(self).items()
+            if name not in GEOMETRY_FIELDS
+        }
+        return {
+            "model": {
+                "model": MODELS[self.tiny],
+                "implementation": "mlops",
+                "mode": "full",
+            },
+            "geometry": geometry.as_dict(),
+            "precision": Precision().as_dict(),
+            "configuration": configuration,
+        }
+
     def arguments(self):
         result = []
         for name, value in dataclasses.asdict(self).items():
@@ -124,6 +175,23 @@ class Settings:
             elif value is not None:
                 result.extend([f"--{flag}", str(value)])
         return result
+
+
+def command(python, world_size, settings, output):
+    """The torchrun command line of one case."""
+    return [
+        str(python),
+        "-m",
+        "torch.distributed.run",
+        "--standalone",
+        f"--nproc-per-node={world_size}",
+        "--max-restarts=0",
+        "-m",
+        "baselines.fsdp2.train",
+        "--output",
+        str(output),
+        *settings.arguments(),
+    ]
 
 
 def add_arguments(parser):

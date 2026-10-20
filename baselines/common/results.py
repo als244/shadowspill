@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import json
 import math
+import re
 import statistics
 from collections.abc import Mapping
 from pathlib import Path
@@ -24,6 +25,9 @@ RESULT_SCHEMA = "shadowspill.baselines_result/v1"
 
 #: The statuses a row may carry.
 STATUSES = ("completed", "cuda_out_of_memory", "failed", "timeout", "interrupted")
+
+#: The attempt directories a sweep writes under a case.
+ATTEMPT = re.compile(r"attempt-\d+")
 
 #: What ``measurement`` holds for a completed row.
 MEASUREMENT_KEYS = (
@@ -153,11 +157,25 @@ def memory_peaks(rank_results: list[Mapping[str, Any]]) -> dict[str, int]:
     }
 
 
-def read_rows(root: Path) -> list[dict[str, Any]]:
-    """Every row under ``root``: each ``row.json`` a harness or sweep wrote."""
+def read_rows(root: Path, *, latest_attempts: bool = True) -> list[dict[str, Any]]:
+    """Every row under ``root``: each ``row.json`` a harness or a sweep wrote.
+    Where a case directory holds ``attempt-NNN`` directories, only its last
+    attempt that wrote a row counts, unless ``latest_attempts`` is false."""
 
+    paths = sorted(Path(root).rglob("row.json"))
+    if latest_attempts:
+        last: dict[Path, Path] = {}
+        for path in paths:
+            if ATTEMPT.fullmatch(path.parent.name):
+                last[path.parent.parent] = path
+        paths = [
+            path
+            for path in paths
+            if not ATTEMPT.fullmatch(path.parent.name)
+            or last[path.parent.parent] == path
+        ]
     rows = []
-    for path in sorted(Path(root).rglob("row.json")):
+    for path in paths:
         value = json.loads(path.read_text())
         validate_row(value)
         value["_path"] = str(path)

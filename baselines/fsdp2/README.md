@@ -85,7 +85,7 @@ The example matrix has six microbatch sizes, five whole-block recomputation
 fractions, and two offload modes (60 cases). Inspect its expanded commands first:
 
 ```bash
-python -m baselines.fsdp2.sweep \
+python -m baselines.sweep --harness fsdp2 \
   --config baselines/fsdp2/configs/qwen30b.json \
   --gpus 8 --output runs/baselines/fsdp2/qwen30b --dry-run
 ```
@@ -93,15 +93,16 @@ python -m baselines.fsdp2.sweep \
 Run or resume exactly that manifest:
 
 ```bash
-python -m baselines.fsdp2.sweep \
+python -m baselines.sweep --harness fsdp2 \
   --config baselines/fsdp2/configs/qwen30b.json \
   --gpus 8 --output runs/baselines/fsdp2/qwen30b --resume
 ```
 
 Use `configs/qualification.json` for the six-case tiny numerical matrix first.
-The driver launches a fresh single-node `torchrun` for each configuration,
-with automatic worker restarts disabled. Launch the driver inside the GPU
-allocation, preferably from tmux. It does not reserve GPUs itself.
+The sweep (`baselines/sweep.py`, shared by every harness) launches a fresh
+single-node `torchrun` for each configuration, with automatic worker restarts
+disabled, and reads the `row.json` the trainer's first rank writes. Launch it
+inside the GPU allocation, preferably from tmux. It does not reserve GPUs itself.
 
 Configuration JSON has `schema_version: 1`, a `defaults` mapping, and either a
 Cartesian `grid` or explicit `cases` list. Keys use the CLI names with underscores.
