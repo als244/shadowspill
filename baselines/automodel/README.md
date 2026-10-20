@@ -24,6 +24,10 @@ automodel runs/baselines/automodel/16K-real/config.yaml --nproc-per-node 8
 
 Use `--routing balanced` to reproduce artificial balanced routing; it must be
 reported separately from real routing. `--no-recompute` disables checkpointing.
+`--cpu-offload` sets FSDP2's `CPUOffloadPolicy` as the recipe's
+`distributed.offload_policy`, which AutoModel's parallelizer hands to every
+`fully_shard` call: parameter shards, gradients and optimizer state on the
+host, pinned. AutoModel offloads no activations.
 `--microbatch-tokens` is per rank; accumulation is derived and checked against
 the fixed global update. Every generated case records its source and changes.
 

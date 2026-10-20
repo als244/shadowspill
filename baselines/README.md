@@ -70,6 +70,7 @@ and a corpus whose vocabulary exceeds the model's is refused.
 |---|---|---|
 | [`moe_layer/`](moe_layer/README.md) | One Qwen MoE router/expert layer: SonicMoE DP1 versus QuackMoE EP8; BF16/FP8 and full/LoRA | 48 H100 forward/backward cases validated; four-plot report and raw-sample audit complete |
 | [`fsdp2/`](fsdp2/README.md) | Native PyTorch FSDP2 over any catalog model, full or LoRA, with recompute, both activation offloaders, CPU offload, the torchao scenarios, a corpus and a checkpoint; local experts, no EP | The tiny qualification matrix passes across the five families against the eager reference; multi-rank bring-up pending |
+| [`deepspeed/`](deepspeed/README.md) | DeepSpeed ZeRO stages 1 to 3 over any catalog model, full or LoRA, with optimizer and parameter offload, activation checkpointing and CPU checkpointing, a corpus and a checkpoint | Harness and tiny qualification matrix; bring-up pending |
 | [`automodel/`](automodel/README.md) | Pinned NVIDIA NeMo AutoModel FSDP2 + EP8, TE/DeepEP | Derived-case generator ready; environment/GPU qualification pending |
 | [`megatron_core/`](megatron_core/README.md) | Official Qwen model through NVIDIA Megatron Bridge / Megatron-Core | Pinned model/recipe and topology-aware command generator; environment/GPU qualification pending |
 | [`references/`](references/automodel.json) | Unmodified NVIDIA AutoModel YAML, source commit and digest | Preserved for upstream reproduction |
@@ -79,6 +80,21 @@ uses AutoModel with **FSDP2 + EP8**, Transformer Engine, and DeepEP. It is not
 a Megatron-Core recipe. It also enables `fake_balanced_gate`; keep that
 distinction explicit in any performance comparison. The original YAML, license
 notice, commit, and SHA256 are preserved in `references/`.
+
+## Offload options by harness
+
+Every harness exposes its framework's own offloading, by the framework's
+names, as a sweep dimension; nothing is offloaded that the framework does
+not offload itself.
+
+| Harness | Parameters, gradients, optimizer state | Optimizer state alone | Activations |
+|---|---|---|---|
+| `fsdp2/` | `--offload cpu`: FSDP2's `CPUOffloadPolicy` (shards and state on the host, the step on CPU) | `--optimizer cpu-offload`: torchao's `CPUOffloadOptimizer` with the shards on the device | `--activation-offload cpu` (PyTorch's `offload_wrapper`) or `overlapped` (torchtune's stream-overlapped offloader, vendored); both beside `--recompute` |
+| `deepspeed/` | `--offload-param cpu\|nvme` (ZeRO-3 parameters between uses) with `--offload-optimizer` | `--offload-optimizer cpu\|nvme` (ZeRO-2 and 3, DeepSpeed's CPU AdamW) | `--activation-offload cpu`: DeepSpeed's CPU checkpointing of recomputed blocks' inputs |
+| `megatron_core/` | `--cpu-offload-layers N` with weights (Megatron-Core's layer-level `cpu_offloading`; not beside recomputation or pipeline parallelism) | `--optimizer-cpu-offload` (Megatron-Core's `optimizer_cpu_offload`, a fraction of the state) | `--cpu-offload-layers N` with `--no-cpu-offload-weights` |
+| `automodel/` | `--cpu-offload`: FSDP2's `CPUOffloadPolicy` through the recipe's `distributed.offload_policy` | none in AutoModel | none in AutoModel (activation checkpointing only) |
+| torchtitan (planned) | `training.enable_cpu_offload`: FSDP2's `CPUOffloadPolicy` | none in torchtitan | none in torchtitan outside its experiments (activation checkpointing only) |
+| ShadowSpill (planned) | the execution and spill budgets and the SSD spill of its planner stand in for all three columns | | |
 
 ## Measurement contract
 

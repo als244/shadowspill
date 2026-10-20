@@ -22,6 +22,7 @@ def configuration(
     world_size=8,
     routing,
     recompute=True,
+    cpu_offload=False,
     warmup_steps=3,
     steps=5,
 ):
@@ -41,6 +42,14 @@ def configuration(
     value["model"]["dtype"] = "float32"
     value["model"]["backend"]["fake_balanced_gate"] = routing == "balanced"
     value["distributed"]["activation_checkpointing"] = recompute
+    if cpu_offload:
+        # FSDP2's own policy, as AutoModel's parallelizer hands it to every
+        # fully_shard call: parameter shards, gradients and optimizer state on
+        # the host. AutoModel offloads no activations.
+        value["distributed"]["offload_policy"] = {
+            "_target_": "torch.distributed.fsdp.CPUOffloadPolicy",
+            "pin_memory": True,
+        }
     value["distributed"]["mp_policy"] = {
         "_target_": "torch.distributed.fsdp.MixedPrecisionPolicy",
         "param_dtype": "bfloat16",
@@ -74,6 +83,7 @@ def configuration(
         "gradient_accumulation": accumulation,
         "routing": routing,
         "recompute": recompute,
+        "cpu_offload": cpu_offload,
         "warmup_steps": warmup_steps,
         "steps": steps,
         "precision": "BF16 compute; FP32 resident masters, gradients and AdamW states",
@@ -85,6 +95,11 @@ def configuration(
             "Requested token counts, microbatch size and measured/warmup steps",
             f"Expert routing explicitly selected: {routing}",
             "Requested activation recomputation; checkpoint saving disabled",
+            *(
+                ["FSDP2 CPU offload of shards, gradients and optimizer state"]
+                if cpu_offload
+                else []
+            ),
         ],
     }
     return value, metadata
@@ -100,6 +115,9 @@ def main(argv=None):
     parser.add_argument("--routing", choices=("real", "balanced"), required=True)
     parser.add_argument(
         "--recompute", action=argparse.BooleanOptionalAction, default=True
+    )
+    parser.add_argument(
+        "--cpu-offload", action=argparse.BooleanOptionalAction, default=False
     )
     parser.add_argument("--warmup-steps", type=int, default=3)
     parser.add_argument("--steps", type=int, default=5)

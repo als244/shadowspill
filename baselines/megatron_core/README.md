@@ -42,8 +42,17 @@ warmup: exclude the first `warmup_steps` complete updates in throughput analysis
 `--tensor-parallel`, `--pipeline-parallel`, `--expert-parallel`, and
 `--expert-tensor-parallel` expose the topology. The generator validates group
 divisibility and computes accumulation from the actual attention DP size.
-`--no-recompute` disables the recipe's full-block recomputation. The resolved
-upstream configuration must still be validated before accepting GPU results.
+`--no-recompute` disables the recipe's full-block recomputation.
+`--cpu-offload-layers N` turns on Megatron-Core's layer-level CPU offloading
+(`model.cpu_offloading`, `cpu_offloading_num_layers`): the activations and,
+unless `--no-cpu-offload-weights`, the weights of the first N layers live on
+the host between uses; Megatron-Core refuses it beside recomputation or
+pipeline parallelism, so it needs `--no-recompute` and `--pipeline-parallel 1`.
+`--optimizer-cpu-offload` keeps the optimizer state and step on the host
+(`optimizer.optimizer_cpu_offload`, the `--optimizer-offload-fraction` of the
+state, host-device transfers overlapped). The option names are those of the
+pinned Megatron-Core revision; the resolved upstream configuration must still
+be validated before accepting GPU results.
 
 Source support and command generation have been verified. Environment
 installation and GPU qualification are pending; there are no performance

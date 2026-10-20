@@ -13,6 +13,82 @@ from baselines.common import accumulation_steps, write_json
 BRIDGE_REVISION = "6dea15d7fd499975ebf91fbeaf8c2b740a73d679"
 CORE_REVISION = "ce852bfb93f364f64a556602fc71a5d9ed2c377e"
 RECIPE = "qwen3_30b_a3b_pretrain_8gpu_h100_bf16_config"
+#: The pinned recipe's decoder depth; Megatron-Core offloads fewer layers.
+RECIPE_LAYERS = 48
+
+
+def recipe_overrides(
+    *,
+    output,
+    tensor_parallel,
+    recompute,
+    cpu_offload_layers,
+    cpu_offload_weights,
+    optimizer_cpu_offload,
+    optimizer_offload_fraction,
+):
+    """The Megatron Bridge overrides of one case: the fixed ones, then
+    recomputation, Megatron-Core's layer-level CPU offloading
+    (``cpu_offloading``: the activations and, when asked, the weights of the
+    first ``cpu_offload_layers`` layers on the host, which Megatron-Core
+    refuses beside recomputation or pipeline parallelism) and its CPU
+    optimizer (``optimizer_cpu_offload`` with the fraction of state kept on
+    the host)."""
+
+    if cpu_offload_layers < 0 or cpu_offload_layers >= RECIPE_LAYERS:
+        raise ValueError(f"cpu_offload_layers must be in [0, {RECIPE_LAYERS})")
+    if cpu_offload_layers and recompute:
+        raise ValueError(
+            "Megatron-Core's CPU offloading does not run beside recomputation;"
+            " pass --no-recompute"
+        )
+    if not 0.0 <= optimizer_offload_fraction <= 1.0:
+        raise ValueError("optimizer_offload_fraction must be in [0, 1]")
+    overrides = [
+        "checkpoint.save=null",
+        "checkpoint.load=null",
+        "checkpoint.pretrained_checkpoint=null",
+        "validation.eval_iters=0",
+        "logger.log_interval=1",
+        f"logger.tensorboard_dir={output / 'tensorboard'}",
+        "dataset.num_workers=0",
+        "optimizer.adam_beta1=0.9",
+        "optimizer.adam_beta2=0.999",
+        "optimizer.adam_eps=1e-8",
+        "optimizer.weight_decay=0.01",
+        "optimizer.clip_grad=0.0",
+        "model.moe_router_force_load_balancing=false",
+        "ddp.grad_reduce_in_fp32=true",
+        "mixed_precision.grad_reduce_in_fp32=true",
+        f"model.sequence_parallel={'true' if tensor_parallel > 1 else 'false'}",
+    ]
+    if not recompute:
+        overrides.extend(
+            [
+                "model.recompute_granularity=null",
+                "model.recompute_method=null",
+                "model.recompute_num_layers=null",
+            ]
+        )
+    if cpu_offload_layers:
+        overrides.extend(
+            [
+                "model.cpu_offloading=true",
+                f"model.cpu_offloading_num_layers={cpu_offload_layers}",
+                "model.cpu_offloading_activations=true",
+                "model.cpu_offloading_weights="
+                + ("true" if cpu_offload_weights else "false"),
+            ]
+        )
+    if optimizer_cpu_offload:
+        overrides.extend(
+            [
+                "optimizer.optimizer_cpu_offload=true",
+                f"optimizer.optimizer_offload_fraction={optimizer_offload_fraction}",
+                "optimizer.overlap_cpu_optimizer_d2h_h2d=true",
+            ]
+        )
+    return overrides
 
 
 def main(argv=None):
@@ -31,6 +107,21 @@ def main(argv=None):
     parser.add_argument(
         "--recompute", action=argparse.BooleanOptionalAction, default=True
     )
+    parser.add_argument(
+        "--cpu-offload-layers",
+        type=int,
+        default=0,
+        help="layers whose activations (and weights, unless"
+        " --no-cpu-offload-weights) Megatron-Core keeps on the host; needs"
+        " --no-recompute and no pipeline parallelism",
+    )
+    parser.add_argument(
+        "--cpu-offload-weights", action=argparse.BooleanOptionalAction, default=True
+    )
+    parser.add_argument(
+        "--optimizer-cpu-offload", action=argparse.BooleanOptionalAction, default=False
+    )
+    parser.add_argument("--optimizer-offload-fraction", type=float, default=1.0)
     parser.add_argument("--warmup-steps", type=int, default=3)
     parser.add_argument("--steps", type=int, default=5)
     args = parser.parse_args(argv)
@@ -55,6 +146,10 @@ def main(argv=None):
     )
     if remainder or args.world_size % expert_group:
         parser.error("world size must divide into complete attention and expert groups")
+    if args.cpu_offload_layers and args.pipeline_parallel > 1:
+        parser.error(
+            "Megatron-Core's CPU offloading does not run with pipeline parallelism"
+        )
     accumulation = accumulation_steps(
         args.global_tokens, args.sequence_length, args.microbatch_tokens, dp
     )
@@ -67,32 +162,18 @@ def main(argv=None):
     script = root / "scripts/training/run_recipe.py"
     if not script.is_file():
         parser.error("upstream recipe launcher is missing")
-    overrides = [
-        "checkpoint.save=null",
-        "checkpoint.load=null",
-        "checkpoint.pretrained_checkpoint=null",
-        "validation.eval_iters=0",
-        "logger.log_interval=1",
-        f"logger.tensorboard_dir={output / 'tensorboard'}",
-        "dataset.num_workers=0",
-        "optimizer.adam_beta1=0.9",
-        "optimizer.adam_beta2=0.999",
-        "optimizer.adam_eps=1e-8",
-        "optimizer.weight_decay=0.01",
-        "optimizer.clip_grad=0.0",
-        "model.moe_router_force_load_balancing=false",
-        "ddp.grad_reduce_in_fp32=true",
-        "mixed_precision.grad_reduce_in_fp32=true",
-        f"model.sequence_parallel={'true' if args.tensor_parallel > 1 else 'false'}",
-    ]
-    if not args.recompute:
-        overrides.extend(
-            [
-                "model.recompute_granularity=null",
-                "model.recompute_method=null",
-                "model.recompute_num_layers=null",
-            ]
+    try:
+        overrides = recipe_overrides(
+            output=output,
+            tensor_parallel=args.tensor_parallel,
+            recompute=args.recompute,
+            cpu_offload_layers=args.cpu_offload_layers,
+            cpu_offload_weights=args.cpu_offload_weights,
+            optimizer_cpu_offload=args.optimizer_cpu_offload,
+            optimizer_offload_fraction=args.optimizer_offload_fraction,
         )
+    except ValueError as error:
+        parser.error(str(error))
     command = [
         str(args.python.resolve()),
         "-m",
