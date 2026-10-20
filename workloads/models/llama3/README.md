@@ -18,8 +18,12 @@ their widths and parameter counts.
 | `llama3-1b` | Llama-3.2-1B's decoder, with tied embeddings |
 | `llama3-8b` | Llama-3.1-8B's decoder |
 
-The definition applies no RoPE scaling; the scaled rotary frequencies of a
-Llama 3.1 or 3.2 checkpoint are not reproduced.
+`llama3-1b` and `llama3-8b` scale their rotary frequencies as Llama 3.2 and
+Llama 3.1 do past the 8,192-token context their base models were trained at
+(`rope_scaling`): a wavelength beyond that context divided by
+`low_freq_factor` is slowed by `factor`, one within the context divided by
+`high_freq_factor` is kept, and the band between is blended.
+`llama3-numerical` and `llama3-tiny` apply no scaling.
 
 ## Configuration
 
@@ -32,6 +36,8 @@ Llama 3.1 or 3.2 checkpoint are not reproduced.
 | `rope_base` | RoPE base; 500,000 |
 | `max_seq_len` | Maximum supported sequence length / rotary-table capacity; 131,072 |
 | `tied_embeddings` | Share embedding and output-head weights; false |
+| `rope_scaling` | Llama 3's rotary frequency scaling (`factor`, `low_freq_factor`, `high_freq_factor`, `original_max_position_embeddings`), or none; none |
+| `norm_epsilon` | Stabilizer of every RMSNorm; 1e-5 |
 
 `head_dim` is derived as `d_model // n_heads`; the division must be exact.
 All shape fields above `rope_base` are required for a custom configuration.
