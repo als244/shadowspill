@@ -10,6 +10,28 @@ sequences and 2,097,152 global tokens per optimizer update. Every rank sees
 different synthetic inputs. No checkpoint download is needed for the FSDP2
 throughput baseline. Full-model multi-GPU qualification and performance measurements are still pending.
 
+## Environment
+
+`baselines/scripts/setup.sh` creates the `baselines` Conda environment every
+harness here runs in: ShadowSpill built from this checkout with mlops and its
+providers (through `scripts/setup.sh`), then DeepSpeed, torchtitan and torchao
+at the versions verified with PyTorch 2.13. It checks that every harness entry
+point imports and records the installed packages in
+`baselines/scripts/environment.lock.json`. The Megatron-Core/Bridge and NeMo
+AutoModel recipe harnesses have their own pinned environments.
+
+## Shared layer
+
+`baselines/common/` is what every harness shares and no training system owns:
+`geometry` (one optimizer update's shape and the tokens per update of each
+hardware tier), `precision` (the dtype contract mirroring the quickstart's
+flags, and the refusal of a combination a harness cannot honor), `models` (the
+catalog model a harness builds, full or LoRA, with the shared objective and the
+useful work a step performs), `results` (the result row schema and the
+measurement contract), `provenance` (sources, packages, hardware and the
+kernels that ran) and `data` (synthetic tokens per rank, or windows of a
+pre-tokenized corpus).
+
 ## Implementations
 
 | Directory | Implementation | Status |

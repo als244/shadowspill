@@ -66,7 +66,8 @@ def expand(specification, world_size):
 def source_identity():
     """Do not reuse old timings after local trainer/model source has changed."""
     paths = list((ROOT / "baselines/fsdp2").rglob("*.py"))
-    paths.extend([ROOT / "baselines/common.py", ROOT / "baselines/__init__.py"])
+    paths.extend((ROOT / "baselines/common").rglob("*.py"))
+    paths.append(ROOT / "baselines/__init__.py")
     paths.extend((ROOT / "workloads/models").rglob("*.py"))
     files = {
         str(path.relative_to(ROOT)): hashlib.sha256(path.read_bytes()).hexdigest()
