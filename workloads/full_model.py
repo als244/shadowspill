@@ -11,6 +11,8 @@ from typing import Any, cast
 import torch
 import torch.nn as nn
 
+from workloads.models import catalog
+from workloads.models.construction import initialize as initialize_model
 from workloads.models.shared.decoder import auxiliary_share, language_model_loss
 from workloads.precision import TrainingDtypes
 from workloads.providers import MODEL_DTYPES, ModelImplementation
@@ -18,22 +20,12 @@ from workloads.providers import MODEL_DTYPES, ModelImplementation
 _GIB = 1 << 30
 _RETAINED_HEAD_SCRATCH_BYTES = 512 << 20
 
-#: The family package each full-model family builds from.
-_FAMILY_PACKAGES = {
-    "llama3": "llama3",
-    "qwen35": "qwen35",
-    "qwen35_27b": "qwen35",
-    "olmoe": "olmoe",
-    "qwen3moe": "qwen3moe",
-    "qwen35moe": "qwen35moe",
-}
-
 
 @dataclass(frozen=True, slots=True)
 class FullModelSpec:
-    """One reproducible provider/model/geometry performance request."""
+    """One reproducible model/implementation/geometry performance request."""
 
-    family: str
+    model: str
     implementation: ModelImplementation
     sequence_length: int
     sequences_per_microbatch: int
@@ -44,6 +36,15 @@ class FullModelSpec:
     master_dtype: str = "none"
     grad_dtype: str = "bfloat16"
     opt_state_dtype: str = "bfloat16"
+
+    @property
+    def entry(self) -> catalog.Entry:
+        return catalog.entry(self.model)
+
+    @property
+    def family(self) -> str:
+        """The family the gates name a cell by."""
+        return self.entry.family
 
     @property
     def dtypes(self) -> TrainingDtypes:
@@ -61,10 +62,12 @@ class FullModelSpec:
 
     @property
     def identity(self) -> str:
+        """The cell the gates judge: implementation and family."""
         return f"{self.implementation}_{self.family}"
 
     def as_dict(self) -> dict[str, object]:
         result = asdict(self)
+        result["family"] = self.family
         result["model_config"] = asdict(self.model_config)
         result["tokens_per_microbatch"] = self.tokens_per_microbatch
         result["tokens_per_step"] = self.tokens_per_step
@@ -72,44 +75,26 @@ class FullModelSpec:
         return result
 
 
-def throughput_spec(family: str, implementation: ModelImplementation) -> FullModelSpec:
-    """A supplied model/geometry recipe, independent of gate budgets or verdicts."""
+def spec(
+    model: str, implementation: ModelImplementation = "mlops", **changes: Any
+) -> FullModelSpec:
+    """A catalog model at its retained geometry, independent of gate budgets
+    or verdicts; ``changes`` apply to the entry's configuration."""
 
-    from workloads.models.llama3.config import Config as Llama3Config
-    from workloads.models.olmoe.config import Config as OLMoEConfig
-    from workloads.models.qwen35.config import Config as Qwen35Config
-
-    if family == "llama3":
-        config: Any = Llama3Config.throughput()
-        tokens = 8_192
-    elif family == "qwen35":
-        config = Qwen35Config.throughput()
-        tokens = 16_384
-    elif family == "qwen35_27b":
-        config = Qwen35Config.dense_27b()
-        tokens = 8_192
-    elif family == "olmoe":
-        if implementation == "pytorch":
-            raise ValueError("pure-PyTorch OLMoE full-model benchmarking is deferred")
-        config = OLMoEConfig.throughput()
-        tokens = 32_768
-    elif family in {"qwen3moe", "qwen35moe"}:
-        if implementation != "mlops":
-            raise ValueError("Qwen MoE full-model workloads use MLOps")
-        from workloads.models.qwen3moe.config import Config as Qwen3MoEConfig
-        from workloads.models.qwen35moe.config import Config as Qwen35MoEConfig
-
-        config = (Qwen3MoEConfig if family == "qwen3moe" else Qwen35MoEConfig)()
-        tokens = 8_192
-    else:
-        raise ValueError(f"unknown full-model family {family!r}")
+    item = catalog.entry(model)
+    if implementation not in item.implementations:
+        raise ValueError(
+            f"{model} has no {implementation!r} implementation; "
+            f"it has {', '.join(item.implementations)}"
+        )
+    geometry = item.geometry
     return FullModelSpec(
-        family=family,
+        model=model,
         implementation=implementation,
-        sequence_length=1_024,
-        sequences_per_microbatch=tokens // 1_024,
-        accumulation_count=65_536 // tokens,
-        model_config=config,
+        sequence_length=geometry.sequence_length,
+        sequences_per_microbatch=geometry.sequences_per_microbatch,
+        accumulation_count=geometry.accumulation_count,
+        model_config=item.config(**changes),
     )
 
 
@@ -142,8 +127,9 @@ def full_model_objective(
         raise TypeError("performance tokens and targets must be tensors")
     total = float(manifest.tokens_per_step)
     callable_model: Any = model
+    mixture = manifest.entry.mixture
     if manifest.implementation == "pytorch":
-        if manifest.family == "olmoe":
+        if mixture:
             hidden, auxiliary = callable_model.hidden(tokens, sequence_lengths)
             return _with_balancing(
                 language_model_loss(hidden, callable_model.lm_head, targets, "sum"),
@@ -159,7 +145,7 @@ def full_model_objective(
         int(callable_model.config.vocab_size),
         manifest.head_scratch_bytes,
     )
-    if manifest.family in {"olmoe", "qwen3moe", "qwen35moe"}:
+    if mixture:
         hidden, auxiliary = callable_model.hidden(tokens, sequence_lengths)
         return _with_balancing(
             callable_model.lm_head.loss(
@@ -230,41 +216,10 @@ def meta_construction(dtype: torch.dtype) -> Iterator[None]:
         torch.set_default_dtype(previous)
 
 
-def initialize_model(model: nn.Module) -> None:
-    """Let every module fill the storage it owns.
-
-    One traversal, used by every materialisation path, so a model built into
-    the spill pool draws exactly what the same model built on the host draws.
-    """
-
-    for module in model.modules():
-        reset = getattr(module, "reset_parameters", None)
-        if callable(reset):
-            reset()
-
-
 def build_model(manifest: FullModelSpec) -> nn.Module:
     """Return this manifest's model on `meta`: structure only, no storage."""
 
-    from importlib import import_module
-
-    package = _FAMILY_PACKAGES.get(manifest.family)
-    module = (
-        None
-        if package is None
-        else f"workloads.models.{package}.implementations.{manifest.implementation}"
-    )
-    try:
-        if module is None:
-            raise ModuleNotFoundError(manifest.family, name=manifest.family)
-        model_type = import_module(module).Model
-    except ModuleNotFoundError as exc:
-        if exc.name != module and exc.name != manifest.family:
-            raise
-        raise ValueError(
-            "unsupported full-model cell "
-            f"{(manifest.family, manifest.implementation)!r}"
-        ) from exc
+    model_type = manifest.entry.model_class(manifest.implementation)
     if manifest.model_dtype not in MODEL_DTYPES:
         raise ValueError(f"model_dtype must be one of {MODEL_DTYPES}")
     with meta_construction(getattr(torch, manifest.model_dtype)):
@@ -303,5 +258,6 @@ __all__ = [
     "build_case",
     "build_model",
     "full_model_objective",
-    "throughput_spec",
+    "initialize_model",
+    "spec",
 ]

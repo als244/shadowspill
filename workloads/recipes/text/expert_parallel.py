@@ -16,18 +16,17 @@ import torch
 import torch.distributed as dist
 
 from shadowspill.pytorch import Distributed
-from workloads.full_model import throughput_spec
+from workloads.full_model import spec
+from workloads.models import catalog
 from workloads.models.shared.training import LEARNING_RATE
 
 from .quickstart import Precision, _distributed_objective, text_metrics
-
-_MODELS = ("olmoe", "qwen3moe", "qwen35moe")
 
 
 def experiment(
     *,
     device,
-    model="qwen3moe",
+    model="qwen3moe-30b-a3b",
     sequence_length=4096,
     sequences_per_step=64,
     sequences_per_microbatch=16,
@@ -48,8 +47,9 @@ def experiment(
     Computation weights/gradients are not transfer-sharded. Optimizer ownership
     follows each parameter's replicas, independently of expert placement.
     """
-    if model not in _MODELS:
-        raise ValueError(f"model must be one of {_MODELS}")
+    if model not in catalog.expert_parallel_names():
+        raise ValueError(f"model must be one of {catalog.expert_parallel_names()}")
+    entry = catalog.entry(model)
     for name, value in (
         ("sequence_length", sequence_length),
         ("sequences_per_step", sequences_per_step),
@@ -74,7 +74,7 @@ def experiment(
         grad_dtype=grad_dtype,
         opt_state_dtype=opt_state_dtype,
     )
-    manifest = throughput_spec(model, "mlops")
+    manifest = spec(model, "mlops")
     config = replace(
         manifest.model_config,
         **{**(config_overrides or {}), "max_seq_len": sequence_length},
@@ -121,14 +121,9 @@ def experiment(
             dist.destroy_process_group(group)
 
     def model_factory():
-        from importlib import import_module
-
-        implementation = import_module(
-            f"workloads.models.{model}.implementations.mlops"
-        )
         with torch.random.fork_rng(devices=[]):
             torch.manual_seed(seed + rank)
-            return implementation.Model(
+            return entry.model_class("mlops")(
                 config,
                 ep_group=group,
                 token_capacity=capacity,

@@ -1,4 +1,5 @@
-"""CLI flags and search/profiling policy; no model imports."""
+"""CLI flags and search/profiling policy; the catalog names the models, no
+model is imported here."""
 
 from __future__ import annotations
 
@@ -25,17 +26,8 @@ from shadowspill.pytorch import ProfilingOptions, StepSearchReport
 from shadowspill.pytorch.graph_pairs import GRAPH_PAIR_VARIANTS
 from shadowspill.schema import artifact_schema
 from shadowspill.store import STORE_MODES
+from workloads.models import catalog
 
-IDENTITIES = (
-    "mlops_llama3",
-    "mlops_qwen35",
-    "mlops_qwen35_27b",
-    "mlops_qwen3moe",
-    "mlops_qwen35moe",
-    "mlops_olmoe",
-    "pytorch_llama3",
-    "pytorch_qwen35",
-)
 _DTYPE_NAMES = ("bfloat16", "float16", "float32")
 _ROUNDINGS = ("nearest", "stochastic")
 # The planner's own small-object threshold, so a change to the library
@@ -251,11 +243,10 @@ def _reproduced_arguments(
 
     given = {token.split("=", 1)[0] for token in sys.argv[1:] if token.startswith("--")}
     foreign = sorted(given - _REPRODUCE_MAY_TAKE)
-    if foreign or arguments.model is not None:
-        named = [*foreign, *([arguments.model] if arguments.model else [])]
+    if foreign:
         parser.error(
             "--reproduce takes the whole request from the run; "
-            f"{', '.join(named)} would contradict it"
+            f"{', '.join(foreign)} would contradict it"
         )
     run = arguments.reproduce
     if not (run / "request.json").exists():
@@ -298,10 +289,21 @@ def _parser() -> argparse.ArgumentParser:
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
     )
     parser.add_argument(
-        "model",
-        nargs="?",
-        choices=IDENTITIES,
-        help="which workload to run; taken from the run when --reproduce is given",
+        "--model",
+        choices=catalog.names(),
+        help="the catalog model to run; taken from the run when --reproduce is given",
+    )
+    parser.add_argument(
+        "--implementation",
+        choices=catalog.IMPLEMENTATIONS,
+        default=None,
+        help="which implementation builds --model; mlops unless given",
+    )
+    parser.add_argument(
+        "--model-config",
+        type=json.loads,
+        default={},
+        help="JSON field overrides on the catalog entry's configuration",
     )
     parser.add_argument(
         "--factory",
@@ -429,7 +431,7 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--lora",
         action="store_true",
-        help="train LoRA factors in the selected text preset; freeze its base weights",
+        help="train LoRA factors in the selected model; freeze its base weights",
     )
     parser.add_argument(
         "--lora-rank",
@@ -721,11 +723,27 @@ def parse_arguments() -> tuple[argparse.ArgumentParser, argparse.Namespace]:
     if arguments.reproduce is not None:
         arguments = _reproduced_arguments(parser, arguments)
     elif arguments.model is None and arguments.factory is None:
-        parser.error(
-            "a text preset or --factory is required unless --reproduce names a run"
-        )
+        parser.error("--model or --factory is required unless --reproduce names a run")
     if arguments.model is not None and arguments.factory is not None:
-        parser.error("choose a text preset or --factory")
+        parser.error("choose --model or --factory")
+    entry = None if arguments.model is None else catalog.entry(arguments.model)
+    if (
+        entry is not None
+        and arguments.implementation is not None
+        and arguments.implementation not in entry.implementations
+    ):
+        parser.error(
+            f"{entry.name} has no {arguments.implementation} implementation;"
+            f" it has {', '.join(entry.implementations)}"
+        )
+    # A catalog entry with a factory is built by it, as --factory would be.
+    factory_bound = arguments.factory is not None or (
+        entry is not None and entry.factory is not None
+    )
+    if factory_bound and arguments.model_config:
+        parser.error("--model-config applies to a model the text recipe builds")
+    if arguments.factory is not None and arguments.implementation is not None:
+        parser.error("--implementation applies to --model")
     if arguments.transfer_shard_size is not None:
         if not arguments.distributed:
             parser.error("--transfer-shard-size requires --distributed")
@@ -747,17 +765,18 @@ def parse_arguments() -> tuple[argparse.ArgumentParser, argparse.Namespace]:
         )
     if arguments.ssd_image is not None and arguments.ssd_spill is None:
         parser.error("--ssd-image needs --ssd-spill for the scratch behind the image")
-    if arguments.factory is not None and arguments.lora:
+    if factory_bound and arguments.lora:
         parser.error(
-            "--lora applies to text presets; a factory decides its own"
-            " trainability, and takes --lora-rank, --lora-alpha and --lora-dtype"
+            "--lora applies to a model the text recipe builds; a factory decides"
+            " its own trainability, and takes --lora-rank, --lora-alpha and"
+            " --lora-dtype"
         )
     if (arguments.lora_rank is not None and arguments.lora_rank <= 0) or (
         arguments.lora_alpha is not None and arguments.lora_alpha <= 0
     ):
         parser.error("LoRA rank and alpha must be positive")
     if (
-        arguments.factory is None
+        not factory_bound
         and not arguments.lora
         and any(
             value is not None
@@ -770,7 +789,7 @@ def parse_arguments() -> tuple[argparse.ArgumentParser, argparse.Namespace]:
     ):
         parser.error(
             "--lora-rank, --lora-alpha and --lora-dtype require --lora with a"
-            " text preset"
+            " model the text recipe builds"
         )
     if arguments.minimum_evict_kib < 0:
         parser.error("--minimum-evict-kib must be nonnegative")

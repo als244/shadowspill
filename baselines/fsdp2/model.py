@@ -2,28 +2,19 @@
 
 from __future__ import annotations
 
+from dataclasses import replace
+
 import torch
 from torch import nn
 
-from workloads.models.qwen3moe.config import Config
+from workloads.models.qwen3moe.config import PRESETS
 from workloads.models.qwen3moe.implementations.mlops import Model
 
 
 def configuration(*, tiny=False, sequence_length=4096):
     if not tiny:
-        return Config(max_seq_len=max(40960, sequence_length))
-    return Config(
-        n_layers=2,
-        d_model=128,
-        n_heads=4,
-        n_kv_heads=2,
-        head_dim=32,
-        n_experts=8,
-        top_k=2,
-        d_ff_expert=128,
-        vocab_size=1024,
-        max_seq_len=max(512, sequence_length),
-    )
+        return replace(PRESETS["30b-a3b"], max_seq_len=max(40960, sequence_length))
+    return replace(PRESETS["tiny"], max_seq_len=max(512, sequence_length))
 
 
 class TrainingModel(nn.Module):

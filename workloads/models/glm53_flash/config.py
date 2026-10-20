@@ -1,5 +1,6 @@
 """GLM-5.3-Flash language-backbone dimensions and precision configuration."""
 
+from collections.abc import Mapping
 from dataclasses import dataclass, fields
 
 import torch
@@ -165,3 +166,8 @@ def from_huggingface(config, **overrides):
                 "from configured architecture"
             )
     return result
+
+
+#: The named shapes the catalog serves: the published architecture, and the
+#: small random fixture the quickstart factory builds with ``tiny=True``.
+PRESETS: Mapping[str, Config] = {"published": Config(), "tiny": Config.tiny()}

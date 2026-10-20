@@ -70,7 +70,7 @@ def test_a_config_on_mlops_asks_it_for_weight_gradients_at_its_grad_dtype(
 
     raw = json.loads(path.read_text())
     settings = raw.get("settings", [])
-    if "implementations.mlops" not in json.dumps(raw.get("model", {})):
+    if raw.get("model", {}).get("implementation") != "mlops":
         pytest.skip("the model does not run on mlops kernels")
     assert all(
         setting.get("@call") != "workloads.providers:select_implementation"
@@ -96,7 +96,7 @@ def test_fp16_model_and_optimizer_precision_survive_config(tmp_path, master):
         tmp_path,
         {
             "model": {
-                "@call": "workloads.recipes.text.models:build_on_meta",
+                "@call": "workloads.models.construction:build_on_meta",
                 "model": "@tests.training._synthetic:TinyModel",
                 "dtype": "bfloat16",
             },

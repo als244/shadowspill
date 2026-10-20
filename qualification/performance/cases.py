@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, fields
 
-from workloads.full_model import FullModelSpec, throughput_spec
+from workloads.full_model import FullModelSpec, spec
 from workloads.providers import ModelImplementation
 
 _GIB = 1 << 30
@@ -92,36 +92,32 @@ class FullModelManifest(FullModelSpec):
     reject_overbudget: bool = False
 
 
-def _manifest(
-    family: str,
-    implementation: ModelImplementation,
-) -> FullModelManifest:
-    spec = throughput_spec(family, implementation)
+def _manifest(model: str, implementation: ModelImplementation) -> FullModelManifest:
+    recipe = spec(model, implementation)
     return FullModelManifest(
-        **{field.name: getattr(spec, field.name) for field in fields(spec)},
+        **{field.name: getattr(recipe, field.name) for field in fields(recipe)},
         device_physical_capacity_bytes=16 * _GIB,
         spill_budget_bytes=112 * _GIB,
-        regression_tokens_per_second=_REGRESSION_TOKENS_PER_SECOND.get(
-            f"{implementation}_{family}"
-        ),
+        regression_tokens_per_second=_REGRESSION_TOKENS_PER_SECOND.get(recipe.identity),
         remote_regression_tokens_per_second=_REMOTE_REGRESSION_TOKENS_PER_SECOND.get(
-            f"{implementation}_{family}"
+            recipe.identity
         ),
         predecessor_tokens_per_second=_PREDECESSOR_TOKENS_PER_SECOND.get(
-            f"{implementation}_{family}"
+            recipe.identity
         ),
     )
 
 
 def manifests() -> tuple[FullModelManifest, ...]:
-    """Return the five accepted provider cells in stable execution order."""
+    """The five accepted cells in stable execution order: each family at the
+    published size the authorities were measured at, by implementation."""
 
     return (
-        _manifest("llama3", "mlops"),
-        _manifest("qwen35", "mlops"),
-        _manifest("olmoe", "mlops"),
-        _manifest("llama3", "pytorch"),
-        _manifest("qwen35", "pytorch"),
+        _manifest("llama3-8b", "mlops"),
+        _manifest("qwen35-9b", "mlops"),
+        _manifest("olmoe-7b-a1b", "mlops"),
+        _manifest("llama3-8b", "pytorch"),
+        _manifest("qwen35-9b", "pytorch"),
     )
 
 

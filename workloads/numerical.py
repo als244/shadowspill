@@ -4,17 +4,15 @@ from __future__ import annotations
 
 from collections.abc import Iterator, Mapping, Sequence
 from contextlib import contextmanager
-from dataclasses import dataclass, field, replace
+from dataclasses import dataclass, field
 from typing import Any, Protocol, cast
 
 import torch
 import torch.nn as nn
 
+from workloads.models import catalog
 from workloads.precision import TrainingDtypes
 from workloads.providers import MODEL_DTYPES, ModelImplementation
-
-#: The families with an exact-scale numerical shape.
-_NUMERICAL_FAMILIES = ("llama3", "qwen35", "olmoe")
 
 _DEFAULT_DATA_GEOMETRY: tuple[dict[str, Any], ...] = (
     {
@@ -45,7 +43,7 @@ class NumericalCase:
     def objective(self, model: nn.Module, *values: Any) -> torch.Tensor:
         tokens, targets, sequence_lengths = values
         workload = cast(SupportsLoss, model)
-        if self.family == "olmoe":
+        if catalog.entry(f"{self.family}-numerical").mixture:
             return workload.loss(
                 tokens,
                 targets,
@@ -101,20 +99,14 @@ def build_case(
         opt_state_dtype or "bfloat16",
     )
     torch.manual_seed(seed)
-    from importlib import import_module
-
-    if family not in _NUMERICAL_FAMILIES:
+    if f"{family}-numerical" not in catalog.names():
         raise ValueError(f"unknown numerical family {family!r}")
-    preset = import_module(f"workloads.models.{family}.config").Config
-    model_type = import_module(
-        f"workloads.models.{family}.implementations.{model_implementation}"
-    ).Model
-    config = replace(preset.numerical(), max_seq_len=192)
-    if model_config:
-        try:
-            config = replace(config, **dict(model_config))
-        except TypeError as exc:
-            raise ValueError(f"invalid {family} model_config: {exc}") from exc
+    entry = catalog.entry(f"{family}-numerical")
+    model_type = entry.model_class(model_implementation)
+    try:
+        config = entry.config(**{"max_seq_len": 192, **dict(model_config or {})})
+    except ValueError as exc:
+        raise ValueError(f"invalid {family} model_config: {exc}") from exc
     # The branch above pairs each config with the class that reads it.
     model: nn.Module = model_type(cast(Any, config)).to(
         getattr(torch, model_dtype or "bfloat16")

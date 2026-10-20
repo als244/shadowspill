@@ -53,7 +53,7 @@ def _config() -> CollectionConfig:
         case_timeout_seconds=10,
         max_attempts=2,
         geometry=GeometryAxes((1024,), (1024,), (1, 2)),
-        models=(ModelSpec("mlops-llama", "llama3", "mlops"),),
+        models=(ModelSpec("mlops-llama", "llama3-8b", "mlops"),),
         runtime=RuntimeSpec(4096, 8192, 4096, 8192),
         build=BuildSpec("stage_interleaved", 1, 2, "contribute", None),
     )

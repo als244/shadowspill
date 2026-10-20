@@ -10,6 +10,8 @@ from pathlib import Path
 from typing import Any, Literal
 
 from shadowspill.store import STORE_MODES, StoreMode
+from workloads.models import catalog
+from workloads.providers import ModelImplementation
 
 _SCHEMA = "shadowspill.program_corpus_collection/v1"
 _SIZE_PATTERN = re.compile(r"^([1-9][0-9]*)(B|KiB|MiB|GiB|TiB)$")
@@ -54,12 +56,11 @@ class GeometryAxes:
 
 @dataclass(frozen=True, slots=True)
 class ModelSpec:
-    """One registered benchmark-model provider and optional axes."""
+    """One registered catalog model, its implementation and optional axes."""
 
     name: str
-    family: Literal["llama3", "qwen35", "olmoe"]
-    implementation: Literal["pytorch", "mlops"]
-    preset: Literal["throughput"] = "throughput"
+    model: str
+    implementation: ModelImplementation
     geometry: GeometryAxes | None = None
     head_scratch_bytes: int | None = None
 
@@ -68,17 +69,25 @@ class ModelSpec:
             raise ValueError(
                 "model name must contain only letters, digits, '.', '_', or '-'"
             )
-        if self.family == "olmoe" and self.implementation == "pytorch":
-            raise ValueError("pure-PyTorch OLMoE collection is currently unsupported")
+        entry = catalog.entry(self.model)
+        if self.implementation not in entry.implementations:
+            raise ValueError(
+                f"{self.model} has no {self.implementation!r} implementation"
+            )
         if self.head_scratch_bytes is not None and self.head_scratch_bytes <= 0:
             raise ValueError("model head_scratch_bytes must be positive")
+
+    @property
+    def family(self) -> str:
+        """The family a collected program's identity records."""
+
+        return catalog.entry(self.model).family
 
     def to_dict(self) -> dict[str, object]:
         return {
             "name": self.name,
-            "family": self.family,
+            "model": self.model,
             "implementation": self.implementation,
-            "preset": self.preset,
             "geometry": None if self.geometry is None else self.geometry.to_dict(),
             "head_scratch_bytes": self.head_scratch_bytes,
         }
@@ -291,32 +300,21 @@ def _model(value: object, path: str) -> ModelSpec:
     data = _object(value, path)
     _keys(
         data,
-        {
-            "name",
-            "family",
-            "implementation",
-            "preset",
-            "geometry",
-            "head_scratch_bytes",
-        },
+        {"name", "model", "implementation", "geometry", "head_scratch_bytes"},
         path,
-        required={"name", "family", "implementation"},
+        required={"name", "model", "implementation"},
     )
-    family = _string(data.get("family"), f"{path}.family")
+    model = _string(data.get("model"), f"{path}.model")
     implementation = _string(data.get("implementation"), f"{path}.implementation")
-    preset = _string(data.get("preset", "throughput"), f"{path}.preset")
-    if family not in {"llama3", "qwen35", "olmoe"}:
-        raise ValueError(f"{path}.family is unsupported")
-    if implementation not in {"pytorch", "mlops"}:
+    if model not in catalog.names():
+        raise ValueError(f"{path}.model is not a catalog model")
+    if implementation not in catalog.IMPLEMENTATIONS:
         raise ValueError(f"{path}.implementation is unsupported")
-    if preset != "throughput":
-        raise ValueError(f"{path}.preset is unsupported")
     geometry_value = data.get("geometry")
     return ModelSpec(
         name=_string(data.get("name"), f"{path}.name"),
-        family=family,  # type: ignore[arg-type]
+        model=model,
         implementation=implementation,  # type: ignore[arg-type]
-        preset=preset,  # type: ignore[arg-type]
         geometry=(
             None
             if geometry_value is None

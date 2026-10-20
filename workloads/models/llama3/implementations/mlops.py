@@ -110,6 +110,8 @@ class Model(nn.Module):
         self.blocks = nn.ModuleList(Block(config) for _ in range(config.n_layers))
         self.final_norm = RMSNorm(config.d_model)
         self.lm_head = LanguageModelHead(config.d_model, config.vocab_size)
+        if config.tied_embeddings:
+            self.lm_head.weight = self.embed.weight
 
     def hidden(
         self, tokens: torch.Tensor, sequence_lengths: SequenceLengths = None

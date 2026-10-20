@@ -10,7 +10,7 @@ from typing import Any, cast
 
 import torch
 
-from workloads.full_model import build_model, full_model_objective, throughput_spec
+from workloads.full_model import build_model, full_model_objective, spec
 from workloads.models.shared.training import LEARNING_RATE
 
 from .geometry import search_geometries
@@ -175,9 +175,12 @@ def _lora_settings(arguments: argparse.Namespace) -> dict[str, object]:
 
 
 def recipe(parser, arguments):
-    implementation, family = arguments.model.split("_", 1)
+    implementation = arguments.implementation or "mlops"
     lora = _lora_settings(arguments) if arguments.lora else None
-    manifest = throughput_spec(family, implementation)
+    try:
+        manifest = spec(arguments.model, implementation, **arguments.model_config)
+    except ValueError as error:
+        parser.error(str(error))
     precision = Precision.from_arguments(arguments)
     length = arguments.sequence_length or manifest.sequence_length
     sequences = (
@@ -291,6 +294,9 @@ def recipe(parser, arguments):
                         else {}
                     ),
                 },
+                "model": arguments.model,
+                "implementation": implementation,
+                "model_config": dict(arguments.model_config),
                 "world_size": world_size,
                 "rank": rank,
                 "units_scope": "per_rank",

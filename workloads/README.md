@@ -10,15 +10,16 @@ must never import `workloads`.
 The [example model catalog](MODELS.md) is the central reference for:
 
 - Llama 3, dense Qwen 3.5, OLMoE, Qwen 3 MoE, and Qwen 3.5 MoE.
-- Python constructors, quickstart names, preset dimensions and parameter counts.
+- Catalog names, preset dimensions and parameter counts.
 - Shape configuration, weights/masters/gradients/optimizer dtypes, and rounding.
 - Frozen/trainable parameters, LoRA availability, and expert parallelism.
 - Inputs, losses, packing, and runnable Python/JSON/CLI examples.
 
-`mlops_qwen35` is dense, and `mlops_qwen35_27b` is the same architecture at
-Qwen3.5-27B's shape; `mlops_qwen3moe` and `mlops_qwen35moe` select
-Qwen 3 and Qwen 3.5 MoE. Their default dimensions match the 30B-A3B and
-35B-A3B models, respectively.
+The [catalog](models/catalog.py) names every supplied model `<family>-<size>`:
+`llama3-8b`, `qwen35-9b`, `qwen35-27b`, `olmoe-7b-a1b`, `qwen3moe-30b-a3b`,
+`qwen35moe-35b-a3b`, the small `llama3-1b` and `qwen35-2b`, each family's
+`numerical` and `tiny` shapes, and the GLM entries. The implementation,
+`mlops` or `pytorch`, is chosen beside the name.
 
 All MLOps MoE models expose optional expert parallelism through the same
 constructor arguments. Choose the architecture first, then supply `ep_group`

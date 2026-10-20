@@ -19,7 +19,7 @@ def _config(tmp_path):
         ],
         "run_dir": str(tmp_path / "run"),
         "model": {
-            "@call": "workloads.recipes.text.models:build_on_meta",
+            "@call": "workloads.models.construction:build_on_meta",
             "model": "@tests.training._synthetic:TinyModel",
         },
         "objective": "@workloads.recipes.text.objectives:model_loss",

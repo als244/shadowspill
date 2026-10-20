@@ -2,12 +2,13 @@ from __future__ import annotations
 
 import torch
 
+from workloads.models.llama3.config import PRESETS
 from workloads.models.llama3.config import Config as Llama3Config
 from workloads.models.llama3.implementations.pytorch import Model as Llama3
 
 
 def test_llama3_parameter_catalog_and_gradients() -> None:
-    numerical = Llama3Config.numerical()
+    numerical = PRESETS["numerical"]
     with torch.device("meta"):
         model = Llama3(numerical)
     assert sum(parameter.numel() for parameter in model.parameters()) == 1_179_699_200

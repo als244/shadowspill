@@ -7,14 +7,11 @@
     }
   ],
   "model": {
-    "@call": "workloads.recipes.text.models:build_on_meta",
-    "model": "@workloads.models.llama3.implementations.mlops:Model",
+    "@call": "workloads.models.catalog:build_on_meta",
+    "model": "llama3-numerical",
+    "implementation": "mlops",
     "dtype": "bfloat16",
-    "config": {
-      "@call": "workloads.recipes.text.models:config_preset",
-      "preset": "@workloads.models.llama3.config:Config.numerical",
-      "max_seq_len": 2048
-    }
+    "max_seq_len": 2048
   },
   "objective": "@workloads.recipes.text.objectives:model_loss",
   "optimizer": "@mlops.optim:AdamW",

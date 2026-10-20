@@ -7,7 +7,7 @@ the lanes carried bytes at another rate. Nothing executes, so a line is what
 the simulator predicts for the plan the search chose, and the distance
 between two lines is the transfer calibration and nothing else.
 
-    python -m benchmarking.bandwidth_frontier mlops_qwen35 \
+    python -m benchmarking.bandwidth_frontier --model qwen35-9b \
         --sequence-length 32768 --sequences-per-step 2 \
         --min-tokens-per-microbatch 16384 \
         --budget-gib 14,16,18,20 \
@@ -110,7 +110,13 @@ def arguments(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
     )
-    parser.add_argument("identity", nargs="?", help="a quickstart model identity")
+    parser.add_argument("--model", default=None, help="a catalog model")
+    parser.add_argument(
+        "--implementation",
+        default="mlops",
+        choices=("pytorch", "mlops"),
+        help="which implementation builds --model",
+    )
     parser.add_argument("--sequence-length", type=int, default=None)
     parser.add_argument("--sequences-per-step", type=int, default=None)
     parser.add_argument("--min-tokens-per-microbatch", type=int, default=None)
@@ -273,7 +279,7 @@ def arguments(argv: list[str] | None = None) -> argparse.Namespace:
         missing = [
             name
             for name, value in (
-                ("identity", parsed.identity),
+                ("--model", parsed.model),
                 ("--sequence-length", parsed.sequence_length),
                 ("--sequences-per-step", parsed.sequences_per_step),
                 ("--budget-gib", parsed.budget_gib),
@@ -350,15 +356,13 @@ def plan_one_calibration(parsed: argparse.Namespace, raw_data: Path) -> Path:
         plan_step_search,
         release_model_state,
     )
-    from workloads.full_model import build_case, throughput_spec
+    from workloads.full_model import build_case, spec
     from workloads.recipes.text.geometry import search_geometries
 
     fetch, evict = _bandwidth_pairs(parsed.plan_one)[0]
     spill_gib = parsed.plan_spill if parsed.plan_spill is not None else parsed.spill_gib
     label = f"{label_for(fetch, evict)}_spill{spill_gib:g}"
-    # `mlops_qwen35` names the implementation first and the family second.
-    implementation, _, family = parsed.identity.partition("_")
-    manifest = throughput_spec(family, implementation)
+    manifest = spec(parsed.model, parsed.implementation)
     manifest = replace(
         manifest,
         sequence_length=parsed.sequence_length,
@@ -609,7 +613,8 @@ def write_raw_data(raw_data: Path, parsed: argparse.Namespace) -> Path:
     (raw_data / "sweep.json").write_text(
         json.dumps(
             {
-                "identity": parsed.identity,
+                "model": parsed.model,
+                "implementation": parsed.implementation,
                 "sequence_length": parsed.sequence_length,
                 "sequences_per_step": parsed.sequences_per_step,
                 "budgets_gib": list(parsed.budget_gib or ()),
@@ -743,7 +748,8 @@ def draw(raw_data: Path, output: Path, title: str | None) -> tuple[Path, ...]:
     figures.mkdir(parents=True, exist_ok=True)
     tokens = sweep_record["sequences_per_step"] * sweep_record["sequence_length"]
     heading = title or (
-        f"{sweep_record['identity']}: {sweep_record['sequence_length']:,}-token"
+        f"{sweep_record['model']} ({sweep_record['implementation']}):"
+        f" {sweep_record['sequence_length']:,}-token"
         f" sequences, {tokens:,} tokens per step"
     )
     spills = sorted({row["spill_budget_gib"] for row in rows})

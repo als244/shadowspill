@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass
 
 
@@ -56,66 +57,6 @@ class Config:
     def layer_kind(self, index: int) -> str:
         return "full" if (index + 1) % self.full_attention_interval == 0 else "linear"
 
-    @classmethod
-    def numerical(cls) -> Config:
-        return cls(
-            8,
-            1_536,
-            4,
-            12,
-            4,
-            128,
-            0.25,
-            6,
-            12,
-            128,
-            128,
-            4,
-            4_608,
-            248_320,
-        )
-
-    @classmethod
-    def throughput(cls) -> Config:
-        return cls(
-            32,
-            4_096,
-            4,
-            16,
-            4,
-            256,
-            0.25,
-            16,
-            32,
-            128,
-            128,
-            4,
-            12_288,
-            248_320,
-        )
-
-    @classmethod
-    def dense_27b(cls) -> Config:
-        """The text decoder of Qwen3.5-27B, without its multi-token prediction
-        layer."""
-        return cls(
-            64,
-            5_120,
-            4,
-            24,
-            4,
-            256,
-            0.25,
-            16,
-            48,
-            128,
-            128,
-            4,
-            17_408,
-            248_320,
-            max_seq_len=262_144,
-        )
-
     def __post_init__(self) -> None:
         if self.n_heads % self.n_kv_heads:
             raise ValueError("n_heads must be divisible by n_kv_heads")
@@ -123,3 +64,93 @@ class Config:
             raise ValueError("linear value heads must be divisible by key heads")
         if self.rotary_width <= 0 or self.rotary_width % 2:
             raise ValueError("partial rotary width must be positive and even")
+
+
+#: The named shapes the catalog serves, by size. Each published size is the
+#: text decoder alone; the multi-token prediction layer stays out.
+PRESETS: Mapping[str, Config] = {
+    "numerical": Config(
+        n_layers=8,
+        d_model=1_536,
+        full_attention_interval=4,
+        n_heads=12,
+        n_kv_heads=4,
+        head_dim=128,
+        partial_rotary_factor=0.25,
+        lin_k_heads=6,
+        lin_v_heads=12,
+        lin_k_head_dim=128,
+        lin_v_head_dim=128,
+        lin_conv_kernel=4,
+        d_ff=4_608,
+        vocab_size=248_320,
+    ),
+    "tiny": Config(
+        n_layers=2,
+        d_model=128,
+        full_attention_interval=2,
+        n_heads=4,
+        n_kv_heads=2,
+        head_dim=32,
+        partial_rotary_factor=0.25,
+        lin_k_heads=2,
+        lin_v_heads=4,
+        lin_k_head_dim=32,
+        lin_v_head_dim=32,
+        lin_conv_kernel=4,
+        d_ff=256,
+        vocab_size=512,
+        max_seq_len=4_096,
+    ),
+    "2b": Config(
+        n_layers=24,
+        d_model=2_048,
+        full_attention_interval=4,
+        n_heads=8,
+        n_kv_heads=2,
+        head_dim=256,
+        partial_rotary_factor=0.25,
+        lin_k_heads=16,
+        lin_v_heads=16,
+        lin_k_head_dim=128,
+        lin_v_head_dim=128,
+        lin_conv_kernel=4,
+        d_ff=6_144,
+        vocab_size=248_320,
+        tied_embeddings=True,
+        max_seq_len=262_144,
+    ),
+    "9b": Config(
+        n_layers=32,
+        d_model=4_096,
+        full_attention_interval=4,
+        n_heads=16,
+        n_kv_heads=4,
+        head_dim=256,
+        partial_rotary_factor=0.25,
+        lin_k_heads=16,
+        lin_v_heads=32,
+        lin_k_head_dim=128,
+        lin_v_head_dim=128,
+        lin_conv_kernel=4,
+        d_ff=12_288,
+        vocab_size=248_320,
+    ),
+    "27b": Config(
+        n_layers=64,
+        d_model=5_120,
+        full_attention_interval=4,
+        n_heads=24,
+        n_kv_heads=4,
+        head_dim=256,
+        partial_rotary_factor=0.25,
+        lin_k_heads=16,
+        lin_v_heads=48,
+        lin_k_head_dim=128,
+        lin_v_head_dim=128,
+        lin_conv_kernel=4,
+        d_ff=17_408,
+        vocab_size=248_320,
+        max_seq_len=262_144,
+    ),
+}

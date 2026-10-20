@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass
 
 
@@ -27,16 +28,16 @@ class Config:
     def key_value_width(self) -> int:
         return self.n_kv_heads * self.head_dim
 
-    @classmethod
-    def numerical(cls) -> Config:
-        return cls(16, 1_024, 8, 8, 128, 16, 4, 1_024, 50_304)
-
-    @classmethod
-    def throughput(cls) -> Config:
-        return cls(16, 2_048, 16, 16, 128, 64, 8, 1_024, 50_304)
-
     def __post_init__(self) -> None:
         if self.n_heads % self.n_kv_heads:
             raise ValueError("n_heads must be divisible by n_kv_heads")
         if not 0 < self.top_k <= self.n_experts:
             raise ValueError("top_k must select between one and all experts")
+
+
+#: The named shapes the catalog serves, by size.
+PRESETS: Mapping[str, Config] = {
+    "numerical": Config(16, 1_024, 8, 8, 128, 16, 4, 1_024, 50_304),
+    "tiny": Config(2, 128, 4, 2, 32, 8, 2, 128, 512, max_seq_len=4_096),
+    "7b-a1b": Config(16, 2_048, 16, 16, 128, 64, 8, 1_024, 50_304),
+}

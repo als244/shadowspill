@@ -88,13 +88,13 @@ device or `LOCAL_RANK` when several are visible. Device selection alone does
 not enable distributed collectives; coordinated distributed preparation is a
 separate phase of the implementation.
 
-## Three ways to use the supplied text presets
+## Three ways to run a catalog model
 
 **The default demo.** No budget flags: the model's retained qualification
 budget is searched and run.
 
 ```bash
-python -m benchmarking.quickstart mlops_olmoe
+python -m benchmarking.quickstart --model olmoe-7b-a1b
 ```
 
 **Planning only.** Search budgets but no run budgets: every geometry
@@ -103,7 +103,7 @@ This mode needs the device only for profiling fresh geometries; a warm
 build store keeps it cheap.
 
 ```bash
-python -m benchmarking.quickstart mlops_olmoe \
+python -m benchmarking.quickstart --model olmoe-7b-a1b \
   --sequences-per-step 64 --search-budget-gib 8,10,12,14,16 \
   --plots --resolution-plans
 ```
@@ -113,7 +113,7 @@ each one gets the full treatment — the plan's breakdown, steps, and the
 traced-step reconciliation — at that budget's winning geometry.
 
 ```bash
-python -m benchmarking.quickstart mlops_llama3 \
+python -m benchmarking.quickstart --model llama3-8b \
   --sequence-length 1024 --sequences-per-step 64 \
   --search-budget-gib 6,7,8,9,10,12,16,20,24,28,30 \
   --run-budget-gib 6,7,8,9,10,12,16,20,24,28,30 \
@@ -145,7 +145,9 @@ Geometry:
 
 | Argument | Meaning | Default |
 |---|---|---|
-| `model` | One of `mlops_llama3`, `mlops_qwen35`, `mlops_qwen35_27b`, `mlops_qwen3moe`, `mlops_qwen35moe`, `mlops_olmoe`, `pytorch_llama3`, `pytorch_qwen35` | required |
+| `--model` | A catalog name from [the model catalog](../workloads/MODELS.md#architecture-index): `llama3-8b`, `qwen35-9b`, `qwen35-27b`, `olmoe-7b-a1b`, `qwen3moe-30b-a3b`, `qwen35moe-35b-a3b`, a family's `numerical` or `tiny` shape, or a GLM entry, which runs through its own factory | required unless `--factory` or `--reproduce` |
+| `--implementation` | `mlops` or `pytorch`, which implementation builds the model | `mlops` |
+| `--model-config` | JSON field overrides on the entry's configuration, such as `'{"n_layers": 4}'` | none |
 | `--sequence-length` | Tokens per sequence | the model's retained value |
 | `--sequences-per-step` | Sequences one optimizer step consumes; the search splits this into microbatches times accumulation | retained value |
 | `--sequences-per-microbatch` | Choose the geometry yourself instead of searching; must divide the sequences per step, and requires a run budget | search decides |
@@ -206,7 +208,7 @@ Quickstart keeps its BF16 defaults on every machine. Choose FP16 weights and
 FP32 optimizer moments explicitly on a GPU below SM80, such as an RTX 2080 Ti:
 
 ```bash
-python -u -m benchmarking.quickstart mlops_llama3 \
+python -u -m benchmarking.quickstart --model llama3-8b \
   --model-dtype float16 --opt-state-dtype float32 \
   --master-dtype none --grad-dtype float16 \
   --sequence-length 1024 --sequences-per-step 8 \
@@ -289,7 +291,7 @@ overwrites:
 
 ```text
 benchmarking/quickstart_reports/
-  mlops_llama3_<revision>_<MMDD_HHMM>/
+  llama3-8b_mlops_<revision>_<MMDD_HHMM>/
     seq1024/
       seqsperstep64/
         request.json            the request in full, as --reproduce reads it
@@ -574,7 +576,7 @@ Launch one process per GPU, with each process seeing its GPU as logical device 0
 
 ```bash
 torchrun --standalone --nproc-per-node=2 -m benchmarking.rank_device \
-  -m benchmarking.quickstart mlops_llama3 \
+  -m benchmarking.quickstart --model llama3-8b \
   --distributed --sequence-length 1024 --sequences-per-step 16 \
   --search-budget-gib 12,16 --run-budget-gib 12,16 --spill-gib 40 \
   --steps 5 --plots --resolution-plans --output-dir runs/llama_dp
@@ -740,7 +742,7 @@ accept `adopted`, the names it leaves alone.
 
 ```bash
 mkdir -p ~/shadowspill_ssd
-python -u -m benchmarking.quickstart mlops_llama3 \
+python -u -m benchmarking.quickstart --model llama3-8b \
   --lora --lora-rank 32 --lora-alpha 32 --lora-dtype bfloat16 \
   --grad-dtype float32 --ssd-spill ~/shadowspill_ssd --spill-gib 32 \
   --ssd-staging-mib 256 --ssd-chunk-mib 2 --ssd-queue-depth 16 \

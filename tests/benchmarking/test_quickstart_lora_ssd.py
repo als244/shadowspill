@@ -64,10 +64,10 @@ def test_remote_and_ssd_are_mutually_exclusive(tmp_path):
 
 
 def test_lora_is_configured_before_initialization_with_frozen_base(monkeypatch):
-    original = text.throughput_spec
+    original = text.spec
 
-    def small(family, implementation):
-        spec = original(family, implementation)
+    def small(model, implementation, **changes):
+        spec = original(model, implementation, **changes)
         config = replace(
             spec.model_config,
             n_layers=1,
@@ -79,11 +79,12 @@ def test_lora_is_configured_before_initialization_with_frozen_base(monkeypatch):
         )
         return replace(spec, model_config=config)
 
-    monkeypatch.setattr(text, "throughput_spec", small)
+    monkeypatch.setattr(text, "spec", small)
     parser = _parser()
     args = parser.parse_args(
         [
-            "mlops_llama3",
+            "--model",
+            "llama3-8b",
             "--lora",
             "--lora-rank",
             "4",
@@ -184,7 +185,9 @@ def test_lora_flags_are_refused_by_a_factory_that_does_not_take_them(monkeypatch
 
 
 def test_preset_lora_settings_require_lora(monkeypatch):
-    monkeypatch.setattr(sys, "argv", ["quickstart", "mlops_llama3", "--lora-rank", "8"])
+    monkeypatch.setattr(
+        sys, "argv", ["quickstart", "--model", "llama3-8b", "--lora-rank", "8"]
+    )
     with pytest.raises(SystemExit):
         parse_arguments()
 
@@ -193,7 +196,8 @@ def test_preset_lora_defaults_are_configure_loras_own():
     parser = _parser()
     args = parser.parse_args(
         [
-            "mlops_llama3",
+            "--model",
+            "llama3-8b",
             "--lora",
             "--sequence-length",
             "16",

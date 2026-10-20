@@ -3,7 +3,7 @@ from dataclasses import replace
 import pytest
 import torch
 
-from workloads.full_model import build_model, initialize_model, throughput_spec
+from workloads.full_model import build_model, initialize_model, spec
 from workloads.models.qwen3moe.config import Config as Qwen3MoEConfig
 from workloads.models.qwen3moe.implementations.mlops import Model as Qwen3MoE
 from workloads.models.qwen35moe.config import Config as Qwen35MoEConfig
@@ -32,11 +32,12 @@ def tiny(config):
 
 
 @pytest.mark.parametrize(
-    "family,count", [("qwen3moe", 30_532_122_624), ("qwen35moe", 34_660_610_688)]
+    "name,count",
+    [("qwen3moe-30b-a3b", 30_532_122_624), ("qwen35moe-35b-a3b", 34_660_610_688)],
 )
-def test_published_presets_construct_on_meta(family, count):
-    spec = throughput_spec(family, "mlops")
-    model = build_model(spec)
+def test_published_presets_construct_on_meta(name, count):
+    manifest = spec(name, "mlops")
+    model = build_model(manifest)
     assert all(p.is_meta for p in model.parameters())
     assert sum(p.numel() for p in model.parameters()) == count
     assert model.embed.weight is not model.lm_head.weight
@@ -44,7 +45,7 @@ def test_published_presets_construct_on_meta(family, count):
     assert c.attention_width == 4096
     assert c.d_model == 2048 and c.top_k == 8 and c.norm_epsilon == 1e-6
     assert c.router_aux_loss_coef == 0.001
-    if family == "qwen3moe":
+    if name == "qwen3moe-30b-a3b":
         assert (c.n_layers, c.n_heads, c.n_kv_heads, c.head_dim) == (48, 32, 4, 128)
         assert (c.n_experts, c.d_ff_expert, c.d_ff_shared, c.vocab_size) == (
             128,

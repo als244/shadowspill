@@ -13,25 +13,22 @@
   "models": [
     {
       "name": "mlops-llama3-8b",
-      "family": "llama3",
+      "model": "llama3-8b",
       "implementation": "mlops",
-      "preset": "throughput",
       "geometry": null,
       "head_scratch_bytes": null
     },
     {
       "name": "mlops-qwen35-9b",
-      "family": "qwen35",
+      "model": "qwen35-9b",
       "implementation": "mlops",
-      "preset": "throughput",
       "geometry": null,
       "head_scratch_bytes": null
     },
     {
       "name": "mlops-olmoe-7b",
-      "family": "olmoe",
+      "model": "olmoe-7b-a1b",
       "implementation": "mlops",
-      "preset": "throughput",
       "geometry": null,
       "head_scratch_bytes": null
     }

@@ -28,7 +28,9 @@ class _Parser:
 
 def _arguments(**overrides: object) -> argparse.Namespace:
     named: dict[str, object] = dict(
-        model="mlops_llama3",
+        model="llama3-8b",
+        implementation=None,
+        model_config={},
         lora=False,
         distributed=False,
         host_headroom_gib=2,
@@ -97,7 +99,7 @@ def test_the_record_holds_the_request_and_not_where_it_was_written(
     )
     request = record["request"]
     assert isinstance(request, dict)
-    assert request["model"] == "mlops_llama3"
+    assert request["model"] == "llama3-8b"
     assert request["export_bypass_key"] == "rev-1"
     assert request["resolution_options"] == ["0", "1/2", "1"]
     assert request["artifact_store"] == str(tmp_path / "store")
@@ -127,7 +129,7 @@ def test_reproduce_reads_the_request_and_pins_the_calibration(
     monkeypatch.setattr(sys, "argv", ["quickstart", "--reproduce", str(run)])
     given = argparse.Namespace(model=None, reproduce=run, output_dir=None, plots=False)
     arguments = _reproduced_arguments(_Parser(), given)  # type: ignore[arg-type]
-    assert arguments.model == "mlops_llama3"
+    assert arguments.model == "llama3-8b"
     assert arguments.plan_store_mode == "require"
     assert arguments.artifact_store == tmp_path / "store"
     assert arguments.build_store is None
@@ -151,12 +153,12 @@ def test_reproduce_refuses_a_flag_that_would_contradict_the_record(
     with pytest.raises(SystemExit, match="--steps"):
         _reproduced_arguments(_Parser(), given)  # type: ignore[arg-type]
     monkeypatch.setattr(
-        sys, "argv", ["quickstart", "mlops_qwen35", "--reproduce", str(run)]
+        sys, "argv", ["quickstart", "--model", "qwen35-9b", "--reproduce", str(run)]
     )
     given = argparse.Namespace(
-        model="mlops_qwen35", reproduce=run, output_dir=None, plots=False
+        model="qwen35-9b", reproduce=run, output_dir=None, plots=False
     )
-    with pytest.raises(SystemExit, match="mlops_qwen35"):
+    with pytest.raises(SystemExit, match="--model"):
         _reproduced_arguments(_Parser(), given)  # type: ignore[arg-type]
 
 
@@ -232,7 +234,7 @@ def test_text_recipe_normalizes_by_the_requested_step_total():
     from workloads.recipes.text.quickstart import recipe
 
     arguments = _arguments(
-        model="mlops_olmoe",
+        model="olmoe-7b-a1b",
         sequence_length=8192,
         sequences_per_step=32,
         min_tokens_per_microbatch=None,
@@ -262,7 +264,8 @@ def test_fp16_quickstart_constructs_the_requested_model_and_precision(master, gr
 
     parser = _parser()
     flags = [
-        "mlops_llama3",
+        "--model",
+        "llama3-8b",
         "--model-dtype",
         "float16",
         "--master-dtype",
@@ -301,7 +304,7 @@ def test_quickstart_keeps_bf16_defaults_without_probing_the_gpu():
     from workloads.recipes.text.quickstart import recipe
 
     parser = _parser()
-    arguments = parser.parse_args(["mlops_llama3"])
+    arguments = parser.parse_args(["--model", "llama3-8b"])
     setup, _, _ = recipe(parser, arguments)
     manifest = setup(device=torch.device("cuda:0"))["objective"].args[0]
     assert manifest.dtypes.as_dict() == {

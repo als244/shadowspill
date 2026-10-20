@@ -1,5 +1,6 @@
 """GLM-5.3's published sparse-MLA architecture and training precision."""
 
+from collections.abc import Mapping
 from dataclasses import dataclass, fields
 
 import torch
@@ -146,3 +147,8 @@ def from_huggingface(metadata, **overrides):
             "Checkpoint MLP layer types disagree with configured architecture"
         )
     return config
+
+
+#: The named shapes the catalog serves: the published architecture, and the
+#: small random fixture the quickstart factory builds with ``tiny=True``.
+PRESETS: Mapping[str, Config] = {"published": Config(), "tiny": Config.tiny()}

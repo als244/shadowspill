@@ -24,61 +24,72 @@ construction, trainable parameters, and data semantics belong to the caller.
 
 ## Architecture index
 
-`mlops_qwen3moe` means **Qwen 3 with MoE**, whose default shape is 30B-A3B.
-`mlops_qwen35` means the **dense** Qwen 3.5 architecture, and
-`mlops_qwen35_27b` the same architecture at the shape of Qwen3.5-27B.
-`mlops_qwen35moe` means **Qwen 3.5 with MoE**, whose default shape is 35B-A3B.
-Dimensions are configurable; the architecture name does not force a model size.
+A catalog name is `<family>-<size>`: `qwen35-9b` is the **dense** Qwen 3.5
+architecture at Qwen3.5-9B's shape and `qwen35-27b` the same architecture at
+Qwen3.5-27B's; `qwen3moe-30b-a3b` is **Qwen 3 with MoE** and
+`qwen35moe-35b-a3b` **Qwen 3.5 with MoE**. The implementation is chosen beside
+the name (`--implementation pytorch|mlops`, `mlops` by default), and
+dimensions stay configurable: a name is a starting shape, not a constraint.
 
-| Architecture | Family package | Implementations | Quickstart names |
+| Architecture | Family package | Implementations | Catalog names |
 |---|---|---|---|
-| [Llama 3](#llama-3) | `workloads.models.llama3` | `pytorch`, `mlops` | `pytorch_llama3`, `mlops_llama3` |
-| [Dense Qwen 3.5](#dense-qwen-35) | `workloads.models.qwen35` | `pytorch`, `mlops` | `pytorch_qwen35`, `mlops_qwen35`, `mlops_qwen35_27b` |
-| [OLMoE](#olmoe) | `workloads.models.olmoe` | `pytorch`, `mlops`; optional EP in MLOps | `mlops_olmoe` |
-| [Qwen 3 MoE](#qwen-3-moe) | `workloads.models.qwen3moe` | `mlops`; optional EP constructor | `mlops_qwen3moe` |
-| [Qwen 3.5 MoE](#qwen-35-moe) | `workloads.models.qwen35moe` | `mlops`; optional EP constructor | `mlops_qwen35moe` |
+| [Llama 3](#llama-3) | `workloads.models.llama3` | `pytorch`, `mlops` | `llama3-numerical`, `llama3-tiny`, `llama3-1b`, `llama3-8b` |
+| [Dense Qwen 3.5](#dense-qwen-35) | `workloads.models.qwen35` | `pytorch`, `mlops` | `qwen35-numerical`, `qwen35-tiny`, `qwen35-2b`, `qwen35-9b`, `qwen35-27b` |
+| [OLMoE](#olmoe) | `workloads.models.olmoe` | `pytorch`, `mlops`; optional EP in MLOps | `olmoe-numerical`, `olmoe-tiny`, `olmoe-7b-a1b` |
+| [Qwen 3 MoE](#qwen-3-moe) | `workloads.models.qwen3moe` | `mlops`; optional EP constructor | `qwen3moe-tiny`, `qwen3moe-30b-a3b` |
+| [Qwen 3.5 MoE](#qwen-35-moe) | `workloads.models.qwen35moe` | `mlops`; optional EP constructor | `qwen35moe-tiny`, `qwen35moe-35b-a3b` |
+| [GLM-5.3 and GLM-5.3-Flash](#glm-53-flash-checkpoint-integration) | `workloads.models.glm53`, `workloads.models.glm53_flash` | `mlops`, through each family's quickstart factory | `glm53`, `glm53-tiny`, `glm53-flash`, `glm53-flash-tiny` |
 
 A family package holds `Config` in its `config.py` and one module per
 implementation under `implementations/`, each exposing `Model`. Pure PyTorch
 implementations provide readable numerical references. MLOps
-implementations use the separately installed operation library. PyTorch OLMoE
-is available as a model, but has no supplied full-model quickstart preset.
-All three MLOps MoE architectures can enable EP through the same Python
-constructor arguments. An experiment factory supplies groups and resources;
-a text quickstart name alone does not enable EP.
+implementations use the separately installed operation library. All three
+MLOps MoE architectures can enable EP through the same Python constructor
+arguments. An experiment factory supplies groups and resources; a catalog
+name alone does not enable EP.
 
 For a non-text example, see the [regression recipe](recipes/regression.py) and
 [generic training walkthrough](../docs/examples/generic-training.md).
 
 ## Preset dimensions and parameter counts
 
-`numerical()` supplies a smaller validation shape; `throughput()` supplies a
-larger performance shape. Both are ordinary configuration dataclasses.
-`Qwen35Config.dense_27b()` supplies Qwen3.5-27B's published text dimensions,
-without its multi-token prediction layer. Qwen MoE configurations also have
-published dimensions as constructor defaults.
+Each family's `config.py` holds `PRESETS`, its named shapes by size, and the
+[catalog](models/catalog.py) names every one `<family>-<size>`: a `numerical`
+shape is the small exact-scale one the numerical gate runs, `tiny` a smoke-test
+shape, and a published size is that checkpoint's text decoder (`qwen35-27b`
+and `qwen35-2b` without their multi-token prediction layer). The GLM
+families' shapes come from their checkpoints; see their READMEs.
 
 Counts below include embeddings and the output head, count shared Parameter
 objects once, and exclude buffers and optimizer state. They describe the whole
 unsharded model, and equal its trainable count under default full training.
 They are **total parameters**, not the subset used by one routed token.
 
-| Architecture / preset | Layers | Model width | Q / KV heads | Head width | MLP or expert width | Experts / top-k | Vocabulary | Total parameters |
+| Catalog name | Layers | Model width | Q / KV heads | Head width | MLP or expert width | Experts / top-k | Vocabulary | Total parameters |
 |---|---:|---:|---:|---:|---:|---:|---:|---:|
-| Llama 3 numerical | 12 | 2,048 | 16 / 4 | 128 | 7,168 | — | 128,256 | 1,179,699,200 |
-| Llama 3 throughput | 32 | 4,096 | 32 / 8 | 128 | 14,336 | — | 128,256 | 8,030,261,248 |
-| Dense Qwen 3.5 numerical | 8 | 1,536 | 12 / 4 | 128 | 4,608 | — | 248,320 | 1,006,955,408 |
-| Dense Qwen 3.5 throughput | 32 | 4,096 | 16 / 4 | 256 | 12,288 | — | 248,320 | 8,953,803,264 |
-| Dense Qwen 3.5 27B | 64 | 5,120 | 24 / 4 | 256 | 17,408 | — | 248,320 | 26,895,998,464 |
-| OLMoE numerical | 16 | 1,024 | 8 / 8 | 128 | 1,024 | 16 / 4 | 50,304 | 975,766,528 |
-| OLMoE throughput | 16 | 2,048 | 16 / 16 | 128 | 1,024 | 64 / 8 | 50,304 | 6,919,161,856 |
-| Qwen3-30B-A3B default | 48 | 2,048 | 32 / 4 | 128 | 768 | 128 / 8 | 151,936 | 30,532,122,624 |
-| Qwen 3.5 MoE default | 40 | 2,048 | 16 / 2 | 256 | 512 routed + 512 shared | 256 / 8 | 248,320 | 34,660,610,688 |
+| `llama3-numerical` | 12 | 2,048 | 16 / 4 | 128 | 7,168 | — | 128,256 | 1,179,699,200 |
+| `llama3-tiny` | 2 | 128 | 4 / 2 | 32 | 256 | — | 512 | 426,624 |
+| `llama3-1b` | 16 | 2,048 | 32 / 8 | 64 | 8,192 | — | 128,256 | 1,235,814,400 |
+| `llama3-8b` | 32 | 4,096 | 32 / 8 | 128 | 14,336 | — | 128,256 | 8,030,261,248 |
+| `qwen35-numerical` | 8 | 1,536 | 12 / 4 | 128 | 4,608 | — | 248,320 | 1,006,955,408 |
+| `qwen35-tiny` | 2 | 128 | 4 / 2 | 32 | 256 | — | 512 | 461,544 |
+| `qwen35-2b` | 24 | 2,048 | 8 / 2 | 256 | 6,144 | — | 248,320 | 1,881,825,088 |
+| `qwen35-9b` | 32 | 4,096 | 16 / 4 | 256 | 12,288 | — | 248,320 | 8,953,803,264 |
+| `qwen35-27b` | 64 | 5,120 | 24 / 4 | 256 | 17,408 | — | 248,320 | 26,895,998,464 |
+| `olmoe-numerical` | 16 | 1,024 | 8 / 8 | 128 | 1,024 | 16 / 4 | 50,304 | 975,766,528 |
+| `olmoe-tiny` | 2 | 128 | 4 / 2 | 32 | 128 | 8 / 2 | 512 | 1,018,880 |
+| `olmoe-7b-a1b` | 16 | 2,048 | 16 / 16 | 128 | 1,024 | 64 / 8 | 50,304 | 6,919,161,856 |
+| `qwen3moe-tiny` | 2 | 128 | 4 / 2 | 32 | 128 | 8 / 2 | 1,024 | 1,149,696 |
+| `qwen3moe-30b-a3b` | 48 | 2,048 | 32 / 4 | 128 | 768 | 128 / 8 | 151,936 | 30,532,122,624 |
+| `qwen35moe-tiny` | 2 | 128 | 4 / 2 | 32 | 128 routed + 128 shared | 8 / 2 | 1,024 | 1,283,048 |
+| `qwen35moe-35b-a3b` | 40 | 2,048 | 16 / 2 | 256 | 512 routed + 512 shared | 256 / 8 | 248,320 | 34,660,610,688 |
 
-The dense Qwen presets use a full-attention block every fourth layer. Their
-DeltaNet key/value head counts are 6/12 (numerical) or 16/32 (throughput), with
-128-wide heads and a width-4 convolution. The Qwen 3.5 MoE default uses 16/32
-DeltaNet heads of width 128 and the same convolution width.
+The dense Qwen shapes use a full-attention block every fourth layer (every
+second in `qwen35-tiny`). Their DeltaNet key/value head counts are 6/12
+(`qwen35-numerical`), 2/4 (`qwen35-tiny`), 16/16 (`qwen35-2b`), 16/32
+(`qwen35-9b`) and 16/48 (`qwen35-27b`), with 128-wide heads (32 in `tiny`)
+and a width-4 convolution. `qwen35moe-35b-a3b` uses 16/32 DeltaNet heads of
+width 128 and the same convolution width; `qwen35moe-tiny` 2/4 of width 32.
 
 Qualification may select smaller shapes and FP16 precision on devices below
 SM80; that policy lives in [qualification](../qualification/device_defaults.py),
@@ -105,7 +116,9 @@ Configuration: [Config](models/llama3/config.py). Implementations:
 
 `head_dim` is derived as `d_model // n_heads`; the division must be exact.
 All shape fields above `rope_base` are required for a custom configuration.
-Use `Config.numerical()` or `.throughput()` for ready-made shapes.
+`PRESETS` in the family's `config.py` holds the named shapes (`numerical`,
+`tiny`, `1b`, `8b`); `tied_embeddings` shares the embedding and head weights,
+as Llama-3.2-1B does.
 
 ## Dense Qwen 3.5
 
@@ -128,7 +141,7 @@ Configuration: [Config](models/qwen35/config.py). Implementations:
 | `lin_conv_kernel` | Depthwise causal-convolution width |
 | `rope_base` | 10,000,000 |
 | `tied_embeddings` | Share embedding and output-head weights; false |
-| `max_seq_len` | Maximum sequence length; 131,072, or 262,144 in `dense_27b()` |
+| `max_seq_len` | Maximum sequence length; 131,072, or 262,144 in the `2b` and `27b` presets |
 
 Full-attention projection width is `n_heads * head_dim` and may differ from
 `d_model`. The rotary width must be positive and even. With tied embeddings,
@@ -217,7 +230,9 @@ Its architecture has 45 layers: 34 KDA, 11 NoPE sparse-MLA, mHC streams, three
 initial dense MLPs, then 288 routed experts/top-8 plus a shared expert.
 This checkpoint integration has its own text/image forward-validation CLI and a
 [quickstart factory](models/glm53_flash/quickstart.py), including data-parallel
-group construction and optional local transfer sharding. Complete text forwards for both
+group construction and optional local transfer sharding; the catalog names
+`glm53-flash` and `glm53` resolve to the two factories, so `--model glm53-flash`
+with `--factory-args` runs one. Complete text forwards for both
 checkpoints and the checkpoint vision encoders execute through SSD-backed plans.
 Reduced-model LoRA updates and selected-state checkpoint replay are also tested.
 See the workload README for numerical limits and the current image/text status;
@@ -290,10 +305,10 @@ The local models support whole-model LoRA through a one-time recipe:
 
 ```python
 from workloads.lora import configure_lora, parameter_report
-from workloads.models.llama3.config import Config
+from workloads.models.llama3.config import PRESETS
 from workloads.models.llama3.implementations.mlops import Model
 
-model = Model(Config.numerical())
+model = Model(PRESETS["numerical"])
 configure_lora(model, rank=32, alpha=32, head="frozen")
 print(parameter_report(model))
 # Pass model to the same generic Trainer or planning API used for full training.
@@ -321,11 +336,12 @@ logits and bounded loss, so both paths include its factors. State dictionaries
 retain original weight names and add `lora_*` parameters. Apply the same LoRA
 configuration before strict checkpoint loading.
 
-The text recipe `workloads.recipes.text.models.build_on_meta` also accepts a
-`lora` dictionary with these options, so a training config can construct LoRA
-before initialization and optimizer creation. There is no dedicated quickstart
-`--lora` flag yet. EP full-model conversion is not currently supported by this
-recipe: the separately available `QuackMoELoRA` and `TEMoELoRA` require their
+`workloads.models.catalog.build_on_meta` and the generic
+`workloads.models.construction.build_on_meta` also accept a `lora` dictionary
+with these options, so a training config can construct LoRA before
+initialization and optimizer creation; the quickstart's `--lora` flags do the
+same for a catalog model. EP full-model conversion is not currently supported
+by this recipe: the separately available `QuackMoELoRA` and `TEMoELoRA` require their
 own layer construction and distributed validation.
 
 Frozen state remains a forward/backward input when needed. Memory savings come
@@ -341,10 +357,10 @@ implementations remain independent references. Model dimensions and attention
 structure do not change when enabling EP.
 
 ```python
-from workloads.models.olmoe.config import Config
+from workloads.models.olmoe.config import PRESETS
 from workloads.models.olmoe.implementations.mlops import Model
 
-config = Config.throughput()
+config = PRESETS["7b-a1b"]
 model = Model(config)  # local experts
 
 # After creating the process group, on the rank's selected compute device:
@@ -440,10 +456,10 @@ Customize a preset without editing the model definition:
 
 ```python
 from dataclasses import replace
-from workloads.models.llama3.config import Config
+from workloads.models.llama3.config import PRESETS
 from workloads.models.llama3.implementations.mlops import Model
 
-config = replace(Config.numerical(), n_layers=4, max_seq_len=2048)
+config = replace(PRESETS["numerical"], n_layers=4, max_seq_len=2048)
 model = Model(config)  # ordinary initialized PyTorch module
 ```
 
@@ -459,19 +475,17 @@ with torch.device("meta"):
 print(sum(p.numel() for p in model.parameters()))  # 34,660,610,688
 ```
 
-A saved text recipe specifies the constructor, shape and dtype explicitly:
+A saved text recipe names a catalog model, its implementation and dtype, and
+any configuration field it changes:
 
 ```json
 {
   "model": {
-    "@call": "workloads.recipes.text.models:build_on_meta",
-    "model": "@workloads.models.llama3.implementations.mlops:Model",
+    "@call": "workloads.models.catalog:build_on_meta",
+    "model": "llama3-numerical",
+    "implementation": "mlops",
     "dtype": "bfloat16",
-    "config": {
-      "@call": "workloads.recipes.text.models:config_preset",
-      "preset": "@workloads.models.llama3.config:Config.numerical",
-      "max_seq_len": 2048
-    }
+    "max_seq_len": 2048
   }
 }
 ```
@@ -486,7 +500,7 @@ optimizer schedules, evaluation, W&B, and checkpoints.
 For a benchmark using a supplied throughput preset and saved resolution plans:
 
 ```bash
-python -m benchmarking.quickstart mlops_llama3 \
+python -m benchmarking.quickstart --model llama3-8b \
   --sequence-length 1024 --sequences-per-step 64 \
   --min-tokens-per-microbatch 8192 --max-tokens-per-microbatch 16384 \
   --search-budget-gib 20,30 --run-budget-gib 20,30 \

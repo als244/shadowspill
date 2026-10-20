@@ -10,6 +10,7 @@ from datetime import timedelta
 from pathlib import Path
 
 from shadowspill.pytorch.accelerator import resolve_device
+from workloads.models import catalog
 
 from .options import graph_pair_variants, parse_arguments
 from .reporting import gib, rule
@@ -68,21 +69,32 @@ def _factory_arguments(parser, factory, arguments):
 def resolve_request(parser, arguments):
     device = resolve_device(arguments.device)
     defaults = {}
-    if arguments.factory is not None:
-        module, separator, name = arguments.factory.partition(":")
+    factory_path = arguments.factory
+    bound: dict = {}
+    if arguments.model is not None:
+        entry = catalog.entry(arguments.model)
+        if entry.factory is not None:
+            factory_path = entry.factory
+            bound = dict(entry.factory_arguments)
+    if factory_path is not None:
+        module, separator, name = factory_path.partition(":")
         if not separator or not module or not name:
             parser.error("--factory must use module:function")
         factory = getattr(importlib.import_module(module), name)
-        setup = functools.partial(
-            factory, **_factory_arguments(parser, factory, arguments)
-        )
-        label = name
+        given = _factory_arguments(parser, factory, arguments)
+        fixed = sorted(set(bound) & set(given))
+        if fixed:
+            parser.error(f"{arguments.model} fixes {', '.join(fixed)} for its factory")
+        setup = functools.partial(factory, **bound, **given)
+        label = name if arguments.model is None else arguments.model
         manual = None
     else:
         from workloads.recipes.text.quickstart import recipe
 
         setup, defaults, manual = recipe(parser, arguments)
-        label = arguments.model + ("_lora" if arguments.lora else "")
+        label = f"{arguments.model}_{arguments.implementation or 'mlops'}" + (
+            "_lora" if arguments.lora else ""
+        )
     requested = arguments.search_budget_gib
     run = arguments.run_budget_gib
     if not requested and not run:

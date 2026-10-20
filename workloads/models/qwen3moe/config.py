@@ -3,6 +3,7 @@ decoder."""
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass
 
 from workloads.models.shared.qwen_moe.config import QwenMoEConfig
@@ -26,3 +27,21 @@ class Config(QwenMoEConfig):
     zero_centered_norm: bool = False
     attention_gate: bool = False
     full_attention_interval: int = 1
+
+
+#: The named shapes the catalog serves, by size.
+PRESETS: Mapping[str, Config] = {
+    "tiny": Config(
+        n_layers=2,
+        d_model=128,
+        n_heads=4,
+        n_kv_heads=2,
+        head_dim=32,
+        n_experts=8,
+        top_k=2,
+        d_ff_expert=128,
+        vocab_size=1_024,
+        max_seq_len=4_096,
+    ),
+    "30b-a3b": Config(),
+}

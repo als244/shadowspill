@@ -2,8 +2,10 @@ from __future__ import annotations
 
 import torch
 
+from workloads.models.olmoe.config import PRESETS as OLMOE_PRESETS
 from workloads.models.olmoe.config import Config as OLMoEConfig
 from workloads.models.olmoe.implementations.pytorch import Model as OLMoE
+from workloads.models.qwen35.config import PRESETS as QWEN35_PRESETS
 from workloads.models.qwen35.config import Config as Qwen35Config
 from workloads.models.qwen35.implementations.pytorch import (
     Model as Qwen35,
@@ -16,8 +18,8 @@ from workloads.models.qwen35.implementations.pytorch import (
 
 def test_reduced_family_parameter_counts() -> None:
     with torch.device("meta"):
-        qwen = Qwen35(Qwen35Config.numerical())
-        olmoe = OLMoE(OLMoEConfig.numerical())
+        qwen = Qwen35(QWEN35_PRESETS["numerical"])
+        olmoe = OLMoE(OLMOE_PRESETS["numerical"])
     assert sum(parameter.numel() for parameter in qwen.parameters()) == 1_006_955_408
     assert sum(parameter.numel() for parameter in olmoe.parameters()) == 975_766_528
 

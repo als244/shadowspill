@@ -127,7 +127,7 @@ def test_ep_objective_normalizes_global_tokens_once(environment, monkeypatch):
 @pytest.mark.parametrize(
     "kwargs,match",
     [
-        ({"model": "llama3"}, "model must be"),
+        ({"model": "llama3-8b"}, "model must be"),
         ({"model_dtype": "float32"}, "BF16"),
         ({"grad_dtype": "float16"}, "gradients"),
         ({"preparation_timeout": 0}, "positive"),

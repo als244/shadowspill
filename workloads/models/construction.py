@@ -11,7 +11,6 @@ instead of passing the whole model to a bulk operation.
 from __future__ import annotations
 
 from collections.abc import Callable
-from dataclasses import replace
 from typing import Any
 
 import torch
@@ -36,20 +35,13 @@ def build_on_meta(
     try:
         result = model(**arguments)
         if lora is not None:
-            from workloads.lora import configure_lora
+            from workloads.lora import configure_lora  # a caller-side recipe
 
             result = configure_lora(result, **lora)
         return result
     finally:
         torch.set_default_device(previous_device)
         torch.set_default_dtype(previous_dtype)
-
-
-def config_preset(preset: Callable[[], Any], **changes: Any) -> Any:
-    """The config ``preset()`` returns -- a dataclass -- with ``changes`` in place
-    of its own values: a model's preset with another ``max_seq_len``, say."""
-
-    return replace(preset(), **changes)
 
 
 def initialize(module: nn.Module) -> None:

@@ -5,7 +5,7 @@ from __future__ import annotations
 from collections.abc import Sequence
 from dataclasses import replace
 
-from workloads.full_model import FullModelCase, build_case, throughput_spec
+from workloads.full_model import FullModelCase, build_case, spec
 
 from .matrix import ProgramRequest
 
@@ -13,12 +13,7 @@ from .matrix import ProgramRequest
 def build_program_case(request: ProgramRequest) -> FullModelCase:
     """Construct one registered model with the request's packed geometry."""
 
-    if request.model.preset != "throughput":
-        raise ValueError(f"unsupported model preset {request.model.preset!r}")
-    manifest = throughput_spec(
-        request.model.family,
-        request.model.implementation,
-    )
+    manifest = spec(request.model.model, request.model.implementation)
     manifest = replace(
         manifest,
         sequence_length=request.sequence_length,
