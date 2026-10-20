@@ -15,7 +15,8 @@ torchrun --standalone --nproc-per-node=1 -m baselines.fsdp2.train \
   --recompute 1 --activation-offload none --offload none
 ```
 
-The tiny qualification matrix, every family against an eager reference:
+The tiny qualification matrix, every family but Qwen 3.5 MoE
+(`../PRECISION.md` says why) against a reference copy compiled whole:
 
 ```bash
 python -m baselines.sweep --harness fsdp2 \
@@ -50,25 +51,30 @@ python -m baselines.sweep --harness fsdp2 \
 | `--allocator-cap-gib G` | A PyTorch caching-allocator limit; NCCL and other external allocations are outside it |
 | `--float8` | torchao Float8 training, tensorwise scaling with the Float8 all-gather, on every block linear the kernels take; the head stays as it is. Full mode on bfloat16 weights |
 | `--optimizer {adamw,adamw8bit,adamw4bit,cpu-offload}` | Fused torch AdamW, torchao's 8-bit or 4-bit AdamW (their state is in low-bit blocks, so `--opt-state-dtype none`), or torchao's `CPUOffloadOptimizer` stepping on the host with the shards on the device |
-| `--qlora-nf4` | LoRA with the frozen weight of every adapted linear quantized to NF4 (torchao); the model is materialized on the host, quantized, then sharded |
 | `--warmup-steps`, `--steps` | Excluded warmups and measured complete optimizer updates |
 | `--learning-rate`, `--weight-decay`, `--seed`, `--cpu-threads` | Optimizer settings, the data and initialization seed, intra-op threads per rank |
-| `--verify-reference` | Tiny models: compare every update's loss, gradients, masters and both AdamW moments to an unsharded eager copy; never a throughput result |
+| `--verify-reference` | Tiny models: compare every update's loss, gradients, masters and both AdamW moments to an unsharded copy compiled whole; never a throughput result |
 | `--nsys-capture` | Bracket the measured steps with the profiler; not a throughput result |
 
 ## Precision
 
+[`../PRECISION.md`](../PRECISION.md) sets this harness beside the others.
 FSDP2 keeps a trained weight's shard at the dtype it was materialized at,
 the master when one is kept, and sums gradients into that shard; AdamW keeps
 its moments at it. So `--grad-dtype` and `--opt-state-dtype` must be the
 stepped dtype (`float32` with masters, the model dtype without), or
 `parameter`, or `none`. The default is bfloat16 compute with float32 masters,
-gradients and moments. `--master-dtype none` with a bfloat16 model steps the
+gradients and moments: gradients default to float32 here, where the shared
+default is the model dtype, since the shard they are summed into is the
+float32 master. `--master-dtype none` with a bfloat16 model steps the
 weights themselves; `--parameter-rounding stochastic` then uses torchao's
 AdamW, which rounds the bfloat16 update stochastically. A float16 model would
 need loss scaling the harness does not do, and `--round-accumulation-once`
-is not available: both are refused. `mlops.dispatch.set_weight_gradient_dtype`
-makes the MLOps kernels produce weight gradients at the stepped dtype.
+is not available: both are refused. Each microbatch's gradients are
+created at the compute dtype, since autograd gives a weight's gradient the
+weight's own dtype; FSDP2 casts them to `--grad-dtype` for the
+reduce-scatter (`MixedPrecisionPolicy`'s `reduce_dtype`) and sums them into
+the shard.
 
 ## What a run writes
 

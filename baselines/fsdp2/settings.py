@@ -5,9 +5,9 @@ harness's own knobs: activation offloading through PyTorch's
 ``offload_wrapper`` or the stream-overlapped offloader vendored from
 torchtune; FSDP2's CPU offload of parameters, gradients and optimizer state;
 prefetch depths, resharding and gradient-synchronization policies;
-compilation; and the torchao scenarios, Float8 training, the low-bit and
-CPU-offloaded AdamW optimizers and NF4-quantized frozen weights for LoRA.
-What the harness cannot honor is refused before launch.
+compilation; and the torchao scenarios, Float8 training and the low-bit and
+CPU-offloaded AdamW optimizers. What the harness cannot honor is refused
+before launch.
 """
 
 from __future__ import annotations
@@ -73,6 +73,10 @@ class Settings(common.Settings):
         default=CAPABILITIES, init=False, repr=False, compare=False
     )
 
+    # FSDP2 sums each gradient into the shard it steps, the float32 master
+    # under the default contract, so its gradients default to float32 where
+    # the shared default is the model dtype.
+    grad_dtype: str | None = "float32"
     # Memory mechanisms.
     activation_offload: str = "none"
     offload: str = "none"
@@ -86,7 +90,6 @@ class Settings(common.Settings):
     # torchao scenarios.
     float8: bool = False
     optimizer: str = "adamw"
-    qlora_nf4: bool = False
 
     @classmethod
     def coerce(cls, value):
@@ -129,19 +132,14 @@ class Settings(common.Settings):
             raise Unsupported("Float8 training computes on bfloat16 weights")
         if self.float8 and self.mode != "full":
             raise Unsupported("Float8 training converts the linears LoRA adapts")
-        if self.qlora_nf4 and self.mode != "lora":
-            raise ValueError("qlora_nf4 quantizes the frozen weights of LoRA")
-        if self.float8 and self.qlora_nf4:
-            raise ValueError("float8 and qlora_nf4 are exclusive")
         if self.verify_reference and (
             self.optimizer != "adamw"
             or self.float8
-            or self.qlora_nf4
             or precision.parameter_rounding is not None
         ):
             raise ValueError(
-                "the reference check compares plain AdamW without Float8,"
-                " NF4 or stochastic rounding"
+                "the reference check compares plain AdamW without Float8 or"
+                " stochastic rounding"
             )
 
 
@@ -159,7 +157,6 @@ HELP = {
     "float8": "torchao Float8 training of every block's linears (tensorwise)",
     "optimizer": "AdamW: fused torch, torchao 8-bit or 4-bit, or torchao's"
     " CPU-offloaded",
-    "qlora_nf4": "quantize the frozen weights of LoRA targets to NF4",
 }
 
 

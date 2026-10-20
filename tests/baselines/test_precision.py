@@ -20,12 +20,12 @@ def parse(*argv, defaults=None):
     return parser.parse_args(argv)
 
 
-def test_the_default_is_bf16_compute_with_fp32_masters_gradients_and_state():
+def test_the_default_is_bf16_compute_and_gradients_with_fp32_masters_and_state():
     default = Precision()
     assert default.resolved() == {
         "model_dtype": "bfloat16",
         "master_dtype": "float32",
-        "grad_dtype": "float32",
+        "grad_dtype": "bfloat16",
         "opt_state_dtype": "float32",
         "parameter_rounding": "default",
         "opt_state_rounding": "default",
@@ -113,10 +113,10 @@ def test_capabilities_refuse_what_a_harness_cannot_honor():
         opt_state_roundings=(None,),
         round_accumulation_once=False,
     )
-    fsdp.check(Precision())
+    fsdp.check(Precision(grad_dtype="float32"))
     with pytest.raises(Unsupported, match="master_dtype=none"):
-        fsdp.check(Precision(master_dtype=None))
+        fsdp.check(Precision(master_dtype=None, grad_dtype="float32"))
     with pytest.raises(Unsupported, match="parameter_rounding=stochastic"):
-        fsdp.check(Precision(parameter_rounding="stochastic"))
+        fsdp.check(Precision(grad_dtype="float32", parameter_rounding="stochastic"))
     with pytest.raises(Unsupported, match="accumulation"):
-        fsdp.check(Precision(round_accumulation_once=True))
+        fsdp.check(Precision(grad_dtype="float32", round_accumulation_once=True))

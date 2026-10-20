@@ -40,10 +40,12 @@ HELP = {
     "checkpoint": "a local Hugging Face checkpoint of the model, read through"
     " the family's checkpoint.py; initialized weights otherwise",
     "seed": "synthetic data and initialization seed",
-    "recompute": "fraction of whole transformer blocks checkpointed, from 0 to 1",
+    "recompute": "fraction of whole transformer blocks checkpointed, from 0 to 1;"
+    " none where the system decides for itself",
     "allocator_cap_gib": "allocator limit; excludes NCCL and external allocations",
     "cpu_threads": "intra-op threads per rank, including CPU optimizer work",
-    "verify_reference": "tiny model: compare updates to an eager reference",
+    "verify_reference": "tiny model: compare updates to a reference copy compiled"
+    " whole",
     "nsys_capture": "capture measured steps; not a throughput result",
 }
 
@@ -71,7 +73,7 @@ class Settings:
     # The precision contract.
     model_dtype: str = "bfloat16"
     master_dtype: str | None = "float32"
-    grad_dtype: str | None = "float32"
+    grad_dtype: str | None = None
     opt_state_dtype: str | None = "float32"
     parameter_rounding: str | None = None
     opt_state_rounding: str | None = None
@@ -174,7 +176,8 @@ class Settings:
         geometry = self.geometry(world_size)
         precision = self.precision()
         self.CAPABILITIES.check(precision)
-        recompute_layers(self.layers(request), self.recompute)
+        if self.recompute is not None:
+            recompute_layers(self.layers(request), self.recompute)
         if self.data is not None and not (Path(self.data) / "meta.json").is_file():
             raise ValueError(f"{self.data} is not a corpus directory")
         if self.checkpoint is not None:
@@ -259,7 +262,7 @@ def add_arguments(
 
     model_flags.add_arguments(parser)
     geometry_flags.add_arguments(parser)
-    precision_flags.add_arguments(parser)
+    precision_flags.add_arguments(parser, settings_type().precision())
     help = {**HELP, **(help or {})}
     choices = choices or {}
     types = types or {}

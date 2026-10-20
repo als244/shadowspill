@@ -2,16 +2,19 @@
 
 ``model_dtype`` is what the weights and activations compute at;
 ``master_dtype`` what a trained weight's master copy is kept at, or none to
-step the weights themselves; ``grad_dtype`` what gradients are created and
-summed at over a step; ``opt_state_dtype`` what the optimizer keeps its
+step the weights themselves; ``grad_dtype`` what gradients are summed at
+over a step (under PyTorch's autograd each microbatch's is created at its
+weight's own dtype first); ``opt_state_dtype`` what the optimizer keeps its
 state at, or ``parameter`` for the dtype of what it steps; the two roundings
 how the optimizer rounds the weights it steps and the state it stores;
 ``round_accumulation_once`` whether a multiply adds its product into a
 narrower running gradient as it writes it, rounding once instead of twice.
 
-The baselines default to BF16 compute with FP32 masters, gradients and
-moments. A harness states what it can honor as ``Capabilities``; a request
-outside them is refused with the reason, never substituted.
+The baselines default to BF16 compute and gradients with FP32 masters and
+moments; a harness that cannot sum gradients at the model dtype under its
+masters defaults to its own and says so. A harness states what it can
+honor as ``Capabilities``; a request outside them is refused with the
+reason, never substituted.
 """
 
 from __future__ import annotations
@@ -42,7 +45,7 @@ class Unsupported(ValueError):
 class Precision:
     model_dtype: str = "bfloat16"
     master_dtype: str | None = "float32"
-    grad_dtype: str | None = "float32"
+    grad_dtype: str | None = None
     opt_state_dtype: str | None = "float32"
     parameter_rounding: str | None = None
     opt_state_rounding: str | None = None
@@ -198,8 +201,8 @@ def add_arguments(
         type=_dtype_name,
         default=defaults.grad_dtype,
         metavar="DTYPE",
-        help="the dtype gradients are created and summed at over a step's"
-        " microbatches; none for the weights' own"
+        help="the dtype gradients are summed at over a step's microbatches;"
+        " none for the weights' own"
         f" (default: {defaults.grad_dtype or 'none'})",
     )
     parser.add_argument(

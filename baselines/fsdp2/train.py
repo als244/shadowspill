@@ -102,45 +102,6 @@ def float8_filter(module, name):
     return module.in_features % 16 == 0 and module.out_features % 16 == 0
 
 
-def nf4_block_sizes(numel, block_size=64, scaler_block_size=256):
-    """torchao's NF4 blocks, shrunk for a weight too small for them: the
-    scaler block is the largest power of two not above the default that
-    divides the weight's block count; ``None`` if the weight has no whole
-    blocks."""
-
-    if numel % block_size:
-        return None
-    blocks = numel // block_size
-    while scaler_block_size > 1 and blocks % scaler_block_size:
-        scaler_block_size //= 2
-    return block_size, scaler_block_size
-
-
-def quantize_frozen_targets(model):
-    """NF4 for the frozen weight of every linear LoRA adapts; the factors
-    stay as they are. Returns how many weights were quantized."""
-
-    from torchao.quantization import to_nf4
-
-    count = 0
-    for module in model.modules():
-        weight = getattr(module, "weight", None)
-        if (
-            hasattr(module, "lora_a")
-            and isinstance(weight, torch.nn.Parameter)
-            and not weight.requires_grad
-        ):
-            sizes = nf4_block_sizes(weight.numel())
-            if sizes is None:
-                continue
-            quantized = to_nf4(weight.data, *sizes)
-            module.weight = torch.nn.Parameter(quantized, requires_grad=False)
-            count += 1
-    if not count:
-        raise ValueError("no frozen LoRA target to quantize")
-    return count
-
-
 def build_optimizer(model, settings, precision, pinned=()):
     """AdamW over the trained parameters: fused torch, torchao's with
     stochastic rounding, its 8-bit or 4-bit variants, or its CPU-offloaded
@@ -231,9 +192,6 @@ def main(argv=None):
             if not 0 < fraction <= 1:
                 raise ValueError("allocator cap must fit the physical device")
             torch.cuda.set_per_process_memory_fraction(fraction, device)
-        from mlops.dispatch import set_weight_gradient_dtype
-
-        set_weight_gradient_dtype(stepped)
         torch.manual_seed(settings.seed)
         model = TrainingModel(request, geometry, dtype=precision.stepped_dtype)
         useful = (
@@ -298,17 +256,6 @@ def main(argv=None):
                 "directory": str(Path(settings.checkpoint).resolve()),
                 "config": dataclasses.asdict(checkpoint.config),
             }
-        if settings.qlora_nf4:
-            # NF4 quantizes real values: materialize and initialize on the
-            # host first, quantize the frozen targets, then shard.
-            model.to_empty(device="cpu")
-            with torch.device("cpu"):
-                initialize(model)
-            if checkpoint is not None:
-                record["loaded"] = checkpoint.load_into(
-                    model.model, rename=canonical_name
-                )
-            record["nf4_targets"] = quantize_frozen_targets(model.model)
         ignored = set(pinned) or None
         for block in blocks:
             fully_shard(
@@ -327,15 +274,12 @@ def main(argv=None):
             reshard_after_forward=False,
             ignored_params=ignored,
         )
-        if not settings.qlora_nf4:
-            model.to_empty(device=materialization_device)
-            with torch.device(materialization_device):
-                initialize(model)
-            if checkpoint is not None:
-                # Every rank reads the whole tensors and keeps its rows.
-                record["loaded"] = checkpoint.load_into(
-                    model.model, rename=canonical_name
-                )
+        model.to_empty(device=materialization_device)
+        with torch.device(materialization_device):
+            initialize(model)
+        if checkpoint is not None:
+            # Every rank reads the whole tensors and keeps its rows.
+            record["loaded"] = checkpoint.load_into(model.model, rename=canonical_name)
         if checkpoint is not None:
             checkpoint.close()
             if record["loaded"]["unused"]:

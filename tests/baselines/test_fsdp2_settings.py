@@ -4,7 +4,7 @@ import argparse
 
 import pytest
 
-from baselines.common.precision import Unsupported
+from baselines.common.precision import Precision, Unsupported
 from baselines.fsdp2.settings import Settings, add_arguments, command, from_namespace
 
 BASE = {
@@ -37,6 +37,17 @@ def test_flags_round_trip_every_setting():
     line = command("py", 2, settings, "out")
     assert line[:4] == ["py", "-m", "torch.distributed.run", "--standalone"]
     assert line[7:10] == ["baselines.fsdp2.train", "--output", "out"]
+
+
+def test_gradients_default_to_float32_where_the_shared_default_is_the_model_dtype():
+    assert Precision().grad_dtype is None
+    assert Settings().grad_dtype == "float32"
+    parser = argparse.ArgumentParser()
+    add_arguments(parser)
+    assert parser.get_default("grad_dtype") == "float32"
+    Settings.from_dict(BASE).normalized(1)
+    with pytest.raises(Unsupported, match="grad_dtype must be float32"):
+        Settings.from_dict({**BASE, "grad_dtype": None}).normalized(1)
 
 
 def test_describe_splits_model_geometry_precision_and_configuration():
@@ -83,8 +94,6 @@ def test_a_tier_resolves_to_its_tokens_per_step():
         {"offload": "nvme"},
         {"backward_prefetch": 0},
         {"optimizer": "sgd"},
-        {"qlora_nf4": True},
-        {"mode": "lora", "float8": True, "qlora_nf4": True},
         {"data": "/nonexistent/corpus"},
         {"steps": 0},
         {"verify_reference": True, "model": "llama3-1b"},
