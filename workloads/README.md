@@ -10,7 +10,9 @@ must never import `workloads`.
 The [example model catalog](MODELS.md) is the central reference for:
 
 - Llama 3, dense Qwen 3.5, OLMoE, Qwen 3 MoE, and Qwen 3.5 MoE.
-- Catalog names, preset dimensions and parameter counts.
+- Catalog names, preset dimensions and parameter counts, and one README per
+  family under `models/<family>/` with its architecture, configuration,
+  implementations and construction.
 - Shape configuration, weights/masters/gradients/optimizer dtypes, and rounding.
 - Frozen/trainable parameters, LoRA availability, and expert parallelism.
 - Inputs, losses, packing, and runnable Python/JSON/CLI examples.

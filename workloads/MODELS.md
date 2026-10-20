@@ -9,12 +9,7 @@ construction, trainable parameters, and data semantics belong to the caller.
 
 - [Architecture index](#architecture-index)
 - [Preset dimensions and parameter counts](#preset-dimensions-and-parameter-counts)
-- [Llama 3](#llama-3)
-- [Dense Qwen 3.5](#dense-qwen-35)
-- [OLMoE](#olmoe)
-- [Qwen 3 MoE](#qwen-3-moe)
-- [Qwen 3.5 MoE](#qwen-35-moe)
-- [GLM-5.3-Flash checkpoint integration](#glm-53-flash-checkpoint-integration)
+- [Families](#families)
 - [Dtypes and optimizer state](#dtypes-and-optimizer-state)
 - [Trainable parameters and LoRA](#trainable-parameters-and-lora)
 - [Expert parallelism](#expert-parallelism)
@@ -33,12 +28,12 @@ dimensions stay configurable: a name is a starting shape, not a constraint.
 
 | Architecture | Family package | Implementations | Catalog names |
 |---|---|---|---|
-| [Llama 3](#llama-3) | `workloads.models.llama3` | `pytorch`, `mlops` | `llama3-numerical`, `llama3-tiny`, `llama3-1b`, `llama3-8b` |
-| [Dense Qwen 3.5](#dense-qwen-35) | `workloads.models.qwen35` | `pytorch`, `mlops` | `qwen35-numerical`, `qwen35-tiny`, `qwen35-2b`, `qwen35-9b`, `qwen35-27b` |
-| [OLMoE](#olmoe) | `workloads.models.olmoe` | `pytorch`, `mlops`; optional EP in MLOps | `olmoe-numerical`, `olmoe-tiny`, `olmoe-7b-a1b` |
-| [Qwen 3 MoE](#qwen-3-moe) | `workloads.models.qwen3moe` | `mlops`; optional EP constructor | `qwen3moe-tiny`, `qwen3moe-30b-a3b` |
-| [Qwen 3.5 MoE](#qwen-35-moe) | `workloads.models.qwen35moe` | `mlops`; optional EP constructor | `qwen35moe-tiny`, `qwen35moe-35b-a3b` |
-| [GLM-5.3 and GLM-5.3-Flash](#glm-53-flash-checkpoint-integration) | `workloads.models.glm53`, `workloads.models.glm53_flash` | `mlops`, through each family's quickstart factory | `glm53`, `glm53-tiny`, `glm53-flash`, `glm53-flash-tiny` |
+| [Llama 3](models/llama3/README.md) | `workloads.models.llama3` | `pytorch`, `mlops` | `llama3-numerical`, `llama3-tiny`, `llama3-1b`, `llama3-8b` |
+| [Dense Qwen 3.5](models/qwen35/README.md) | `workloads.models.qwen35` | `pytorch`, `mlops` | `qwen35-numerical`, `qwen35-tiny`, `qwen35-2b`, `qwen35-9b`, `qwen35-27b` |
+| [OLMoE](models/olmoe/README.md) | `workloads.models.olmoe` | `pytorch`, `mlops`; optional EP in MLOps | `olmoe-numerical`, `olmoe-tiny`, `olmoe-7b-a1b` |
+| [Qwen 3 MoE](models/qwen3moe/README.md) | `workloads.models.qwen3moe` | `mlops`; optional EP constructor | `qwen3moe-tiny`, `qwen3moe-30b-a3b` |
+| [Qwen 3.5 MoE](models/qwen35moe/README.md) | `workloads.models.qwen35moe` | `mlops`; optional EP constructor | `qwen35moe-tiny`, `qwen35moe-35b-a3b` |
+| [GLM-5.3](models/glm53/README.md) and [GLM-5.3-Flash](models/glm53_flash/README.md) | `workloads.models.glm53`, `workloads.models.glm53_flash` | `mlops`, through each family's quickstart factory | `glm53`, `glm53-tiny`, `glm53-flash`, `glm53-flash-tiny` |
 
 A family package holds `Config` in its `config.py` and one module per
 implementation under `implementations/`, each exposing `Model`. Pure PyTorch
@@ -58,7 +53,8 @@ Each family's `config.py` holds `PRESETS`, its named shapes by size, and the
 shape is the small exact-scale one the numerical gate runs, `tiny` a smoke-test
 shape, and a published size is that checkpoint's text decoder (`qwen35-27b`
 and `qwen35-2b` without their multi-token prediction layer). The GLM
-families' shapes come from their checkpoints; see their READMEs.
+families' shapes come from their checkpoints; see their READMEs under
+[Families](#families).
 
 Counts below include embeddings and the output head, count shared Parameter
 objects once, and exclude buffers and optimizer state. They describe the whole
@@ -96,154 +92,26 @@ SM80; that policy lives in [qualification](../qualification/device_defaults.py),
 not in the models. Parameter counts are independent of dtype. Physical storage
 also depends on dtype, tensor representations, sharding, and runtime resources.
 
-## Llama 3
+## Families
 
-GQA attention and a dense SwiGLU MLP in every decoder block, with RMSNorm and
-RoPE. Embedding and output-head weights are separate.
+Each family package under [models/](models/) has a README with its
+architecture, shapes, configuration fields, implementations and construction,
+and a checkpoint reader where one exists:
 
-Configuration: [Config](models/llama3/config.py). Implementations:
-[PyTorch](models/llama3/implementations/pytorch.py),
-[MLOps](models/llama3/implementations/mlops.py).
-
-| Option | Meaning / default |
+| Family | What it is |
 |---|---|
-| `n_layers`, `d_model` | Number of decoder blocks and residual width |
-| `n_heads`, `n_kv_heads` | Query heads and grouped key/value heads; query heads must divide into KV groups |
-| `d_ff` | Intermediate width of each dense SwiGLU projection |
-| `vocab_size` | Embedding/output-head row count; may include padded vocabulary rows |
-| `rope_base` | RoPE base; 500,000 |
-| `max_seq_len` | Maximum supported sequence length / rotary-table capacity; 131,072 |
+| [Llama 3](models/llama3/README.md) | GQA attention and a dense SwiGLU MLP in every block; `pytorch` and `mlops` |
+| [Dense Qwen 3.5](models/qwen35/README.md) | A repeating hybrid of Gated DeltaNet and gated GQA with dense MLPs; `pytorch` and `mlops` |
+| [OLMoE](models/olmoe/README.md) | GQA attention and routed SwiGLU experts under a softmax router; `pytorch` and `mlops`, optional EP |
+| [Qwen 3 MoE](models/qwen3moe/README.md) | GQA attention and routed experts in every block; `mlops`, optional EP |
+| [Qwen 3.5 MoE](models/qwen35moe/README.md) | The Qwen 3.5 hybrid with routed and gated shared experts; `mlops`, optional EP |
+| [GLM-5.3](models/glm53/README.md) | 78 layers of positional sparse MLA with shared indices and 256-expert MoE, LoRA over a local checkpoint streamed into the pool; `mlops` |
+| [GLM-5.3-Flash](models/glm53_flash/README.md) | 45 layers of KDA and NoPE sparse MLA on mHC streams with 288-expert MoE and an optional vision encoder, LoRA over a local checkpoint streamed into the pool; `mlops` |
 
-`head_dim` is derived as `d_model // n_heads`; the division must be exact.
-All shape fields above `rope_base` are required for a custom configuration.
-`PRESETS` in the family's `config.py` holds the named shapes (`numerical`,
-`tiny`, `1b`, `8b`); `tied_embeddings` shares the embedding and head weights,
-as Llama-3.2-1B does.
-
-## Dense Qwen 3.5
-
-A repeating hybrid of Gated DeltaNet and gated GQA, followed by a dense SwiGLU
-MLP in every block. `full_attention_interval=4` means three DeltaNet blocks,
-then one full-attention block. This example has no routed experts.
-
-Configuration: [Config](models/qwen35/config.py). Implementations:
-[PyTorch](models/qwen35/implementations/pytorch.py),
-[MLOps](models/qwen35/implementations/mlops.py).
-
-| Options | Meaning / defaults |
-|---|---|
-| `n_layers`, `d_model`, `d_ff`, `vocab_size` | Decoder depth, residual width, dense MLP width, vocabulary rows |
-| `full_attention_interval` | Full attention every Nth block, counting from 1 |
-| `n_heads`, `n_kv_heads`, `head_dim` | Full-attention query/KV heads and per-head width |
-| `partial_rotary_factor` | Fraction of each attention head using RoPE; 0.25 in every preset |
-| `lin_k_heads`, `lin_v_heads` | DeltaNet key/value head counts; value heads must divide into key-head groups |
-| `lin_k_head_dim`, `lin_v_head_dim` | DeltaNet key/value head widths |
-| `lin_conv_kernel` | Depthwise causal-convolution width |
-| `rope_base` | 10,000,000 |
-| `tied_embeddings` | Share embedding and output-head weights; false |
-| `max_seq_len` | Maximum sequence length; 131,072, or 262,144 in the `2b` and `27b` presets |
-
-Full-attention projection width is `n_heads * head_dim` and may differ from
-`d_model`. The rotary width must be positive and even. With tied embeddings,
-freezing or training either name affects the same Parameter.
-
-## OLMoE
-
-GQA attention followed by a routed SwiGLU expert block. The router takes a
-softmax over all experts and selects top-k without renormalizing the selected
-weights. Each expert has a packed gate/up projection and a down projection.
-The configuration contains no shared expert.
-
-Configuration: [Config](models/olmoe/config.py). Implementations:
-[PyTorch](models/olmoe/implementations/pytorch.py),
-[MLOps with optional EP](models/olmoe/implementations/mlops.py).
-
-| Options | Meaning / defaults |
-|---|---|
-| `n_layers`, `d_model`, `vocab_size` | Decoder depth, residual width, vocabulary rows |
-| `n_heads`, `n_kv_heads`, `head_dim` | Attention head geometry |
-| `n_experts` | Total routed experts per layer, across the entire EP group when used |
-| `top_k` | Experts selected per token; between 1 and `n_experts` |
-| `d_ff_expert` | Intermediate width of each expert |
-| `rope_base`, `max_seq_len` | 10,000 and 131,072 |
-
-Q/K normalization is applied before rotary attention. The auxiliary load
-balancing loss is returned separately by `hidden`; `loss(..., aux_coef=...)`
-chooses its contribution. The model loss defaults to coefficient 0.0; supplied
-training/qualification objectives can choose another value.
-
-## Qwen 3 MoE
-
-GQA attention followed by MoE in **every** block. The selected routing
-probabilities sum to one. The default shape follows the published
-[Qwen3-30B-A3B configuration](https://huggingface.co/Qwen/Qwen3-30B-A3B/blob/main/config.json).
-
-Use `workloads.models.qwen3moe.implementations.mlops.Model(Config(...))`.
-Configuration: [Config](models/qwen3moe/config.py); implementation:
-[Model](models/qwen3moe/implementations/mlops.py).
-
-## Qwen 3.5 MoE
-
-Three Gated DeltaNet blocks followed by gated GQA, repeating through the
-network, with MoE after every mixer. The default shape follows the text decoder
-of [Qwen3.5-35B-A3B](https://huggingface.co/Qwen/Qwen3.5-35B-A3B/blob/main/config.json).
-It has a shared SwiGLU expert with a learned sigmoid gate, zero-centered RMSNorm,
-and normalized top-k routed probabilities.
-
-Use `workloads.models.qwen35moe.implementations.mlops.Model(Config(...))`.
-Configuration: [Config](models/qwen35moe/config.py); implementation:
-[Model](models/qwen35moe/implementations/mlops.py). The vision encoder and
-multi-token prediction module are outside this text-model example. These constructors initialize model
-state; they do not download or import pretrained Hugging Face checkpoints.
-
-Both Qwen MoE configurations expose the following fields:
-
-| Options | Qwen 3 MoE default | Qwen 3.5 MoE default |
-|---|---|---|
-| `n_layers`, `d_model` | 48, 2,048 | 40, 2,048 |
-| `n_heads`, `n_kv_heads`, `head_dim` | 32, 4, 128 | 16, 2, 256 |
-| `n_experts`, `top_k`, `d_ff_expert` | 128, 8, 768 | 256, 8, 512 |
-| `d_ff_shared` | 0 (disabled) | 512 |
-| `vocab_size`, `max_seq_len` | 151,936; 40,960 | 248,320; 262,144 |
-| `rope_base`, `partial_rotary_factor` | 1e6, 1.0 | 1e7, 0.25 |
-| `norm_epsilon`, `zero_centered_norm` | 1e-6, false | 1e-6, true |
-| `attention_gate`, `full_attention_interval` | false, 1 | true, 4 |
-| `lin_k_heads`, `lin_v_heads` | 16, 32 | 16, 32 |
-| `lin_k_head_dim`, `lin_v_head_dim`, `lin_conv_kernel` | 128, 128, 4 | 128, 128, 4 |
-| `initializer_range` | 0.02 | 0.02 |
-| `router_aux_loss_coef` | 0.001 | 0.001 |
-
-DeltaNet settings apply to layers selected as linear attention. Both defaults
-use separate embedding and head weights. Balancing follows the across-layer
-Qwen convention: balanced top-8 routing gives an unweighted auxiliary near 8.
-`loss(..., aux_coef=...)` overrides the configured coefficient.
-
-## GLM-5.3-Flash checkpoint integration
-
-The [GLM-5.3-Flash workload](models/glm53_flash/README.md) imports local
-Hugging Face safetensors directly into an initialized runtime pool. It preserves
-the original FP8 or NVFP4 expert storage and initially uses BF16 GEMMs.
-No permanent converted checkpoint is required. An SSD pool still contains a
-temporary runtime copy.
-
-Its architecture has 45 layers: 34 KDA, 11 NoPE sparse-MLA, mHC streams, three
-initial dense MLPs, then 288 routed experts/top-8 plus a shared expert.
-This checkpoint integration has its own text/image forward-validation CLI and a
-[quickstart factory](models/glm53_flash/quickstart.py), including data-parallel
-group construction and optional local transfer sharding; the catalog names
-`glm53-flash` and `glm53` resolve to the two factories, so `--model glm53-flash`
-with `--factory-args` runs one. Complete text forwards for both
-checkpoints and the checkpoint vision encoders execute through SSD-backed plans.
-Reduced-model LoRA updates and selected-state checkpoint replay are also tested.
-See the workload README for numerical limits and the current image/text status;
-full-model LoRA training and checkpoint-specific low-precision GEMMs remain
-unqualified.
-
-The normal [GLM-5.3 workload](models/glm53/README.md) has a separate 78-layer
-architecture with positional sparse MLA, shared attention indices, ordinary
-residuals, and 256-expert MoE layers. Both quickstarts share rank-16 BF16 LoRA,
-FP32 gradients, BF16 Adam moments, and optional weight/gradient transfer
-sharding. Normal-model full-checkpoint training qualification is in progress.
+The two GLM families share their building blocks, checkpoint importer, stage
+partition and LoRA recipe through [models/shared/glm/](models/shared/glm/);
+their catalog entries resolve to the quickstart factories, so
+`--model glm53-flash` with `--factory-args` runs one.
 
 ## Dtypes and optimizer state
 
