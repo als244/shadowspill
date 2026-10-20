@@ -21,21 +21,22 @@ from workloads.recipes.text.distributed import data_parallel_groups
 def model_for(name):
     torch.manual_seed(123)
     if name == "mlops_llama3":
-        from workloads.mlops import Llama3
-        from workloads.pytorch import Llama3Config
+        from workloads.models.llama3.config import Config
+        from workloads.models.llama3.implementations.mlops import Model
 
-        model = Llama3(Llama3Config(2, 128, 4, 2, 256, 128, max_seq_len=32))
+        model = Model(Config(2, 128, 4, 2, 256, 128, max_seq_len=32))
     elif name == "mlops_olmoe":
-        from workloads.mlops import OLMoE
-        from workloads.pytorch import OLMoEConfig
+        from workloads.models.olmoe.config import Config
+        from workloads.models.olmoe.implementations.mlops import Model
 
-        model = OLMoE(OLMoEConfig(2, 128, 4, 2, 128, 8, 2, 128, 128, max_seq_len=32))
+        model = Model(Config(2, 128, 4, 2, 128, 8, 2, 128, 128, max_seq_len=32))
     else:
         from workloads.lora import configure_lora
-        from workloads.mlops.qwen3_moe import Qwen3MoE, Qwen3MoEConfig
+        from workloads.models.qwen3moe.config import Config
+        from workloads.models.qwen3moe.implementations.mlops import Model
 
-        model = Qwen3MoE(
-            Qwen3MoEConfig(
+        model = Model(
+            Config(
                 n_layers=2,
                 d_model=128,
                 n_heads=4,

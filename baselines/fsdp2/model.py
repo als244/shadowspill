@@ -5,13 +5,14 @@ from __future__ import annotations
 import torch
 from torch import nn
 
-from workloads.mlops.qwen3_moe import Qwen3MoE, Qwen3MoEConfig
+from workloads.models.qwen3moe.config import Config
+from workloads.models.qwen3moe.implementations.mlops import Model
 
 
 def configuration(*, tiny=False, sequence_length=4096):
     if not tiny:
-        return Qwen3MoEConfig(max_seq_len=max(40960, sequence_length))
-    return Qwen3MoEConfig(
+        return Config(max_seq_len=max(40960, sequence_length))
+    return Config(
         n_layers=2,
         d_model=128,
         n_heads=4,
@@ -35,7 +36,7 @@ class TrainingModel(nn.Module):
         head_scratch_bytes=512 << 20,
     ):
         super().__init__()
-        self.model = Qwen3MoE(config, dtype=torch.float32)
+        self.model = Model(config, dtype=torch.float32)
         self.local_tokens_per_step = local_tokens_per_step
         self.sequence_length = sequence_length
         rows = head_scratch_bytes // (2 * config.vocab_size)

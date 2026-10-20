@@ -1196,7 +1196,7 @@ may also reject unsupported differentiation or mutation boundaries.
 
 See the [architecture contract](../../architecture/partitioning.md),
 [standalone example](../../examples/custom-partitioning.md), and
-[GLM example](../../../workloads/mlops/glm53_flash/README.md#partitioning).
+[GLM example](../../../workloads/models/glm53_flash/README.md#partitioning).
 
 ## Planned callables
 

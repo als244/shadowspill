@@ -8,17 +8,17 @@ import pytest
 import torch
 from torch import nn
 
-from workloads.mlops import (
-    OLMoE,
-    OLMoEConfig,
-    Qwen3MoE,
-    Qwen3MoEConfig,
-    Qwen35MoE,
-    Qwen35MoEConfig,
+from workloads.models.olmoe.config import Config as OLMoEConfig
+from workloads.models.olmoe.implementations.mlops import Model as OLMoE
+from workloads.models.qwen3moe.config import Config as Qwen3MoEConfig
+from workloads.models.qwen3moe.implementations.mlops import Model as Qwen3MoE
+from workloads.models.qwen35moe.config import Config as Qwen35MoEConfig
+from workloads.models.qwen35moe.implementations.mlops import Model as Qwen35MoE
+
+
+@pytest.fixture(
+    params=[OLMoE, Qwen3MoE, Qwen35MoE], ids=["olmoe", "qwen3moe", "qwen35moe"]
 )
-
-
-@pytest.fixture(params=[OLMoE, Qwen3MoE, Qwen35MoE])
 def architecture(request):
     cls = request.param
     if cls is OLMoE:
@@ -183,7 +183,7 @@ def test_fp32_gradient_request_reaches_router(architecture, fake_ep, router_dtyp
 def test_parallel_routing_keeps_fp32_logits(monkeypatch):
     from mlops.expert_parallel.quack import router
 
-    from workloads.mlops._expert_parallel import parallel_forward
+    from workloads.models.shared.expert_parallel import parallel_forward
 
     def route(logits, top_k, normalize):
         selected, ids = logits.topk(top_k, dim=-1)

@@ -38,9 +38,9 @@ def environment(monkeypatch):
         def close(self):
             self.closed = True
 
-    from workloads import mlops
+    from workloads.models.qwen3moe.implementations import mlops as qwen3moe
 
-    monkeypatch.setattr(mlops, "Qwen3MoE", Model)
+    monkeypatch.setattr(qwen3moe, "Model", Model)
     return state
 
 

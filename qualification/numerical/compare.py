@@ -14,7 +14,7 @@ from typing import Any
 
 import torch
 
-from workloads.common.training import LEARNING_RATE
+from workloads.models.shared.training import LEARNING_RATE
 
 from .execution import PlannedRun
 from .metrics import compare_states

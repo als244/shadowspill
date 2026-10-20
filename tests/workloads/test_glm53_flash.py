@@ -6,7 +6,7 @@ from torch import nn
 from torch.nn import functional as F
 
 pytest.importorskip("mlops")
-from workloads.mlops.glm53_flash.common import without_autocast
+from workloads.models.shared.glm.common import without_autocast
 
 
 @pytest.mark.parametrize("enabled", (False, True))
@@ -33,7 +33,7 @@ def test_fp32_projection_preserves_precision_and_restores_autocast(enabled):
 def test_unimplemented_checkpoint_compute_fails_before_reading_files(
     tmp_path, precision
 ):
-    from workloads.mlops.glm53_flash.checkpoint import GLMCheckpoint
+    from workloads.models.glm53_flash.checkpoint import GLMCheckpoint
 
     with pytest.raises(ValueError, match="BF16 GEMMs only"):
         GLMCheckpoint(tmp_path / "not-downloaded", gemm_precision=precision)
@@ -41,7 +41,8 @@ def test_unimplemented_checkpoint_compute_fails_before_reading_files(
 
 @pytest.mark.parametrize("head", (False, True))
 def test_multimodal_lora_freezes_base_and_selects_only_projection_factors(head):
-    from workloads.mlops.glm53_flash import Config, LanguageModel, VisionConfig
+    from workloads.models.glm53_flash.config import Config
+    from workloads.models.glm53_flash.implementations.mlops import Model, VisionConfig
 
     config = Config.tiny(hidden_size=128, lora_rank=8, lora_alpha=8, lora_head=head)
     vision = VisionConfig(
@@ -53,7 +54,7 @@ def test_multimodal_lora_freezes_base_and_selects_only_projection_factors(head):
         projection_intermediate_size=128,
         patch_size=2,
     )
-    model = LanguageModel(config, device="meta", vision_config=vision)
+    model = Model(config, device="meta", vision_config=vision)
     trainable = {
         name for name, value in model.named_parameters() if value.requires_grad
     }

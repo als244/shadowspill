@@ -3,9 +3,9 @@
 from mlops.lora.experts import expert_lora, initialize_factors, reset_factors
 from torch import nn
 
-from workloads.mlops._qwen_moe.experts import MoE as QwenMoE
-from workloads.mlops.olmoe import MoE as OLMoE
-from workloads.pytorch.olmoe import MoE as PyTorchOLMoE
+from workloads.models.olmoe.implementations.mlops import MoE as OLMoE
+from workloads.models.olmoe.implementations.pytorch import MoE as PyTorchOLMoE
+from workloads.models.shared.qwen_moe.experts import MoE as QwenMoE
 
 from .reference import expert_lora as reference_expert_lora
 

@@ -16,12 +16,12 @@ import torch
 import torch.distributed as dist
 
 from shadowspill.pytorch import Distributed
-from workloads.common.training import LEARNING_RATE
 from workloads.full_model import throughput_spec
+from workloads.models.shared.training import LEARNING_RATE
 
 from .quickstart import Precision, _distributed_objective, text_metrics
 
-_MODELS = {"olmoe": "OLMoE", "qwen3moe": "Qwen3MoE", "qwen35moe": "Qwen35MoE"}
+_MODELS = ("olmoe", "qwen3moe", "qwen35moe")
 
 
 def experiment(
@@ -49,7 +49,7 @@ def experiment(
     follows each parameter's replicas, independently of expert placement.
     """
     if model not in _MODELS:
-        raise ValueError(f"model must be one of {tuple(_MODELS)}")
+        raise ValueError(f"model must be one of {_MODELS}")
     for name, value in (
         ("sequence_length", sequence_length),
         ("sequences_per_step", sequences_per_step),
@@ -121,11 +121,14 @@ def experiment(
             dist.destroy_process_group(group)
 
     def model_factory():
-        from workloads import mlops as models
+        from importlib import import_module
 
+        implementation = import_module(
+            f"workloads.models.{model}.implementations.mlops"
+        )
         with torch.random.fork_rng(devices=[]):
             torch.manual_seed(seed + rank)
-            return getattr(models, _MODELS[model])(
+            return implementation.Model(
                 config,
                 ep_group=group,
                 token_capacity=capacity,

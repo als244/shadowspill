@@ -19,12 +19,13 @@ safetensors_torch = pytest.importorskip("safetensors.torch")
 from mlops.kernels.block_fp8 import dequantize_blocks, quantize_blocks  # noqa: E402
 
 from tests.precision import require_fp8_gemms  # noqa: E402
-from workloads.mlops.glm53_flash import Config, LanguageModel  # noqa: E402
-from workloads.mlops.glm53_flash.checkpoint import (  # noqa: E402
+from workloads.models.glm53_flash.checkpoint import (  # noqa: E402
     GLMCheckpoint,
-    physical_state,
     source_name,
 )
+from workloads.models.glm53_flash.config import Config  # noqa: E402
+from workloads.models.glm53_flash.implementations.mlops import Model  # noqa: E402
+from workloads.models.shared.glm.checkpoint import physical_state  # noqa: E402
 
 # Widths that are whole 128x128 blocks, as an FP8 checkpoint's experts are.
 CONFIG = Config.tiny(hidden_size=128, moe_intermediate_size=128)
@@ -51,7 +52,7 @@ def _write(
     *,
     fp8_experts,
     config=CONFIG,
-    model_type=LanguageModel,
+    model_type=Model,
     name_for=source_name,
     prefix="model.language_model",
     nested=True,

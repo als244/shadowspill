@@ -7,9 +7,10 @@ pytest.importorskip("mlops")
 pytest.importorskip("safetensors.torch")
 
 from tests.workloads.test_glm53_checkpoint import _materialized, _write
-from workloads.mlops.glm53 import Config, LanguageModel
-from workloads.mlops.glm53.checkpoint import GLMCheckpoint, source_name
-from workloads.mlops.glm53_flash.checkpoint import physical_state
+from workloads.models.glm53.checkpoint import GLMCheckpoint, source_name
+from workloads.models.glm53.config import Config
+from workloads.models.glm53.implementations.mlops import Model
+from workloads.models.shared.glm.checkpoint import physical_state
 
 
 @pytest.mark.parametrize("use_writer", [False, True])
@@ -23,7 +24,7 @@ def test_normal_checkpoint_streams_all_layers_and_preserves_fp8_bytes(
         tmp_path,
         fp8_experts=True,
         config=config,
-        model_type=LanguageModel,
+        model_type=Model,
         name_for=source_name,
         prefix="model",
         nested=False,

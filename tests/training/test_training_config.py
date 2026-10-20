@@ -70,7 +70,7 @@ def test_a_config_on_mlops_asks_it_for_weight_gradients_at_its_grad_dtype(
 
     raw = json.loads(path.read_text())
     settings = raw.get("settings", [])
-    if "workloads.mlops" not in json.dumps(raw.get("model", {})):
+    if "implementations.mlops" not in json.dumps(raw.get("model", {})):
         pytest.skip("the model does not run on mlops kernels")
     assert all(
         setting.get("@call") != "workloads.providers:select_implementation"

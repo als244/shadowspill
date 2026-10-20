@@ -13,6 +13,9 @@ import torch.nn as nn
 from workloads.precision import TrainingDtypes
 from workloads.providers import MODEL_DTYPES, ModelImplementation
 
+#: The families with an exact-scale numerical shape.
+_NUMERICAL_FAMILIES = ("llama3", "qwen35", "olmoe")
+
 _DEFAULT_DATA_GEOMETRY: tuple[dict[str, Any], ...] = (
     {
         "token_shape": [1, 64],
@@ -100,15 +103,13 @@ def build_case(
     torch.manual_seed(seed)
     from importlib import import_module
 
-    from workloads.pytorch import Llama3Config, OLMoEConfig, Qwen35Config
-
-    library = import_module("workloads." + model_implementation)
-    presets = {"llama3": Llama3Config, "qwen35": Qwen35Config, "olmoe": OLMoEConfig}
-    classes = {"llama3": "Llama3", "qwen35": "Qwen35", "olmoe": "OLMoE"}
-    if family not in presets:
+    if family not in _NUMERICAL_FAMILIES:
         raise ValueError(f"unknown numerical family {family!r}")
-    config = replace(presets[family].numerical(), max_seq_len=192)
-    model_type = getattr(library, classes[family])
+    preset = import_module(f"workloads.models.{family}.config").Config
+    model_type = import_module(
+        f"workloads.models.{family}.implementations.{model_implementation}"
+    ).Model
+    config = replace(preset.numerical(), max_seq_len=192)
     if model_config:
         try:
             config = replace(config, **dict(model_config))

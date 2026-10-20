@@ -4,7 +4,8 @@ import pytest
 import torch
 
 from tests.precision import low_precision_dtype
-from workloads.mlops import OLMoE, OLMoEConfig
+from workloads.models.olmoe.config import Config as OLMoEConfig
+from workloads.models.olmoe.implementations.mlops import Model as OLMoE
 
 
 @pytest.mark.cuda

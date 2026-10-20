@@ -4,7 +4,7 @@ from contextlib import nullcontext
 
 import torch
 
-from workloads.mlops import _expert_parallel as ep
+from workloads.models.shared import expert_parallel as ep
 
 
 def test_a_group_of_one_yields_local_experts(monkeypatch):

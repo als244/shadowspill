@@ -2,8 +2,16 @@ from __future__ import annotations
 
 import torch
 
-from workloads.pytorch import OLMoE, OLMoEConfig, Qwen35, Qwen35Config
-from workloads.pytorch.qwen35 import _delta_rule, _delta_rule_reference
+from workloads.models.olmoe.config import Config as OLMoEConfig
+from workloads.models.olmoe.implementations.pytorch import Model as OLMoE
+from workloads.models.qwen35.config import Config as Qwen35Config
+from workloads.models.qwen35.implementations.pytorch import (
+    Model as Qwen35,
+)
+from workloads.models.qwen35.implementations.pytorch import (
+    _delta_rule,
+    _delta_rule_reference,
+)
 
 
 def test_reduced_family_parameter_counts() -> None:

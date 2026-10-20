@@ -11,12 +11,22 @@ from typing import Any, cast
 import torch
 import torch.nn as nn
 
-from workloads.common import auxiliary_share, language_model_loss
+from workloads.models.shared.decoder import auxiliary_share, language_model_loss
 from workloads.precision import TrainingDtypes
 from workloads.providers import MODEL_DTYPES, ModelImplementation
 
 _GIB = 1 << 30
 _RETAINED_HEAD_SCRATCH_BYTES = 512 << 20
+
+#: The family package each full-model family builds from.
+_FAMILY_PACKAGES = {
+    "llama3": "llama3",
+    "qwen35": "qwen35",
+    "qwen35_27b": "qwen35",
+    "olmoe": "olmoe",
+    "qwen3moe": "qwen3moe",
+    "qwen35moe": "qwen35moe",
+}
 
 
 @dataclass(frozen=True, slots=True)
@@ -65,7 +75,9 @@ class FullModelSpec:
 def throughput_spec(family: str, implementation: ModelImplementation) -> FullModelSpec:
     """A supplied model/geometry recipe, independent of gate budgets or verdicts."""
 
-    from workloads.pytorch import Llama3Config, OLMoEConfig, Qwen35Config
+    from workloads.models.llama3.config import Config as Llama3Config
+    from workloads.models.olmoe.config import Config as OLMoEConfig
+    from workloads.models.qwen35.config import Config as Qwen35Config
 
     if family == "llama3":
         config: Any = Llama3Config.throughput()
@@ -84,7 +96,8 @@ def throughput_spec(family: str, implementation: ModelImplementation) -> FullMod
     elif family in {"qwen3moe", "qwen35moe"}:
         if implementation != "mlops":
             raise ValueError("Qwen MoE full-model workloads use MLOps")
-        from workloads.mlops import Qwen3MoEConfig, Qwen35MoEConfig
+        from workloads.models.qwen3moe.config import Config as Qwen3MoEConfig
+        from workloads.models.qwen35moe.config import Config as Qwen35MoEConfig
 
         config = (Qwen3MoEConfig if family == "qwen3moe" else Qwen35MoEConfig)()
         tokens = 8_192
@@ -235,19 +248,19 @@ def build_model(manifest: FullModelSpec) -> nn.Module:
 
     from importlib import import_module
 
-    models = import_module("workloads." + manifest.implementation)
-    model_types = {
-        "llama3": models.Llama3,
-        "qwen35": models.Qwen35,
-        "qwen35_27b": models.Qwen35,
-    }
-    if manifest.family == "olmoe":
-        model_types["olmoe"] = models.OLMoE
-    if manifest.implementation == "mlops":
-        model_types.update(qwen3moe=models.Qwen3MoE, qwen35moe=models.Qwen35MoE)
+    package = _FAMILY_PACKAGES.get(manifest.family)
+    module = (
+        None
+        if package is None
+        else f"workloads.models.{package}.implementations.{manifest.implementation}"
+    )
     try:
-        model_type = model_types[manifest.family]
-    except KeyError as exc:
+        if module is None:
+            raise ModuleNotFoundError(manifest.family, name=manifest.family)
+        model_type = import_module(module).Model
+    except ModuleNotFoundError as exc:
+        if exc.name != module and exc.name != manifest.family:
+            raise
         raise ValueError(
             "unsupported full-model cell "
             f"{(manifest.family, manifest.implementation)!r}"

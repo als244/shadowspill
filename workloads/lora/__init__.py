@@ -22,9 +22,9 @@ def configure_lora(
     explicitly selected. head is frozen, lora or full; trainable_base contains
     parameter globs. Explicit targets replace the default module selection.
     """
-    from workloads.mlops._qwen_moe.experts import MoE as QwenMoE
-    from workloads.mlops.olmoe import MoE as OLMoE
-    from workloads.pytorch.olmoe import MoE as PyTorchOLMoE
+    from workloads.models.olmoe.implementations.mlops import MoE as OLMoE
+    from workloads.models.olmoe.implementations.pytorch import MoE as PyTorchOLMoE
+    from workloads.models.shared.qwen_moe.experts import MoE as QwenMoE
 
     from .experts import OLMoELoRA, PyTorchOLMoELoRA, QwenMoELoRA
 

@@ -2,7 +2,8 @@ from __future__ import annotations
 
 import torch
 
-from workloads.pytorch.llama3 import Llama3, Llama3Config
+from workloads.models.llama3.config import Config as Llama3Config
+from workloads.models.llama3.implementations.pytorch import Model as Llama3
 
 
 def test_llama3_parameter_catalog_and_gradients() -> None:

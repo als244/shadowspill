@@ -3,17 +3,15 @@ from __future__ import annotations
 import pytest
 import torch
 
-from workloads.mlops import Llama3 as MlopsLlama3
-from workloads.mlops import OLMoE as MlopsOLMoE
-from workloads.mlops import Qwen35 as MlopsQwen35
-from workloads.pytorch import (
-    Llama3,
-    Llama3Config,
-    OLMoE,
-    OLMoEConfig,
-    Qwen35,
-    Qwen35Config,
-)
+from workloads.models.llama3.config import Config as Llama3Config
+from workloads.models.llama3.implementations.mlops import Model as MlopsLlama3
+from workloads.models.llama3.implementations.pytorch import Model as Llama3
+from workloads.models.olmoe.config import Config as OLMoEConfig
+from workloads.models.olmoe.implementations.mlops import Model as MlopsOLMoE
+from workloads.models.olmoe.implementations.pytorch import Model as OLMoE
+from workloads.models.qwen35.config import Config as Qwen35Config
+from workloads.models.qwen35.implementations.mlops import Model as MlopsQwen35
+from workloads.models.qwen35.implementations.pytorch import Model as Qwen35
 
 
 def _assert_state_dict_compatible(

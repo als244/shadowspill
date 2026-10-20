@@ -29,12 +29,13 @@ needed; see [expert parallelism](MODELS.md#expert-parallelism).
 
 | Directory / file | Purpose |
 |---|---|
-| [pytorch/](pytorch/) | Readable PyTorch model references and shared configuration types |
-| [mlops/](mlops/) | Model definitions using the separately installed MLOps operation library |
-| [common/](common/) | Shared math, rotary tables, packing metadata and loss helpers |
+| [models/](models/) | One package per model family: its configuration, checkpoint reader, README and implementations (`pytorch`, `mlops`); `models/shared/` holds the code families share |
+| [lora/](lora/) | LoRA targeting for the supplied models over MLOps's reusable projections |
 | [recipes/](recipes/) | Caller-side model/data/objective composition |
 | [full_model.py](full_model.py) | Reproducible full-model specifications and construction |
+| [numerical.py](numerical.py) | Exact-scale cases shared by the numerical qualification's two arms |
 | [precision.py](precision.py) | Explicit precision settings used by supplied workloads |
+| [providers.py](providers.py) | The implementation names |
 
 Model definitions describe computation. Recipes choose data, objectives,
 initialization, and run policy. Reusable training and forward execution live in

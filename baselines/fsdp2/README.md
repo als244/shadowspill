@@ -3,7 +3,7 @@
 Run from the repository root using an environment with the same PyTorch/MLOps
 versions as the comparison. No ShadowSpill runtime is used. The model, actual
 top-k routing, auxiliary loss, and chunked language-model head come from
-`workloads/mlops/qwen3_moe.py` and its existing implementation.
+`workloads/models/qwen3moe/implementations/mlops.py` and its existing implementation.
 
 The trainer and sweep driver have passed a single-GPU numerical matrix covering
 no/partial/full recomputation, CPU offload with/without pinned memory, prefetch,

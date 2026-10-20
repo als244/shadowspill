@@ -151,7 +151,7 @@ options both to candidate search and to execution planning. It does not recogniz
 architecture names or substitute a model-specific policy.
 
 The [custom partitioning example](../examples/custom-partitioning.md) shows a
-small standalone policy. The [GLM workload](../../workloads/mlops/glm53_flash/README.md#partitioning)
+small standalone policy. The [GLM workload](../../workloads/models/glm53_flash/README.md#partitioning)
 is a model-scale example: its optional workload-local policy bounds each
 decoder layer and vision block, and would bound individual expert modules. No
 GLM condition belongs in the planner, simulator, runtime, or MLOps operators.

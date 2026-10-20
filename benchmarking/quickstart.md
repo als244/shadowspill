@@ -711,8 +711,8 @@ targeting flags are rejected there rather than ignored. `--lora-rank`,
 `--lora-alpha` and `--lora-dtype` do reach a factory: given with `--factory`,
 each is passed to it as `lora_rank`, `lora_alpha` or `lora_dtype` beside
 `--factory-args`, and a factory that does not take those names is refused.
-The [GLM-5.3-Flash factory](../workloads/mlops/glm53_flash/quickstart.py) and
-[GLM-5.3 factory](../workloads/mlops/glm53/quickstart.py) take all three. Both
+The [GLM-5.3-Flash factory](../workloads/models/glm53_flash/quickstart.py) and
+[GLM-5.3 factory](../workloads/models/glm53/quickstart.py) take all three. Both
 default to rank-16 BF16 LoRA factors, alpha 32, FP32 accumulated gradients,
 and BF16 Adam moments.
 
@@ -722,7 +722,7 @@ sharding. The factory receives `transfer_shard_size` and `shard_gradients` and
 owns its process groups. Unsupported or duplicate arguments fail explicitly.
 Spill pools remain per rank: four `--spill-gib 128` pools need 512 GiB of host
 memory, plus setup and runtime headroom. See the
-[GLM distributed example](../workloads/mlops/glm53_flash/README.md#generic-quickstart-and-training-sweeps)
+[GLM distributed example](../workloads/models/glm53_flash/README.md#generic-quickstart-and-training-sweeps)
 and [ownership API](../docs/python/api/distributed.md#computation-weight-and-gradient-spill-sharding).
 
 `--ssd-spill DIRECTORY` selects an ordinary temporary SSD pool instead of pinned
@@ -733,7 +733,7 @@ bounded independently by `--ssd-staging-mib` (256 by default), with
 initialization, calibration and cleanup. Pool files are temporary, not
 checkpoints. `--ssd-spill` and `--remote-spill` are mutually exclusive.
 `--ssd-image FILE` opens the SSD pool on a pool image a conversion wrote (for
-GLM-5.3-Flash, `python -m workloads.mlops.glm53_flash.convert`): the model's
+GLM-5.3-Flash, `python -m workloads.models.glm53_flash.convert`): the model's
 frozen state is bound where it lies in the image instead of being imported, so
 a run writes only the state it creates, and the experiment's initializer must
 accept `adopted`, the names it leaves alone.

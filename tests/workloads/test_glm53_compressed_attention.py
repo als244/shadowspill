@@ -12,8 +12,8 @@ from mlops.sequential_moe.precision.linear import FrozenLinear, FrozenLoRALinear
 from mlops.sequential_moe.precision.storage import pack
 
 from tests.precision import require_fp8_gemms
-from workloads.mlops.glm53_flash.attention import SparseMLA
-from workloads.mlops.glm53_flash.config import Config
+from workloads.models.glm53_flash.config import Config
+from workloads.models.glm53_flash.implementations.mlops.attention import SparseMLA
 
 
 class CausalKeys(nn.Module):

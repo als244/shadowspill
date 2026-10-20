@@ -116,7 +116,7 @@ without a copy; the rest of the model, LoRA factors and all, is allocated and
 initialized in the scratch file behind the image, as are optimizer state and
 evicted activations. The initializer takes `adopted`, the names it must leave
 alone, and a write into adopted state fails. The GLM-5.3-Flash workload's
-`python -m workloads.mlops.glm53_flash.convert` is such a conversion, and the
+`python -m workloads.models.glm53_flash.convert` is such a conversion, and the
 quickstart's `--ssd-image` opens its result.
 
 ## Initialize without a complete host model

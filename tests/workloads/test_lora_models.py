@@ -2,36 +2,45 @@
 
 import copy
 from dataclasses import replace
+from importlib import import_module
 from unittest.mock import patch
 
 import pytest
 import torch
 from mlops.dispatch import use_implementations
 
-from workloads import mlops, pytorch
 from workloads.lora import configure_lora
 from workloads.lora.reference import expert_lora as reference_expert_lora
 
 MODELS = [
     (impl, family)
     for impl in ("pytorch", "mlops")
-    for family in ("Llama3", "Qwen35", "OLMoE")
+    for family in ("llama3", "qwen35", "olmoe")
 ]
-MODELS += [("mlops", family) for family in ("Qwen3MoE", "Qwen35MoE")]
+MODELS += [("mlops", family) for family in ("qwen3moe", "qwen35moe")]
+
+
+def family_classes(implementation, family):
+    """The family's ``Config`` and the implementation's ``Model``."""
+    config = import_module(f"workloads.models.{family}.config").Config
+    model = import_module(
+        f"workloads.models.{family}.implementations.{implementation}"
+    ).Model
+    return config, model
 
 
 def tiny_model(implementation, family):
-    models = mlops if implementation == "mlops" else pytorch
-    if family == "Llama3":
-        config = models.Llama3Config(2, 32, 4, 2, 64, 97, max_seq_len=16)
-    elif family == "Qwen35":
-        config = models.Qwen35Config(
+    config_type, model_type = family_classes(implementation, family)
+    if family == "llama3":
+        config = config_type(2, 32, 4, 2, 64, 97, max_seq_len=16)
+    elif family == "qwen35":
+        config = config_type(
             4, 32, 4, 4, 2, 8, 0.5, 2, 4, 4, 4, 3, 64, 97, max_seq_len=16
         )
-    elif family == "OLMoE":
-        config = models.OLMoEConfig(2, 32, 4, 2, 8, 4, 2, 16, 97, max_seq_len=16)
+    elif family == "olmoe":
+        config = config_type(2, 32, 4, 2, 8, 4, 2, 16, 97, max_seq_len=16)
     else:
-        config = getattr(models, family + "Config")()
+        config = config_type()
         config = replace(
             config,
             n_layers=4,
@@ -50,7 +59,7 @@ def tiny_model(implementation, family):
             lin_k_head_dim=4,
             lin_v_head_dim=4,
         )
-    return getattr(models, family)(config)
+    return model_type(config)
 
 
 @pytest.mark.parametrize("implementation,family", MODELS)
@@ -147,15 +156,14 @@ def test_whole_model_aot_capture(implementation, family):
 def test_meta_initialization_tied_head_and_full_parameter_override():
     from workloads.recipes.text.models import initialize
 
+    config_type, model_type = family_classes("mlops", "qwen35")
     config = replace(
-        pytorch.Qwen35Config(
-            4, 32, 4, 4, 2, 8, 0.5, 2, 4, 4, 4, 3, 64, 97, max_seq_len=16
-        ),
+        config_type(4, 32, 4, 4, 2, 8, 0.5, 2, 4, 4, 4, 3, 64, 97, max_seq_len=16),
         tied_embeddings=True,
     )
     with torch.device("meta"):
         model = configure_lora(
-            mlops.Qwen35(config), rank=4, head="lora", trainable_base=["embed.weight"]
+            model_type(config), rank=4, head="lora", trainable_base=["embed.weight"]
         )
     assert model.embed.weight is model.lm_head.weight
     from shadowspill.training._model import initialize_model
@@ -172,7 +180,7 @@ def test_meta_initialization_tied_head_and_full_parameter_override():
 
 def test_shared_expert_lora_is_explicit():
     model = configure_lora(
-        tiny_model("mlops", "Qwen35MoE"), rank=4, shared_experts=True
+        tiny_model("mlops", "qwen35moe"), rank=4, shared_experts=True
     )
     names = [name for name, p in model.named_parameters() if p.requires_grad]
     assert any(".moe.shared." in name and "lora_" in name for name in names)

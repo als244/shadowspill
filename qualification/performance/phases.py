@@ -23,7 +23,7 @@ from shadowspill.pytorch import (
     Runtime,
     plan_step,
 )
-from workloads.common.training import LEARNING_RATE
+from workloads.models.shared.training import LEARNING_RATE
 
 from ..planning_phases import planning_breakdown, planning_summary
 from .readings import (

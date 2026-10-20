@@ -30,15 +30,17 @@ construction, trainable parameters, and data semantics belong to the caller.
 `mlops_qwen35moe` means **Qwen 3.5 with MoE**, whose default shape is 35B-A3B.
 Dimensions are configurable; the architecture name does not force a model size.
 
-| Architecture | Python model and configuration | Implementations | Quickstart names |
+| Architecture | Family package | Implementations | Quickstart names |
 |---|---|---|---|
-| [Llama 3](#llama-3) | `Llama3`, `Llama3Config` | `workloads.pytorch`, `workloads.mlops` | `pytorch_llama3`, `mlops_llama3` |
-| [Dense Qwen 3.5](#dense-qwen-35) | `Qwen35`, `Qwen35Config` | `workloads.pytorch`, `workloads.mlops` | `pytorch_qwen35`, `mlops_qwen35`, `mlops_qwen35_27b` |
-| [OLMoE](#olmoe) | `OLMoE`, `OLMoEConfig` | `workloads.pytorch`, `workloads.mlops`; optional EP in MLOps | `mlops_olmoe` |
-| [Qwen 3 MoE](#qwen-3-moe) | `Qwen3MoE`, `Qwen3MoEConfig` | `workloads.mlops`; optional EP constructor | `mlops_qwen3moe` |
-| [Qwen 3.5 MoE](#qwen-35-moe) | `Qwen35MoE`, `Qwen35MoEConfig` | `workloads.mlops`; optional EP constructor | `mlops_qwen35moe` |
+| [Llama 3](#llama-3) | `workloads.models.llama3` | `pytorch`, `mlops` | `pytorch_llama3`, `mlops_llama3` |
+| [Dense Qwen 3.5](#dense-qwen-35) | `workloads.models.qwen35` | `pytorch`, `mlops` | `pytorch_qwen35`, `mlops_qwen35`, `mlops_qwen35_27b` |
+| [OLMoE](#olmoe) | `workloads.models.olmoe` | `pytorch`, `mlops`; optional EP in MLOps | `mlops_olmoe` |
+| [Qwen 3 MoE](#qwen-3-moe) | `workloads.models.qwen3moe` | `mlops`; optional EP constructor | `mlops_qwen3moe` |
+| [Qwen 3.5 MoE](#qwen-35-moe) | `workloads.models.qwen35moe` | `mlops`; optional EP constructor | `mlops_qwen35moe` |
 
-Pure PyTorch implementations provide readable numerical references. MLOps
+A family package holds `Config` in its `config.py` and one module per
+implementation under `implementations/`, each exposing `Model`. Pure PyTorch
+implementations provide readable numerical references. MLOps
 implementations use the separately installed operation library. PyTorch OLMoE
 is available as a model, but has no supplied full-model quickstart preset.
 All three MLOps MoE architectures can enable EP through the same Python
@@ -88,8 +90,9 @@ also depends on dtype, tensor representations, sharding, and runtime resources.
 GQA attention and a dense SwiGLU MLP in every decoder block, with RMSNorm and
 RoPE. Embedding and output-head weights are separate.
 
-Configuration: [Llama3Config](pytorch/llama3.py). Implementations:
-[PyTorch](pytorch/llama3.py), [MLOps](mlops/llama3.py).
+Configuration: [Config](models/llama3/config.py). Implementations:
+[PyTorch](models/llama3/implementations/pytorch.py),
+[MLOps](models/llama3/implementations/mlops.py).
 
 | Option | Meaning / default |
 |---|---|
@@ -102,7 +105,7 @@ Configuration: [Llama3Config](pytorch/llama3.py). Implementations:
 
 `head_dim` is derived as `d_model // n_heads`; the division must be exact.
 All shape fields above `rope_base` are required for a custom configuration.
-Use `Llama3Config.numerical()` or `.throughput()` for ready-made shapes.
+Use `Config.numerical()` or `.throughput()` for ready-made shapes.
 
 ## Dense Qwen 3.5
 
@@ -110,8 +113,9 @@ A repeating hybrid of Gated DeltaNet and gated GQA, followed by a dense SwiGLU
 MLP in every block. `full_attention_interval=4` means three DeltaNet blocks,
 then one full-attention block. This example has no routed experts.
 
-Configuration: [Qwen35Config](pytorch/qwen35.py). Implementations:
-[PyTorch](pytorch/qwen35.py), [MLOps](mlops/qwen35.py).
+Configuration: [Config](models/qwen35/config.py). Implementations:
+[PyTorch](models/qwen35/implementations/pytorch.py),
+[MLOps](models/qwen35/implementations/mlops.py).
 
 | Options | Meaning / defaults |
 |---|---|
@@ -137,8 +141,9 @@ softmax over all experts and selects top-k without renormalizing the selected
 weights. Each expert has a packed gate/up projection and a down projection.
 The configuration contains no shared expert.
 
-Configuration: [OLMoEConfig](pytorch/olmoe.py). Implementations:
-[PyTorch](pytorch/olmoe.py), [MLOps with optional EP](mlops/olmoe.py).
+Configuration: [Config](models/olmoe/config.py). Implementations:
+[PyTorch](models/olmoe/implementations/pytorch.py),
+[MLOps with optional EP](models/olmoe/implementations/mlops.py).
 
 | Options | Meaning / defaults |
 |---|---|
@@ -160,8 +165,9 @@ GQA attention followed by MoE in **every** block. The selected routing
 probabilities sum to one. The default shape follows the published
 [Qwen3-30B-A3B configuration](https://huggingface.co/Qwen/Qwen3-30B-A3B/blob/main/config.json).
 
-Use `workloads.mlops.Qwen3MoE(Qwen3MoEConfig(...))`. Configuration:
-[Qwen3MoEConfig and Qwen3MoE](mlops/qwen3_moe.py).
+Use `workloads.models.qwen3moe.implementations.mlops.Model(Config(...))`.
+Configuration: [Config](models/qwen3moe/config.py); implementation:
+[Model](models/qwen3moe/implementations/mlops.py).
 
 ## Qwen 3.5 MoE
 
@@ -171,14 +177,15 @@ of [Qwen3.5-35B-A3B](https://huggingface.co/Qwen/Qwen3.5-35B-A3B/blob/main/confi
 It has a shared SwiGLU expert with a learned sigmoid gate, zero-centered RMSNorm,
 and normalized top-k routed probabilities.
 
-Use `workloads.mlops.Qwen35MoE(Qwen35MoEConfig(...))`. Configuration:
-[Qwen35MoEConfig and Qwen35MoE](mlops/qwen35_moe.py). The vision encoder and multi-token prediction
-module are outside this text-model example. These constructors initialize model
+Use `workloads.models.qwen35moe.implementations.mlops.Model(Config(...))`.
+Configuration: [Config](models/qwen35moe/config.py); implementation:
+[Model](models/qwen35moe/implementations/mlops.py). The vision encoder and
+multi-token prediction module are outside this text-model example. These constructors initialize model
 state; they do not download or import pretrained Hugging Face checkpoints.
 
 Both Qwen MoE configurations expose the following fields:
 
-| Options | Qwen3MoE default | Qwen35MoE default |
+| Options | Qwen 3 MoE default | Qwen 3.5 MoE default |
 |---|---|---|
 | `n_layers`, `d_model` | 48, 2,048 | 40, 2,048 |
 | `n_heads`, `n_kv_heads`, `head_dim` | 32, 4, 128 | 16, 2, 256 |
@@ -200,7 +207,7 @@ Qwen convention: balanced top-8 routing gives an unweighted auxiliary near 8.
 
 ## GLM-5.3-Flash checkpoint integration
 
-The [GLM-5.3-Flash workload](mlops/glm53_flash/README.md) imports local
+The [GLM-5.3-Flash workload](models/glm53_flash/README.md) imports local
 Hugging Face safetensors directly into an initialized runtime pool. It preserves
 the original FP8 or NVFP4 expert storage and initially uses BF16 GEMMs.
 No permanent converted checkpoint is required. An SSD pool still contains a
@@ -209,7 +216,7 @@ temporary runtime copy.
 Its architecture has 45 layers: 34 KDA, 11 NoPE sparse-MLA, mHC streams, three
 initial dense MLPs, then 288 routed experts/top-8 plus a shared expert.
 This checkpoint integration has its own text/image forward-validation CLI and a
-[quickstart factory](mlops/glm53_flash/quickstart.py), including data-parallel
+[quickstart factory](models/glm53_flash/quickstart.py), including data-parallel
 group construction and optional local transfer sharding. Complete text forwards for both
 checkpoints and the checkpoint vision encoders execute through SSD-backed plans.
 Reduced-model LoRA updates and selected-state checkpoint replay are also tested.
@@ -217,7 +224,7 @@ See the workload README for numerical limits and the current image/text status;
 full-model LoRA training and checkpoint-specific low-precision GEMMs remain
 unqualified.
 
-The normal [GLM-5.3 workload](mlops/glm53/README.md) has a separate 78-layer
+The normal [GLM-5.3 workload](models/glm53/README.md) has a separate 78-layer
 architecture with positional sparse MLA, shared attention indices, ordinary
 residuals, and 256-expert MoE layers. Both quickstarts share rank-16 BF16 LoRA,
 FP32 gradients, BF16 Adam moments, and optional weight/gradient transfer
@@ -283,9 +290,10 @@ The local models support whole-model LoRA through a one-time recipe:
 
 ```python
 from workloads.lora import configure_lora, parameter_report
-from workloads.mlops import Llama3, Llama3Config
+from workloads.models.llama3.config import Config
+from workloads.models.llama3.implementations.mlops import Model
 
-model = Llama3(Llama3Config.numerical())
+model = Model(Config.numerical())
 configure_lora(model, rank=32, alpha=32, head="frozen")
 print(parameter_report(model))
 # Pass model to the same generic Trainer or planning API used for full training.
@@ -327,19 +335,20 @@ than inferring task memory from trainable counts alone.
 
 ## Expert parallelism
 
-EP is a constructor choice for **every MLOps MoE architecture**: `OLMoE`,
-`Qwen3MoE`, and `Qwen35MoE`. Local experts are the default; the pure-PyTorch
+EP is a constructor choice for **every MLOps MoE architecture**: OLMoE,
+Qwen 3 MoE and Qwen 3.5 MoE. Local experts are the default; the pure-PyTorch
 implementations remain independent references. Model dimensions and attention
 structure do not change when enabling EP.
 
 ```python
-from workloads.mlops import OLMoE, OLMoEConfig
+from workloads.models.olmoe.config import Config
+from workloads.models.olmoe.implementations.mlops import Model
 
-config = OLMoEConfig.throughput()
-model = OLMoE(config)  # local experts
+config = Config.throughput()
+model = Model(config)  # local experts
 
 # After creating the process group, on the rank's selected compute device:
-model = OLMoE(
+model = Model(
     config,
     ep_group=group,
     token_capacity=32768,
@@ -348,8 +357,7 @@ model = OLMoE(
 )
 ```
 
-The same keyword arguments work with `Qwen3MoE(config, ...)` and
-`Qwen35MoE(config, ...)`:
+The same keyword arguments work with the two Qwen MoE families' `Model`:
 
 | Option | Meaning / default |
 |---|---|
@@ -377,7 +385,7 @@ Failed construction releases the resources it created. Ordinary CPU/meta model
 construction does not load MoonEP or Quack kernels.
 
 The optional EP setup is shared in
-[mlops/_expert_parallel.py](mlops/_expert_parallel.py); it is temporary
+[models/shared/expert_parallel.py](models/shared/expert_parallel.py); it is temporary
 construction state, not part of the model or the generic training API. Routing
 normalization, shared experts, and auxiliary-loss definitions remain properties
 of each architecture. In local mode, ordinary model dtype controls the router
@@ -432,20 +440,22 @@ Customize a preset without editing the model definition:
 
 ```python
 from dataclasses import replace
-from workloads.mlops import Llama3, Llama3Config
+from workloads.models.llama3.config import Config
+from workloads.models.llama3.implementations.mlops import Model
 
-config = replace(Llama3Config.numerical(), n_layers=4, max_seq_len=2048)
-model = Llama3(config)  # ordinary initialized PyTorch module
+config = replace(Config.numerical(), n_layers=4, max_seq_len=2048)
+model = Model(config)  # ordinary initialized PyTorch module
 ```
 
 Inspect a large architecture without allocating its weights:
 
 ```python
 import torch
-from workloads.mlops import Qwen35MoE, Qwen35MoEConfig
+from workloads.models.qwen35moe.config import Config
+from workloads.models.qwen35moe.implementations.mlops import Model
 
 with torch.device("meta"):
-    model = Qwen35MoE(Qwen35MoEConfig())
+    model = Model(Config())
 print(sum(p.numel() for p in model.parameters()))  # 34,660,610,688
 ```
 
@@ -455,11 +465,11 @@ A saved text recipe specifies the constructor, shape and dtype explicitly:
 {
   "model": {
     "@call": "workloads.recipes.text.models:build_on_meta",
-    "model": "@workloads.mlops:Llama3",
+    "model": "@workloads.models.llama3.implementations.mlops:Model",
     "dtype": "bfloat16",
     "config": {
       "@call": "workloads.recipes.text.models:config_preset",
-      "preset": "@workloads.mlops:Llama3Config.numerical",
+      "preset": "@workloads.models.llama3.config:Config.numerical",
       "max_seq_len": 2048
     }
   }
@@ -491,21 +501,18 @@ resources. Text `--distributed` presets use replicated data parallelism.
 
 | Path | Responsibility |
 |---|---|
-| [pytorch/](pytorch/) | Readable model definitions and shared dense/OLMoE shape dataclasses |
-| [mlops/](mlops/) | Corresponding definitions using MLOps operations |
-| [mlops/olmoe.py](mlops/olmoe.py) | OLMoE architecture, with local or EP experts |
-| [mlops/qwen3_moe.py](mlops/qwen3_moe.py) | Qwen 3 MoE public model and configuration |
-| [mlops/qwen35_moe.py](mlops/qwen35_moe.py) | Qwen 3.5 MoE public model and configuration |
-| [mlops/_qwen_moe/](mlops/_qwen_moe/) | Private initialization, mixers, experts, and decoder code shared by the two Qwen families |
-| [mlops/_expert_parallel.py](mlops/_expert_parallel.py) | Shared EP construction, ownership and routing helpers for all MLOps MoE models |
-| [common/](common/) | Shared reference math, rotary tables, packing metadata and loss utilities |
+| [models/](models/) | One package per family: `config.py`, the checkpoint reader where one exists, a README and `implementations/` with one module per implementation |
+| [models/shared/](models/shared/) | Code families share: reference decoder math, rotary tables, packing metadata and loss helpers, the mlops norm containers, the Gated DeltaNet mixer, EP construction, the Qwen mixture blocks and the GLM building blocks |
+| [models/shared/qwen_moe/](models/shared/qwen_moe/) | Initialization, mixers, experts and the decoder shared by the two Qwen MoE families |
+| [models/shared/expert_parallel.py](models/shared/expert_parallel.py) | Shared EP construction, ownership and routing helpers for all MLOps MoE models |
+| [lora/](lora/) | Model-family LoRA targeting over the reusable projections in MLOps |
 | [recipes/](recipes/) | Caller-side model construction, objectives and data composition |
 | [precision.py](precision.py) | Supplied workload precision configuration |
 | [full_model.py](full_model.py) | Reproducible full-model specifications and construction |
 | [training/configs/](../training/configs/) | Concrete example training requests |
 
-The extra private Qwen files factor code shared by two architectures, including
-DeltaNet and full attention. Public family modules remain small; adding EP does
+The shared Qwen package factors code two architectures use, including
+DeltaNet and full attention. Family packages remain small; adding EP does
 not require copying the decoder or changing the trainer/planner.
 
 Reusable LoRA modules belong in MLOps. Model-family target selection belongs

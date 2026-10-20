@@ -4,7 +4,10 @@ import pytest
 import torch
 
 from workloads.full_model import build_model, initialize_model, throughput_spec
-from workloads.mlops import Qwen3MoE, Qwen3MoEConfig, Qwen35MoE, Qwen35MoEConfig
+from workloads.models.qwen3moe.config import Config as Qwen3MoEConfig
+from workloads.models.qwen3moe.implementations.mlops import Model as Qwen3MoE
+from workloads.models.qwen35moe.config import Config as Qwen35MoEConfig
+from workloads.models.qwen35moe.implementations.mlops import Model as Qwen35MoE
 
 
 def tiny(config):
@@ -69,7 +72,9 @@ def test_published_presets_construct_on_meta(family, count):
 
 
 @pytest.mark.parametrize(
-    "cls,config", [(Qwen3MoE, Qwen3MoEConfig()), (Qwen35MoE, Qwen35MoEConfig())]
+    "cls,config",
+    [(Qwen3MoE, Qwen3MoEConfig()), (Qwen35MoE, Qwen35MoEConfig())],
+    ids=["qwen3moe", "qwen35moe"],
 )
 def test_meta_initialization_and_packed_boundaries(cls, config):
     c = tiny(config)
@@ -212,7 +217,9 @@ def _copy_reference(model, reference):
 
 
 @pytest.mark.parametrize(
-    "cls,config", [(Qwen3MoE, Qwen3MoEConfig()), (Qwen35MoE, Qwen35MoEConfig())]
+    "cls,config",
+    [(Qwen3MoE, Qwen3MoEConfig()), (Qwen35MoE, Qwen35MoEConfig())],
+    ids=["qwen3moe", "qwen35moe"],
 )
 def test_logits_and_all_parameter_gradients_match_transformers(
     cls, config, monkeypatch

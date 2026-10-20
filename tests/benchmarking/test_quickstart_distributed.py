@@ -93,7 +93,7 @@ def test_sharding_flags_reach_supporting_factories(monkeypatch):
 def test_glm_dp_objective_is_scaled_once_and_data_differs_between_ranks(monkeypatch):
     from contextlib import nullcontext
 
-    from workloads.mlops.glm53_flash import quickstart as glm
+    from workloads.models.glm53_flash import quickstart as glm
     from workloads.recipes.text import distributed
 
     monkeypatch.setattr(torch.distributed, "is_initialized", lambda: True)

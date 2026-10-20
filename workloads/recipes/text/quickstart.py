@@ -10,8 +10,8 @@ from typing import Any, cast
 
 import torch
 
-from workloads.common.training import LEARNING_RATE
 from workloads.full_model import build_model, full_model_objective, throughput_spec
+from workloads.models.shared.training import LEARNING_RATE
 
 from .geometry import search_geometries
 

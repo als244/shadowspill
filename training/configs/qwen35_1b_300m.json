@@ -8,11 +8,11 @@
   ],
   "model": {
     "@call": "workloads.recipes.text.models:build_on_meta",
-    "model": "@workloads.mlops:Qwen35",
+    "model": "@workloads.models.qwen35.implementations.mlops:Model",
     "dtype": "bfloat16",
     "config": {
       "@call": "workloads.recipes.text.models:config_preset",
-      "preset": "@workloads.mlops:Qwen35Config.numerical",
+      "preset": "@workloads.models.qwen35.config:Config.numerical",
       "max_seq_len": 2048
     }
   },

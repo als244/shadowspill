@@ -21,7 +21,7 @@ from shadowspill.memory import device, pinned_host, transfer_route
 from shadowspill.planner import GenericPlanningOptions, SearchOptions
 from shadowspill.pytorch import Runtime, plan_step
 from shadowspill.ssd import SSDPool
-from workloads.common.training import LEARNING_RATE
+from workloads.models.shared.training import LEARNING_RATE
 
 from ..model_state import import_case_model, release_case_model
 from ..plan_record import write_plan_record

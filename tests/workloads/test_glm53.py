@@ -8,10 +8,14 @@ import torch
 
 pytest.importorskip("mlops")
 
-from workloads.mlops.glm53 import Config, LanguageModel
-from workloads.mlops.glm53.attention import SparseMLA, positions_for, rotate
-from workloads.mlops.glm53.hf_config import from_huggingface
-from workloads.mlops.glm53.quickstart import experiment
+from workloads.models.glm53.config import Config, from_huggingface
+from workloads.models.glm53.implementations.mlops import Model
+from workloads.models.glm53.implementations.mlops.attention import (
+    SparseMLA,
+    positions_for,
+    rotate,
+)
+from workloads.models.glm53.quickstart import experiment
 
 
 def test_normal_glm_architecture_and_lora_defaults_are_distinct_from_flash():
@@ -30,7 +34,7 @@ def test_normal_glm_architecture_and_lora_defaults_are_distinct_from_flash():
         "shared",
         "full",
     )
-    model = LanguageModel(Config.tiny(lora_rank=16), device="meta")
+    model = Model(Config.tiny(lora_rank=16), device="meta")
     assert not hasattr(model.layers[0], "attn_hc")
     assert model.layers[1].self_attn.indexer is None
     assert model.layers[0].self_attn.kv_a_proj_with_mqa.out_features == 128
@@ -141,7 +145,7 @@ def test_normal_model_compiles_with_all_lora_gradients_and_shared_indices(storag
     if storage == "fp8_block" and torch.cuda.get_device_capability()[0] not in (9, 10):
         pytest.skip("FP8 expert LoRA uses SonicMoE on SM90/SM100")
     torch.manual_seed(92)
-    model = LanguageModel(
+    model = Model(
         # Include every key/expert here so BF16 rounding cannot switch a
         # discrete route between the two complete forward passes. Selection
         # correctness, causal packing and subset keys are tested separately.

@@ -8,11 +8,11 @@
   ],
   "model": {
     "@call": "workloads.recipes.text.models:build_on_meta",
-    "model": "@workloads.mlops:Llama3",
+    "model": "@workloads.models.llama3.implementations.mlops:Model",
     "dtype": "bfloat16",
     "config": {
       "@call": "workloads.recipes.text.models:config_preset",
-      "preset": "@workloads.mlops:Llama3Config.numerical",
+      "preset": "@workloads.models.llama3.config:Config.numerical",
       "max_seq_len": 2048
     }
   },
