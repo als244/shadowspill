@@ -1,0 +1,11 @@
+{
+  "schema_version": 1,
+  "gpus": 1,
+  "python": {"fsdp2": "baselines", "deepspeed": "baselines", "shadowspill": "shadowspill"},
+  "case_timeout": 3600,
+  "sweeps": [
+    {"harness": "fsdp2", "config": "baselines/fsdp2/configs/rtx5090_llama3-8b.json"},
+    {"harness": "deepspeed", "config": "baselines/deepspeed/configs/rtx5090_llama3-8b.json"},
+    {"harness": "shadowspill", "config": "baselines/shadowspill/configs/rtx5090_llama3-8b.json"}
+  ]
+}

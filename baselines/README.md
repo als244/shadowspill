@@ -1,12 +1,13 @@
 # Standalone training baselines
 
 This directory holds the training systems ShadowSpill is measured against,
-over the same model definitions (`workloads/models`), the same objective,
-geometry and precision contract, and one result row schema, so a report can
-draw every system's throughput against its memory on one figure. None of
-them imports or runs ShadowSpill's planner, trainer, simulator or allocator.
-Rows, traces and sweep outputs go under the output directory a sweep or a
-harness is given, outside the tracked source files.
+and ShadowSpill itself through its public training API, over the same model
+definitions (`workloads/models`), the same objective, geometry and precision
+contract, and one result row schema, so a report can draw every system's
+throughput against its memory on one figure. No other harness imports or
+runs ShadowSpill's planner, trainer, simulator or allocator. Rows, traces
+and sweep outputs go under the output directory a sweep or a harness is
+given, outside the tracked source files.
 
 ## Environment
 
@@ -14,9 +15,14 @@ harness is given, outside the tracked source files.
 harness here runs in: ShadowSpill built from this checkout with mlops and its
 providers (through `scripts/setup.sh`), then DeepSpeed, torchtitan and torchao
 at the versions verified with PyTorch 2.13. It checks that every harness entry
-point imports and records the installed packages in
+point imports, gives the environment its own copy of the compiler
+toolkit's tree (with the NCCL headers PyTorch links in place of the
+toolkit's, for the DeepSpeed extensions that include them) and records the
+installed packages in
 `baselines/scripts/environment.lock.json`. The Megatron-Core/Bridge and NeMo
-AutoModel recipe harnesses have their own pinned environments.
+AutoModel recipe harnesses have their own pinned environments. The ShadowSpill
+harness runs in the `shadowspill` environment of `scripts/setup.sh` or in
+this one.
 
 ## Shared layer
 
@@ -30,6 +36,14 @@ measurement contract), `provenance` (sources, packages, hardware and the
 kernels that ran) and `data` (synthetic tokens per rank, or windows of a
 pre-tokenized corpus).
 
+## Precision
+
+[`PRECISION.md`](PRECISION.md) is the precision contract across the
+harnesses: what the model, master, gradient and optimizer state dtypes and
+the roundings mean, where each harness creates, accumulates over
+microbatches and reduces across ranks its gradients and at which dtype, and
+which combinations each one honors or refuses.
+
 ## Sweeps
 
 `python -m baselines.sweep --harness <name> --config <matrix.json> --output <dir>
@@ -42,6 +56,17 @@ device memory is a row on the frontier's boundary and the sweep continues;
 any other failure stops it for diagnosis unless `--continue-on-error`. A
 harness joins by exposing `Settings`, `command` and `SOURCE_PATHS` in
 `baselines/<name>/settings.py`.
+
+## Experiments
+
+`python -m baselines.experiment --spec <experiment.json> [--output <dir>]`
+runs the sweeps of several harnesses in order on one node, each through the
+sweep above as its own process with its own interpreter (a path, or the
+name of an environment beside the running one), resuming any sweep whose
+manifest exists and continuing past failures, then draws the report over
+every sweep into `<dir>/report`; `experiment.json` records the spec and
+each sweep's outcome. `baselines/experiments/` holds the specs of the
+rounds; `--dry-run` writes the plan and the commands without launching.
 
 ## Reports
 
@@ -69,8 +94,9 @@ and a corpus whose vocabulary exceeds the model's is refused.
 | Directory | Implementation | Status |
 |---|---|---|
 | [`moe_layer/`](moe_layer/README.md) | One Qwen MoE router/expert layer: SonicMoE DP1 versus QuackMoE EP8; BF16/FP8 and full/LoRA | 48 H100 forward/backward cases validated; four-plot report and raw-sample audit complete |
-| [`fsdp2/`](fsdp2/README.md) | Native PyTorch FSDP2 over any catalog model, full or LoRA, with recompute, both activation offloaders, CPU offload, the torchao scenarios, a corpus and a checkpoint; local experts, no EP | The tiny qualification matrix passes across the five families against the eager reference; multi-rank bring-up pending |
-| [`deepspeed/`](deepspeed/README.md) | DeepSpeed ZeRO stages 1 to 3 over any catalog model, full or LoRA, with optimizer and parameter offload, activation checkpointing and CPU checkpointing, a corpus and a checkpoint | Harness and tiny qualification matrix; bring-up pending |
+| [`shadowspill/`](shadowspill/README.md) | ShadowSpill through `Trainer` over the `ShadowSpill` backend, over any catalog model, full or LoRA, with the device and spill budgets (pinned host memory) as the configuration, a corpus and a checkpoint | The tiny qualification matrix passes against the compiled reference across the families it runs (`PRECISION.md`); multi-rank bring-up pending |
+| [`fsdp2/`](fsdp2/README.md) | Native PyTorch FSDP2 over any catalog model, full or LoRA, with recompute, both activation offloaders, CPU offload, the torchao scenarios, a corpus and a checkpoint; local experts, no EP | The tiny qualification matrix passes against the compiled reference across the families it runs (`PRECISION.md`); multi-rank bring-up pending |
+| [`deepspeed/`](deepspeed/README.md) | DeepSpeed ZeRO stages 1 to 3 over any catalog model, full or LoRA, with optimizer and parameter offload, activation checkpointing and CPU checkpointing, DeepCompile with its offloads, a corpus and a checkpoint | The tiny qualification matrix passes against the compiled reference across the families it runs, and under DeepCompile (`PRECISION.md`); multi-rank bring-up pending |
 | [`automodel/`](automodel/README.md) | Pinned NVIDIA NeMo AutoModel FSDP2 + EP8, TE/DeepEP | Derived-case generator ready; environment/GPU qualification pending |
 | [`megatron_core/`](megatron_core/README.md) | Official Qwen model through NVIDIA Megatron Bridge / Megatron-Core | Pinned model/recipe and topology-aware command generator; environment/GPU qualification pending |
 | [`references/`](references/automodel.json) | Unmodified NVIDIA AutoModel YAML, source commit and digest | Preserved for upstream reproduction |
@@ -90,11 +116,11 @@ not offload itself.
 | Harness | Parameters, gradients, optimizer state | Optimizer state alone | Activations |
 |---|---|---|---|
 | `fsdp2/` | `--offload cpu`: FSDP2's `CPUOffloadPolicy` (shards and state on the host, the step on CPU) | `--optimizer cpu-offload`: torchao's `CPUOffloadOptimizer` with the shards on the device | `--activation-offload cpu` (PyTorch's `offload_wrapper`) or `overlapped` (torchtune's stream-overlapped offloader, vendored); both beside `--recompute` |
-| `deepspeed/` | `--offload-param cpu\|nvme` (ZeRO-3 parameters between uses) with `--offload-optimizer` | `--offload-optimizer cpu\|nvme` (ZeRO-2 and 3, DeepSpeed's CPU AdamW) | `--activation-offload cpu`: DeepSpeed's CPU checkpointing of recomputed blocks' inputs |
+| `deepspeed/` | `--offload-param cpu\|nvme` (ZeRO-3 parameters between uses) with `--offload-optimizer`; under DeepCompile `--deepcompile-offload parameters` | `--offload-optimizer cpu\|nvme` (ZeRO-2 and 3, DeepSpeed's CPU AdamW); under DeepCompile `--deepcompile-offload optimizer-states` | `--activation-offload cpu`: DeepSpeed's CPU checkpointing of recomputed blocks' inputs through its asynchronous offload engine; under DeepCompile `--deepcompile-offload activations`, the saved activations as the memory budget requires |
 | `megatron_core/` | `--cpu-offload-layers N` with weights (Megatron-Core's layer-level `cpu_offloading`; not beside recomputation or pipeline parallelism) | `--optimizer-cpu-offload` (Megatron-Core's `optimizer_cpu_offload`, a fraction of the state) | `--cpu-offload-layers N` with `--no-cpu-offload-weights` |
 | `automodel/` | `--cpu-offload`: FSDP2's `CPUOffloadPolicy` through the recipe's `distributed.offload_policy` | none in AutoModel | none in AutoModel (activation checkpointing only) |
 | torchtitan (planned) | `training.enable_cpu_offload`: FSDP2's `CPUOffloadPolicy` | none in torchtitan | none in torchtitan outside its experiments (activation checkpointing only) |
-| ShadowSpill (planned) | the execution and spill budgets and the SSD spill of its planner stand in for all three columns | | |
+| `shadowspill/` | `--execution-gib` and `--spill-gib` (pinned host memory): the planner keeps, recomputes or spills weights, gradients, optimizer state and activations within the budgets, so the budgets stand in for all three columns | | |
 
 ## Measurement contract
 
@@ -106,9 +132,10 @@ not offload itself.
   optimizer settings, memory peaks, and failures. Do not silently lower a batch
   size or change a precision when a configuration fails.
 - Every harness exposes the precision contract of `baselines/common/precision.py`
-  and states what it honors; by default compute is bfloat16 with float32
-  masters, gradients and moments, and a request a harness cannot honor is
-  refused, never substituted.
+  and states what it honors; by default compute and gradients are bfloat16
+  with float32 masters and moments (FSDP2, which sums gradients into its
+  float32 masters, defaults to float32 gradients), and a request a harness
+  cannot honor is refused, never substituted.
 - Useful work is counted from the model as built by the convention in
   `baselines/common/models.py`; recomputation, the optimizer and communication
   are not credited.
