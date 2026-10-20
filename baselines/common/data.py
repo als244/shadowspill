@@ -31,8 +31,8 @@ def synthetic_tokens(vocabulary: int, count: int, *, seed: int, rank: int) -> An
     generator = torch.Generator().manual_seed(seed * 1_000_003 + rank)
     shape = (1, count)
     return (
-        torch.randint(vocabulary, shape, generator=generator),
-        torch.randint(vocabulary, shape, generator=generator),
+        torch.randint(vocabulary, shape, generator=generator, device="cpu"),
+        torch.randint(vocabulary, shape, generator=generator, device="cpu"),
     )
 
 

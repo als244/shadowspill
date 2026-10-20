@@ -334,11 +334,13 @@ def build_on_meta(
     *,
     dtype: str | None = None,
     lora: Mapping[str, Any] | None = None,
+    device: str = "meta",
     **changes: Any,
 ) -> Any:
-    """A catalog model declared on ``meta``: structure in ``dtype``, no
-    values, LoRA applied when ``lora`` names its options, ``changes`` on
-    the entry's configuration. The form a saved training recipe names."""
+    """A catalog model declared on ``meta`` (or built with values on another
+    ``device``): structure in ``dtype``, LoRA applied when ``lora`` names
+    its options, ``changes`` on the entry's configuration. The form a saved
+    training recipe names."""
 
     from .construction import build_on_meta as declare
 
@@ -347,6 +349,7 @@ def build_on_meta(
         item.model_class(implementation),
         dtype=dtype,
         lora=None if lora is None else dict(lora),
+        device=device,
         config=item.config(**changes),
     )
 

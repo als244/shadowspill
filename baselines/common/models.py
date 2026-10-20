@@ -115,12 +115,13 @@ class ModelRequest:
             accumulation_count=geometry.accumulation,
         )
 
-    def build(self, *, dtype: str) -> Any:
-        """The model on ``meta`` at ``dtype``, with LoRA applied in that mode
-        so the trainable set is fixed before any harness shards or
-        materializes it; the factors are created at ``dtype`` too, unless
-        the LoRA options say otherwise, so they follow the same precision
-        contract as every other trained weight."""
+    def build(self, *, dtype: str, device: str = "meta") -> Any:
+        """The model on ``meta`` (or built with values on ``device``) at
+        ``dtype``, with LoRA applied in that mode so the trainable set is
+        fixed before any harness shards or materializes it; the factors are
+        created at ``dtype`` too, unless the LoRA options say otherwise, so
+        they follow the same precision contract as every other trained
+        weight."""
 
         lora = None
         if self.mode == "lora":
@@ -130,6 +131,7 @@ class ModelRequest:
             self.implementation,
             dtype=dtype,
             lora=lora,
+            device=device,
             **dict(self.config),
         )
 

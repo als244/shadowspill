@@ -381,10 +381,17 @@ def main(argv=None):
         microbatches = geometry.accumulation
         reference = None
         if settings.verify_reference:
-            from baselines.fsdp2.reference import Reference
+            from baselines.fsdp2.reference import Access, Reference
 
             reference = Reference(
-                model, request, geometry, precision, settings, device, world
+                model,
+                request,
+                geometry,
+                precision,
+                settings,
+                device,
+                world,
+                access=Access(optimizer, device),
             )
         cycles, losses, head_losses, wrapped = [], [], [], 0
         evidence = None

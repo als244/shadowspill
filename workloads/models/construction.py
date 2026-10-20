@@ -21,26 +21,30 @@ def build_on_meta(
     model: Callable[..., nn.Module],
     dtype: str | None = None,
     lora: dict[str, Any] | None = None,
+    device: str = "meta",
     **arguments: Any,
 ) -> nn.Module:
-    """``model(**arguments)`` built on ``meta``, declaring its parameters in
-    ``dtype`` -- a ``torch`` dtype name such as ``"bfloat16"`` -- or in the
-    current default dtype."""
+    """``model(**arguments)`` built on ``device`` (``meta`` unless another is
+    given, so a run can declare shapes without values), declaring its
+    parameters in ``dtype`` -- a ``torch`` dtype name such as
+    ``"bfloat16"`` -- or in the current default dtype."""
 
+    # The device is a context, pushed and popped as it was: asking PyTorch
+    # for the default device allocates a probe tensor, which a construction
+    # context such as DeepSpeed's zero.Init places on the accelerator, and
+    # restoring that would leave every later default allocation there.
     previous_dtype = torch.get_default_dtype()
-    previous_device = torch.get_default_device()
     if dtype is not None:
         torch.set_default_dtype(getattr(torch, dtype))
-    torch.set_default_device("meta")
     try:
-        result = model(**arguments)
-        if lora is not None:
-            from workloads.lora import configure_lora  # a caller-side recipe
+        with torch.device(device):
+            result = model(**arguments)
+            if lora is not None:
+                from workloads.lora import configure_lora  # a caller-side recipe
 
-            result = configure_lora(result, **lora)
+                result = configure_lora(result, **lora)
         return result
     finally:
-        torch.set_default_device(previous_device)
         torch.set_default_dtype(previous_dtype)
 
 

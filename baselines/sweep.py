@@ -19,14 +19,14 @@ every case, and a resume must match it exactly, so the rows under one output
 are comparable.
 
 A harness is the module ``baselines.<harness>.settings``: its ``Settings``
-(``from_dict``, ``normalized``, ``arguments`` and ``describe``), its
-``command`` and the ``SOURCE_PATHS`` whose digests identify its code.
+(``from_dict``, ``as_dict``, ``normalized``, ``arguments`` and
+``describe``), its ``command`` and the ``SOURCE_PATHS`` whose digests
+identify its code.
 """
 
 from __future__ import annotations
 
 import argparse
-import dataclasses
 import datetime
 import fcntl
 import hashlib
@@ -107,7 +107,7 @@ def expand(specification, world_size, settings_type):
     for override in overrides:
         settings = settings_type.from_dict({**defaults, **override})
         settings = settings.normalized(world_size)
-        identity = digest(dataclasses.asdict(settings))[:12]
+        identity = digest(settings.as_dict())[:12]
         if identity in seen:
             continue
         seen.add(identity)
@@ -223,7 +223,7 @@ def report(output, cases, harness, world_size):
     ]
     for name, settings in cases:
         outcome = latest(output / "cases" / name)
-        rows.append({"case": name, "settings": dataclasses.asdict(settings), **outcome})
+        rows.append({"case": name, "settings": settings.as_dict(), **outcome})
         status = outcome["status"]
         eligible = status == "completed" and outcome.get("performance_result", False)
         if status == "completed" and not eligible:
@@ -386,7 +386,7 @@ def main(argv=None):
             "source": source_identity(["baselines/sweep.py", *module.SOURCE_PATHS]),
             "environment": environment_identity(args.python),
             "cases": [
-                {"name": name, "settings": dataclasses.asdict(settings)}
+                {"name": name, "settings": settings.as_dict()}
                 for name, settings in cases
             ],
         }
@@ -401,7 +401,7 @@ def main(argv=None):
             write_json(path, manifest)
         for name, settings in cases:
             case = output / "cases" / name
-            write_json(case / "config.json", dataclasses.asdict(settings))
+            write_json(case / "config.json", settings.as_dict())
             first = module.command(
                 args.python, args.gpus, settings, case / "attempt-001"
             )
