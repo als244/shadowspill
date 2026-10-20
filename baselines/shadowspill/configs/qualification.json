@@ -1,0 +1,73 @@
+{
+  "schema_version": 1,
+  "defaults": {
+    "verify_reference": true,
+    "grad_dtype": null,
+    "sequence_length": 64,
+    "tokens_per_step": 1024,
+    "tokens_per_microbatch": 128,
+    "warmup_steps": 1,
+    "steps": 2,
+    "cpu_threads": 2,
+    "execution_gib": 2,
+    "spill_gib": 2
+  },
+  "cases": [
+    {
+      "model": "llama3-tiny"
+    },
+    {
+      "model": "llama3-tiny",
+      "tokens_per_microbatch": 1024
+    },
+    {
+      "model": "llama3-tiny",
+      "mode": "lora",
+      "lora": {
+        "rank": 4
+      }
+    },
+    {
+      "model": "llama3-tiny",
+      "implementation": "pytorch"
+    },
+    {
+      "model": "llama3-tiny",
+      "model_config": {
+        "tied_embeddings": true
+      }
+    },
+    {
+      "model": "llama3-tiny",
+      "master_dtype": null,
+      "grad_dtype": null,
+      "opt_state_dtype": "parameter",
+      "opt_state_rounding": "nearest"
+    },
+    {
+      "model": "llama3-tiny",
+      "grad_dtype": "bfloat16",
+      "round_accumulation_once": true
+    },
+    {
+      "model": "qwen35-tiny"
+    },
+    {
+      "model": "olmoe-tiny"
+    },
+    {
+      "model": "qwen3moe-tiny"
+    },
+    {
+      "model": "llama3-tiny",
+      "model_dtype": "float32",
+      "master_dtype": null,
+      "grad_dtype": null,
+      "opt_state_dtype": "parameter"
+    },
+    {
+      "model": "llama3-tiny",
+      "model_dtype": "float16"
+    }
+  ]
+}
