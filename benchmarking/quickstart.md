@@ -145,7 +145,7 @@ Geometry:
 
 | Argument | Meaning | Default |
 |---|---|---|
-| `--model` | A catalog name from [the model catalog](../workloads/MODELS.md#architecture-index): `llama3-8b`, `qwen35-9b`, `qwen35-27b`, `olmoe-7b-a1b`, `qwen3moe-30b-a3b`, `qwen35moe-35b-a3b`, a family's `numerical` or `tiny` shape, or a GLM entry, which runs through its own factory | required unless `--factory` or `--reproduce` |
+| `--model` | A catalog name from [the model catalog](../workloads/MODELS.md#architecture-index): `llama3-8b`, `qwen3-8b`, `qwen3-32b`, `qwen35-9b`, `qwen35-27b`, `olmoe-7b-a1b`, `qwen3moe-30b-a3b`, `qwen35moe-35b-a3b`, a family's `numerical` or `tiny` shape, or a GLM entry, which runs through its own factory | required unless `--factory` or `--reproduce` |
 | `--implementation` | `mlops` or `pytorch`, which implementation builds the model | `mlops` |
 | `--model-config` | JSON field overrides on the entry's configuration, such as `'{"n_layers": 4}'` | none |
 | `--sequence-length` | Tokens per sequence | the model's retained value |

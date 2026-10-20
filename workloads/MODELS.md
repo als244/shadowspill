@@ -21,14 +21,16 @@ construction, trainable parameters, and data semantics belong to the caller.
 
 A catalog name is `<family>-<size>`: `qwen35-9b` is the **dense** Qwen 3.5
 architecture at Qwen3.5-9B's shape and `qwen35-27b` the same architecture at
-Qwen3.5-27B's; `qwen3moe-30b-a3b` is **Qwen 3 with MoE** and
-`qwen35moe-35b-a3b` **Qwen 3.5 with MoE**. The implementation is chosen beside
-the name (`--implementation pytorch|mlops`, `mlops` by default), and
-dimensions stay configurable: a name is a starting shape, not a constraint.
+Qwen3.5-27B's; `qwen3-8b` is **dense Qwen 3** at Qwen3-8B's shape,
+`qwen3moe-30b-a3b` **Qwen 3 with MoE** and `qwen35moe-35b-a3b` **Qwen 3.5
+with MoE**. The implementation is chosen beside the name (`--implementation
+pytorch|mlops`, `mlops` by default), and dimensions stay configurable: a name
+is a starting shape, not a constraint.
 
 | Architecture | Family package | Implementations | Catalog names |
 |---|---|---|---|
 | [Llama 3](models/llama3/README.md) | `workloads.models.llama3` | `pytorch`, `mlops` | `llama3-numerical`, `llama3-tiny`, `llama3-1b`, `llama3-8b` |
+| [Dense Qwen 3](models/qwen3/README.md) | `workloads.models.qwen3` | `pytorch`, `mlops` | `qwen3-tiny`, `qwen3-1.7b`, `qwen3-8b`, `qwen3-32b` |
 | [Dense Qwen 3.5](models/qwen35/README.md) | `workloads.models.qwen35` | `pytorch`, `mlops` | `qwen35-numerical`, `qwen35-tiny`, `qwen35-2b`, `qwen35-9b`, `qwen35-27b` |
 | [OLMoE](models/olmoe/README.md) | `workloads.models.olmoe` | `pytorch`, `mlops`; optional EP in MLOps | `olmoe-numerical`, `olmoe-tiny`, `olmoe-7b-a1b` |
 | [Qwen 3 MoE](models/qwen3moe/README.md) | `workloads.models.qwen3moe` | `mlops`; optional EP constructor | `qwen3moe-tiny`, `qwen3moe-30b-a3b` |
@@ -67,6 +69,10 @@ They are **total parameters**, not the subset used by one routed token.
 | `llama3-tiny` | 2 | 128 | 4 / 2 | 32 | 256 | — | 512 | 426,624 |
 | `llama3-1b` | 16 | 2,048 | 32 / 8 | 64 | 8,192 | — | 128,256 | 1,235,814,400 |
 | `llama3-8b` | 32 | 4,096 | 32 / 8 | 128 | 14,336 | — | 128,256 | 8,030,261,248 |
+| `qwen3-tiny` | 2 | 128 | 4 / 2 | 64 | 256 | — | 512 | 525,184 |
+| `qwen3-1.7b` | 28 | 2,048 | 16 / 8 | 128 | 6,144 | — | 151,936 | 1,720,574,976 |
+| `qwen3-8b` | 36 | 4,096 | 32 / 8 | 128 | 12,288 | — | 151,936 | 8,190,735,360 |
+| `qwen3-32b` | 64 | 5,120 | 64 / 8 | 128 | 25,600 | — | 151,936 | 32,762,123,264 |
 | `qwen35-numerical` | 8 | 1,536 | 12 / 4 | 128 | 4,608 | — | 248,320 | 1,006,955,408 |
 | `qwen35-tiny` | 2 | 128 | 4 / 2 | 32 | 256 | — | 512 | 461,544 |
 | `qwen35-2b` | 24 | 2,048 | 8 / 2 | 256 | 6,144 | — | 248,320 | 1,881,825,088 |
@@ -80,8 +86,10 @@ They are **total parameters**, not the subset used by one routed token.
 | `qwen35moe-tiny` | 2 | 128 | 4 / 2 | 32 | 128 routed + 128 shared | 8 / 2 | 1,024 | 1,283,048 |
 | `qwen35moe-35b-a3b` | 40 | 2,048 | 16 / 2 | 256 | 512 routed + 512 shared | 256 / 8 | 248,320 | 34,660,610,688 |
 
-The dense Qwen shapes use a full-attention block every fourth layer (every
-second in `qwen35-tiny`). Their DeltaNet key/value head counts are 6/12
+Dense Qwen 3 has full attention in every block; in `qwen3-tiny` and
+`qwen3-32b` its query heads together are wider than the model. The dense
+Qwen 3.5 shapes use a full-attention block every fourth layer (every second
+in `qwen35-tiny`). Their DeltaNet key/value head counts are 6/12
 (`qwen35-numerical`), 2/4 (`qwen35-tiny`), 16/16 (`qwen35-2b`), 16/32
 (`qwen35-9b`) and 16/48 (`qwen35-27b`), with 128-wide heads (32 in `tiny`)
 and a width-4 convolution. `qwen35moe-35b-a3b` uses 16/32 DeltaNet heads of
@@ -103,6 +111,7 @@ the model, parameter by parameter, through `config.from_huggingface` and
 | Family | What it is |
 |---|---|
 | [Llama 3](models/llama3/README.md) | GQA attention and a dense SwiGLU MLP in every block; `pytorch` and `mlops` |
+| [Dense Qwen 3](models/qwen3/README.md) | GQA attention with per-head query and key norms and a dense SwiGLU MLP in every block; `pytorch` and `mlops` |
 | [Dense Qwen 3.5](models/qwen35/README.md) | A repeating hybrid of Gated DeltaNet and gated GQA with dense MLPs; `pytorch` and `mlops` |
 | [OLMoE](models/olmoe/README.md) | GQA attention and routed SwiGLU experts under a softmax router; `pytorch` and `mlops`, optional EP |
 | [Qwen 3 MoE](models/qwen3moe/README.md) | GQA attention and routed experts in every block; `mlops`, optional EP |
@@ -165,11 +174,12 @@ trainable = {name: p for name, p in model.named_parameters() if p.requires_grad}
 print("trainable parameters:", sum(p.numel() for p in trainable.values()))
 ```
 
-Common names include `embed.weight`, `lm_head.weight`, `blocks.N.attn` (Llama
-and OLMoE), `blocks.N.mixer` (Qwen), `blocks.N.mlp` (dense feedforward), and
-`blocks.N.moe` (experts). Inspect `named_parameters()` for exact paths; packed
-expert banks are Parameters rather than collections of `nn.Linear` children.
-A tied embedding/head remains one Parameter and one trainability decision.
+Common names include `embed.weight`, `lm_head.weight`, `blocks.N.attn` (Llama,
+dense Qwen 3 and OLMoE), `blocks.N.mixer` (Qwen 3.5 and the Qwen mixtures),
+`blocks.N.mlp` (dense feedforward), and `blocks.N.moe` (experts). Inspect
+`named_parameters()` for exact paths; packed expert banks are Parameters
+rather than collections of `nn.Linear` children. A tied embedding/head
+remains one Parameter and one trainability decision.
 
 The local models support whole-model LoRA through a one-time recipe:
 
@@ -193,11 +203,11 @@ print(parameter_report(model))
 | `shared_experts` | False; opt in to LoRA on shared-expert linear projections |
 | `trainable_base` | Empty; parameter globs can select full training alongside LoRA |
 
-The preset supports PyTorch and MLOps Llama3, dense Qwen3.5 and OLMoE, plus
-MLOps Qwen3 MoE and Qwen3.5 MoE. Routers, normalization weights, embeddings,
-and shared experts remain frozen by default. Expert modules use independent
-factors per expert, joint gate/up factors, and separate down factors.
-Pure PyTorch expert LoRA retains independent reference math.
+The preset supports PyTorch and MLOps Llama3, dense Qwen3, dense Qwen3.5 and
+OLMoE, plus MLOps Qwen3 MoE and Qwen3.5 MoE. Routers, normalization weights,
+embeddings, and shared experts remain frozen by default. Expert modules use
+independent factors per expert, joint gate/up factors, and separate down
+factors. Pure PyTorch expert LoRA retains independent reference math.
 
 Model forward methods contain no LoRA branches. Dense/head replacement and
 expert-module selection happen in `workloads.lora`; reusable projections and

@@ -13,6 +13,7 @@ from workloads.models.shared.checkpoint import copy_into
 
 READERS = {
     "llama3": ("workloads.models.llama3.checkpoint", "Llama3Checkpoint"),
+    "qwen3": ("workloads.models.qwen3.checkpoint", "Qwen3Checkpoint"),
     "qwen35": ("workloads.models.qwen35.checkpoint", "Qwen35Checkpoint"),
     "olmoe": ("workloads.models.olmoe.checkpoint", "OLMoECheckpoint"),
     "qwen3moe": ("workloads.models.qwen3moe.checkpoint", "Qwen3MoECheckpoint"),
@@ -58,7 +59,7 @@ def huggingface_state(family, model, config):
         }
         state[at + "input_layernorm.weight"] = ours["attn_norm.weight"]
         state[at + "post_attention_layernorm.weight"] = ours["ffn_norm.weight"]
-        mixer = "attn" if family in ("llama3", "olmoe") else "mixer"
+        mixer = "attn" if family in ("llama3", "qwen3", "olmoe") else "mixer"
         kind = config.layer_kind(layer) if hasattr(config, "layer_kind") else "full"
         if kind == "full":
             query = ours[f"{mixer}.wq.weight"]
@@ -145,6 +146,16 @@ def metadata(family, config):
         return {
             **common,
             "model_type": "llama",
+            "intermediate_size": config.d_ff,
+            "rope_theta": config.rope_base,
+            "tie_word_embeddings": config.tied_embeddings,
+            "rms_norm_eps": config.norm_epsilon,
+        }
+    if family == "qwen3":
+        return {
+            **common,
+            "model_type": "qwen3",
+            "head_dim": config.head_dim,
             "intermediate_size": config.d_ff,
             "rope_theta": config.rope_base,
             "tie_word_embeddings": config.tied_embeddings,
@@ -271,23 +282,50 @@ def test_a_family_reads_its_own_layout_back(tmp_path, family):
     assert set(report["written"]) <= set(expected)
 
 
-def test_a_tied_head_is_written_once_from_the_embedding(tmp_path):
-    name = "llama3-tiny"
+@pytest.mark.parametrize("family", ["llama3", "qwen3"])
+def test_a_tied_head_is_written_once_from_the_embedding(tmp_path, family):
+    name = f"{family}-tiny"
     entry = catalog.entry(name)
     config = entry.config(tied_embeddings=True)
     source = materialized(name, tied_embeddings=True)
-    state = huggingface_state("llama3", source, config)
+    state = huggingface_state(family, source, config)
     assert "lm_head.weight" not in state
     directory = tmp_path / "checkpoint"
     directory.mkdir()
     save_file(state, directory / "model.safetensors")
-    (directory / "config.json").write_text(json.dumps(metadata("llama3", config)))
+    (directory / "config.json").write_text(json.dumps(metadata(family, config)))
     target = built(name, tied_embeddings=True)
-    with reader("llama3")(directory, max_seq_len=config.max_seq_len) as checkpoint:
+    with reader(family)(directory, max_seq_len=config.max_seq_len) as checkpoint:
         report = checkpoint.load_into(target)
     assert target.lm_head.weight is target.embed.weight
     assert torch.equal(target.embed.weight, source.embed.weight)
     assert "lm_head.weight" not in report["written"] and report["unused"] == []
+
+
+def test_a_tied_checkpoint_may_store_its_head_only_as_the_embedding(tmp_path):
+    # Qwen 3's tied checkpoints store lm_head.weight beside the embedding.
+    name = "qwen3-tiny"
+    config = catalog.entry(name).config(tied_embeddings=True)
+    source = materialized(name, tied_embeddings=True)
+    state = huggingface_state("qwen3", source, config)
+    state["lm_head.weight"] = state["model.embed_tokens.weight"].clone()
+    directory = tmp_path / "checkpoint"
+    directory.mkdir()
+    (directory / "config.json").write_text(json.dumps(metadata("qwen3", config)))
+    save_file(state, directory / "model.safetensors")
+    target = built(name, tied_embeddings=True)
+    with reader("qwen3")(directory, max_seq_len=config.max_seq_len) as checkpoint:
+        report = checkpoint.load_into(target)
+    assert report["unused"] == []
+    assert target.lm_head.weight is target.embed.weight
+    assert torch.equal(target.embed.weight, source.embed.weight)
+    state["lm_head.weight"] = state["lm_head.weight"] + 1
+    save_file(state, directory / "model.safetensors")
+    with (
+        reader("qwen3")(directory, max_seq_len=config.max_seq_len) as checkpoint,
+        pytest.raises(ValueError, match="differs"),
+    ):
+        checkpoint.load_into(built(name, tied_embeddings=True))
 
 
 def test_copy_into_refuses_a_shape_that_does_not_fit():

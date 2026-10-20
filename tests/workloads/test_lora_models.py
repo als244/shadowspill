@@ -15,7 +15,7 @@ from workloads.lora.reference import expert_lora as reference_expert_lora
 MODELS = [
     (impl, family)
     for impl in ("pytorch", "mlops")
-    for family in ("llama3", "qwen35", "olmoe")
+    for family in ("llama3", "qwen3", "qwen35", "olmoe")
 ]
 MODELS += [("mlops", family) for family in ("qwen3moe", "qwen35moe")]
 
@@ -33,6 +33,8 @@ def tiny_model(implementation, family):
     config_type, model_type = family_classes(implementation, family)
     if family == "llama3":
         config = config_type(2, 32, 4, 2, 64, 97, max_seq_len=16)
+    elif family == "qwen3":
+        config = config_type(2, 32, 4, 2, 16, 64, 97, max_seq_len=16)
     elif family == "qwen35":
         config = config_type(
             4, 32, 4, 4, 2, 8, 0.5, 2, 4, 4, 4, 3, 64, 97, max_seq_len=16

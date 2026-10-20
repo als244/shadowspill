@@ -9,6 +9,9 @@ from workloads.models.llama3.implementations.pytorch import Model as Llama3
 from workloads.models.olmoe.config import Config as OLMoEConfig
 from workloads.models.olmoe.implementations.mlops import Model as MlopsOLMoE
 from workloads.models.olmoe.implementations.pytorch import Model as OLMoE
+from workloads.models.qwen3.config import Config as Qwen3Config
+from workloads.models.qwen3.implementations.mlops import Model as MlopsQwen3
+from workloads.models.qwen3.implementations.pytorch import Model as Qwen3
 from workloads.models.qwen35.config import Config as Qwen35Config
 from workloads.models.qwen35.implementations.mlops import Model as MlopsQwen35
 from workloads.models.qwen35.implementations.pytorch import Model as Qwen35
@@ -43,6 +46,23 @@ def test_tiny_llama_matches_external_operations() -> None:
     config = Llama3Config(2, 32, 4, 2, 64, 97, max_seq_len=16)
     reference = Llama3(config)
     optimized = MlopsLlama3(config)
+    _assert_state_dict_compatible(reference, optimized)
+    tokens = torch.randint(0, config.vocab_size, (1, 6))
+    torch.testing.assert_close(optimized(tokens), reference(tokens))
+    _assert_loss_and_gradients(
+        reference,
+        optimized,
+        tokens,
+        torch.randint(0, config.vocab_size, tokens.shape),
+    )
+
+
+def test_tiny_qwen3_matches_external_operations() -> None:
+    torch.manual_seed(13)
+    # The attention (4 heads of 16) is twice the model's width.
+    config = Qwen3Config(2, 32, 4, 2, 16, 64, 97, max_seq_len=16)
+    reference = Qwen3(config)
+    optimized = MlopsQwen3(config)
     _assert_state_dict_compatible(reference, optimized)
     tokens = torch.randint(0, config.vocab_size, (1, 6))
     torch.testing.assert_close(optimized(tokens), reference(tokens))
@@ -99,12 +119,13 @@ def _loss_and_gradients(
     "build",
     [
         lambda: MlopsLlama3(Llama3Config(2, 32, 4, 2, 64, 97, max_seq_len=16)),
+        lambda: MlopsQwen3(Qwen3Config(2, 32, 4, 2, 16, 64, 97, max_seq_len=16)),
         lambda: MlopsQwen35(
             Qwen35Config(4, 32, 4, 4, 2, 8, 0.5, 2, 4, 4, 4, 3, 64, 97, max_seq_len=16)
         ),
         lambda: MlopsOLMoE(OLMoEConfig(2, 32, 4, 4, 8, 4, 2, 16, 97, max_seq_len=16)),
     ],
-    ids=["llama3", "qwen35", "olmoe"],
+    ids=["llama3", "qwen3", "qwen35", "olmoe"],
 )
 def test_a_lengths_tensor_packs_as_the_same_integers(build: object) -> None:
     # The same three sequences, once as structure and once as data padded

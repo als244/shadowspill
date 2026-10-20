@@ -9,7 +9,7 @@ must never import `workloads`.
 
 The [example model catalog](MODELS.md) is the central reference for:
 
-- Llama 3, dense Qwen 3.5, OLMoE, Qwen 3 MoE, and Qwen 3.5 MoE.
+- Llama 3, dense Qwen 3, dense Qwen 3.5, OLMoE, Qwen 3 MoE, and Qwen 3.5 MoE.
 - Catalog names, preset dimensions and parameter counts, and one README per
   family under `models/<family>/` with its architecture, configuration,
   implementations and construction.
@@ -18,10 +18,11 @@ The [example model catalog](MODELS.md) is the central reference for:
 - Inputs, losses, packing, and runnable Python/JSON/CLI examples.
 
 The [catalog](models/catalog.py) names every supplied model `<family>-<size>`:
-`llama3-8b`, `qwen35-9b`, `qwen35-27b`, `olmoe-7b-a1b`, `qwen3moe-30b-a3b`,
-`qwen35moe-35b-a3b`, the small `llama3-1b` and `qwen35-2b`, each family's
-`numerical` and `tiny` shapes, and the GLM entries. The implementation,
-`mlops` or `pytorch`, is chosen beside the name.
+`llama3-8b`, `qwen3-8b`, `qwen3-32b`, `qwen35-9b`, `qwen35-27b`,
+`olmoe-7b-a1b`, `qwen3moe-30b-a3b`, `qwen35moe-35b-a3b`, the small
+`llama3-1b`, `qwen3-1.7b` and `qwen35-2b`, each family's `numerical` and
+`tiny` shapes, and the GLM entries. The implementation, `mlops` or `pytorch`,
+is chosen beside the name.
 
 All MLOps MoE models expose optional expert parallelism through the same
 constructor arguments. Choose the architecture first, then supply `ep_group`

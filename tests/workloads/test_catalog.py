@@ -85,7 +85,7 @@ def test_build_on_meta_applies_lora_and_configuration_changes() -> None:
 
 def test_mixtures_and_expert_parallel_follow_the_families() -> None:
     for item in catalog.entries():
-        assert item.mixture == (item.family not in {"llama3", "qwen35"})
+        assert item.mixture == (item.family not in {"llama3", "qwen3", "qwen35"})
         assert item.expert_parallel == (
             item.family in {"olmoe", "qwen3moe", "qwen35moe"}
         )
