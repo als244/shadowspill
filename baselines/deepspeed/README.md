@@ -1,9 +1,10 @@
 # DeepSpeed ZeRO over the catalog models
 
 DeepSpeed (ZeRO stages 1 to 3 with its optimizer and parameter offload, its
-activation checkpointing and CPU checkpointing) over any catalog model, full
-or LoRA, with the shared objective, geometry, precision contract and result
-row of `baselines/common`. No ShadowSpill runtime is used. Run from the
+activation checkpointing and CPU checkpointing, and its DeepCompile backend
+with its offloads) over any catalog model, full or LoRA, with the shared
+objective, geometry, precision contract and result row of
+`baselines/common`. No ShadowSpill runtime is used. Run from the
 repository root in the `baselines` environment.
 
 One case:
@@ -33,8 +34,11 @@ the geometry, the precision contract, `--data`, `--checkpoint`,
 | `--[no-]pin-memory` | Pin host-offloaded state |
 | `--[no-]overlap-comm`, `--reduce-bucket-size N` | Gradient reduction overlapped with backward, in buckets of N elements |
 | `--prefetch-bucket-size N`, `--max-live-parameters N`, `--param-persistence-threshold N` | Stage 3's parameter prefetch, the gathered parameters kept at once, and the size below which a parameter stays gathered |
-| `--activation-offload {none,cpu}` | DeepSpeed's CPU checkpointing: the inputs of recomputed blocks on the host |
+| `--activation-offload {none,cpu}` | DeepSpeed's CPU checkpointing: the inputs of recomputed blocks on the host, moved by its asynchronous offload engine (pinned, pooled host buffers on a side stream; the newest input stays on the device) |
 | `--contiguous-checkpointing` | One contiguous buffer for the checkpointed inputs |
+| `--deepcompile`, `--deepcompile-backend {inductor,eager}` | DeepCompile: DeepSpeed's `torch.compile` backend, whose graph passes take over ZeRO's hooks (the gradient reduction in stages 1 and 2; gather, release, prefetch and selective gather in stage 3), handing the graphs to the named compiler |
+| `--deepcompile-offload {none,activations,optimizer-states,parameters}` | Under DeepCompile and ZeRO-3: the saved activations, the optimizer state or the parameters moved to pinned host memory as the memory budget requires, one of them per run |
+| `--deepcompile-free-activation` | Free each activation in DeepCompile's backward as soon as its last use passes (eager backend) |
 
 Recomputation uses DeepSpeed's `checkpoint` on each selected block, and the
 optimizer is always DeepSpeed's AdamW (fused on the device, its CPU
@@ -45,8 +49,31 @@ microbatch's loss is handed to DeepSpeed as the microbatch's mean, since
 DeepSpeed divides the gradients by the accumulation count itself; the
 objective recorded is still the microbatch's share of the update.
 
+DeepCompile compiles the whole model and applies its planning passes at
+its sixth update, compiling the graphs again, so a DeepCompile case warms
+up eight steps or more. Recomputation is refused beside it: DeepSpeed's
+checkpointing inside the compiled graphs loses the recomputed blocks'
+gradients, and DeepCompile offloads or frees activations instead. Its CPU
+checkpointing is refused too (DeepCompile's activation offload takes its
+place), as is its optimizer-state offload beside ZeRO's optimizer offload;
+with parameters and optimizer state both offloaded to the host,
+DeepCompile offloads parameters itself and the case says so. The parameter
+offload takes the `pytorch` implementation: DeepSpeed's pass hands a
+kernel's tuple-valued last use to its offload operator. The eager backend
+needs scipy (DeepSpeed's communication profiler), which the environment
+installs. ZeRO-1 under DeepCompile takes one microbatch per update: with
+gradients accumulated across microbatches its reduce aborts at the second
+update (DeepSpeed releases its reduce buckets after an update and ZeRO-1's
+first non-boundary backward flushes them before it makes them again;
+ZeRO-2 and 3 make them at every backward). The engine falls back to plain
+`torch.compile` when it declines a configuration; the trainer refuses to
+measure that. Under DeepCompile the tiny qualification judges the moments
+and masters: DeepSpeed's gradient accessors refuse after a backward its
+graphs ran.
+
 ## Precision
 
+[`../PRECISION.md`](../PRECISION.md) sets this harness beside the others.
 DeepSpeed's bf16 and fp16 modes cast every parameter to the model dtype,
 the ones a model pins at float32 included (the row records which), and keep
 float32 masters in the ZeRO optimizer with float32 AdamW moments; fp16 runs
@@ -57,11 +84,21 @@ to the model dtype; stage 1's optimizer accumulates at float32 when
 themselves. Rounding choices, bfloat16 moments and masters other than
 float32 are refused.
 
+Under DeepCompile the combinations qualified are a bfloat16 model with
+float32 masters and bfloat16 gradients, and a float32 model stepping its
+weights, in ZeRO-2 and 3 (ZeRO-1 with one microbatch per update); the
+float32-accumulating optimizer of a bfloat16 model is DeepSpeed's BF16
+optimizer, which DeepCompile does not take, a float16 model under its loss
+scaling is not qualified, and LoRA runs under ZeRO-3 only (the ZeRO-1 and
+2 passes register the optimizer's parameters alone, so a frozen base
+parameter has no identity in the graphs). Each of these is refused before
+launch.
+
 ## What a run writes
 
 As the FSDP2 harness: `rank-NNNNN/request.json` (with the DeepSpeed
 configuration the case ran under), `result.json` or `failure.json`,
 `results.json` and `row.json` from the first rank. The tiny qualification
 compares every update's loss, gradients (read through DeepSpeed's accessors
-before its step clears them), masters and moments to an unsharded eager
-copy that casts the pinned parameters as DeepSpeed does.
+before its step clears them), masters and moments to an unsharded copy,
+compiled whole, that casts the pinned parameters as DeepSpeed does.

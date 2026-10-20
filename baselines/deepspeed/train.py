@@ -89,16 +89,24 @@ class DeepSpeedAccess(Access):
     gradient as snapshotted before the step (DeepSpeed clears it in the
     step), and the optimizer state."""
 
-    def __init__(self, engine, device):
+    def __init__(self, engine, device, *, gradients=True):
         super().__init__(engine.optimizer, device)
         self.engine = engine
         self.gradients = {}
+        if not gradients:
+            # After a backward DeepCompile ran inside its graphs, DeepSpeed's
+            # accessors refuse the gradient (their window between backward
+            # and step is not seen), so the moments, which the first update
+            # makes out of the gradient alone, are judged instead.
+            self.exposes = ("first_moment", "second_moment", "master")
 
     def snapshot(self, model):
         # The accumulated gradient of the update, at the accumulation dtype:
         # DeepSpeed's generic accessor would hand back the parameter's own
         # low-precision gradient of the last microbatch when it still holds
         # one, so the optimizer's copy is read directly.
+        if "gradient" not in self.exposes:
+            return
         for parameter in model.parameters():
             if not parameter.requires_grad:
                 continue
@@ -193,6 +201,18 @@ def main(argv=None):
         # The op builder refuses a toolkit whose minor version differs from
         # PyTorch's build; the extensions built here do not depend on it.
         os.environ.setdefault("DS_SKIP_CUDA_CHECK", "1")
+        # The environment's own CUDA home when setup.sh assembled one: the
+        # toolkit with the NCCL headers of the NCCL PyTorch links, for the
+        # extensions that include them (DeepCompile's). PyTorch's extension
+        # builder fixes its CUDA home when it is imported, which the model
+        # imports already did, so the loaded value is set as well.
+        cuda_home = Path(sys.prefix) / "cuda-home"
+        if cuda_home.is_dir():
+            os.environ["CUDA_HOME"] = str(cuda_home)
+            builder = sys.modules.get("torch.utils.cpp_extension")
+            if builder is not None:
+                builder.CUDA_HOME = str(cuda_home)
+            record["cuda_home"] = str(cuda_home)
         import deepspeed
 
         deepspeed.init_distributed(dist_backend="nccl")
@@ -203,9 +223,6 @@ def main(argv=None):
             if not 0 < fraction <= 1:
                 raise ValueError("allocator cap must fit the physical device")
             torch.cuda.set_per_process_memory_fraction(fraction, device)
-        from mlops.dispatch import set_weight_gradient_dtype
-
-        set_weight_gradient_dtype(model_dtype)
         torch.manual_seed(settings.seed)
         # Every parameter is built with its values, at the model dtype
         # DeepSpeed casts to anyway; in stage three inside zero.Init, which
@@ -286,6 +303,19 @@ def main(argv=None):
             model=model, model_parameters=trainable, config=config
         )
         engine.train()
+        if settings.deepcompile:
+            # DeepCompile is DeepSpeed's own torch.compile backend: its passes
+            # replace ZeRO's hooks with reduction, gather, release and offload
+            # nodes in the captured graphs. The engine falls back to plain
+            # torch.compile when it declines a configuration, silently, so
+            # the measurement asks whether the passes are in place.
+            stage = "compilation"
+            engine.compile(backend=settings.deepcompile_backend)
+            if not engine.is_deepcompile_active():
+                raise RuntimeError(
+                    "DeepSpeed compiled the model without DeepCompile's passes"
+                )
+            record["deepcompile"] = config["compile"]
         vocabulary = int(model.model.config.vocab_size)
         corpus = None
         if settings.data is not None:
@@ -301,7 +331,7 @@ def main(argv=None):
         write_json(output / "request.json", record)
         batch = geometry.tokens_per_microbatch
         microbatches = geometry.accumulation
-        access = DeepSpeedAccess(engine, device)
+        access = DeepSpeedAccess(engine, device, gradients=not settings.deepcompile)
         reference = None
         if settings.verify_reference:
             from baselines.common.reference import Reference

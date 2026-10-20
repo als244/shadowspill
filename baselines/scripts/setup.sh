@@ -35,6 +35,11 @@ Megatron-Core/Bridge and NeMo AutoModel recipe harnesses have their own
 pinned environments and scripts. --skip-shadowspill leaves step 1 out when
 the environment already holds ShadowSpill and mlops from an earlier run.
 
+The environment also gets its own CUDA home, <prefix>/cuda-home: the
+toolkit found at CUDA_HOME (or /usr/local/cuda) with the NCCL headers of the
+NCCL PyTorch links in place of the toolkit's. DeepSpeed's extensions that
+include NCCL (DeepCompile's) are built against it by the DeepSpeed harness.
+
 The ShadowSpill build directory is shared with any other environment built
 from this checkout at the same Python and PyTorch (build/<wheel tag>); the
 libraries are identical, so the sharing is harmless.
@@ -88,9 +93,9 @@ if [[ -z "${python_executable}" ]]; then
   conda_root="$("${conda_executable}" info --base)"
   python_executable="${conda_root}/envs/${environment_name}/bin/python"
   if [[ -x "${python_executable}" ]]; then
-    echo "[0/4] Conda environment ${environment_name} exists; installing into it"
+    echo "[0/5] Conda environment ${environment_name} exists; installing into it"
   else
-    echo "[0/4] Creating Conda environment ${environment_name} with Python 3.12"
+    echo "[0/5] Creating Conda environment ${environment_name} with Python 3.12"
     "${conda_executable}" create --yes --quiet --name "${environment_name}" python=3.12
   fi
 fi
@@ -106,16 +111,16 @@ if [[ -z "${uv_executable}" ]]; then
 fi
 
 if [[ "${skip_shadowspill}" == 1 ]]; then
-  echo "[1/4] Keeping the ShadowSpill and mlops already in the environment"
+  echo "[1/5] Keeping the ShadowSpill and mlops already in the environment"
 else
-  echo "[1/4] ShadowSpill, mlops and the providers through scripts/setup.sh"
+  echo "[1/5] ShadowSpill, mlops and the providers through scripts/setup.sh"
   "${project_root}/scripts/setup.sh" \
     --python "${python_executable}" \
     --torch-backend "${torch_backend}" \
     ${expert_parallel:+--expert-parallel "${expert_parallel}"}
 fi
 
-echo "[2/4] DeepSpeed ${deepspeed_version}, torchtitan ${torchtitan_version}, torchao ${torchao_version}"
+echo "[2/5] DeepSpeed ${deepspeed_version}, torchtitan ${torchtitan_version}, torchao ${torchao_version}, scipy for DeepCompile's eager backend"
 # PyTorch is pinned to the exact build step 1 installed (its local version
 # names the CUDA build) so the resolver cannot move it. uv's torch-backend
 # mode is not used here: it confines every PyTorch-family package, torchdata
@@ -133,9 +138,36 @@ torch_cuda_tag="$("${python_executable}" -c 'import torch; v = torch.version.cud
   "deepspeed==${deepspeed_version}" \
   "torchtitan==${torchtitan_version}" \
   "torchao==${torchao_version}" \
-  "pyyaml"
+  "pyyaml" \
+  "scipy"
 
-echo "[3/4] Verifying the baseline systems import beside PyTorch ${torch_version}"
+echo "[3/5] The environment's CUDA home with PyTorch's NCCL headers"
+environment_prefix="$(dirname "$(dirname "${python_executable}")")"
+toolkit_home="${CUDA_HOME:-/usr/local/cuda}"
+nccl_include="$("${python_executable}" -c 'import os, nvidia.nccl; print(os.path.join(os.path.dirname(nvidia.nccl.__file__), "include"))')"
+cuda_home="${environment_prefix}/cuda-home"
+if [[ -d "${toolkit_home}/include" && -f "${nccl_include}/nccl.h" ]]; then
+  rm -rf "${cuda_home}"
+  mkdir -p "${cuda_home}/include"
+  for entry in "${toolkit_home}"/*; do
+    name="$(basename "${entry}")"
+    [[ "${name}" == include ]] && continue
+    ln -s "${entry}" "${cuda_home}/${name}"
+  done
+  for header in "${toolkit_home}"/include/*; do
+    name="$(basename "${header}")"
+    [[ -e "${nccl_include}/${name}" ]] && continue
+    ln -s "${header}" "${cuda_home}/include/${name}"
+  done
+  for header in "${nccl_include}"/*; do
+    ln -s "${header}" "${cuda_home}/include/$(basename "${header}")"
+  done
+  echo "CUDA home: ${cuda_home} (toolkit ${toolkit_home}, NCCL headers ${nccl_include})"
+else
+  echo "no toolkit at ${toolkit_home} or no NCCL headers at ${nccl_include}; DeepSpeed builds against the toolkit as found"
+fi
+
+echo "[4/5] Verifying the baseline systems import beside PyTorch ${torch_version}"
 "${python_executable}" - <<'PY'
 from importlib import import_module
 from importlib.metadata import version
@@ -179,7 +211,7 @@ for name in (checkpoint_wrapper, offload_wrapper, CPUOffloadPolicy, fully_shard,
 print("harness entry points: available")
 PY
 
-echo "[4/4] Recording the environment"
+echo "[5/5] Recording the environment"
 "${python_executable}" - <<'PY' > "${project_root}/baselines/scripts/environment.lock.json"
 import importlib.metadata, json, platform, sys
 

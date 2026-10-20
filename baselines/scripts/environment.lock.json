@@ -137,6 +137,7 @@
     "rich": "15.0.0",
     "ruff": "0.17.1",
     "safetensors": "0.8.0",
+    "scipy": "1.18.1",
     "sentencepiece": "0.2.2",
     "setuptools": "84.0.0",
     "shadowspill": "0.1.0.dev0",

@@ -11,20 +11,174 @@
     "grad_dtype": "bfloat16"
   },
   "cases": [
-    {"model": "llama3-tiny", "zero_stage": 1, "recompute": 0, "grad_dtype": "float32"},
-    {"model": "llama3-tiny", "zero_stage": 2, "recompute": 1},
-    {"model": "llama3-tiny", "zero_stage": 2, "recompute": 1, "activation_offload": "cpu"},
-    {"model": "llama3-tiny", "zero_stage": 2, "recompute": 0.5, "offload_optimizer": "cpu"},
-    {"model": "llama3-tiny", "zero_stage": 1, "recompute": 1},
-    {"model": "llama3-tiny", "zero_stage": 3, "recompute": 1},
-    {"model": "llama3-tiny", "zero_stage": 3, "recompute": 1, "offload_param": "cpu",
-     "offload_optimizer": "cpu"},
-    {"model": "llama3-tiny", "zero_stage": 3, "mode": "lora", "lora": {"rank": 4}, "recompute": 1},
-    {"model": "llama3-tiny", "zero_stage": 2, "implementation": "pytorch", "recompute": 1},
-    {"model": "llama3-tiny", "zero_stage": 3, "model_config": {"tied_embeddings": true}, "recompute": 1},
-    {"model": "qwen35-tiny", "zero_stage": 2, "recompute": 1},
-    {"model": "olmoe-tiny", "zero_stage": 3, "recompute": 1},
-    {"model": "qwen3moe-tiny", "zero_stage": 2, "recompute": 1},
-    {"model": "qwen35moe-tiny", "zero_stage": 3, "recompute": 0.5, "offload_optimizer": "cpu"}
+    {
+      "model": "llama3-tiny",
+      "zero_stage": 1,
+      "recompute": 0,
+      "grad_dtype": "float32"
+    },
+    {
+      "model": "llama3-tiny",
+      "zero_stage": 2,
+      "recompute": 1
+    },
+    {
+      "model": "llama3-tiny",
+      "zero_stage": 2,
+      "recompute": 1,
+      "activation_offload": "cpu"
+    },
+    {
+      "model": "llama3-tiny",
+      "zero_stage": 2,
+      "recompute": 0.5,
+      "offload_optimizer": "cpu"
+    },
+    {
+      "model": "llama3-tiny",
+      "zero_stage": 1,
+      "recompute": 1
+    },
+    {
+      "model": "llama3-tiny",
+      "zero_stage": 3,
+      "recompute": 1
+    },
+    {
+      "model": "llama3-tiny",
+      "zero_stage": 3,
+      "recompute": 1,
+      "offload_param": "cpu",
+      "offload_optimizer": "cpu"
+    },
+    {
+      "model": "llama3-tiny",
+      "zero_stage": 3,
+      "mode": "lora",
+      "lora": {
+        "rank": 4
+      },
+      "recompute": 1
+    },
+    {
+      "model": "llama3-tiny",
+      "zero_stage": 2,
+      "implementation": "pytorch",
+      "recompute": 1
+    },
+    {
+      "model": "llama3-tiny",
+      "zero_stage": 3,
+      "model_config": {
+        "tied_embeddings": true
+      },
+      "recompute": 1
+    },
+    {
+      "model": "qwen35-tiny",
+      "zero_stage": 2,
+      "recompute": 1
+    },
+    {
+      "model": "olmoe-tiny",
+      "zero_stage": 3,
+      "recompute": 1
+    },
+    {
+      "model": "qwen3moe-tiny",
+      "zero_stage": 2,
+      "recompute": 1
+    },
+    {
+      "model": "qwen35-tiny",
+      "zero_stage": 3,
+      "recompute": 0.5,
+      "offload_optimizer": "cpu"
+    },
+    {
+      "model": "llama3-tiny",
+      "zero_stage": 3,
+      "recompute": 0,
+      "deepcompile": true,
+      "warmup_steps": 8
+    },
+    {
+      "model": "llama3-tiny",
+      "zero_stage": 2,
+      "recompute": 0,
+      "deepcompile": true,
+      "warmup_steps": 8
+    },
+    {
+      "model": "llama3-tiny",
+      "zero_stage": 1,
+      "tokens_per_microbatch": 1024,
+      "recompute": 0,
+      "deepcompile": true,
+      "warmup_steps": 8
+    },
+    {
+      "model": "llama3-tiny",
+      "zero_stage": 3,
+      "deepcompile_offload": "activations",
+      "recompute": 0,
+      "deepcompile": true,
+      "warmup_steps": 8
+    },
+    {
+      "model": "llama3-tiny",
+      "zero_stage": 3,
+      "deepcompile_offload": "optimizer-states",
+      "recompute": 0,
+      "deepcompile": true,
+      "warmup_steps": 8
+    },
+    {
+      "model": "llama3-tiny",
+      "zero_stage": 3,
+      "deepcompile_offload": "parameters",
+      "implementation": "pytorch",
+      "recompute": 0,
+      "deepcompile": true,
+      "warmup_steps": 8
+    },
+    {
+      "model": "llama3-tiny",
+      "zero_stage": 3,
+      "deepcompile_backend": "eager",
+      "deepcompile_free_activation": true,
+      "recompute": 0,
+      "deepcompile": true,
+      "warmup_steps": 8
+    },
+    {
+      "model": "llama3-tiny",
+      "zero_stage": 3,
+      "mode": "lora",
+      "lora": {
+        "rank": 4
+      },
+      "recompute": 0,
+      "deepcompile": true,
+      "warmup_steps": 8
+    },
+    {
+      "model": "llama3-tiny",
+      "zero_stage": 3,
+      "model_dtype": "float32",
+      "master_dtype": null,
+      "grad_dtype": null,
+      "opt_state_dtype": "parameter",
+      "recompute": 0,
+      "deepcompile": true,
+      "warmup_steps": 8
+    },
+    {
+      "model": "qwen3moe-tiny",
+      "zero_stage": 3,
+      "recompute": 0,
+      "deepcompile": true,
+      "warmup_steps": 8
+    }
   ]
 }

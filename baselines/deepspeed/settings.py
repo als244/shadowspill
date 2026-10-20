@@ -4,9 +4,12 @@ On top of what every harness takes (``baselines.common.settings``), the
 ZeRO configuration: the stage, the optimizer and parameter offload to the
 host or NVMe, the communication and prefetch sizes, activation checkpointing
 with DeepSpeed's own ``checkpoint`` and its CPU checkpointing as the
-activation offload. The optimizer is DeepSpeed's AdamW, fused on the device
-or its CPU implementation when the optimizer is offloaded. What the harness
-cannot honor is refused before launch.
+activation offload; and DeepCompile, DeepSpeed's ``torch.compile`` backend,
+whose graph passes take over ZeRO's reduction, gathering and prefetch and
+offer their own offload of activations, optimizer state or parameters. The
+optimizer is DeepSpeed's AdamW, fused on the device or its CPU
+implementation when the optimizer is offloaded. What the harness cannot
+honor is refused before launch.
 """
 
 from __future__ import annotations
@@ -31,6 +34,11 @@ SOURCE_PATHS = (
 STAGES = (1, 2, 3)
 OFFLOADS = ("none", "cpu", "nvme")
 ACTIVATION_OFFLOADS = ("none", "cpu")
+DEEPCOMPILE_BACKENDS = ("inductor", "eager")
+DEEPCOMPILE_OFFLOADS = ("none", "activations", "optimizer-states", "parameters")
+#: DeepCompile applies its planning passes at its sixth update and compiles
+#: the graphs again; a measured step comes after that.
+DEEPCOMPILE_WARMUP_STEPS = 8
 
 #: What this harness honors of the precision contract. DeepSpeed's bf16 and
 #: fp16 modes cast every parameter and keep float32 masters in the ZeRO
@@ -70,6 +78,11 @@ class Settings(common.Settings):
     # Activation checkpointing.
     activation_offload: str = "none"
     contiguous_checkpointing: bool = False
+    # DeepCompile.
+    deepcompile: bool = False
+    deepcompile_backend: str = "inductor"
+    deepcompile_offload: str = "none"
+    deepcompile_free_activation: bool = False
 
     def harness_validation(self, request, geometry, precision):
         if self.zero_stage not in STAGES:
@@ -95,6 +108,97 @@ class Settings(common.Settings):
             )
         if min(self.reduce_bucket_size, self.prefetch_bucket_size) < 1:
             raise ValueError("bucket sizes must be positive")
+        if self.deepcompile_backend not in DEEPCOMPILE_BACKENDS:
+            raise ValueError(
+                f"deepcompile_backend must be one of {DEEPCOMPILE_BACKENDS}"
+            )
+        if self.deepcompile_offload not in DEEPCOMPILE_OFFLOADS:
+            raise ValueError(
+                f"deepcompile_offload must be one of {DEEPCOMPILE_OFFLOADS}"
+            )
+        if not self.deepcompile:
+            if self.deepcompile_offload != "none" or self.deepcompile_free_activation:
+                raise ValueError(
+                    "DeepCompile's offload and free-activation options need deepcompile"
+                )
+        else:
+            both_on_host = (
+                self.offload_optimizer == "cpu" and self.offload_param == "cpu"
+            )
+            resolved_grad = precision.grad_dtype or precision.model_dtype
+            if self.deepcompile_offload != "none" and self.zero_stage != 3:
+                raise Unsupported(
+                    "DeepCompile offloads under ZeRO-3; stages one and two compile"
+                    " the gradient reduction alone"
+                )
+            if (
+                self.deepcompile_offload == "optimizer-states"
+                and self.offload_optimizer != "none"
+            ):
+                raise Unsupported(
+                    "DeepCompile's optimizer-state offload and ZeRO's optimizer"
+                    " offload manage the same state; choose one"
+                )
+            if both_on_host and self.deepcompile_offload != "parameters":
+                raise Unsupported(
+                    "with parameters and optimizer state both offloaded to the host,"
+                    " DeepCompile offloads parameters itself: deepcompile_offload"
+                    " parameters"
+                )
+            if self.deepcompile_free_activation and self.deepcompile_backend != "eager":
+                raise Unsupported(
+                    "DeepCompile frees activations eagerly under its eager backend only"
+                )
+            if self.activation_offload == "cpu":
+                raise Unsupported(
+                    "DeepSpeed's CPU checkpointing runs outside the compiled graph;"
+                    " DeepCompile's own activation offload is deepcompile_offload"
+                    " activations"
+                )
+            if self.recompute:
+                raise Unsupported(
+                    "DeepCompile compiles the model whole, and DeepSpeed's"
+                    " checkpointing inside its graphs loses the recomputed blocks'"
+                    " gradients; DeepCompile offloads or frees activations instead"
+                )
+            if (
+                self.deepcompile_offload == "parameters"
+                and self.implementation == "mlops"
+            ):
+                raise Unsupported(
+                    "DeepCompile's parameter offload pass hands a kernel's"
+                    " tuple-valued last use to its offload operator; it takes the"
+                    " pytorch implementation"
+                )
+            if self.warmup_steps < DEEPCOMPILE_WARMUP_STEPS:
+                raise ValueError(
+                    "DeepCompile plans its graphs again at its sixth update; warm up"
+                    f" {DEEPCOMPILE_WARMUP_STEPS} steps or more"
+                )
+            if self.zero_stage == 1 and geometry.accumulation > 1:
+                raise Unsupported(
+                    "ZeRO-1 under DeepCompile takes one microbatch per update: its"
+                    " reduce aborts at the second update when gradients accumulate"
+                    " across microbatches (the buckets it released are flushed"
+                    " before it makes them again)"
+                )
+            if resolved_grad == "float32" and precision.model_dtype != "float32":
+                raise Unsupported(
+                    "DeepCompile takes ZeRO's bit16 optimizer; float32 accumulation"
+                    " under a narrower model is DeepSpeed's BF16 optimizer, which"
+                    " it does not take"
+                )
+            if self.mode == "lora" and self.zero_stage != 3:
+                raise Unsupported(
+                    "DeepCompile's ZeRO-1 and 2 passes register the optimizer's"
+                    " parameters only, so a frozen base parameter has no identity in"
+                    " its graphs; LoRA under DeepCompile is ZeRO-3"
+                )
+            if precision.model_dtype == "float16":
+                raise Unsupported(
+                    "DeepCompile takes bfloat16 and float32 models here; its float16"
+                    " path under DeepSpeed's loss scaling is not qualified"
+                )
         if precision.master_dtype is None and precision.model_dtype != "float32":
             raise Unsupported(
                 "DeepSpeed keeps float32 masters in its bf16 and fp16 modes"
@@ -175,6 +279,14 @@ def deepspeed_config(settings: Settings, geometry, precision) -> dict[str, Any]:
     ):
         config["communication_data_type"] = "fp32"
         config["data_types"] = {"grad_accum_dtype": "fp32"}
+    if settings.deepcompile:
+        config["compile"] = {
+            "deepcompile": True,
+            "offload_activation": settings.deepcompile_offload == "activations",
+            "offload_opt_states": settings.deepcompile_offload == "optimizer-states",
+            "offload_parameters": settings.deepcompile_offload == "parameters",
+            "free_activation": settings.deepcompile_free_activation,
+        }
     return config
 
 
@@ -192,6 +304,14 @@ HELP = {
     "param_persistence_threshold": "parameters below this size stay gathered (stage 3)",
     "activation_offload": "none, or cpu: the inputs of recomputed blocks on the host",
     "contiguous_checkpointing": "one contiguous buffer for the checkpointed inputs",
+    "deepcompile": "compile the model with DeepCompile, DeepSpeed's torch.compile"
+    " backend whose graph passes take over ZeRO's hooks",
+    "deepcompile_backend": "the compiler DeepCompile hands its graphs to",
+    "deepcompile_offload": "what DeepCompile moves to pinned host memory as the"
+    " memory budget requires (ZeRO-3): saved activations, optimizer state or"
+    " parameters",
+    "deepcompile_free_activation": "free activations eagerly in DeepCompile's"
+    " backward (eager backend)",
 }
 
 
@@ -205,6 +325,8 @@ def add_arguments(parser):
             "offload_optimizer": OFFLOADS,
             "offload_param": OFFLOADS,
             "activation_offload": ACTIVATION_OFFLOADS,
+            "deepcompile_backend": DEEPCOMPILE_BACKENDS,
+            "deepcompile_offload": DEEPCOMPILE_OFFLOADS,
         },
     )
 
@@ -234,6 +356,9 @@ def command(python, world_size, settings, output):
 __all__ = [
     "ACTIVATION_OFFLOADS",
     "CAPABILITIES",
+    "DEEPCOMPILE_BACKENDS",
+    "DEEPCOMPILE_OFFLOADS",
+    "DEEPCOMPILE_WARMUP_STEPS",
     "GEOMETRY_FIELDS",
     "MODEL_FIELDS",
     "OFFLOADS",

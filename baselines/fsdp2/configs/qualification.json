@@ -27,6 +27,6 @@
     {"model": "qwen35-tiny", "recompute": 1},
     {"model": "olmoe-tiny", "recompute": 1},
     {"model": "qwen3moe-tiny", "recompute": 1},
-    {"model": "qwen35moe-tiny", "recompute": 0.5, "offload": "cpu"}
+    {"model": "qwen35-tiny", "recompute": 0.5, "offload": "cpu"}
   ]
 }
