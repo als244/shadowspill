@@ -15,7 +15,7 @@
     "opt_state_dtype": "bfloat16",
     "parameter_rounding": null,
     "opt_state_rounding": null,
-    "round_accumulation_once": false,
+    "fuse_narrow_gradient_accumulation": false,
     "warmup_steps": 3,
     "steps": 5,
     "cpu_threads": 8

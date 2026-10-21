@@ -19,7 +19,7 @@
     "opt_state_dtype": "float32",
     "parameter_rounding": null,
     "opt_state_rounding": null,
-    "round_accumulation_once": false,
+    "fuse_narrow_gradient_accumulation": false,
     "learning_rate": 1e-5,
     "weight_decay": 0.01,
     "warmup_steps": 1,

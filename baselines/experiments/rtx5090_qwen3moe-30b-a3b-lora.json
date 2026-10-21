@@ -8,7 +8,7 @@
     "implementation": "mlops",
     "mode": "lora",
     "lora": {"rank": 16, "alpha": 16.0},
-    "checkpoint": "/mnt/storage/models/Qwen3-30B-A3B",
+    "checkpoint": "/home/shein/Documents/grad_school/research/models/Qwen3-30B-A3B",
     "data": "/mnt/storage/datasets/baselines/qwen3",
     "seed": 0,
     "sequence_length": 4096,
@@ -19,7 +19,7 @@
     "opt_state_dtype": "bfloat16",
     "parameter_rounding": null,
     "opt_state_rounding": null,
-    "round_accumulation_once": false,
+    "fuse_narrow_gradient_accumulation": false,
     "warmup_steps": 3,
     "steps": 5,
     "cpu_threads": 8
