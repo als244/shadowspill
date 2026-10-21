@@ -1,10 +1,10 @@
-"""What a ShadowSpill case can ask for and what the harness refuses."""
+"""What a ShadowSpill case can ask for and what the engine refuses."""
 
 import argparse
 
 import pytest
 
-from baselines.common.launch import command, harness_module
+from baselines.common.launch import command, engine_module
 from baselines.shadowspill.settings import (
     Settings,
     add_arguments,
@@ -37,11 +37,27 @@ def test_flags_round_trip_every_setting():
     add_arguments(parser)
     assert from_namespace(parser.parse_args(settings.arguments())) == settings
     assert "--recompute" not in settings.arguments()
-    assert harness_module("shadowspill").ENVIRONMENT == "shadowspill"
+    assert engine_module("shadowspill").ENVIRONMENT == "shadowspill"
     assert command("shadowspill", "py", 2, settings, "out")[11:] == settings.arguments()
     configuration = settings.describe(2)["configuration"]
     assert configuration["execution_gib"] == 2
     assert configuration["recompute"] is None
+
+
+@pytest.mark.parametrize("options", ["quarters", "eighths", "halves", "0,1/2,1"])
+def test_the_resolution_options_are_the_planners_own(options):
+    settings = Settings.from_dict({**BASE, "resolution_options": options})
+    settings.validate(1)
+    parser = argparse.ArgumentParser()
+    add_arguments(parser)
+    assert from_namespace(parser.parse_args(settings.arguments())) == settings
+    assert Settings.from_dict(BASE).resolution_options == "quarters"
+
+
+@pytest.mark.parametrize("options", ["thirds", "0,3/2", ""])
+def test_resolution_options_the_planner_refuses_are_refused(options):
+    with pytest.raises(ValueError):
+        Settings.from_dict({**BASE, "resolution_options": options}).validate(1)
 
 
 def test_a_recompute_fraction_is_refused():

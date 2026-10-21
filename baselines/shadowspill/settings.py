@@ -1,13 +1,15 @@
 """The settings of one ShadowSpill case, shared by the trainer and the sweep.
 
-On top of what every harness takes (``baselines.common.settings``), the
+On top of what every engine takes (``baselines.common.settings``), the
 budgets ShadowSpill plans within: the execution pool on the device and the
 spill pool in pinned host memory, with the headrooms the runtime keeps
 beside them and an optional artifact store, so the captures
-and profiles of one model are built once across a matrix. ShadowSpill
-honors the whole precision contract. There is no recompute fraction here:
-the planner decides what to keep, recompute or spill, so ``recompute`` is
-none and any value is refused.
+and profiles of one model are built once across a matrix, and the
+resolution options the planner searches. ShadowSpill honors the whole
+precision contract. There is no recompute fraction here: the planner
+decides what to keep, recompute or spill, so ``recompute`` is none and any
+value is refused; the resolution options are the shares of the flexible
+groups it may recompute, of which it plans each and keeps the best.
 """
 
 from __future__ import annotations
@@ -19,7 +21,7 @@ from baselines.common import settings as common
 from baselines.common.precision import Capabilities
 from baselines.common.settings import GEOMETRY_FIELDS, MODEL_FIELDS, PRECISION_FIELDS
 
-#: The sources whose digests identify this harness in a manifest and a row.
+#: The sources whose digests identify this engine in a manifest and a row.
 SOURCE_PATHS = (
     "baselines/__init__.py",
     "baselines/common",
@@ -51,8 +53,11 @@ class Settings(common.Settings):
     external_headroom_gib: float = 0.5
     host_headroom_gib: float = 2.0
     artifact_store: str | None = None
+    #: The shares of the flexible groups the planner may recompute, as the
+    #: quickstart's ``--resolution-options`` spells them.
+    resolution_options: str = "quarters"
 
-    def harness_validation(self, request, geometry, precision):
+    def engine_validation(self, request, geometry, precision):
         if self.recompute is not None:
             raise ValueError(
                 "ShadowSpill's planner decides what to keep, recompute or spill;"
@@ -68,6 +73,11 @@ class Settings(common.Settings):
             )
         if self.host_headroom_gib < 0:
             raise ValueError("host headroom is nonnegative")
+        from shadowspill.planner.search.toolkit.resolution import (
+            named_resolution_options,
+        )
+
+        named_resolution_options(self.resolution_options)
         if self.allocator_cap_gib is not None:
             raise ValueError(
                 "the execution budget is ShadowSpill's device cap; PyTorch's"
@@ -88,6 +98,9 @@ HELP = {
     " pool",
     "artifact_store": "a directory where captures and profiles persist, so a"
     " matrix builds each model once",
+    "resolution_options": "the shares of the flexible groups the planner may"
+    " recompute, each planned and the best kept: 'quarters' (its default),"
+    " 'eighths', 'halves', or comma-separated exact fractions such as 0,1/2,1",
     "allocator_cap_gib": "not a setting here: the execution budget is the cap",
 }
 

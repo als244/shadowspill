@@ -28,7 +28,7 @@ from baselines.common.provenance import hardware_identity
 from baselines.common.reference import Access
 from baselines.common.results import memory_peaks
 from baselines.common.training import TrainingModel
-from baselines.shadowspill import settings as harness_settings
+from baselines.shadowspill import settings as engine_settings
 from workloads.full_model import HEAD_LOSS_METRIC
 
 GIB = 1 << 30
@@ -40,7 +40,7 @@ def optimizer_arguments(precision):
     gradient dtype, so a float32 sum is not rounded on its way in), the dtype
     of its moments (``parameter`` for the dtype of what it steps) and both
     roundings. A rounding the contract leaves unnamed is rounding to nearest,
-    as every other harness's AdamW rounds: ShadowSpill's own training default
+    as every other engine's AdamW rounds: ShadowSpill's own training default
     rounds bfloat16 moments stochastically, which a case asks for by name."""
 
     given = {
@@ -314,6 +314,14 @@ def train(case, clock):
 
     import mlops
 
+    from shadowspill.planner import SearchOptions
+    from shadowspill.planner.search.algorithms.pressurefit import PressureFit
+    from shadowspill.planner.search.algorithms.pressurefit.options import (
+        PressureFitOptions,
+    )
+    from shadowspill.planner.search.toolkit.resolution import (
+        named_resolution_options,
+    )
     from shadowspill.pytorch import ProfilingOptions
     from shadowspill.training import Distributed, Trainer
     from shadowspill.training.backends import ShadowSpill
@@ -337,6 +345,15 @@ def train(case, clock):
     record["profiling_options"] = (
         "defaults" if profiling is None else dataclasses.asdict(profiling)
     )
+    shares = named_resolution_options(settings.resolution_options)
+    record["resolution_options"] = list(shares)
+    search = SearchOptions(
+        algorithm=PressureFit(
+            PressureFitOptions(
+                resolution_options=tuple(Fraction(share) for share in shares)
+            )
+        )
+    )
     snapshots = None
     case.stage = "runtime"
     try:
@@ -345,6 +362,7 @@ def train(case, clock):
             spill_gib=settings.spill_gib,
             device=device,
             artifact_store=settings.artifact_store,
+            search_options=search,
             profiling_options=profiling,
             fuse_narrow_gradient_accumulation=precision.fuse_narrow_gradient_accumulation,
             external_headroom_gib=settings.external_headroom_gib,
@@ -450,7 +468,7 @@ def train(case, clock):
                         )
                         clock.begin(step)
                         result = trainer.step((tokens, targets))
-                        # The rank's share of the update, as every harness
+                        # The rank's share of the update, as every engine
                         # records it; the objective divided it by the world.
                         loss_sum = float(sum(result.losses)) * world
                         head_sum = 0.0
@@ -518,7 +536,7 @@ def train(case, clock):
 def main(argv=None):
     runner.main(
         "shadowspill",
-        harness_settings,
+        engine_settings,
         train,
         argv,
         standalone=False,
