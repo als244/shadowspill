@@ -28,6 +28,9 @@ SOURCE_PATHS = (
     "workloads/full_model.py",
 )
 
+#: The environment beside the launcher's that the trainer runs in.
+ENVIRONMENT = "baselines"
+
 ACTIVATION_OFFLOADS = ("none", "cpu", "overlapped")
 OFFLOADS = ("none", "cpu")
 GRADIENT_SYNCS = ("per-microbatch", "last-microbatch")
@@ -47,7 +50,7 @@ CAPABILITIES = Capabilities(
     opt_state_dtypes=(None, "parameter", "float32", "bfloat16"),
     parameter_roundings=(None, "stochastic"),
     opt_state_roundings=(None,),
-    round_accumulation_once=False,
+    fuse_narrow_gradient_accumulation=False,
 )
 
 
@@ -75,8 +78,10 @@ class Settings(common.Settings):
 
     # FSDP2 sums each gradient into the shard it steps, the float32 master
     # under the default contract, so its gradients default to float32 where
-    # the shared default is the model dtype.
+    # the shared default is the model dtype; autograd writes every weight
+    # gradient before it is added, so it adds a narrower one after.
     grad_dtype: str | None = "float32"
+    fuse_narrow_gradient_accumulation: bool = False
     # Memory mechanisms.
     activation_offload: str = "none"
     offload: str = "none"
@@ -182,23 +187,6 @@ def from_namespace(arguments) -> Settings:
     return common.from_namespace(Settings, arguments)
 
 
-def command(python, world_size, settings, output):
-    """The torchrun command line of one case."""
-    return [
-        str(python),
-        "-m",
-        "torch.distributed.run",
-        "--standalone",
-        f"--nproc-per-node={world_size}",
-        "--max-restarts=0",
-        "-m",
-        "baselines.fsdp2.train",
-        "--output",
-        str(output),
-        *settings.arguments(),
-    ]
-
-
 def configure_prefetch(model, *, forward, backward):
     """Use public FSDP2 APIs. Root owns embedding/head; blocks execute in order."""
     blocks = list(model.model.blocks)
@@ -217,6 +205,7 @@ def configure_prefetch(model, *, forward, backward):
 __all__ = [
     "ACTIVATION_OFFLOADS",
     "CAPABILITIES",
+    "ENVIRONMENT",
     "GEOMETRY_FIELDS",
     "GRADIENT_SYNCS",
     "MODEL_FIELDS",
@@ -227,7 +216,6 @@ __all__ = [
     "Settings",
     "add_arguments",
     "backward_prefetch",
-    "command",
     "configure_prefetch",
     "from_namespace",
 ]

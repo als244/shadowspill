@@ -5,17 +5,18 @@ import argparse
 import dataclasses
 import json
 import sys
+from pathlib import Path
 
 import pytest
 
 from baselines.common import write_json
+from baselines.common.launch import command, harness_module, trainer_command
 from baselines.common.results import memory_peaks, row, summarize_cycles, varied
 from baselines.fsdp2.settings import Settings, add_arguments, from_namespace
 from baselines.sweep import (
     classify,
     expand,
     failure_row,
-    harness_module,
     latest,
     main,
     run_case,
@@ -115,11 +116,25 @@ def test_unknown_knob_is_not_silently_ignored():
         )
 
 
-def test_a_harness_is_its_settings_module():
+def test_a_harness_is_its_settings_module_launched_through_the_launcher():
     module = harness_module("fsdp2")
     assert module.Settings is Settings
-    command = module.command("py", 2, Settings(**TINY), "out")
-    assert command[:10] == [
+    line = command("fsdp2", "py", 2, Settings(**TINY), "out")
+    assert line[:11] == [
+        sys.executable,
+        "-m",
+        "baselines.common.launch",
+        "--harness",
+        "fsdp2",
+        "--python",
+        "py",
+        "--gpus",
+        "2",
+        "--output",
+        "out",
+    ]
+    assert line[11:] == Settings(**TINY).arguments()
+    assert trainer_command("fsdp2", "py", 2, Path("out")) == [
         "py",
         "-m",
         "torch.distributed.run",
@@ -130,8 +145,9 @@ def test_a_harness_is_its_settings_module():
         "baselines.fsdp2.train",
         "--output",
         "out",
+        "--case",
+        "out/case.json",
     ]
-    assert command[10:] == Settings(**TINY).arguments()
     with pytest.raises(ValueError, match="no harness"):
         harness_module("nonesuch")
 

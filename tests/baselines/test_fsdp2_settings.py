@@ -4,8 +4,9 @@ import argparse
 
 import pytest
 
+from baselines.common.launch import command, harness_module
 from baselines.common.precision import Precision, Unsupported
-from baselines.fsdp2.settings import Settings, add_arguments, command, from_namespace
+from baselines.fsdp2.settings import Settings, add_arguments, from_namespace
 
 BASE = {
     "model": "llama3-tiny",
@@ -35,9 +36,8 @@ def test_flags_round_trip_every_setting():
     parser = argparse.ArgumentParser()
     add_arguments(parser)
     assert from_namespace(parser.parse_args(settings.arguments())) == settings
-    line = command("py", 2, settings, "out")
-    assert line[:4] == ["py", "-m", "torch.distributed.run", "--standalone"]
-    assert line[7:10] == ["baselines.fsdp2.train", "--output", "out"]
+    assert harness_module("fsdp2").ENVIRONMENT == "baselines"
+    assert command("fsdp2", "py", 2, settings, "out")[11:] == settings.arguments()
 
 
 def test_gradients_default_to_float32_where_the_shared_default_is_the_model_dtype():
@@ -108,7 +108,12 @@ def test_invalid_settings_are_refused(override):
         {"grad_dtype": "bfloat16"},
         {"opt_state_dtype": "bfloat16"},
         {"opt_state_rounding": "stochastic"},
-        {"round_accumulation_once": True},
+        {
+            "master_dtype": None,
+            "grad_dtype": None,
+            "opt_state_dtype": "parameter",
+            "fuse_narrow_gradient_accumulation": True,
+        },
         {"parameter_rounding": "stochastic"},
         {"optimizer": "adamw8bit"},
         {"float8": True, "mode": "lora", "lora": {"rank": 4}},

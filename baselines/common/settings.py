@@ -71,7 +71,7 @@ class Settings:
     opt_state_dtype: str | None = "float32"
     parameter_rounding: str | None = None
     opt_state_rounding: str | None = None
-    round_accumulation_once: bool = False
+    fuse_narrow_gradient_accumulation: bool = True
     # The data and the weights.
     data: str | None = None
     checkpoint: str | None = None
@@ -191,6 +191,19 @@ class Settings:
     def harness_validation(self, request, geometry, precision) -> None:
         """A harness's own rules, after the shared ones."""
 
+    def resolve(self, world_size) -> dict[str, Any]:
+        """What a harness's trainer needs of the catalog beyond what every
+        case resolves (``baselines.common.launch``), for a trainer whose
+        interpreter cannot import it."""
+        return {}
+
+    def environment(self) -> dict[str, str | None]:
+        """The variables a library reads only from the process environment,
+        as this case sets them (``None``: unset), from the case's own
+        settings: the launcher sets them for the trainer, and the trainer
+        refuses to run in another environment."""
+        return {}
+
     def describe(self, world_size):
         """The model, geometry, precision and configuration a row records."""
         configuration = {
@@ -212,8 +225,10 @@ class Settings:
             flag = "--" + name.replace("_", "-")
             if name in ("lora", "model_config"):
                 result.extend([flag, json.dumps(value, sort_keys=True)])
-            elif name == "round_accumulation_once":
-                result.append(flag if value else "--no-round-accumulation-once")
+            elif name == "fuse_narrow_gradient_accumulation":
+                result.append(
+                    flag if value else "--no-fuse-narrow-gradient-accumulation"
+                )
             elif name in PRECISION_FIELDS:
                 result.extend([flag, "none" if value is None else str(value)])
             elif isinstance(value, bool):
@@ -230,12 +245,17 @@ def add_arguments(
     help: dict[str, str] | None = None,
     choices: dict[str, tuple] | None = None,
     types: dict[str, Any] | None = None,
+    booleans: frozenset[str] = frozenset(),
+    implementations: tuple[str, ...] | None = None,
 ) -> None:
     """The trainer's flags for a harness's settings: the common model,
     geometry and precision flags, then every other field from its default,
-    with the help, choices and types the harness gives."""
+    with the help, choices and types the harness gives; ``booleans`` are the
+    fields that are a yes or a no once set and unset (none) by default;
+    ``implementations`` replace the catalog's for a harness that trains
+    another system's."""
 
-    model_flags.add_arguments(parser)
+    model_flags.add_arguments(parser, implementations)
     geometry_flags.add_arguments(parser)
     precision_flags.add_arguments(parser, settings_type().precision())
     help = {**HELP, **(help or {})}
@@ -247,7 +267,7 @@ def add_arguments(
         options: dict[str, Any] = {"default": value, "help": help.get(name)}
         if name in types:
             options["type"] = types[name]
-        elif isinstance(value, bool):
+        elif isinstance(value, bool) or name in booleans:
             options["action"] = argparse.BooleanOptionalAction
         elif name == "allocator_cap_gib":
             options["type"] = float

@@ -6,11 +6,11 @@ import argparse
 import pytest
 
 from baselines.common.geometry import Geometry
+from baselines.common.launch import command, harness_module
 from baselines.common.precision import Unsupported
 from baselines.deepspeed.settings import (
     Settings,
     add_arguments,
-    command,
     deepspeed_config,
     from_namespace,
 )
@@ -40,8 +40,8 @@ def test_flags_round_trip_every_setting():
     parser = argparse.ArgumentParser()
     add_arguments(parser)
     assert from_namespace(parser.parse_args(settings.arguments())) == settings
-    line = command("py", 2, settings, "out")
-    assert line[7:10] == ["baselines.deepspeed.train", "--output", "out"]
+    assert harness_module("deepspeed").ENVIRONMENT == "baselines"
+    assert command("deepspeed", "py", 2, settings, "out")[11:] == settings.arguments()
     assert "zero_stage" in settings.describe(2)["configuration"]
 
 
@@ -140,7 +140,7 @@ def test_invalid_settings_are_refused(override):
         },
         {"grad_dtype": "float16"},
         {"parameter_rounding": "stochastic"},
-        {"round_accumulation_once": True},
+        {"fuse_narrow_gradient_accumulation": True},
         {"deepcompile": True, "warmup_steps": 8, "deepcompile_offload": "activations"},
         {
             "deepcompile": True,

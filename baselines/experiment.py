@@ -36,6 +36,7 @@ import sys
 from pathlib import Path
 
 from baselines.common import write_json
+from baselines.common.launch import harness_module, interpreter
 from baselines.common.provenance import ROOT
 
 SPEC_KEYS = {
@@ -48,15 +49,6 @@ SPEC_KEYS = {
     "sweeps",
 }
 SWEEP_KEYS = {"name", "harness", "config", "python", "case_timeout"}
-
-
-def interpreter(value: str) -> Path:
-    """A path as given; a bare name is an environment beside the running
-    interpreter's."""
-
-    if "/" in value:
-        return Path(value).expanduser().resolve()
-    return (Path(sys.prefix).resolve().parent / value / "bin" / "python").resolve()
 
 
 def matrix_source(sweep: dict) -> Path:
@@ -91,7 +83,8 @@ def sweep_matrix(path: Path, settings: dict) -> dict:
 def load_spec(path: Path, output: Path | None = None) -> dict:
     """The spec, checked: every sweep names a harness and a matrix that
     leaves the experiment's settings to it, has a name of its own, and an
-    interpreter resolved from its own entry or the harness's."""
+    interpreter resolved from its own entry, the spec's for its harness, or
+    the environment the harness names."""
 
     spec = json.loads(Path(path).read_text())
     unknown = set(spec) - SPEC_KEYS
@@ -126,7 +119,7 @@ def load_spec(path: Path, output: Path | None = None) -> dict:
         names.add(sweep["name"])
         python = sweep.get("python", pythons.get(sweep["harness"]))
         if not python:
-            raise ValueError(f"no interpreter for harness {sweep['harness']!r}")
+            python = harness_module(sweep["harness"]).ENVIRONMENT
         sweep["python"] = str(interpreter(python))
         sweep.setdefault("case_timeout", timeout)
         if not matrix_source(sweep).is_file():

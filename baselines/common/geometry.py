@@ -1,12 +1,15 @@
 """The geometry of one optimizer update.
 
 An update is ``tokens_per_step`` tokens across every rank, consumed as
-``world_size`` ranks times ``accumulation`` microbatches of
+``replicas`` data-parallel replicas times ``accumulation`` microbatches of
 ``tokens_per_microbatch`` tokens each, in whole sequences of
-``sequence_length``. An experiment chooses them for its model, sequence
-length and hardware together. A harness never changes any of these to make
-a configuration fit: a geometry that does not divide is refused, and one
-that does not fit the device is a row that says so.
+``sequence_length``. Every rank is a replica unless a system splits one
+replica over several ranks (tensor, pipeline or context parallelism), which
+names the replicas its ``world_size`` ranks form. An experiment chooses
+them for its model, sequence length and hardware together. A harness never
+changes any of these to make a configuration fit: a geometry that does not
+divide is refused, and one that does not fit the device is a row that says
+so.
 """
 
 from __future__ import annotations
@@ -50,26 +53,35 @@ class Geometry:
     tokens_per_step: int
     tokens_per_microbatch: int
     world_size: int = 1
+    #: Data-parallel replicas, when fewer than the ranks.
+    replicas: int | None = None
 
     def __post_init__(self) -> None:
         for name, value in asdict(self).items():
-            if type(value) is not int:
+            if type(value) is not int and not (name == "replicas" and value is None):
                 raise ValueError(f"{name} must be an integer")
+        if self.data_parallel < 1 or self.world_size % self.data_parallel:
+            raise ValueError("the replicas must divide the world")
         accumulation_steps(
             self.tokens_per_step,
             self.sequence_length,
             self.tokens_per_microbatch,
-            self.world_size,
+            self.data_parallel,
         )
 
     @property
+    def data_parallel(self) -> int:
+        """Data-parallel replicas: every rank, unless ``replicas`` says."""
+        return self.world_size if self.replicas is None else self.replicas
+
+    @property
     def accumulation(self) -> int:
-        """Microbatches per rank per update."""
+        """Microbatches per replica per update."""
         return accumulation_steps(
             self.tokens_per_step,
             self.sequence_length,
             self.tokens_per_microbatch,
-            self.world_size,
+            self.data_parallel,
         )
 
     @property
@@ -78,11 +90,15 @@ class Geometry:
 
     @property
     def tokens_per_rank_per_step(self) -> int:
-        return self.tokens_per_step // self.world_size
+        """Tokens per replica per update, which every rank of it reads."""
+        return self.tokens_per_step // self.data_parallel
 
     def as_dict(self) -> dict[str, int]:
+        value = asdict(self)
+        if self.replicas is None:
+            del value["replicas"]
         return {
-            **asdict(self),
+            **value,
             "accumulation": self.accumulation,
             "sequences_per_microbatch": self.sequences_per_microbatch,
             "tokens_per_rank_per_step": self.tokens_per_rank_per_step,

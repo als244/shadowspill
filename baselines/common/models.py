@@ -235,12 +235,17 @@ def useful_flops_per_token(model: Any, sequence_length: int) -> float:
     return linear + attention
 
 
-def add_arguments(parser: argparse.ArgumentParser) -> None:
-    """The model flags every harness takes."""
+def add_arguments(
+    parser: argparse.ArgumentParser, implementations: tuple[str, ...] | None = None
+) -> None:
+    """The model flags every harness takes; a harness that trains another
+    system's implementation names it in ``implementations``."""
 
     parser.add_argument("--model", required=True, choices=catalog.names())
     parser.add_argument(
-        "--implementation", choices=catalog.IMPLEMENTATIONS, default="mlops"
+        "--implementation",
+        choices=implementations or catalog.IMPLEMENTATIONS,
+        default=(implementations or ("mlops",))[0],
     )
     parser.add_argument("--mode", choices=MODES, default="full")
     parser.add_argument(

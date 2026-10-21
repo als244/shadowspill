@@ -31,6 +31,9 @@ SOURCE_PATHS = (
     "workloads/full_model.py",
 )
 
+#: The environment beside the launcher's that the trainer runs in.
+ENVIRONMENT = "baselines"
+
 STAGES = (1, 2, 3)
 OFFLOADS = ("none", "cpu", "nvme")
 ACTIVATION_OFFLOADS = ("none", "cpu")
@@ -56,7 +59,7 @@ CAPABILITIES = Capabilities(
     opt_state_dtypes=(None, "parameter", "float32", "bfloat16"),
     parameter_roundings=(None,),
     opt_state_roundings=(None,),
-    round_accumulation_once=False,
+    fuse_narrow_gradient_accumulation=False,
 )
 
 
@@ -66,6 +69,9 @@ class Settings(common.Settings):
         default=CAPABILITIES, init=False, repr=False, compare=False
     )
 
+    # Autograd writes every weight gradient before DeepSpeed adds it, so a
+    # narrower one is added after.
+    fuse_narrow_gradient_accumulation: bool = False
     # ZeRO.
     zero_stage: int = 2
     offload_optimizer: str = "none"
@@ -359,30 +365,13 @@ def from_namespace(arguments) -> Settings:
     return common.from_namespace(Settings, arguments)
 
 
-def command(python, world_size, settings, output):
-    """The torchrun command line of one case; DeepSpeed takes its ranks from
-    torchrun's environment."""
-    return [
-        str(python),
-        "-m",
-        "torch.distributed.run",
-        "--standalone",
-        f"--nproc-per-node={world_size}",
-        "--max-restarts=0",
-        "-m",
-        "baselines.deepspeed.train",
-        "--output",
-        str(output),
-        *settings.arguments(),
-    ]
-
-
 __all__ = [
     "ACTIVATION_OFFLOADS",
     "CAPABILITIES",
     "DEEPCOMPILE_BACKENDS",
     "DEEPCOMPILE_OFFLOADS",
     "DEEPCOMPILE_WARMUP_STEPS",
+    "ENVIRONMENT",
     "GEOMETRY_FIELDS",
     "MODEL_FIELDS",
     "OFFLOADS",
@@ -391,7 +380,6 @@ __all__ = [
     "STAGES",
     "Settings",
     "add_arguments",
-    "command",
     "deepspeed_config",
     "from_namespace",
 ]

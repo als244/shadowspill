@@ -20,9 +20,12 @@ every case, and a resume must match it exactly, so the rows under one output
 are comparable.
 
 A harness is the module ``baselines.<harness>.settings``: its ``Settings``
-(``from_dict``, ``as_dict``, ``validate``, ``arguments`` and
-``describe``), its ``command`` and the ``SOURCE_PATHS`` whose digests
-identify its code.
+(``from_dict``, ``as_dict``, ``validate``, ``arguments``, ``describe`` and
+``resolve``), the ``SOURCE_PATHS`` whose digests identify its code and the
+``ENVIRONMENT`` its trainer runs in. Every attempt is launched through
+``baselines.common.launch``, which resolves the case in this interpreter and
+starts the harness's trainer in ``--python``, by default the environment the
+harness names.
 """
 
 from __future__ import annotations
@@ -37,12 +40,10 @@ import os
 import shlex
 import signal
 import subprocess
-import sys
 import time
-from importlib import import_module
 from pathlib import Path
 
-from baselines.common import write_json
+from baselines.common import launch, write_json
 from baselines.common.provenance import ROOT, environment_identity, source_identity
 from baselines.common.results import row as result_row
 from baselines.common.results import validate_row, varied
@@ -56,23 +57,6 @@ INDEX_COLUMNS = (
     "Host peak GiB",
     "Evidence",
 )
-
-
-def harness_module(name):
-    """The settings module of a harness, checked for what the sweep calls."""
-
-    try:
-        module = import_module(f"baselines.{name}.settings")
-    except ModuleNotFoundError as error:
-        raise ValueError(f"no harness {name!r}: {error}") from error
-    missing = [
-        attribute
-        for attribute in ("Settings", "command", "SOURCE_PATHS")
-        if not hasattr(module, attribute)
-    ]
-    if missing:
-        raise ValueError(f"harness {name!r} lacks {', '.join(missing)}")
-    return module
 
 
 def digest(value):
@@ -334,7 +318,11 @@ def main(argv=None):
     parser.add_argument(
         "--gpus", type=int, required=True, help="single-node torchrun world size"
     )
-    parser.add_argument("--python", type=Path, default=Path(sys.executable))
+    parser.add_argument(
+        "--python",
+        type=Path,
+        help="the trainer's interpreter (default: the environment the harness names)",
+    )
     parser.add_argument(
         "--dry-run",
         action="store_true",
@@ -374,10 +362,17 @@ def main(argv=None):
     if args.retry_failed and not args.resume:
         parser.error("--retry-failed requires --resume")
     try:
-        module = harness_module(args.harness)
+        module = launch.harness_module(args.harness)
         cases = expand(json.loads(args.config.read_text()), args.gpus, module.Settings)
     except ValueError as error:
         parser.error(str(error))
+    if args.python is None:
+        args.python = launch.interpreter(module.ENVIRONMENT)
+    if not os.access(args.python, os.X_OK):
+        parser.error(
+            f"{args.python} is not an interpreter: build the {args.harness}"
+            " harness's environment or name --python"
+        )
     output = args.output.resolve()
     output.mkdir(parents=True, exist_ok=True)
     with (output / ".sweep.lock").open("a") as lock:
@@ -409,8 +404,8 @@ def main(argv=None):
         for name, settings in cases:
             case = output / "cases" / name
             write_json(case / "config.json", settings.as_dict())
-            first = module.command(
-                args.python, args.gpus, settings, case / "attempt-001"
+            first = launch.command(
+                args.harness, args.python, args.gpus, settings, case / "attempt-001"
             )
             (case / "command.txt").write_text(shlex.join(first) + "\n")
         report(output, cases, args.harness, args.gpus)
@@ -431,7 +426,9 @@ def main(argv=None):
             )
             attempt = case / f"attempt-{number:03d}"
             attempt.mkdir()
-            cmd = module.command(args.python, args.gpus, settings, attempt)
+            cmd = launch.command(
+                args.harness, args.python, args.gpus, settings, attempt
+            )
             (attempt / "command.txt").write_text(shlex.join(cmd) + "\n")
             print(
                 f"Starting {name}/{attempt.name}: {shlex.join(settings.arguments())}",

@@ -30,6 +30,9 @@ SOURCE_PATHS = (
     "src/shadowspill",
 )
 
+#: The environment beside the launcher's that the trainer runs in.
+ENVIRONMENT = "shadowspill"
+
 #: ShadowSpill honors every choice of the contract.
 CAPABILITIES = Capabilities("shadowspill")
 
@@ -102,32 +105,14 @@ def from_namespace(arguments) -> Settings:
     return common.from_namespace(Settings, arguments)
 
 
-def command(python, world_size, settings, output):
-    """The torchrun command line of one case; the runtime takes its device
-    from torchrun's environment."""
-    return [
-        str(python),
-        "-m",
-        "torch.distributed.run",
-        "--standalone",
-        f"--nproc-per-node={world_size}",
-        "--max-restarts=0",
-        "-m",
-        "baselines.shadowspill.train",
-        "--output",
-        str(output),
-        *settings.arguments(),
-    ]
-
-
 __all__ = [
     "CAPABILITIES",
+    "ENVIRONMENT",
     "GEOMETRY_FIELDS",
     "MODEL_FIELDS",
     "PRECISION_FIELDS",
     "SOURCE_PATHS",
     "Settings",
     "add_arguments",
-    "command",
     "from_namespace",
 ]

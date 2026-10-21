@@ -6,6 +6,7 @@ import argparse
 import pytest
 
 from baselines.common import precision
+from baselines.common.launch import harness_module
 from baselines.common.precision import (
     Capabilities,
     Precision,
@@ -29,7 +30,7 @@ def test_the_default_is_bf16_compute_and_gradients_with_fp32_masters_and_state()
         "opt_state_dtype": "float32",
         "parameter_rounding": "default",
         "opt_state_rounding": "default",
-        "round_accumulation_once": False,
+        "fuse_narrow_gradient_accumulation": True,
     }
     assert default.stepped_dtype == "float32"
     assert "model_dtype=bfloat16" in default.describe()
@@ -56,7 +57,7 @@ def test_defaults_resolve_against_what_the_step_computes():
         {"opt_state_dtype": "weights"},
         {"parameter_rounding": "truncate"},
         {"opt_state_rounding": "random"},
-        {"round_accumulation_once": "yes"},
+        {"fuse_narrow_gradient_accumulation": "yes"},
     ],
 )
 def test_values_outside_the_contract_are_refused(changes):
@@ -70,7 +71,7 @@ def test_dict_and_flag_round_trips_reproduce_a_request():
         grad_dtype="bfloat16",
         opt_state_dtype="parameter",
         parameter_rounding="stochastic",
-        round_accumulation_once=True,
+        fuse_narrow_gradient_accumulation=False,
     )
     assert Precision.from_dict(request.as_dict()) == request
     assert Precision.from_arguments(parse(*request.arguments())) == request
@@ -102,7 +103,9 @@ def test_flags_accept_torch_names_and_none():
 
 def test_capabilities_refuse_what_a_harness_cannot_honor():
     Capabilities("any").check(
-        Precision(parameter_rounding="stochastic", round_accumulation_once=True)
+        Precision(
+            parameter_rounding="stochastic", fuse_narrow_gradient_accumulation=True
+        )
     )
     fsdp = Capabilities(
         "fsdp2",
@@ -111,12 +114,39 @@ def test_capabilities_refuse_what_a_harness_cannot_honor():
         opt_state_dtypes=("float32",),
         parameter_roundings=(None,),
         opt_state_roundings=(None,),
-        round_accumulation_once=False,
+        fuse_narrow_gradient_accumulation=False,
     )
     fsdp.check(Precision(grad_dtype="float32"))
     with pytest.raises(Unsupported, match="master_dtype=none"):
         fsdp.check(Precision(master_dtype=None, grad_dtype="float32"))
     with pytest.raises(Unsupported, match="parameter_rounding=stochastic"):
         fsdp.check(Precision(grad_dtype="float32", parameter_rounding="stochastic"))
-    with pytest.raises(Unsupported, match="accumulation"):
-        fsdp.check(Precision(grad_dtype="float32", round_accumulation_once=True))
+    # Fused narrow-gradient accumulation asks nothing of float32 gradients.
+    fsdp.check(Precision(grad_dtype="float32", fuse_narrow_gradient_accumulation=True))
+    autograd = Capabilities("autograd", fuse_narrow_gradient_accumulation=False)
+    autograd.check(Precision(fuse_narrow_gradient_accumulation=False))
+    with pytest.raises(Unsupported, match="bfloat16 running gradient"):
+        autograd.check(Precision())
+
+
+def test_narrow_gradients_fuse_their_accumulation_by_default():
+    assert Precision().fuse_narrow_gradient_accumulation
+    assert Precision().narrow_gradients
+    assert not Precision(grad_dtype="float32").narrow_gradients
+    assert not Precision(model_dtype="float32").narrow_gradients
+    assert Precision(model_dtype="float32", grad_dtype="bfloat16").narrow_gradients
+
+
+@pytest.mark.parametrize(
+    ("harness", "fused"),
+    [
+        ("fsdp2", False),
+        ("deepspeed", False),
+        ("shadowspill", True),
+        ("megatron_core", True),
+    ],
+)
+def test_a_harness_that_cannot_fuse_defaults_to_adding_after(harness, fused):
+    settings = harness_module(harness).Settings()
+    assert settings.fuse_narrow_gradient_accumulation is fused
+    settings.CAPABILITIES.check(settings.precision())

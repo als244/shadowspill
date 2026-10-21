@@ -4,10 +4,10 @@ import argparse
 
 import pytest
 
+from baselines.common.launch import command, harness_module
 from baselines.shadowspill.settings import (
     Settings,
     add_arguments,
-    command,
     from_namespace,
 )
 from baselines.shadowspill.train import optimizer_arguments
@@ -29,7 +29,7 @@ def test_flags_round_trip_every_setting():
             "artifact_store": "/tmp/store",
             "parameter_rounding": "stochastic",
             "opt_state_rounding": "stochastic",
-            "round_accumulation_once": True,
+            "fuse_narrow_gradient_accumulation": False,
         }
     )
     settings.validate(2)
@@ -37,8 +37,8 @@ def test_flags_round_trip_every_setting():
     add_arguments(parser)
     assert from_namespace(parser.parse_args(settings.arguments())) == settings
     assert "--recompute" not in settings.arguments()
-    line = command("py", 2, settings, "out")
-    assert line[7:10] == ["baselines.shadowspill.train", "--output", "out"]
+    assert harness_module("shadowspill").ENVIRONMENT == "shadowspill"
+    assert command("shadowspill", "py", 2, settings, "out")[11:] == settings.arguments()
     configuration = settings.describe(2)["configuration"]
     assert configuration["execution_gib"] == 2
     assert configuration["recompute"] is None

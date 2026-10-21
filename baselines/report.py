@@ -36,9 +36,11 @@ MEMORY_KEYS = {
     "reserved": "peak_reserved_bytes",
 }
 
-#: Geometry fields derived from the others, left out of a point's settings.
+#: Geometry fields derived from the others, left out of a point's settings;
+#: a system's replicas follow from the parallelism its configuration names.
 DERIVED_GEOMETRY = (
     "accumulation",
+    "replicas",
     "sequences_per_microbatch",
     "tokens_per_rank_per_step",
 )

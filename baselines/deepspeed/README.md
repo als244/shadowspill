@@ -4,13 +4,14 @@ DeepSpeed (ZeRO stages 1 to 3 with its optimizer and parameter offload, its
 activation checkpointing and CPU checkpointing, and its DeepCompile backend
 with its offloads) over any catalog model, full or LoRA, with the shared
 objective, geometry, precision contract and result row of
-`baselines/common`. No ShadowSpill runtime is used. Run from the
-repository root in the `baselines` environment.
+`baselines/common`. No ShadowSpill runtime is used. Every case starts
+through the launcher (`baselines.common.launch`), run from the repository
+root in the `baselines` environment, the environment the trainer runs in.
 
 One case:
 
 ```bash
-torchrun --standalone --nproc-per-node=1 -m baselines.deepspeed.train \
+python -m baselines.common.launch --harness deepspeed --gpus 1 \
   --output /mnt/storage/research/shadowspill/baselines/round1/deepspeed/llama3-8b-z3 \
   --model llama3-8b --tokens-per-step 65536 --tokens-per-microbatch 8192 \
   --zero-stage 3 --offload-optimizer cpu --recompute 1
@@ -104,8 +105,8 @@ launch.
 
 ## What a run writes
 
-As the FSDP2 harness: `rank-NNNNN/request.json` (with the DeepSpeed
-configuration the case ran under), `result.json` or `failure.json`,
+As the FSDP2 harness: `case.json`, `rank-NNNNN/request.json` (with the
+DeepSpeed configuration the case ran under), `result.json` or `failure.json`,
 `results.json` and `row.json` from the first rank. The tiny qualification
 compares every update's loss, gradients (read through DeepSpeed's accessors
 before its step clears them), masters and moments to an unsharded copy,

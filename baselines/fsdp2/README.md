@@ -3,13 +3,15 @@
 Native PyTorch FSDP2 (`fully_shard`) over any catalog model, full or LoRA,
 with the shared objective, geometry, precision contract and result row of
 `baselines/common`. No ShadowSpill runtime is used: the trainer refuses to
-finish if `shadowspill` was imported. Run from the repository root in the
-`baselines` environment (`baselines/scripts/setup.sh`).
+finish if `shadowspill` was imported. Every case starts through the launcher
+(`baselines.common.launch`), run from the repository root in the `baselines`
+environment (`baselines/scripts/setup.sh`); the trainer runs there too, the
+environment this harness names.
 
 One case:
 
 ```bash
-torchrun --standalone --nproc-per-node=1 -m baselines.fsdp2.train \
+python -m baselines.common.launch --harness fsdp2 --gpus 1 \
   --output /mnt/storage/research/shadowspill/baselines/round1/fsdp2/llama3-8b-r100 \
   --model llama3-8b --tokens-per-step 65536 --tokens-per-microbatch 8192 \
   --recompute 1 --activation-offload none --offload none
@@ -39,7 +41,7 @@ python -m baselines.experiment --spec baselines/experiments/rtx5090_llama3-8b.js
 |---|---|
 | `--model`, `--implementation`, `--mode`, `--lora JSON`, `--model-config JSON` | The catalog model (`workloads/models/catalog.py`), its `pytorch` or `mlops` implementation, `full` or `lora` training with `configure_lora`'s options, and field overrides on the entry's configuration (`baselines.common.models`) |
 | `--sequence-length`, `--tokens-per-step`, `--tokens-per-microbatch` | One update's geometry: `tokens_per_step = world_size * tokens_per_microbatch * accumulation`, in whole sequences; a geometry that does not divide is refused (`baselines.common.geometry`) |
-| `--model-dtype`, `--master-dtype`, `--grad-dtype`, `--opt-state-dtype`, `--parameter-rounding`, `--opt-state-rounding`, `--round-accumulation-once` | The precision contract the quickstart names (`baselines.common.precision`); what FSDP2 cannot honor is refused, never substituted: see below |
+| `--model-dtype`, `--master-dtype`, `--grad-dtype`, `--opt-state-dtype`, `--parameter-rounding`, `--opt-state-rounding`, `--fuse-narrow-gradient-accumulation` | The precision contract the quickstart names (`baselines.common.precision`); what FSDP2 cannot honor is refused, never substituted: see below |
 | `--data DIR` | A corpus `baselines/scripts/prepare_corpus.py` wrote; each rank reads one contiguous window per step, disjoint across ranks and steps until the corpus wraps. Without it, synthetic tokens distinct per rank from `--seed` |
 | `--checkpoint DIR` | A local Hugging Face checkpoint of the model, read through the family's `checkpoint.py` after the shards are materialized: every rank reads the whole tensors and keeps its rows, a checkpoint whose configuration is not the catalog entry's is refused, and keys the model does not take fail the run. Without it, the initialized weights |
 | `--recompute F` | Fraction of whole transformer blocks checkpointed, spread evenly, from 0 to 1 |
@@ -70,7 +72,7 @@ default is the model dtype, since the shard they are summed into is the
 float32 master. `--master-dtype none` with a bfloat16 model steps the
 weights themselves; `--parameter-rounding stochastic` then uses torchao's
 AdamW, which rounds the bfloat16 update stochastically. A float16 model would
-need loss scaling the harness does not do, and `--round-accumulation-once`
+need loss scaling the harness does not do, and `--fuse-narrow-gradient-accumulation`
 is not available: both are refused. Each microbatch's gradients are
 created at the compute dtype, since autograd gives a weight's gradient the
 weight's own dtype; FSDP2 casts them to `--grad-dtype` for the
@@ -81,6 +83,7 @@ the shard.
 
 ```text
 output/
+  case.json                 # the case the launcher validated and resolved
   rank-NNNNN/request.json   # the case as described, the hardware, the resolved precision,
                             # checkpointed layers, the model summary, the corpus
   rank-NNNNN/result.json    # cycles, losses, peaks, evidence; or failure.json
@@ -95,10 +98,11 @@ reads the rows (`baselines/report.py`).
 ## Measurement
 
 Every rank's cycle times are kept; a step's time is the slowest rank's and
-the result is the median over measured steps. Useful TFLOP/s per GPU uses
-the convention of `baselines.common.models.useful_flops_per_token`, counted
-from the model as built: recomputation, the optimizer and communication are
-not credited. Peaks are PyTorch allocator measurements of the binding rank,
+the result is the median over measured steps (`baselines.common.runner`).
+Useful TFLOP/s per GPU uses the convention of
+`baselines.common.models.useful_flops_per_token`, counted by the launcher
+from the catalog model the case builds: recomputation, the optimizer and
+communication are not credited. Peaks are PyTorch allocator measurements of the binding rank,
 and the host peak is the sum of the ranks' high-water marks. The tiny
 qualification and profiled runs are rows whose measurement is not a
 throughput result. Every measured loss must be finite, and the first rank's

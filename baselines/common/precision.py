@@ -7,12 +7,16 @@ over a step (under PyTorch's autograd each microbatch's is created at its
 weight's own dtype first); ``opt_state_dtype`` what the optimizer keeps its
 state at, or ``parameter`` for the dtype of what it steps; the two roundings
 how the optimizer rounds the weights it steps and the state it stores;
-``round_accumulation_once`` whether a multiply adds its product into a
-narrower running gradient as it writes it, rounding once instead of twice.
+``fuse_narrow_gradient_accumulation`` whether, with gradients narrower than
+a multiply's float32 accumulator, a later microbatch's weight gradient is
+added into the running gradient by the multiply as it writes it instead of
+written at the narrow dtype and added after (``PRECISION.md``); it asks
+nothing of float32 gradients.
 
 The baselines default to BF16 compute and gradients with FP32 masters and
-moments; a harness that cannot sum gradients at the model dtype under its
-masters defaults to its own and says so. A harness states what it can
+moments, the multiplies adding into the BF16 gradients themselves; a harness
+that cannot sum gradients at the model dtype under its masters, or cannot
+fuse that accumulation, defaults to its own and says so. A harness states what it can
 honor as ``Capabilities``; a request outside them is refused with the
 reason, never substituted.
 """
@@ -33,7 +37,7 @@ FIELDS = (
     "opt_state_dtype",
     "parameter_rounding",
     "opt_state_rounding",
-    "round_accumulation_once",
+    "fuse_narrow_gradient_accumulation",
 )
 
 
@@ -49,7 +53,7 @@ class Precision:
     opt_state_dtype: str | None = "float32"
     parameter_rounding: str | None = None
     opt_state_rounding: str | None = None
-    round_accumulation_once: bool = False
+    fuse_narrow_gradient_accumulation: bool = True
 
     def __post_init__(self) -> None:
         if self.model_dtype not in DTYPES:
@@ -69,8 +73,14 @@ class Precision:
             value = getattr(self, name)
             if value is not None and value not in ROUNDINGS:
                 raise ValueError(f"{name} must be one of {ROUNDINGS} or none")
-        if not isinstance(self.round_accumulation_once, bool):
-            raise ValueError("round_accumulation_once must be a boolean")
+        if not isinstance(self.fuse_narrow_gradient_accumulation, bool):
+            raise ValueError("fuse_narrow_gradient_accumulation must be a boolean")
+
+    @property
+    def narrow_gradients(self) -> bool:
+        """Whether gradients are summed narrower than the float32 a multiply
+        of bfloat16 or float16 operands sums its products at."""
+        return (self.grad_dtype or self.model_dtype) != "float32"
 
     @property
     def stepped_dtype(self) -> str:
@@ -94,7 +104,7 @@ class Precision:
             ),
             "parameter_rounding": self.parameter_rounding or "default",
             "opt_state_rounding": self.opt_state_rounding or "default",
-            "round_accumulation_once": self.round_accumulation_once,
+            "fuse_narrow_gradient_accumulation": self.fuse_narrow_gradient_accumulation,
         }
 
     def describe(self) -> str:
@@ -118,8 +128,10 @@ class Precision:
         for name in FIELDS:
             value = getattr(self, name)
             flag = "--" + name.replace("_", "-")
-            if name == "round_accumulation_once":
-                result.append(flag if value else "--no-round-accumulation-once")
+            if name == "fuse_narrow_gradient_accumulation":
+                result.append(
+                    flag if value else "--no-fuse-narrow-gradient-accumulation"
+                )
             else:
                 result.extend([flag, "none" if value is None else str(value)])
         return result
@@ -137,7 +149,7 @@ class Capabilities:
     opt_state_dtypes: tuple[str | None, ...] = (None, "parameter", *DTYPES)
     parameter_roundings: tuple[str | None, ...] = (None, *ROUNDINGS)
     opt_state_roundings: tuple[str | None, ...] = (None, *ROUNDINGS)
-    round_accumulation_once: bool = True
+    fuse_narrow_gradient_accumulation: bool = True
 
     def check(self, precision: Precision) -> None:
         """Refuse a request this harness cannot run as asked."""
@@ -159,9 +171,16 @@ class Capabilities:
                     f"{self.harness} cannot honor {field}={value or 'none'};"
                     f" it offers {choices}"
                 )
-        if precision.round_accumulation_once and not self.round_accumulation_once:
+        if (
+            precision.fuse_narrow_gradient_accumulation
+            and precision.narrow_gradients
+            and not self.fuse_narrow_gradient_accumulation
+        ):
+            gradients = precision.grad_dtype or precision.model_dtype
             raise Unsupported(
-                f"{self.harness} cannot round a gradient accumulation once"
+                f"{self.harness} cannot have a multiply add a weight gradient"
+                f" into a {gradients} running gradient as it writes it;"
+                " --no-fuse-narrow-gradient-accumulation adds it after"
             )
 
 
@@ -234,11 +253,14 @@ def add_arguments(
         " none for its own default",
     )
     parser.add_argument(
-        "--round-accumulation-once",
+        "--fuse-narrow-gradient-accumulation",
         action=argparse.BooleanOptionalAction,
-        default=defaults.round_accumulation_once,
-        help="let a multiply add its product into running gradients kept narrower"
-        " than it sums at as it writes them, rounding once instead of twice",
+        default=defaults.fuse_narrow_gradient_accumulation,
+        help="with gradients narrower than float32, let a later microbatch's"
+        " multiply add its weight gradient into the running gradient as it writes"
+        " it instead of writing it at the narrow dtype and adding it after; no"
+        " effect on float32 gradients"
+        f" (default: {'on' if defaults.fuse_narrow_gradient_accumulation else 'off'})",
     )
 
 

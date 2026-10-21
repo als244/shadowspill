@@ -1,62 +1,37 @@
 """One ShadowSpill case of a catalog model through the public training API,
-``Trainer`` over the ``ShadowSpill`` backend; launch with torchrun.
+``Trainer`` over the ``ShadowSpill`` backend: the trainer
+``baselines.common.launch`` starts under torchrun.
 
-    torchrun --standalone --nproc-per-node=N -m baselines.shadowspill.train \\
-        --output DIR --model NAME --tokens-per-microbatch T \\
-        --tokens-per-step S --execution-gib G --spill-gib H ...
-
-The settings are ``baselines.shadowspill.settings``. Every rank writes
-``rank-NNNNN/request.json`` as it starts, ``plan.json`` (and ``search.json``
-when the backend searched) once planning is done, and ``result.json`` or
-``failure.json`` as it ends; the first rank writes ``results.json`` with
-every rank's measurements and ``row.json``, the result row every harness
-shares.
+The settings are ``baselines.shadowspill.settings``, validated by the
+launcher; ``baselines.common.runner`` writes the request, the result and
+the row around ``train``, which plans the step and runs every step under the
+runner's clock, writing ``plan.json`` (and ``search.json`` when the backend
+searched) beside the request once planning is done.
 """
 
 from __future__ import annotations
 
-import argparse
 import contextlib
 import dataclasses
-import datetime
 import functools
-import math
-import os
-import resource
 import shutil
-import sys
 import tempfile
 import time
-import traceback
 from fractions import Fraction
 from pathlib import Path
 
 import torch
 import torch.distributed as dist
 
-from baselines.common import summarize_cycles, write_json
-from baselines.common.data import Corpus, synthetic_tokens
-from baselines.common.models import useful_flops_per_token
-from baselines.common.provenance import (
-    environment_identity,
-    hardware_identity,
-    source_identity,
-)
+from baselines.common import runner
+from baselines.common.provenance import hardware_identity
 from baselines.common.reference import Access
 from baselines.common.results import memory_peaks
-from baselines.common.results import row as result_row
 from baselines.common.training import TrainingModel
-from baselines.shadowspill.settings import SOURCE_PATHS, add_arguments, from_namespace
+from baselines.shadowspill import settings as harness_settings
 from workloads.full_model import HEAD_LOSS_METRIC
 
 GIB = 1 << 30
-
-
-def parse(argv=None):
-    parser = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
-    parser.add_argument("--output", type=Path, required=True)
-    add_arguments(parser)
-    return parser.parse_args(argv)
 
 
 def optimizer_arguments(precision):
@@ -244,159 +219,134 @@ class ShadowSpillAccess(Access):
         return counts
 
 
-def main(argv=None):
-    args = parse(argv)
-    rank, world = int(os.environ["RANK"]), int(os.environ["WORLD_SIZE"])
-    local_rank = int(os.environ["LOCAL_RANK"])
-    settings = from_namespace(args)
-    geometry = settings.validate(world)
+def failure(error):
+    """A budget the planner cannot fit is the frontier's boundary, recorded
+    under the schema's name for it."""
+
+    found = boundary(error)
+    return {"status": "cuda_out_of_memory" if found else "failed", "boundary": found}
+
+
+def memory(all_ranks):
+    """The row's memory: the execution pool's peaks and budget, with what
+    each rank's pools held."""
+
+    value = memory_peaks(all_ranks)
+    value["peak_allocated_aggregation"] = (
+        "maximum over ranks of the execution pool's measured peak occupancy"
+    )
+    value["peak_reserved_aggregation"] = (
+        "the execution budget, the pool's physical capacity"
+    )
+    value["shadowspill"] = [row["shadowspill_memory"] for row in all_ranks]
+    return value
+
+
+def train(case, clock):
+    """Plan the case's step with the ShadowSpill backend and run every step."""
+
+    settings, geometry, precision = case.settings, case.geometry, case.precision
     request = settings.request()
-    precision = settings.precision()
-    torch.set_num_threads(settings.cpu_threads)
-    # Nothing touches the device before the backend installs its allocator:
-    # the device is named here and selected, probed and capped once the
-    # runtime is up.
-    device = torch.device("cuda", local_rank)
-    started = time.perf_counter()
-    output = args.output / f"rank-{rank:05d}"
-    output.mkdir(parents=True, exist_ok=False)
-    stage = "distributed_initialization"
-    description = settings.describe(world)
-    record = {
-        **description,
-        "output": str(args.output),
-        "rank": rank,
-        "world_size": world,
-        "hardware": None,
-        "resolved_precision": precision.resolved(),
-        "microbatches_per_step": geometry.accumulation,
-        "shadowspill": True,
-    }
-    write_json(output / "request.json", record)
+    record = case.record
+    world, device = case.world, case.device
+    if world > 1:
+        # The runtime takes a host control group before it allocates its
+        # pools; the device group is made inside the backend.
+        dist.init_process_group("gloo")
+    case.stage = "model_initialization"
+    from mlops.dispatch import set_weight_gradient_dtype
+
+    grad_dtype = getattr(torch, precision.grad_dtype or precision.model_dtype)
+    set_weight_gradient_dtype(grad_dtype)
+    torch.manual_seed(settings.seed)
+    # The model is built on meta; the backend materializes it in its pools
+    # and runs the initialization there.
+    model = TrainingModel(request, geometry, dtype=precision.model_dtype)
+    checkpoint = None
+    if settings.checkpoint is not None:
+        checkpoint = request.checkpoint(settings.checkpoint)
+        record["checkpoint"] = {
+            "directory": str(Path(settings.checkpoint).resolve()),
+            "config": checkpoint.config.__dict__
+            if not hasattr(checkpoint.config, "__dataclass_fields__")
+            else {
+                name: getattr(checkpoint.config, name)
+                for name in checkpoint.config.__dataclass_fields__
+            },
+        }
+    case.save()
+    loaded = {}
+
+    def copy_value(parameter, value):
+        parameter.copy_(value.to(parameter.dtype))
+
+    def initialize(module):
+        # Called by preparation on the pool-owned tensors: the model's own
+        # initialization under the seed, then the checkpoint's values
+        # written in place.
+        from shadowspill.training import reset_parameters
+
+        with torch.random.fork_rng(devices=[]):
+            torch.manual_seed(settings.seed)
+            reset_parameters(module)
+        if checkpoint is not None:
+            with torch.no_grad():
+                loaded.update(module.load_checkpoint(checkpoint, copy=copy_value))
+
+    data = case.data(int(model.model.config.vocab_size))
+    batch = geometry.tokens_per_microbatch
+
+    def microbatches(pair):
+        # Each microbatch's objective is already its share of the update,
+        # so every scale is one.
+        tokens, targets = pair
+        for start in range(0, tokens.shape[1], batch):
+            yield (
+                (tokens[:, start : start + batch], targets[:, start : start + batch]),
+                1.0,
+            )
+
+    def objective(module, pair):
+        # The backend sums the ranks' contributions, so each rank's share
+        # of the update is divided by the world.
+        loss, metrics = module(*pair)
+        return (loss / world if world > 1 else loss), metrics
+
+    import mlops
+
+    from shadowspill.pytorch import ProfilingOptions
+    from shadowspill.training import Distributed, Trainer
+    from shadowspill.training.backends import ShadowSpill
+    from shadowspill.training.schedules import Constant
+
+    # A case checked against the reference is never a throughput result, so
+    # its tasks are timed as the numerical gate times them: the exact task's
+    # warmups, the allocation probes and the minimum samples, without the
+    # sustained-clock conditioning and duration floors a throughput case's
+    # profiles take, which cost a tiny model's search minutes.
+    profiling = (
+        ProfilingOptions(
+            conditioning_seconds=0,
+            conditioning_wall_seconds=0,
+            measurement_seconds=0,
+            measurement_wall_seconds=0,
+        )
+        if settings.verify_reference
+        else None
+    )
+    record["profiling_options"] = (
+        "defaults" if profiling is None else dataclasses.asdict(profiling)
+    )
     snapshots = None
+    case.stage = "runtime"
     try:
-        if world > 1:
-            # The runtime takes a host control group before it allocates
-            # its pools; the device group is made inside the backend.
-            dist.init_process_group("gloo")
-        stage = "model_initialization"
-        from mlops.dispatch import set_weight_gradient_dtype
-
-        grad_dtype = getattr(torch, precision.grad_dtype or precision.model_dtype)
-        set_weight_gradient_dtype(grad_dtype)
-        torch.manual_seed(settings.seed)
-        # The model is built on meta; the backend materializes it in its
-        # pools and runs the initialization there.
-        model = TrainingModel(request, geometry, dtype=precision.model_dtype)
-        useful = (
-            useful_flops_per_token(model.model, geometry.sequence_length)
-            * geometry.tokens_per_step
-        )
-        record["summary"] = request.summary(model.model)
-        checkpoint = None
-        if settings.checkpoint is not None:
-            checkpoint = request.checkpoint(settings.checkpoint)
-            record["checkpoint"] = {
-                "directory": str(Path(settings.checkpoint).resolve()),
-                "config": checkpoint.config.__dict__
-                if not hasattr(checkpoint.config, "__dataclass_fields__")
-                else {
-                    name: getattr(checkpoint.config, name)
-                    for name in checkpoint.config.__dataclass_fields__
-                },
-            }
-        write_json(output / "request.json", record)
-        loaded = {}
-
-        def copy_value(parameter, value):
-            parameter.copy_(value.to(parameter.dtype))
-
-        def initialize(module):
-            # Called by preparation on the pool-owned tensors: the model's
-            # own initialization under the seed, then the checkpoint's
-            # values written in place.
-            from shadowspill.training import reset_parameters
-
-            with torch.random.fork_rng(devices=[]):
-                torch.manual_seed(settings.seed)
-                reset_parameters(module)
-            if checkpoint is not None:
-                with torch.no_grad():
-                    loaded.update(module.load_checkpoint(checkpoint, copy=copy_value))
-
-        vocabulary = int(model.model.config.vocab_size)
-        corpus = None
-        if settings.data is not None:
-            corpus = Corpus(settings.data)
-            corpus.check_vocabulary(vocabulary)
-            record["corpus"] = corpus.meta
-        tokens_per_rank = geometry.tokens_per_rank_per_step
-        batch = geometry.tokens_per_microbatch
-        microbatch_count = geometry.accumulation
-
-        def item(step):
-            if corpus is None:
-                tokens, targets = synthetic_tokens(
-                    vocabulary, tokens_per_rank, seed=settings.seed, rank=rank
-                )
-                return tokens, targets, 0
-            return corpus.window(
-                rank=rank, world_size=world, step=step, tokens=tokens_per_rank
-            )
-
-        def microbatches(data):
-            # Each microbatch's objective is already its share of the
-            # update, so every scale is one.
-            tokens, targets = data
-            for start in range(0, tokens.shape[1], batch):
-                yield (
-                    (
-                        tokens[:, start : start + batch],
-                        targets[:, start : start + batch],
-                    ),
-                    1.0,
-                )
-
-        def objective(module, data):
-            # The backend sums the ranks' contributions, so each rank's
-            # share of the update is divided by the world.
-            loss, metrics = module(*data)
-            return (loss / world if world > 1 else loss), metrics
-
-        import mlops
-
-        from shadowspill.pytorch import ProfilingOptions
-        from shadowspill.training import Distributed, Trainer
-        from shadowspill.training.backends import ShadowSpill
-        from shadowspill.training.schedules import Constant
-
-        # A case checked against the reference is never a throughput result,
-        # so its tasks are timed as the numerical gate times them: the exact
-        # task's warmups, the allocation probes and the minimum samples,
-        # without the sustained-clock conditioning and duration floors a
-        # throughput case's profiles take, which cost a tiny model's search
-        # minutes.
-        profiling = (
-            ProfilingOptions(
-                conditioning_seconds=0,
-                conditioning_wall_seconds=0,
-                measurement_seconds=0,
-                measurement_wall_seconds=0,
-            )
-            if settings.verify_reference
-            else None
-        )
-        record["profiling_options"] = (
-            "defaults" if profiling is None else dataclasses.asdict(profiling)
-        )
-        stage = "runtime"
         with ShadowSpill(
             execution_gib=settings.execution_gib,
             spill_gib=settings.spill_gib,
             device=device,
             artifact_store=settings.artifact_store,
             profiling_options=profiling,
-            round_accumulation_once=precision.round_accumulation_once,
+            fuse_narrow_gradient_accumulation=precision.fuse_narrow_gradient_accumulation,
             external_headroom_gib=settings.external_headroom_gib,
             control_group=dist.group.WORLD if world > 1 else None,
             host_headroom_gib=settings.host_headroom_gib,
@@ -433,15 +383,14 @@ def main(argv=None):
                     grad_dtype=grad_dtype,
                     distributed=None if group is None else Distributed(group),
                 ) as trainer:
-                    stage = "planning"
-                    tokens, targets, _ = item(0)
+                    case.stage = "planning"
                     planning_started = time.perf_counter()
                     with (
                         checkpoint
                         if checkpoint is not None
                         else contextlib.nullcontext()
                     ):
-                        trainer.prepare((tokens, targets), initialize=initialize)
+                        trainer.prepare(data(0), initialize=initialize)
                     torch.cuda.synchronize()
                     planning_seconds = time.perf_counter() - planning_started
                     if checkpoint is not None:
@@ -453,16 +402,16 @@ def main(argv=None):
                             )
                     plan = trainer.plan
                     record["plan"] = plan_record(plan, planning_seconds)
-                    (output / "plan.json").write_text(
+                    (case.directory / "plan.json").write_text(
                         plan.execution_plan.to_json() + "\n"
                     )
                     if trainer.planning is not None:
-                        trainer.planning.save(output / "search.json")
+                        trainer.planning.save(case.directory / "search.json")
                     record["pools_after_planning"] = {
                         name: pool_record(backend.runtime.pool_statistics(name))
                         for name in ("execution", "spill")
                     }
-                    write_json(output / "request.json", record)
+                    case.save()
                     access = reference = None
                     if settings.verify_reference:
                         from baselines.common.reference import Reference
@@ -484,19 +433,11 @@ def main(argv=None):
                             world,
                             access=access,
                         )
-                    cycles, losses, head_losses, wrapped = [], [], [], 0
                     device_used = []
                     evidence = None
-                    stage = "training"
-                    setup_seconds = time.perf_counter() - started
-                    print(
-                        f"rank={rank} initialized seconds={setup_seconds:.3f} "
-                        f"planning={planning_seconds:.3f} "
-                        f"accumulation={microbatch_count}",
-                        flush=True,
-                    )
-                    for step in range(settings.warmup_steps + settings.steps):
-                        tokens, targets, wrapped = item(step)
+                    clock.ready(f"planning={planning_seconds:.3f}")
+                    for step in range(clock.steps):
+                        tokens, targets = data(step)
                         expected_loss = (
                             None
                             if reference is None
@@ -507,24 +448,8 @@ def main(argv=None):
                                 batch,
                             )
                         )
-                        measured = step >= settings.warmup_steps
-                        if step == settings.warmup_steps:
-                            torch.cuda.synchronize()
-                            if world > 1:
-                                dist.barrier()
-                            if settings.nsys_capture and rank == 0:
-                                torch.cuda.cudart().cudaProfilerStart()
-                        torch.cuda.synchronize()
-                        if world > 1:
-                            dist.barrier()
-                        tick = time.perf_counter()
-                        torch.cuda.nvtx.range_push(
-                            f"baseline.shadowspill/rank-{rank}/step-{step + 1}"
-                        )
+                        clock.begin(step)
                         result = trainer.step((tokens, targets))
-                        torch.cuda.nvtx.range_pop()
-                        torch.cuda.synchronize()
-                        elapsed = time.perf_counter() - tick
                         # The rank's share of the update, as every harness
                         # records it; the objective divided it by the world.
                         loss_sum = float(sum(result.losses)) * world
@@ -540,8 +465,7 @@ def main(argv=None):
                             head_sum += (
                                 float(loss) * world if head is None else float(head)
                             )
-                        if not math.isfinite(loss_sum):
-                            raise ValueError("training loss is not finite")
+                        clock.end(step, loss_sum, head_sum)
                         free, total = torch.cuda.mem_get_info(device)
                         device_used.append(total - free)
                         if reference is not None:
@@ -552,153 +476,55 @@ def main(argv=None):
                                 torch.tensor(loss_sum, device=device),
                                 expected_loss,
                             )
-                        if measured:
-                            cycles.append(elapsed)
-                            losses.append(loss_sum)
-                            head_losses.append(head_sum)
                         if step == 0 and access is not None:
                             evidence = access.evidence(trainer.model)
-                        print(
-                            f"rank={rank} step={step + 1} measured={measured} "
-                            f"seconds={elapsed:.6f} loss={loss_sum:.6f}",
-                            flush=True,
-                        )
-                    if settings.nsys_capture:
-                        if world > 1:
-                            dist.barrier()
-                        if rank == 0:
-                            torch.cuda.cudart().cudaProfilerStop()
-                    torch.cuda.synchronize()
+                    clock.close()
                     execution = backend.runtime.pool_statistics("execution")
                     spill = backend.runtime.pool_statistics("spill")
-                    performance = (
-                        reference is None
-                        and not settings.nsys_capture
-                        and request.entry.size not in ("tiny", "numerical")
-                    )
-                    result = {
-                        "status": "completed",
-                        "rank": rank,
-                        "cycles": cycles,
-                        "losses": losses,
-                        "head_losses": head_losses,
-                        "precision_evidence": evidence,
-                        "corpus_wrapped": wrapped,
-                        # The device peak is the execution pool's measured
-                        # peak occupancy; what the process held is the
-                        # budget, the pool's physical capacity, whole from
-                        # the first second.
-                        "peak_allocated_bytes": int(execution.peak_allocated_bytes),
-                        "peak_reserved_bytes": int(settings.execution_gib * GIB),
-                        "host_peak_rss_bytes": resource.getrusage(
-                            resource.RUSAGE_SELF
-                        ).ru_maxrss
-                        * 1024,
-                        "shadowspill_memory": {
-                            "execution_pool": pool_record(execution),
-                            "spill_pool": pool_record(spill),
-                            "predicted_device_peak_bytes": int(
-                                plan.predicted_device_peak_bytes
-                            ),
-                            "predicted_spill_peak_bytes": int(
-                                plan.predicted_spill_peak_bytes
-                            ),
-                            "device_used_bytes_max": int(max(device_used)),
-                        },
-                        "planning_seconds": planning_seconds,
-                        "setup_seconds": setup_seconds,
-                        "total_wall_seconds": time.perf_counter() - started,
-                        "finished_at": datetime.datetime.now().astimezone().isoformat(),
-                        "qualified_against_reference": reference is not None,
-                        "reference_checks": None
-                        if reference is None
-                        else reference.checks,
-                        "performance_result": performance,
-                    }
-                    write_json(output / "result.json", result)
-                    all_ranks = [result]
-                    if world > 1:
-                        all_ranks = [None] * world
-                        dist.all_gather_object(all_ranks, result)
-                    if rank == 0:
-                        summary = summarize_cycles(
-                            [row["cycles"] for row in all_ranks],
-                            global_tokens=geometry.tokens_per_step,
-                            useful_flops_per_step=useful,
-                        )
-                        summary["performance_result"] = performance
-                        summary["losses"] = [row["losses"] for row in all_ranks]
-                        summary["head_losses"] = [
-                            row["head_losses"] for row in all_ranks
-                        ]
-                        write_json(
-                            args.output / "results.json",
-                            {
-                                **summary,
-                                "status": "completed",
-                                "request": record,
-                                "ranks": all_ranks,
-                                "useful_flops_per_step": useful,
-                                "flops_convention": "baselines.common.models"
-                                ".useful_flops_per_token",
-                            },
-                        )
-                        memory = memory_peaks(all_ranks)
-                        memory["peak_allocated_aggregation"] = (
-                            "maximum over ranks of the execution pool's measured"
-                            " peak occupancy"
-                        )
-                        memory["peak_reserved_aggregation"] = (
-                            "the execution budget, the pool's physical capacity"
-                        )
-                        memory["shadowspill"] = [
-                            row["shadowspill_memory"] for row in all_ranks
-                        ]
-                        write_json(
-                            args.output / "row.json",
-                            result_row(
-                                harness="shadowspill",
-                                status="completed",
-                                **description,
-                                hardware=record["hardware"],
-                                provenance={
-                                    "source": source_identity(SOURCE_PATHS),
-                                    "environment": environment_identity(sys.executable),
-                                    "model_summary": record["summary"],
-                                    "corpus": record.get("corpus"),
-                                    "checkpoint": record.get("checkpoint"),
-                                    "plan": record["plan"],
-                                    "pools_after_planning": record[
-                                        "pools_after_planning"
-                                    ],
-                                },
-                                measurement=summary,
-                                memory=memory,
-                            ),
-                        )
             finally:
                 if group is not None:
                     dist.destroy_process_group(group)
-    except Exception as error:
-        write_json(
-            output / "failure.json",
-            {
-                "rank": rank,
-                "stage": stage,
-                # A budget the planner cannot fit is the frontier's boundary,
-                # recorded under the schema's name for it.
-                "status": "cuda_out_of_memory" if boundary(error) else "failed",
-                "boundary": boundary(error),
-                "exception_type": type(error).__name__,
-                "error": traceback.format_exc(),
-            },
-        )
-        raise
     finally:
         if snapshots is not None:
             snapshots.cleanup()
-        if dist.is_initialized():
-            dist.destroy_process_group()
+    return runner.Outcome(
+        evidence=evidence,
+        reference_checks=None if reference is None else reference.checks,
+        # The device peak is the execution pool's measured peak occupancy;
+        # what the process held is the budget, the pool's physical
+        # capacity, whole from the first second.
+        peaks={
+            "peak_allocated_bytes": int(execution.peak_allocated_bytes),
+            "peak_reserved_bytes": int(settings.execution_gib * GIB),
+        },
+        result={
+            "shadowspill_memory": {
+                "execution_pool": pool_record(execution),
+                "spill_pool": pool_record(spill),
+                "predicted_device_peak_bytes": int(plan.predicted_device_peak_bytes),
+                "predicted_spill_peak_bytes": int(plan.predicted_spill_peak_bytes),
+                "device_used_bytes_max": int(max(device_used)),
+            },
+            "planning_seconds": planning_seconds,
+        },
+        provenance={
+            "plan": record["plan"],
+            "pools_after_planning": record["pools_after_planning"],
+        },
+        memory=memory,
+    )
+
+
+def main(argv=None):
+    runner.main(
+        "shadowspill",
+        harness_settings,
+        train,
+        argv,
+        standalone=False,
+        device_first=False,
+        failure=failure,
+    )
 
 
 if __name__ == "__main__":
