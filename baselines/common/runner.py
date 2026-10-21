@@ -498,6 +498,9 @@ def main(
         outcome = train(case, clock)
         finish(case, clock, outcome, module.SOURCE_PATHS)
     except Exception as error:
+        # What the engine recorded before failing, the device it probed
+        # once its allocator was in place among it, joins the request.
+        case.save()
         write_json(
             case.directory / "failure.json",
             {
