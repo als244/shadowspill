@@ -51,8 +51,8 @@ def find_case(sweep: Path, case: str) -> Path:
 
     matches = [
         path
-        for path in sorted((sweep / "cases").glob("case-*"))
-        if path.name == case or path.name.endswith(f"-{case}")
+        for path in sorted((sweep / "cases").glob("*__*"))
+        if path.name == case or path.name.endswith(f"__{case}")
     ]
     if len(matches) != 1:
         raise ValueError(

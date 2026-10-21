@@ -7,11 +7,14 @@
 
 A matrix names ``defaults`` and either a Cartesian ``grid``, or a list of
 grids whose cases are their union, or explicit ``cases`` over the engine's
-settings. Every case is validated, refused if
-invalid, and named by a digest of what runs, so two spellings of one
-configuration are one case. Each attempt of a case is its own process under
-``cases/<name>/attempt-NNN/`` with its command, its console log and, when it
-completed, the ``row.json`` the engine wrote; a case that ran out of device
+settings. Every case is validated, refused if invalid, and identified by a
+digest of what runs, so two spellings of one configuration are one case. A
+case's folder is named for the settings its matrix varies, each as a short
+code and its value (``CODES``; a setting without a code goes by its name),
+then eight characters of that digest: ``mb16384_rc0.25_act-cpu__1a2b3c4d``.
+Each attempt of a case is its own process under ``cases/<name>/attempt-NNN/``
+with its command, its console log and, when it completed, the ``row.json``
+the engine wrote; a case that ran out of device
 memory, failed or timed out gets a row from this launcher saying so.
 Out-of-memory is a boundary of the frontier and the sweep continues past it;
 any other failure stops the sweep for diagnosis unless told to continue.
@@ -52,6 +55,7 @@ import hashlib
 import itertools
 import json
 import os
+import re
 import shlex
 import signal
 import subprocess
@@ -64,6 +68,32 @@ from baselines.common.provenance import ROOT, environment_identity, source_ident
 from baselines.common.results import row as result_row
 from baselines.common.results import validate_row, varied
 from baselines.report import DERIVED_GEOMETRY
+
+#: The short code a case's folder name gives a setting; any other setting
+#: goes by its name.
+CODES = {
+    "tokens_per_microbatch": "mb",
+    "recompute": "rc",
+    "activation_offload": "act",
+    "offload_policy": "op",
+    "pin_memory": "pin",
+    "forward_prefetch": "fpf",
+    "backward_prefetch": "bpf",
+    "reshard_after_forward": "raf",
+    "reshard_after_backward": "rab",
+    "gradient_sync": "gs",
+    "compile_blocks": "cb",
+    "float8": "f8",
+    "optimizer": "opt",
+    "offload_gradients": "og",
+    "zero_stage": "z",
+    "offload_param": "ofp",
+    "offload_optimizer": "ofo",
+    "deepcompile": "dc",
+    "execution_gib": "ex",
+    "spill_gib": "sp",
+    "resolution_options": "res",
+}
 
 #: How an outcome reads on the console, in the order counts list.
 OUTCOME_WORDS = {
@@ -121,34 +151,65 @@ def expand(specification, world_size, settings_type):
         ]
     if not isinstance(overrides, list) or not overrides:
         raise ValueError("at least one case is required")
-    result, seen = [], set()
+    unique, seen = [], set()
     for override in overrides:
         settings = settings_type.from_dict({**defaults, **override})
         settings.validate(world_size)
-        identity = digest(settings.as_dict())[:12]
+        identity = digest(settings.as_dict())
         if identity in seen:
             continue
         seen.add(identity)
-        result.append((f"case-{len(result) + 1:04d}-{identity}", settings))
-    return result
+        unique.append((identity, settings))
+    values = {
+        identity: flat(settings.describe(world_size)) for identity, settings in unique
+    }
+    order = list(CODES)
+    knobs = sorted(
+        (key for key in varied(values) if key not in DERIVED_GEOMETRY),
+        key=lambda key: (order.index(key) if key in order else len(order), key),
+    )
+    names = [case_name(values[identity], knobs, identity[:8]) for identity, _ in unique]
+    if len(set(names)) != len(names):
+        raise ValueError("two cases share a name; their digests begin alike")
+    return list(zip(names, (settings for _, settings in unique), strict=True))
+
+
+def flat(description):
+    """A case's geometry and configuration as one mapping."""
+
+    return {**description["geometry"], **description["configuration"]}
+
+
+def case_name(values, knobs, identity):
+    """A case's folder name: each setting its matrix varies, as its code and
+    value, then the digest of everything it runs."""
+
+    parts = []
+    for key in knobs:
+        code, value = CODES.get(key, key), values.get(key)
+        if isinstance(value, bool):
+            parts.append(f"{code}-{'on' if value else 'off'}")
+        elif isinstance(value, int):
+            parts.append(f"{code}{value}")
+        elif isinstance(value, float):
+            parts.append(f"{code}{value:g}")
+        else:
+            text = value if isinstance(value, str) else json.dumps(value)
+            parts.append(f"{code}-{re.sub(r'[^A-Za-z0-9.]+', '-', text).strip('-')}")
+    return "_".join(parts or ["case"]) + "__" + identity
 
 
 def keep_names(cases, output):
-    """The cases named as ``output`` already names their digests, and the
-    rest numbered after every case it holds, in the matrix's order."""
+    """The cases with the names ``output`` already gives their digests: a
+    case keeps its folder when a grown matrix varies other settings."""
 
-    held = {}
-    for path in (output / "cases").glob("case-*-*"):
-        held[path.name.rsplit("-", 1)[1]] = path.name
-    highest = max((int(name.split("-")[1]) for name in held.values()), default=0)
-    result = []
-    for name, settings in cases:
-        digest = name.rsplit("-", 1)[1]
-        if digest not in held:
-            highest += 1
-            held[digest] = f"case-{highest:04d}-{digest}"
-        result.append((held[digest], settings))
-    return result
+    held = {
+        path.name.rsplit("__", 1)[1]: path.name
+        for path in (output / "cases").glob("*__*")
+    }
+    return [
+        (held.get(name.rsplit("__", 1)[1], name), settings) for name, settings in cases
+    ]
 
 
 def comparable(held, manifest):
@@ -269,11 +330,7 @@ def failure_row(attempt, outcome, settings, world_size, engine, manifest):
 def described(cases, world_size):
     """Per case, the geometry and configuration its settings describe."""
 
-    result = {}
-    for name, settings in cases:
-        description = settings.describe(world_size)
-        result[name] = {**description["geometry"], **description["configuration"]}
-    return result
+    return {name: flat(settings.describe(world_size)) for name, settings in cases}
 
 
 def clock():

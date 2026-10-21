@@ -9,8 +9,10 @@ from pathlib import Path
 
 import pytest
 
+from baselines import sweep
 from baselines.common import write_json
 from baselines.common.launch import command, engine_module, trainer_command
+from baselines.common.provenance import ROOT
 from baselines.common.results import (
     memory_peaks,
     read_rows,
@@ -18,7 +20,7 @@ from baselines.common.results import (
     summarize_cycles,
     varied,
 )
-from baselines.fsdp2.settings import Settings, add_arguments, from_namespace
+from baselines.engines.fsdp2.settings import Settings, add_arguments, from_namespace
 from baselines.sweep import (
     classify,
     comparable,
@@ -155,7 +157,7 @@ def test_a_engine_is_its_settings_module_launched_through_the_launcher():
         "--nproc-per-node=2",
         "--max-restarts=0",
         "-m",
-        "baselines.fsdp2.train",
+        "baselines.engines.fsdp2.train",
         "--output",
         "out",
         "--case",
@@ -361,7 +363,10 @@ def test_a_resume_refuses_another_world_but_takes_a_grown_matrix(tmp_path, monke
     main([*argv, "--resume"])
     manifest = json.loads((output / "manifest.json").read_text())
     names = [case["name"] for case in manifest["cases"]]
-    assert names[1] == first and names[0] == "case-0002-" + names[0].rsplit("-")[-1]
+    # The grown matrix varies recompute: the new case's name says so, and
+    # the case that ran keeps the name it was given.
+    assert first.startswith("case__") and names[1] == first
+    assert names[0].startswith("rc0__")
     assert manifest["cases"][0]["settings"]["recompute"] == 0
     write_json(config, {"schema_version": 1, "defaults": BIG, "cases": [{}]})
     main([*argv, "--resume"])
@@ -397,23 +402,35 @@ def test_the_code_may_change_under_a_resume_but_not_the_environment():
 
 
 def test_a_case_keeps_the_name_its_digest_was_given(tmp_path):
-    (tmp_path / "cases" / "case-0007-aaaaaaaaaaaa").mkdir(parents=True)
+    (tmp_path / "cases" / "rc1__aaaaaaaa").mkdir(parents=True)
     settings = Settings(**TINY)
     named = keep_names(
-        [("case-0001-bbbbbbbbbbbb", settings), ("case-0002-aaaaaaaaaaaa", settings)],
+        [("rc0_mb128__bbbbbbbb", settings), ("rc1_mb64__aaaaaaaa", settings)],
         tmp_path,
     )
-    assert [name for name, _ in named] == [
-        "case-0008-bbbbbbbbbbbb",
-        "case-0007-aaaaaaaaaaaa",
+    assert [name for name, _ in named] == ["rc0_mb128__bbbbbbbb", "rc1__aaaaaaaa"]
+
+
+def test_a_case_is_named_for_the_settings_its_matrix_varies():
+    matrix = {
+        "schema_version": 1,
+        "defaults": TINY,
+        "grid": {"recompute": [0, 0.25], "activation_offload": ["none", "cpu"]},
+    }
+    names = [name for name, _ in expand(matrix, 1, Settings)]
+    assert [name.split("__")[0] for name in names] == [
+        "rc0_act-none",
+        "rc0_act-cpu",
+        "rc0.25_act-none",
+        "rc0.25_act-cpu",
     ]
-    fresh = keep_names([("case-0001-bbbbbbbbbbbb", settings)], tmp_path / "new")
-    assert [name for name, _ in fresh] == ["case-0001-bbbbbbbbbbbb"]
+    assert all(len(name.split("__")[1]) == 8 for name in names)
+    assert len(set(sweep.CODES.values())) == len(sweep.CODES)
 
 
 def test_only_the_cases_a_sweep_names_count(tmp_path):
     sweep = tmp_path / "sweep"
-    for name in ("case-0001-aaaaaaaaaaaa", "case-0002-bbbbbbbbbbbb"):
+    for name in ("rc0__aaaaaaaa", "rc1__bbbbbbbb"):
         write_json(
             sweep / "cases" / name / "attempt-001" / "row.json",
             failure_row(
@@ -425,6 +442,12 @@ def test_only_the_cases_a_sweep_names_count(tmp_path):
                 {"source": {}, "environment": {}},
             ),
         )
-    write_json(sweep / "manifest.json", {"cases": [{"name": "case-0002-bbbbbbbbbbbb"}]})
+    write_json(sweep / "manifest.json", {"cases": [{"name": "rc1__bbbbbbbb"}]})
     rows = read_rows(tmp_path)
-    assert [Path(row["_path"]).parts[-3] for row in rows] == ["case-0002-bbbbbbbbbbbb"]
+    assert [Path(row["_path"]).parts[-3] for row in rows] == ["rc1__bbbbbbbb"]
+
+
+def test_the_guide_lists_every_case_name_code():
+    guide = (ROOT / "baselines" / "experiments" / "README.md").read_text()
+    for setting, code in sweep.CODES.items():
+        assert f"| `{code}` | `{setting}` |" in guide
