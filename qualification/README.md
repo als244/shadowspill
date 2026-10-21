@@ -38,6 +38,12 @@ whatever order the command line names them in; each finishes before the next
 begins, because the measured ones are timed and overlapping them would
 corrupt both.
 
+**Every gate builds from nothing.** The unit suite gives each planning call a
+temporary store, and every matrix gate runs with `--empty-caches`: each cell
+starts from an empty artifact store and empty Inductor and Triton caches of
+its own, removed afterwards. A gate judges the code as it is, never reading
+an earlier run's builds, profiles or plans, nor the user's own store.
+
 **`numerical_ssd` is opt-in** and runs the same numerical matrix against a local
 SSD spill pool. See [SSD numerical qualification](#ssd-numerical-qualification).
 
@@ -286,8 +292,11 @@ Both matrices give each cell its own artifact store under the output
 directory, and both take `--build-store-mode` and `--plan-store-mode` to say
 what a cell does with each tree of it; the four modes are defined in
 [the artifact store guide](../docs/python/artifact-store.md#store-modes).
-`contribute` is the default, which is what a gate run wants: it reuses whatever
-matches by digest and keeps what it had to build. The
+`contribute` is the default: a cell reuses whatever matches by digest and
+keeps what it had to build. `--empty-caches`, which the gates always pass,
+puts the store and the compiler caches in a temporary directory of the cell's
+own (of each subprocess, in the numerical matrix), removed afterwards; a tree
+named by `--build-store` or `--plan-store` is still used. The
 numerical matrix asks for `reuse` on its planning tree unless
 `--detailed-artifacts` is given, because there is nothing to keep from a cell
 that only has to agree.

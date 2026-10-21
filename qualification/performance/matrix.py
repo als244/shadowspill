@@ -9,9 +9,12 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import re
+import shutil
 import signal
 import sys
+import tempfile
 import time
 from collections.abc import Sequence
 from dataclasses import replace
@@ -303,6 +306,16 @@ def _parser() -> argparse.ArgumentParser:
     add_dtype_arguments(parser)
     add_memory_budget_arguments(parser)
     parser.add_argument("--keep-going", action="store_true")
+    parser.add_argument(
+        "--empty-caches",
+        action="store_true",
+        help=(
+            "start every cell with an empty artifact store and empty Inductor "
+            "and Triton caches, in a temporary directory removed afterwards, so "
+            "nothing is reused from an earlier run or another cell; a tree "
+            "--build-store or --plan-store names is still used"
+        ),
+    )
     parser.add_argument("--plan-only", action="store_true")
     parser.add_argument(
         "--measure-only",
@@ -375,8 +388,11 @@ def _cell_command(
     output: Path,
     artifact: Path,
     planning_budgets: dict[str, int],
+    *,
+    store: Path | None = None,
 ) -> list[str]:
-    """The command line one cell is run as, in its own process."""
+    """The command line one cell is run as, in its own process: its artifact
+    store is ``store``, else the cell's own under ``output``."""
 
     command = [
         sys.executable,
@@ -386,7 +402,7 @@ def _cell_command(
         manifest.implementation,
         str(artifact),
         "--artifact-store",
-        str(output / "artifact_store" / manifest.identity),
+        str(store or output / "artifact_store" / manifest.identity),
     ]
     for tree in ("build", "plan"):
         store_mode = getattr(arguments, f"{tree}_store_mode")
@@ -454,7 +470,28 @@ def _run_cell(
     artifact.unlink(missing_ok=True)
     failure_path.unlink(missing_ok=True)
     log.unlink(missing_ok=True)
-    command = _cell_command(manifest, arguments, output, artifact, planning_budgets)
+    environment: dict[str, str] | None = None
+    cache_root: Path | None = None
+    if arguments.empty_caches:
+        # The cell starts from nothing: a store, an Inductor cache and a
+        # Triton cache of its own, removed once it ends.
+        (output / ".empty_caches").mkdir(parents=True, exist_ok=True)
+        cache_root = Path(
+            tempfile.mkdtemp(
+                prefix=f"{manifest.identity}-", dir=output / ".empty_caches"
+            )
+        )
+        environment = dict(os.environ)
+        environment["TORCHINDUCTOR_CACHE_DIR"] = str(cache_root / "torchinductor")
+        environment["TRITON_CACHE_DIR"] = str(cache_root / "triton")
+    command = _cell_command(
+        manifest,
+        arguments,
+        output,
+        artifact,
+        planning_budgets,
+        store=None if cache_root is None else cache_root / "shadowspill",
+    )
     started = time.perf_counter()
     started_at = utc_now()
     console.emit()
@@ -469,7 +506,13 @@ def _run_cell(
             started_at=started_at,
         ),
     )
-    return_code = console.stream(command, cell_log_path=log, prefix=prefix)
+    try:
+        return_code = console.stream(
+            command, cell_log_path=log, prefix=prefix, environment=environment
+        )
+    finally:
+        if cache_root is not None:
+            shutil.rmtree(cache_root)
     elapsed = time.perf_counter() - started
     artifact_payload: dict[str, object] | None = None
     if artifact.is_file():

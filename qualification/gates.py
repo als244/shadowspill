@@ -177,6 +177,9 @@ def _commands(
     ]
     if keep_going:
         command.append("--keep-going")
+    # A gate judges the code as it is: every cell builds from nothing, in an
+    # artifact store and compiler caches of its own, removed afterwards.
+    command.append("--empty-caches")
     command += options
     if name == "numerical_ssd":
         command += ["--spill-pool", "ssd"]

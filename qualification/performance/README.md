@@ -32,7 +32,10 @@ python -m qualification.performance.run llama3 mlops \
 say what this cell does with each; the four modes are defined in [the artifact
 store guide](../../docs/python/artifact-store.md#store-modes), and `contribute`
 is the default. Omitting the store entirely puts it in the user
-cache root, shared with every other run on the machine.
+cache root, shared with every other run on the machine. The matrix gives each
+cell its own store under its output directory, and with `--empty-caches`,
+which the gates pass, a temporary store and Inductor and Triton caches of the
+cell's own, removed once it ends.
 
 A host cannot hold both the full pinned spill arena and an anonymous
 checkpoint copy. `--skip-checkpoint` runs the throughput protocol without that
