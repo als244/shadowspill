@@ -669,11 +669,14 @@ def test_current_contract_docs_are_backend_and_topology_neutral() -> None:
         r"\b(?:cross-step )?cyclic residency\b",
         re.IGNORECASE,
     )
+    # The baseline harnesses document third-party systems by those systems'
+    # own names, options and hardware; ShadowSpill's pages say neither.
     violations = {
         path.relative_to(ROOT).as_posix(): sorted(
             set(forbidden.findall(path.read_text()))
         )
         for path in _normative_markdown_files()
+        if not path.is_relative_to(ROOT / "baselines")
     }
     violations = {path: values for path, values in violations.items() if values}
     assert not violations, (

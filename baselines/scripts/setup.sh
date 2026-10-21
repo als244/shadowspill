@@ -10,6 +10,9 @@ torch_backend="auto"
 expert_parallel=""
 conda_executable=""
 skip_shadowspill=0
+# uv reads a download for at most 30 s by default, too short for PyTorch's
+# CUDA wheels from a slow mirror; a caller's own value is kept.
+export UV_HTTP_TIMEOUT="${UV_HTTP_TIMEOUT:-300}"
 
 # The versions this environment is verified with. PyTorch's own pin lives in
 # scripts/setup.sh (2.13); these are the baseline systems on top of it.
@@ -43,6 +46,9 @@ include NCCL (DeepCompile's) are built against it by the DeepSpeed harness.
 The ShadowSpill build directory is shared with any other environment built
 from this checkout at the same Python and PyTorch (build/<wheel tag>); the
 libraries are identical, so the sharing is harmless.
+
+The installed packages, the platform and the GPU are recorded inside the
+environment, in <prefix>/environment.lock.json.
 EOF
 }
 
@@ -144,7 +150,7 @@ torch_cuda_tag="$("${python_executable}" -c 'import torch; v = torch.version.cud
 echo "[3/5] The environment's CUDA home with PyTorch's NCCL headers"
 environment_prefix="$(dirname "$(dirname "${python_executable}")")"
 toolkit_home="${CUDA_HOME:-/usr/local/cuda}"
-nccl_include="$("${python_executable}" -c 'import os, nvidia.nccl; print(os.path.join(os.path.dirname(nvidia.nccl.__file__), "include"))')"
+nccl_include="$("${python_executable}" -c 'import os, nvidia.nccl; print(os.path.join(list(nvidia.nccl.__path__)[0], "include"))')"
 cuda_home="${environment_prefix}/cuda-home"
 if [[ -d "${toolkit_home}/include" && -f "${nccl_include}/nccl.h" ]]; then
   rm -rf "${cuda_home}"
@@ -211,8 +217,8 @@ for name in (checkpoint_wrapper, offload_wrapper, CPUOffloadPolicy, fully_shard,
 print("harness entry points: available")
 PY
 
-echo "[5/5] Recording the environment"
-"${python_executable}" - <<'PY' > "${project_root}/baselines/scripts/environment.lock.json"
+echo "[5/5] Recording the environment in ${environment_prefix}/environment.lock.json"
+"${python_executable}" - <<'PY' > "${environment_prefix}/environment.lock.json"
 import importlib.metadata, json, platform, sys
 
 import torch
