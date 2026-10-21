@@ -279,7 +279,7 @@ def main(argv=None):
             initialize(model)
         if checkpoint is not None:
             # Every rank reads the whole tensors and keeps its rows.
-            record["loaded"] = checkpoint.load_into(model.model, rename=canonical_name)
+            record["loaded"] = model.load_checkpoint(checkpoint, rename=canonical_name)
         if checkpoint is not None:
             checkpoint.close()
             if record["loaded"]["unused"]:

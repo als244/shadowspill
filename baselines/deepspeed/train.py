@@ -296,7 +296,7 @@ def main(argv=None):
                     parameter.data.copy_(value.to(parameter.dtype))
 
             with checkpoint:
-                record["loaded"] = checkpoint.load_into(model.model, copy=copy)
+                record["loaded"] = model.load_checkpoint(checkpoint, copy=copy)
             if record["loaded"]["unused"]:
                 raise ValueError(
                     "checkpoint keys the model did not take:"

@@ -32,6 +32,11 @@ class TrainingModel(nn.Module):
             geometry.sequence_length,
         ) * geometry.sequences_per_microbatch
 
+    def load_checkpoint(self, checkpoint, **options):
+        """Write a checkpoint's values into the model this objective wraps,
+        under the model's own parameter names; the reader's report."""
+        return checkpoint.load_into(self.model, **options)
+
     def forward(
         self, tokens: torch.Tensor, targets: torch.Tensor
     ) -> tuple[torch.Tensor, dict[str, torch.Tensor]]:

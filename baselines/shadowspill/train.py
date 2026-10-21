@@ -322,7 +322,7 @@ def main(argv=None):
                 reset_parameters(module)
             if checkpoint is not None:
                 with torch.no_grad():
-                    loaded.update(checkpoint.load_into(module, copy=copy_value))
+                    loaded.update(module.load_checkpoint(checkpoint, copy=copy_value))
 
         vocabulary = int(model.model.config.vocab_size)
         corpus = None
