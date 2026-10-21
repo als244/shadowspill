@@ -18,9 +18,12 @@ torchrun --standalone --nproc-per-node=1 -m baselines.shadowspill.train \
   --execution-gib 16 --spill-gib 128
 ```
 
-The tiny qualification matrix and a throughput matrix run through the
-shared sweep, `python -m baselines.sweep --harness shadowspill --config
-baselines/shadowspill/configs/qualification.json --output <dir> --gpus 1`.
+The tiny qualification matrix runs through the shared sweep, `python -m
+baselines.sweep --harness shadowspill --config
+baselines/shadowspill/configs/qualification.json --output <dir> --gpus 1`; a
+throughput matrix names only ShadowSpill's own knobs and runs inside an
+experiment, which gives every harness the same model, geometry and
+precision contract (`../README.md`).
 
 ## What a case names
 

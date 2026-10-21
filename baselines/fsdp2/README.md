@@ -24,12 +24,13 @@ python -m baselines.sweep --harness fsdp2 \
   --output /mnt/storage/research/shadowspill/baselines/dev/fsdp2-qualification --gpus 1
 ```
 
-A throughput matrix, resumable, with the same manifest:
+A throughput matrix names only FSDP2's own knobs and runs inside an
+experiment, which gives every harness the same model, geometry and
+precision contract (`../README.md`):
 
 ```bash
-python -m baselines.sweep --harness fsdp2 \
-  --config baselines/fsdp2/configs/rtx5090_llama3-8b.json \
-  --output /mnt/storage/research/shadowspill/baselines/round1/fsdp2/llama3-8b --gpus 1
+python -m baselines.experiment --spec baselines/experiments/rtx5090_llama3-8b.json \
+  --output /mnt/storage/research/shadowspill/baselines/round1/rtx5090_llama3-8b
 ```
 
 ## What a case names
