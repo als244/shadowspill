@@ -1,9 +1,10 @@
 """Run an experiment: the sweeps of several engines, in order, on one node,
 then a summary and a report over everything the experiment holds.
 
-    python -m baselines.experiment --spec experiment.json --output DIR \\
+    python -m baselines.experiment --spec experiment.json [--output DIR] \\
         [--variable NAME=VALUE ...] [--engine NAME ...] [--only SWEEP ...] \\
-        [--retry-failed] [--limit N] [--publish DIR] [--dry-run] [--skip-report]
+        [--retry-failed] [--overwrite] [--limit N] [--publish DIR] [--dry-run] \\
+        [--skip-report]
 
 A spec names the GPU count, the interpreter each engine runs in, the
 settings every case of every sweep takes, the sweeps (each an engine, its
@@ -34,9 +35,15 @@ engine or by name, and the others keep what they hold, so an experiment is
 collected one engine at a time or whole; either way it resumes where it
 stopped, since a sweep keeps its completed cases, attempts those never
 attempted or interrupted, and with ``--retry-failed`` attempts the failed,
-out-of-memory and timed-out ones again.
+out-of-memory and timed-out ones again. ``--overwrite`` discards what the
+sweeps it runs hold and runs them from scratch; the other sweeps and the
+records of earlier runs stay.
 
-Each run's record and console are ``<output>/runs/<stamp>.json`` and
+Everything a run writes goes under the experiment's output: ``--output``,
+else the spec's ``output``, a path from the spec's folder, else ``output/``
+beside the spec, which git ignores, so an experiment keeps its runs and logs
+in its own folder. Each run's record and console are
+``<output>/runs/<stamp>.json`` and
 ``.log``; ``experiment.json`` holds the latest spec with its variables'
 values, each sweep's latest run and every run. A run ends with the report
 of ``baselines.report`` over every sweep the experiment holds, in
@@ -60,6 +67,7 @@ import json
 import os
 import re
 import shlex
+import shutil
 import subprocess
 import sys
 import textwrap
@@ -187,9 +195,10 @@ def load_spec(
     if unknown or spec.get("schema_version") != 1:
         raise ValueError("expected schema_version=1 and gpus, python and sweeps")
     if output is not None:
-        spec["output"] = str(output)
-    if not spec.get("output"):
-        raise ValueError("the spec or --output names the experiment's directory")
+        spec["output"] = str(Path(output).resolve())
+    else:
+        folder = Path(path).resolve().parent
+        spec["output"] = str((folder / spec.get("output", "output")).resolve())
     if not isinstance(spec.get("gpus"), int) or spec["gpus"] < 1:
         raise ValueError("gpus must be a positive integer")
     pythons = spec.get("python", {})
@@ -207,7 +216,7 @@ def load_spec(
         for name, meaning in declared.items()
     ):
         raise ValueError("variables maps each variable's name to what its value is")
-    values = {**recorded_values(output), **(variables or {})}
+    values = {**recorded_values(Path(spec["output"])), **(variables or {})}
     unknown = sorted(set(values) - set(declared))
     if variables and set(variables) - set(declared):
         raise ValueError(f"the spec declares no variable {unknown}")
@@ -513,6 +522,15 @@ def execute(args, spec: dict, selected: list, output: Path, stamp: str, console)
     header(console, spec, args.spec, selected, output)
     if args.dry_run:
         console("  dry run: each sweep validates its cases and writes their commands")
+    if args.overwrite:
+        for sweep in selected:
+            held = output / "sweeps" / sweep["name"]
+            if held.exists():
+                if args.dry_run:
+                    console(f"  overwrite: would discard {held}")
+                else:
+                    shutil.rmtree(held)
+                    console(f"  overwrite: discarded {held}")
     failed: list[str] = []
     ending = "interrupted"
     try:
@@ -544,7 +562,22 @@ def execute(args, spec: dict, selected: list, output: Path, stamp: str, console)
                 sweep_runner.clock(),
                 time.monotonic(),
             )
-            returncode = run_sweep(command, sweep_output / "launcher.log", console)
+            try:
+                returncode = run_sweep(command, sweep_output / "launcher.log", console)
+            except KeyboardInterrupt:
+                run["sweeps"].append(
+                    {
+                        **sweep,
+                        "output": str(sweep_output),
+                        "command": command,
+                        "status": "interrupted",
+                        "returncode": None,
+                        "started_at": began,
+                        "finished_at": now(),
+                    }
+                )
+                console(f"ENGINE {sweep['name']}: interrupted")
+                raise
             status = (
                 "failed"
                 if returncode != 0
@@ -636,7 +669,11 @@ def execute(args, spec: dict, selected: list, output: Path, stamp: str, console)
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     parser.add_argument("--spec", type=Path, required=True)
-    parser.add_argument("--output", type=Path, help="the experiment's directory")
+    parser.add_argument(
+        "--output",
+        type=Path,
+        help="where the run writes (default: output/ beside the spec)",
+    )
     parser.add_argument(
         "--variable",
         action="append",
@@ -662,6 +699,11 @@ def main(argv=None):
         "--retry-failed",
         action="store_true",
         help="attempt the failed, out-of-memory and timed-out cases again",
+    )
+    parser.add_argument(
+        "--overwrite",
+        action="store_true",
+        help="discard what the sweeps run hold and run them from scratch",
     )
     parser.add_argument(
         "--limit", type=int, help="at most this many new attempts per sweep"
