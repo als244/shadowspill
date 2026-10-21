@@ -72,7 +72,7 @@ class _Build:
     export_bypass_key: str | None
     master_dtype: torch.dtype | None
     grad_dtype: torch.dtype | None
-    round_accumulation_once: bool
+    fuse_narrow_gradient_accumulation: bool
     memory_bound_flops_per_byte: float
     graph_pair_variants: tuple[str, ...] = GRAPH_PAIR_VARIANTS
     parameter_metrics: Callable[[torch.Tensor, torch.Tensor], Any] | None = None
@@ -119,7 +119,7 @@ class _Build:
                         master_dtype=self.master_dtype,
                         grad_dtype=self.grad_dtype,
                         parameter_metrics=self.parameter_metrics,
-                        round_accumulation_once=self.round_accumulation_once,
+                        fuse_narrow_gradient_accumulation=self.fuse_narrow_gradient_accumulation,
                         memory_bound_flops_per_byte=self.memory_bound_flops_per_byte,
                         graph_pair_variants=self.graph_pair_variants,
                     ),

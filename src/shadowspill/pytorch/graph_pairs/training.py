@@ -28,7 +28,7 @@ def partition_training_capture(
     retention: RetentionPolicy | None = None,
     accumulating: bool = False,
     gradient_dtype: torch.dtype | None = None,
-    round_accumulation_once: bool = False,
+    fuse_narrow_gradient_accumulation: bool = True,
     graph_pair_variants: tuple[str, ...] = GRAPH_PAIR_VARIANTS,
     template: PartitionedExport | None = None,
 ) -> PartitionedTrainingCapture:
@@ -43,7 +43,7 @@ def partition_training_capture(
     gradients its predecessors created, so its stages need the backward form
     that does the adding. ``gradient_dtype`` is the dtype parameter gradients
     are created and accumulated at; ``None`` keeps each at its parameter's.
-    ``round_accumulation_once`` lets a matrix multiply add its product into a
+    ``fuse_narrow_gradient_accumulation`` lets a matrix multiply add its product into a
     running gradient narrower than it sums at, with BLAS-controlled rounding
     (:func:`~shadowspill.pytorch.capture.aot.accumulate_gradient_outputs`).
     ``graph_pair_variants`` names the variants to build, both by default.
@@ -72,7 +72,7 @@ def partition_training_capture(
             retention=retention,
             accumulating=accumulating,
             gradient_dtype=gradient_dtype,
-            round_accumulation_once=round_accumulation_once,
+            fuse_narrow_gradient_accumulation=fuse_narrow_gradient_accumulation,
             variants=graph_pair_variants,
         ),
     )

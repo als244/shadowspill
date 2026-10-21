@@ -96,7 +96,7 @@ class GraphPairVariant:
         )
 
     def accumulating(
-        self, *, round_accumulation_once: bool = False
+        self, *, fuse_narrow_gradient_accumulation: bool = True
     ) -> GraphPairVariant:
         """Return the form of this variant that adds onto the gradients it is given.
 
@@ -104,7 +104,7 @@ class GraphPairVariant:
         the microbatch that produced it. So the parameter gradients this
         backward returns are exactly the ones a later microbatch has to add
         to, and taking them as arguments moves that addition inside the task.
-        ``round_accumulation_once`` is :func:`accumulate_gradient_outputs`'s.
+        ``fuse_narrow_gradient_accumulation`` is :func:`accumulate_gradient_outputs`'s.
         """
 
         return replace(
@@ -114,7 +114,7 @@ class GraphPairVariant:
                 backward=accumulate_gradient_outputs(
                     self.pair.backward,
                     parameter_gradient_leaves(self.pair),
-                    round_accumulation_once=round_accumulation_once,
+                    fuse_narrow_gradient_accumulation=fuse_narrow_gradient_accumulation,
                 ),
             ),
             accumulates=True,
@@ -175,12 +175,14 @@ class TaskGraphPairs:
         )
 
     def accumulating_variants(
-        self, *, round_accumulation_once: bool = False
+        self, *, fuse_narrow_gradient_accumulation: bool = True
     ) -> tuple[GraphPairVariant, ...]:
         """Derive the accumulating form of every captured variant."""
 
         return tuple(
-            item.accumulating(round_accumulation_once=round_accumulation_once)
+            item.accumulating(
+                fuse_narrow_gradient_accumulation=fuse_narrow_gradient_accumulation
+            )
             for item in self.variants
             if not item.accumulates
         )

@@ -22,7 +22,7 @@ def capture_training_stages(
     retention: RetentionPolicy | None = None,
     accumulating: bool = False,
     gradient_dtype: torch.dtype | None = None,
-    round_accumulation_once: bool = False,
+    fuse_narrow_gradient_accumulation: bool = True,
     variants: tuple[str, ...] = GRAPH_PAIR_VARIANTS,
 ) -> tuple[DifferentiatedStage, ...]:
     """Bind every stage occurrence to its structural graph pairs, their
@@ -54,7 +54,7 @@ def capture_training_stages(
             retention=retention,
             accumulating=accumulating,
             gradient_dtype=gradient_dtype,
-            round_accumulation_once=round_accumulation_once,
+            fuse_narrow_gradient_accumulation=fuse_narrow_gradient_accumulation,
             variants=(
                 variants if index in read_later else forward_sink_variants(variants)
             ),
@@ -91,7 +91,7 @@ def _capture_training_stage(
     retention: RetentionPolicy | None = None,
     accumulating: bool = False,
     gradient_dtype: torch.dtype | None = None,
-    round_accumulation_once: bool = False,
+    fuse_narrow_gradient_accumulation: bool = True,
     variants: tuple[str, ...] = GRAPH_PAIR_VARIANTS,
 ) -> DifferentiatedStage:
     example = partitioned.stages[stage_index]
@@ -128,7 +128,7 @@ def _capture_training_stage(
             retention=retention,
             accumulating=accumulating,
             gradient_dtype=gradient_dtype,
-            round_accumulation_once=round_accumulation_once,
+            fuse_narrow_gradient_accumulation=fuse_narrow_gradient_accumulation,
             variants=variants,
         ),
     )

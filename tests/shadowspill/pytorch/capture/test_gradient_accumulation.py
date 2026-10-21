@@ -260,24 +260,24 @@ def _kept(
 
 
 @pytest.mark.parametrize(
-    ("gradient_dtype", "round_once"), [(torch.float32, False), (None, True)]
+    ("gradient_dtype", "fused"), [(torch.float32, False), (None, True)]
 )
 def test_a_multiply_adds_the_gradient_it_computes_into_the_running_one(
-    gradient_dtype: torch.dtype | None, round_once: bool
+    gradient_dtype: torch.dtype | None, fused: bool
 ) -> None:
     """On CUDA, where a kernel adds a product into a tensor in place, the
     weight's gradient is added by the multiply that computes it -- the
     running gradient is what the backward returns -- when gradients are kept
     at fp32, the dtype the multiply sums bf16 at, and when kept at the
-    weights' bf16 if the sum may be rounded once. The bias's sum is added
-    after."""
+    weights' bf16 with fused narrow-gradient accumulation. The bias's sum is
+    added after."""
 
     with FakeTensorMode():
         backward, leaves = _projection_backward("cuda")
     accumulating = accumulate_gradient_outputs(
         _kept(backward, leaves, gradient_dtype),
         leaves,
-        round_accumulation_once=round_once,
+        fuse_narrow_gradient_accumulation=fused,
     )
 
     nodes = list(accumulating.graph_module.graph.nodes)
@@ -293,15 +293,22 @@ def test_a_multiply_adds_the_gradient_it_computes_into_the_running_one(
     assert bias.target is torch.ops.aten.add_.Tensor
 
 
-def test_a_bf16_running_gradient_is_added_after_the_multiply_by_default() -> None:
-    """Kept at bf16, narrower than the multiply sums at, a gradient added
-    inside the multiply would be rounded once where adding after rounds the
-    product first; by default the step computes what adding after does."""
+def test_a_bf16_running_gradient_is_added_after_the_multiply_unless_fused() -> None:
+    """Kept at bf16, narrower than the multiply sums at, a gradient is added
+    inside the multiply by default; without fused narrow-gradient
+    accumulation the multiply writes it at bf16 and the step adds it after,
+    as PyTorch's own step does."""
 
     with FakeTensorMode():
         backward, leaves = _projection_backward("cuda")
-    accumulating = accumulate_gradient_outputs(backward, leaves)
+    fused = accumulate_gradient_outputs(backward, leaves)
+    accumulating = accumulate_gradient_outputs(
+        backward, leaves, fuse_narrow_gradient_accumulation=False
+    )
 
+    assert torch.ops.shadowspill.accumulate_matmul_.default in {
+        node.target for node in fused.graph_module.graph.nodes
+    }
     targets = {node.target for node in accumulating.graph_module.graph.nodes}
     assert torch.ops.shadowspill.accumulate_matmul_.default not in targets
     assert all(
@@ -336,7 +343,7 @@ def test_the_multiply_adds_in_place_at_the_accumulator_dtype(
     accumulating = accumulate_gradient_outputs(
         _kept(backward, leaves, gradient_dtype),
         leaves,
-        round_accumulation_once=True,
+        fuse_narrow_gradient_accumulation=True,
     )
 
     arguments = tuple(_materialize(item, "cuda") for item in backward.example_arguments)
@@ -414,12 +421,15 @@ def test_the_multiply_adding_in_place_compiles_as_one_call() -> None:
 
 
 @pytest.mark.cuda
-def test_by_default_a_bf16_step_accumulates_as_adding_after_does() -> None:
-    """The running gradient after the default accumulating backward is, bit
-    for bit, the product the creating form computes added to it."""
+def test_without_fusion_a_bf16_step_accumulates_as_adding_after_does() -> None:
+    """The running gradient after an accumulating backward without fused
+    narrow-gradient accumulation is, bit for bit, the product the creating
+    form computes added to it."""
 
     backward, leaves = _projection_backward("cuda", low_precision_dtype())
-    accumulating = accumulate_gradient_outputs(backward, leaves)
+    accumulating = accumulate_gradient_outputs(
+        backward, leaves, fuse_narrow_gradient_accumulation=False
+    )
 
     arguments = tuple(_materialize(item, "cuda") for item in backward.example_arguments)
     contributions = backward.graph_module(*arguments)

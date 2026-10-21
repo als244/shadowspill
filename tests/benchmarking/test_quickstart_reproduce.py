@@ -57,7 +57,7 @@ def _arguments(**overrides: object) -> argparse.Namespace:
         opt_state_dtype="parameter",
         parameter_rounding=None,
         opt_state_rounding="stochastic",
-        round_accumulation_once=False,
+        fuse_narrow_gradient_accumulation=False,
         export_bypass_key="rev-1",
         reproduce=None,
         output_dir=Path("somewhere"),
@@ -110,7 +110,7 @@ def test_the_record_holds_the_request_and_not_where_it_was_written(
     assert request["opt_state_dtype"] == "parameter"
     assert request["parameter_rounding"] is None
     assert request["opt_state_rounding"] == "stochastic"
-    assert request["round_accumulation_once"] is False
+    assert request["fuse_narrow_gradient_accumulation"] is False
     for name in (
         "output_dir",
         "force_overwrite",
@@ -139,7 +139,7 @@ def test_reproduce_reads_the_request_and_pins_the_calibration(
     assert arguments.model_dtype == "float16"
     assert arguments.master_dtype == "float32"
     assert arguments.opt_state_rounding == "stochastic"
-    assert arguments.round_accumulation_once is False
+    assert arguments.fuse_narrow_gradient_accumulation is False
 
 
 def test_reproduce_refuses_a_flag_that_would_contradict_the_record(
@@ -177,23 +177,25 @@ def test_precision_reaches_planning_and_the_optimizer_as_the_harness_names_it() 
             opt_state_dtype=None,
             parameter_rounding=None,
             opt_state_rounding=None,
-            round_accumulation_once=False,
+            fuse_narrow_gradient_accumulation=False,
         )
     )
     assert nothing.plan_arguments() == {
         "master_dtype": None,
         "grad_dtype": None,
-        "round_accumulation_once": False,
+        "fuse_narrow_gradient_accumulation": False,
     }
     # Naming nothing hands planning the optimizer as it was, so a request
     # without the flags plans exactly as before.
     assert nothing.optimizer(_adamw) is _adamw
 
-    precise = Precision.from_arguments(_arguments(round_accumulation_once=True))
+    precise = Precision.from_arguments(
+        _arguments(fuse_narrow_gradient_accumulation=True)
+    )
     assert precise.plan_arguments() == {
         "master_dtype": torch.float32,
         "grad_dtype": torch.float32,
-        "round_accumulation_once": True,
+        "fuse_narrow_gradient_accumulation": True,
     }
     built = precise.optimizer(_adamw)
     assert isinstance(built, functools.partial)

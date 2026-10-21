@@ -340,7 +340,7 @@ def plan_step(
     master_dtype: torch.dtype | None = None,
     grad_dtype: torch.dtype | None = None,
     parameter_metrics: Callable[[torch.Tensor, torch.Tensor], Any] | None = None,
-    round_accumulation_once: bool = False,
+    fuse_narrow_gradient_accumulation: bool = True,
     memory_bound_flops_per_byte: float = MEMORY_BOUND_FLOPS_PER_BYTE,
     graph_pair_variants: tuple[str, ...] = GRAPH_PAIR_VARIANTS,
     keep_resolutions: bool = False,
@@ -409,11 +409,13 @@ def plan_step(
 
     A microbatch after the first adds its gradients onto the running ones,
     and one a matrix multiply computes is added by the multiply as it writes
-    its result. ``round_accumulation_once`` permits this fusion for gradients
-    narrower than the multiply's accumulator, such as bf16, as well as fp32.
-    It avoids a product buffer and a separate addition. The BLAS kernel
-    controls rounding, so the option does not guarantee a single rounding
-    or equality with an explicit multiply followed by an addition.
+    its result when the running gradient is at the multiply's float32
+    accumulator. ``fuse_narrow_gradient_accumulation`` permits it for
+    gradients narrower than that, such as bf16, which are otherwise written
+    at their dtype by the multiply and added after. It avoids a product
+    buffer and a separate addition. The BLAS kernel controls rounding, so
+    the option does not guarantee a single rounding or equality with an
+    explicit multiply followed by an addition.
 
     ``memory_bound_flops_per_byte`` is the arithmetic intensity, in flops per
     byte moved, at or under which a stage's ``save`` graph pair regenerates
@@ -550,7 +552,7 @@ def plan_step(
                 master_dtype=master_dtype,
                 grad_dtype=grad_dtype,
                 parameter_metrics=parameter_metrics,
-                round_accumulation_once=round_accumulation_once,
+                fuse_narrow_gradient_accumulation=fuse_narrow_gradient_accumulation,
                 memory_bound_flops_per_byte=memory_bound_flops_per_byte,
                 graph_pair_variants=graph_pair_variants,
                 keep_resolutions=keep_resolutions,
@@ -595,7 +597,7 @@ def build_step_programs(
     master_dtype: torch.dtype | None = None,
     grad_dtype: torch.dtype | None = None,
     parameter_metrics: Callable[[torch.Tensor, torch.Tensor], Any] | None = None,
-    round_accumulation_once: bool = False,
+    fuse_narrow_gradient_accumulation: bool = True,
     memory_bound_flops_per_byte: float = MEMORY_BOUND_FLOPS_PER_BYTE,
     graph_pair_variants: tuple[str, ...] = GRAPH_PAIR_VARIANTS,
 ) -> tuple[StepProgram, ...]:
@@ -684,7 +686,7 @@ def build_step_programs(
                 master_dtype=master_dtype,
                 grad_dtype=grad_dtype,
                 parameter_metrics=parameter_metrics,
-                round_accumulation_once=round_accumulation_once,
+                fuse_narrow_gradient_accumulation=fuse_narrow_gradient_accumulation,
                 memory_bound_flops_per_byte=memory_bound_flops_per_byte,
                 graph_pair_variants=graph_pair_variants,
             )

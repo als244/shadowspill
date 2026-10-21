@@ -48,7 +48,7 @@ class ShadowSpill:
         search_options: SearchOptions | None = None,
         profiling_options: ProfilingOptions | None = None,
         partition: Literal["auto", "whole"] | PartitionPolicy = "auto",
-        round_accumulation_once: bool = False,
+        fuse_narrow_gradient_accumulation: bool = True,
         orderings: Callable[[int], Sequence[StepDataOrdering]] | None = None,
         external_headroom_gib: float = 0.5,
         reject_overbudget: bool = False,
@@ -73,7 +73,7 @@ class ShadowSpill:
         self.search_options = search_options
         self.profiling_options = profiling_options
         self.partition = partition
-        self.round_accumulation_once = round_accumulation_once
+        self.fuse_narrow_gradient_accumulation = fuse_narrow_gradient_accumulation
         self.orderings = orderings
         self.external_headroom_bytes = int(external_headroom_gib * GIB)
         self.reject_overbudget = reject_overbudget
@@ -202,7 +202,7 @@ class ShadowSpill:
             master_dtype=spec.master_dtype,
             grad_dtype=spec.grad_dtype,
             parameter_metrics=spec.parameter_metrics,
-            round_accumulation_once=self.round_accumulation_once,
+            fuse_narrow_gradient_accumulation=self.fuse_narrow_gradient_accumulation,
             **self._planning_args(),
         )
         report = None

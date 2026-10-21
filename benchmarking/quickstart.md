@@ -189,7 +189,7 @@ arithmetic:
 | `--opt-state-dtype` | The dtype the optimizer keeps its state at, AdamW's moments: `bfloat16`, `float16`, `float32`, or `parameter` for the dtype of what it steps | the optimizer's own default |
 | `--parameter-rounding` | How the optimizer rounds the weights it steps: `nearest`, or `stochastic`, which keeps small updates in expectation | the optimizer's own default, nearest |
 | `--opt-state-rounding` | How it rounds the state it stores: `nearest` or `stochastic` | ShadowSpill: stochastic for BF16 AdamW moments, nearest otherwise |
-| `--round-accumulation-once` | `plan_step`'s: a matrix multiply adds its product into running gradients kept narrower than it sums at -- bf16 -- as it writes them, avoiding a separate product buffer and addition. BLAS controls rounding; a single rounding is not guaranteed. Off, the narrow-dtype addition stays separate | off |
+| `--fuse-narrow-gradient-accumulation` | `plan_step`'s: with gradients narrower than float32 (bf16), a later microbatch's matrix multiply adds its weight gradient into the running gradient as it writes it, instead of writing the product at bf16 and adding it after; float32 gradients are added by the multiply either way. `--no-fuse-narrow-gradient-accumulation` adds it after, as PyTorch's own step does. BLAS controls rounding; a single rounding is not guaranteed | on |
 
 Every one of these is part of the plan's identity in the store and of the
 request a run records, so `--reproduce` replays them, and the banner names

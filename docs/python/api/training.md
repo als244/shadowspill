@@ -312,11 +312,11 @@ function without renaming model state or changing the original module's forward.
 
 `PyTorch(compile=True, device="auto")` executes the same objective with ordinary
 PyTorch autograd; `compile=False` selects eager execution. It accepts CPU and
-accelerator devices. `ShadowSpill(execution_gib=..., spill_gib=..., device="auto")`
-installs its pools on entering the context. It also accepts `artifact_store`,
-`search_options`, `profiling_options`, `partition`, `orderings`,
-`round_accumulation_once`, `numa_binding=True`, `external_headroom_gib=0.5`, and
-`reject_overbudget=False`.
+accelerator devices. `ShadowSpill(execution_gib=..., spill_gib=...,
+device="auto")` installs its pools on entering the context. It also accepts
+`artifact_store`, `search_options`, `profiling_options`, `partition`,
+`orderings`, `fuse_narrow_gradient_accumulation=True`, `numa_binding=True`,
+`external_headroom_gib=0.5`, and `reject_overbudget=False`.
 
 `device` can be an explicit local device/index. Automatic selection uses the
 only visible device, or `LOCAL_RANK` when several are visible. It does not map

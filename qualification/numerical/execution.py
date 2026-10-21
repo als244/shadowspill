@@ -241,6 +241,9 @@ def _plan_case(
         spill="spill",
         optimizer_ordering=request.case.optimizer_ordering,
         **request.case.data_ordering_arguments(),
+        # The reference arm is PyTorch's own step, which writes a gradient
+        # narrower than float32 at its dtype and adds it after the multiply.
+        fuse_narrow_gradient_accumulation=False,
         artifact_store=request.artifact_store,
         build_store=request.build_store,
         plan_store=request.plan_store,

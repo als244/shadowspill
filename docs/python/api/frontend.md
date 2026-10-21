@@ -890,7 +890,7 @@ plan_step(
     master_dtype=None,
     grad_dtype=None,
     parameter_metrics=None,
-    round_accumulation_once=False,
+    fuse_narrow_gradient_accumulation=True,
     memory_bound_flops_per_byte=MEMORY_BOUND_FLOPS_PER_BYTE,
     graph_pair_variants=GRAPH_PAIR_VARIANTS,
     keep_resolutions=False,
@@ -915,7 +915,7 @@ Beyond the shared and store arguments:
 | `transfer_bandwidths` | `TransferBandwidths` \| `None` | `None` | As for `plan_forward()`. A step that runs what `plan_step_search()` chose is planned against the report's `planned_lanes`, so it asks the store the search's question and executes the plan the search chose. |
 | `master_dtype` | `torch.dtype` \| `None` | `None` | Gives every weight the step trains at another dtype a master copy at this one, and builds `optimizer` over the masters; the update writes each weight from its master. See [the optimizer](../../architecture/optimizer.md#master-copies-and-the-dtype-gradients-are-kept-at). |
 | `grad_dtype` | `torch.dtype` \| `None` | `None` | The dtype gradients are created and accumulated at, the weights' own when `None`. The update casts a gradient only where its parameter is at another dtype. |
-| `round_accumulation_once` | `bool` | `False` | Permits a matrix multiply to add into running gradients kept narrower than its accumulator, such as BF16, avoiding a separate product buffer and addition. The BLAS kernel controls rounding; the name does not guarantee a single rounding or equality with a separate multiply and add. Gradients kept at the multiply's own dtype are added inside it either way. See [accumulating onto gradients](../../architecture/graph-pair-construction.md#accumulating-onto-gradients-that-already-exist). |
+| `fuse_narrow_gradient_accumulation` | `bool` | `True` | Permits a matrix multiply to add into running gradients kept narrower than its accumulator, such as BF16, avoiding a separate product buffer and addition; `False` writes such a gradient at its dtype and adds it after, as PyTorch's own step does. The BLAS kernel controls rounding; the option does not guarantee a single rounding or equality with a separate multiply and add. Gradients kept at the multiply's own dtype are added inside it either way. See [accumulating onto gradients](../../architecture/graph-pair-construction.md#accumulating-onto-gradients-that-already-exist). |
 | `memory_bound_flops_per_byte` | `float` | `16.0` | The arithmetic intensity, in flops per byte moved, at or under which a stage's `save` graph pair regenerates an operator's results in the backward rather than retaining them: a normalization, an activation, a rotation, a cast, a gather. Above it the results are retained, and so are those of any custom operator whose library registered no flop formula. The default sits well under any device's ridge point, so the classification does not depend on the machine; the value is part of the step's identity in the store. See [the save variant](../../architecture/graph-pair-construction.md#save). |
 | `graph_pair_variants` | `tuple[str, ...]` | `('save', 'recompute')` | Which of a stage's graph pairs the build constructs. A search that can select only one of them, such as one asked to recompute every flexible group, needs that one alone; naming it alone skips the capture, compilation and profiling of the other, and the program then carries no alternative at that boundary. A stage no later forward stage reads, the objective's, keeps `save` whatever was asked, since selection forces a forward sink to it. Part of the step's identity in the store. See [constructing one variant](../../architecture/graph-pair-construction.md#constructing-one-variant). |
 | `keep_resolutions` | `bool` | `False` | Files every resolved program's best plan beside the answer in the planning store, certified like it, when the search runs, as `plan_program()` does; each is as large as the answer. |
@@ -1016,7 +1016,7 @@ build_step_programs(
     master_dtype=None,
     grad_dtype=None,
     parameter_metrics=None,
-    round_accumulation_once=False,
+    fuse_narrow_gradient_accumulation=True,
     memory_bound_flops_per_byte=MEMORY_BOUND_FLOPS_PER_BYTE,
     graph_pair_variants=GRAPH_PAIR_VARIANTS,
 ) -> tuple[StepProgram, ...]
@@ -1072,7 +1072,7 @@ plan_step_search(
     master_dtype=None,
     grad_dtype=None,
     parameter_metrics=None,
-    round_accumulation_once=False,
+    fuse_narrow_gradient_accumulation=True,
     memory_bound_flops_per_byte=MEMORY_BOUND_FLOPS_PER_BYTE,
     graph_pair_variants=GRAPH_PAIR_VARIANTS,
     keep_resolutions=False,
@@ -1080,11 +1080,11 @@ plan_step_search(
 )
 ```
 
-`model`, `objective`, `optimizer`, `hyperparams`,
-`runtime`, `execution`, `spill`,
-`optimizer_ordering`, `master_dtype`, `grad_dtype`, `parameter_metrics`, `round_accumulation_once`,
-`memory_bound_flops_per_byte`, `graph_pair_variants` and the store arguments mean what they mean for
-`plan_step()`. The rest are:
+`model`, `objective`, `optimizer`, `hyperparams`, `runtime`, `execution`,
+`spill`, `optimizer_ordering`, `master_dtype`, `grad_dtype`,
+`parameter_metrics`, `fuse_narrow_gradient_accumulation`,
+`memory_bound_flops_per_byte`, `graph_pair_variants` and the store arguments
+mean what they mean for `plan_step()`. The rest are:
 
 | argument | type | default | what it must be |
 |---|---|---|---|

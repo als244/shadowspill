@@ -54,7 +54,7 @@ class _Form:
 
     gradient_dtype: torch.dtype | None
     accumulating: bool
-    round_accumulation_once: bool
+    fuse_narrow_gradient_accumulation: bool
     gradient_padding: tuple[tuple[int, int], ...] = ()
 
 
@@ -91,15 +91,16 @@ class GraphPairStore:
         retention: RetentionPolicy | None = None,
         accumulating: bool = False,
         gradient_dtype: torch.dtype | None = None,
-        round_accumulation_once: bool = False,
+        fuse_narrow_gradient_accumulation: bool = True,
         variants: tuple[str, ...] = GRAPH_PAIR_VARIANTS,
     ) -> TaskGraphPairs:
         """The stage's graph pairs, their ``save`` variant retaining what
         ``retention`` says to retain (the library's default when ``None``),
         their parameter gradients produced at ``gradient_dtype`` (the
         parameters' own when ``None``), and with the accumulating form when
-        the stage runs in an ``accumulating`` step -- rounding a sum once
-        where it may with ``round_accumulation_once``.
+        the stage runs in an ``accumulating`` step -- whose multiplies add
+        into gradients narrower than float32 too with
+        ``fuse_narrow_gradient_accumulation``.
 
         The store holds the pairs as captured; the forms a step asks for are
         derived from them, once per contract, and rebound per occurrence. The
@@ -137,7 +138,10 @@ class GraphPairStore:
                 if layout is not None:
                     padding.append((position, layout.group.size()))
         form = _Form(
-            gradient_dtype, accumulating, round_accumulation_once, tuple(padding)
+            gradient_dtype,
+            accumulating,
+            fuse_narrow_gradient_accumulation,
+            tuple(padding),
         )
         self._keys_seen.add(key)
         existing = self._pairs.get(key)
@@ -193,7 +197,7 @@ class GraphPairStore:
             )
             if form.accumulating:
                 accumulating = derived.accumulating_variants(
-                    round_accumulation_once=form.round_accumulation_once
+                    fuse_narrow_gradient_accumulation=form.fuse_narrow_gradient_accumulation
                 )
                 derived = replace(derived, variants=(*derived.variants, *accumulating))
             self._derived[(key, form)] = derived

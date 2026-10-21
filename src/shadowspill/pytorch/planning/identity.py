@@ -72,7 +72,7 @@ def step_identity(
     master_dtype: torch.dtype | None = None,
     grad_dtype: torch.dtype | None = None,
     parameter_metrics: Callable[[torch.Tensor, torch.Tensor], Any] | None = None,
-    round_accumulation_once: bool = False,
+    fuse_narrow_gradient_accumulation: bool = True,
     memory_bound_flops_per_byte: float = MEMORY_BOUND_FLOPS_PER_BYTE,
     graph_pair_variants: tuple[str, ...] = GRAPH_PAIR_VARIANTS,
 ) -> dict[str, object]:
@@ -134,7 +134,7 @@ def step_identity(
         "master_dtype": None if master_dtype is None else str(master_dtype),
         "grad_dtype": None if grad_dtype is None else str(grad_dtype),
         "parameter_metrics": code_identity(parameter_metrics),
-        "round_accumulation_once": round_accumulation_once,
+        "fuse_narrow_gradient_accumulation": fuse_narrow_gradient_accumulation,
         "retention": {
             "memory_bound_flops_per_byte": float(memory_bound_flops_per_byte),
         },

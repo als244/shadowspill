@@ -636,13 +636,15 @@ def _parser() -> argparse.ArgumentParser:
         " ShadowSpill defaults to stochastic for BF16 AdamW moments, nearest otherwise",
     )
     parser.add_argument(
-        "--round-accumulation-once",
+        "--fuse-narrow-gradient-accumulation",
         action=argparse.BooleanOptionalAction,
-        default=False,
-        help="let a matrix multiply add its product into running gradients"
-        " kept narrower than it sums at as it writes them, rounding the sum"
-        " once instead of twice; off by default, which is what PyTorch's"
-        " own step computes",
+        default=True,
+        help="with gradients narrower than float32 (bf16, fp16), let a later"
+        " microbatch's matrix multiply add its weight gradient into the running"
+        " gradient as it writes it, instead of writing it at the narrow dtype"
+        " and adding it after; float32 gradients are added by the multiply"
+        " either way; on by default; --no-fuse-narrow-gradient-accumulation"
+        " computes what PyTorch's own step computes",
     )
     parser.add_argument(
         "--artifact-store",

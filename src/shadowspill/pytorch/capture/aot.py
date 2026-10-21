@@ -864,7 +864,7 @@ def accumulate_gradient_outputs(
     backward: GraphArtifact,
     leaf_indices: Sequence[int],
     *,
-    round_accumulation_once: bool = False,
+    fuse_narrow_gradient_accumulation: bool = True,
 ) -> GraphArtifact:
     """Return a backward that adds its gradients onto ones it is given.
 
@@ -888,7 +888,7 @@ def accumulate_gradient_outputs(
     is added by the multiply itself instead (:func:`accumulate_matmul_`):
     ``C = A @ B + C`` into the running gradient, where the device has a kernel
     for it at these dtypes. The multiply adds gradients narrower than its
-    accumulator, such as bf16, only with ``round_accumulation_once``. This
+    accumulator, such as bf16, only with ``fuse_narrow_gradient_accumulation``. This
     avoids a product buffer and separate addition, but the BLAS kernel
     controls rounding: even one kernel may round the product before adding
     the prior gradient. The option permits fusion, not a rounding guarantee.
@@ -932,7 +932,12 @@ def accumulate_gradient_outputs(
             _record_value(prior, prior_value)
         anchor = prior
         adding = _add_in_multiply(
-            graph, produced, prior, outputs, fake_mode, round_accumulation_once
+            graph,
+            produced,
+            prior,
+            outputs,
+            fake_mode,
+            fuse_narrow_gradient_accumulation,
         )
         if adding is not None:
             outputs[leaf] = prior
@@ -1339,7 +1344,7 @@ def _add_in_multiply(
     prior: torch.fx.Node,
     outputs: Sequence[object],
     fake_mode: Any,
-    round_accumulation_once: bool,
+    fuse_narrow_gradient_accumulation: bool,
 ) -> list[torch.fx.Node] | None:
     """Have the matrix multiply that computes ``produced`` add it into ``prior``.
 
@@ -1349,7 +1354,7 @@ def _add_in_multiply(
     and when PyTorch has an in-place kernel for it on the device that accepts
     these dtypes -- the operator's own check. A running gradient narrower than
     the dtype the multiply sums at is added so only with
-    ``round_accumulation_once``. Returns the nodes it replaced, for the caller
+    ``fuse_narrow_gradient_accumulation``. Returns the nodes it replaced, for the caller
     to erase once the output no longer reads them, or ``None``.
     """
 
@@ -1376,7 +1381,9 @@ def _add_in_multiply(
         return None
     left, right = (cast(torch.fx.Node, item) for item in multiply.args[:2])
     operands = cast(torch.Tensor, left.meta["val"]).dtype
-    if not round_accumulation_once and running.dtype != get_computation_dtype(operands):
+    if not fuse_narrow_gradient_accumulation and running.dtype != get_computation_dtype(
+        operands
+    ):
         return None
     undoing = [undo for undo in map(_undo_move, chain[:-1]) if undo is not None]
     # Which dtypes the multiply writes at is the operator's own check, made by

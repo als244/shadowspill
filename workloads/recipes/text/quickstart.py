@@ -22,7 +22,7 @@ class Precision:
     harness names them.
 
     ``model_dtype`` controls model construction. ``master_dtype``,
-    ``grad_dtype`` and ``round_accumulation_once`` are
+    ``grad_dtype`` and ``fuse_narrow_gradient_accumulation`` are
     ``plan_step``'s. The rest are the optimizer's own, given to it when it is
     built: the dtype it keeps its state at and how it rounds what it stores
     and the weights it steps. A gradient dtype reaches two more places on its
@@ -38,7 +38,7 @@ class Precision:
     opt_state_dtype: str | None = None
     parameter_rounding: str | None = None
     opt_state_rounding: str | None = None
-    round_accumulation_once: bool = False
+    fuse_narrow_gradient_accumulation: bool = True
 
     @classmethod
     def from_arguments(cls, arguments: argparse.Namespace) -> Precision:
@@ -49,7 +49,9 @@ class Precision:
             opt_state_dtype=arguments.opt_state_dtype,
             parameter_rounding=arguments.parameter_rounding,
             opt_state_rounding=arguments.opt_state_rounding,
-            round_accumulation_once=bool(arguments.round_accumulation_once),
+            fuse_narrow_gradient_accumulation=bool(
+                arguments.fuse_narrow_gradient_accumulation
+            ),
         )
 
     @staticmethod
@@ -74,7 +76,7 @@ class Precision:
         return {
             "master_dtype": self.master,
             "grad_dtype": self.gradients,
-            "round_accumulation_once": self.round_accumulation_once,
+            "fuse_narrow_gradient_accumulation": self.fuse_narrow_gradient_accumulation,
         }
 
     def optimizer_arguments(self) -> dict[str, object]:
@@ -129,9 +131,9 @@ class Precision:
                 self.grad_dtype or "weights'",
                 f"gradients summed over the microbatches at {gradients} dtype;"
                 + (
-                    " a multiply adds its product in as it writes, rounded once"
-                    if self.round_accumulation_once
-                    else " a product rounded to a narrower gradient is added after"
+                    " a multiply adds a narrower gradient in as it writes it"
+                    if self.fuse_narrow_gradient_accumulation
+                    else " a narrower gradient is written by its multiply, then added"
                 ),
             ),
             (

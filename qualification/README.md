@@ -361,6 +361,13 @@ each case its own compile cache and deletes it afterwards, which is what makes
 that safe here; a tool that reuses a cache across the boundary would need to
 key it on the setting.
 
+The planned arm also accumulates as the reference arm's PyTorch step does: a
+later microbatch's weight gradient narrower than float32 is written at its
+dtype by its multiply and added after it
+(`fuse_narrow_gradient_accumulation=False`), where ShadowSpill by default adds
+it inside the multiply. Float32 gradients are added inside the multiply either
+way.
+
 Against the reference, every weight must agree within a relative L2 of
 2.5 % (cosine at least 0.999, sign agreement at least 99 %); an optimizer
 moment gets 5 %, because it is an accumulator whose reduction order follows the

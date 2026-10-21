@@ -76,14 +76,14 @@ def capture_training_graphs(
     stores: PlanningStores,
     timer: PlanningTimer,
     grad_dtype: torch.dtype | None = None,
-    round_accumulation_once: bool = False,
+    fuse_narrow_gradient_accumulation: bool = True,
     memory_bound_flops_per_byte: float = MEMORY_BOUND_FLOPS_PER_BYTE,
     graph_pair_variants: tuple[str, ...] = GRAPH_PAIR_VARIANTS,
 ) -> TrainingCaptureArtifacts:
     """Capture objective and stage-local graph pairs entirely offline, their
     parameter gradients at ``grad_dtype`` when one is given, their
     accumulating forms rounding once where they may with
-    ``round_accumulation_once``, their ``save`` variants regenerating
+    ``fuse_narrow_gradient_accumulation``, their ``save`` variants regenerating
     every operator at or under ``memory_bound_flops_per_byte``, and only
     the ``graph_pair_variants`` named built at all."""
 
@@ -123,7 +123,7 @@ def capture_training_graphs(
             timer=timer,
             retention=retention,
             grad_dtype=grad_dtype,
-            round_accumulation_once=round_accumulation_once,
+            fuse_narrow_gradient_accumulation=fuse_narrow_gradient_accumulation,
             graph_pair_variants=graph_pair_variants,
             values=lambda: pool_values(memory.runtime),
         )
@@ -237,7 +237,7 @@ def _partition_training_graphs(
     timer: PlanningTimer,
     retention: RetentionPolicy,
     grad_dtype: torch.dtype | None,
-    round_accumulation_once: bool,
+    fuse_narrow_gradient_accumulation: bool,
     graph_pair_variants: tuple[str, ...] = GRAPH_PAIR_VARIANTS,
     values: Callable[[], AbstractContextManager[object]] = nullcontext,
 ) -> tuple[PartitionedTrainingCapture, ...]:
@@ -308,7 +308,7 @@ def _partition_training_graphs(
                     # once.
                     accumulating=len(captures) > 1,
                     gradient_dtype=grad_dtype,
-                    round_accumulation_once=round_accumulation_once,
+                    fuse_narrow_gradient_accumulation=fuse_narrow_gradient_accumulation,
                     graph_pair_variants=graph_pair_variants,
                     template=shared,
                 )

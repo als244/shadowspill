@@ -299,7 +299,7 @@ def test_rounding_an_accumulation_once_is_a_form_of_its_own() -> None:
                 partitioned,
                 graph_pair_store=store,
                 accumulating=True,
-                round_accumulation_once=round_once,
+                fuse_narrow_gradient_accumulation=round_once,
             )
         return {
             adding_inside

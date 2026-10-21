@@ -177,7 +177,7 @@ def _geometry_failure_worker(rank, root):
         export_bypass_key=None,
         master_dtype=None,
         grad_dtype=None,
-        round_accumulation_once=False,
+        fuse_narrow_gradient_accumulation=False,
         memory_bound_flops_per_byte=1,
     )
     calls = []

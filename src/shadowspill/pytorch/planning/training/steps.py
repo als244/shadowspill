@@ -86,7 +86,7 @@ def make_training_programs(
     master_dtype: torch.dtype | None = None,
     grad_dtype: torch.dtype | None = None,
     parameter_metrics: Callable[[torch.Tensor, torch.Tensor], Any] | None = None,
-    round_accumulation_once: bool = False,
+    fuse_narrow_gradient_accumulation: bool = True,
     memory_bound_flops_per_byte: float = MEMORY_BOUND_FLOPS_PER_BYTE,
     graph_pair_variants: tuple[str, ...] = GRAPH_PAIR_VARIANTS,
 ) -> tuple[StepProgram, ...]:
@@ -123,7 +123,7 @@ def make_training_programs(
                 master_dtype=master_dtype,
                 grad_dtype=grad_dtype,
                 parameter_metrics=parameter_metrics,
-                round_accumulation_once=round_accumulation_once,
+                fuse_narrow_gradient_accumulation=fuse_narrow_gradient_accumulation,
                 memory_bound_flops_per_byte=memory_bound_flops_per_byte,
                 graph_pair_variants=graph_pair_variants,
                 export_bypass_key=bypass_key,
@@ -177,7 +177,7 @@ def make_training_programs(
                 master_dtype=master_dtype,
                 grad_dtype=grad_dtype,
                 parameter_metrics=parameter_metrics,
-                round_accumulation_once=round_accumulation_once,
+                fuse_narrow_gradient_accumulation=fuse_narrow_gradient_accumulation,
                 memory_bound_flops_per_byte=memory_bound_flops_per_byte,
                 graph_pair_variants=graph_pair_variants,
             )
@@ -208,7 +208,7 @@ def _build_training_step_programs(
     master_dtype: torch.dtype | None = None,
     grad_dtype: torch.dtype | None = None,
     parameter_metrics: Callable[[torch.Tensor, torch.Tensor], Any] | None = None,
-    round_accumulation_once: bool = False,
+    fuse_narrow_gradient_accumulation: bool = True,
     memory_bound_flops_per_byte: float = MEMORY_BOUND_FLOPS_PER_BYTE,
     graph_pair_variants: tuple[str, ...] = GRAPH_PAIR_VARIANTS,
 ) -> dict[StepDataOrdering, StepProgram]:
@@ -231,7 +231,7 @@ def _build_training_step_programs(
         stores=artifacts,
         timer=timer,
         grad_dtype=grad_dtype,
-        round_accumulation_once=round_accumulation_once,
+        fuse_narrow_gradient_accumulation=fuse_narrow_gradient_accumulation,
         memory_bound_flops_per_byte=memory_bound_flops_per_byte,
         graph_pair_variants=graph_pair_variants,
     )
