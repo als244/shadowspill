@@ -158,10 +158,9 @@ def test_the_summary_is_printed_and_written(experiment, capsys):
     text = capsys.readouterr().out
     assert "fastest within each GPU budget:" in text and "nothing fits" in text
     assert "3,000.0 tok/s" in text and "budget=16" in text
-    assert (
-        "## Frontier of each engine, fastest first"
-        in (experiment / "summary.md").read_text()
-    )
+    written = (experiment / "summary.md").read_text()
+    assert "## Frontier of each engine, fastest first" in written
+    assert "| Sweep | Engine | Outcomes |" in written
     data = json.loads((experiment / "summary.json").read_text())
     assert data["sweeps"][2] == {
         "sweep": "deepspeed",
@@ -180,32 +179,36 @@ def test_without_budgets_only_the_frontiers_are_given(experiment):
 def test_the_summary_names_the_commits_and_embeds_the_reports_figures(experiment):
     from baselines.report import slug
 
-    key = ("llama3-8b", "full", "RTX 5090", 1)
-    figure = experiment / "report" / "figures" / f"{slug(key)}.png"
-    figure.parent.mkdir(parents=True)
-    figure.write_bytes(b"png")
+    key = ("llama3-8b", "full", 4096, 0, "RTX 5090", 1)
+    figures = experiment / "report" / "figures"
+    figures.mkdir(parents=True)
+    for name in ("device", "host"):
+        (figures / f"{slug(key)}-{name}.png").write_bytes(b"png")
     result = summary.summarize(experiment)
     assert result["commits"][0] == {"commit": None, "dirty": False, "rows": 5}
     assert {"commit": "fadc671c0000", "dirty": False, "rows": 1} in result["commits"]
     (group,) = result["groups"]
-    assert group["figure"] == f"report/figures/{slug(key)}.png"
-    assert f"![{group['title']}](report/figures/{slug(key)}.png)" in summary.markdown(
-        result
-    )
+    assert group["figures"] == [
+        f"report/figures/{slug(key)}-device.png",
+        f"report/figures/{slug(key)}-host.png",
+    ]
+    text = summary.markdown(result)
+    for name in ("device", "host"):
+        assert f"![{group['title']}](report/figures/{slug(key)}-{name}.png)" in text
 
 
 def test_a_published_summary_keeps_its_figures_and_no_path(experiment, tmp_path):
     from baselines.report import slug
 
-    key = ("llama3-8b", "full", "RTX 5090", 1)
-    figure = experiment / "report" / "figures" / f"{slug(key)}.png"
+    key = ("llama3-8b", "full", 4096, 0, "RTX 5090", 1)
+    figure = experiment / "report" / "figures" / f"{slug(key)}-device.png"
     figure.parent.mkdir(parents=True)
     figure.write_bytes(b"png")
     target = tmp_path / "published"
     summary.publish(experiment, summary.summarize(experiment), target)
-    assert (target / "figures" / f"{slug(key)}.png").read_bytes() == b"png"
+    assert (target / "figures" / f"{slug(key)}-device.png").read_bytes() == b"png"
     text = (target / "summary.md").read_text()
-    assert f"(figures/{slug(key)}.png)" in text
+    assert f"(figures/{slug(key)}-device.png)" in text
     assert str(experiment) not in text and "row.json" not in text
     data = json.loads((target / "summary.json").read_text())
     assert "experiment" not in data and '"row":' not in json.dumps(data)

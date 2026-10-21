@@ -5,17 +5,20 @@ pair from result rows, and index the figures.
         [--memory allocated|reserved] [--dpi N]
 
 Rows are every ``row.json`` under the roots, a case's attempts counting once
-by the last that wrote a row. They are grouped by model, training mode,
-device and world size, and each group is one figure of two panels: global
-tokens per second against the peak device memory of the binding rank, and
-against the host memory the ranks' processes peaked at in sum. Every
-completed throughput row is a point, colored by engine; the Pareto frontier
-of each engine, the rows no other row of that engine beats on both axes,
-is drawn as a step and its points are labeled with the settings that vary
-among that engine's rows of the group. Rows that ran out of device memory
-are the boundary and are listed with the group. Each figure is written as
-PNG, SVG and PDF with a table of its points, and ``index.html`` links them
-all.
+by the last that wrote a row. They are grouped by what an experiment's cases
+share, the model, training mode, sequence length, sequences per step, device
+and world size, which title the group's figures, and each group has two
+figures: global tokens per
+second against the peak device memory of the binding rank (``-device``),
+and against the host memory the ranks' processes peaked at in sum
+(``-host``). Every completed throughput row is a point, colored and marked
+by engine. Each engine's Pareto frontier against device memory, the rows no
+other row of that engine beats on both throughput and device memory, is
+drawn solid and outlined on both figures, and the rest faint. The group's
+table lists every point with the settings that vary among its engine's rows
+of the group, and marks the frontier. Rows that ran out of device memory are
+the boundary and are listed with the group. Each figure is written as PNG,
+SVG and PDF, and ``index.html`` links them all.
 """
 
 from __future__ import annotations
@@ -45,6 +48,13 @@ DERIVED_GEOMETRY = (
     "tokens_per_rank_per_step",
 )
 
+#: A group's figures: each one's name, the column it draws throughput
+#: against, and its axis caption.
+FIGURES = (
+    ("device", "device_gib", "peak device memory, {memory} (GiB)"),
+    ("host", "host_gib", "peak host memory, sum over ranks (GiB)"),
+)
+
 #: One color per engine, in the order engines usually appear.
 COLORS = (
     "#3268db",
@@ -71,16 +81,22 @@ p { line-height:1.6 }
 """
 
 
-def group_key(row: dict[str, Any]) -> tuple[str, str, str, int]:
-    """What a figure is of: the model, its training mode, the device and
-    the world size."""
+def group_key(row: dict[str, Any]) -> tuple[str, str, int, int, str, int]:
+    """What a figure is of, the settings its experiment shares: the model,
+    its training mode, the sequence length, the sequences per update, the
+    device and the world size."""
 
     device = (row.get("hardware") or {}).get("device") or {}
+    geometry = row["geometry"]
+    length = int(geometry.get("sequence_length") or 0)
+    tokens = int(geometry.get("tokens_per_step") or 0)
     return (
         str(row["model"]["model"]),
         str(row["model"].get("mode", "full")),
+        length,
+        tokens // length if length else 0,
         str(device.get("name") or "unknown device"),
-        int(row["geometry"].get("world_size") or 0),
+        int(geometry.get("world_size") or 0),
     )
 
 
@@ -145,24 +161,47 @@ def label(item: dict[str, Any], keys: list[str]) -> str:
     return ", ".join(parts)
 
 
-def slug(key: tuple[str, str, str, int]) -> str:
+def slug(key: tuple[str, str, int, int, str, int]) -> str:
     text = " ".join(str(part) for part in key).lower()
     return re.sub(r"[^a-z0-9]+", "-", text).strip("-")
 
 
-def title(key: tuple[str, str, str, int]) -> str:
-    model, mode, device, world_size = key
-    return f"{model} ({mode}) on {world_size} x {device}"
+def title(key: tuple[str, str, int, int, str, int]) -> str:
+    """The settings a group's cases share, as a figure's title."""
+
+    model, mode, length, sequences, device, world_size = key
+    parts = [model, {"full": "full training", "lora": "LoRA"}.get(mode, mode)]
+    if length:
+        parts.append(f"{length:,}-token sequences")
+    if sequences:
+        parts.append(f"{sequences} sequences per step")
+    parts.extend([f"world size {world_size}", device])
+    return ", ".join(parts)
+
+
+def wrapped(text: str, width: int) -> str:
+    """``text`` on as few lines of at most ``width`` characters as its
+    comma-separated parts allow, a part never split."""
+
+    lines: list[str] = []
+    for part in text.split(", "):
+        if lines and len(lines[-1]) + 2 + len(part) <= width:
+            lines[-1] += ", " + part
+        else:
+            lines.append(part)
+    return ",\n".join(lines)
 
 
 def groups(
     rows: list[dict[str, Any]], memory: str
-) -> dict[tuple[str, str, str, int], dict[str, Any]]:
+) -> dict[tuple[str, str, int, int, str, int], dict[str, Any]]:
     """Per group: its points, the setting keys that vary within each
     engine, the frontier of each engine on both axes, and the rows that
-    ran out of device memory."""
+    ran out of device memory. A row that names no device, which a case
+    refused before its engine probed the device writes, joins the one group
+    that shares everything else of its key."""
 
-    collected: dict[tuple[str, str, str, int], dict[str, Any]] = defaultdict(
+    collected: dict[tuple[str, str, int, int, str, int], dict[str, Any]] = defaultdict(
         lambda: {"points": [], "boundary": []}
     )
     for row in rows:
@@ -177,6 +216,16 @@ def groups(
                     "path": row.get("_path", ""),
                 }
             )
+    unknown = "unknown device"
+    for key in [key for key in collected if key[4] == unknown]:
+        shared = key[:4] + key[5:]
+        known = [
+            other
+            for other in collected
+            if other[4] != unknown and other[:4] + other[5:] == shared
+        ]
+        if len(known) == 1 and not collected[key]["points"]:
+            collected[known[0]]["boundary"].extend(collected.pop(key)["boundary"])
     result = {}
     for key in sorted(collected):
         group = collected[key]
@@ -193,14 +242,11 @@ def groups(
             for engine in engines
         }
         frontiers = {
-            engine: {
-                axis: frontier(
-                    [item for item in group["points"] if item["engine"] == engine],
-                    axis,
-                    "tokens_per_second",
-                )
-                for axis in ("device_gib", "host_gib")
-            }
+            engine: frontier(
+                [item for item in group["points"] if item["engine"] == engine],
+                "device_gib",
+                "tokens_per_second",
+            )
             for engine in engines
         }
         result[key] = {
@@ -214,77 +260,63 @@ def groups(
 
 
 def draw(key, group, output: Path, *, memory: str, dpi: int) -> list[Path]:
-    """The group's figure as PNG, SVG and PDF under ``output/figures``."""
+    """The group's two figures, throughput against device memory and against
+    host memory, as PNG, SVG and PDF under ``output/figures``."""
 
     import matplotlib
 
     matplotlib.use("Agg")
     from matplotlib import pyplot
 
-    figure, axes = pyplot.subplots(1, 2, figsize=(15, 5.6))
     styles = {
         engine: (COLORS[index % len(COLORS)], MARKERS[index % len(MARKERS)])
         for index, engine in enumerate(group["engines"])
     }
-    for axis, column, caption in (
-        (axes[0], "device_gib", f"peak device memory, {memory} (GiB)"),
-        (axes[1], "host_gib", "peak host memory, sum over ranks (GiB)"),
-    ):
-        widest = max((item[column] for item in group["points"]), default=0.0)
+    # Each engine's frontier against the device memory it held stands out on
+    # both figures; the points it beats are drawn faint behind it.
+    best = {
+        id(item) for engine in group["engines"] for item in group["frontiers"][engine]
+    }
+    paths = []
+    (output / "figures").mkdir(parents=True, exist_ok=True)
+    for name, column, caption in FIGURES:
+        figure, axis = pyplot.subplots(figsize=(7.5, 5.6))
         for engine in group["engines"]:
             color, marker = styles[engine]
             items = [item for item in group["points"] if item["engine"] == engine]
-            if not items:
-                continue
-            axis.scatter(
-                [item[column] for item in items],
-                [item["tokens_per_second"] for item in items],
-                color=color,
-                marker=marker,
-                s=28,
-                alpha=0.6,
-                label=engine,
-            )
-            best = group["frontiers"][engine][column]
-            if best:
-                axis.step(
-                    [item[column] for item in best],
-                    [item["tokens_per_second"] for item in best],
-                    where="post",
+            for chosen, alpha, size, edge in (
+                (False, 0.22, 22, "none"),
+                (True, 1.0, 40, "black"),
+            ):
+                drawn = [item for item in items if (id(item) in best) == chosen]
+                if not drawn:
+                    continue
+                axis.scatter(
+                    [item[column] for item in drawn],
+                    [item["tokens_per_second"] for item in drawn],
                     color=color,
-                    linewidth=1.6,
+                    marker=marker,
+                    s=size,
+                    alpha=alpha,
+                    edgecolors=edge,
+                    linewidths=0.6,
+                    label=engine if chosen else None,
+                    zorder=3 if chosen else 2,
                 )
-                for item in best:
-                    # Labels of points in the right third read leftwards, so
-                    # the axis edge does not cut them.
-                    leftwards = item[column] > 0.67 * widest
-                    text = axis.annotate(
-                        label(item, group["keys"][item["engine"]]),
-                        (item[column], item["tokens_per_second"]),
-                        fontsize=6,
-                        xytext=(-4 if leftwards else 4, 2),
-                        textcoords="offset points",
-                        horizontalalignment="right" if leftwards else "left",
-                        color=color,
-                        clip_on=True,
-                    )
-                    text.set_in_layout(False)
-        axis.set_xlabel(caption)
+        axis.set_xlabel(caption.format(memory=memory))
         axis.set_ylabel("global tokens per second")
         axis.set_ylim(bottom=0)
         axis.grid(color="#e3e8ef", linewidth=0.8)
         axis.set_axisbelow(True)
         if group["engines"]:
             axis.legend(frameon=False, fontsize=8, loc="lower right")
-    figure.suptitle(title(key))
-    figure.tight_layout()
-    paths = []
-    (output / "figures").mkdir(parents=True, exist_ok=True)
-    for suffix in ("png", "svg", "pdf"):
-        path = output / "figures" / f"{slug(key)}.{suffix}"
-        figure.savefig(path, dpi=dpi)
-        paths.append(path)
-    pyplot.close(figure)
+        axis.set_title(wrapped(title(key), 64), fontsize=10)
+        figure.tight_layout()
+        for suffix in ("png", "svg", "pdf"):
+            path = output / "figures" / f"{slug(key)}-{name}.{suffix}"
+            figure.savefig(path, dpi=dpi)
+            paths.append(path)
+        pyplot.close(figure)
     return paths
 
 
@@ -293,12 +325,7 @@ def table_rows(group) -> list[dict[str, Any]]:
     marked, for the tables and the CSV."""
 
     on_frontier = {
-        axis: {
-            id(item)
-            for engine in group["engines"]
-            for item in group["frontiers"][engine][axis]
-        }
-        for axis in ("device_gib", "host_gib")
+        id(item) for engine in group["engines"] for item in group["frontiers"][engine]
     }
     records = []
     for item in sorted(
@@ -313,11 +340,7 @@ def table_rows(group) -> list[dict[str, Any]]:
                 "useful_tflops_per_gpu": item["useful_tflops_per_gpu"],
                 "device_gib": item["device_gib"],
                 "host_gib": item["host_gib"],
-                "frontier": ", ".join(
-                    name
-                    for name, axis in (("device", "device_gib"), ("host", "host_gib"))
-                    if id(item) in on_frontier[axis]
-                ),
+                "frontier": "yes" if id(item) in on_frontier else "",
                 "status": "completed",
                 "path": item["path"],
             }
@@ -405,25 +428,31 @@ def write_index(output: Path, sections: list[dict[str, Any]], memory: str) -> No
         "<title>Baselines frontier</title>",
         f"<style>{INDEX_STYLE}</style>",
         "<h1>Throughput against memory</h1>",
-        "<p>One figure per model, training mode, device and world size: global "
+        "<p>Two figures per model, training mode, sequence length, sequences "
+        "per step, device and world size, which title them: global "
         "tokens per second against the binding rank's peak device memory "
-        f"({html.escape(memory)}) and against the ranks' summed peak host memory. "
-        "A step is one engine's Pareto frontier, labeled with the settings that "
-        "vary within the group; out-of-memory rows are the boundary.</p>",
+        f"({html.escape(memory)}), and against the ranks' summed peak host memory. "
+        "Each point is a completed case, colored and marked by engine; each "
+        "engine's Pareto frontier against device memory is solid and outlined "
+        "on both figures, the rest faint. Each "
+        "table lists the points with their settings, and out-of-memory rows "
+        "are the boundary.</p>",
         '<p><a href="rows.csv">CSV of every point</a></p>',
     ]
     for section in sections:
         name = slug(section["key"])
         parts.append(f"<h2>{html.escape(title(section['key']))}</h2>")
-        parts.append(
-            f'<img src="figures/{name}.png" alt="{html.escape(title(section["key"]))}">'
-        )
-        parts.append(
-            f'<p><a href="figures/{name}.png">PNG</a> · '
-            f'<a href="figures/{name}.svg">SVG</a> · '
-            f'<a href="figures/{name}.pdf">PDF</a> · '
-            f'<a href="tables/{name}.md">Table</a></p>'
-        )
+        for figure, _, _ in FIGURES:
+            parts.append(
+                f'<img src="figures/{name}-{figure}.png" '
+                f'alt="{html.escape(title(section["key"]))}, {figure} memory">'
+            )
+            parts.append(
+                f'<p>{figure} memory: <a href="figures/{name}-{figure}.png">PNG</a> · '
+                f'<a href="figures/{name}-{figure}.svg">SVG</a> · '
+                f'<a href="figures/{name}-{figure}.pdf">PDF</a></p>'
+            )
+        parts.append(f'<p><a href="tables/{name}.md">Table</a></p>')
         parts.append(html_table(section["records"]))
     (output / "index.html").write_text("\n".join(parts) + "\n")
 
@@ -436,7 +465,7 @@ def main(argv=None) -> None:
     parser.add_argument("--dpi", type=int, default=200)
     args = parser.parse_args(argv)
     rows = []
-    for root in args.roots:
+    for root in [root.resolve() for root in args.roots]:
         for row in read_rows(root):
             relative = Path(row["_path"]).relative_to(root.resolve())
             row["_path"] = str(Path(root.name) / relative)
@@ -462,7 +491,8 @@ def main(argv=None) -> None:
             sections.append({"key": key, "records": records})
     write_index(output, sections, args.memory)
     print(
-        f"{len(rows)} rows, {len(sections)} figures; index: {output / 'index.html'}",
+        f"{len(rows)} rows, {len(sections)} groups of {len(FIGURES)} figures;"
+        f" index: {output / 'index.html'}",
         flush=True,
     )
 

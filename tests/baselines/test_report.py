@@ -59,7 +59,7 @@ def test_only_completed_throughput_rows_are_points():
     assert point(completed("fsdp2", 1000.0, 8.0, 2.0), "reserved")["device_gib"] > 8.0
     assert point(completed("fsdp2", 1000.0, 8.0, 2.0, performance_result=False)) is None
     assert point(boundary("fsdp2")) is None
-    assert group_key(boundary("fsdp2")) == ("llama3-8b", "full", "RTX 5090", 1)
+    assert group_key(boundary("fsdp2")) == ("llama3-8b", "full", 4096, 0, "RTX 5090", 1)
 
 
 def test_groups_hold_their_points_frontiers_boundary_and_varied_keys():
@@ -71,7 +71,7 @@ def test_groups_hold_their_points_frontiers_boundary_and_varied_keys():
         boundary("fsdp2", recompute=0.0, offload_policy="cpu"),
     ]
     result = groups(rows, "allocated")
-    key = ("llama3-8b", "full", "RTX 5090", 1)
+    key = ("llama3-8b", "full", 4096, 0, "RTX 5090", 1)
     assert list(result) == [key]
     group = result[key]
     assert group["engines"] == ["fsdp2", "shadowspill"]
@@ -79,10 +79,30 @@ def test_groups_hold_their_points_frontiers_boundary_and_varied_keys():
         "fsdp2": ["offload_policy", "recompute"],
         "shadowspill": [],
     }
-    device = [item["device_gib"] for item in group["frontiers"]["fsdp2"]["device_gib"]]
+    device = [item["device_gib"] for item in group["frontiers"]["fsdp2"]]
     assert device == [8.0, 12.0]
     assert len(group["boundary"]) == 1
     keys = group["keys"]["fsdp2"]
     assert label(group["boundary"][0], keys) == "offload_policy=cpu, recompute=0"
-    assert slug(key) == "llama3-8b-full-rtx-5090-1"
-    assert title(key) == "llama3-8b (full) on 1 x RTX 5090"
+    assert slug(key) == "llama3-8b-full-4096-0-rtx-5090-1"
+    assert title(key) == (
+        "llama3-8b, full training, 4,096-token sequences, world size 1, RTX 5090"
+    )
+    lora = ("qwen35-27b", "lora", 4096, 16, "NVIDIA GeForce RTX 5090", 1)
+    assert title(lora) == (
+        "qwen35-27b, LoRA, 4,096-token sequences, 16 sequences per step, "
+        "world size 1, NVIDIA GeForce RTX 5090"
+    )
+
+
+def test_a_boundary_row_without_a_device_joins_its_models_group():
+    refused = boundary("shadowspill", execution_gib=4)
+    refused["hardware"] = {}
+    rows = [completed("shadowspill", 1000.0, 8.0, 2.0, execution_gib=8), refused]
+    result = groups(rows, "reserved")
+    (key,) = result
+    assert key[4] == "RTX 5090"
+    assert [item["settings"]["execution_gib"] for item in result[key]["boundary"]] == [
+        4
+    ]
+    assert result[key]["keys"]["shadowspill"] == ["execution_gib"]

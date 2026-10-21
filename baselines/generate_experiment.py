@@ -284,13 +284,27 @@ def readme(name: str, relative: Path, folder: Path, args, spec, cases, matrices)
     variables = spec.get("variables", {})
     assignments = " ".join(f"--variable {key}=<dir>" for key in variables)
     spec_file = f"baselines/experiments/{relative}/experiment.json"
-    command = (
-        f"python -u -m baselines.experiment --spec {spec_file} \\\n"
-        f"  --output <results>/{name}" + (f" {assignments}" if assignments else "")
+    command = f"python -u -m baselines.experiment --spec {spec_file}" + (
+        f" \\\n  {assignments}" if assignments else ""
     )
     guide = os.path.relpath(EXPERIMENTS / "README.md", folder)
+    length, tokens = settings["sequence_length"], settings["tokens_per_step"]
+    training = {"full": "full training", "lora": "LoRA"}.get(
+        settings["mode"], settings["mode"]
+    )
     lines = [
         f"# {name}",
+        "",
+        "| Model | Training | Sequence length | Sequences per step | World size"
+        " | Hardware |",
+        "|---|---|---|---|---|---|",
+        f"| `{settings['model']}` | {training} | {length:,} tokens"
+        f" | {tokens // length} ({tokens:,} tokens) | {spec['gpus']}"
+        f" | {args.device}, {args.gpu_memory_gib:g} GiB each;"
+        f" {args.host_memory_gib:g} GiB of host memory |",
+        "",
+        "These define the experiment: every case of every engine shares them, and"
+        " they title its figures.",
         "",
         args.description or "A throughput and memory experiment.",
         "",
@@ -346,7 +360,7 @@ def readme(name: str, relative: Path, folder: Path, args, spec, cases, matrices)
         )
         lines.append(
             f"### {item['name']}: {len(cases[item['name']])} cases"
-            f" ([options]({up}/{item['engine']}/README.md))"
+            f" ([options]({up}/engines/{item['engine']}/README.md))"
         )
         lines.append("")
         if fixed:
@@ -367,31 +381,33 @@ def readme(name: str, relative: Path, folder: Path, args, spec, cases, matrices)
         [
             "## Running it",
             "",
-            "From the root of a clone of the committed tree, in a tmux window, first"
-            " the dry run, which validates every case and launches nothing:",
+            "From the repository's root, in a tmux window, first the dry run, which"
+            " validates every case and launches nothing:",
             "",
             "```bash",
             command + " --dry-run",
             "```",
             "",
-            "then the same command without `--dry-run`. `--engine <engine>` runs one"
+            "then the same command without `--dry-run`. A run writes everything into"
+            " `output/` in this folder, which git ignores. `--engine <engine>` runs one"
             " engine and keeps what the others hold; the same command again resumes,"
-            " and `--retry-failed` attempts the failed cases again. The variables'"
-            " values are recorded with the results, so a resume need not repeat them.",
+            " `--retry-failed` attempts the failed cases again, and `--overwrite`"
+            " runs the engines it runs from scratch. The variables' values are"
+            " recorded in `output/`, so a resume need not repeat them.",
             "",
             "## Results",
             "",
-            "A run ends with `summary.md` and the report in its results directory."
-            " To keep them with the experiment:",
+            "A run ends with `output/summary.md` and the report in `output/report/`."
+            " To keep the summary with the experiment:",
             "",
             "```bash",
-            f"python -m baselines.summary <results>/{name} \\\n"
+            f"python -m baselines.summary baselines/experiments/{relative}/output \\\n"
             f"  --publish baselines/experiments/{relative}/results",
             "```",
             "",
             "which writes `results/summary.md` and its figures;"
-            " `python -m baselines.trace <results>/<run> <engine> <case>` traces one"
-            " case under Nsight Systems.",
+            f" `python -m baselines.trace baselines/experiments/{relative}/output"
+            " <engine> <case>` traces one case under Nsight Systems.",
             "",
         ]
     )
@@ -415,6 +431,9 @@ def main(argv=None) -> None:
     parser.add_argument("--sequence-length", type=int, required=True)
     parser.add_argument("--tokens-per-step", type=int, required=True)
     parser.add_argument("--gpus", type=int, default=1)
+    parser.add_argument(
+        "--device", required=True, help="the GPU's name, as its driver reports it"
+    )
     parser.add_argument("--gpu-memory-gib", type=float, required=True)
     parser.add_argument("--host-memory-gib", type=float, required=True)
     parser.add_argument(

@@ -29,24 +29,34 @@ LoRA from a checkpoint on one 32 GiB GPU, `lora_rtx5090/`:
 | [`qwen35moe-35b-a3b_4K_16seqs`](lora_rtx5090/qwen35moe-35b-a3b_4K_16seqs/README.md) | Qwen3.5 35B-A3B |
 | [`qwen3moe-30b-a3b_4K_16seqs`](lora_rtx5090/qwen3moe-30b-a3b_4K_16seqs/README.md) | Qwen3 30B-A3B |
 
-`templates/` holds the generator's templates, which are not experiments.
+[`demo`](demo/README.md) checks the whole experiment path in minutes: Llama 3
+1B with two cases per engine. `templates/` holds the generator's templates,
+which are not experiments.
 
 ## An experiment's folder
 
 ```text
 <experiment>/
-  README.md          # the scenario, each engine's matrix, how to run it
+  README.md          # what defines it, the scenario, each engine's matrix, how to run it
   experiment.json    # the spec: shared settings, engines, variables, summary budgets
   <engine>.json      # one matrix per engine: that engine's own options
   generation.json    # a generated folder's record of how it was made
   results/           # the published summary and its figures, once published
+  output/            # everything a run writes; local, ignored by git
 ```
+
+An experiment is defined by what all its cases share: the model, the
+training mode, the sequence length, the sequences per step, the world size
+and the hardware.
+Its README opens with them in one table, and they title its figures, one
+group of figures per distinct combination among its rows.
 
 A folder can sit at any path under `baselines/experiments`. It is the whole
 of the experiment's configuration: matrices are copies, never shared with
-another experiment, so a change to one experiment changes no other. Results
-are written elsewhere, to the results directory named at launch, and only
-the summary a run publishes comes back into `results/`.
+another experiment, so a change to one experiment changes no other. A run
+writes into the folder's `output/`, which git ignores, so an experiment's
+runs and logs stay with it; only the summary a run publishes into
+`results/` is committed. `output` can be a symlink to another disk.
 
 ## Before an experiment
 
@@ -71,7 +81,7 @@ the summary a run publishes comes back into `results/`.
 | `variables` | Each variable's name and what its value is (optional); a string in the settings or a matrix refers to one as `{name}` |
 | `settings` | The shared settings, below |
 | `sweeps` | One entry per engine: `name`, `engine`, `config` (its matrix, a path from the spec's folder or the repository's root), and optionally `python` and `case_timeout` of its own |
-| `output` | Where results go (optional); the experiments here leave it to `--output`, so that no machine's path is in the repository |
+| `output` | Where a run writes (optional): a path from the spec's folder, `output` by default |
 
 The shared settings are what every case of every engine takes, the fields
 of `baselines/common/settings.py` that each engine's README lists under
@@ -110,9 +120,10 @@ rest.
 `defaults` holds what every case of the engine takes; `grid` is one
 Cartesian grid, or a list of grids whose cases are their union; `cases`, in
 place of a grid, lists cases one by one. Every key is one of the
-engine's settings, under the name its README gives it (`../fsdp2/README.md`,
-`../deepspeed/README.md`, `../shadowspill/README.md`,
-`../megatron_core/README.md`, `../automodel/README.md`). Every case is
+engine's settings, under the name its README gives it (`../engines/fsdp2/README.md`,
+`../engines/deepspeed/README.md`,
+`../engines/shadowspill/README.md`, `../engines/megatron_core/README.md`,
+`../engines/automodel/README.md`). Every case is
 validated when the matrix is expanded, before anything runs: an unknown
 setting, a value out of range or a combination the engine cannot run is
 refused there, with the reason. Two grids that name the same case run it
@@ -120,16 +131,15 @@ once.
 
 ## Running it
 
-A long run is best launched from a clone of a committed tree, which keeps the
-code it imports fixed while the working tree changes; `shadowspill` and
-`mlops` themselves are the editable installs of their checkouts, which a
-running engine imports as they are. Which code ran is the caller's to
-track; every row records the sources and commit it ran from. From the
-clone's root, in a tmux window:
+An experiment runs from the repository's root, in a tmux window. Its
+engines import `baselines/` and the editable installs of `shadowspill` and
+`mlops` as they are, so that code stays unchanged until the run ends. Which
+code ran is the caller's to track; every row records the sources and commit
+it ran from.
 
 ```bash
 python -u -m baselines.experiment --spec baselines/experiments/<experiment>/experiment.json \
-  --output <results>/<experiment> [--variable NAME=VALUE ...] --dry-run
+  [--variable NAME=VALUE ...] --dry-run
 ```
 
 checks every case of every engine and launches nothing; the same command
@@ -137,10 +147,11 @@ without `--dry-run` runs the engines in the spec's order.
 
 | Option | What it does |
 |---|---|
-| `--output DIR` | The results directory; everything a run writes goes under it |
+| `--output DIR` | Write into DIR in place of the folder's `output/` |
 | `--variable NAME=VALUE` | A value for a variable the spec declares; a resume takes the recorded values when none is given |
 | `--engine NAME`, `--only SWEEP` | Run these engines, by engine or by sweep name, and keep what the others hold; repeatable |
 | `--retry-failed` | Attempt the failed, out-of-memory and timed-out cases again |
+| `--overwrite` | Discard what the engines this run runs hold, and run them from scratch; the other engines and the records of earlier runs stay |
 | `--limit N` | At most N new attempts per engine in this run |
 | `--publish DIR` | Also write the summary and its figures into DIR, the experiment's `results/` |
 | `--skip-report` | Draw no report |
@@ -159,12 +170,38 @@ take every case the matrices name, old and new. A case a matrix no longer
 names stays on disk but counts nowhere, and a changed shared setting
 changes every case. What a resume refuses is an engine under another engine,
 world size, interpreter or environment; which code ran is the caller's to
-track, and every row records its sources.
+track, and every row records its sources. `--overwrite` starts the engines
+a run runs from scratch.
+
+## Case names
+
+A case's folder is named for the settings its engine's matrix varies, each
+as a short code and its value, then the first eight characters of the
+digest of everything the case runs: `mb16384_rc0.25_act-cpu__1a2b3c4d` is
+16,384 tokens per microbatch, a quarter recomputed and activations offloaded
+to the CPU. A number follows its code; a word or a switch (`on`, `off`)
+follows a hyphen; a setting without a code goes by its name. The digest
+keeps every name unique, and a case keeps the name it was first given when
+a grown matrix varies more settings, so a resume finds it.
+
+| Code | Setting | Code | Setting |
+|---|---|---|---|
+| `mb` | `tokens_per_microbatch` | `rc` | `recompute` |
+| `act` | `activation_offload` | `op` | `offload_policy` |
+| `pin` | `pin_memory` | `fpf` | `forward_prefetch` |
+| `bpf` | `backward_prefetch` | `raf` | `reshard_after_forward` |
+| `rab` | `reshard_after_backward` | `gs` | `gradient_sync` |
+| `cb` | `compile_blocks` | `f8` | `float8` |
+| `opt` | `optimizer` | `og` | `offload_gradients` |
+| `z` | `zero_stage` | `ofp` | `offload_param` |
+| `ofo` | `offload_optimizer` | `dc` | `deepcompile` |
+| `ex` | `execution_gib` | `sp` | `spill_gib` |
+| `res` | `resolution_options` | | |
 
 ## What a run writes
 
 ```text
-<results>/
+<experiment>/output/
   experiment.json            # the latest spec with its variables, each engine's latest run, every run
   runs/<stamp>.json, .log    # each run's record and console
   matrices/<engine>.json     # each engine's matrix with the shared settings joined
@@ -200,10 +237,10 @@ each budget of `summary_budgets_gib`, and each engine's frontier, with the
 report's figures embedded. Either runs again on its own:
 
 ```bash
-python -m baselines.summary <results>/<experiment> \
+python -m baselines.summary baselines/experiments/<experiment>/output \
   [--budgets GIB ...] [--publish baselines/experiments/<experiment>/results]
-python -m baselines.report <results>/<experiment>/sweeps \
-  --output <results>/<experiment>/report --memory reserved
+python -m baselines.report baselines/experiments/<experiment>/output/sweeps \
+  --output baselines/experiments/<experiment>/output/report --memory reserved
 ```
 
 `--publish` writes the summary into the experiment's `results/` with its
@@ -215,12 +252,12 @@ peak its allocator reserved for any other engine.
 ## Tracing a case
 
 ```bash
-python -m baselines.trace <results>/<experiment> <engine> <case> \
+python -m baselines.trace baselines/experiments/<experiment>/output <engine> <case> \
   [--steps N] [--devices LIST] [--capture measured|whole] [--output DIR] [--name NAME]
 ```
 
 runs one case again as its engine ran it, under `nsys profile` with the
-GPU's metrics sampled, into `<results>/.../traces/<engine>/<case>/<stamp>/`
+GPU's metrics sampled, into `output/traces/<engine>/<case>/<stamp>/`
 unless `--output` says otherwise; `python -m baselines.trace --help` lists
 every option. A trace is not a throughput result, and no summary or report
 reads it.

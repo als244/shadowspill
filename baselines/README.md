@@ -163,7 +163,7 @@ engine's own options, a README stating the scenario, and, once published,
 its results. `python -m baselines.experiment --spec <experiment.json>
 --output <dir>` runs its engines' sweeps in order, one engine at a time or
 all, resuming where it stopped and attempting only the cases a grown matrix
-adds, and ends with the report and a summary over everything the experiment
+adds, or from scratch with `--overwrite`, and ends with the report and a summary over everything the experiment
 holds. [`experiments/README.md`](experiments/README.md) is the guide to
 writing, running, summarizing, publishing and tracing an experiment;
 [`experiments/GENERATING.md`](experiments/GENERATING.md) describes
@@ -173,13 +173,16 @@ experiment's folder from a template.
 ## Reports
 
 `python -m baselines.report <rows root> [<rows root> ...] --output <dir>` reads
-every `row.json` under the roots and draws, per model, training mode, device
-and world size, global tokens per second against peak device memory and
-against peak host memory: one point per completed throughput row, colored by
-engine, with each engine's Pareto frontier as a step whose points are
-labeled by the settings that vary among that engine's rows; out-of-memory
-rows are listed as the boundary. Figures are PNG, SVG and PDF with a table
-per figure, `rows.csv` of every point and `index.html` linking them.
+every `row.json` under the roots and draws, per model, training mode,
+sequence length, sequences per step, device and world size, which title
+them, two figures: global tokens per second against peak device
+memory, and against peak host memory. Each completed throughput row is a
+point, colored and marked by engine; each engine's Pareto frontier against
+device memory is solid and outlined on both figures, and the rest faint. A
+table per group lists its points with the settings that vary among that
+engine's rows and marks the frontier; out-of-memory rows are listed as the
+boundary. Figures are PNG, SVG and PDF,
+with `rows.csv` of every point and `index.html` linking them.
 
 ## Corpora
 
@@ -196,11 +199,11 @@ and a corpus whose vocabulary exceeds the model's is refused.
 | Directory | Implementation | Qualification |
 |---|---|---|
 | [`moe_layer/`](moe_layer/README.md) | One Qwen MoE router/expert layer: SonicMoE DP1 versus QuackMoE EP8; BF16/FP8 and full/LoRA | Its own sweep, with `--tiny` as the smoke-test geometry: every case checks that its output and gradients are present and finite, the trained gradients float32, and under LoRA that no frozen weight has one |
-| [`shadowspill/`](shadowspill/README.md) | ShadowSpill through `Trainer` over the `ShadowSpill` backend, full or LoRA, with the device and spill budgets (pinned host memory) as the configuration, a corpus and a checkpoint | Tiny cases whose every update is compared with the reference copy compiled whole (`PRECISION.md`) |
-| [`fsdp2/`](fsdp2/README.md) | Native PyTorch FSDP2, full or LoRA, with recompute, both activation offloaders, CPU offload, the torchao scenarios, a corpus and a checkpoint; local experts, no EP | As ShadowSpill's |
-| [`deepspeed/`](deepspeed/README.md) | DeepSpeed ZeRO stages 1 to 3, full or LoRA, with optimizer and parameter offload, activation checkpointing and CPU checkpointing, DeepCompile with its offloads, a corpus and a checkpoint | As ShadowSpill's, with and without DeepCompile |
-| [`automodel/`](automodel/README.md) | NVIDIA's model of a catalog architecture through NeMo AutoModel's fine-tuning recipe and its own loop, full or LoRA, from a Hugging Face configuration or a checkpoint, with AutoModel's options under their own names (FSDP2, Megatron-FSDP and DDP, tensor, pipeline, context and expert parallelism, every backend field, its four losses, FP8, compilation) | Tiny cases whose first update is checked against the dtypes the contract's mechanism holds, with no reference copy, since the model is NVIDIA's (`PRECISION.md`); a LoRA case that adapts pretrained weights adapts the tiny checkpoint `python -m baselines.scripts.write_checkpoint` writes |
-| [`megatron_core/`](megatron_core/README.md) | NVIDIA's model of a catalog architecture through Megatron Bridge's training loop over Megatron-Core, full or LoRA, from a Hugging Face configuration or a Bridge recipe, with every Megatron option under its own name (parallelism, sharding, recomputation, activation and optimizer offloading, FP8 and FP4, graph capture) | As AutoModel's |
+| [`engines/shadowspill/`](engines/shadowspill/README.md) | ShadowSpill through `Trainer` over the `ShadowSpill` backend, full or LoRA, with the device and spill budgets (pinned host memory) as the configuration, a corpus and a checkpoint | Tiny cases whose every update is compared with the reference copy compiled whole (`PRECISION.md`) |
+| [`engines/fsdp2/`](engines/fsdp2/README.md) | Native PyTorch FSDP2, full or LoRA, with recompute, both activation offloaders, CPU offload, the torchao scenarios, a corpus and a checkpoint; local experts, no EP | As ShadowSpill's |
+| [`engines/deepspeed/`](engines/deepspeed/README.md) | DeepSpeed ZeRO stages 1 to 3, full or LoRA, with optimizer and parameter offload, activation checkpointing and CPU checkpointing, DeepCompile with its offloads, a corpus and a checkpoint | As ShadowSpill's, with and without DeepCompile |
+| [`engines/automodel/`](engines/automodel/README.md) | NVIDIA's model of a catalog architecture through NeMo AutoModel's fine-tuning recipe and its own loop, full or LoRA, from a Hugging Face configuration or a checkpoint, with AutoModel's options under their own names (FSDP2, Megatron-FSDP and DDP, tensor, pipeline, context and expert parallelism, every backend field, its four losses, FP8, compilation) | Tiny cases whose first update is checked against the dtypes the contract's mechanism holds, with no reference copy, since the model is NVIDIA's (`PRECISION.md`); a LoRA case that adapts pretrained weights adapts the tiny checkpoint `python -m baselines.scripts.write_checkpoint` writes |
+| [`engines/megatron_core/`](engines/megatron_core/README.md) | NVIDIA's model of a catalog architecture through Megatron Bridge's training loop over Megatron-Core, full or LoRA, from a Hugging Face configuration or a Bridge recipe, with every Megatron option under its own name (parallelism, sharding, recomputation, activation and optimizer offloading, FP8 and FP4, graph capture) | As AutoModel's |
 | [`references/`](references/automodel.json) | NVIDIA's AutoModel benchmark YAML, unmodified, with its source commit and digest | Not an engine (below) |
 
 ShadowSpill, FSDP2 and DeepSpeed train any catalog model but those a
@@ -208,13 +211,13 @@ quickstart factory builds (`glm53`, `glm53-tiny`, `glm53-flash` and
 `glm53-flash-tiny`), which `ModelRequest` refuses, as it does for the
 NVIDIA engines. Every engine but the MoE layer benchmark is qualified
 by its matrix through the sweep, `python -m baselines.sweep --engine
-<name> --config baselines/<name>/configs/qualification.json --output
+<name> --config baselines/engines/<name>/configs/qualification.json --output
 <dir> --gpus 1`; the table says what its cases check.
 
 The supplied [NVIDIA YAML](https://github.com/NVIDIA-NeMo/Automodel/blob/b203f3f9f9f3140c660942a088ff36bbc3a5e856/examples/llm_benchmark/qwen/qwen3_moe_30b_te_deepep.yaml)
 uses AutoModel with **FSDP2 + EP8**, Transformer Engine, and DeepEP, not
 Megatron-Core;
-[`automodel/README.md`](automodel/README.md#automodels-benchmark-recipes)
+[`engines/automodel/README.md`](engines/automodel/README.md#automodels-benchmark-recipes)
 gives it as engine options. It also enables `fake_balanced_gate`, which
 spreads the tokens uniformly over the experts in place of the router's
 choice, so its throughput is that of perfectly balanced routing. The

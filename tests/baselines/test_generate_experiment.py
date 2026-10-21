@@ -15,6 +15,8 @@ TINY = [
     "64",
     "--tokens-per-step",
     "1024",
+    "--device",
+    "A GPU",
     "--gpu-memory-gib",
     "32",
     "--host-memory-gib",
@@ -94,7 +96,13 @@ def test_a_full_experiment_is_written_checked_and_described(experiments, capsys)
     assert record["template"] == "full"
     assert record["cases"] == {"shadowspill": 25, "fsdp2": 206, "deepspeed": 90}
     readme = (folder / "README.md").read_text()
-    assert readme.startswith("# tiny\n\nA tiny check.")
+    assert readme.startswith(
+        "# tiny\n\n| Model | Training | Sequence length | Sequences per step"
+        " | World size | Hardware |\n|---|---|---|---|---|---|\n| `llama3-tiny`"
+        " | full training | 64 tokens | 16 (1,024 tokens) | 1 | A GPU, 32 GiB each;"
+        " 188 GiB of host memory |\n"
+    )
+    assert "they title its figures.\n\nA tiny check." in readme
     assert "### fsdp2: 206 cases" in readme and "run once" in readme
     assert "fsdp2: 206 cases" in capsys.readouterr().out
     with pytest.raises(SystemExit):

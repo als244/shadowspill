@@ -12,7 +12,7 @@ afterwards as it needs; an experiment can as well be written without it.
 python -m baselines.generate_experiment lora_rtx5090/qwen35-27b_4K_16seqs \
   --template lora --model qwen35-27b --checkpoint Qwen3.6-27B --corpus qwen35 \
   --sequence-length 4096 --tokens-per-step 65536 \
-  --gpu-memory-gib 32 --host-memory-gib 188 \
+  --device "NVIDIA GeForce RTX 5090" --gpu-memory-gib 32 --host-memory-gib 188 \
   --description "LoRA fine-tuning of Qwen3.6 27B from its checkpoint on one 32 GiB GPU" \
   [--variable models=<dir> --variable corpora=<dir>]
 ```
@@ -25,6 +25,7 @@ python -m baselines.generate_experiment lora_rtx5090/qwen35-27b_4K_16seqs \
 | `--lora JSON` | `configure_lora`'s options, for the `lora` template (rank 16, alpha 16) |
 | `--checkpoint NAME`, `--corpus NAME` | The checkpoint's directory under the `{models}` variable and the corpus's under `{corpora}`; left out, the experiment trains initialized weights on synthetic tokens |
 | `--sequence-length`, `--tokens-per-step`, `--gpus` | The geometry, and the world size every case runs at (1) |
+| `--device` | The GPU's name as its driver reports it, `NVIDIA GeForce RTX 5090`, for the README |
 | `--gpu-memory-gib`, `--host-memory-gib` | The machine the experiment is sized for |
 | `--setting NAME=JSON` | Replaces a shared setting after the template is filled; repeatable |
 | `--description TEXT` | What the experiment is for, at the top of its README |
@@ -79,7 +80,10 @@ and corpus are read only when `--variable` gives the variables' values;
 otherwise the dry run reads them. Then the folder holds:
 
 * `experiment.json` and one `<engine>.json` per engine;
-* `README.md`: the description, the scenario (model, data, geometry,
+* `README.md`: first the table of what defines the experiment (model,
+  training mode, sequence length, sequences per step, world size,
+  hardware), then the
+  description, the scenario (model, data, geometry,
   contract, run, the machine it is sized for, the variables), each engine's
   matrix grid by grid with its case count, how to run it with the common
   runner, and where its results go;

@@ -13,8 +13,9 @@ its allocator reserved for any other engine; what was in use at that peak,
 ``peak_allocated_bytes``, is shown beside it. The budgets are ``--budgets``,
 else the spec's ``summary_budgets_gib``; with neither, the summary gives the
 frontiers alone. It names the commits the rows ran from and the span of the
-experiment's runs, and embeds the report's figure of each model, mode,
-device and world size when ``DIR/report`` holds it. The summary is printed
+experiment's runs, and embeds the report's two figures of each group of
+shared settings (model, mode, sequence length, sequences per step, device
+and world size) when ``DIR/report`` holds them. The summary is printed
 and written to ``DIR/summary.md``, and as data to ``DIR/summary.json``.
 ``--publish`` also writes it, with the figures beside it, into a folder of
 its own, the experiment's ``results`` in the repository, with no path of the
@@ -34,7 +35,7 @@ from typing import Any
 
 from baselines.common import write_json
 from baselines.common.results import read_rows
-from baselines.report import groups, label, slug, title
+from baselines.report import FIGURES, groups, label, slug, title
 
 #: How a case's latest outcome reads in a count, in the order counts list.
 OUTCOMES = {
@@ -108,14 +109,14 @@ def _entry(
         "gpu_gib": item["device_gib"],
         "gpu_in_use_gib": row["memory"]["peak_allocated_bytes"] / 2**30,
         "host_gib": item["host_gib"],
-        "settings": label(item, keys),
+        "settings": label(item, keys) or "—",
         "row": str(Path(item["path"]).relative_to(directory)),
     }
 
 
 def summarize(directory: Path, budgets: list[float] | None = None) -> dict[str, Any]:
     """The summary of everything the experiment in ``directory`` holds, as
-    data: its engines, and per model, mode, device and world size the
+    data: its engines, and per group of shared settings the
     fastest case of each engine within each budget and each engine's
     frontier, fastest first."""
 
@@ -164,17 +165,18 @@ def summarize(directory: Path, budgets: list[float] | None = None) -> dict[str, 
         sections.append(
             {
                 "title": title(key),
-                "figure": (
-                    f"report/figures/{slug(key)}.png"
-                    if (directory / "report" / "figures" / f"{slug(key)}.png").is_file()
-                    else None
-                ),
+                "figures": [
+                    f"report/figures/{slug(key)}-{name}.png"
+                    for name, _, _ in FIGURES
+                    if (
+                        directory / "report" / "figures" / f"{slug(key)}-{name}.png"
+                    ).is_file()
+                ],
                 "engines": engines,
                 "best": best,
                 "frontiers": {
                     engine: [
-                        entry(item)
-                        for item in reversed(group["frontiers"][engine]["device_gib"])
+                        entry(item) for item in reversed(group["frontiers"][engine])
                     ]
                     for engine in engines
                 },
@@ -344,20 +346,16 @@ def markdown(summary: dict[str, Any], published: bool = False) -> str:
         "",
         "## Engines",
         "",
-        "| Engine | Engine | Outcomes |",
+        "| Sweep | Engine | Outcomes |",
         "|---|---|---|",
     ]
     for engine in summary["sweeps"]:
         lines.append(f"| {engine['sweep']} | {engine['engine']} | {counts(engine)} |")
     for group in summary["groups"]:
         lines.extend(["", f"## {group['title']}"])
-        if group.get("figure"):
-            figure = (
-                f"figures/{Path(group['figure']).name}"
-                if published
-                else group["figure"]
-            )
-            lines.extend(["", f"![{group['title']}]({figure})"])
+        for figure in group["figures"]:
+            shown = f"figures/{Path(figure).name}" if published else figure
+            lines.extend(["", f"![{group['title']}]({shown})"])
         if group["best"]:
             lines.extend(
                 [
@@ -410,8 +408,8 @@ def publish(directory: Path, summary: dict[str, Any], target: Path) -> Path:
     directory, target = Path(directory), Path(target)
     target.mkdir(parents=True, exist_ok=True)
     for group in summary["groups"]:
-        if group.get("figure"):
-            source = directory / group["figure"]
+        for figure in group["figures"]:
+            source = directory / figure
             for path in (source, source.with_suffix(".svg")):
                 if path.is_file():
                     (target / "figures").mkdir(exist_ok=True)
@@ -420,8 +418,9 @@ def publish(directory: Path, summary: dict[str, Any], target: Path) -> Path:
     data = copy.deepcopy(summary)
     data.pop("experiment")
     for group in data["groups"]:
-        if group.get("figure"):
-            group["figure"] = f"figures/{Path(group['figure']).name}"
+        group["figures"] = [
+            f"figures/{Path(figure).name}" for figure in group["figures"]
+        ]
         entries = [*group["frontiers"].values()]
         entries += [list(budget["engines"].values()) for budget in group["best"]]
         for listed in entries:

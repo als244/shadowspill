@@ -12,6 +12,7 @@
     "sequence_length": 4096,
     "tokens_per_step": 65536,
     "gpus": 1,
+    "device": "NVIDIA GeForce RTX 5090",
     "gpu_memory_gib": 32.0,
     "host_memory_gib": 188.0,
     "checkpoint": "Qwen3-30B-A3B",
@@ -49,9 +50,9 @@
     "fsdp2": 206,
     "deepspeed": 180
   },
-  "generated_at": "2026-10-21T18:21:19-04:00",
+  "generated_at": "2026-10-21T19:17:53-04:00",
   "generator": {
-    "git_head": "fadc671c810afc03ad12c952a1586a8c02e1503b",
+    "git_head": "d8a16c2b8271b65715e38c066e767c5fa810d091",
     "git_dirty": true
   }
 }

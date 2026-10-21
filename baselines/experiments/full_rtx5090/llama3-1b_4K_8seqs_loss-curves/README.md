@@ -1,5 +1,11 @@
 # llama3-1b_4K_8seqs_loss-curves
 
+| Model | Training | Sequence length | Sequences per step | World size | Hardware |
+|---|---|---|---|---|---|
+| `llama3-1b` from Llama-3.2-1B | full training | 4,096 tokens | 8 (32,768 tokens) | 1 | NVIDIA GeForce RTX 5090, 32 GiB |
+
+These define the experiment: every case of every engine shares them.
+
 Loss curves from a real checkpoint: Llama-3.2-1B fine-tuned for 50 updates on
 its corpus by ShadowSpill, FSDP2 and DeepSpeed under one contract, float32
 masters, gradients and AdamW moments, so that the three engines' losses can be
@@ -29,15 +35,14 @@ it with the common runner as [the guide](../../README.md) describes.
 
 ## Running it
 
-From the root of a clone of the committed tree, the dry run first:
+From the repository's root, the dry run first:
 
 ```bash
 python -u -m baselines.experiment \
   --spec baselines/experiments/full_rtx5090/llama3-1b_4K_8seqs_loss-curves/experiment.json \
-  --output <results>/llama3-1b_4K_8seqs_loss-curves \
   --variable models=<dir> --variable corpora=<dir> --dry-run
 ```
 
-then the same command without `--dry-run`. Every update's loss is in each
-case's `rank-NNNNN/result.json` (`losses`), and the row's measurement holds
-every rank's.
+then the same command without `--dry-run`, which writes into `output/` in
+this folder. Every update's loss is in each case's `rank-NNNNN/result.json`
+(`losses`), and the row's measurement holds every rank's.
