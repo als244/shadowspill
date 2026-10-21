@@ -2,7 +2,7 @@
 
 import torch
 
-from baselines.fsdp2.train import float8_filter
+from baselines.engines.fsdp2.train import float8_filter
 
 
 def test_float8_converts_block_linears_the_kernels_take():

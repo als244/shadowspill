@@ -28,7 +28,7 @@ from baselines.common.precision import Capabilities, Unsupported
 SOURCE_PATHS = (
     "baselines/__init__.py",
     "baselines/common",
-    "baselines/automodel",
+    "baselines/engines/automodel",
 )
 
 #: The environment beside the launcher's that the trainer runs in.

@@ -6,7 +6,7 @@ import pytest
 
 from baselines.common.launch import command, engine_module
 from baselines.common.precision import Precision, Unsupported
-from baselines.fsdp2.settings import Settings, add_arguments, from_namespace
+from baselines.engines.fsdp2.settings import Settings, add_arguments, from_namespace
 
 BASE = {
     "model": "llama3-tiny",

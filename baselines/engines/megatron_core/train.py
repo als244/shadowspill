@@ -24,8 +24,8 @@ import torch
 import torch.distributed as dist
 
 from baselines.common import runner
-from baselines.megatron_core import settings as engine_settings
-from baselines.megatron_core.settings import OPTIONS, aware, parse_value
+from baselines.engines.megatron_core import settings as engine_settings
+from baselines.engines.megatron_core.settings import OPTIONS, aware, parse_value
 
 #: The provider fields a recipe's model must share with the case's.
 ARCHITECTURE = (

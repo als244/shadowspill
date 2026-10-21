@@ -31,7 +31,7 @@ from baselines.common.settings import GEOMETRY_FIELDS, MODEL_FIELDS, PRECISION_F
 SOURCE_PATHS = (
     "baselines/__init__.py",
     "baselines/common",
-    "baselines/megatron_core",
+    "baselines/engines/megatron_core",
 )
 
 #: The environment beside the launcher's that the trainer runs in.

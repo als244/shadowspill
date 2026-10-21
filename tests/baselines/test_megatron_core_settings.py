@@ -9,7 +9,7 @@ import pytest
 
 from baselines.common.launch import command, engine_module
 from baselines.common.precision import Unsupported
-from baselines.megatron_core.settings import (
+from baselines.engines.megatron_core.settings import (
     IMPLEMENTATION,
     OPTIONS,
     Settings,
@@ -254,7 +254,7 @@ def test_every_option_has_its_flag_in_the_readme():
     from pathlib import Path
 
     readme = (
-        Path(__file__).parents[2] / "baselines/megatron_core/README.md"
+        Path(__file__).parents[2] / "baselines/engines/megatron_core/README.md"
     ).read_text()
     missing = [
         option.name

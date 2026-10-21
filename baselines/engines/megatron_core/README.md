@@ -93,7 +93,7 @@ The tiny qualification matrix:
 
 ```bash
 python -m baselines.sweep --engine megatron_core \
-  --config baselines/megatron_core/configs/qualification.json \
+  --config baselines/engines/megatron_core/configs/qualification.json \
   --output <dir> --gpus 1
 ```
 
@@ -106,7 +106,7 @@ checkpoint that
 `python -m baselines.scripts.write_checkpoint --model llama3-tiny --output runs/checkpoints/llama3-tiny`
 writes. A throughput matrix names only Megatron's own options and runs inside
 an experiment, which gives every engine the same model, geometry and
-precision contract (`../README.md`).
+precision contract (`../../README.md`).
 
 ## The model
 
@@ -210,7 +210,7 @@ the column says so.
 
 ## Precision
 
-[`../PRECISION.md`](../PRECISION.md) sets this engine beside the others.
+[`../../PRECISION.md`](../../PRECISION.md) sets this engine beside the others.
 
 ### The contract in Megatron's terms
 
@@ -256,7 +256,7 @@ choice and sets `gradient_accumulation_fusion` (on by default); naming
 the fused accumulation under Megatron-FSDP version 2. For float32 gradients
 the contract asks nothing, and `gradient_accumulation_fusion` is the case's
 or Bridge's.
-[`../PRECISION.md`](../PRECISION.md#gradients-creation-accumulation-and-reduction)
+[`../../PRECISION.md`](../../PRECISION.md#gradients-creation-accumulation-and-reduction)
 compares the engines.
 
 ### The optimizer

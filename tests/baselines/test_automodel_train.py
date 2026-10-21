@@ -10,8 +10,8 @@ import torch
 
 pytest.importorskip("transformers")
 
-from baselines.automodel.settings import Settings
-from baselines.automodel.train import recipe_config
+from baselines.engines.automodel.settings import Settings
+from baselines.engines.automodel.train import recipe_config
 
 BASE = {
     "model": "llama3-tiny",
@@ -52,7 +52,7 @@ def test_the_shared_settings_become_the_recipes_sections():
     assert mp_policy["param_dtype"] is torch.bfloat16
     assert config["checkpoint"]["enabled"] is False
     dataset = config["dataset"]
-    assert dataset["_target_"] == "baselines.automodel.data.CaseTokens"
+    assert dataset["_target_"] == "baselines.engines.automodel.data.CaseTokens"
     assert dataset["steps"] == 8 and dataset["tokenizer"] is None
 
 
@@ -103,8 +103,8 @@ def test_lora_takes_the_shared_options_and_automodels_own():
 
 
 def test_the_dataset_serves_each_replica_the_shared_tokens():
-    from baselines.automodel import data
     from baselines.common.runner import Tokens
+    from baselines.engines.automodel import data
 
     settings = Settings.from_dict({**BASE, "warmup_steps": 1, "steps": 1})
     geometry = settings.validate(2)

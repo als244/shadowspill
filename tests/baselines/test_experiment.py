@@ -14,11 +14,14 @@ SPEC = {
     "gpus": 2,
     "python": {"fsdp2": "baselines"},
     "sweeps": [
-        {"engine": "fsdp2", "config": "baselines/fsdp2/configs/qualification.json"},
+        {
+            "engine": "fsdp2",
+            "config": "baselines/engines/fsdp2/configs/qualification.json",
+        },
         {
             "name": "deep",
             "engine": "deepspeed",
-            "config": "baselines/deepspeed/configs/qualification.json",
+            "config": "baselines/engines/deepspeed/configs/qualification.json",
             "python": "/opt/py/bin/python",
             "case_timeout": 60,
         },
@@ -115,7 +118,7 @@ def test_a_matrix_that_names_a_shared_setting_is_refused(tmp_path, matrix):
             "sweeps": [
                 {
                     "engine": "fsdp2",
-                    "config": "baselines/fsdp2/configs/qualification.json",
+                    "config": "baselines/engines/fsdp2/configs/qualification.json",
                     "name": "a/b",
                 }
             ]
@@ -178,7 +181,7 @@ def test_a_dry_run_runs_each_sweeps_own_dry_run(tmp_path, monkeypatch):
     assert "baselines.sweep --engine deepspeed" in log and "a sweep's console" in log
     matrix = tmp_path / "out" / "matrices" / "deep.json"
     assert f"--config {matrix}" in log
-    source = experiment.ROOT / "baselines/deepspeed/configs/qualification.json"
+    source = experiment.ROOT / "baselines/engines/deepspeed/configs/qualification.json"
     assert json.loads(matrix.read_text()) == json.loads(source.read_text())
     (console,) = (tmp_path / "out" / "runs").glob("*.log")
     text = console.read_text()
@@ -275,3 +278,39 @@ def test_a_run_publishes_its_summary_without_its_paths(tmp_path, monkeypatch):
     assert "experiment" not in data
     held = record(tmp_path)
     assert held["summary"]["published"] == str(target)
+
+
+def test_an_overwrite_discards_only_the_engines_it_runs(tmp_path, monkeypatch):
+    run(tmp_path, monkeypatch, "--dry-run")
+    held = tmp_path / "out" / "sweeps"
+    (held / "fsdp2-qualification" / "kept.txt").write_text("a result")
+    (held / "deep" / "kept.txt").write_text("a result")
+    run(tmp_path, monkeypatch, "--dry-run", "--overwrite", "--engine", "deepspeed")
+    assert (held / "deep" / "kept.txt").is_file()
+    run(tmp_path, monkeypatch, "--overwrite", "--engine", "deepspeed", "--skip-report")
+    assert not (held / "deep" / "kept.txt").exists()
+    assert (held / "fsdp2-qualification" / "kept.txt").is_file()
+    console = sorted((tmp_path / "out" / "runs").glob("*.log"))[-1]
+    assert "overwrite: discarded" in console.read_text()
+
+
+def test_an_interrupted_engine_is_recorded_so(tmp_path, monkeypatch):
+    class Interrupted(Sweeps):
+        def __call__(self, command, **options):
+            process = super().__call__(command, **options)
+
+            class Stopped:
+                @property
+                def stdout(self):
+                    raise KeyboardInterrupt
+
+                def wait(self):
+                    return process.wait()
+
+            return Stopped()
+
+    with pytest.raises(KeyboardInterrupt):
+        run(tmp_path, monkeypatch, sweeps=Interrupted())
+    held = record(tmp_path)
+    assert held["sweeps"][0]["status"] == "interrupted"
+    assert held["runs"][0]["finished_at"] is not None

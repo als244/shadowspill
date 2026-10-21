@@ -1,7 +1,7 @@
 """One FSDP2 case of a catalog model, outside ShadowSpill: the trainer
 ``baselines.common.launch`` starts under torchrun.
 
-The settings are ``baselines.fsdp2.settings``, validated by the launcher;
+The settings are ``baselines.engines.fsdp2.settings``, validated by the launcher;
 ``baselines.common.runner`` writes the request, the result and the row
 around ``train``, which builds the sharded model and runs every step under
 the runner's clock.
@@ -23,8 +23,8 @@ from torch.distributed.fsdp import (
 )
 
 from baselines.common import recompute_layers, runner
-from baselines.fsdp2 import settings as engine_settings
-from baselines.fsdp2.settings import configure_prefetch
+from baselines.engines.fsdp2 import settings as engine_settings
+from baselines.engines.fsdp2.settings import configure_prefetch
 from workloads.full_model import HEAD_LOSS_METRIC
 
 
@@ -130,7 +130,7 @@ def train(case, clock):
     model_dtype = getattr(torch, precision.model_dtype)
     dist.init_process_group("nccl", device_id=device)
     # MLOps imports may inspect CUDA; select this rank's device first.
-    from baselines.fsdp2.model import (
+    from baselines.engines.fsdp2.model import (
         TrainingModel,
         canonical_name,
         initialize,
@@ -175,7 +175,7 @@ def train(case, clock):
             block = offload_wrapper(block)
         blocks[index] = block
     if settings.activation_offload == "overlapped":
-        from baselines.fsdp2.offload_overlapped import blocks_context
+        from baselines.engines.fsdp2.offload_overlapped import blocks_context
 
         blocks_context(list(blocks), use_pin_memory=settings.pin_memory)
     mesh = init_device_mesh("cuda", (world,), mesh_dim_names=("dp",))
@@ -255,7 +255,7 @@ def train(case, clock):
     microbatches = geometry.accumulation
     reference = None
     if settings.verify_reference:
-        from baselines.fsdp2.reference import Access, Reference
+        from baselines.engines.fsdp2.reference import Access, Reference
 
         reference = Reference(
             model,

@@ -25,7 +25,7 @@ from baselines.common.settings import GEOMETRY_FIELDS, MODEL_FIELDS, PRECISION_F
 SOURCE_PATHS = (
     "baselines/__init__.py",
     "baselines/common",
-    "baselines/deepspeed",
+    "baselines/engines/deepspeed",
     "workloads/models",
     "workloads/lora",
     "workloads/full_model.py",

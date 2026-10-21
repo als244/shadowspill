@@ -42,7 +42,7 @@ def engine_module(name):
     """The settings module of an engine, checked for what is called."""
 
     try:
-        module = import_module(f"baselines.{name}.settings")
+        module = import_module(f"baselines.engines.{name}.settings")
     except ModuleNotFoundError as error:
         raise ValueError(f"no engine {name!r}: {error}") from error
     missing = [attribute for attribute in REQUIRED if not hasattr(module, attribute)]
@@ -127,7 +127,7 @@ def trainer_command(engine, python, world_size, output):
         f"--nproc-per-node={world_size}",
         "--max-restarts=0",
         "-m",
-        f"baselines.{engine}.train",
+        f"baselines.engines.{engine}.train",
         "--output",
         str(output),
         "--case",

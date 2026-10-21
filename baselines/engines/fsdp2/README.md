@@ -17,16 +17,16 @@ python -m baselines.common.launch --engine fsdp2 --gpus 1 --output <dir> \
 ```
 
 The tiny qualification matrix, every family but Qwen 3.5 MoE
-(`../PRECISION.md` says why) against a reference copy compiled whole:
+(`../../PRECISION.md` says why) against a reference copy compiled whole:
 
 ```bash
 python -m baselines.sweep --engine fsdp2 \
-  --config baselines/fsdp2/configs/qualification.json --output <dir> --gpus 1
+  --config baselines/engines/fsdp2/configs/qualification.json --output <dir> --gpus 1
 ```
 
 A throughput matrix names only FSDP2's own knobs and runs inside an
 experiment, which gives every engine the same model, geometry and
-precision contract (`../experiments/README.md`):
+precision contract (`../../experiments/README.md`):
 
 ```bash
 python -m baselines.experiment \
@@ -122,7 +122,7 @@ and where the optimizer steps; an empty cell is the default's.
 
 ## Precision
 
-[`../PRECISION.md`](../PRECISION.md) sets this engine beside the others.
+[`../../PRECISION.md`](../../PRECISION.md) sets this engine beside the others.
 FSDP2 keeps a trained weight's shard at the dtype it was materialized at,
 the master when one is kept, and sums gradients into that shard; AdamW keeps
 its moments at it. So `--grad-dtype` and `--opt-state-dtype` must be the

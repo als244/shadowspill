@@ -10,8 +10,8 @@ import torch
 from baselines.common import runner
 from baselines.common.launch import resolve, trainer_environment
 from baselines.common.results import validate_row
-from baselines.fsdp2 import settings as fsdp2
-from baselines.fsdp2.settings import Settings
+from baselines.engines.fsdp2 import settings as fsdp2
+from baselines.engines.fsdp2.settings import Settings
 
 TINY = {
     "model": "llama3-tiny",
@@ -163,3 +163,27 @@ def test_the_first_rank_writes_the_results_and_the_row(monkeypatch, tmp_path):
     assert row["provenance"]["extra"] == "kept"
     assert row["provenance"]["model_summary"] == case["model_summary"]
     assert row["provenance"]["environment"]["packages"]["torch"]
+
+
+def test_a_failed_case_keeps_what_its_engine_recorded(monkeypatch, tmp_path):
+    _, _, path = write_case(tmp_path, world_size=1)
+    monkeypatch.setenv("RANK", "0")
+    monkeypatch.setenv("WORLD_SIZE", "1")
+    monkeypatch.setenv("LOCAL_RANK", "0")
+
+    def refused(case, clock):
+        case.record["hardware"] = {"device": {"name": "a device"}}
+        raise RuntimeError("no microbatch candidate fits the configured budgets")
+
+    with pytest.raises(RuntimeError, match="no microbatch candidate"):
+        runner.main(
+            "fsdp2",
+            fsdp2,
+            refused,
+            ["--output", str(tmp_path), "--case", str(path)],
+            standalone=False,
+            device_first=False,
+        )
+    request = json.loads((tmp_path / "rank-00000" / "request.json").read_text())
+    assert request["hardware"] == {"device": {"name": "a device"}}
+    assert (tmp_path / "rank-00000" / "failure.json").is_file()

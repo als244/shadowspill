@@ -8,14 +8,14 @@ import json
 
 import pytest
 
-from baselines.automodel.settings import (
+from baselines.common.launch import command, engine_module
+from baselines.engines.automodel.settings import (
     IMPLEMENTATION,
     OPTIONS,
     Settings,
     add_arguments,
     from_namespace,
 )
-from baselines.common.launch import command, engine_module
 
 SECTIONS = {
     "distributed",
@@ -215,7 +215,9 @@ def test_the_resolved_case_says_whether_the_model_routes_to_experts():
 def test_every_option_has_its_flag_in_the_readme():
     from pathlib import Path
 
-    readme = (Path(__file__).parents[2] / "baselines/automodel/README.md").read_text()
+    readme = (
+        Path(__file__).parents[2] / "baselines/engines/automodel/README.md"
+    ).read_text()
     missing = [
         option.name
         for option in OPTIONS

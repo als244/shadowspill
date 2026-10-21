@@ -9,7 +9,7 @@ import pytest
 
 from baselines import trace
 from baselines.common import write_json
-from baselines.fsdp2.settings import Settings
+from baselines.engines.fsdp2.settings import Settings
 
 TINY = {
     "model": "llama3-tiny",
@@ -27,19 +27,19 @@ def experiment(tmp_path):
         {"engine": "fsdp2", "world_size": 1, "python": "/opt/py/bin/python"},
     )
     write_json(
-        root / "cases" / "case-0007-1a2b3c4d5e6f" / "config.json",
+        root / "cases" / "rc1__1a2b3c4d" / "config.json",
         Settings.from_dict({**TINY, "recompute": 1}).as_dict(),
     )
     return tmp_path
 
 
 def traced(experiment, *arguments):
-    case = [str(experiment), "fsdp2", "1a2b3c4d5e6f"]
+    case = [str(experiment), "fsdp2", "1a2b3c4d"]
     trace.main([*case, "--nsys", "/opt/nsys", "--dry-run", *arguments])
     if "--output" in arguments:
         output = Path(arguments[arguments.index("--output") + 1])
     else:
-        traces = experiment / "traces" / "fsdp2" / "case-0007-1a2b3c4d5e6f"
+        traces = experiment / "traces" / "fsdp2" / "rc1__1a2b3c4d"
         (output,) = traces.iterdir()
     return output, shlex.split((output / "command.txt").read_text())
 

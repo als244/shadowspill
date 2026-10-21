@@ -13,8 +13,8 @@ nccl_ep=0
 # CUDA wheels from a slow mirror; a caller's own value is kept.
 export UV_HTTP_TIMEOUT="${UV_HTTP_TIMEOUT:-300}"
 
-# The pinned revisions the recipe engines run (megatron_core/README.md,
-# automodel/README.md), and the PyTorch every baseline environment runs.
+# The pinned revisions the recipe engines run (engines/megatron_core/README.md,
+# engines/automodel/README.md), and the PyTorch every baseline environment runs.
 readonly bridge_revision="6dea15d7fd499975ebf91fbeaf8c2b740a73d679"
 readonly megatron_core_revision="ce852bfb93f364f64a556602fc71a5d9ed2c377e"
 readonly automodel_revision="b203f3f9f9f3140c660942a088ff36bbc3a5e856"

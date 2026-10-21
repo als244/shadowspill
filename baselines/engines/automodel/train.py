@@ -25,11 +25,11 @@ from pathlib import Path
 import torch
 import torch.distributed as dist
 
-from baselines.automodel import data as engine_data
-from baselines.automodel import settings as engine_settings
-from baselines.automodel.settings import OPTIONS, parse_list
 from baselines.common import runner
 from baselines.common.precision import Unsupported
+from baselines.engines.automodel import data as engine_data
+from baselines.engines.automodel import settings as engine_settings
+from baselines.engines.automodel.settings import OPTIONS, parse_list
 
 #: The recipe classes behind the engine's names.
 LOSSES = {
@@ -143,7 +143,7 @@ def recipe_config(case, mechanism, vocabulary, attention, own, targets=()):
         # batches; no tokenizer, which the recipe would otherwise load from
         # the model's path.
         "dataset": {
-            "_target_": "baselines.automodel.data.CaseTokens",
+            "_target_": "baselines.engines.automodel.data.CaseTokens",
             "steps": steps,
             "tokenizer": None,
         },

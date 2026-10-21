@@ -71,7 +71,7 @@ writes:
 
 ```bash
 python -m baselines.sweep --engine automodel \
-  --config baselines/automodel/configs/qualification.json \
+  --config baselines/engines/automodel/configs/qualification.json \
   --output <dir> --gpus 1
 ```
 
@@ -143,7 +143,7 @@ configuration the run used.
 
 ## Precision
 
-[`../PRECISION.md`](../PRECISION.md) sets this engine beside the others.
+[`../../PRECISION.md`](../../PRECISION.md) sets this engine beside the others.
 
 ### What AutoModel offers
 
@@ -506,7 +506,7 @@ The tokens are the ones every engine trains on (`baselines/common/runner.py`):
 synthetic tokens drawn once per data-parallel replica from `--seed`, or each
 replica's window of the corpus for each update. They reach AutoModel through
 its own data path: the recipe's dataset is the engine's
-`baselines.automodel.data.CaseTokens`, which yields each update's
+`baselines.engines.automodel.data.CaseTokens`, which yields each update's
 microbatches as AutoModel's language-model datasets yield batches, each
 `sequences per microbatch x sequence length` input tokens with their next
 tokens as labels and their positions, every position trained. AutoModel's

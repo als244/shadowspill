@@ -1,7 +1,7 @@
 """One DeepSpeed case of a catalog model, outside ShadowSpill: the trainer
 ``baselines.common.launch`` starts under torchrun.
 
-The settings are ``baselines.deepspeed.settings``, validated by the
+The settings are ``baselines.engines.deepspeed.settings``, validated by the
 launcher; ``baselines.common.runner`` writes the request, the result and
 the row around ``train``, which builds the engine and runs every step under
 the runner's clock.
@@ -19,8 +19,8 @@ from torch import nn
 from baselines.common import recompute_layers, runner
 from baselines.common.reference import Access
 from baselines.common.training import TrainingModel, pinned_parameters
-from baselines.deepspeed import settings as engine_settings
-from baselines.deepspeed.settings import deepspeed_config
+from baselines.engines.deepspeed import settings as engine_settings
+from baselines.engines.deepspeed.settings import deepspeed_config
 from workloads.full_model import HEAD_LOSS_METRIC
 
 

@@ -9,7 +9,7 @@ import torch
 from torch import nn
 
 from baselines.common.precision import Precision
-from baselines.megatron_core.train import (
+from baselines.engines.megatron_core.train import (
     pinned_parameters,
     precision_evidence,
     stepped_of,

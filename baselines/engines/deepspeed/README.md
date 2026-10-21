@@ -19,10 +19,10 @@ python -m baselines.common.launch --engine deepspeed --gpus 1 \
 
 The tiny qualification matrix runs through the shared sweep, `python -m
 baselines.sweep --engine deepspeed --config
-baselines/deepspeed/configs/qualification.json --output <dir> --gpus 1`; a
+baselines/engines/deepspeed/configs/qualification.json --output <dir> --gpus 1`; a
 throughput matrix names only DeepSpeed's own knobs and runs inside an
 experiment, which gives every engine the same model, geometry and
-precision contract (`../README.md`).
+precision contract (`../../README.md`).
 
 ## What a case names
 
@@ -90,7 +90,7 @@ and where the optimizer steps; an empty cell is the default's.
 
 ## Precision
 
-[`../PRECISION.md`](../PRECISION.md) sets this engine beside the others.
+[`../../PRECISION.md`](../../PRECISION.md) sets this engine beside the others.
 DeepSpeed's bf16 and fp16 modes cast every parameter to the model dtype,
 the ones a model pins at float32 included (the row records which), and keep
 float32 masters in the ZeRO optimizer with float32 AdamW moments; fp16 runs
