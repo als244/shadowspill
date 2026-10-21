@@ -1,0 +1,5 @@
+{
+  "schema_version": 1,
+  "defaults": {"zero_stage": 3, "offload_optimizer": "cpu", "tokens_per_microbatch": 4096},
+  "grid": {"offload_param": ["none", "cpu"]}
+}

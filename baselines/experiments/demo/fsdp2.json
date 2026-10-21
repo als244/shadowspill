@@ -1,0 +1,5 @@
+{
+  "schema_version": 1,
+  "defaults": {"tokens_per_microbatch": 4096},
+  "grid": {"offload_policy": ["none", "cpu"]}
+}
