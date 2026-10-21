@@ -1,0 +1,32 @@
+{
+  "schema_version": 1,
+  "defaults": {"sequence_length": 64, "tokens_per_step": 1024, "tokens_per_microbatch": 128, "warmup_steps": 1, "steps": 2},
+  "cases": [
+    {"model": "llama3-tiny"},
+    {"model": "llama3-tiny", "master_dtype": null, "opt_state_dtype": "parameter"},
+    {"model": "llama3-tiny", "opt_state_dtype": "bfloat16"},
+    {"model": "llama3-tiny", "master_dtype": "float16"},
+    {"model": "llama3-tiny", "store_param_remainders": true},
+    {"model": "llama3-tiny", "loss": "masked"},
+    {"model": "llama3-tiny", "loss": "masked", "masked_fp32_upcast": false},
+    {"model": "llama3-tiny", "chunk_len": 32},
+    {"model": "llama3-tiny", "loss": "fused_linear"},
+    {"model": "llama3-tiny", "loss": "fused_linear", "fused_linear_impl": "torch_compile"},
+    {"model": "llama3-tiny", "activation_checkpointing": "full"},
+    {"model": "llama3-tiny", "activation_checkpointing": "selective"},
+    {"model": "llama3-tiny", "strategy": "ddp", "master_dtype": null, "opt_state_dtype": "parameter"},
+    {"model": "llama3-tiny", "attn_implementation": "flash_attention_2"},
+    {"model": "llama3-tiny", "force_hf": true, "loss": "masked"},
+    {"model": "llama3-tiny", "mode": "lora", "lora": {"rank": 4}, "checkpoint": "runs/checkpoints/llama3-tiny"},
+    {"model": "llama3-tiny", "mode": "lora", "lora": {"rank": 4, "alpha": 8}, "checkpoint": "runs/checkpoints/llama3-tiny", "force_hf": true, "loss": "masked", "lora_dropout": 0.1, "use_memory_efficient_lora": false, "use_triton": true},
+    {"model": "qwen3-tiny"},
+    {"model": "qwen3moe-tiny"},
+    {"model": "qwen3moe-tiny", "activation_checkpointing": "full"},
+    {"model": "qwen3moe-tiny", "loss": "masked", "masked_fp32_upcast": false, "attn": "te", "linear": "te", "rms_norm": "te", "rope_fusion": true, "experts": "torch_mm", "fake_balanced_gate": true, "enable_hf_state_dict_adapter": true, "enable_fsdp_optimizations": true, "activation_checkpointing": "full", "gc_every_steps": 10},
+    {"model": "qwen35-tiny", "model_config": {"zero_centered_norm": true}},
+    {"model": "qwen35moe-tiny"},
+    {"model": "qwen3moe-tiny", "mode": "lora", "lora": {"rank": 4}},
+    {"model": "qwen35-tiny", "model_config": {"zero_centered_norm": true}, "mode": "lora", "lora": {"rank": 4}},
+    {"model": "qwen35moe-tiny", "mode": "lora", "lora": {"rank": 4, "shared_experts": true}}
+  ]
+}
