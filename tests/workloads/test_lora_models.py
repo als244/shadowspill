@@ -1,5 +1,6 @@
 """Whole-model LoRA losses, gradients, updates, loading and frozen-state checks."""
 
+import contextlib
 import copy
 from dataclasses import replace
 from importlib import import_module
@@ -10,7 +11,23 @@ import torch
 from mlops.dispatch import use_implementations
 
 from workloads.lora import configure_lora
-from workloads.lora.reference import expert_lora as reference_expert_lora
+from workloads.models.shared.routed_lora import expert_lora as reference_expert_lora
+
+#: Where the mlops MoE modules take their routed-expert LoRA kernel from.
+ROUTED_KERNELS = (
+    "workloads.models.olmoe.implementations.mlops.expert_lora",
+    "workloads.models.shared.qwen_moe.experts.expert_lora",
+)
+
+
+@contextlib.contextmanager
+def reference_experts():
+    """The routed experts' LoRA computed by the ordinary-PyTorch reference."""
+    with contextlib.ExitStack() as stack:
+        for target in ROUTED_KERNELS:
+            stack.enter_context(patch(target, reference_expert_lora))
+        yield
+
 
 MODELS = [
     (impl, family)
@@ -95,7 +112,7 @@ def test_full_model_losses_gradients_updates_and_frozen_state(
         reference_optimizer.zero_grad(set_to_none=True)
         actual = model.loss(tokens, targets, seq_lens=(3, 4))
         with (
-            patch("workloads.lora.experts.expert_lora", reference_expert_lora),
+            reference_experts(),
             use_implementations(
                 {
                     "head_loss": "native_torch.head_loss",
@@ -215,3 +232,35 @@ def test_text_recipe_materializes_mixed_precision_factors(implementation, family
     assert torch.isfinite(loss)
     loss.backward()
     assert all(p.grad is not None for p in model.parameters() if p.requires_grad)
+
+
+@pytest.mark.parametrize(
+    "implementation,family",
+    [("mlops", "qwen3moe"), ("mlops", "olmoe"), ("pytorch", "olmoe")],
+)
+def test_routed_factors_follow_the_declared_shapes(implementation, family):
+    # A caller that partitions parameters as their modules are constructed
+    # leaves the expert banks without their data; the factors are sized from
+    # what the module declares all the same.
+    model = tiny_model(implementation, family)
+    routed = [module for module in model.modules() if hasattr(module, "expert_shapes")]
+    assert routed
+    for module in routed:
+        for parameter in module.parameters(recurse=False):
+            parameter.data = torch.empty(0)
+    configure_lora(model, rank=4, alpha=4)
+    for module in routed:
+        (experts, gate_up_out, gate_up_in), (_, down_out, down_in) = (
+            module.expert_shapes
+        )
+        assert module.lora_gate_up_a.shape == (experts, 4, gate_up_in)
+        assert module.lora_gate_up_b.shape == (experts, gate_up_out, 4)
+        assert module.lora_down_a.shape == (experts, 4, down_in)
+        assert module.lora_down_b.shape == (experts, down_out, 4)
+        banks = [
+            parameter
+            for name, parameter in module.named_parameters(recurse=False)
+            if not name.startswith("lora_")
+        ]
+        assert banks and not any(bank.requires_grad for bank in banks)
+        assert module.lora_gate_up_a.requires_grad

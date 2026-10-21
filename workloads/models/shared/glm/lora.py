@@ -4,7 +4,8 @@ projections and train the routed experts' factors."""
 from mlops.lora import LoRAConfig, LoRAHead, LoRALinear
 from torch import nn
 
-from .moe import FACTORS, MoE
+from ..routed_lora import FACTORS
+from .moe import MoE
 
 
 def enable_lora(model, config):

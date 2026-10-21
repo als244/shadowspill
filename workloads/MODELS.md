@@ -209,9 +209,17 @@ embeddings, and shared experts remain frozen by default. Expert modules use
 independent factors per expert, joint gate/up factors, and separate down
 factors. Pure PyTorch expert LoRA retains independent reference math.
 
-Model forward methods contain no LoRA branches. Dense/head replacement and
-expert-module selection happen in `workloads.lora`; reusable projections and
-conversion live in `mlops.lora`. MLOps heads call the same head module for
+Dense projections and heads take LoRA by replacement: `workloads.lora` selects
+them and `mlops.lora` converts them, so their forwards have no LoRA branch.
+Routed experts take it in place, one path for every MoE family
+(`workloads.models.shared.routed_lora`): a MoE module declares its expert
+banks' shapes as `expert_shapes`, `add_factors` registers the factors beside
+the banks, sized from that declaration rather than from the weights, and the
+module's forward runs its experts with them when present (`expert_lora`,
+mlops's in the MLOps implementations and the module's ordinary-PyTorch
+reference in the pytorch one). Because nothing reads an expert bank's
+shape, a caller that partitions parameters as their modules are
+constructed builds LoRA models too. MLOps heads call the same head module for
 logits and bounded loss, so both paths include its factors. State dictionaries
 retain original weight names and add `lora_*` parameters. Apply the same LoRA
 configuration before strict checkpoint loading.

@@ -1,10 +1,13 @@
-"""Normalized top-k experts, with optional caller-selected expert parallelism."""
+"""Normalized top-k experts, with optional caller-selected expert parallelism
+and routed-expert LoRA factors (``workloads.models.shared.routed_lora``)."""
 
 import mlops
 import torch
+from mlops.lora.experts import expert_lora
 from torch import nn
 
 from ..expert_parallel import parallel_forward
+from ..routed_lora import factors, reset_factors
 from .initialization import Linear
 
 
@@ -34,41 +37,48 @@ class MoE(nn.Module):
             self.router = Linear(
                 config.d_model, config.n_experts, std=config.initializer_range
             )
-            self.w13 = nn.Parameter(
-                torch.empty(
-                    config.n_experts,
-                    2 * config.d_ff_expert,
-                    config.d_model,
-                )
-            )
-            self.w2 = nn.Parameter(
-                torch.empty(
-                    config.n_experts,
-                    config.d_model,
-                    config.d_ff_expert,
-                )
-            )
+            gate_up, down = self.expert_shapes
+            self.w13 = nn.Parameter(torch.empty(gate_up))
+            self.w2 = nn.Parameter(torch.empty(down))
             self.reset_parameters()
+
+    @property
+    def expert_shapes(self):
+        """The routed experts' gate/up and down banks, ``[E, out, in]``."""
+        c = self.config
+        return (
+            (c.n_experts, 2 * c.d_ff_expert, c.d_model),
+            (c.n_experts, c.d_model, c.d_ff_expert),
+        )
 
     def reset_parameters(self):
         if self.experts is None:
             nn.init.normal_(self.w13, std=self.config.initializer_range)
             nn.init.normal_(self.w2, std=self.config.initializer_range)
+            if getattr(self, "lora_config", None) is not None:
+                reset_factors(self)
 
     def forward(self, hidden, residual):
         c = self.config
+        lora = getattr(self, "lora_config", None)
+        routing = {"top_k": c.top_k, "routing_mode": "topk_then_softmax"}
         if self.experts is not None:
             routed, counts, probability_sum = parallel_forward(self.experts, hidden)
             output = residual + routed
-        else:
+        elif lora is None:
             output, _auxiliary, counts, probability_sum = mlops.moe(
+                hidden, residual, self.router.weight, self.w13, self.w2, **routing
+            )
+        else:
+            output, _auxiliary, counts, probability_sum = expert_lora(
                 hidden,
                 residual,
                 self.router.weight,
                 self.w13,
                 self.w2,
-                top_k=c.top_k,
-                routing_mode="topk_then_softmax",
+                *factors(self),
+                scale=lora.scale,
+                **routing,
             )
         if self.shared is not None:
             output = output + self.shared(hidden)

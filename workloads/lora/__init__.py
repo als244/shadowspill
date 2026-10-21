@@ -1,8 +1,15 @@
-"""LoRA targeting for supplied examples; generic conversion lives in MLOps."""
+"""LoRA targeting for supplied examples: a selected module that declares
+routed experts carries their factors itself
+(``workloads.models.shared.routed_lora``); every other selected module is
+replaced by the generic conversion in MLOps."""
+
+from fnmatch import fnmatchcase
 
 import torch
-from mlops.lora import LoRAConfig, LoRALinear, apply_lora, parameter_report
+from mlops.lora import LoRAConfig, apply_lora, parameter_report
 from torch import nn
+
+from workloads.models.shared.routed_lora import add_factors
 
 
 def configure_lora(
@@ -16,20 +23,22 @@ def configure_lora(
     shared_experts=False,
     trainable_base=(),
 ):
-    """Select attention/mixer, dense MLP and routed-expert projections by default.
+    """Select every linear projection but the head, and the routed experts of
+    every module that declares them, by default.
 
-    Embeddings, routers, norms, shared experts and the head remain frozen unless
-    explicitly selected. head is frozen, lora or full; trainable_base contains
-    parameter globs. Explicit targets replace the default module selection.
+    Inside a module that declares routed experts (``expert_shapes``) nothing
+    else is selected unless ``shared_experts`` adds its linear projections
+    other than its router; inside a module that declares ``takes_lora =
+    False`` nothing is selected. Embeddings, norms and the head remain frozen
+    unless explicitly selected. head is frozen, lora or full; trainable_base
+    contains parameter globs. Explicit targets, module globs, replace the
+    default module selection; a selected module that declares routed experts
+    gains their factors in place.
     """
-    from workloads.models.olmoe.implementations.mlops import MoE as OLMoE
-    from workloads.models.olmoe.implementations.pytorch import MoE as PyTorchOLMoE
-    from workloads.models.shared.qwen_moe.experts import MoE as QwenMoE
-
-    from .experts import OLMoELoRA, PyTorchOLMoELoRA, QwenMoELoRA
-
     if head not in ("frozen", "lora", "full"):
         raise ValueError("head must be frozen, lora or full")
+    if any(hasattr(module, "lora_config") for module in model.modules()):
+        raise ValueError("model already contains LoRA modules")
     config = LoRAConfig(
         rank=rank,
         alpha=alpha,
@@ -37,43 +46,78 @@ def configure_lora(
         if isinstance(factor_dtype, str)
         else factor_dtype,
     )
+    modules = dict(model.named_modules())
+    owners = [
+        name for name, module in modules.items() if hasattr(module, "expert_shapes")
+    ]
+    closed = [
+        name
+        for name, module in modules.items()
+        if getattr(module, "takes_lora", True) is False
+    ]
+
+    def within(name, roots):
+        return next((root for root in roots if name.startswith(root + ".")), None)
+
     if targets is None:
-        targets = []
-        for name, module in model.named_modules():
-            if not name.startswith("blocks."):
-                continue
-            if isinstance(module, (OLMoE, PyTorchOLMoE, QwenMoE)):
-                if getattr(module, "experts", None) is not None:
-                    raise ValueError(
-                        "EP conversion requires a dedicated expert LoRA replacement"
-                    )
-                targets.append(name)
-            elif isinstance(module, nn.Linear) and ".moe." not in name:
-                targets.append(name)
-    targets = list(targets)
+        targets = [
+            name
+            for name, module in modules.items()
+            if name in owners
+            or (
+                isinstance(module, nn.Linear)
+                and name != "lm_head"
+                and within(name, owners) is None
+                and within(name, closed) is None
+            )
+        ]
+    selected = []
+    for pattern in targets:
+        names = [name for name in modules if fnmatchcase(name, pattern)]
+        if not names:
+            raise ValueError(f"target {pattern!r} matched no modules")
+        selected += [name for name in names if name not in selected]
+    if shared_experts:
+        selected += [
+            name
+            for name, module in modules.items()
+            if isinstance(module, nn.Linear)
+            and (owner := within(name, owners)) is not None
+            and module is not getattr(modules[owner], "router", None)
+            and name not in selected
+        ]
+    routed = [
+        modules[name] for name in selected if hasattr(modules[name], "expert_shapes")
+    ]
+    if any(getattr(module, "experts", None) is not None for module in routed):
+        raise ValueError("expert-parallel experts take no LoRA factors")
+    dense = [name for name in selected if not hasattr(modules[name], "expert_shapes")]
     if head == "lora":
-        targets.append("lm_head")
+        dense.append("lm_head")
     if head == "full":
         trainable_base = [*trainable_base, "lm_head.weight"]
-    model = apply_lora(
-        model,
-        config,
-        targets=targets,
-        trainable_base=trainable_base,
-        converters={
-            OLMoE: OLMoELoRA,
-            QwenMoE: QwenMoELoRA,
-            PyTorchOLMoE: PyTorchOLMoELoRA,
-        },
-    )
-    if shared_experts:
-        # These children are preserved by the routed-expert replacement. Do
-        # this separately so a generic transform never selects parent+child.
-        for name, module in tuple(model.named_modules()):
-            if ".moe.shared." in name and isinstance(module, nn.Linear):
-                parent, _, leaf = name.rpartition(".")
-                setattr(model.get_submodule(parent), leaf, LoRALinear(module, config))
+    if dense:
+        model = apply_lora(model, config, targets=dense, trainable_base=trainable_base)
+    else:
+        _freeze(model, trainable_base)
+    for module in routed:
+        add_factors(module, config)
     return model
+
+
+def _freeze(model, trainable_base):
+    """Freeze every parameter but the ``trainable_base`` globs, as the
+    generic conversion does when it replaces modules."""
+
+    parameters = dict(model.named_parameters(remove_duplicate=False))
+    trainable = set()
+    for pattern in trainable_base:
+        names = [name for name in parameters if fnmatchcase(name, pattern)]
+        if not names:
+            raise ValueError(f"trainable_base {pattern!r} matched no parameters")
+        trainable.update(id(parameters[name]) for name in names)
+    for parameter in parameters.values():
+        parameter.requires_grad_(id(parameter) in trainable)
 
 
 __all__ = ["configure_lora", "parameter_report"]

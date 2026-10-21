@@ -16,12 +16,11 @@ import mlops
 import torch
 from mlops import packed_swiglu
 from mlops.lora import LoRAConfig
-from mlops.lora.experts import expert_lora, initialize_factors
+from mlops.lora.experts import expert_lora
 from torch import nn
 
+from ..routed_lora import add_factors, factors
 from .common import linear, without_autocast
-
-FACTORS = ("lora_gate_up_a", "lora_gate_up_b", "lora_down_a", "lora_down_b")
 
 
 class DenseMLP(nn.Module):
@@ -105,19 +104,34 @@ class MoE(nn.Module):
             "e_score_correction_bias",
             torch.zeros(experts, device=device, dtype=torch.float32),
         )
-        self.w13 = expert_weight((experts, 2 * width, hidden), c, device, gate_up=True)
-        self.w2 = expert_weight((experts, hidden, width), c, device, gate_up=False)
+        gate_up, down = self.expert_shapes
+        self.w13 = expert_weight(gate_up, c, device, gate_up=True)
+        self.w2 = expert_weight(down, c, device, gate_up=False)
         self.shared_experts = (
             DenseMLP(replace(c, intermediate_size=width * c.n_shared_experts), device)
             if c.n_shared_experts
             else None
         )
-        self.lora_config = None
         if c.lora_rank:
-            self.lora_config = LoRAConfig(
-                rank=c.lora_rank, alpha=c.lora_alpha, factor_dtype=c.lora_factor_dtype
+            add_factors(
+                self,
+                LoRAConfig(
+                    rank=c.lora_rank,
+                    alpha=c.lora_alpha,
+                    factor_dtype=c.lora_factor_dtype,
+                ),
             )
-            initialize_factors(self, self.w13, self.w2, self.lora_config)
+
+    @property
+    def expert_shapes(self):
+        """The routed experts' gate/up and down banks, ``[E, out, in]``."""
+        c = self.config
+        experts, hidden, width = (
+            c.num_local_experts,
+            c.hidden_size,
+            c.moe_intermediate_size,
+        )
+        return (experts, 2 * width, hidden), (experts, hidden, width)
 
     def forward(self, x):
         c = self.config
@@ -135,7 +149,8 @@ class MoE(nn.Module):
             "swiglu_limit": c.swiglu_limit,
         }
         with without_autocast(x):
-            if self.lora_config is None:
+            lora = getattr(self, "lora_config", None)
+            if lora is None:
                 output, *_ = mlops.moe(
                     x, base, self.router, self.w13, self.w2, **options
                 )
@@ -146,8 +161,8 @@ class MoE(nn.Module):
                     self.router,
                     self.w13,
                     self.w2,
-                    *(getattr(self, name) for name in FACTORS),
-                    scale=self.lora_config.scale,
+                    *factors(self),
+                    scale=lora.scale,
                     **options,
                 )
         return output

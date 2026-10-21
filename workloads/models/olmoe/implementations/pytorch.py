@@ -16,6 +16,7 @@ from workloads.models.shared.decoder import (
     language_model_loss,
     swiglu,
 )
+from workloads.models.shared.routed_lora import expert_lora, factors, reset_factors
 
 from ..config import Config
 
@@ -58,13 +59,19 @@ class MoE(nn.Module):
         super().__init__()
         self.config = config
         self.router = nn.Linear(config.d_model, config.n_experts, bias=False)
-        self.w13_experts = nn.Parameter(
-            torch.empty(config.n_experts, 2 * config.d_ff_expert, config.d_model)
-        )
-        self.w2_experts = nn.Parameter(
-            torch.empty(config.n_experts, config.d_model, config.d_ff_expert)
-        )
+        gate_up, down = self.expert_shapes
+        self.w13_experts = nn.Parameter(torch.empty(gate_up))
+        self.w2_experts = nn.Parameter(torch.empty(down))
         self.reset_parameters()
+
+    @property
+    def expert_shapes(self):
+        """The routed experts' gate/up and down banks, ``[E, out, in]``."""
+        config = self.config
+        return (
+            (config.n_experts, 2 * config.d_ff_expert, config.d_model),
+            (config.n_experts, config.d_model, config.d_ff_expert),
+        )
 
     def reset_parameters(self) -> None:
         """Initialise the parameters this module owns, in place."""
@@ -73,11 +80,26 @@ class MoE(nn.Module):
         with torch.no_grad():
             nn.init.normal_(self.w13_experts, std=config.d_model**-0.5)
             nn.init.normal_(self.w2_experts, std=config.d_ff_expert**-0.5)
+        if getattr(self, "lora_config", None) is not None:
+            reset_factors(self)
 
     def forward(
         self, hidden: torch.Tensor, residual: torch.Tensor
     ) -> tuple[torch.Tensor, torch.Tensor]:
         config = self.config
+        lora = getattr(self, "lora_config", None)
+        if lora is not None:
+            return expert_lora(
+                hidden,
+                residual,
+                self.router.weight,
+                self.w13_experts,
+                self.w2_experts,
+                *factors(self),
+                top_k=config.top_k,
+                routing_mode="softmax_then_topk",
+                scale=lora.scale,
+            )[:2]
         probabilities = torch.softmax(self.router(hidden).float(), dim=-1)
         sorted_probabilities, sorted_indices = torch.sort(
             probabilities, dim=-1, descending=True, stable=True

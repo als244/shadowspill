@@ -5,6 +5,7 @@ from __future__ import annotations
 import mlops
 import torch
 import torch.nn as nn
+from mlops.lora.experts import expert_lora
 from mlops.modules import LanguageModelHead
 
 from workloads.models.shared.decoder import (
@@ -20,6 +21,7 @@ from workloads.models.shared.expert_parallel import (
     parallel_forward,
 )
 from workloads.models.shared.norms import RMSNorm
+from workloads.models.shared.routed_lora import factors, reset_factors
 
 from ..config import Config
 
@@ -83,13 +85,19 @@ class MoE(nn.Module):
         if self.experts is not None:
             return
         self.router = nn.Linear(config.d_model, config.n_experts, bias=False)
-        self.w13_experts = nn.Parameter(
-            torch.empty(config.n_experts, 2 * config.d_ff_expert, config.d_model)
-        )
-        self.w2_experts = nn.Parameter(
-            torch.empty(config.n_experts, config.d_model, config.d_ff_expert)
-        )
+        gate_up, down = self.expert_shapes
+        self.w13_experts = nn.Parameter(torch.empty(gate_up))
+        self.w2_experts = nn.Parameter(torch.empty(down))
         self.reset_parameters()
+
+    @property
+    def expert_shapes(self):
+        """The routed experts' gate/up and down banks, ``[E, out, in]``."""
+        config = self.config
+        return (
+            (config.n_experts, 2 * config.d_ff_expert, config.d_model),
+            (config.n_experts, config.d_model, config.d_ff_expert),
+        )
 
     def reset_parameters(self) -> None:
         """Initialise the parameters this module owns, in place."""
@@ -100,6 +108,8 @@ class MoE(nn.Module):
         with torch.no_grad():
             nn.init.normal_(self.w13_experts, std=config.d_model**-0.5)
             nn.init.normal_(self.w2_experts, std=config.d_ff_expert**-0.5)
+        if getattr(self, "lora_config", None) is not None:
+            reset_factors(self)
 
     def forward(
         self,
@@ -119,14 +129,20 @@ class MoE(nn.Module):
             )
             output = residual + routed
         else:
-            output, auxiliary, counts, probability_sum = mlops.moe(
-                hidden,
-                residual,
-                self.router.weight,
-                self.w13_experts,
-                self.w2_experts,
-                top_k=self.config.top_k,
-                routing_mode="softmax_then_topk",
+            lora = getattr(self, "lora_config", None)
+            routing = {"top_k": self.config.top_k, "routing_mode": "softmax_then_topk"}
+            weights = (self.router.weight, self.w13_experts, self.w2_experts)
+            output, auxiliary, counts, probability_sum = (
+                mlops.moe(hidden, residual, *weights, **routing)
+                if lora is None
+                else expert_lora(
+                    hidden,
+                    residual,
+                    *weights,
+                    *factors(self),
+                    scale=lora.scale,
+                    **routing,
+                )
             )
         if return_metrics:
             return output, auxiliary, counts, probability_sum
