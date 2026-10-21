@@ -1,4 +1,4 @@
-"""What an AutoModel case can ask for, what the harness itself refuses
+"""What an AutoModel case can ask for, what the engine itself refuses
 before launch, and how the precision contract maps onto AutoModel's
 options. What AutoModel allows together is its own to decide."""
 
@@ -15,7 +15,7 @@ from baselines.automodel.settings import (
     add_arguments,
     from_namespace,
 )
-from baselines.common.launch import command, harness_module
+from baselines.common.launch import command, engine_module
 
 SECTIONS = {
     "distributed",
@@ -29,7 +29,7 @@ SECTIONS = {
     "compile",
     "step_scheduler",
     "peft",
-    "harness",
+    "engine",
 }
 
 BASE = {
@@ -66,7 +66,7 @@ def test_the_command_line_reproduces_the_case():
     parser = argparse.ArgumentParser()
     add_arguments(parser)
     assert from_namespace(parser.parse_args(settings.arguments())) == settings
-    assert harness_module("automodel").ENVIRONMENT == "nvidia-training"
+    assert engine_module("automodel").ENVIRONMENT == "nvidia-training"
     assert command("automodel", "py", 1, settings, "out")[11:] == settings.arguments()
     assert settings.describe(1)["model"]["implementation"] == IMPLEMENTATION
 
@@ -144,7 +144,7 @@ def test_the_loss_and_its_linear_layers_default_by_tensor_parallelism():
         ({"strategy": "ddp", "mp_output_dtype": "float32"}, "are FSDP2's"),
     ],
 )
-def test_the_harness_refuses_what_it_cannot_say(changes, message):
+def test_the_engine_refuses_what_it_cannot_say(changes, message):
     with pytest.raises(ValueError, match=message):
         case(**changes).validate(1)
 

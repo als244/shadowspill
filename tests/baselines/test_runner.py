@@ -31,17 +31,17 @@ def write_case(tmp_path, world_size=2, **changes):
     return settings, case, path
 
 
-def open_rank(monkeypatch, tmp_path, path, *, rank=0, world=2, harness="fsdp2"):
+def open_rank(monkeypatch, tmp_path, path, *, rank=0, world=2, engine="fsdp2"):
     monkeypatch.setenv("RANK", str(rank))
     monkeypatch.setenv("WORLD_SIZE", str(world))
     monkeypatch.setenv("LOCAL_RANK", str(rank))
-    arguments = runner.parse(harness, ["--output", str(tmp_path), "--case", str(path)])
-    return runner.open_case(harness, fsdp2, arguments, standalone=True)
+    arguments = runner.parse(engine, ["--output", str(tmp_path), "--case", str(path)])
+    return runner.open_case(engine, fsdp2, arguments, standalone=True)
 
 
 def test_a_resolved_case_describes_and_counts_what_the_trainer_runs(tmp_path):
     settings, case, _ = write_case(tmp_path)
-    assert case["harness"] == "fsdp2" and case["size"] == "tiny"
+    assert case["engine"] == "fsdp2" and case["size"] == "tiny"
     assert case["settings"] == settings.as_dict()
     assert case["description"] == settings.describe(2)
     assert case["useful_flops_per_step"] > 0
@@ -69,7 +69,7 @@ def test_a_case_runs_only_where_it_was_resolved(monkeypatch, tmp_path):
     with pytest.raises(ValueError, match="another world"):
         open_rank(monkeypatch, tmp_path, path, world=4)
     with pytest.raises(ValueError, match="not a deepspeed case"):
-        open_rank(monkeypatch, tmp_path, path, harness="deepspeed")
+        open_rank(monkeypatch, tmp_path, path, engine="deepspeed")
 
 
 def test_a_case_runs_only_in_the_environment_it_sets(monkeypatch, tmp_path):
@@ -155,7 +155,7 @@ def test_the_first_rank_writes_the_results_and_the_row(monkeypatch, tmp_path):
     assert results["losses"] == [[3.0, 2.5]]
     row = json.loads((tmp_path / "row.json").read_text())
     validate_row(row)
-    assert row["harness"] == "fsdp2" and row["status"] == "completed"
+    assert row["engine"] == "fsdp2" and row["status"] == "completed"
     for key in ("model", "geometry", "precision", "configuration"):
         assert row[key] == case["description"][key]
     assert row["measurement"]["step_seconds"] == pytest.approx(0.375)

@@ -1,6 +1,6 @@
 """The case's tokens as an AutoModel dataset.
 
-Every harness trains on the tokens ``baselines.common.runner`` serves: one
+Every engine trains on the tokens ``baselines.common.runner`` serves: one
 synthetic draw per data-parallel replica, or the replica's corpus window of
 each update. ``CaseTokens`` serves them as AutoModel's language-model
 datasets serve batches, each ``sequences per microbatch x sequence length``

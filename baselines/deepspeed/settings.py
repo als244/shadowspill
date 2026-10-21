@@ -1,6 +1,6 @@
 """The settings of one DeepSpeed case, shared by the trainer and the sweep.
 
-On top of what every harness takes (``baselines.common.settings``), the
+On top of what every engine takes (``baselines.common.settings``), the
 ZeRO configuration: the stage, the optimizer and parameter offload to the
 host or NVMe, the communication and prefetch sizes, activation checkpointing
 with DeepSpeed's own ``checkpoint`` and its CPU checkpointing as the
@@ -8,7 +8,7 @@ activation offload; and DeepCompile, DeepSpeed's ``torch.compile`` backend,
 whose graph passes take over ZeRO's reduction, gathering and prefetch and
 offer their own offload of activations, optimizer state or parameters. The
 optimizer is DeepSpeed's AdamW, fused on the device or its CPU
-implementation when the optimizer is offloaded. What the harness cannot
+implementation when the optimizer is offloaded. What the engine cannot
 honor is refused before launch.
 """
 
@@ -21,7 +21,7 @@ from baselines.common import settings as common
 from baselines.common.precision import Capabilities, Unsupported
 from baselines.common.settings import GEOMETRY_FIELDS, MODEL_FIELDS, PRECISION_FIELDS
 
-#: The sources whose digests identify this harness in a manifest and a row.
+#: The sources whose digests identify this engine in a manifest and a row.
 SOURCE_PATHS = (
     "baselines/__init__.py",
     "baselines/common",
@@ -43,7 +43,7 @@ DEEPCOMPILE_OFFLOADS = ("none", "activations", "optimizer-states", "parameters")
 #: the graphs again; a measured step comes after that.
 DEEPCOMPILE_WARMUP_STEPS = 8
 
-#: What this harness honors of the precision contract. DeepSpeed's bf16 and
+#: What this engine honors of the precision contract. DeepSpeed's bf16 and
 #: fp16 modes cast every parameter and keep float32 masters in the ZeRO
 #: optimizer, whose AdamW moments are float32; fp16 runs under its dynamic
 #: loss scaling. Without masters a bf16 model steps bfloat16 values with
@@ -92,7 +92,7 @@ class Settings(common.Settings):
     deepcompile_offload: str = "none"
     deepcompile_free_activation: bool = False
 
-    def harness_validation(self, request, geometry, precision):
+    def engine_validation(self, request, geometry, precision):
         if self.zero_stage not in STAGES:
             raise ValueError(f"zero_stage must be one of {STAGES}")
         if self.offload_optimizer not in OFFLOADS or self.offload_param not in OFFLOADS:

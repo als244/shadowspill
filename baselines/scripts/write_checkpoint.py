@@ -1,5 +1,5 @@
 """Write a Hugging Face checkpoint of a catalog model, initialized under a
-seed, that every harness can start from.
+seed, that every engine can start from.
 
     python -m baselines.scripts.write_checkpoint --model NAME --output DIR \\
         [--model-config JSON] [--seed N]
@@ -9,9 +9,9 @@ so the recipe systems build the same model from it that our implementations
 do; the weights are the ``transformers`` model's own initialization at
 bfloat16, saved as safetensors. The family's checkpoint reader then reads it
 back, which refuses a configuration other than the catalog entry's, so a
-written checkpoint is one every harness reads. A tiny model's checkpoint is
+written checkpoint is one every engine reads. A tiny model's checkpoint is
 what a LoRA case that must start from pretrained weights starts from, and
-the same weights let the harnesses' loss curves be compared.
+the same weights let the engines' loss curves be compared.
 """
 
 from __future__ import annotations

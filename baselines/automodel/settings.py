@@ -1,10 +1,10 @@
 """The settings of one NeMo AutoModel case, shared by the launcher and the
 trainer.
 
-The harness trains NVIDIA's implementation of the catalog model's
+The engine trains NVIDIA's implementation of the catalog model's
 architecture (AutoModel's own model where it registers one, Hugging Face's
 otherwise) with AutoModel's fine-tuning recipe and its own training loop,
-over the tokens every harness trains on. The model is built from the case's
+over the tokens every engine trains on. The model is built from the case's
 Hugging Face configuration, the catalog model's from its family's
 ``to_huggingface`` or a named checkpoint's own. The shared settings (the
 model, the geometry, the precision contract, the run) become AutoModel's
@@ -24,7 +24,7 @@ from typing import Any
 from baselines.common import settings as common
 from baselines.common.precision import Capabilities, Unsupported
 
-#: The sources whose digests identify this harness in a manifest and a row.
+#: The sources whose digests identify this engine in a manifest and a row.
 SOURCE_PATHS = (
     "baselines/__init__.py",
     "baselines/common",
@@ -63,7 +63,7 @@ class Option:
     recipe section that holds it (``distributed``; ``distributed.moe``;
     ``distributed.pipeline``; ``model``; ``model.backend``; ``loss_fn``;
     ``fp8``; ``compile``; ``step_scheduler``; ``peft``; ``optimizer``; or
-    ``harness``, read by the harness to build a section), the key there when
+    ``engine``, read by the engine to build a section), the key there when
     it differs from the name, the type of its value, what it does, its
     allowed values, and how a string is read (``names``, a comma-separated
     list of the allowed values; ``dtype``, a dtype's name)."""
@@ -212,20 +212,20 @@ OPTIONS = (
     ),
     _option(
         "cpu_offload",
-        "harness",
+        "engine",
         bool,
         "FSDP2's CPUOffloadPolicy: weight shards, gradients and the optimizer"
         " step on the host (needs two or more ranks to shard)",
     ),
     _option(
         "offload_pin_memory",
-        "harness",
+        "engine",
         bool,
         "pin the offloaded shards' host memory",
     ),
     _option(
         "mp_param_dtype",
-        "harness",
+        "engine",
         str,
         "FSDP2's compute and all-gather dtype (mp_policy.param_dtype); the"
         " contract's model dtype",
@@ -234,7 +234,7 @@ OPTIONS = (
     ),
     _option(
         "mp_reduce_dtype",
-        "harness",
+        "engine",
         str,
         "FSDP2's gradient reduce-scatter dtype (mp_policy.reduce_dtype); the"
         " contract's gradient dtype",
@@ -243,7 +243,7 @@ OPTIONS = (
     ),
     _option(
         "mp_output_dtype",
-        "harness",
+        "engine",
         str,
         "FSDP2's cast of module outputs (mp_policy.output_dtype)",
         DTYPES,
@@ -430,7 +430,7 @@ OPTIONS = (
     # The model's construction.
     _option(
         "attn_implementation",
-        "harness",
+        "engine",
         str,
         "Hugging Face's attention: sdpa, eager, flash_attention_2, 3 or 4, or"
         " te (Transformer Engine's injected into Hugging Face's attention);"
@@ -459,7 +459,7 @@ OPTIONS = (
     ),
     _option(
         "sdpa_method",
-        "harness",
+        "engine",
         str,
         "the SDPA backends allowed, comma-separated",
         ("flash_attention", "efficient_attention", "math", "cudnn_attention"),
@@ -483,7 +483,7 @@ OPTIONS = (
     ),
     _option(
         "linear",
-        "harness",
+        "engine",
         str,
         "the linear layers: torch, te or quack; torch by default with the"
         " chunked loss, AutoModel's te or torch otherwise",
@@ -650,7 +650,7 @@ OPTIONS = (
     ),
     _option(
         "te_fp8",
-        "harness",
+        "engine",
         str,
         "Transformer Engine's FP8 around every forward, by recipe: current,"
         " block or mxfp8 (linear te or experts te)",
@@ -709,7 +709,7 @@ OPTIONS = (
     ),
     _option(
         "cuda_graph_modules",
-        "harness",
+        "engine",
         str,
         "the parts captured in CUDA graphs, comma-separated",
         ("attn", "te_dpa", "moe_router", "moe_preprocess"),
@@ -718,7 +718,7 @@ OPTIONS = (
     # The loss.
     _option(
         "loss",
-        "harness",
+        "engine",
         str,
         "the cross entropy: chunked (ChunkedCrossEntropy, the head and its"
         " loss chunk_len rows at a time, no full logits), masked"
@@ -730,19 +730,19 @@ OPTIONS = (
     ),
     _option(
         "chunk_len",
-        "harness",
+        "engine",
         int,
         "chunked: token rows per chunk (512 by default)",
     ),
     _option(
         "chunked_compile",
-        "harness",
+        "engine",
         bool,
         "chunked: compile each chunk's projection and loss with their backward",
     ),
     _option(
         "fused_linear_impl",
-        "harness",
+        "engine",
         str,
         "fused_linear: cce (Cut Cross-Entropy, flat memory) or torch_compile"
         " (faster, memory growing with tokens times vocabulary)",
@@ -750,14 +750,14 @@ OPTIONS = (
     ),
     _option(
         "masked_fp32_upcast",
-        "harness",
+        "engine",
         bool,
         "masked: upcast the logits to float32",
     ),
     # torchao FP8.
     _option(
         "fp8",
-        "harness",
+        "engine",
         bool,
         "torchao's float8 training of the linear layers",
     ),
@@ -790,7 +790,7 @@ OPTIONS = (
     # Whole-model compilation (not under FSDP2).
     _option(
         "compile",
-        "harness",
+        "engine",
         bool,
         "torch.compile the whole model (not under FSDP2, which takes"
         " enable_compile, nor with pipeline parallelism)",
@@ -824,7 +824,7 @@ OPTIONS = (
     # The optimizer.
     _option(
         "optimizer",
-        "harness",
+        "engine",
         str,
         "AutoModel's optimizer: adamw (torch's AdamW), adam (torch's Adam),"
         " fused_adam (Transformer Engine's FusedAdam, with masters and moment"
@@ -834,20 +834,20 @@ OPTIONS = (
     ),
     _option(
         "adamw_fused",
-        "harness",
+        "engine",
         bool,
         "adamw and adam: torch's fused implementation (torch's default when none)",
     ),
     _option(
         "store_param_remainders",
-        "harness",
+        "engine",
         bool,
         "fused_adam: keep a float32 master as its bfloat16 weight and a 16-bit"
         " remainder",
     ),
     _option(
         "master_weight_bits",
-        "harness",
+        "engine",
         int,
         "flash_adamw: bits kept of each master",
     ),
@@ -988,7 +988,7 @@ class Base(common.Settings):
         }
 
     def loss_kind(self) -> str:
-        """The case's loss, or the harness's: chunked, whose head and loss
+        """The case's loss, or the engine's: chunked, whose head and loss
         never hold the full logits, unless tensor parallelism shards the head
         over the vocabulary, where te_parallel is AutoModel's one loss that
         computes on the shards (the linear losses refuse a tensor-parallel
@@ -1109,8 +1109,8 @@ class Base(common.Settings):
                 " and the shared objective is the text model's"
             )
 
-    def harness_validation(self, request, geometry, precision):
-        """The harness's own rules: NVIDIA's implementation, option values of
+    def engine_validation(self, request, geometry, precision):
+        """The engine's own rules: NVIDIA's implementation, option values of
         the types and choices AutoModel takes, the shared settings and the
         precision contract as AutoModel's options can say them. What goes
         together in AutoModel is AutoModel's to decide as it sets up: a case
@@ -1146,7 +1146,7 @@ class Base(common.Settings):
                     f" {sorted(unknown)}"
                 )
             if self.lora.get("head", "frozen") != "frozen":
-                raise Unsupported("the harness's AutoModel LoRA leaves the head frozen")
+                raise Unsupported("the engine's AutoModel LoRA leaves the head frozen")
 
     def check_values(self):
         """Each option's value of its type, and among AutoModel's choices."""

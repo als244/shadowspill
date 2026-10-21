@@ -1,4 +1,4 @@
-"""What every harness trains: the catalog model with the shared objective
+"""What every engine trains: the catalog model with the shared objective
 as its forward, so a case trains exactly what the quickstart measures, and
 the helpers around its construction: the wrapper-stripping of names, the
 parameters a model pins at float32, the materialization of a few by

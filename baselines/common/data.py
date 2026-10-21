@@ -1,4 +1,4 @@
-"""The tokens a harness trains on: synthetic by default, drawn per rank from
+"""The tokens an engine trains on: synthetic by default, drawn per rank from
 a seed, or windows of a corpus ``prepare_corpus`` tokenized once per
 tokenizer family.
 

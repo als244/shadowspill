@@ -1,20 +1,20 @@
-"""Launch one case of any harness.
+"""Launch one case of any engine.
 
-    python -m baselines.common.launch --harness NAME --gpus N --output DIR \\
-        [--python PATH] <the harness's settings flags>
+    python -m baselines.common.launch --engine NAME --gpus N --output DIR \\
+        [--python PATH] <the engine's settings flags>
 
-Every harness starts here, from the sweep or by hand. The settings are
+Every engine starts here, from the sweep or by hand. The settings are
 validated in this interpreter, the one that runs the sweep, which can
 import the catalog with its implementations, readers and LoRA; the case is
 then resolved: the row's description, the model's catalog size, the useful
 work of a step counted from the catalog model built on ``meta``, a summary
-of what was built, whatever the harness's ``Settings.resolve`` adds (a
-recipe harness's Hugging Face configuration), and the environment variables
+of what was built, whatever the engine's ``Settings.resolve`` adds (a
+recipe engine's Hugging Face configuration), and the environment variables
 the case's settings decide (``Settings.environment``). The case is written to
-``DIR/case.json`` and torchrun replaces this process, running the harness's
+``DIR/case.json`` and torchrun replaces this process, running the engine's
 trainer in its own interpreter with ``--output DIR --case DIR/case.json``,
 in this process's environment with the case's variables set or unset.
-That interpreter is ``--python``, or the environment the harness names
+That interpreter is ``--python``, or the environment the engine names
 (``ENVIRONMENT``) beside the running one.
 """
 
@@ -28,7 +28,7 @@ from pathlib import Path
 
 from baselines.common.results import write_json
 
-#: What a harness's settings module provides.
+#: What an engine's settings module provides.
 REQUIRED = (
     "Settings",
     "SOURCE_PATHS",
@@ -38,16 +38,16 @@ REQUIRED = (
 )
 
 
-def harness_module(name):
-    """The settings module of a harness, checked for what is called."""
+def engine_module(name):
+    """The settings module of an engine, checked for what is called."""
 
     try:
         module = import_module(f"baselines.{name}.settings")
     except ModuleNotFoundError as error:
-        raise ValueError(f"no harness {name!r}: {error}") from error
+        raise ValueError(f"no engine {name!r}: {error}") from error
     missing = [attribute for attribute in REQUIRED if not hasattr(module, attribute)]
     if missing:
-        raise ValueError(f"harness {name!r} lacks {', '.join(missing)}")
+        raise ValueError(f"engine {name!r} lacks {', '.join(missing)}")
     return module
 
 
@@ -60,7 +60,7 @@ def interpreter(value: str) -> Path:
     return (Path(sys.prefix).resolve().parent / value / "bin" / "python").resolve()
 
 
-def resolve(harness, settings, world_size):
+def resolve(engine, settings, world_size):
     """The case a trainer runs: validated, described, counted."""
 
     from baselines.common.models import useful_flops_per_token
@@ -70,7 +70,7 @@ def resolve(harness, settings, world_size):
     model = request.build(dtype=settings.precision().stepped_dtype)
     case = {
         "schema_version": 1,
-        "harness": harness,
+        "engine": engine,
         "settings": settings.as_dict(),
         "description": settings.describe(world_size),
         "size": request.entry.size,
@@ -97,15 +97,15 @@ def trainer_environment(environment, base=None):
     return result
 
 
-def command(harness, python, world_size, settings, output):
+def command(engine, python, world_size, settings, output):
     """The command line of one case, as the sweep runs it."""
 
     return [
         sys.executable,
         "-m",
         "baselines.common.launch",
-        "--harness",
-        harness,
+        "--engine",
+        engine,
         "--python",
         str(python),
         "--gpus",
@@ -116,8 +116,8 @@ def command(harness, python, world_size, settings, output):
     ]
 
 
-def trainer_command(harness, python, world_size, output):
-    """The torchrun command line of the harness's trainer."""
+def trainer_command(engine, python, world_size, output):
+    """The torchrun command line of the engine's trainer."""
 
     return [
         str(python),
@@ -127,7 +127,7 @@ def trainer_command(harness, python, world_size, output):
         f"--nproc-per-node={world_size}",
         "--max-restarts=0",
         "-m",
-        f"baselines.{harness}.train",
+        f"baselines.{engine}.train",
         "--output",
         str(output),
         "--case",
@@ -138,9 +138,9 @@ def trainer_command(harness, python, world_size, output):
 def main(argv=None):
     parser = argparse.ArgumentParser(
         description=__doc__.split("\n\n")[0],
-        epilog="Every other flag is the harness's settings.",
+        epilog="Every other flag is the engine's settings.",
     )
-    parser.add_argument("--harness", required=True, help="baselines.<harness>")
+    parser.add_argument("--engine", required=True, help="baselines.<engine>")
     parser.add_argument("--gpus", type=int, required=True, help="torchrun world size")
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument(
@@ -150,10 +150,10 @@ def main(argv=None):
     if known.gpus < 1:
         parser.error("the GPU count must be positive")
     try:
-        module = harness_module(known.harness)
+        module = engine_module(known.engine)
     except ValueError as error:
         parser.error(str(error))
-    flags = argparse.ArgumentParser(prog=f"{parser.prog} --harness {known.harness}")
+    flags = argparse.ArgumentParser(prog=f"{parser.prog} --engine {known.engine}")
     module.add_arguments(flags)
     settings = module.from_namespace(flags.parse_args(rest))
     python = interpreter(known.python or module.ENVIRONMENT)
@@ -161,9 +161,9 @@ def main(argv=None):
         parser.error(f"{python} is not an interpreter")
     output = known.output.resolve()
     output.mkdir(parents=True, exist_ok=True)
-    case = resolve(known.harness, settings, known.gpus)
+    case = resolve(known.engine, settings, known.gpus)
     write_json(output / "case.json", case)
-    trainer = trainer_command(known.harness, python, known.gpus, output)
+    trainer = trainer_command(known.engine, python, known.gpus, output)
     sys.stdout.flush()
     os.execve(trainer[0], trainer, trainer_environment(case["environment"]))
 

@@ -8,7 +8,7 @@ configuration, or the named recipe's, whose architecture must be the same;
 a named checkpoint's weights are Bridge's to import. Bridge trains with its
 defaults, or the recipe's values, under the shared settings and the case's
 Megatron options. The runner's clock runs from Bridge's step callbacks, and
-the tokens are the ones every harness trains on, served by a dataset
+the tokens are the ones every engine trains on, served by a dataset
 provider in the order Megatron's sampler asks for them.
 """
 
@@ -24,7 +24,7 @@ import torch
 import torch.distributed as dist
 
 from baselines.common import runner
-from baselines.megatron_core import settings as harness_settings
+from baselines.megatron_core import settings as engine_settings
 from baselines.megatron_core.settings import OPTIONS, aware, parse_value
 
 #: The provider fields a recipe's model must share with the case's.
@@ -68,7 +68,7 @@ class Samples(torch.utils.data.Dataset):
     sampler hands each data-parallel replica, in turn, ``micro_batch_size``
     consecutive indices of every run of ``micro_batch_size x replicas``, one
     run per microbatch; sample ``i`` is therefore the sequence at that
-    place in the replica's tokens of the step, as every other harness cuts
+    place in the replica's tokens of the step, as every other engine cuts
     its microbatches."""
 
     def __init__(self, case, count, vocabulary, micro_batch_size, replicas):
@@ -253,7 +253,7 @@ def apply(config, case, vocabulary, dataset):
     config.dataset = dataset
     config.tokenizer.tokenizer_type = "NullTokenizer"
     config.tokenizer.vocab_size = vocabulary
-    # Megatron refuses a seed of zero, every harness's default; its seed
+    # Megatron refuses a seed of zero, every engine's default; its seed
     # sets NVIDIA's initialization alone, the tokens keep the case's.
     config.rng.seed = settings.seed + 1
     config.logger.log_interval = config.train.train_iters + 1
@@ -262,7 +262,7 @@ def apply(config, case, vocabulary, dataset):
     config.checkpoint.load = None
     config.checkpoint.pretrained_checkpoint = settings.checkpoint
     # AdamW at the shared hyperparameters, a constant rate, no clipping, as
-    # every harness steps.
+    # every engine steps.
     optimizer.optimizer = "adam"
     optimizer.lr = optimizer.min_lr = settings.learning_rate
     optimizer.weight_decay = settings.weight_decay
@@ -361,7 +361,7 @@ def apply(config, case, vocabulary, dataset):
 
         model.attention_backend = AttnBackend[settings.attention_backend]
     # Selective recomputation of the modules the launcher resolved: the
-    # case's, or the harness's default.
+    # case's, or the engine's default.
     if settings.recompute_granularity == "selective":
         model.recompute_modules = case.resolved["recompute_modules"]
     if settings.tp_comm_overlap is not None:
@@ -374,7 +374,7 @@ def apply(config, case, vocabulary, dataset):
             if value is not None:
                 place(config.comm_overlap, "comm", name, value)
     # The runner checks every measured loss; Megatron's own check of each
-    # microbatch's loss would add a host synchronization no other harness
+    # microbatch's loss would add a host synchronization no other engine
     # makes (and a whole-iteration CUDA graph refuses it).
     config.rerun_state_machine.check_for_nan_in_loss = False
     # CUDA graphs need Transformer Engine's random-number tracker, which
@@ -737,7 +737,7 @@ def train(case, clock):
 
     @dataclasses.dataclass
     class Tokens(DatasetProvider):
-        """The case's tokens, every harness's, for Bridge's loaders."""
+        """The case's tokens, every engine's, for Bridge's loaders."""
 
         seq_length: int = geometry.sequence_length
         skip_getting_attention_mask_from_dataset: bool = True
@@ -783,7 +783,7 @@ def train(case, clock):
 
 
 def main(argv=None):
-    runner.main("megatron_core", harness_settings, train, argv)
+    runner.main("megatron_core", engine_settings, train, argv)
 
 
 if __name__ == "__main__":

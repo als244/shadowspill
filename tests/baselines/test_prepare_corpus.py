@@ -1,5 +1,5 @@
 """A corpus is whole documents, each ending in the end-of-text id, cut at
-the requested token count, and readable by the harnesses."""
+the requested token count, and readable by the engines."""
 
 import numpy
 import pytest

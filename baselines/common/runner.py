@@ -1,18 +1,18 @@
-"""One process of one case: what every harness's trainer shares.
+"""One process of one case: what every engine's trainer shares.
 
 A trainer is its system's setup and its step; this module is the rest.
 ``main`` reads the trainer's command line, ``--output`` and ``--case``, the
 case ``baselines.common.launch`` validated and resolved for it. It writes
-``rank-NNNNN/request.json`` as the process starts, hands the harness's
+``rank-NNNNN/request.json`` as the process starts, hands the engine's
 ``train`` the ``Case`` and the step ``Clock``, and writes ``result.json`` as
 it ends, or ``failure.json`` with the stage it failed in and whether it ran
 out of device memory; the first rank then writes ``results.json`` with every
-rank's measurements and ``row.json``, the row every harness shares.
+rank's measurements and ``row.json``, the row every engine shares.
 
 The clock is the measurement contract. A step starts once every rank's
 device is idle and the ranks have met, and ends when this rank's device is
 idle again; the first ``warmup_steps`` steps are not measured, and at the
-boundary the device peaks are reset and an nsys capture begins. A harness
+boundary the device peaks are reset and an nsys capture begins. An engine
 whose loop is its own calls ``begin`` and ``end`` around each step; one
 whose system owns the loop calls them from the system's step hooks.
 """
@@ -48,11 +48,11 @@ FLOPS_CONVENTION = "baselines.common.models.useful_flops_per_token"
 
 @dataclasses.dataclass
 class Outcome:
-    """What a harness's ``train`` returns once its last step is done.
+    """What an engine's ``train`` returns once its last step is done.
 
     ``useful_flops_per_step`` replaces the count the launcher resolved, for
-    a harness that counts from the model it built; ``performance`` is false
-    when the harness's own case is no throughput result. ``result`` adds to
+    an engine that counts from the model it built; ``performance`` is false
+    when the engine's own case is no throughput result. ``result`` adds to
     this rank's ``result.json`` and ``provenance`` to the row's;
     ``peaks`` are this rank's device peaks where PyTorch's allocator does
     not hold the device, and ``memory`` the row's memory from every rank's
@@ -114,7 +114,7 @@ class Case:
     rank, what the row will describe, and the request record it keeps
     current as setup learns more."""
 
-    harness: str
+    engine: str
     settings: Any
     output: Path
     rank: int
@@ -177,7 +177,7 @@ class Case:
 
 
 class Clock:
-    """The step clock every harness measures with."""
+    """The step clock every engine measures with."""
 
     def __init__(self, case: Case, *, reset_peaks: bool = True) -> None:
         self.case = case
@@ -233,7 +233,7 @@ class Clock:
         self.barrier()
         self.tick = time.perf_counter()
         torch.cuda.nvtx.range_push(
-            f"baseline.{self.case.harness}/rank-{self.case.rank}/step-{step + 1}"
+            f"baseline.{self.case.engine}/rank-{self.case.rank}/step-{step + 1}"
         )
 
     def end(self, step: int, loss, head_loss=None) -> float:
@@ -290,9 +290,9 @@ def out_of_memory(error: BaseException) -> dict[str, Any]:
     return {"status": "cuda_out_of_memory" if oom else "failed"}
 
 
-def parse(harness, argv=None) -> argparse.Namespace:
+def parse(engine, argv=None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description=f"One process of a {harness} case; started by"
+        description=f"One process of a {engine} case; started by"
         " baselines.common.launch under torchrun."
     )
     parser.add_argument("--output", type=Path, required=True)
@@ -302,15 +302,15 @@ def parse(harness, argv=None) -> argparse.Namespace:
     return parser.parse_args(argv)
 
 
-def open_case(harness, module, arguments, *, standalone) -> Case:
+def open_case(engine, module, arguments, *, standalone) -> Case:
     """The case this process runs, as the launcher validated and resolved
     it."""
 
     rank, world = int(os.environ["RANK"]), int(os.environ["WORLD_SIZE"])
     local_rank = int(os.environ["LOCAL_RANK"])
     value = json.loads(arguments.case.read_text())
-    if value.get("harness") != harness:
-        raise ValueError(f"{arguments.case} is not a {harness} case")
+    if value.get("engine") != engine:
+        raise ValueError(f"{arguments.case} is not a {engine} case")
     settings = module.Settings.from_dict(value["settings"])
     geometry = settings.geometry(world)
     description = value["description"]
@@ -342,7 +342,7 @@ def open_case(harness, module, arguments, *, standalone) -> Case:
         "environment": value["environment"],
     }
     return Case(
-        harness=harness,
+        engine=engine,
         settings=settings,
         output=arguments.output,
         rank=rank,
@@ -440,7 +440,7 @@ def finish(case: Case, clock: Clock, outcome: Outcome, source_paths) -> None:
     write_json(
         case.output / "row.json",
         result_row(
-            harness=case.harness,
+            engine=case.engine,
             status="completed",
             **case.description,
             hardware=case.record["hardware"],
@@ -459,7 +459,7 @@ def finish(case: Case, clock: Clock, outcome: Outcome, source_paths) -> None:
 
 
 def main(
-    harness: str,
+    engine: str,
     module,
     train: Callable[[Case, Clock], Outcome],
     argv=None,
@@ -468,7 +468,7 @@ def main(
     device_first: bool = True,
     failure: Callable[[BaseException], dict[str, Any]] = out_of_memory,
 ) -> None:
-    """Run one process of a case of ``harness``, whose settings module is
+    """Run one process of a case of ``engine``, whose settings module is
     ``module`` and whose ``train(case, clock)`` sets the system up and runs
     every step under the clock.
 
@@ -483,8 +483,8 @@ def main(
     import torch
     import torch.distributed as dist
 
-    arguments = parse(harness, argv)
-    case = open_case(harness, module, arguments, standalone=standalone)
+    arguments = parse(engine, argv)
+    case = open_case(engine, module, arguments, standalone=standalone)
     torch.set_num_threads(case.settings.cpu_threads)
     if device_first:
         torch.cuda.set_device(case.device)

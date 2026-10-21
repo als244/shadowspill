@@ -9,7 +9,7 @@ Reads the parquet files the glob matches, in sorted order, and writes
 ``workloads.recipes.text.prepare_data`` does: every document's token ids
 followed by the tokenizer's end-of-text id, as uint32, the first
 ``--val-tokens`` to ``val.bin`` and ``train.bin`` stopping at the last whole
-document within ``--tokens``. A harness reads the result with ``--data DIR``;
+document within ``--tokens``. An engine reads the result with ``--data DIR``;
 every model family that shares the tokenizer reads the same corpus, and
 ``meta.json`` names the tokenizer (``--name``, or the path given) so a row
 can say what it trained on.

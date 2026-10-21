@@ -1,4 +1,4 @@
-"""The precision contract every harness exposes, as the quickstart names it.
+"""The precision contract every engine exposes, as the quickstart names it.
 
 ``model_dtype`` is what the weights and activations compute at;
 ``master_dtype`` what a trained weight's master copy is kept at, or none to
@@ -14,9 +14,9 @@ written at the narrow dtype and added after (``PRECISION.md``); it asks
 nothing of float32 gradients.
 
 The baselines default to BF16 compute and gradients with FP32 masters and
-moments, the multiplies adding into the BF16 gradients themselves; a harness
+moments, the multiplies adding into the BF16 gradients themselves; an engine
 that cannot sum gradients at the model dtype under its masters, or cannot
-fuse that accumulation, defaults to its own and says so. A harness states what it can
+fuse that accumulation, defaults to its own and says so. An engine states what it can
 honor as ``Capabilities``; a request outside them is refused with the
 reason, never substituted.
 """
@@ -42,7 +42,7 @@ FIELDS = (
 
 
 class Unsupported(ValueError):
-    """A harness cannot honor the requested precision; the message says why."""
+    """An engine cannot honor the requested precision; the message says why."""
 
 
 @dataclass(frozen=True)
@@ -139,10 +139,10 @@ class Precision:
 
 @dataclass(frozen=True)
 class Capabilities:
-    """What one harness can honor; ``None`` in a tuple means the system
+    """What one engine can honor; ``None`` in a tuple means the system
     default is among the choices."""
 
-    harness: str
+    engine: str
     model_dtypes: tuple[str, ...] = DTYPES
     master_dtypes: tuple[str | None, ...] = (None, *DTYPES)
     grad_dtypes: tuple[str | None, ...] = (None, *DTYPES)
@@ -152,7 +152,7 @@ class Capabilities:
     fuse_narrow_gradient_accumulation: bool = True
 
     def check(self, precision: Precision) -> None:
-        """Refuse a request this harness cannot run as asked."""
+        """Refuse a request this engine cannot run as asked."""
 
         for field, allowed in (
             ("model_dtype", self.model_dtypes),
@@ -168,7 +168,7 @@ class Capabilities:
                     "none" if item is None else item for item in allowed
                 )
                 raise Unsupported(
-                    f"{self.harness} cannot honor {field}={value or 'none'};"
+                    f"{self.engine} cannot honor {field}={value or 'none'};"
                     f" it offers {choices}"
                 )
         if (
@@ -178,7 +178,7 @@ class Capabilities:
         ):
             gradients = precision.grad_dtype or precision.model_dtype
             raise Unsupported(
-                f"{self.harness} cannot have a multiply add a weight gradient"
+                f"{self.engine} cannot have a multiply add a weight gradient"
                 f" into a {gradients} running gradient as it writes it;"
                 " --no-fuse-narrow-gradient-accumulation adds it after"
             )

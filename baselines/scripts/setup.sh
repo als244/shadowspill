@@ -27,21 +27,21 @@ Usage: baselines/scripts/setup.sh [--env NAME | --python PATH]
                                   [--expert-parallel quack|te|both]
                                   [--skip-shadowspill]
 
-Create the environment every baseline harness runs in: ShadowSpill (built
+Create the environment every baseline engine runs in: ShadowSpill (built
 from this checkout) with mlops and its providers, through scripts/setup.sh,
 and then DeepSpeed, torchtitan and torchao at the versions verified with
 PyTorch 2.13. torchtune is not installed: its import needs an older torchao
 than the LoRA and FP8 cases use. By default a Conda environment named
 `baselines` is created with Python 3.12; --python installs into an existing
 interpreter instead. --expert-parallel passes through to mlops. The
-Megatron-Core/Bridge and NeMo AutoModel recipe harnesses have their own
+Megatron-Core/Bridge and NeMo AutoModel recipe engines have their own
 pinned environments and scripts. --skip-shadowspill leaves step 1 out when
 the environment already holds ShadowSpill and mlops from an earlier run.
 
 The environment also gets its own CUDA home, <prefix>/cuda-home: the
 toolkit found at CUDA_HOME (or /usr/local/cuda) with the NCCL headers of the
 NCCL PyTorch links in place of the toolkit's. DeepSpeed's extensions that
-include NCCL (DeepCompile's) are built against it by the DeepSpeed harness.
+include NCCL (DeepCompile's) are built against it by the DeepSpeed engine.
 
 The ShadowSpill build directory is shared with any other environment built
 from this checkout at the same Python and PyTorch (build/<wheel tag>); the
@@ -198,7 +198,7 @@ for module_name, package_name in (
     import_module(module_name)
     print(f"{package_name}: {version(package_name)}")
 
-# The pieces the harnesses call, so a missing one fails here, not in a sweep.
+# The pieces the engines call, so a missing one fails here, not in a sweep.
 from torch.distributed.algorithms._checkpoint.checkpoint_wrapper import (  # noqa: E402
     checkpoint_wrapper,
     offload_wrapper,
@@ -214,7 +214,7 @@ for name in (checkpoint_wrapper, offload_wrapper, CPUOffloadPolicy, fully_shard,
              Float8LinearConfig, AdamW4bit, AdamW8bit, CPUOffloadOptimizer,
              deepspeed.runtime.zero):
     assert name is not None
-print("harness entry points: available")
+print("engine entry points: available")
 PY
 
 echo "[5/5] Recording the environment in ${environment_prefix}/environment.lock.json"

@@ -19,7 +19,7 @@ from torch import nn
 from baselines.common import recompute_layers, runner
 from baselines.common.reference import Access
 from baselines.common.training import TrainingModel, pinned_parameters
-from baselines.deepspeed import settings as harness_settings
+from baselines.deepspeed import settings as engine_settings
 from baselines.deepspeed.settings import deepspeed_config
 from workloads.full_model import HEAD_LOSS_METRIC
 
@@ -333,7 +333,7 @@ def train(case, clock):
 
 
 def main(argv=None):
-    runner.main("deepspeed", harness_settings, train, argv)
+    runner.main("deepspeed", engine_settings, train, argv)
 
 
 if __name__ == "__main__":

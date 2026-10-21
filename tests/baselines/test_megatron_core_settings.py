@@ -1,4 +1,4 @@
-"""What a Megatron-Core case can ask for, what the harness itself refuses
+"""What a Megatron-Core case can ask for, what the engine itself refuses
 before launch, and what it resolves for a trainer that cannot import the
 catalog. What Megatron and Bridge allow together is theirs to decide."""
 
@@ -7,7 +7,7 @@ import dataclasses
 
 import pytest
 
-from baselines.common.launch import command, harness_module
+from baselines.common.launch import command, engine_module
 from baselines.common.precision import Unsupported
 from baselines.megatron_core.settings import (
     IMPLEMENTATION,
@@ -60,7 +60,7 @@ def test_the_command_line_reproduces_the_case():
     parser = argparse.ArgumentParser()
     add_arguments(parser)
     assert from_namespace(parser.parse_args(settings.arguments())) == settings
-    assert harness_module("megatron_core").ENVIRONMENT == "nvidia-training"
+    assert engine_module("megatron_core").ENVIRONMENT == "nvidia-training"
     assert command("megatron_core", "py", 1, settings, "out")[11:] == (
         settings.arguments()
     )
@@ -157,7 +157,7 @@ def test_a_plain_norm_qwen35_has_no_hugging_face_counterpart():
         ),
     ],
 )
-def test_the_harness_refuses_what_it_cannot_say_or_measure(changes, message):
+def test_the_engine_refuses_what_it_cannot_say_or_measure(changes, message):
     with pytest.raises(ValueError, match=message):
         case(**changes).validate(1)
 

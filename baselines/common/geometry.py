@@ -6,7 +6,7 @@ An update is ``tokens_per_step`` tokens across every rank, consumed as
 ``sequence_length``. Every rank is a replica unless a system splits one
 replica over several ranks (tensor, pipeline or context parallelism), which
 names the replicas its ``world_size`` ranks form. An experiment chooses
-them for its model, sequence length and hardware together. A harness never
+them for its model, sequence length and hardware together. An engine never
 changes any of these to make a configuration fit: a geometry that does not
 divide is refused, and one that does not fit the device is a row that says
 so.
@@ -106,7 +106,7 @@ class Geometry:
 
 
 def add_arguments(parser: argparse.ArgumentParser) -> None:
-    """The geometry flags every harness takes."""
+    """The geometry flags every engine takes."""
 
     parser.add_argument(
         "--sequence-length",

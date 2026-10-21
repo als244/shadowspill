@@ -1,10 +1,10 @@
-"""What every harness's settings share: the catalog model and its mode, the
+"""What every engine's settings share: the catalog model and its mode, the
 geometry of an update, the precision contract, the data and the weights,
 and the run; the validation of all of that; and the forms a case takes, a
 mapping, a command line and a description for its row.
 
-A harness subclasses ``Settings`` with its own fields, its ``CAPABILITIES``
-of the precision contract and its ``harness_validation``; the sweep and the
+An engine subclasses ``Settings`` with its own fields, its ``CAPABILITIES``
+of the precision contract and its ``engine_validation``; the sweep and the
 trainer see one interface.
 """
 
@@ -47,11 +47,11 @@ HELP = {
 
 @dataclasses.dataclass(frozen=True)
 class Settings:
-    """The fields every harness takes; a harness adds its own after them."""
+    """The fields every engine takes; an engine adds its own after them."""
 
-    #: What the harness honors of the precision contract.
+    #: What the engine honors of the precision contract.
     CAPABILITIES: Capabilities = dataclasses.field(
-        default=Capabilities("harness"), init=False, repr=False, compare=False
+        default=Capabilities("engine"), init=False, repr=False, compare=False
     )
 
     # The model and its training mode.
@@ -94,7 +94,7 @@ class Settings:
 
     @classmethod
     def coerce(cls, value: dict) -> dict:
-        """A harness's own normalization of a mapping's values."""
+        """An engine's own normalization of a mapping's values."""
         return value
 
     @classmethod
@@ -185,14 +185,14 @@ class Settings:
             raise ValueError("allocator_cap_gib must be a positive finite number")
         if self.verify_reference and request.entry.size != "tiny":
             raise ValueError("the reference check materializes a tiny model")
-        self.harness_validation(request, geometry, precision)
+        self.engine_validation(request, geometry, precision)
         return geometry
 
-    def harness_validation(self, request, geometry, precision) -> None:
-        """A harness's own rules, after the shared ones."""
+    def engine_validation(self, request, geometry, precision) -> None:
+        """An engine's own rules, after the shared ones."""
 
     def resolve(self, world_size) -> dict[str, Any]:
-        """What a harness's trainer needs of the catalog beyond what every
+        """What an engine's trainer needs of the catalog beyond what every
         case resolves (``baselines.common.launch``), for a trainer whose
         interpreter cannot import it."""
         return {}
@@ -248,11 +248,11 @@ def add_arguments(
     booleans: frozenset[str] = frozenset(),
     implementations: tuple[str, ...] | None = None,
 ) -> None:
-    """The trainer's flags for a harness's settings: the common model,
+    """The trainer's flags for an engine's settings: the common model,
     geometry and precision flags, then every other field from its default,
-    with the help, choices and types the harness gives; ``booleans`` are the
+    with the help, choices and types the engine gives; ``booleans`` are the
     fields that are a yes or a no once set and unset (none) by default;
-    ``implementations`` replace the catalog's for a harness that trains
+    ``implementations`` replace the catalog's for an engine that trains
     another system's."""
 
     model_flags.add_arguments(parser, implementations)

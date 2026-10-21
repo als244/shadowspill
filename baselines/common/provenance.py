@@ -74,7 +74,7 @@ print(json.dumps({'python': sys.version, 'packages': packages, 'mlops_source': f
 
 
 def hardware_identity() -> dict[str, Any]:
-    """The host and the device a harness process runs on; imports PyTorch,
+    """The host and the device an engine process runs on; imports PyTorch,
     so a launcher calls it only in the process that measures."""
 
     import torch

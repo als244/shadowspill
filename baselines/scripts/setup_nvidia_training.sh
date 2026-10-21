@@ -13,7 +13,7 @@ nccl_ep=0
 # CUDA wheels from a slow mirror; a caller's own value is kept.
 export UV_HTTP_TIMEOUT="${UV_HTTP_TIMEOUT:-300}"
 
-# The pinned revisions the recipe harnesses run (megatron_core/README.md,
+# The pinned revisions the recipe engines run (megatron_core/README.md,
 # automodel/README.md), and the PyTorch every baseline environment runs.
 readonly bridge_revision="6dea15d7fd499975ebf91fbeaf8c2b740a73d679"
 readonly megatron_core_revision="ce852bfb93f364f64a556602fc71a5d9ed2c377e"
@@ -61,12 +61,12 @@ usage() {
 Usage: baselines/scripts/setup_nvidia_training.sh [--env NAME | --python PATH]
          [--sources DIR] [--cuda-archs LIST] [--jobs N]
 
-Create the environment the recipe harnesses run in: Megatron-Core and
+Create the environment the recipe engines run in: Megatron-Core and
 Megatron Bridge, and NeMo AutoModel, at their pinned revisions, with the
 Transformer Engine revision Bridge pins built against PyTorch 2.13. It is
 separate from the `baselines` environment: these revisions pin transformers,
 cuDNN Frontend and quack at versions mlops's stack does not take, so mlops
-is not installed here and the qualified harnesses' environment is left
+is not installed here and the qualified engines' environment is left
 unchanged. Run without options it needs nothing else, and compiles for the
 GPUs the machine shows, or for the list --cuda-archs names. By default a
 Conda environment named `nvidia-training` is created with Python 3.12

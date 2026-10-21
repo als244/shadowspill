@@ -1,12 +1,12 @@
-"""The precision contract every harness exposes, and the refusal of what a
-harness cannot honor."""
+"""The precision contract every engine exposes, and the refusal of what an
+engine cannot honor."""
 
 import argparse
 
 import pytest
 
 from baselines.common import precision
-from baselines.common.launch import harness_module
+from baselines.common.launch import engine_module
 from baselines.common.precision import (
     Capabilities,
     Precision,
@@ -101,7 +101,7 @@ def test_flags_accept_torch_names_and_none():
     assert parse(defaults=Precision(model_dtype="float16")).model_dtype == "float16"
 
 
-def test_capabilities_refuse_what_a_harness_cannot_honor():
+def test_capabilities_refuse_what_a_engine_cannot_honor():
     Capabilities("any").check(
         Precision(
             parameter_rounding="stochastic", fuse_narrow_gradient_accumulation=True
@@ -138,7 +138,7 @@ def test_narrow_gradients_fuse_their_accumulation_by_default():
 
 
 @pytest.mark.parametrize(
-    ("harness", "fused"),
+    ("engine", "fused"),
     [
         ("fsdp2", False),
         ("deepspeed", False),
@@ -146,7 +146,7 @@ def test_narrow_gradients_fuse_their_accumulation_by_default():
         ("megatron_core", True),
     ],
 )
-def test_a_harness_that_cannot_fuse_defaults_to_adding_after(harness, fused):
-    settings = harness_module(harness).Settings()
+def test_a_engine_that_cannot_fuse_defaults_to_adding_after(engine, fused):
+    settings = engine_module(engine).Settings()
     assert settings.fuse_narrow_gradient_accumulation is fused
     settings.CAPABILITIES.check(settings.precision())

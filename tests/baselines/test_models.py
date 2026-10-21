@@ -1,4 +1,4 @@
-"""The catalog model a harness builds, its objective and its useful work."""
+"""The catalog model an engine builds, its objective and its useful work."""
 
 import argparse
 import functools

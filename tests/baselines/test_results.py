@@ -1,4 +1,4 @@
-"""The row a harness writes and the measurement contract."""
+"""The row an engine writes and the measurement contract."""
 
 import json
 
@@ -61,7 +61,7 @@ def peaks(allocated, reserved, host):
 
 def completed_row(**changes):
     fields = {
-        "harness": "fsdp2",
+        "engine": "fsdp2",
         "status": "completed",
         "model": {"model": "llama3-tiny", "implementation": "pytorch", "mode": "full"},
         "geometry": {"sequence_length": 4096},

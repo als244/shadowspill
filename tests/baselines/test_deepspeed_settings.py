@@ -1,4 +1,4 @@
-"""What a DeepSpeed case can ask for, what the harness refuses, and the
+"""What a DeepSpeed case can ask for, what the engine refuses, and the
 configuration it runs under."""
 
 import argparse
@@ -6,7 +6,7 @@ import argparse
 import pytest
 
 from baselines.common.geometry import Geometry
-from baselines.common.launch import command, harness_module
+from baselines.common.launch import command, engine_module
 from baselines.common.precision import Unsupported
 from baselines.deepspeed.settings import (
     Settings,
@@ -40,7 +40,7 @@ def test_flags_round_trip_every_setting():
     parser = argparse.ArgumentParser()
     add_arguments(parser)
     assert from_namespace(parser.parse_args(settings.arguments())) == settings
-    assert harness_module("deepspeed").ENVIRONMENT == "baselines"
+    assert engine_module("deepspeed").ENVIRONMENT == "baselines"
     assert command("deepspeed", "py", 2, settings, "out")[11:] == settings.arguments()
     assert "zero_stage" in settings.describe(2)["configuration"]
 

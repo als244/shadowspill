@@ -1,7 +1,7 @@
 """The settings of one Megatron-Core case, shared by the launcher and the
 trainer.
 
-The harness trains NVIDIA's prebuilt model of the catalog model's
+The engine trains NVIDIA's prebuilt model of the catalog model's
 architecture with Megatron Bridge's training loop over Megatron-Core. The
 model is the one Bridge builds from the case's Hugging Face configuration,
 the catalog model's from its family's ``to_huggingface`` or a named
@@ -27,7 +27,7 @@ from baselines.common.geometry import Geometry
 from baselines.common.precision import Capabilities, Unsupported
 from baselines.common.settings import GEOMETRY_FIELDS, MODEL_FIELDS, PRECISION_FIELDS
 
-#: The sources whose digests identify this harness in a manifest and a row.
+#: The sources whose digests identify this engine in a manifest and a row.
 SOURCE_PATHS = (
     "baselines/__init__.py",
     "baselines/common",
@@ -1088,8 +1088,8 @@ class Base(common.Settings):
         self.check_values()
         return super().validate(world_size)
 
-    def harness_validation(self, request, geometry, precision):
-        """The harness's own rules: NVIDIA's implementation, option values of
+    def engine_validation(self, request, geometry, precision):
+        """The engine's own rules: NVIDIA's implementation, option values of
         the types and choices Megatron takes, the shared settings and the
         precision contract as Megatron's options can say them, and CUDA
         graphs captured before the measured steps. What goes together in

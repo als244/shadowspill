@@ -1,4 +1,4 @@
-"""The training model and its helpers are shared by every harness; this
+"""The training model and its helpers are shared by every engine; this
 module keeps the FSDP2 package's imports short."""
 
 from baselines.common.training import (

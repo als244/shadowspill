@@ -1,8 +1,8 @@
-"""Tiny-model check of a harness's accumulation, reduction and optimizer
+"""Tiny-model check of an engine's accumulation, reduction and optimizer
 ownership against an unsharded copy of the same catalog model, compiled
 whole as the repository's numerical gate compiles its reference.
 
-The harness supplies an ``Access`` to its own storage: the whole value of a
+The engine supplies an ``Access`` to its own storage: the whole value of a
 parameter, of its gradient and of an optimizer state, however it shards or
 offloads them."""
 
@@ -18,7 +18,7 @@ from workloads.models.shared.routed_lora import FACTORS
 from .training import TrainingModel, canonical_name, retie, shared_parameter_groups
 
 # The repository's numerical gate's bounds (``qualification/numerical/
-# tolerances.py``), held here because no harness but ShadowSpill's imports
+# tolerances.py``), held here because no engine but ShadowSpill's imports
 # ShadowSpill; a unit test pins them to the gate's. A loss agrees within an
 # absolute and a relative bound. A weight agrees when its cosine, relative L2
 # and sign agreement are within the weight bounds; a moment or a gradient, an
@@ -149,12 +149,12 @@ def step_error(reference: torch.Tensor, actual: torch.Tensor, dtype) -> float:
 
 
 class Access:
-    """How a harness exposes a parameter's whole value, gradient and
+    """How an engine exposes a parameter's whole value, gradient and
     optimizer state, and a buffer's value; the default reads plain tensors
     and FSDP2 shards."""
 
     #: The kinds of value this access exposes, of the four the check knows;
-    #: a harness that consumes its gradients inside its step leaves that
+    #: an engine that consumes its gradients inside its step leaves that
     #: one out, and the moments the first update makes are the gradient's.
     exposes = ("gradient", "first_moment", "second_moment", "master")
 
@@ -205,7 +205,7 @@ class Reference:
         self.stepped = getattr(torch, precision.stepped_dtype)
         self.model_dtype = getattr(torch, precision.model_dtype)
         # Gradients accumulate over the microbatches at the contract's
-        # gradient dtype, as the harness does, before the masters take them.
+        # gradient dtype, as the engine does, before the masters take them.
         self.grad_dtype = getattr(torch, precision.grad_dtype or precision.model_dtype)
         self.learning_rate = settings.learning_rate
         self.model = TrainingModel(request, geometry, dtype=precision.model_dtype)
@@ -213,7 +213,7 @@ class Reference:
         self.model.to_empty(device=device)
         retie(self.model, groups)
         if cast_pinned:
-            # The harness casts every parameter to the model dtype, the ones
+            # The engine casts every parameter to the model dtype, the ones
             # the model pins at float32 included; so does this copy.
             for parameter in self.model.parameters():
                 parameter.data = parameter.data.to(self.model_dtype)
@@ -267,7 +267,7 @@ class Reference:
         )
         self.checks = []
         #: The copy's microbatch objective, compiled whole on the first
-        #: update, once the harness has finished the copy's parameters.
+        #: update, once the engine has finished the copy's parameters.
         self.compiled = None
         #: The trained weights every element of which was zero before the
         #: first update: still nothing but their optimizer's steps.

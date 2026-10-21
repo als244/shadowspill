@@ -1,12 +1,12 @@
-"""The catalog model a harness builds, in full or LoRA mode, with the
-objective every harness shares and the useful work a step performs.
+"""The catalog model an engine builds, in full or LoRA mode, with the
+objective every engine shares and the useful work a step performs.
 
 A ``ModelRequest`` names a catalog entry, the implementation that builds
 it, the training mode and, for LoRA, the adapter options ``configure_lora``
-takes; it builds the model on ``meta`` so each harness materializes it where
+takes; it builds the model on ``meta`` so each engine materializes it where
 its sharding wants, and it supplies the objective of ``workloads.full_model``
 (each microbatch's summed loss over the rank's tokens per update), so every
-harness optimizes the same quantity.
+engine optimizes the same quantity.
 
 Useful work is counted from the model that was built, not from a table:
 every two-dimensional weight is a matrix multiply of its size per token, a
@@ -55,7 +55,7 @@ class ModelRequest:
         if entry.factory is not None:
             raise ValueError(
                 f"{self.model} is built by its quickstart factory, which the"
-                " baseline harnesses do not run"
+                " baseline engines do not run"
             )
         entry.config(**dict(self.config))
         if self.lora:
@@ -118,7 +118,7 @@ class ModelRequest:
     def build(self, *, dtype: str, device: str = "meta") -> Any:
         """The model on ``meta`` (or built with values on ``device``) at
         ``dtype``, with LoRA applied in that mode so the trainable set is
-        fixed before any harness shards or materializes it; the factors are
+        fixed before any engine shards or materializes it; the factors are
         created at ``dtype`` too, unless the LoRA options say otherwise, so
         they follow the same precision contract as every other trained
         weight."""
@@ -238,7 +238,7 @@ def useful_flops_per_token(model: Any, sequence_length: int) -> float:
 def add_arguments(
     parser: argparse.ArgumentParser, implementations: tuple[str, ...] | None = None
 ) -> None:
-    """The model flags every harness takes; a harness that trains another
+    """The model flags every engine takes; an engine that trains another
     system's implementation names it in ``implementations``."""
 
     parser.add_argument("--model", required=True, choices=catalog.names())

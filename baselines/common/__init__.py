@@ -1,9 +1,9 @@
-"""What every baseline harness shares.
+"""What every baseline engine shares.
 
 ``geometry`` is the shape of one optimizer update; ``precision`` the dtype
-contract every harness exposes and the refusal of a combination it cannot
-honor; ``models`` the catalog model a harness builds, in full or LoRA mode,
-with its objective and useful work; ``results`` the row a harness writes and
+contract every engine exposes and the refusal of a combination it cannot
+honor; ``models`` the catalog model an engine builds, in full or LoRA mode,
+with its objective and useful work; ``results`` the row an engine writes and
 the measurement contract; ``provenance`` what a row records about the code,
 the packages and the hardware; ``data`` the synthetic tokens each rank draws
 and the pre-tokenized corpus a real-data run reads.

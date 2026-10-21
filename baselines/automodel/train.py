@@ -7,9 +7,9 @@ The recipe's sections come from the shared settings and the case's AutoModel
 options: the model from the case's Hugging Face configuration (or a named
 checkpoint), the distributed strategy and its sizes, the loss, the optimizer
 the precision contract maps to, and a step scheduler over the tokens every
-harness trains on. The runner's clock times each optimizer update inside
+engine trains on. The runner's clock times each optimizer update inside
 AutoModel's own step, ``_run_train_optim_step``, with gradient clipping off
-as every harness steps. Once the recipe is set up, the request records what
+as every engine steps. Once the recipe is set up, the request records what
 AutoModel built: the model's class, its head, its attention, its backend and
 the loss.
 """
@@ -25,13 +25,13 @@ from pathlib import Path
 import torch
 import torch.distributed as dist
 
-from baselines.automodel import data as harness_data
-from baselines.automodel import settings as harness_settings
+from baselines.automodel import data as engine_data
+from baselines.automodel import settings as engine_settings
 from baselines.automodel.settings import OPTIONS, parse_list
 from baselines.common import runner
 from baselines.common.precision import Unsupported
 
-#: The recipe classes behind the harness's names.
+#: The recipe classes behind the engine's names.
 LOSSES = {
     "chunked": "nemo_automodel.components.loss.chunked_ce.ChunkedCrossEntropy",
     "masked": "nemo_automodel.components.loss.masked_ce.MaskedCrossEntropy",
@@ -139,7 +139,7 @@ def recipe_config(case, mechanism, vocabulary, attention, own, targets=()):
             "enabled": False,
             "checkpoint_dir": str(case.directory / "automodel"),
         },
-        # The case's tokens, every harness's, as AutoModel's datasets serve
+        # The case's tokens, every engine's, as AutoModel's datasets serve
         # batches; no tokenizer, which the recipe would otherwise load from
         # the model's path.
         "dataset": {
@@ -152,7 +152,7 @@ def recipe_config(case, mechanism, vocabulary, attention, own, targets=()):
     # AutoModel's options, under their own names where the case sets them.
     for option in OPTIONS:
         value = getattr(settings, option.name)
-        if value is None or option.section == "harness":
+        if value is None or option.section == "engine":
             continue
         if option.name == "activation_checkpointing":
             value = {"none": False, "full": True}.get(value, value)
@@ -206,7 +206,7 @@ def recipe_config(case, mechanism, vocabulary, attention, own, targets=()):
 
 
 def backend_options(settings, resolved):
-    """The fields of AutoModel's BackendConfig the case sets, the harness's
+    """The fields of AutoModel's BackendConfig the case sets, the engine's
     linear layers beside the chunked loss among them."""
 
     value = {
@@ -596,7 +596,7 @@ def train(case, clock):
         def _run_train_optim_step(self, batches, max_grad_norm=None):
             step = seen["step"]
             clock.begin(step)
-            # No clipping, as every harness steps.
+            # No clipping, as every engine steps.
             sample = super()._run_train_optim_step(batches, None)
             clock.end(step, sample.metrics["loss"])
             if clock.measured(step):
@@ -623,7 +623,7 @@ def train(case, clock):
             seen["step"] += 1
             return sample
 
-    harness_data.serve(case, vocabulary)
+    engine_data.serve(case, vocabulary)
     recipe = Recipe(ConfigNode(config))
     case.stage = "setup"
     recipe.setup()
@@ -644,7 +644,7 @@ def train(case, clock):
 
 
 def main(argv=None):
-    runner.main("automodel", harness_settings, train, argv)
+    runner.main("automodel", engine_settings, train, argv)
 
 
 if __name__ == "__main__":

@@ -1,4 +1,4 @@
-"""What every harness trains: a checkpoint loads into the catalog model the
+"""What every engine trains: a checkpoint loads into the catalog model the
 objective wraps, under the model's own parameter names, which are the
 names the family's reader maps."""
 
