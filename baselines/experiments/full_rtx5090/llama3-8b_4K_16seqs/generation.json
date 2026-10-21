@@ -1,0 +1,51 @@
+{
+  "schema_version": 1,
+  "template": "full",
+  "inputs": {
+    "template": "full",
+    "model": "llama3-8b",
+    "implementation": "mlops",
+    "lora": {
+      "rank": 16,
+      "alpha": 16.0
+    },
+    "sequence_length": 4096,
+    "tokens_per_step": 65536,
+    "gpus": 1,
+    "gpu_memory_gib": 32.0,
+    "host_memory_gib": 188.0,
+    "checkpoint": null,
+    "corpus": null,
+    "setting": [],
+    "description": "Full training of Llama 3 8B on one 32 GiB GPU, every engine offloading: the throughput each engine reaches within the GPU memory it holds, and the host memory it needs."
+  },
+  "derived": {
+    "model": "llama3-8b",
+    "implementation": "mlops",
+    "lora": {
+      "rank": 16,
+      "alpha": 16.0
+    },
+    "gpus": 1,
+    "sequence_length": 4096,
+    "tokens_per_step": 65536,
+    "microbatches": [4096, 8192, 16384, 32768, 65536],
+    "accumulated_microbatches": [4096, 8192, 16384, 32768],
+    "single_microbatch": [65536],
+    "recompute": [0, 0.25, 0.5, 0.75, 1],
+    "recomputed": [0.25, 0.5, 0.75, 1],
+    "execution_budgets": [8, 12, 16, 24, 28],
+    "summary_budgets": [8, 12, 16, 24, 28, 32],
+    "spill_gib": 144
+  },
+  "cases": {
+    "shadowspill": 25,
+    "fsdp2": 206,
+    "deepspeed": 90
+  },
+  "generated_at": "2026-10-21T18:20:52-04:00",
+  "generator": {
+    "git_head": "fadc671c810afc03ad12c952a1586a8c02e1503b",
+    "git_dirty": true
+  }
+}

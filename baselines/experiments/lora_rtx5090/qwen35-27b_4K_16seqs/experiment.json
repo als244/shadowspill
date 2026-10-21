@@ -1,0 +1,53 @@
+{
+  "schema_version": 1,
+  "gpus": 1,
+  "python": {
+    "fsdp2": "baselines",
+    "deepspeed": "baselines",
+    "shadowspill": "shadowspill"
+  },
+  "case_timeout": 3600,
+  "summary_budgets_gib": [8, 12, 16, 24, 28, 32],
+  "variables": {
+    "models": "the directory holding the Hugging Face checkpoints, one directory per checkpoint",
+    "corpora": "the directory holding the tokenized corpora prepare_corpus writes, one directory per tokenizer family"
+  },
+  "settings": {
+    "model": "qwen35-27b",
+    "implementation": "mlops",
+    "mode": "lora",
+    "lora": {
+      "rank": 16,
+      "alpha": 16.0
+    },
+    "checkpoint": "{models}/Qwen3.6-27B",
+    "data": "{corpora}/qwen35",
+    "seed": 0,
+    "sequence_length": 4096,
+    "tokens_per_step": 65536,
+    "model_dtype": "bfloat16",
+    "master_dtype": null,
+    "grad_dtype": "bfloat16",
+    "opt_state_dtype": "bfloat16",
+    "warmup_steps": 1,
+    "steps": 3,
+    "cpu_threads": 8
+  },
+  "sweeps": [
+    {
+      "name": "shadowspill",
+      "engine": "shadowspill",
+      "config": "shadowspill.json"
+    },
+    {
+      "name": "fsdp2",
+      "engine": "fsdp2",
+      "config": "fsdp2.json"
+    },
+    {
+      "name": "deepspeed",
+      "engine": "deepspeed",
+      "config": "deepspeed.json"
+    }
+  ]
+}
