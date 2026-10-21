@@ -1,16 +1,16 @@
 # NeMo AutoModel over the catalog models
 
-This harness trains NVIDIA's implementation of a catalog model's
+This engine trains NVIDIA's implementation of a catalog model's
 architecture with NeMo AutoModel's fine-tuning recipe
 (`TrainFinetuneRecipeForNextTokenPrediction`) and AutoModel's own training
 loop, under the shared objective, geometry, precision contract and result
 row of `baselines/common`. AutoModel builds its own class of the
 architecture where its registry has one, and Hugging Face's otherwise; the
-tokens are the ones every harness trains on, through AutoModel's own data
+tokens are the ones every engine trains on, through AutoModel's own data
 path.
 
 AutoModel's options are settings under AutoModel's own names, each left to
-AutoModel's default unless the case names it. The harness sets two defaults
+AutoModel's default unless the case names it. The engine sets two defaults
 of its own: the loss, and the linear layers beside it
 ([The loss](#the-loss)). It refuses only what it cannot say or what would
 train another objective: a value of the wrong type or outside AutoModel's
@@ -51,11 +51,11 @@ take where they import:
 A platform without a pinned wheel keeps PyTorch's and cuDNN's attention;
 the setup says so, and the lock file records what it installed.
 
-One case, through the launcher every harness starts from:
+One case, through the launcher every engine starts from:
 
 ```bash
-python -m baselines.common.launch --harness automodel --gpus 1 \
-  --output /mnt/storage/research/shadowspill/baselines/dev/automodel-llama3-tiny \
+python -m baselines.common.launch --engine automodel --gpus 1 \
+  --output <dir> \
   --model llama3-tiny --sequence-length 64 --tokens-per-step 1024 \
   --tokens-per-microbatch 128 --warmup-steps 1 --steps 2
 ```
@@ -70,9 +70,9 @@ NVIDIA's); its checkpoint LoRA cases adapt the tiny checkpoint that
 writes:
 
 ```bash
-python -m baselines.sweep --harness automodel \
+python -m baselines.sweep --engine automodel \
   --config baselines/automodel/configs/qualification.json \
-  --output /mnt/storage/research/shadowspill/baselines/dev/automodel-qualification --gpus 1
+  --output <dir> --gpus 1
 ```
 
 ## The model
@@ -113,7 +113,7 @@ take no backend.
 
 The row names the implementation `automodel`. Its useful work is counted from
 the catalog's own model of the same architecture with the convention every
-harness uses, so recomputation, the optimizer and communication are not
+engine uses, so recomputation, the optimizer and communication are not
 credited.
 
 ## Shared settings
@@ -121,7 +121,7 @@ credited.
 | Flags | Values (default) | Meaning |
 |---|---|---|
 | `--model`, `--model-config JSON` | a catalog name; field overrides | The catalog model and overrides of its configuration's fields |
-| `--implementation` | `automodel` | NVIDIA's implementation, the only one this harness trains |
+| `--implementation` | `automodel` | NVIDIA's implementation, the only one this engine trains |
 | `--mode`, `--lora JSON` | `full` or `lora` (`full`); LoRA options | Full or LoRA training ([LoRA](#lora)) |
 | `--checkpoint DIR` | a directory (none) | A Hugging Face checkpoint to import |
 | `--sequence-length`, `--tokens-per-step`, `--tokens-per-microbatch` | tokens | One update's geometry in whole sequences; a replica is tensor x pipeline x context parallel ranks |
@@ -132,18 +132,18 @@ credited.
 | `--learning-rate`, `--weight-decay`, `--seed` | (3e-4, 0.01, 0) | Adam's rate (constant) and decay; betas 0.9 and 0.999, epsilon 1e-8, no clipping |
 
 `--verify-reference` is refused: the reference check compares updates of the
-catalog's own implementation, and this harness trains NVIDIA's.
+catalog's own implementation, and this engine trains NVIDIA's.
 
 Each AutoModel option below is `--<name-with-dashes> VALUE`, a boolean
 `--<name>` or `--no-<name>`, a list comma-separated. Each goes into the
 recipe section AutoModel reads it from under AutoModel's key; the default in
 each table is AutoModel's own when the case names nothing, unless the table
-says it is the harness's, and each rank's request records the whole recipe
+says it is the engine's, and each rank's request records the whole recipe
 configuration the run used.
 
 ## Precision
 
-[`../PRECISION.md`](../PRECISION.md) sets this harness beside the others.
+[`../PRECISION.md`](../PRECISION.md) sets this engine beside the others.
 
 ### What AutoModel offers
 
@@ -173,13 +173,13 @@ contract is refused, and `case.json` records the mechanism
 | float32 model | float32 storage stepped in place by torch's AdamW, the weights their own masters; FSDP2 only on one rank, where DDP and Megatron-FSDP cast to bfloat16 |
 
 FSDP2 reduces gradients at the contract's gradient dtype (`reduce_dtype`), as
-the FSDP2 harness does. A parameter the model itself keeps at float32 inside a
+the FSDP2 engine does. A parameter the model itself keeps at float32 inside a
 narrower model (Qwen 3.5's gated delta net keeps `A_log` and `dt_bias` at
 float32) stays there and is stepped beside the others; the first update's
 evidence counts such parameters apart (`pinned_float32`), and the request
 names them (`automodel_pinned_float32`).
 
-The harness never substitutes a dtype, so a contract no mechanism expresses
+The engine never substitutes a dtype, so a contract no mechanism expresses
 is refused. Megatron-FSDP's options apply where it shards, over a
 data-parallel shard group of two or more ranks: under tensor parallelism
 over the whole world AutoModel does not wrap the model in Megatron-FSDP, and
@@ -199,7 +199,7 @@ than the model's dtype without them. On one rank LoRA factors at a dtype
 other than the model's are refused, since AutoModel casts the adapters of
 every module that owns frozen weights to the compute dtype there. Gradients
 accumulate as autograd writes them, so fused narrow-gradient accumulation is
-refused and the harness defaults to adding after. Rounding is to nearest.
+refused and the engine defaults to adding after. Rounding is to nearest.
 
 The first update checks the weights, the gradients, the masters (a remainder
 kept by `store_param_remainders` counts as a float32 master) and the moments
@@ -218,7 +218,7 @@ there.
 
 ## The loss
 
-The harness has one default loss. With a tensor-parallel size of 1 it is
+The engine has one default loss. With a tensor-parallel size of 1 it is
 `ChunkedCrossEntropy`, whose head and loss never hold the full logits, so a
 single device keeps no `tokens x vocabulary` buffer. Under tensor
 parallelism it is `TEParallelCrossEntropy`, AutoModel's one loss that
@@ -251,8 +251,8 @@ a loss that takes Transformer Engine's head.
 
 | Option | Values (default) | What it does | Goes with |
 |---|---|---|---|
-| `--loss L` | `chunked`, `masked`, `fused_linear`, `te_parallel` (the harness's: `chunked`; `te_parallel` under tensor parallelism) | `chunked`: `ChunkedCrossEntropy` projects the head and computes the loss `chunk_len` token rows at a time, recomputing each chunk in backward. `masked`: `MaskedCrossEntropy` over the full logits, AutoModel's example recipes' loss. `fused_linear`: `FusedLinearCrossEntropy` on the hidden states and the head's weight. `te_parallel`: Transformer Engine's cross entropy over vocabulary-sharded logits | `chunked` needs a plain bias-free `nn.Linear` head and no logit softcapping; the linear losses need a model whose forward takes `logits_to_keep`, no tensor-parallel head, and pipeline stages that return hidden states |
-| `--linear L` | `torch`, `te`, `quack` (the harness's: `torch` with `chunked`; AutoModel's `te` where Transformer Engine imports, else `torch`) | The linear layers of AutoModel's own classes ([The backend](#the-backend)) | |
+| `--loss L` | `chunked`, `masked`, `fused_linear`, `te_parallel` (the engine's: `chunked`; `te_parallel` under tensor parallelism) | `chunked`: `ChunkedCrossEntropy` projects the head and computes the loss `chunk_len` token rows at a time, recomputing each chunk in backward. `masked`: `MaskedCrossEntropy` over the full logits, AutoModel's example recipes' loss. `fused_linear`: `FusedLinearCrossEntropy` on the hidden states and the head's weight. `te_parallel`: Transformer Engine's cross entropy over vocabulary-sharded logits | `chunked` needs a plain bias-free `nn.Linear` head and no logit softcapping; the linear losses need a model whose forward takes `logits_to_keep`, no tensor-parallel head, and pipeline stages that return hidden states |
+| `--linear L` | `torch`, `te`, `quack` (the engine's: `torch` with `chunked`; AutoModel's `te` where Transformer Engine imports, else `torch`) | The linear layers of AutoModel's own classes ([The backend](#the-backend)) | |
 | `--chunk-len N` | token rows (512) | `chunked`: rows per chunk | |
 | `--[no-]chunked-compile` | (on) | `chunked`: compiles each chunk's projection and loss with their backward | |
 | `--fused-linear-impl I` | `cce`, `torch_compile` (`cce`) | `fused_linear`: Cut Cross-Entropy, which never holds the logits and is the slowest, or a compiled projection and loss, several times faster with memory growing as tokens times vocabulary | |
@@ -261,7 +261,7 @@ a loss that takes Transformer Engine's head.
 Where a model's forward takes no `logits_to_keep`, AutoModel refuses the
 chunked loss and replaces `fused_linear` and `te_parallel` with its masked
 loss, warning; under pipeline parallelism with stages that return no hidden
-states it refuses the chunked loss and replaces `fused_linear`. The harness
+states it refuses the chunked loss and replaces `fused_linear`. The engine
 reads the loss AutoModel built and refuses a case whose loss was replaced.
 Every loss sums over a microbatch's trained tokens and AutoModel divides by
 the update's trained tokens across the data-parallel ranks, so the gradient
@@ -288,7 +288,7 @@ choice.
 
 | Option | Values (default) | What it does | Goes with |
 |---|---|---|---|
-| `--attn-implementation I` | `sdpa`, `eager`, `flash_attention_2`, `flash_attention_3`, `flash_attention_4`, `te` (AutoModel's default: `flash_attention_2` where flash-attn imports, else `sdpa`) | Hugging Face's attention, or Transformer Engine's injected into it (`te`) | FlashAttention takes bfloat16 and float16 only, so a float32 model names `sdpa`; FlashAttention 3 on compute capability 9.0 only. `te` is injected into classes built from Hugging Face's, and into AutoModel's Llama 3 and Qwen 3 only with another `--attn`: they hold Transformer Engine's attention for packed batches, so AutoModel skips the injection and they attend by SDPA. Context parallelism takes `sdpa` for classes built from Hugging Face's. AutoModel applies its default to a checkpoint's configuration but leaves its own classes' configuration unset under `from_config`, so the harness puts it on the configuration too |
+| `--attn-implementation I` | `sdpa`, `eager`, `flash_attention_2`, `flash_attention_3`, `flash_attention_4`, `te` (AutoModel's default: `flash_attention_2` where flash-attn imports, else `sdpa`) | Hugging Face's attention, or Transformer Engine's injected into it (`te`) | FlashAttention takes bfloat16 and float16 only, so a float32 model names `sdpa`; FlashAttention 3 on compute capability 9.0 only. `te` is injected into classes built from Hugging Face's, and into AutoModel's Llama 3 and Qwen 3 only with another `--attn`: they hold Transformer Engine's attention for packed batches, so AutoModel skips the injection and they attend by SDPA. Context parallelism takes `sdpa` for classes built from Hugging Face's. AutoModel applies its default to a checkpoint's configuration but leaves its own classes' configuration unset under `from_config`, so the engine puts it on the configuration too |
 | `--sdpa-method LIST` | `flash_attention`, `efficient_attention`, `math`, `cudnn_attention` (AutoModel's: flash and efficient under context parallelism, flash, efficient and math under activation checkpointing, none otherwise) | The SDPA backends a patched forward allows; the patch also sets them process-wide, so recomputation in backward takes the same | `--use-sdpa-patching`: without the patch the list does nothing |
 | `--[no-]use-sdpa-patching` | (on) | Runs the forward of classes built from Hugging Face's inside `sdpa_kernel(sdpa_method)`, all four backends where no list applies, and of AutoModel's own whenever a list applies: a named `--sdpa-method`, or AutoModel's own under context parallelism or activation checkpointing | |
 | `--[no-]use-liger-kernel` | (on) | Liger's kernels in classes built from Hugging Face's | Off under tensor or context parallelism |
@@ -339,7 +339,7 @@ it `mp_policy` and `offload_policy`), and DDP and Megatron-FSDP cast the model
 to bfloat16. Megatron-FSDP also wraps nothing where its data-parallel shard
 group is one rank, as under tensor parallelism over the whole world:
 AutoModel applies tensor parallelism alone, and Megatron-FSDP's options do
-not apply. The harness writes `--cpu-offload`, `--offload-pin-memory` and
+not apply. The engine writes `--cpu-offload`, `--offload-pin-memory` and
 the `--mp-*` dtypes into FSDP2's policies, so under DDP and Megatron-FSDP it
 refuses them, as AutoModel refuses an option of another strategy.
 
@@ -353,7 +353,7 @@ refuses them, as AutoModel refuses an option of another strategy.
 | `--[no-]enable-compile` | (off) | `torch.compile` on each decoder layer after sharding | The FSDP2 way to compile |
 | `--[no-]enable-fsdp2-prefetch`, `--fsdp2-backward-prefetch-depth N`, `--fsdp2-forward-prefetch-depth N` | (off); (2); (1) | Explicit prefetch chains between layers, and their depths | No effect under pipeline or expert parallelism, with `--no-reshard-after-forward`, or on Qwen 3.5 |
 | `--[no-]enable-async-tensor-parallel` | (off) | Asynchronous tensor parallelism; it also compiles each layer | Refused without sequence parallelism at tensor parallelism above 1, and on the MoE path |
-| `--[no-]patch-is-packed-sequence` | (off) | Skips transformers' packed-sequence check, one host synchronization per attention layer | Unpacked batches, as the harness's |
+| `--[no-]patch-is-packed-sequence` | (off) | Skips transformers' packed-sequence check, one host synchronization per attention layer | Unpacked batches, as the engine's |
 | `--[no-]cpu-offload`, `--[no-]offload-pin-memory` | (off), (on) | FSDP2's `CPUOffloadPolicy`: the weight shards, gradients and optimizer step on the host | Two or more ranks; refused under DDP and Megatron-FSDP, and with a contract that maps to Transformer Engine's `FusedAdam` (masters, or moments at a dtype other than the stepped weights'), which steps on the device while the shards stay on the host. On one rank nothing offloads: weights built without a checkpoint, or for LoRA, stay on the host unmoved; a full fine-tune from a checkpoint loads on the device |
 
 ### Megatron-FSDP
@@ -389,7 +389,7 @@ rank, logging an error.
 | `--[no-]scale-grads-in-schedule`, `--[no-]patch-inner-model`, `--[no-]patch-causal-lm-model`, `--[no-]pp-recv-buffer-pool` | (off), (on), (on), (off) | The schedule scales the gradients; the stage forwards patched; receive buffers reused | |
 
 A `--pp-size` above 1 with no pipeline option takes AutoModel's pipeline
-defaults: the harness writes the pipeline section, which AutoModel
+defaults: the engine writes the pipeline section, which AutoModel
 otherwise requires.
 
 ## Activation checkpointing and offloading
@@ -402,6 +402,16 @@ otherwise requires.
 AutoModel offloads no activations: its one offload is FSDP2's
 `CPUOffloadPolicy`, which needs two or more ranks to shard, so on one
 device AutoModel offloads nothing.
+
+### What each offload option moves
+
+Where each option puts the weights, gradients, optimizer state and activations,
+and where the optimizer steps; an empty cell is the default's.
+
+| Option | Weights the compute uses | Weights the optimizer steps | Gradients | Optimizer state and step | Activations |
+|---|---|---|---|---|---|
+| none (the default) | device | device | device | device | device |
+| `--cpu-offload` (FSDP2's `CPUOffloadPolicy`, two or more ranks) | device: each block's gathered from the host before it runs | host: the shards | host | host; the step on the CPU | device |
 
 ## FP8 and compilation
 
@@ -423,7 +433,7 @@ builds the class AutoModel will build on the meta device, which holds no
 weights, selects the modules by those rules by module type, and passes their
 names as `target_modules`; the request records them
 (`automodel_lora_targets`). AutoModel adapts what a target matches and
-passes over a target that matches nothing, so the harness refuses a target
+passes over a target that matches nothing, so the engine refuses a target
 that matches no module of the model AutoModel built. The adapters take the
 case's rank (`dim`), its alpha as given (AutoModel scales the adapters'
 output by alpha over `dim`) and its `factor_dtype`, the head frozen. A case
@@ -431,14 +441,14 @@ takes the `rank`, `alpha`, `factor_dtype`, `head` (frozen) and
 `shared_experts` entries of `--lora`; LoRA adapts a pretrained model when it
 names `--checkpoint`, and AutoModel's own initialization otherwise.
 
-Each harness trains its framework's default LoRA layout over the shared
+Each engine trains its framework's default LoRA layout over the shared
 definition's targets. AutoModel adapts each Hugging Face projection
 separately, so where the catalog fuses projections (Qwen 3.5's
 linear-attention inputs `w_qkvz` and `w_ba`, and the shared expert's
 `gate_up`), AutoModel's split ones (`in_proj_qkv`, `in_proj_z`, `in_proj_b`
 and `in_proj_a`; `gate_proj` and `up_proj`) each carry their own A factor, a
 few more trainable parameters than the catalog's; the routed experts'
-factors are the catalog's shapes transposed. Harnesses are compared by total
+factors are the catalog's shapes transposed. Engines are compared by total
 trainable parameters, the elements of every trainable tensor, which each row
 records from the model AutoModel built.
 
@@ -448,11 +458,11 @@ records from the model AutoModel built.
 | `--[no-]use-triton` | (off) | Triton LoRA kernels | AutoModel turns them off where Transformer Engine imports, and under tensor or pipeline parallelism and DoRA |
 | `--[no-]moe-rank-scaling` | (off) | Expert adapters of rank `dim // experts per token` | |
 | `--[no-]use-dora` | (off) | DoRA | Plain `nn.Linear` layers only: it raises on Transformer Engine's linears and on grouped experts |
-| `--lora-dropout F`, `--lora-dropout-position P` | (0); `pre`, `post` (`post`) | Dropout on the adapters' path, before or after the adapter | The shared objective has none: a case with dropout departs from the other harnesses' |
+| `--lora-dropout F`, `--lora-dropout-position P` | (0); `pre`, `post` (`post`) | Dropout on the adapters' path, before or after the adapter | The shared objective has none: a case with dropout departs from the other engines' |
 
 ## AutoModel's benchmark recipes
 
-AutoModel's own benchmark recipes map onto harness options; the shared
+AutoModel's own benchmark recipes map onto engine options; the shared
 settings take the geometry, the optimizer's hyperparameters and the data.
 Llama 3.1 8B LoRA
 ([`llama3_1_8b_peft_benchmark.yaml`](https://github.com/NVIDIA-NeMo/Automodel/blob/b203f3f9f9f3140c660942a088ff36bbc3a5e856/examples/llm_benchmark/llama3_1/llama3_1_8b_peft_benchmark.yaml),
@@ -483,7 +493,7 @@ Where they differ from the recipes: the first recipe's LoRA dropout of 0.1
 is `--lora-dropout 0.1`, outside the shared objective, its `use_triton` is a
 no-op where Transformer Engine imports, as in the nvidia-training
 environment, and it names no `clip_grad_norm`, so AutoModel clips at its
-default norm of 1.0, which the harness does not; the second recipe reduces
+default norm of 1.0, which the engine does not; the second recipe reduces
 gradients at float32 over bfloat16 weights, which the contract does not name
 (its gradient dtype is the reduction's), sets `rope_fusion`, which AutoModel
 turns off, and runs AutoModel's benchmarking recipe, which never clips and
@@ -492,10 +502,10 @@ environment builds where 9.0 or 10.0 is a target ([Limits](#limits)).
 
 ## Data
 
-The tokens are the ones every harness trains on (`baselines/common/runner.py`):
+The tokens are the ones every engine trains on (`baselines/common/runner.py`):
 synthetic tokens drawn once per data-parallel replica from `--seed`, or each
 replica's window of the corpus for each update. They reach AutoModel through
-its own data path: the recipe's dataset is the harness's
+its own data path: the recipe's dataset is the engine's
 `baselines.automodel.data.CaseTokens`, which yields each update's
 microbatches as AutoModel's language-model datasets yield batches, each
 `sequences per microbatch x sequence length` input tokens with their next
@@ -511,12 +521,12 @@ AutoModel's loop runs the case. The runner's clock times each optimizer
 update inside AutoModel's step (`_run_train_optim_step`), from a device
 synchronization and a barrier across the ranks to the end of the step's
 blocking loss reduction. The configuration cannot turn clipping off, so the
-harness calls the step without a norm, as every harness steps; AutoModel
+engine calls the step without a norm, as every engine steps; AutoModel
 then computes no gradient norm (its log shows 0). AutoModel's logging,
 garbage collection and checkpoint checks between updates fall outside.
 Checkpointing, validation and the preemption handler are off, and the
 learning rate is constant. AutoModel's first rank resets the allocator's peak
-each time it logs an update, so the harness records each measured update's
+each time it logs an update, so the engine records each measured update's
 peak itself and the row takes the largest.
 
 ## What a run writes

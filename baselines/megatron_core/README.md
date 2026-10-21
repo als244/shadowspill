@@ -1,16 +1,16 @@
 # Megatron-Core over the catalog models
 
-This harness trains NVIDIA's own implementation of a catalog model's
+This engine trains NVIDIA's own implementation of a catalog model's
 architecture with Megatron Bridge's training loop over Megatron-Core, under
 the shared objective, geometry, precision contract and result row of
 `baselines/common`. Bridge builds the model from the case's Hugging Face
 configuration (or from a Bridge recipe of the same architecture) and runs
 its `pretrain` loop with the case's settings; the tokens are the ones every
-harness trains on.
+engine trains on.
 
 Every Megatron option a case can set is a setting under Megatron's own
 name, left to Bridge's default (or the recipe's value) unless the case names
-it. The harness refuses only what it cannot say or measure: a value of the
+it. The engine refuses only what it cannot say or measure: a value of the
 wrong type or outside Megatron's choices, a precision the contract asks for
 that Megatron's options cannot express, the shared settings where they
 contradict Megatron's own or a recipe's, and a graph capture during a
@@ -73,12 +73,12 @@ finds the checkouts elsewhere, and `--env NAME` or `--python PATH` choose
 another environment). What it installed is recorded inside the environment, in
 `<prefix>/environment.lock.json`.
 
-One case, through the launcher every harness starts from, run from the
+One case, through the launcher every engine starts from, run from the
 repository root in the environment the sweeps run in:
 
 ```bash
-python -m baselines.common.launch --harness megatron_core --gpus 1 \
-  --output /mnt/storage/research/shadowspill/baselines/dev/megatron-llama3-tiny \
+python -m baselines.common.launch --engine megatron_core --gpus 1 \
+  --output <dir> \
   --model llama3-tiny --sequence-length 64 --tokens-per-step 1024 \
   --tokens-per-microbatch 128 --warmup-steps 1 --steps 2
 ```
@@ -92,9 +92,9 @@ another).
 The tiny qualification matrix:
 
 ```bash
-python -m baselines.sweep --harness megatron_core \
+python -m baselines.sweep --engine megatron_core \
   --config baselines/megatron_core/configs/qualification.json \
-  --output /mnt/storage/research/shadowspill/baselines/dev/megatron-qualification --gpus 1
+  --output <dir> --gpus 1
 ```
 
 Its cases run each precision, recomputation and offloading mechanism on the
@@ -105,7 +105,7 @@ comparison, since the model is NVIDIA's. Its LoRA case adapts a tiny
 checkpoint that
 `python -m baselines.scripts.write_checkpoint --model llama3-tiny --output runs/checkpoints/llama3-tiny`
 writes. A throughput matrix names only Megatron's own options and runs inside
-an experiment, which gives every harness the same model, geometry and
+an experiment, which gives every engine the same model, geometry and
 precision contract (`../README.md`).
 
 ## The model
@@ -122,7 +122,7 @@ instead from a recipe in `megatron.bridge.recipes`, whose model must have the
 case's architecture (layers, widths, heads, query groups, experts, tied
 embeddings). The case's geometry, precision, LoRA and options apply over the
 recipe's values (in full mode a recipe's LoRA is dropped), and what the
-harness's geometry and rules take as given must be what the recipe leaves: a
+engine's geometry and rules take as given must be what the recipe leaves: a
 recipe that sets the tensor, pipeline, context or virtual-pipeline sizes,
 layer-level or fine-grained offloading, graph capture, the optimizer's graph
 or Megatron-FSDP otherwise than the case does, by name or by default, is
@@ -153,7 +153,7 @@ otherwise and are not described here.
 
 The row names the implementation `megatron_core`. Its useful work is counted
 from the catalog's own model of the same architecture, built on `meta` by the
-launcher, with the convention every harness uses, so recomputation, the
+launcher, with the convention every engine uses, so recomputation, the
 optimizer and communication are not credited.
 
 LoRA (`--mode lora`) is Bridge's own layout over the shared definition's
@@ -162,7 +162,7 @@ projection module Megatron builds, fused or not (attention's `linear_qkv`
 and `linear_proj`, Gated DeltaNet's `in_proj` and `out_proj` in Qwen 3.5,
 a dense MLP's `linear_fc1` and `linear_fc2`), and one on each projection of
 every routed expert; the head stays frozen. The shared experts are adapted
-only when the case's `shared_experts` entry is true; otherwise the harness
+only when the case's `shared_experts` entry is true; otherwise the engine
 names target patterns that leave `*.shared_experts.*` out. Bridge builds the
 factors at the model's parameter dtype, so a `factor_dtype` other than the
 model's is refused, and it scales an adapter's output by alpha over the
@@ -173,7 +173,7 @@ entries of `--lora`.
 
 The layouts differ between frameworks: where the catalog adapts the query,
 key and value projections, or the gate and up projections, one by one,
-Bridge adapts its fused `linear_qkv` or `linear_fc1` once. Harnesses are
+Bridge adapts its fused `linear_qkv` or `linear_fc1` once. Engines are
 compared by their total trainable parameters, the elements of every
 trainable tensor, which each row records from the model Megatron built.
 
@@ -182,7 +182,7 @@ trainable tensor, which each row records from the model Megatron built.
 | Flags | Values (default) | Meaning |
 |---|---|---|
 | `--model`, `--model-config JSON` | a catalog name; field overrides | The catalog model and overrides of its configuration's fields |
-| `--implementation` | `megatron_core` | NVIDIA's implementation, the only one this harness trains |
+| `--implementation` | `megatron_core` | NVIDIA's implementation, the only one this engine trains |
 | `--mode`, `--lora JSON` | `full` or `lora` (`full`); LoRA options | Full or LoRA training ([The model](#the-model)) |
 | `--checkpoint DIR`, `--recipe NAME` | a directory; a recipe's name (none) | Weights to import, and a Bridge recipe to start from |
 | `--sequence-length`, `--tokens-per-step`, `--tokens-per-microbatch` | tokens | One update's geometry, in whole sequences. A replica is tensor x pipeline x context parallel ranks, and the data-parallel ranks are the replicas (`baselines.common.geometry`) |
@@ -194,7 +194,7 @@ trainable tensor, which each row records from the model Megatron built.
 | `--[no-]nsys-capture` | (off) | Brackets the measured updates with the profiler; not a throughput result |
 
 `--verify-reference` is refused: the reference check compares updates of the
-catalog's own implementation, and this harness trains NVIDIA's.
+catalog's own implementation, and this engine trains NVIDIA's.
 
 ## Megatron's options
 
@@ -205,12 +205,12 @@ for Llama 3, and for Qwen 3 MoE where it differs. A model's bridge may set
 others, and each rank's request records every option's value in the
 configuration Bridge finalized ([What a run writes](#what-a-run-writes)).
 The last column gives Megatron's and Bridge's own rules for the option,
-which the harness leaves to them; where the harness refuses a value itself,
+which the engine leaves to them; where the engine refuses a value itself,
 the column says so.
 
 ## Precision
 
-[`../PRECISION.md`](../PRECISION.md) sets this harness beside the others.
+[`../PRECISION.md`](../PRECISION.md) sets this engine beside the others.
 
 ### The contract in Megatron's terms
 
@@ -219,11 +219,11 @@ the column says so.
 | Model dtype | `bfloat16` (Bridge's bf16 mixed precision, the weights kept at bfloat16) or `float32`, whose masters are what the optimizer steps: under DDP the float32 parameters themselves, under Megatron-FSDP with float32 masters its float32 main weights; `float16` would need loss scaling the contract does not name |
 | Masters | `float32` by default: Megatron's mixed-precision optimizer keeps float32 copies of the bfloat16 weights, or the distributed optimizer keeps float32 shards of them. `float16` through the precision-aware optimizer ([below](#the-optimizer)). `none`, stepping the weights themselves, only under Megatron-FSDP (`--use-megatron-fsdp`), whose main weights are then the compute weights (`megatron_fsdp_main_params_dtype` none); Megatron's DDP optimizers always keep masters |
 | Gradients | Megatron's DDP accumulates and reduces in one buffer per bucket, at float32 with `grad_reduce_in_fp32` (gradient dtype `float32`) or at the weights' dtype; Megatron-FSDP at any dtype (`megatron_fsdp_main_grads_dtype`). Another dtype under DDP is refused |
-| Moments | `float32` by default; `float16` or `bfloat16` through the precision-aware optimizer. With no master (Megatron-FSDP), the case's `--opt-state-dtype`, `float32` or none (Transformer Engine's fused Adam's own float32): other moments need the precision-aware optimizer, which the harness turns on only beside masters, since it holds masters itself (except under Megatron-FSDP version 2) |
+| Moments | `float32` by default; `float16` or `bfloat16` through the precision-aware optimizer. With no master (Megatron-FSDP), the case's `--opt-state-dtype`, `float32` or none (Transformer Engine's fused Adam's own float32): other moments need the precision-aware optimizer, which the engine turns on only beside masters, since it holds masters itself (except under Megatron-FSDP version 2) |
 | Roundings | Rounding to nearest only (Transformer Engine's fused Adam, PyTorch's) |
 | Fused narrow-gradient accumulation | `gradient_accumulation_fusion` for gradients narrower than float32 ([below](#gradient-accumulation)); refused under Megatron-FSDP version 2, which turns the fusion off |
 
-The harness sets Bridge's mixed-precision configuration from the contract
+The engine sets Bridge's mixed-precision configuration from the contract
 and the case's FP8 or FP4 options. With neither it names no FP8 recipe, since
 Bridge's default recipe name, carried onto the optimizer, would keep the
 precision-aware optimizer from holding its masters itself. The first update
@@ -257,7 +257,7 @@ the fused accumulation under Megatron-FSDP version 2. For float32 gradients
 the contract asks nothing, and `gradient_accumulation_fusion` is the case's
 or Bridge's.
 [`../PRECISION.md`](../PRECISION.md#gradients-creation-accumulation-and-reduction)
-compares the harnesses.
+compares the engines.
 
 ### The optimizer
 
@@ -274,7 +274,7 @@ Megatron-FSDP's sharding strategies shard those too
 **The precision-aware optimizer.** `--use-precision-aware-optimizer` (Adam
 only, with the distributed optimizer) steps with Transformer Engine's fused
 Adam holding the masters and the moments at chosen dtypes, in place of
-Megatron's float32 shards. The harness turns it on, with the distributed
+Megatron's float32 shards. The engine turns it on, with the distributed
 optimizer, whenever the contract keeps masters and asks for masters or
 moments other than float32, and sets its dtypes from the contract: masters
 at float32 or float16 (Transformer Engine refuses bfloat16 masters),
@@ -297,7 +297,7 @@ contract is refused.
 |---|---|---|---|
 | `--fp8 F` | `e4m3`, `hybrid` (none: no FP8) | FP8 matrix multiplies through Transformer Engine: `e4m3` for every FP8 value, or `hybrid`, with e5m2 for the gradients | Compute capability 8.9 or later |
 | `--fp8-recipe R` | `tensorwise`, `delayed`, `mxfp8`, `blockwise`, `custom` (`tensorwise`) | The scaling: current per-tensor scaling, delayed scaling from an amax history, MXFP8 block scaling, blockwise scaling, or a custom recipe of the quantizers `fp8_quantizer_factory` makes | `mxfp8` needs compute capability 10.0 and is not supported on 12.0; `blockwise` needs 9.0 and a PyTorch built with toolkit 12.9 or later (the environment's is built with 13.0); `custom` needs `fp8_quantizer_factory` |
-| `--[no-]fp8-param-gather` | (off) | Keeps the compute weights at FP8 and gathers them at FP8 | Needs `fp8`; with `mxfp8` and no Megatron-FSDP, Bridge also requires `reuse_grad_buf_for_mxfp8_param_ag`, which no harness option sets, so that combination is refused |
+| `--[no-]fp8-param-gather` | (off) | Keeps the compute weights at FP8 and gathers them at FP8 | Needs `fp8`; with `mxfp8` and no Megatron-FSDP, Bridge also requires `reuse_grad_buf_for_mxfp8_param_ag`, which no engine option sets, so that combination is refused |
 | `--[no-]fp8-wgrad` | (on) | Computes the weight gradients at FP8; off, at higher precision | Read only with `fp8` |
 | `--fp8-amax-history-len N`, `--fp8-amax-compute-algo A` | integer (1); `most_recent`, `max` (`most_recent`) | Delayed scaling's amax history, and how it reduces it | Delayed scaling |
 | `--[no-]fp8-dot-product-attention`, `--[no-]fp8-multi-head-attention` | (off) | FP8 attention | Read only with `fp8` |
@@ -375,7 +375,7 @@ compute.
 | Option | Values (default) | What it does | Goes with |
 |---|---|---|---|
 | `--[no-]use-megatron-fsdp` | (off) | Megatron-Core's own FSDP in place of its DDP; the one way to step the compute weights without masters | Version 1 turns on the distributed optimizer and refuses `CUDA_DEVICE_MAX_CONNECTIONS=1` |
-| `--megatron-fsdp-version V` | `1`, `2` (`1`) | Megatron-FSDP's implementation | Version 2: bfloat16 only; no tensor, pipeline or virtual-pipeline parallelism, no optimizer offload, no FP8 or FP4, and no checkpoint load, so neither `--checkpoint` nor LoRA; it shards the weights, gradients and state, turns the distributed optimizer off, checks no `CUDA_DEVICE_MAX_CONNECTIONS`, and turns off every data-parallel overlap and `gradient_accumulation_fusion`, so the harness refuses the contract's fused narrow-gradient accumulation under it |
+| `--megatron-fsdp-version V` | `1`, `2` (`1`) | Megatron-FSDP's implementation | Version 2: bfloat16 only; no tensor, pipeline or virtual-pipeline parallelism, no optimizer offload, no FP8 or FP4, and no checkpoint load, so neither `--checkpoint` nor LoRA; it shards the weights, gradients and state, turns the distributed optimizer off, checks no `CUDA_DEVICE_MAX_CONNECTIONS`, and turns off every data-parallel overlap and `gradient_accumulation_fusion`, so the engine refuses the contract's fused narrow-gradient accumulation under it |
 | `--data-parallel-sharding-strategy S` | `no_shard`, `optim`, `optim_grads`, `optim_grads_params` (`no_shard`) | What is sharded: nothing; the optimizer state (ZeRO-1); and the gradients (ZeRO-2); and the weights (ZeRO-3) | `gradient_accumulation_fusion` under Megatron-FSDP needs Transformer Engine 2.10 (the environment's is newer); Bridge warns with the sharded-gradient strategies |
 | `--expert-data-parallel-sharding-strategy S` | the same (the dense strategy) | The same for the routed experts' parameters | |
 | `--outer-dp-sharding-strategy S` | `no_shard`, `optim` (`no_shard`) | Hybrid sharding: the outer data-parallel group replicates, or shards the optimizer state | |
@@ -456,7 +456,7 @@ layer, so neither can move it.
 ### Selective recomputation
 
 `--recompute-granularity selective` recomputes the named parts of every
-layer. With no modules named, the harness recomputes `core_attn` and
+layer. With no modules named, the engine recomputes `core_attn` and
 `layernorm`, and `moe_act` in MoE models (Megatron's own default is
 `core_attn` alone); a case that names `--recompute-modules` gets exactly its
 list.
@@ -580,7 +580,7 @@ activation. No rule in Megatron or Bridge refuses fine-grained offloading
 beside full recomputation, though a recomputed layer's forward keeps nothing
 for the groups; during the warmup, the groups its recomputation enters again
 in the backward are offloaded and reloaded at once. The FSDP2 and DeepSpeed
-harnesses offload a recomputed block's input whole (`--activation-offload`);
+engines offload a recomputed block's input whole (`--activation-offload`);
 Megatron has no counterpart.
 
 Recomputation and offloading both choose layers only by position: `block`
@@ -595,7 +595,7 @@ particular layers, or particular microbatches: Megatron-Core's
 `num_microbatches_with_partial_activation_checkpoints` would hand a
 per-microbatch flag to the forward step, but nothing in Megatron-Core's
 layers reads it and Bridge's forward step has no parameter for it, so the
-harness does not offer it.
+engine does not offer it.
 
 Examples, added to a case's flags:
 
@@ -677,7 +677,7 @@ method or layer count, and `moe` recomputation (`:3825-3836`).
 |---|---|---|---|
 | `--recompute-granularity G` | `full`, `selective` (none: nothing recomputed) | Full or selective recomputation, as above | One per case; not beside the shared `--recompute`, which sets `full` itself |
 | `--recompute-method M` | `uniform`, `block` (none) | How full recomputation chooses its layers | Full recomputation needs it; not beside the shared `--recompute` |
-| `--recompute-num-layers N` | integer (none) | The run length (`uniform`) or the layer count (`block`) | Full recomputation needs it and selective takes none; Megatron checks only that it is set, and the harness refuses a value below 1, with which `uniform` never ends; not beside the shared `--recompute` |
+| `--recompute-num-layers N` | integer (none) | The run length (`uniform`) or the layer count (`block`) | Full recomputation needs it and selective takes none; Megatron checks only that it is set, and the engine refuses a value below 1, with which `uniform` never ends; not beside the shared `--recompute` |
 | `--recompute-modules LIST` | `core_attn`, `layernorm`, `mlp`, `moe`, `moe_act`, `shared_experts`, `mla_up_proj`, `gdn_norm_out`, `gdp_in_proj`, `gdp_qkv`, `mhc`, `shortcut_pre_mlp_layernorm`, `residual_stream` (`core_attn,layernorm`, and `moe_act` in MoE models) | The parts selective recomputation recomputes | Read only with `selective`; not beside the shared `--recompute` |
 | `--[no-]distribute-saved-activations` | (off) | Splits each kept input across the tensor-parallel ranks | Not with sequence parallelism |
 | `--[no-]cpu-offloading` | (off) | Layer-level offloading | Not with recomputation, pipeline parallelism, per-layer graphs or fine-grained offloading |
@@ -708,6 +708,17 @@ options without fine-grained offloading, change nothing.
 Megatron offloads no parameters to the host: the weights and the gradient
 buffer stay on the device, so a model larger than one device trains only
 sharded across ranks.
+
+## What each offload option moves
+
+Where each option puts the weights, gradients, optimizer state and activations,
+and where the optimizer steps; an empty cell is the default's.
+
+| Option | Weights the compute uses | Weights the optimizer steps | Gradients | Optimizer state and step | Activations |
+|---|---|---|---|---|---|
+| none (the default) | device | device | device: the gradient buffer | device | device |
+| `--optimizer-cpu-offload --optimizer-offload-fraction F` (Megatron-Core's hybrid device optimizer) | device | the share F of the float32 masters on the host, the rest on the device | device, copied to the host for the host's share | the share F on the host, stepped there with PyTorch's AdamW; the rest on the device | device |
+| `--cpu-offloading` (Transformer Engine's) or `--fine-grained-activation-offloading --offload-modules ...` (Megatron-Core's) | | | | | host: whole layers' saved values, or those of the named modules |
 
 ## Mixture of experts
 
@@ -763,11 +774,11 @@ its share; on one device only a smaller microbatch makes it smaller.
 | Option | Values (default) | What it does | Goes with |
 |---|---|---|---|
 | `--cuda-graph-impl I` | `none`, `local`, `transformer_engine`, `full_iteration` (`none`) | Megatron-Core's per-layer graphs, Transformer Engine's per-layer graphs, or forward and backward as one graph (the optimizer outside) | Bridge's local graphs capture parts of a layer (`cuda_graph_modules`) |
-| `--cuda-graph-modules LIST` | `attn`, `mlp`, `moe`, `moe_router`, `moe_preprocess`, `mamba` (none: the whole layer) | With per-layer graphs, the parts of a layer captured | None with `full_iteration`; `moe` and `moe_router` not together; `moe_preprocess` with `moe_router`; `mamba` for Mamba layers, of a family no catalog model is; `mlp` for dense layers, `moe` for drop-and-pad MoE layers only (an expert capacity factor with `moe_pad_expert_input_to_capacity`, which no harness option sets) |
+| `--cuda-graph-modules LIST` | `attn`, `mlp`, `moe`, `moe_router`, `moe_preprocess`, `mamba` (none: the whole layer) | With per-layer graphs, the parts of a layer captured | None with `full_iteration`; `moe` and `moe_router` not together; `moe_preprocess` with `moe_router`; `mamba` for Mamba layers, of a family no catalog model is; `mlp` for dense layers, `moe` for drop-and-pad MoE layers only (an expert capacity factor with `moe_pad_expert_input_to_capacity`, which no engine option sets) |
 | `--cuda-graph-warmup-steps N` | updates (3) | N, which places the capture, as below | Fewer than `--warmup-steps` with graphs or `optimizer_cuda_graph` |
 
 Bridge requires Transformer Engine's random-number tracker under graph capture
-and does not turn it on; the harness turns it on whenever graphs are on (as
+and does not turn it on; the engine turns it on whenever graphs are on (as
 Megatron-LM's command line does). Where the graphs are captured depends on
 the implementation, N being `cuda_graph_warmup_steps` and the updates
 counted from 0: Transformer Engine's per-layer graphs at the top of update
@@ -775,7 +786,7 @@ N, before the step's callbacks start its clock; full-iteration graphs inside
 update N; Megatron-Core's local graphs at the end of update 0's forward and
 backward, whatever N is, each after N eager warmup runs; and the optimizer's
 graph (`optimizer_cuda_graph`) inside update N's optimizer step. The
-harness refuses a case with graphs or the optimizer's graph whose N is not
+engine refuses a case with graphs or the optimizer's graph whose N is not
 one of its warmup updates.
 
 ## The process environment
@@ -799,7 +810,7 @@ environment's builds used.
 
 ## Data
 
-The tokens are the ones every harness trains on: synthetic tokens drawn once
+The tokens are the ones every engine trains on: synthetic tokens drawn once
 per replica from `--seed`, or each replica's window of the corpus for each
 update. Megatron's sampler asks for an update's samples by index, each
 microbatch `micro_batch_size x replicas` consecutive indices with each
@@ -817,7 +828,7 @@ barrier at the end; the warmup updates are excluded, and the result is the
 median over the measured ones of the slowest rank's time. The learning rate
 is constant and gradients are not clipped. Megatron's own checks of the
 gradients and of each microbatch's loss for NaN are off: the runner checks
-every measured loss, the other harnesses add no such host synchronization,
+every measured loss, the other engines add no such host synchronization,
 and a full-iteration graph refuses the loss check. Peaks are PyTorch
 allocator measurements of the binding rank. The row's useful TFLOP/s per GPU
 is counted from the catalog model ([The model](#the-model)).

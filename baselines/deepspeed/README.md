@@ -11,24 +11,24 @@ root in the `baselines` environment, the environment the trainer runs in.
 One case:
 
 ```bash
-python -m baselines.common.launch --harness deepspeed --gpus 1 \
-  --output /mnt/storage/research/shadowspill/baselines/round1/deepspeed/llama3-8b-z3 \
+python -m baselines.common.launch --engine deepspeed --gpus 1 \
+  --output <dir> \
   --model llama3-8b --tokens-per-step 65536 --tokens-per-microbatch 8192 \
   --zero-stage 3 --offload-optimizer cpu --recompute 1
 ```
 
 The tiny qualification matrix runs through the shared sweep, `python -m
-baselines.sweep --harness deepspeed --config
+baselines.sweep --engine deepspeed --config
 baselines/deepspeed/configs/qualification.json --output <dir> --gpus 1`; a
 throughput matrix names only DeepSpeed's own knobs and runs inside an
-experiment, which gives every harness the same model, geometry and
+experiment, which gives every engine the same model, geometry and
 precision contract (`../README.md`).
 
 ## What a case names
 
-The common flags are the FSDP2 harness's (`../fsdp2/README.md`): the model,
+The common flags are the FSDP2 engine's (`../fsdp2/README.md`): the model,
 the geometry, the precision contract, `--data`, `--checkpoint`,
-`--recompute`, the allocator cap and the run. This harness adds:
+`--recompute`, the allocator cap and the run. This engine adds:
 
 | Flags | Meaning |
 |---|---|
@@ -75,9 +75,22 @@ measure that. Under DeepCompile the tiny qualification judges the moments
 and masters: DeepSpeed's gradient accessors refuse after a backward its
 graphs ran.
 
+## What each offload option moves
+
+Where each option puts the weights, gradients, optimizer state and activations,
+and where the optimizer steps; an empty cell is the default's.
+
+| Option | Weights the compute uses | Weights the optimizer steps | Gradients | Optimizer state and step | Activations |
+|---|---|---|---|---|---|
+| none (the default) | device | device | device | device | device |
+| `--offload-param cpu\|nvme` (ZeRO-3) | host or NVMe between uses, fetched to the device as each module runs | as `--offload-optimizer` says | as `--offload-optimizer` says | as `--offload-optimizer` says | device |
+| `--offload-optimizer cpu\|nvme` (ZeRO-2 and 3) | device, unless the parameters are offloaded | host or NVMe: DeepSpeed's master copy | host: the reduced partitions | host or NVMe; the step on the CPU, DeepSpeed's CPU AdamW | device |
+| `--activation-offload cpu` (DeepSpeed's CPU checkpointing) | | | | | host: the inputs of recomputed blocks |
+| `--deepcompile-offload parameters\|optimizer-states\|activations` (DeepCompile, ZeRO-3) | as DeepCompile's passes place them, within its memory budget (above) | | | | |
+
 ## Precision
 
-[`../PRECISION.md`](../PRECISION.md) sets this harness beside the others.
+[`../PRECISION.md`](../PRECISION.md) sets this engine beside the others.
 DeepSpeed's bf16 and fp16 modes cast every parameter to the model dtype,
 the ones a model pins at float32 included (the row records which), and keep
 float32 masters in the ZeRO optimizer with float32 AdamW moments; fp16 runs
@@ -105,7 +118,7 @@ launch.
 
 ## What a run writes
 
-As the FSDP2 harness: `case.json`, `rank-NNNNN/request.json` (with the
+As the FSDP2 engine: `case.json`, `rank-NNNNN/request.json` (with the
 DeepSpeed configuration the case ran under), `result.json` or `failure.json`,
 `results.json` and `row.json` from the first rank. The tiny qualification
 compares every update's loss, gradients (read through DeepSpeed's accessors
