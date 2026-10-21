@@ -16,8 +16,8 @@
     {"model": "llama3-tiny", "recompute": 0.5, "activation_offload": "overlapped",
      "gradient_sync": "last-microbatch", "reshard_after_forward": false,
      "reshard_after_backward": false},
-    {"model": "llama3-tiny", "offload": "cpu", "recompute": 1},
-    {"model": "llama3-tiny", "offload": "cpu", "pin_memory": false, "recompute": 0,
+    {"model": "llama3-tiny", "offload_policy": "cpu", "recompute": 1},
+    {"model": "llama3-tiny", "offload_policy": "cpu", "pin_memory": false, "recompute": 0,
      "gradient_sync": "last-microbatch"},
     {"model": "llama3-tiny", "mode": "lora", "lora": {"rank": 4}, "recompute": 1},
     {"model": "llama3-tiny", "implementation": "pytorch", "recompute": 1},
@@ -27,12 +27,12 @@
     {"model": "qwen35-tiny", "recompute": 1},
     {"model": "olmoe-tiny", "recompute": 1},
     {"model": "qwen3moe-tiny", "recompute": 1},
-    {"model": "qwen35-tiny", "recompute": 0.5, "offload": "cpu"},
+    {"model": "qwen35-tiny", "recompute": 0.5, "offload_policy": "cpu"},
     {"model": "llama3-tiny", "mode": "lora", "lora": {"rank": 4}, "master_dtype": null,
-     "opt_state_dtype": "parameter", "grad_dtype": null, "offload": "cpu",
+     "opt_state_dtype": "parameter", "grad_dtype": null, "offload_policy": "cpu",
      "recompute": 1},
     {"model": "qwen35-tiny", "mode": "lora", "lora": {"rank": 4}, "master_dtype": null,
-     "opt_state_dtype": "parameter", "grad_dtype": null, "offload": "cpu",
+     "opt_state_dtype": "parameter", "grad_dtype": null, "offload_policy": "cpu",
      "recompute": 1}
   ]
 }

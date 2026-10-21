@@ -1,10 +1,10 @@
-"""What an FSDP2 case can ask for, and what the harness refuses."""
+"""What an FSDP2 case can ask for, and what the engine refuses."""
 
 import argparse
 
 import pytest
 
-from baselines.common.launch import command, harness_module
+from baselines.common.launch import command, engine_module
 from baselines.common.precision import Precision, Unsupported
 from baselines.fsdp2.settings import Settings, add_arguments, from_namespace
 
@@ -36,7 +36,7 @@ def test_flags_round_trip_every_setting():
     parser = argparse.ArgumentParser()
     add_arguments(parser)
     assert from_namespace(parser.parse_args(settings.arguments())) == settings
-    assert harness_module("fsdp2").ENVIRONMENT == "baselines"
+    assert engine_module("fsdp2").ENVIRONMENT == "baselines"
     assert command("fsdp2", "py", 2, settings, "out")[11:] == settings.arguments()
 
 
@@ -84,7 +84,7 @@ def test_a_case_names_its_tokens_per_step():
         {"tokens_per_microbatch": 100},
         {"recompute": 2},
         {"activation_offload": "disk"},
-        {"offload": "nvme"},
+        {"offload_policy": "nvme"},
         {"backward_prefetch": 0},
         {"optimizer": "sgd"},
         {"data": "/nonexistent/corpus"},
@@ -126,9 +126,48 @@ def test_invalid_settings_are_refused(override):
         },
     ],
 )
-def test_precision_outside_the_harness_is_refused(override):
+def test_precision_outside_the_engine_is_refused(override):
     with pytest.raises(Unsupported):
         Settings.from_dict({**BASE, **override}).validate(1)
+
+
+PURE_BF16 = {"master_dtype": None, "grad_dtype": None, "opt_state_dtype": "parameter"}
+
+
+@pytest.mark.parametrize(
+    "override, refusal",
+    [
+        ({"offload_gradients": True}, ValueError),
+        ({"optimizer": "cpu-offload", "offload_gradients": True}, Unsupported),
+        ({"optimizer": "cpu-offload", "offload_policy": "cpu"}, Unsupported),
+        (
+            {
+                "optimizer": "cpu-offload",
+                **PURE_BF16,
+                "parameter_rounding": "stochastic",
+            },
+            Unsupported,
+        ),
+    ],
+)
+def test_torchaos_offload_optimizer_is_refused_where_it_cannot_run(override, refusal):
+    with pytest.raises(refusal):
+        Settings.from_dict({**BASE, **override}).validate(1)
+
+
+def test_torchao_offloads_gradients_with_one_microbatch_per_update():
+    settings = Settings.from_dict(
+        {
+            **BASE,
+            "tokens_per_microbatch": 1024,
+            "optimizer": "cpu-offload",
+            "offload_gradients": True,
+        }
+    )
+    settings.validate(1)
+    assert "--offload-gradients" in settings.arguments()
+    lowbit = {**BASE, "optimizer": "adamw8bit", "opt_state_dtype": None}
+    Settings.from_dict({**lowbit, "offload_policy": "cpu"}).validate(1)
 
 
 def test_a_pure_bf16_case_steps_the_weights_themselves():

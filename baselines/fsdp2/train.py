@@ -23,7 +23,7 @@ from torch.distributed.fsdp import (
 )
 
 from baselines.common import recompute_layers, runner
-from baselines.fsdp2 import settings as harness_settings
+from baselines.fsdp2 import settings as engine_settings
 from baselines.fsdp2.settings import configure_prefetch
 from workloads.full_model import HEAD_LOSS_METRIC
 
@@ -70,18 +70,17 @@ def float8_filter(module, name):
 
 
 def build_optimizer(model, settings, precision, pinned=()):
-    """AdamW over the trained parameters: fused torch, torchao's with
+    """AdamW over the trained parameters: PyTorch's fused implementation, on
+    the device or, for CPU-offloaded shards, on the host; torchao's with
     stochastic rounding, its 8-bit or 4-bit variants, or its CPU-offloaded
-    step; on CPU-offloaded shards the single-tensor torch implementation.
-    The pinned parameters, plain tensors beside the shards, step in a group
-    of their own since a fused step takes one kind."""
+    step. The pinned parameters, plain tensors beside the shards, step in a
+    group of their own, since one fused call takes one kind of tensor."""
 
     skipped = {id(parameter) for parameter in pinned}
     parameters = [
         p for p in model.parameters() if p.requires_grad and id(p) not in skipped
     ]
     whole = [p for p in pinned if p.requires_grad]
-    on_cpu = settings.offload == "cpu"
     stochastic = precision.parameter_rounding == "stochastic"
     options = {
         "lr": settings.learning_rate,
@@ -92,18 +91,19 @@ def build_optimizer(model, settings, precision, pinned=()):
     if settings.optimizer == "adamw" and not stochastic:
         groups = [{"params": parameters}]
         if whole:
-            groups.append({"params": whole, "fused": False, "foreach": False})
-        return torch.optim.AdamW(
-            groups,
-            **options,
-            fused=not on_cpu,
-            foreach=False if on_cpu else None,
-        )
+            groups.append({"params": whole})
+        return torch.optim.AdamW(groups, **options, fused=True)
     parameters.extend(whole)
     if settings.optimizer == "cpu-offload":
         from torchao.optim import CPUOffloadOptimizer
 
-        return CPUOffloadOptimizer(parameters, torch.optim.AdamW, fused=True, **options)
+        return CPUOffloadOptimizer(
+            parameters,
+            torch.optim.AdamW,
+            offload_gradients=settings.offload_gradients,
+            fused=True,
+            **options,
+        )
     from torchao.optim import AdamW4bit, AdamW8bit, _AdamW
 
     variant = {"adamw": _AdamW, "adamw8bit": AdamW8bit, "adamw4bit": AdamW4bit}
@@ -119,6 +119,13 @@ def train(case, clock):
     request = settings.request()
     record = case.record
     world, device = case.world, case.device
+    if settings.float8:
+        capability = torch.cuda.get_device_capability(device)
+        if capability < (8, 9):
+            raise RuntimeError(
+                "torchao's Float8 training needs compute capability 8.9 or above;"
+                f" this device has {capability[0]}.{capability[1]}"
+            )
     stepped = getattr(torch, precision.stepped_dtype)
     model_dtype = getattr(torch, precision.model_dtype)
     dist.init_process_group("nccl", device_id=device)
@@ -178,11 +185,11 @@ def train(case, clock):
     )
     offload_policy = (
         CPUOffloadPolicy(pin_memory=settings.pin_memory)
-        if settings.offload == "cpu"
+        if settings.offload_policy == "cpu"
         else OffloadPolicy()
     )
     materialization_device = (
-        torch.device("cpu") if settings.offload == "cpu" else device
+        torch.device("cpu") if settings.offload_policy == "cpu" else device
     )
     checkpoint = None
     if settings.checkpoint is not None:
@@ -308,7 +315,7 @@ def train(case, clock):
 
 
 def main(argv=None):
-    runner.main("fsdp2", harness_settings, train, argv)
+    runner.main("fsdp2", engine_settings, train, argv)
 
 
 if __name__ == "__main__":

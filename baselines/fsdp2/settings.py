@@ -1,12 +1,12 @@
 """The settings of one FSDP2 case, shared by the trainer and the sweep.
 
-On top of what every harness takes (``baselines.common.settings``), this
-harness's own knobs: activation offloading through PyTorch's
+On top of what every engine takes (``baselines.common.settings``), this
+engine's own knobs: activation offloading through PyTorch's
 ``offload_wrapper`` or the stream-overlapped offloader vendored from
 torchtune; FSDP2's CPU offload of parameters, gradients and optimizer state;
 prefetch depths, resharding and gradient-synchronization policies;
 compilation; and the torchao scenarios, Float8 training and the low-bit and
-CPU-offloaded AdamW optimizers. What the harness cannot honor is refused
+CPU-offloaded AdamW optimizers. What the engine cannot honor is refused
 before launch.
 """
 
@@ -18,7 +18,7 @@ from baselines.common import settings as common
 from baselines.common.precision import Capabilities, Unsupported
 from baselines.common.settings import GEOMETRY_FIELDS, MODEL_FIELDS, PRECISION_FIELDS
 
-#: The sources whose digests identify this harness in a manifest and a row.
+#: The sources whose digests identify this engine in a manifest and a row.
 SOURCE_PATHS = (
     "baselines/__init__.py",
     "baselines/common",
@@ -32,15 +32,15 @@ SOURCE_PATHS = (
 ENVIRONMENT = "baselines"
 
 ACTIVATION_OFFLOADS = ("none", "cpu", "overlapped")
-OFFLOADS = ("none", "cpu")
+OFFLOAD_POLICIES = ("none", "cpu")
 GRADIENT_SYNCS = ("per-microbatch", "last-microbatch")
 OPTIMIZERS = ("adamw", "adamw8bit", "adamw4bit", "cpu-offload")
 
-#: What this harness honors of the precision contract. FSDP2 keeps a
+#: What this engine honors of the precision contract. FSDP2 keeps a
 #: trained weight's shard at the dtype the weight was materialized at, the
 #: master when one is kept, sums gradients into that shard and keeps AdamW's
 #: moments at it, so the gradient and state dtypes must be that dtype; a
-#: float16 model would need loss scaling the harness does not do; stochastic
+#: float16 model would need loss scaling the engine does not do; stochastic
 #: rounding comes from torchao's AdamW and applies to bfloat16 weights.
 CAPABILITIES = Capabilities(
     "fsdp2",
@@ -84,7 +84,7 @@ class Settings(common.Settings):
     fuse_narrow_gradient_accumulation: bool = False
     # Memory mechanisms.
     activation_offload: str = "none"
-    offload: str = "none"
+    offload_policy: str = "none"
     pin_memory: bool = True
     forward_prefetch: int = 0
     backward_prefetch: int | str = "auto"
@@ -95,6 +95,9 @@ class Settings(common.Settings):
     # torchao scenarios.
     float8: bool = False
     optimizer: str = "adamw"
+    #: torchao's CPUOffloadOptimizer frees each device gradient once it is
+    #: on the host, which it does not do between accumulated microbatches.
+    offload_gradients: bool = False
 
     @classmethod
     def coerce(cls, value):
@@ -102,7 +105,7 @@ class Settings(common.Settings):
             value["backward_prefetch"] = backward_prefetch(value["backward_prefetch"])
         return value
 
-    def harness_validation(self, request, geometry, precision):
+    def engine_validation(self, request, geometry, precision):
         stepped = precision.stepped_dtype
         if (precision.grad_dtype or precision.model_dtype) != stepped:
             raise Unsupported(
@@ -115,6 +118,26 @@ class Settings(common.Settings):
             )
         if self.optimizer not in OPTIMIZERS:
             raise ValueError(f"optimizer must be one of {OPTIMIZERS}")
+        if self.offload_gradients and self.optimizer != "cpu-offload":
+            raise ValueError("offload_gradients is the cpu-offload optimizer's option")
+        if self.optimizer == "cpu-offload" and self.offload_policy == "cpu":
+            raise Unsupported(
+                "torchao's CPUOffloadOptimizer takes the weights on the device;"
+                " under offload_policy cpu FSDP2 keeps their shards on the host"
+            )
+        if (
+            self.optimizer == "cpu-offload"
+            and precision.parameter_rounding == "stochastic"
+        ):
+            raise Unsupported(
+                "torchao's CPUOffloadOptimizer steps with torch's AdamW, which"
+                " rounds to nearest; stochastic rounding is torchao's AdamW"
+            )
+        if self.offload_gradients and geometry.accumulation != 1:
+            raise Unsupported(
+                "torchao's CPUOffloadOptimizer offloads gradients only with one"
+                " microbatch per update"
+            )
         if self.optimizer in ("adamw8bit", "adamw4bit") and (
             precision.opt_state_dtype is not None
         ):
@@ -126,8 +149,8 @@ class Settings(common.Settings):
             raise Unsupported("stochastic rounding applies to bfloat16 weights")
         if self.activation_offload not in ACTIVATION_OFFLOADS:
             raise ValueError(f"activation_offload must be one of {ACTIVATION_OFFLOADS}")
-        if self.offload not in OFFLOADS:
-            raise ValueError(f"offload must be one of {OFFLOADS}")
+        if self.offload_policy not in OFFLOAD_POLICIES:
+            raise ValueError(f"offload_policy must be one of {OFFLOAD_POLICIES}")
         if self.gradient_sync not in GRADIENT_SYNCS:
             raise ValueError(f"gradient_sync must be one of {GRADIENT_SYNCS}")
         if self.forward_prefetch < 0:
@@ -151,7 +174,8 @@ class Settings(common.Settings):
 HELP = {
     "activation_offload": "none; cpu, PyTorch's offload_wrapper per block;"
     " overlapped, the stream-overlapped offloader vendored from torchtune",
-    "offload": "FSDP2 CPU offload of parameters, gradients and optimizer state",
+    "offload_policy": "FSDP2's CPUOffloadPolicy: the weights the optimizer steps,"
+    " their gradients and the optimizer state on the host, the step on the CPU",
     "pin_memory": "pin CPU-offloaded shards (with --offload cpu)",
     "forward_prefetch": "explicit lookahead depth; 0 is native forward behavior",
     "backward_prefetch": "native auto prefetch or an explicit depth of at least 1",
@@ -162,11 +186,13 @@ HELP = {
     "float8": "torchao Float8 training of every block's linears (tensorwise)",
     "optimizer": "AdamW: fused torch, torchao 8-bit or 4-bit, or torchao's"
     " CPU-offloaded",
+    "offload_gradients": "with the cpu-offload optimizer, free each device gradient"
+    " once it is copied to the host; one microbatch per update",
 }
 
 
 def add_arguments(parser):
-    """The trainer's flags: the common ones, then this harness's own."""
+    """The trainer's flags: the common ones, then this engine's own."""
 
     common.add_arguments(
         parser,
@@ -174,7 +200,7 @@ def add_arguments(parser):
         help=HELP,
         choices={
             "activation_offload": ACTIVATION_OFFLOADS,
-            "offload": OFFLOADS,
+            "offload_policy": OFFLOAD_POLICIES,
             "gradient_sync": GRADIENT_SYNCS,
             "optimizer": OPTIMIZERS,
         },
@@ -209,7 +235,7 @@ __all__ = [
     "GEOMETRY_FIELDS",
     "GRADIENT_SYNCS",
     "MODEL_FIELDS",
-    "OFFLOADS",
+    "OFFLOAD_POLICIES",
     "OPTIMIZERS",
     "PRECISION_FIELDS",
     "SOURCE_PATHS",
