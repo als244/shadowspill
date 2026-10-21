@@ -1,1 +1,2 @@
-"""Official Qwen Megatron-Core recipe preparation via Megatron Bridge."""
+"""Megatron-Core through Megatron Bridge: NVIDIA's prebuilt models of the
+catalog's architectures, trained by Bridge's own loop."""
