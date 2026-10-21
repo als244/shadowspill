@@ -1,0 +1,77 @@
+{
+  "schema_version": 1,
+  "defaults": {
+    "offload_policy": "cpu"
+  },
+  "grid": [
+    {
+      "tokens_per_microbatch": "@microbatches",
+      "recompute": "@recompute",
+      "activation_offload": ["none", "cpu", "overlapped"]
+    },
+    {
+      "tokens_per_microbatch": "@accumulated_microbatches",
+      "recompute": [1],
+      "forward_prefetch": [0],
+      "backward_prefetch": ["auto"],
+      "reshard_after_forward": [true, false],
+      "reshard_after_backward": [true, false],
+      "gradient_sync": ["per-microbatch", "last-microbatch"]
+    },
+    {
+      "tokens_per_microbatch": "@single_microbatch",
+      "recompute": [1],
+      "forward_prefetch": [0],
+      "backward_prefetch": ["auto"],
+      "reshard_after_forward": [true, false]
+    },
+    {
+      "tokens_per_microbatch": "@accumulated_microbatches",
+      "recompute": [1],
+      "forward_prefetch": [1],
+      "backward_prefetch": [1],
+      "reshard_after_forward": [true, false],
+      "reshard_after_backward": [true, false],
+      "gradient_sync": ["per-microbatch", "last-microbatch"]
+    },
+    {
+      "tokens_per_microbatch": "@single_microbatch",
+      "recompute": [1],
+      "forward_prefetch": [1],
+      "backward_prefetch": [1],
+      "reshard_after_forward": [true, false]
+    },
+    {
+      "tokens_per_microbatch": "@accumulated_microbatches",
+      "recompute": [1],
+      "forward_prefetch": [2],
+      "backward_prefetch": [2],
+      "reshard_after_forward": [true, false],
+      "reshard_after_backward": [true, false],
+      "gradient_sync": ["per-microbatch", "last-microbatch"]
+    },
+    {
+      "tokens_per_microbatch": "@single_microbatch",
+      "recompute": [1],
+      "forward_prefetch": [2],
+      "backward_prefetch": [2],
+      "reshard_after_forward": [true, false]
+    },
+    {
+      "tokens_per_microbatch": "@accumulated_microbatches",
+      "recompute": [1],
+      "forward_prefetch": [4],
+      "backward_prefetch": [4],
+      "reshard_after_forward": [true, false],
+      "reshard_after_backward": [true, false],
+      "gradient_sync": ["per-microbatch", "last-microbatch"]
+    },
+    {
+      "tokens_per_microbatch": "@single_microbatch",
+      "recompute": [1],
+      "forward_prefetch": [4],
+      "backward_prefetch": [4],
+      "reshard_after_forward": [true, false]
+    }
+  ]
+}

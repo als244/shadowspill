@@ -1,0 +1,20 @@
+{
+  "schema_version": 1,
+  "defaults": {
+    "zero_stage": 3,
+    "offload_optimizer": "cpu"
+  },
+  "grid": [
+    {
+      "tokens_per_microbatch": "@microbatches",
+      "recompute": [0],
+      "offload_param": ["none", "cpu"]
+    },
+    {
+      "tokens_per_microbatch": "@microbatches",
+      "recompute": "@recomputed",
+      "offload_param": ["none", "cpu"],
+      "activation_offload": ["none", "cpu"]
+    }
+  ]
+}
