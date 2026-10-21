@@ -1,8 +1,8 @@
-"""The result a harness writes: one row per configuration that ran, under one
+"""The result an engine writes: one row per configuration that ran, under one
 schema, with the measurement contract as code.
 
-A row names the harness, the catalog model and mode, the precision, the
-geometry, every harness setting that applied, the hardware, the provenance
+A row names the engine, the catalog model and mode, the precision, the
+geometry, every engine setting that applied, the hardware, the provenance
 (sources, packages, the kernels that ran) and what was measured: the median
 over measured steps of the slowest rank's time, tokens per second, useful
 TFLOP/s, device and host peaks. A configuration that ran out of device memory
@@ -72,7 +72,7 @@ def write_json(path, value):
 
 def row(
     *,
-    harness: str,
+    engine: str,
     status: str,
     model: Mapping[str, Any],
     geometry: Mapping[str, Any],
@@ -88,7 +88,7 @@ def row(
 
     result = {
         "schema": RESULT_SCHEMA,
-        "harness": harness,
+        "engine": engine,
         "status": status,
         "model": dict(model),
         "geometry": dict(geometry),
@@ -113,7 +113,7 @@ def validate_row(value: Mapping[str, Any]) -> None:
     if value.get("status") not in STATUSES:
         raise ValueError(f"unknown row status {value.get('status')!r}")
     for key in (
-        "harness",
+        "engine",
         "model",
         "geometry",
         "precision",
@@ -176,11 +176,29 @@ def varied(values_by_key: Mapping[Any, Mapping[str, Any]]) -> list[str]:
 
 
 def read_rows(root: Path, *, latest_attempts: bool = True) -> list[dict[str, Any]]:
-    """Every row under ``root``: each ``row.json`` a harness or a sweep wrote.
+    """Every row under ``root``: each ``row.json`` an engine or a sweep wrote.
     Where a case directory holds ``attempt-NNN`` directories, only its last
-    attempt that wrote a row counts, unless ``latest_attempts`` is false."""
+    attempt that wrote a row counts, unless ``latest_attempts`` is false, and
+    within a sweep's output only the cases its manifest names count."""
 
     paths = sorted(Path(root).rglob("row.json"))
+    named: dict[Path, set[str] | None] = {}
+
+    def counted(path: Path) -> bool:
+        case = path.parent.parent if ATTEMPT.fullmatch(path.parent.name) else None
+        if case is None or case.parent.name != "cases":
+            return True
+        sweep = case.parent.parent
+        if sweep not in named:
+            manifest = sweep / "manifest.json"
+            named[sweep] = (
+                {item["name"] for item in json.loads(manifest.read_text())["cases"]}
+                if manifest.is_file()
+                else None
+            )
+        return named[sweep] is None or case.name in named[sweep]
+
+    paths = [path for path in paths if counted(path)]
     if latest_attempts:
         last: dict[Path, Path] = {}
         for path in paths:

@@ -1,31 +1,46 @@
-"""Run a matrix of independent, resumable cases of one harness on one node.
+"""Run a matrix of independent, resumable cases of one engine on one node.
 
-    python -m baselines.sweep --harness fsdp2 --config matrix.json \\
+    python -m baselines.sweep --engine fsdp2 --config matrix.json \\
         --output DIR --gpus N [--python PATH] [--dry-run] [--resume] \\
         [--retry-failed] [--continue-on-error] [--case-timeout SECONDS] \\
         [--limit N]
 
 A matrix names ``defaults`` and either a Cartesian ``grid``, or a list of
-grids whose cases are their union, or explicit ``cases`` over the harness's
+grids whose cases are their union, or explicit ``cases`` over the engine's
 settings. Every case is validated, refused if
 invalid, and named by a digest of what runs, so two spellings of one
 configuration are one case. Each attempt of a case is its own process under
 ``cases/<name>/attempt-NNN/`` with its command, its console log and, when it
-completed, the ``row.json`` the harness wrote; a case that ran out of device
+completed, the ``row.json`` the engine wrote; a case that ran out of device
 memory, failed or timed out gets a row from this launcher saying so.
 Out-of-memory is a boundary of the frontier and the sweep continues past it;
 any other failure stops the sweep for diagnosis unless told to continue.
-``manifest.json`` records the harness, the sources, the environment and
-every case, and a resume must match it exactly, so the rows under one output
-are comparable.
+``manifest.json`` records the engine, the sources, the environment and
+every case. A resume must find the same engine, world size and
+interpreter, with the same Python and packages; which code ran is the
+caller's to track, and each row records its sources. The matrix itself may
+have changed. A case keeps
+the name its settings were first given there, by the digest that ends it,
+and a new case is numbered after every case the output holds, so a resume
+over a grown matrix attempts only the cases it adds, and the manifest names
+the matrix's cases, the ones its rows count for. A resume attempts every
+named case with no outcome, never attempted or interrupted, keeps the
+completed ones, and attempts the failed, out-of-memory and timed-out ones
+again only with ``--retry-failed``.
 
-A harness is the module ``baselines.<harness>.settings``: its ``Settings``
+The console names the cases, the settings the matrix varies and the
+outcomes so far, then gives a line as each case starts, with its settings,
+and a line as it ends, with its outcome and, when it completed, its
+throughput, update time, GPU peak held and in use, and host peak; the last
+line counts every case's outcome and the run's duration.
+
+An engine is the module ``baselines.<engine>.settings``: its ``Settings``
 (``from_dict``, ``as_dict``, ``validate``, ``arguments``, ``describe`` and
 ``resolve``), the ``SOURCE_PATHS`` whose digests identify its code and the
 ``ENVIRONMENT`` its trainer runs in. Every attempt is launched through
 ``baselines.common.launch``, which resolves the case in this interpreter and
-starts the harness's trainer in ``--python``, by default the environment the
-harness names.
+starts the engine's trainer in ``--python``, by default the environment the
+engine names.
 """
 
 from __future__ import annotations
@@ -41,12 +56,24 @@ import shlex
 import signal
 import subprocess
 import time
+from collections import Counter
 from pathlib import Path
 
 from baselines.common import launch, write_json
 from baselines.common.provenance import ROOT, environment_identity, source_identity
 from baselines.common.results import row as result_row
 from baselines.common.results import validate_row, varied
+from baselines.report import DERIVED_GEOMETRY
+
+#: How an outcome reads on the console, in the order counts list.
+OUTCOME_WORDS = {
+    "completed": "completed",
+    "cuda_out_of_memory": "out of device memory",
+    "failed": "failed",
+    "timeout": "timed out",
+    "interrupted": "interrupted",
+    "pending": "not yet run",
+}
 
 INDEX_COLUMNS = (
     "Status",
@@ -106,9 +133,48 @@ def expand(specification, world_size, settings_type):
     return result
 
 
+def keep_names(cases, output):
+    """The cases named as ``output`` already names their digests, and the
+    rest numbered after every case it holds, in the matrix's order."""
+
+    held = {}
+    for path in (output / "cases").glob("case-*-*"):
+        held[path.name.rsplit("-", 1)[1]] = path.name
+    highest = max((int(name.split("-")[1]) for name in held.values()), default=0)
+    result = []
+    for name, settings in cases:
+        digest = name.rsplit("-", 1)[1]
+        if digest not in held:
+            highest += 1
+            held[digest] = f"case-{highest:04d}-{digest}"
+        result.append((held[digest], settings))
+    return result
+
+
+def comparable(held, manifest):
+    """What differs between a manifest an output holds and a resume's that
+    makes their rows incomparable: the engine, the world size, the
+    interpreter, its version or its packages. The matrix may change, and so
+    may the code, ShadowSpill's and mlops's sources included."""
+
+    def environment(value):
+        return {
+            key: item for key, item in (value or {}).items() if key != "mlops_source"
+        }
+
+    differences = [
+        key
+        for key in ("engine", "world_size", "python")
+        if held.get(key) != manifest[key]
+    ]
+    if environment(held.get("environment")) != environment(manifest["environment"]):
+        differences.append("environment")
+    return differences
+
+
 def classify(attempt, returncode, world_size, settings):
     """What an attempt produced: an out-of-memory, a failure, or the
-    measurements of a row the harness wrote for exactly this case."""
+    measurements of a row the engine wrote for exactly this case."""
 
     failures = [
         json.loads(path.read_text())
@@ -152,6 +218,17 @@ def classify(attempt, returncode, world_size, settings):
     }
 
 
+def to_attempt(previous, retry_failed):
+    """Whether a case gets a new attempt: one never attempted or interrupted
+    does, a completed one never does, and one that failed, ran out of
+    memory or timed out does on a retry."""
+
+    status = previous["status"]
+    return status in ("pending", "interrupted") or (
+        status != "completed" and retry_failed
+    )
+
+
 def latest(case):
     attempts = sorted(case.glob("attempt-*"))
     if not attempts:
@@ -162,7 +239,7 @@ def latest(case):
     return json.loads(path.read_text())
 
 
-def failure_row(attempt, outcome, settings, world_size, harness, manifest):
+def failure_row(attempt, outcome, settings, world_size, engine, manifest):
     """The row this launcher writes for an attempt that produced none: the
     request as described by the settings, the hardware the first rank
     reported before it failed, and what went wrong."""
@@ -177,7 +254,7 @@ def failure_row(attempt, outcome, settings, world_size, harness, manifest):
             key: outcome.get(key) for key in ("returncode", "reason", "failures")
         }
     return result_row(
-        harness=harness,
+        engine=engine,
         status=outcome["status"],
         **settings.describe(world_size),
         hardware=hardware,
@@ -189,21 +266,95 @@ def failure_row(attempt, outcome, settings, world_size, harness, manifest):
     )
 
 
+def described(cases, world_size):
+    """Per case, the geometry and configuration its settings describe."""
+
+    result = {}
+    for name, settings in cases:
+        description = settings.describe(world_size)
+        result[name] = {**description["geometry"], **description["configuration"]}
+    return result
+
+
+def clock():
+    """The local time, as the console shows it."""
+
+    return datetime.datetime.now().astimezone().strftime("%Y-%m-%d %H:%M:%S %Z")
+
+
+def duration(seconds):
+    """``1h 02m 03s`` or ``2m 03s``."""
+
+    minutes, seconds = divmod(round(seconds), 60)
+    hours, minutes = divmod(minutes, 60)
+    if hours:
+        return f"{hours}h {minutes:02d}m {seconds:02d}s"
+    return f"{minutes}m {seconds:02d}s"
+
+
+def tally(statuses):
+    """``3 completed, 1 out of device memory, 8 not yet run``."""
+
+    order = list(OUTCOME_WORDS)
+    counts = Counter(statuses)
+    return ", ".join(
+        f"{counts[status]} {OUTCOME_WORDS.get(status, status)}"
+        for status in sorted(
+            counts, key=lambda item: order.index(item) if item in order else len(order)
+        )
+    )
+
+
+def labels(cases, world_size):
+    """The settings the matrix varies, those the geometry derives from them
+    left out, and per case ``key=value`` for each."""
+
+    values = described(cases, world_size)
+    knobs = [key for key in varied(values) if key not in DERIVED_GEOMETRY]
+    return knobs, {
+        name: " ".join(
+            f"{key}={value if isinstance(value, str) else json.dumps(value)}"
+            for key in knobs
+            for value in [values[name].get(key)]
+        )
+        for name in values
+    }
+
+
+def result_line(outcome):
+    """An ended attempt as the console shows it."""
+
+    status = outcome["status"]
+    text = OUTCOME_WORDS.get(status, status)
+    if status == "completed":
+        text += (
+            f": {outcome['global_tokens_per_second']:,.1f} tok/s,"
+            f" {outcome['step_seconds']:.2f} s/update,"
+            f" GPU {outcome['peak_reserved_bytes'] / 2**30:.2f} GiB held"
+            f" ({outcome['peak_allocated_bytes'] / 2**30:.2f} in use),"
+            f" host {outcome['host_peak_rss_bytes'] / 2**30:.2f} GiB"
+        )
+        if not outcome.get("performance_result", True):
+            text += " (a qualification or profile, not a throughput result)"
+    elif outcome.get("reason"):
+        text += f": {outcome['reason']}"
+    if "wall_seconds" in outcome:
+        text += f"; {duration(outcome['wall_seconds'])}"
+    return text
+
+
 def _cell(value, form):
     return "—" if value is None else form.format(value)
 
 
-def report(output, cases, harness, world_size):
+def report(output, cases, engine, world_size):
     """``results.json`` and the ``README.md`` index of every case's latest
     outcome, with a column per setting the matrix varies."""
 
-    rows, described = [], {}
-    for name, settings in cases:
-        description = settings.describe(world_size)
-        described[name] = {**description["geometry"], **description["configuration"]}
-    knobs = varied(described)
+    rows, values = [], described(cases, world_size)
+    knobs = varied(values)
     text = [
-        f"# {harness} sweep",
+        f"# {engine} sweep",
         "",
         "[Exact manifest and commands](manifest.json). Throughput is global; "
         "device peaks are PyTorch allocator measurements; a completed run that "
@@ -227,7 +378,7 @@ def report(output, cases, harness, world_size):
                 evidence += f" · [row]({path}/row.json)"
         cells = [
             name,
-            *(json.dumps(described[name].get(key)) for key in knobs),
+            *(json.dumps(values[name].get(key)) for key in knobs),
             status,
             _cell(outcome.get("step_seconds") if eligible else None, "{:.4f}"),
             _cell(
@@ -245,7 +396,7 @@ def report(output, cases, harness, world_size):
         text.append("| " + " | ".join(cells) + " |")
     write_json(
         output / "results.json",
-        {"harness": harness, "world_size": world_size, "cases": rows},
+        {"engine": engine, "world_size": world_size, "cases": rows},
     )
     (output / "README.md").write_text("\n".join(text) + "\n")
 
@@ -312,7 +463,7 @@ def run_case(command_line, attempt, settings, world_size, timeout):
 
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
-    parser.add_argument("--harness", required=True, help="baselines.<harness>")
+    parser.add_argument("--engine", required=True, help="baselines.<engine>")
     parser.add_argument("--config", required=True, type=Path, help="the matrix")
     parser.add_argument("--output", required=True, type=Path)
     parser.add_argument(
@@ -321,7 +472,7 @@ def main(argv=None):
     parser.add_argument(
         "--python",
         type=Path,
-        help="the trainer's interpreter (default: the environment the harness names)",
+        help="the trainer's interpreter (default: the environment the engine names)",
     )
     parser.add_argument(
         "--dry-run",
@@ -362,16 +513,17 @@ def main(argv=None):
     if args.retry_failed and not args.resume:
         parser.error("--retry-failed requires --resume")
     try:
-        module = launch.harness_module(args.harness)
+        module = launch.engine_module(args.engine)
         cases = expand(json.loads(args.config.read_text()), args.gpus, module.Settings)
+        cases = keep_names(cases, args.output.resolve())
     except ValueError as error:
         parser.error(str(error))
     if args.python is None:
         args.python = launch.interpreter(module.ENVIRONMENT)
     if not os.access(args.python, os.X_OK):
         parser.error(
-            f"{args.python} is not an interpreter: build the {args.harness}"
-            " harness's environment or name --python"
+            f"{args.python} is not an interpreter: build the {args.engine}"
+            " engine's environment or name --python"
         )
     output = args.output.resolve()
     output.mkdir(parents=True, exist_ok=True)
@@ -382,7 +534,7 @@ def main(argv=None):
             parser.error("another sweep launcher holds this output directory")
         manifest = {
             "schema_version": 1,
-            "harness": args.harness,
+            "engine": args.engine,
             "world_size": args.gpus,
             "python": str(args.python.resolve()),
             "source": source_identity(["baselines/sweep.py", *module.SOURCE_PATHS]),
@@ -393,72 +545,114 @@ def main(argv=None):
             ],
         }
         path = output / "manifest.json"
+        changes = None
         if path.exists():
-            if not args.resume or json.loads(path.read_text()) != manifest:
+            held = json.loads(path.read_text())
+            differences = comparable(held, manifest)
+            if not args.resume or differences:
                 parser.error(
-                    "existing output requires --resume with the same harness, "
-                    "cases, world size, sources and Python"
+                    "existing output requires --resume with the same engine,"
+                    " world size, Python and environment"
+                    + (
+                        f"; this one differs in {', '.join(differences)}"
+                        if differences
+                        else ""
+                    )
                 )
-        else:
-            write_json(path, manifest)
+            before = {item["name"] for item in held["cases"]}
+            after = {item["name"] for item in manifest["cases"]}
+            changes = (len(after - before), len(before - after))
+        write_json(path, manifest)
         for name, settings in cases:
             case = output / "cases" / name
             write_json(case / "config.json", settings.as_dict())
             first = launch.command(
-                args.harness, args.python, args.gpus, settings, case / "attempt-001"
+                args.engine, args.python, args.gpus, settings, case / "attempt-001"
             )
             (case / "command.txt").write_text(shlex.join(first) + "\n")
-        report(output, cases, args.harness, args.gpus)
-        print(f"{len(cases)} configurations; index: {output / 'README.md'}", flush=True)
-        if args.dry_run:
-            return
-        attempted = 0
-        for name, settings in cases:
-            case = output / "cases" / name
-            previous = latest(case)
-            if previous["status"] == "completed" or (
-                previous["status"] != "pending" and not args.retry_failed
-            ):
-                continue
-            attempts = list(case.glob("attempt-*"))
-            number = (
-                max((int(path.name.split("-")[-1]) for path in attempts), default=0) + 1
-            )
-            attempt = case / f"attempt-{number:03d}"
-            attempt.mkdir()
-            cmd = launch.command(
-                args.harness, args.python, args.gpus, settings, attempt
-            )
-            (attempt / "command.txt").write_text(shlex.join(cmd) + "\n")
+        report(output, cases, args.engine, args.gpus)
+        knobs, label_of = labels(cases, args.gpus)
+        print(
+            f"{args.engine}: {len(cases)} cases at world size {args.gpus};"
+            f" trainers in {args.python}",
+            flush=True,
+        )
+        print(f"  varying: {', '.join(knobs) if knobs else 'nothing'}")
+        if changes and any(changes):
             print(
-                f"Starting {name}/{attempt.name}: {shlex.join(settings.arguments())}",
+                f"  the matrix changed: {changes[0]} new cases, {changes[1]} it no"
+                " longer names kept as they ran but not counted"
+            )
+        print(
+            "  outcomes so far: "
+            + tally(latest(output / "cases" / name)["status"] for name, _ in cases)
+        )
+        print(f"  index: {output / 'README.md'}", flush=True)
+        if args.dry_run:
+            print("  dry run: every case validated and its command written", flush=True)
+            return
+        started, began = time.monotonic(), clock()
+        print(f"  start: {began}", flush=True)
+        try:
+            run_cases(args, cases, output, manifest, label_of)
+        finally:
+            print(
+                f"{args.engine}: "
+                + tally(latest(output / "cases" / name)["status"] for name, _ in cases)
+                + f"; this run {duration(time.monotonic() - started)},"
+                f" {began} to {clock()}",
                 flush=True,
             )
-            try:
-                outcome = run_case(cmd, attempt, settings, args.gpus, args.case_timeout)
-                if outcome["status"] != "completed":
-                    write_json(
-                        attempt / "row.json",
-                        failure_row(
-                            attempt,
-                            outcome,
-                            settings,
-                            args.gpus,
-                            args.harness,
-                            manifest,
-                        ),
-                    )
-            finally:
-                report(output, cases, args.harness, args.gpus)
-            print(f"{name}: {outcome['status']}", flush=True)
-            attempted += 1
-            if (
-                outcome["status"] not in ("completed", "cuda_out_of_memory")
-                and not args.continue_on_error
-            ):
-                raise SystemExit(f"Stopped for diagnosis: {attempt / 'console.log'}")
-            if args.limit is not None and attempted >= args.limit:
-                break
+
+
+def run_cases(args, cases, output, manifest, label_of):
+    """Attempt every case that is due, in the matrix's order."""
+
+    width = len(str(len(cases)))
+    attempted = 0
+    for index, (name, settings) in enumerate(cases, 1):
+        case = output / "cases" / name
+        if not to_attempt(latest(case), args.retry_failed):
+            continue
+        position = f"[{index:>{width}}/{len(cases)}]"
+        attempts = list(case.glob("attempt-*"))
+        number = (
+            max((int(path.name.split("-")[-1]) for path in attempts), default=0) + 1
+        )
+        attempt = case / f"attempt-{number:03d}"
+        attempt.mkdir()
+        cmd = launch.command(args.engine, args.python, args.gpus, settings, attempt)
+        (attempt / "command.txt").write_text(shlex.join(cmd) + "\n")
+        again = "" if attempt.name == "attempt-001" else f" ({attempt.name})"
+        print(f"{position} {name}{again}  {label_of[name]}", flush=True)
+        try:
+            outcome = run_case(cmd, attempt, settings, args.gpus, args.case_timeout)
+            if outcome["status"] != "completed":
+                write_json(
+                    attempt / "row.json",
+                    failure_row(
+                        attempt,
+                        outcome,
+                        settings,
+                        args.gpus,
+                        args.engine,
+                        manifest,
+                    ),
+                )
+        finally:
+            report(output, cases, args.engine, args.gpus)
+        line = result_line(outcome)
+        if outcome["status"] in ("failed", "timeout"):
+            line += f"; log {attempt / 'console.log'}"
+        print(f"{position}   {line}", flush=True)
+        attempted += 1
+        if (
+            outcome["status"] not in ("completed", "cuda_out_of_memory")
+            and not args.continue_on_error
+        ):
+            raise SystemExit(f"Stopped for diagnosis: {attempt / 'console.log'}")
+        if args.limit is not None and attempted >= args.limit:
+            break
 
 
 if __name__ == "__main__":

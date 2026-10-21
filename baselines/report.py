@@ -9,10 +9,10 @@ by the last that wrote a row. They are grouped by model, training mode,
 device and world size, and each group is one figure of two panels: global
 tokens per second against the peak device memory of the binding rank, and
 against the host memory the ranks' processes peaked at in sum. Every
-completed throughput row is a point, colored by harness; the Pareto frontier
-of each harness, the rows no other row of that harness beats on both axes,
+completed throughput row is a point, colored by engine; the Pareto frontier
+of each engine, the rows no other row of that engine beats on both axes,
 is drawn as a step and its points are labeled with the settings that vary
-among that harness's rows of the group. Rows that ran out of device memory
+among that engine's rows of the group. Rows that ran out of device memory
 are the boundary and are listed with the group. Each figure is written as
 PNG, SVG and PDF with a table of its points, and ``index.html`` links them
 all.
@@ -45,7 +45,7 @@ DERIVED_GEOMETRY = (
     "tokens_per_rank_per_step",
 )
 
-#: One color per harness, in the order harnesses usually appear.
+#: One color per engine, in the order engines usually appear.
 COLORS = (
     "#3268db",
     "#008b83",
@@ -85,8 +85,8 @@ def group_key(row: dict[str, Any]) -> tuple[str, str, str, int]:
 
 
 def settings_of(row: dict[str, Any]) -> dict[str, Any]:
-    """The geometry a harness was asked for and its configuration, as one
-    mapping; what distinguishes rows of one harness within a group."""
+    """The geometry an engine was asked for and its configuration, as one
+    mapping; what distinguishes rows of one engine within a group."""
 
     geometry = {
         key: value
@@ -106,7 +106,7 @@ def point(row: dict[str, Any], memory: str = "allocated") -> dict[str, Any] | No
         return None
     peaks = row["memory"] or {}
     return {
-        "harness": row["harness"],
+        "engine": row["engine"],
         "key": group_key(row),
         "tokens_per_second": float(measurement["global_tokens_per_second"]),
         "step_seconds": float(measurement["step_seconds"]),
@@ -159,7 +159,7 @@ def groups(
     rows: list[dict[str, Any]], memory: str
 ) -> dict[tuple[str, str, str, int], dict[str, Any]]:
     """Per group: its points, the setting keys that vary within each
-    harness, the frontier of each harness on both axes, and the rows that
+    engine, the frontier of each engine on both axes, and the rows that
     ran out of device memory."""
 
     collected: dict[tuple[str, str, str, int], dict[str, Any]] = defaultdict(
@@ -172,7 +172,7 @@ def groups(
         elif row["status"] == "cuda_out_of_memory":
             collected[group_key(row)]["boundary"].append(
                 {
-                    "harness": row["harness"],
+                    "engine": row["engine"],
                     "settings": settings_of(row),
                     "path": row.get("_path", ""),
                 }
@@ -181,33 +181,33 @@ def groups(
     for key in sorted(collected):
         group = collected[key]
         everything = group["points"] + group["boundary"]
-        harnesses = sorted({item["harness"] for item in everything})
+        engines = sorted({item["engine"] for item in everything})
         keys = {
-            harness: varied(
+            engine: varied(
                 {
                     index: item["settings"]
                     for index, item in enumerate(everything)
-                    if item["harness"] == harness
+                    if item["engine"] == engine
                 }
             )
-            for harness in harnesses
+            for engine in engines
         }
         frontiers = {
-            harness: {
+            engine: {
                 axis: frontier(
-                    [item for item in group["points"] if item["harness"] == harness],
+                    [item for item in group["points"] if item["engine"] == engine],
                     axis,
                     "tokens_per_second",
                 )
                 for axis in ("device_gib", "host_gib")
             }
-            for harness in harnesses
+            for engine in engines
         }
         result[key] = {
             "points": group["points"],
             "boundary": group["boundary"],
             "keys": keys,
-            "harnesses": harnesses,
+            "engines": engines,
             "frontiers": frontiers,
         }
     return result
@@ -223,17 +223,17 @@ def draw(key, group, output: Path, *, memory: str, dpi: int) -> list[Path]:
 
     figure, axes = pyplot.subplots(1, 2, figsize=(15, 5.6))
     styles = {
-        harness: (COLORS[index % len(COLORS)], MARKERS[index % len(MARKERS)])
-        for index, harness in enumerate(group["harnesses"])
+        engine: (COLORS[index % len(COLORS)], MARKERS[index % len(MARKERS)])
+        for index, engine in enumerate(group["engines"])
     }
     for axis, column, caption in (
         (axes[0], "device_gib", f"peak device memory, {memory} (GiB)"),
         (axes[1], "host_gib", "peak host memory, sum over ranks (GiB)"),
     ):
         widest = max((item[column] for item in group["points"]), default=0.0)
-        for harness in group["harnesses"]:
-            color, marker = styles[harness]
-            items = [item for item in group["points"] if item["harness"] == harness]
+        for engine in group["engines"]:
+            color, marker = styles[engine]
+            items = [item for item in group["points"] if item["engine"] == engine]
             if not items:
                 continue
             axis.scatter(
@@ -243,9 +243,9 @@ def draw(key, group, output: Path, *, memory: str, dpi: int) -> list[Path]:
                 marker=marker,
                 s=28,
                 alpha=0.6,
-                label=harness,
+                label=engine,
             )
-            best = group["frontiers"][harness][column]
+            best = group["frontiers"][engine][column]
             if best:
                 axis.step(
                     [item[column] for item in best],
@@ -259,7 +259,7 @@ def draw(key, group, output: Path, *, memory: str, dpi: int) -> list[Path]:
                     # the axis edge does not cut them.
                     leftwards = item[column] > 0.67 * widest
                     text = axis.annotate(
-                        label(item, group["keys"][item["harness"]]),
+                        label(item, group["keys"][item["engine"]]),
                         (item[column], item["tokens_per_second"]),
                         fontsize=6,
                         xytext=(-4 if leftwards else 4, 2),
@@ -274,7 +274,7 @@ def draw(key, group, output: Path, *, memory: str, dpi: int) -> list[Path]:
         axis.set_ylim(bottom=0)
         axis.grid(color="#e3e8ef", linewidth=0.8)
         axis.set_axisbelow(True)
-        if group["harnesses"]:
+        if group["engines"]:
             axis.legend(frameon=False, fontsize=8, loc="lower right")
     figure.suptitle(title(key))
     figure.tight_layout()
@@ -295,19 +295,19 @@ def table_rows(group) -> list[dict[str, Any]]:
     on_frontier = {
         axis: {
             id(item)
-            for harness in group["harnesses"]
-            for item in group["frontiers"][harness][axis]
+            for engine in group["engines"]
+            for item in group["frontiers"][engine][axis]
         }
         for axis in ("device_gib", "host_gib")
     }
     records = []
     for item in sorted(
-        group["points"], key=lambda item: (item["harness"], item["device_gib"])
+        group["points"], key=lambda item: (item["engine"], item["device_gib"])
     ):
         records.append(
             {
-                "harness": item["harness"],
-                "settings": label(item, group["keys"][item["harness"]]),
+                "engine": item["engine"],
+                "settings": label(item, group["keys"][item["engine"]]),
                 "tokens_per_second": item["tokens_per_second"],
                 "step_seconds": item["step_seconds"],
                 "useful_tflops_per_gpu": item["useful_tflops_per_gpu"],
@@ -322,11 +322,11 @@ def table_rows(group) -> list[dict[str, Any]]:
                 "path": item["path"],
             }
         )
-    for item in sorted(group["boundary"], key=lambda item: item["harness"]):
+    for item in sorted(group["boundary"], key=lambda item: item["engine"]):
         records.append(
             {
-                "harness": item["harness"],
-                "settings": label(item, group["keys"][item["harness"]]),
+                "engine": item["engine"],
+                "settings": label(item, group["keys"][item["engine"]]),
                 "tokens_per_second": None,
                 "step_seconds": None,
                 "useful_tflops_per_gpu": None,
@@ -341,7 +341,7 @@ def table_rows(group) -> list[dict[str, Any]]:
 
 
 TABLE_COLUMNS = (
-    ("harness", "Harness", False),
+    ("engine", "Engine", False),
     ("settings", "Settings", False),
     ("status", "Status", False),
     ("tokens_per_second", "tok/s", True),
@@ -408,7 +408,7 @@ def write_index(output: Path, sections: list[dict[str, Any]], memory: str) -> No
         "<p>One figure per model, training mode, device and world size: global "
         "tokens per second against the binding rank's peak device memory "
         f"({html.escape(memory)}) and against the ranks' summed peak host memory. "
-        "A step is one harness's Pareto frontier, labeled with the settings that "
+        "A step is one engine's Pareto frontier, labeled with the settings that "
         "vary within the group; out-of-memory rows are the boundary.</p>",
         '<p><a href="rows.csv">CSV of every point</a></p>',
     ]
