@@ -98,6 +98,35 @@ def from_huggingface(metadata: Mapping[str, Any], **overrides: Any) -> Config:
     return Config(**{**values, **overrides})
 
 
+def to_huggingface(config: Config) -> dict[str, Any]:
+    """The Hugging Face ``config.json`` of a ``Config``, the inverse of
+    ``from_huggingface`` apart from the rotary capacity, which it records as
+    ``max_position_embeddings``: what a system that builds Llama from a
+    Hugging Face configuration builds this model from."""
+
+    scaling = config.rope_scaling
+    return {
+        "architectures": ["LlamaForCausalLM"],
+        "model_type": "llama",
+        "hidden_act": "silu",
+        "attention_bias": False,
+        "mlp_bias": False,
+        "num_hidden_layers": config.n_layers,
+        "hidden_size": config.d_model,
+        "num_attention_heads": config.n_heads,
+        "num_key_value_heads": config.n_kv_heads,
+        "head_dim": config.head_dim,
+        "intermediate_size": config.d_ff,
+        "vocab_size": config.vocab_size,
+        "rope_theta": config.rope_base,
+        "rope_scaling": None if scaling is None else {**scaling, "rope_type": "llama3"},
+        "max_position_embeddings": config.max_seq_len,
+        "tie_word_embeddings": config.tied_embeddings,
+        "rms_norm_eps": config.norm_epsilon,
+        "torch_dtype": "bfloat16",
+    }
+
+
 #: The named shapes the catalog serves, by size.
 PRESETS: Mapping[str, Config] = {
     "numerical": Config(12, 2_048, 16, 4, 7_168, 128_256),

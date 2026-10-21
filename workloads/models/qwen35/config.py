@@ -167,6 +167,64 @@ PRESETS: Mapping[str, Config] = {
 }
 
 
+def to_huggingface(config: Config) -> dict[str, Any]:
+    """The Hugging Face text decoder's ``config.json`` of a ``Config``
+    (``Qwen3_5ForCausalLM``), the inverse of ``from_huggingface`` apart from
+    the rotary capacity, which it records as ``max_position_embeddings``:
+    the published checkpoints' text configuration without their vision
+    tower and with no multi-token prediction layer, which this family
+    leaves out. Hugging Face's Qwen 3.5 always keeps its norms as offsets
+    from one, so a configuration with plain norms has no counterpart."""
+
+    if not config.zero_centered_norm:
+        raise ValueError(
+            "Hugging Face's Qwen 3.5 zero-centers every norm; this configuration"
+            " keeps plain ones (set zero_centered_norm)"
+        )
+    return {
+        "architectures": ["Qwen3_5ForCausalLM"],
+        "model_type": "qwen3_5_text",
+        "hidden_act": "silu",
+        "attention_bias": False,
+        "attn_output_gate": True,
+        "num_hidden_layers": config.n_layers,
+        "hidden_size": config.d_model,
+        "full_attention_interval": config.full_attention_interval,
+        "layer_types": [
+            "full_attention"
+            if config.layer_kind(index) == "full"
+            else "linear_attention"
+            for index in range(config.n_layers)
+        ],
+        "num_attention_heads": config.n_heads,
+        "num_key_value_heads": config.n_kv_heads,
+        "head_dim": config.head_dim,
+        "linear_num_key_heads": config.lin_k_heads,
+        "linear_num_value_heads": config.lin_v_heads,
+        "linear_key_head_dim": config.lin_k_head_dim,
+        "linear_value_head_dim": config.lin_v_head_dim,
+        "linear_conv_kernel_dim": config.lin_conv_kernel,
+        "mamba_ssm_dtype": "float32",
+        "intermediate_size": config.d_ff,
+        "mlp_only_layers": [],
+        "mtp_num_hidden_layers": 0,
+        "vocab_size": config.vocab_size,
+        "rope_parameters": {
+            "rope_type": "default",
+            "rope_theta": config.rope_base,
+            "partial_rotary_factor": config.partial_rotary_factor,
+            "mrope_interleaved": True,
+            "mrope_section": mrope_sections(
+                config.head_dim, config.partial_rotary_factor
+            ),
+        },
+        "max_position_embeddings": config.max_seq_len,
+        "tie_word_embeddings": config.tied_embeddings,
+        "rms_norm_eps": config.norm_epsilon,
+        "torch_dtype": "bfloat16",
+    }
+
+
 def from_huggingface(metadata: Mapping[str, Any], **overrides: Any) -> Config:
     """The ``Config`` a Hugging Face Qwen 3.5 ``config.json`` describes: the
     text decoder of the vision-language checkpoint, whose settings sit under
@@ -212,3 +270,14 @@ def from_huggingface(metadata: Mapping[str, Any], **overrides: Any) -> Config:
     if unknown:
         raise ValueError(f"unknown Qwen 3.5 fields {sorted(unknown)}")
     return Config(**{**values, **overrides})
+
+
+def mrope_sections(head_dim, partial_rotary_factor):
+    """The rotary pairs a Qwen vision-language checkpoint splits among its
+    time, height and width positions, as the published models split them
+    (32 pairs as 11, 11 and 10); a text sequence's three positions are one,
+    so any split rotates the same."""
+
+    pairs = int(head_dim * partial_rotary_factor) // 2
+    base, extra = divmod(pairs, 3)
+    return [base + (index < extra) for index in range(3)]

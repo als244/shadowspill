@@ -81,6 +81,33 @@ def from_huggingface(metadata: Mapping[str, Any], **overrides: Any) -> Config:
     return Config(**{**values, **overrides})
 
 
+def to_huggingface(config: Config) -> dict[str, Any]:
+    """The Hugging Face ``config.json`` of a ``Config``, the inverse of
+    ``from_huggingface`` apart from the rotary capacity, which it records as
+    ``max_position_embeddings``."""
+
+    return {
+        "architectures": ["Qwen3ForCausalLM"],
+        "model_type": "qwen3",
+        "hidden_act": "silu",
+        "attention_bias": False,
+        "use_sliding_window": False,
+        "num_hidden_layers": config.n_layers,
+        "hidden_size": config.d_model,
+        "num_attention_heads": config.n_heads,
+        "num_key_value_heads": config.n_kv_heads,
+        "head_dim": config.head_dim,
+        "intermediate_size": config.d_ff,
+        "vocab_size": config.vocab_size,
+        "rope_theta": config.rope_base,
+        "rope_scaling": None,
+        "max_position_embeddings": config.max_seq_len,
+        "tie_word_embeddings": config.tied_embeddings,
+        "rms_norm_eps": config.norm_epsilon,
+        "torch_dtype": "bfloat16",
+    }
+
+
 #: The named shapes the catalog serves, by size. The tiny shape's attention
 #: is wider than its model, as Qwen3-32B's is (8,192 against 5,120).
 PRESETS: Mapping[str, Config] = {

@@ -53,3 +53,46 @@ PRESETS: Mapping[str, Config] = {
 def from_huggingface(metadata, **overrides):
     """The ``Config`` a Hugging Face ``config.json`` of this family describes."""
     return _from_huggingface(Config, metadata, ("qwen3_moe",), **overrides)
+
+
+def to_huggingface(config):
+    """The Hugging Face ``config.json`` of a ``Config``, the inverse of
+    ``from_huggingface`` apart from the rotary capacity, which it records as
+    ``max_position_embeddings``. Every layer is a mixture; the dense width a
+    mixed checkpoint gives its MLP-only layers is the published model's
+    (three model widths), which no layer here uses."""
+
+    if config.d_ff_shared or config.full_attention_interval != 1:
+        raise ValueError("Qwen 3 MoE has no shared experts or linear attention")
+    if config.partial_rotary_factor != 1 or config.zero_centered_norm:
+        raise ValueError("Qwen 3 MoE rotates whole heads and scales its norms")
+    if config.attention_gate:
+        raise ValueError("Qwen 3 MoE has no attention gate")
+    return {
+        "architectures": ["Qwen3MoeForCausalLM"],
+        "model_type": "qwen3_moe",
+        "hidden_act": "silu",
+        "attention_bias": False,
+        "norm_topk_prob": True,
+        "decoder_sparse_step": 1,
+        "mlp_only_layers": [],
+        "num_hidden_layers": config.n_layers,
+        "hidden_size": config.d_model,
+        "intermediate_size": 3 * config.d_model,
+        "num_attention_heads": config.n_heads,
+        "num_key_value_heads": config.n_kv_heads,
+        "head_dim": config.head_dim,
+        "num_experts": config.n_experts,
+        "num_experts_per_tok": config.top_k,
+        "moe_intermediate_size": config.d_ff_expert,
+        "vocab_size": config.vocab_size,
+        "rope_theta": config.rope_base,
+        "rope_scaling": None,
+        "max_position_embeddings": config.max_seq_len,
+        "rms_norm_eps": config.norm_epsilon,
+        "router_aux_loss_coef": config.router_aux_loss_coef,
+        "initializer_range": config.initializer_range,
+        "tie_word_embeddings": False,
+        "use_sliding_window": False,
+        "torch_dtype": "bfloat16",
+    }

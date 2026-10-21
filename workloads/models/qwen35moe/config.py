@@ -64,3 +64,70 @@ def from_huggingface(metadata, **overrides):
     return _from_huggingface(
         Config, metadata, ("qwen3_5_moe", "qwen3_5_moe_text"), **overrides
     )
+
+
+def to_huggingface(config):
+    """The Hugging Face text decoder's ``config.json`` of a ``Config``
+    (``Qwen3_5MoeForCausalLM``), the inverse of ``from_huggingface`` apart
+    from the rotary capacity, which it records as
+    ``max_position_embeddings``: the published checkpoint's text
+    configuration without its vision tower and with no multi-token
+    prediction layer. Hugging Face's Qwen 3.5 MoE zero-centers its norms and
+    gates its attention, so a configuration without either has no
+    counterpart."""
+
+    from workloads.models.qwen35.config import mrope_sections
+
+    if not (config.zero_centered_norm and config.attention_gate):
+        raise ValueError(
+            "Hugging Face's Qwen 3.5 MoE zero-centers its norms and gates its"
+            " attention; this configuration does not"
+        )
+    return {
+        "architectures": ["Qwen3_5MoeForCausalLM"],
+        "model_type": "qwen3_5_moe_text",
+        "hidden_act": "silu",
+        "attention_bias": False,
+        "attn_output_gate": True,
+        "norm_topk_prob": True,
+        "num_hidden_layers": config.n_layers,
+        "hidden_size": config.d_model,
+        "full_attention_interval": config.full_attention_interval,
+        "layer_types": [
+            "full_attention"
+            if config.layer_kind(index) == "full"
+            else "linear_attention"
+            for index in range(config.n_layers)
+        ],
+        "num_attention_heads": config.n_heads,
+        "num_key_value_heads": config.n_kv_heads,
+        "head_dim": config.head_dim,
+        "linear_num_key_heads": config.lin_k_heads,
+        "linear_num_value_heads": config.lin_v_heads,
+        "linear_key_head_dim": config.lin_k_head_dim,
+        "linear_value_head_dim": config.lin_v_head_dim,
+        "linear_conv_kernel_dim": config.lin_conv_kernel,
+        "mamba_ssm_dtype": "float32",
+        "num_experts": config.n_experts,
+        "num_experts_per_tok": config.top_k,
+        "moe_intermediate_size": config.d_ff_expert,
+        "shared_expert_intermediate_size": config.d_ff_shared,
+        "mlp_only_layers": [],
+        "mtp_num_hidden_layers": 0,
+        "router_aux_loss_coef": config.router_aux_loss_coef,
+        "vocab_size": config.vocab_size,
+        "rope_parameters": {
+            "rope_type": "default",
+            "rope_theta": config.rope_base,
+            "partial_rotary_factor": config.partial_rotary_factor,
+            "mrope_interleaved": True,
+            "mrope_section": mrope_sections(
+                config.head_dim, config.partial_rotary_factor
+            ),
+        },
+        "max_position_embeddings": config.max_seq_len,
+        "rms_norm_eps": config.norm_epsilon,
+        "initializer_range": config.initializer_range,
+        "tie_word_embeddings": False,
+        "torch_dtype": "bfloat16",
+    }
