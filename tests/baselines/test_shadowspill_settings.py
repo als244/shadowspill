@@ -5,12 +5,12 @@ import argparse
 import pytest
 
 from baselines.common.launch import command, engine_module
-from baselines.shadowspill.settings import (
+from baselines.engines.shadowspill.settings import (
     Settings,
     add_arguments,
     from_namespace,
 )
-from baselines.shadowspill.train import optimizer_arguments
+from baselines.engines.shadowspill.train import optimizer_arguments
 
 BASE = {
     "model": "llama3-tiny",
@@ -93,3 +93,15 @@ def test_an_unnamed_rounding_is_rounding_to_nearest():
         {**BASE, "opt_state_dtype": "bfloat16", "opt_state_rounding": "stochastic"}
     ).precision()
     assert optimizer_arguments(named)["opt_state_rounding"] == "stochastic"
+
+
+def test_every_case_shares_the_librarys_store_unless_it_names_another():
+    assert Settings.from_dict(BASE).artifact_store == "default"
+    for store in ("default", "none", "/tmp/store"):
+        settings = Settings.from_dict({**BASE, "artifact_store": store})
+        settings.validate(1)
+        parser = argparse.ArgumentParser()
+        add_arguments(parser)
+        assert from_namespace(parser.parse_args(settings.arguments())) == settings
+    with pytest.raises(ValueError, match="artifact_store"):
+        Settings.from_dict({**BASE, "artifact_store": ""}).validate(1)

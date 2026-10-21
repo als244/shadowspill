@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import tempfile
 import weakref
 from collections.abc import Callable, Mapping, Sequence
 from pathlib import Path
@@ -87,7 +86,6 @@ class ShadowSpill:
         )
         self._owned_models: list[nn.Module] = []
         self._sessions: list[_Step | _Forward] = []
-        self._temporary_store: tempfile.TemporaryDirectory[str] | None = None
 
     def __enter__(self) -> Self:
         if self.runtime is not None:
@@ -176,11 +174,7 @@ class ShadowSpill:
             execution_budget=self.budget[0],
             spill_budget=self.budget[1],
             execution_device=self.device,
-            artifact_store=(
-                self._temporary_store.name
-                if self._temporary_store
-                else self.artifact_store
-            ),
+            artifact_store=self.artifact_store,
             search_options=self.search_options,
             profiling_options=self.profiling_options,
             partition=self.partition,
@@ -209,12 +203,6 @@ class ShadowSpill:
         chosen = next(iter(examples))
         selection: dict[str, Any] = {}
         if len(examples) > 1 or len(examples[chosen]) > 1:
-            if self.artifact_store is None:
-                if self._temporary_store is None:
-                    self._temporary_store = tempfile.TemporaryDirectory(
-                        prefix="shadowspill-training-"
-                    )
-                common["artifact_store"] = self._temporary_store.name
             search_args = dict(common)
             for key in ("execution_budget", "spill_budget"):
                 search_args.pop(key)
@@ -287,9 +275,6 @@ class ShadowSpill:
         self._sessions.clear()
         self._owned_models.clear()
         self._models.clear()
-        if self._temporary_store is not None:
-            self._temporary_store.cleanup()
-            self._temporary_store = None
 
 
 class _Session[Call: (PlannedForward, PlannedTrainStep)]:

@@ -316,7 +316,11 @@ accelerator devices. `ShadowSpill(execution_gib=..., spill_gib=...,
 device="auto")` installs its pools on entering the context. It also accepts
 `artifact_store`, `search_options`, `profiling_options`, `partition`,
 `orderings`, `fuse_narrow_gradient_accumulation=True`, `numa_binding=True`,
-`external_headroom_gib=0.5`, and `reject_overbudget=False`.
+`external_headroom_gib=0.5`, and `reject_overbudget=False`. Every step it
+prepares, one microbatch list or a search over several, builds and plans in
+`artifact_store`, or the library's own store (`~/.cache/shadowspill`) when it
+is `None`, in `contribute` mode: what the store holds is read, and what it
+lacks is built and written back ([the artifact store](../artifact-store.md)).
 
 `device` can be an explicit local device/index. Automatic selection uses the
 only visible device, or `LOCAL_RANK` when several are visible. It does not map

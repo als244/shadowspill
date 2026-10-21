@@ -87,6 +87,9 @@ def test_search_and_forward_share_imported_state_and_build_store(monkeypatch, tm
         assert trainer.model is imported[0]
         assert trainer.model is not model
         assert tuple(searches[0]["candidates"]) == ("split",)
+        # Searched or not, a step builds and plans in the backend's store, the
+        # library's own when it names none.
+        assert searches[0]["artifact_store"] is None
         assert len(plans[0]["example_inputs"]) == 2
         assert plans[0]["incumbent"] == "chosen"
         assert plans[0]["search_options"] is searches[0]["search_options"] is policy
