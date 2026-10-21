@@ -114,3 +114,77 @@ def test_an_accumulator_is_judged_without_its_signs():
     assert metric.sign_agreement < reference.MINIMUM_SIGN_AGREEMENT
     assert reference.meets_tolerance(metric, weight=False, step_size=RATE)
     assert not reference.meets_tolerance(metric, weight=True, step_size=RATE)
+
+
+def test_a_zero_started_weight_is_allowed_its_stepped_dtype_rounding():
+    # Two opposite full steps, the values held at bf16: they lie a little
+    # more than two learning rates apart, by less than one unit in the last
+    # place at their magnitude.
+    expected = torch.full((8,), -3e-4).to(torch.bfloat16)
+    actual = -expected
+    distance = float(actual[0].float() - expected[0].float())
+    rate = distance / 2 * (1 - 2**-10)
+    metric = reference.tensor_metrics(expected, actual)
+    assert metric.maximum_absolute_error > 2 * rate
+    error = reference.step_error(expected, actual, torch.bfloat16)
+    assert error <= 2 * rate
+    assert reference.meets_tolerance(
+        metric, weight=True, step_size=rate, zero_started=True, step_error=error
+    )
+    assert not reference.meets_tolerance(
+        metric, weight=True, step_size=rate, zero_started=True
+    )
+    far = actual.clone()
+    far[0] = torch.tensor(4 * rate).to(torch.bfloat16)
+    assert reference.step_error(expected, far, torch.bfloat16) > 2 * rate
+    # At float32 the allowance is negligible.
+    assert reference.step_error(
+        expected.float(), actual.float(), torch.float32
+    ) == pytest.approx(metric.maximum_absolute_error, rel=1e-5)
+
+
+def test_a_zero_started_weight_is_measured_in_the_references_own_steps():
+    # AdamW stepping bf16 weights with bf16 moments: the first step of a
+    # zero-started weight is one learning rate only to within the moments'
+    # rounding, so two opposite steps can lie more than two learning rates
+    # and an ulp apart. The reference's own largest step is the unit.
+    rate = 3e-4
+    gradient = torch.logspace(-6, 0, 4096).to(torch.bfloat16)
+
+    def first_step(sign):
+        weight = torch.zeros_like(gradient, requires_grad=True)
+        optimizer = torch.optim.AdamW([weight], lr=rate, foreach=False)
+        weight.grad = sign * gradient
+        optimizer.step()
+        return weight.detach()
+
+    expected, actual = first_step(1.0), first_step(-1.0)
+    metric = reference.tensor_metrics(expected, actual)
+    error = reference.step_error(expected, actual, torch.bfloat16)
+    step = max(rate, float(expected.float().abs().max()))
+    assert step > rate
+    assert error > 2 * rate
+    assert reference.meets_tolerance(
+        metric, weight=True, step_size=step, zero_started=True, step_error=error
+    )
+    assert not reference.meets_tolerance(
+        metric, weight=True, step_size=rate, zero_started=True, step_error=error
+    )
+
+
+def test_a_routed_expert_factor_takes_the_wider_accumulator_bound():
+    generator = torch.Generator().manual_seed(0)
+    expected = torch.randn(4096, generator=generator)
+    noise = torch.randn(4096, generator=generator)
+    actual = expected + 0.07 * noise * expected.norm() / noise.norm()
+    metric = reference.tensor_metrics(expected, actual)
+    assert 0.995 < metric.cosine < reference.MINIMUM_COSINE
+    assert reference.MAXIMUM_RELATIVE_L2_OPTIMIZER < metric.relative_l2 < 0.10
+    assert reference.meets_tolerance(
+        metric, weight=False, step_size=RATE, routed_factor=True
+    )
+    assert not reference.meets_tolerance(metric, weight=False, step_size=RATE)
+    # A routed factor's master keeps the weight bounds.
+    assert not reference.meets_tolerance(
+        metric, weight=True, step_size=RATE, routed_factor=True
+    )
