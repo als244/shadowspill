@@ -185,7 +185,8 @@ def test_a_dry_run_runs_each_sweeps_own_dry_run(tmp_path, monkeypatch):
     assert json.loads(matrix.read_text()) == json.loads(source.read_text())
     (console,) = (tmp_path / "out" / "runs").glob("*.log")
     text = console.read_text()
-    assert "ENGINE [2/2] deep" in text and "\n  a sweep's console\n" in text
+    assert "── Engine 2/2: deep (deepspeed) ─" in text
+    assert "\na sweep's console\n" in text
     assert "SUMMARY" in text and (tmp_path / "out" / "summary.md").is_file()
 
 
@@ -291,7 +292,7 @@ def test_an_overwrite_discards_only_the_engines_it_runs(tmp_path, monkeypatch):
     assert not (held / "deep" / "kept.txt").exists()
     assert (held / "fsdp2-qualification" / "kept.txt").is_file()
     console = sorted((tmp_path / "out" / "runs").glob("*.log"))[-1]
-    assert "overwrite: discarded" in console.read_text()
+    assert "discarded" in console.read_text()
 
 
 def test_an_interrupted_engine_is_recorded_so(tmp_path, monkeypatch):

@@ -371,7 +371,7 @@ def run_sweep(command, log: Path, console: Console) -> int:
             for line in process.stdout:
                 handle.write(line)
                 handle.flush()
-                console("  " + line.rstrip("\n"))
+                console(line.rstrip("\n"))
         finally:
             returncode = process.wait()
     return returncode
@@ -461,13 +461,19 @@ def header(console: Console, spec: dict, spec_path: Path, selected: list, output
     """What the run is of: the spec, its settings, every sweep with its case
     count and whether this run runs it."""
 
-    console(f"EXPERIMENT {spec_path}")
-    console(f"  output: {output}")
-    console(f"  start: {sweep_runner.clock()}; this run's console: {console.path}")
+    rule, field = sweep_runner.rule, sweep_runner.field
+    console(rule(f"Experiment {Path(spec_path).resolve().parent.name}"))
+    console(field("spec", spec_path))
+    console(field("output", output))
+    console(field("console", console.path))
+    console(field("start", sweep_runner.clock()))
     memory = host_gib()
     console(
-        f"  GPUs: {spec['gpus']}"
-        + ("" if memory is None else f"; host memory {memory:.0f} GiB")
+        field(
+            "machine",
+            f"{spec['gpus']} GPU{'s' if spec['gpus'] > 1 else ''}"
+            + ("" if memory is None else f", {memory:.0f} GiB of host memory"),
+        )
     )
     shared = " ".join(
         f"{key}={value if isinstance(value, str) else json.dumps(value)}"
@@ -476,17 +482,21 @@ def header(console: Console, spec: dict, spec_path: Path, selected: list, output
     for line in textwrap.wrap(
         shared,
         width=96,
-        initial_indent="  settings: ",
-        subsequent_indent=" " * 12,
+        initial_indent=field("shared", ""),
+        subsequent_indent=field("", ""),
         break_long_words=False,
         break_on_hyphens=False,
     ):
         console(line)
-    for sweep in spec["sweeps"]:
+    width = max(len(sweep["name"]) for sweep in spec["sweeps"])
+    for index, sweep in enumerate(spec["sweeps"]):
         role = "runs" if sweep in selected else "kept as it is"
         console(
-            f"  {sweep['name']}: {case_count(spec, sweep)} of {sweep['engine']},"
-            f" trainers in {sweep['python']}; {role}"
+            field(
+                "sweeps" if index == 0 else "",
+                f"{sweep['name']:<{width}}  {case_count(spec, sweep)} of"
+                f" {sweep['engine']}; {role}",
+            )
         )
 
 
@@ -521,16 +531,20 @@ def execute(args, spec: dict, selected: list, output: Path, stamp: str, console)
     }
     header(console, spec, args.spec, selected, output)
     if args.dry_run:
-        console("  dry run: each sweep validates its cases and writes their commands")
+        console(
+            sweep_runner.field(
+                "dry run", "each sweep validates its cases and writes their commands"
+            )
+        )
     if args.overwrite:
         for sweep in selected:
             held = output / "sweeps" / sweep["name"]
             if held.exists():
                 if args.dry_run:
-                    console(f"  overwrite: would discard {held}")
+                    console(sweep_runner.field("overwrite", f"would discard {held}"))
                 else:
                     shutil.rmtree(held)
-                    console(f"  overwrite: discarded {held}")
+                    console(sweep_runner.field("overwrite", f"discarded {held}"))
     failed: list[str] = []
     ending = "interrupted"
     try:
@@ -556,7 +570,12 @@ def execute(args, spec: dict, selected: list, output: Path, stamp: str, console)
                 # a matrix its engine refuses fails here, not mid-experiment.
                 command.append("--dry-run")
             console()
-            console(f"ENGINE [{index}/{len(selected)}] {sweep['name']}")
+            console(
+                sweep_runner.rule(
+                    f"Engine {index}/{len(selected)}: {sweep['name']}"
+                    f" ({sweep['engine']})"
+                )
+            )
             began, clock_began, sweep_started = (
                 now(),
                 sweep_runner.clock(),
@@ -597,14 +616,18 @@ def execute(args, spec: dict, selected: list, output: Path, stamp: str, console)
                 }
             )
             console(
-                f"ENGINE {sweep['name']}: {status}"
-                + (f" (exit status {returncode})" if returncode else "")
-                + f"; {sweep_runner.duration(time.monotonic() - sweep_started)},"
-                f" {clock_began} to {sweep_runner.clock()}"
+                sweep_runner.field(
+                    "engine",
+                    f"{status}"
+                    + (f" (exit status {returncode})" if returncode else "")
+                    + f"; {sweep_runner.duration(time.monotonic() - sweep_started)},"
+                    f" {clock_began} to {sweep_runner.clock()}",
+                )
             )
             write_json(record_path, run)
             write_json(output / "experiment.json", merged_record(output, spec, run))
         console()
+        console(sweep_runner.rule("Report and summary"))
         if not args.skip_report:
             roots = [
                 output / "sweeps" / sweep["name"]
@@ -629,16 +652,20 @@ def execute(args, spec: dict, selected: list, output: Path, stamp: str, console)
                 }
                 if status == "failed":
                     failed.append("report")
-                console(f"REPORT {status}: {output / 'report' / 'index.html'}")
+                console(
+                    sweep_runner.field(
+                        "report", f"{status}: {output / 'report' / 'index.html'}"
+                    )
+                )
             else:
-                console("REPORT not drawn: no rows yet")
+                console(sweep_runner.field("report", "not drawn: no rows yet"))
             console()
         try:
             summary = summaries.write(output, summaries.summarize(output))
             if args.publish is not None:
                 summaries.publish(output, summary, args.publish)
         except (ValueError, OSError, KeyError) as error:
-            console(f"SUMMARY failed: {error}")
+            console(sweep_runner.field("summary", f"failed: {error}"))
             run["summary"] = {"status": "failed", "error": str(error)}
             failed.append("summary")
         else:
@@ -651,18 +678,23 @@ def execute(args, spec: dict, selected: list, output: Path, stamp: str, console)
                 "published": None if args.publish is None else str(args.publish),
             }
             if args.publish is not None:
-                console(f"PUBLISHED {args.publish / 'summary.md'}")
+                console(sweep_runner.field("published", args.publish / "summary.md"))
         ending = "finished" + (f", failed: {', '.join(failed)}" if failed else "")
     finally:
         run["finished_at"] = now()
         write_json(record_path, run)
         write_json(output / "experiment.json", merged_record(output, spec, run))
         console()
+        console(sweep_runner.rule("Experiment " + ending))
         console(
-            f"EXPERIMENT {ending} at {sweep_runner.clock()} after"
-            f" {sweep_runner.duration(time.monotonic() - started)}"
+            sweep_runner.field(
+                "end",
+                f"{sweep_runner.clock()}, after"
+                f" {sweep_runner.duration(time.monotonic() - started)}",
+            )
         )
-        console(f"  record: {output / 'experiment.json'}; this run: {record_path}")
+        console(sweep_runner.field("record", output / "experiment.json"))
+        console(sweep_runner.field("this run", record_path))
     return failed
 
 

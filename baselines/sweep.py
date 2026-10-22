@@ -378,26 +378,95 @@ def labels(cases, world_size):
     }
 
 
-def result_line(outcome):
-    """An ended attempt as the console shows it."""
+#: The width of a section's rule, as quickstart draws it.
+RULE_WIDTH = 72
+
+
+def rule(title):
+    """A section's heading: ``── title ───``."""
+
+    head = f"── {title} "
+    return head + "─" * max(0, RULE_WIDTH - len(head))
+
+
+def field(name, value):
+    """One labeled line of a block, its values aligned."""
+
+    return f"  {name:<13}{value}"
+
+
+def geometry_text(settings, world_size):
+    """A case's microbatches as the console describes them."""
+
+    geometry = settings.geometry(world_size)
+    if getattr(settings, "tokens_per_microbatch", 0) is None:
+        sizes = settings.microbatch_candidates(world_size)
+        return (
+            f"searched: {sizes[-1]:,} to {sizes[0]:,} tokens per microbatch,"
+            f" {geometry.sequence_length:,}-token sequences"
+        )
+    return (
+        f"{geometry.sequences_per_microbatch} x {geometry.sequence_length:,}-token"
+        f" sequences per microbatch, {geometry.accumulation} microbatches per update"
+    )
+
+
+def started_block(position, name, label, settings, world_size, attempt):
+    """A case as it starts: what it runs and where its output goes."""
+
+    lines = [
+        f"CASE START {position} {name}",
+        field("settings", label or "the matrix's defaults"),
+        field("geometry", geometry_text(settings, world_size)),
+    ]
+    if attempt.name != "attempt-001":
+        lines.append(field("attempt", f"{attempt.name}, a retry"))
+    lines.extend(
+        [
+            field("log", attempt / "console.log"),
+            field("start", clock()),
+        ]
+    )
+    return lines
+
+
+def ended_block(position, name, outcome, attempt):
+    """A case as it ends: its outcome and, when it completed, what it
+    measured."""
 
     status = outcome["status"]
-    text = OUTCOME_WORDS.get(status, status)
+    lines = [f"CASE {OUTCOME_WORDS.get(status, status).upper()} {position} {name}"]
     if status == "completed":
-        text += (
-            f": {outcome['global_tokens_per_second']:,.1f} tok/s,"
-            f" {outcome['step_seconds']:.2f} s/update,"
-            f" GPU {outcome['peak_reserved_bytes'] / 2**30:.2f} GiB held"
-            f" ({outcome['peak_allocated_bytes'] / 2**30:.2f} in use),"
-            f" host {outcome['host_peak_rss_bytes'] / 2**30:.2f} GiB"
+        lines.append(
+            field(
+                "throughput",
+                f"{outcome['global_tokens_per_second']:,.1f} tok/s,"
+                f" {outcome['step_seconds']:.2f} s/update",
+            )
+        )
+        lines.append(
+            field(
+                "memory",
+                f"GPU {outcome['peak_reserved_bytes'] / 2**30:.2f} GiB held"
+                f" ({outcome['peak_allocated_bytes'] / 2**30:.2f} in use),"
+                f" host {outcome['host_peak_rss_bytes'] / 2**30:.2f} GiB",
+            )
         )
         if not outcome.get("performance_result", True):
-            text += " (a qualification or profile, not a throughput result)"
+            lines.append(
+                field("note", "a qualification or profile, not a throughput result")
+            )
     elif outcome.get("reason"):
-        text += f": {outcome['reason']}"
+        lines.append(field("reason", outcome["reason"]))
     if "wall_seconds" in outcome:
-        text += f"; {duration(outcome['wall_seconds'])}"
-    return text
+        lines.append(
+            field("duration", f"{duration(outcome['wall_seconds'])}, ended {clock()}")
+        )
+    if status != "completed":
+        lines.append(field("log", attempt / "console.log"))
+    if (attempt / "row.json").is_file():
+        lines.append(field("row", attempt / "row.json"))
+    return lines
 
 
 def _cell(value, form):
@@ -629,35 +698,58 @@ def main(argv=None):
             (case / "command.txt").write_text(shlex.join(first) + "\n")
         report(output, cases, args.engine, args.gpus)
         knobs, label_of = labels(cases, args.gpus)
-        print(
-            f"{args.engine}: {len(cases)} cases at world size {args.gpus};"
-            f" trainers in {args.python}",
-            flush=True,
-        )
-        print(f"  varying: {', '.join(knobs) if knobs else 'nothing'}")
+        lines = [
+            field("cases", f"{len(cases)} at world size {args.gpus}"),
+            field("interpreter", args.python),
+            field("varying", ", ".join(knobs) if knobs else "nothing"),
+        ]
         if changes and any(changes):
-            print(
-                f"  the matrix changed: {changes[0]} new cases, {changes[1]} it no"
-                " longer names kept as they ran but not counted"
+            lines.append(
+                field(
+                    "changed",
+                    f"{changes[0]} new cases; {changes[1]} no longer named, kept"
+                    " as they ran but not counted",
+                )
             )
-        print(
-            "  outcomes so far: "
-            + tally(latest(output / "cases" / name)["status"] for name, _ in cases)
-        )
-        print(f"  index: {output / 'README.md'}", flush=True)
+        lines += [
+            field(
+                "so far",
+                tally(latest(output / "cases" / name)["status"] for name, _ in cases),
+            ),
+            field("index", output / "README.md"),
+            field("cases dir", output / "cases"),
+        ]
         if args.dry_run:
-            print("  dry run: every case validated and its command written", flush=True)
+            lines.append(
+                field("dry run", "every case validated and its command written")
+            )
+        print("\n".join(lines), flush=True)
+        if args.dry_run:
             return
         started, began = time.monotonic(), clock()
-        print(f"  start: {began}", flush=True)
+        print(field("start", began), flush=True)
         try:
             run_cases(args, cases, output, manifest, label_of)
         finally:
             print(
-                f"{args.engine}: "
-                + tally(latest(output / "cases" / name)["status"] for name, _ in cases)
-                + f"; this run {duration(time.monotonic() - started)},"
-                f" {began} to {clock()}",
+                "\n".join(
+                    [
+                        "",
+                        f"SWEEP {args.engine}",
+                        field(
+                            "outcomes",
+                            tally(
+                                latest(output / "cases" / name)["status"]
+                                for name, _ in cases
+                            ),
+                        ),
+                        field(
+                            "this run",
+                            f"{duration(time.monotonic() - started)},"
+                            f" {began} to {clock()}",
+                        ),
+                    ]
+                ),
                 flush=True,
             )
 
@@ -680,8 +772,17 @@ def run_cases(args, cases, output, manifest, label_of):
         attempt.mkdir()
         cmd = launch.command(args.engine, args.python, args.gpus, settings, attempt)
         (attempt / "command.txt").write_text(shlex.join(cmd) + "\n")
-        again = "" if attempt.name == "attempt-001" else f" ({attempt.name})"
-        print(f"{position} {name}{again}  {label_of[name]}", flush=True)
+        print(
+            "\n".join(
+                [
+                    "",
+                    *started_block(
+                        position, name, label_of[name], settings, args.gpus, attempt
+                    ),
+                ]
+            ),
+            flush=True,
+        )
         try:
             outcome = run_case(cmd, attempt, settings, args.gpus, args.case_timeout)
             if outcome["status"] != "completed":
@@ -698,10 +799,7 @@ def run_cases(args, cases, output, manifest, label_of):
                 )
         finally:
             report(output, cases, args.engine, args.gpus)
-        line = result_line(outcome)
-        if outcome["status"] in ("failed", "timeout"):
-            line += f"; log {attempt / 'console.log'}"
-        print(f"{position}   {line}", flush=True)
+        print("\n".join(ended_block(position, name, outcome, attempt)), flush=True)
         attempted += 1
         if (
             outcome["status"] not in ("completed", "cuda_out_of_memory")

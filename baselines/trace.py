@@ -43,7 +43,7 @@ import shutil
 from pathlib import Path
 
 from baselines.common import launch, write_json
-from baselines.sweep import clock, result_line, run_case
+from baselines.sweep import clock, ended_block, run_case
 
 
 def find_case(sweep: Path, case: str) -> Path:
@@ -222,7 +222,7 @@ def main(argv=None) -> None:
         os.environ["CUDA_VISIBLE_DEVICES"] = args.devices
     print(f"  start: {clock()}; console: {output / 'console.log'}", flush=True)
     outcome = run_case(command, output, settings, manifest["world_size"], args.timeout)
-    print(f"  {result_line(outcome)}", flush=True)
+    print("\n".join(ended_block("", args.case, outcome, output)), flush=True)
     report = output / f"{args.name}.nsys-rep"
     if report.is_file():
         print(f"  trace: {report} ({report.stat().st_size / 2**20:,.1f} MiB)")

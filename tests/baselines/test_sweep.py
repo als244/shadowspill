@@ -25,14 +25,15 @@ from baselines.sweep import (
     classify,
     comparable,
     duration,
+    ended_block,
     expand,
     failure_row,
     keep_names,
     labels,
     latest,
     main,
-    result_line,
     run_case,
+    started_block,
     tally,
     to_attempt,
 )
@@ -275,7 +276,7 @@ def test_a_resume_attempts_a_case_with_no_outcome_and_a_failed_one_on_a_retry():
     assert not to_attempt({"status": "completed"}, True)
 
 
-def test_the_console_names_what_varies_and_what_each_case_measured():
+def test_the_console_names_what_varies_and_what_each_case_measured(tmp_path):
     cases = expand(
         {"schema_version": 1, "defaults": TINY, "grid": {"recompute": [0, 1]}},
         1,
@@ -293,16 +294,21 @@ def test_the_console_names_what_varies_and_what_each_case_measured():
         "host_peak_rss_bytes": 71 * 2**30,
         "wall_seconds": 390.2,
     }
-    assert result_line(measured) == (
-        "completed: 1,476.3 tok/s, 44.40 s/update, GPU 12.00 GiB held"
-        " (11.00 in use), host 71.00 GiB; 6m 30s"
+    attempt = tmp_path / "attempt-001"
+    attempt.mkdir()
+    ended = ended_block("[1/2]", "rc0__ab", measured, attempt)
+    assert ended[0] == "CASE COMPLETED [1/2] rc0__ab"
+    assert "  throughput   1,476.3 tok/s, 44.40 s/update" in ended
+    assert "  memory       GPU 12.00 GiB held (11.00 in use), host 71.00 GiB" in ended
+    assert ended[3].startswith("  duration     6m 30s, ended ")
+    failed = ended_block(
+        "[2/2]", "rc1__cd", {"status": "failed", "reason": "exit status 1"}, attempt
     )
-    assert result_line({"status": "cuda_out_of_memory", "wall_seconds": 31}) == (
-        "out of device memory; 0m 31s"
-    )
-    assert result_line({"status": "failed", "reason": "exit status 1"}) == (
-        "failed: exit status 1"
-    )
+    assert failed[:2] == ["CASE FAILED [2/2] rc1__cd", "  reason       exit status 1"]
+    assert failed[2] == f"  log          {attempt / 'console.log'}"
+    started = started_block("[1/2]", "rc0__ab", "recompute=0", cases[0][1], 1, attempt)
+    assert started[:2] == ["CASE START [1/2] rc0__ab", "  settings     recompute=0"]
+    assert started[3] == f"  log          {attempt / 'console.log'}"
     assert tally(["pending", "completed", "completed"]) == (
         "2 completed, 1 not yet run"
     )
