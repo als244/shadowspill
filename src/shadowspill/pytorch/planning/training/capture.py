@@ -38,6 +38,7 @@ from shadowspill.pytorch.planning.common import (
     estimate_spill_reservation,
     validate_cpu_model,
 )
+from shadowspill.pytorch.prepared import PreparedStep
 from shadowspill.pytorch.state.initialization import pool_values
 from shadowspill.runtime.plan import PlanMemory
 
@@ -79,6 +80,7 @@ def capture_training_graphs(
     fuse_narrow_gradient_accumulation: bool = True,
     memory_bound_flops_per_byte: float = MEMORY_BOUND_FLOPS_PER_BYTE,
     graph_pair_variants: tuple[str, ...] = GRAPH_PAIR_VARIANTS,
+    prepared_step: PreparedStep | None = None,
 ) -> TrainingCaptureArtifacts:
     """Capture objective and stage-local graph pairs entirely offline, their
     parameter gradients at ``grad_dtype`` when one is given, their
@@ -103,16 +105,36 @@ def capture_training_graphs(
     with timer.measure("capture_lowering"):
         fake_mode = FakeTensorMode(allow_non_fake_inputs=True)
         fake_model = fake_device_model(model, fake_mode, device_index=device_ordinal)
-        captures = _capture_training_objectives(
-            fake_model,
-            objective,
-            cpu_inputs,
-            signatures=signatures,
-            fake_mode=fake_mode,
-            device_ordinal=device_ordinal,
-            stores=stores,
-            timer=timer,
-        )
+        if prepared_step is None:
+            captures = _capture_training_objectives(
+                fake_model,
+                objective,
+                cpu_inputs,
+                signatures=signatures,
+                fake_mode=fake_mode,
+                device_ordinal=device_ordinal,
+                stores=stores,
+                timer=timer,
+            )
+        else:
+            with timer.measure("prepared_binding"):
+                prepared_step.validate(
+                    model,
+                    [item.digest for item in signatures],
+                    capture_options(
+                        partition,
+                        grad_dtype,
+                        fuse_narrow_gradient_accumulation,
+                        memory_bound_flops_per_byte,
+                        graph_pair_variants,
+                    ),
+                )
+                captures = prepared_step.bind(
+                    fake_model,
+                    cpu_inputs,
+                    fake_mode=fake_mode,
+                    device_ordinal=device_ordinal,
+                )
         partitioned = _partition_training_graphs(
             model,
             captures,
@@ -143,6 +165,23 @@ def capture_training_graphs(
         layout,
         retention,
     )
+
+
+def capture_options(
+    partition: PartitionSpec,
+    grad_dtype: torch.dtype | None,
+    fuse_narrow_gradient_accumulation: bool,
+    memory_bound_flops_per_byte: float,
+    graph_pair_variants: tuple[str, ...],
+) -> dict[str, object]:
+    """Budget-independent options that define the prepared objective graphs."""
+    return {
+        "partition": partition if isinstance(partition, str) else repr(partition),
+        "grad_dtype": None if grad_dtype is None else str(grad_dtype),
+        "fuse_narrow_gradient_accumulation": fuse_narrow_gradient_accumulation,
+        "memory_bound_flops_per_byte": memory_bound_flops_per_byte,
+        "graph_pair_variants": graph_pair_variants,
+    }
 
 
 def _prepare_training_inputs(

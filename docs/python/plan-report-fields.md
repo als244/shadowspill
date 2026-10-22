@@ -126,7 +126,22 @@ plus `recomputation_overhead_seconds` plus `task_contention_seconds` plus `idle_
 | `planning_phase_seconds` | Each planning phase's wall time in phase order, ending with `total`. A view over the report's `phase_timings_ns`, which stays the stored record. |
 | `selected_candidate` | The candidate whose plan was selected: residency strategy, fetch rule, repairs at best, the fastest plan it could not place (`best_unplaced_makespan_ns`, `unplaced_plans`) and `placement_gap`, the answer over that plan (`None` when every measured plan fit). When the search answered with the plan it was handed, `incumbent` with that plan's outcome instead. |
 
-`recomputing_group_fraction` is derived from the two counts.
+`device_peak_bytes` is the simulated peak of logical device allocations,
+including task workspace. `physical_execution_peak_bytes` adds the fixed runtime
+costs to the certified slab requirement on an `AnnotatedProgramPlan`; it is
+`None` where no physical certificate is available. This is the required execution
+footprint, not the whole pool reserved by the process. `spill_peak_bytes` is the
+simulated live spill footprint, distinct from the host pool held at runtime.
+
+`recomputing_group_fraction` is derived from the two counts; the JSON field
+`recomputing_group_percent` multiplies it by 100. Its denominator is flexible
+graph-pair groups, not FLOPs or time. `idle_percent`, `fetch_utilization_percent`
+and `evict_utilization_percent` divide their respective simulated idle/busy times
+by the estimated step time. Transfer lanes can overlap compute and one another,
+so these percentages do not sum to 100. Blended transfer throughput divides bytes
+by lane busy time and is `None` when the lane is unused. All these quantities are
+estimates from profiles and simulation; serialized summaries mark `estimate=true`.
+Each returned `AnnotatedProgramPlan.summary` and its JSON `summary` include them.
 
 ## PlanDiagnostics
 

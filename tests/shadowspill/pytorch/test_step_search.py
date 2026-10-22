@@ -10,6 +10,7 @@ from torch import OutOfMemoryError
 
 from qualification.profiling import CORRECTNESS_PROFILING
 from shadowspill.planner import SearchOptions, StepDataOrdering
+from shadowspill.planner.diagnostics.plan import PlanSummary
 from shadowspill.planner.program_inputs import TransferBandwidths
 from shadowspill.planner.search.algorithms.pressurefit import PressureFit
 from shadowspill.planner.search.algorithms.pressurefit.options import PressureFitOptions
@@ -533,6 +534,7 @@ def test_each_budget_is_handed_the_best_plan_below_it(
         def __init__(self, makespan_ns: int, candidate: str) -> None:
             self.simulation = Simulation(makespan_ns)
             self.result = Result(makespan_ns, candidate)
+            self.summary = PlanSummary(makespan_ns / 1e9, 1.0, 0.0, 0.0, 0.0, 0, 0, 0)
 
     # what each budget's own search finds: 8 GiB is worse than 6 GiB, so it
     # answers with the 6 GiB plan; 10 GiB beats it
@@ -658,7 +660,6 @@ def test_points_answer_from_summaries_and_only_winners_read_plans(
     the stored answer is searched, as the store itself would search it."""
 
     from shadowspill.errors import PlanInfeasibleError
-    from shadowspill.planner.diagnostics.plan import PlanSummary
     from shadowspill.planner.plan_store import PlanSummaryLookup
     from shadowspill.pytorch import plan_step_search
     from shadowspill.pytorch.step_search import sweep as module
@@ -691,6 +692,7 @@ def test_points_answer_from_summaries_and_only_winners_read_plans(
         def __init__(self, makespan_ns: int, candidate: str) -> None:
             self.simulation = Simulation(makespan_ns)
             self.result = Result(makespan_ns, candidate)
+            self.summary = PlanSummary(makespan_ns / 1e9, 1.0, 0.0, 0.0, 0.0, 0, 0, 0)
 
     gib = 1 << 30
     blank = PlanSummary(1.0, 1.0, 0.0, 0.0, 0.0, 0, 0, 0)
@@ -792,7 +794,10 @@ def test_points_answer_from_summaries_and_only_winners_read_plans(
         8 * gib,
         None,
     ]
-    assert points[6 * gib].summary is blank
+    # Winner summaries are refreshed from the selected plan, including fields
+    # that were absent from the older cached search summary.
+    assert points[6 * gib].summary is report.winner_plans[(6 * gib, gib)].summary
+    assert points[6 * gib].summary.simulated_step_seconds == 100 / 1e9
     assert sorted(report.winner_plans) == [
         (budget * gib, gib) for budget in (6, 8, 10, 12, 14)
     ]

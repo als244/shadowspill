@@ -21,6 +21,7 @@ from shadowspill.runtime.configuration import (
     Topology,
     resolve_dynamic_scratch_reserve,
     resolve_execution_budget,
+    resolve_physical_execution_budget,
     validate_topology,
 )
 
@@ -89,6 +90,23 @@ def test_execution_budget_accepts_runtime_physical_cap_without_double_charge() -
         resolve_execution_budget(derived + 1, pool)
     with pytest.raises(AdmissionError, match="physical capacity"):
         resolve_execution_budget(physical + 1, pool)
+
+
+def test_physical_budget_retains_runtime_reservations_at_every_cap() -> None:
+    physical = 16 << 30
+    overhead = (1280 << 20) + (256 << 20)
+    pool = MemoryPool("execution", 0, "device", physical - overhead, physical, 0)
+    assert resolve_physical_execution_budget(None, pool) == pool.capacity
+    for requested in (10 << 30, physical - 1, physical):
+        assert (
+            resolve_physical_execution_budget(requested, pool) == requested - overhead
+        )
+    with pytest.raises(AdmissionError, match="positive"):
+        resolve_physical_execution_budget(overhead, pool)
+    with pytest.raises(AdmissionError, match="exceeds"):
+        resolve_physical_execution_budget(physical + 1, pool)
+    with pytest.raises(TypeError, match="integer"):
+        resolve_physical_execution_budget(True, pool)
 
 
 def test_dynamic_scratch_reserve_is_an_optional_bounded_minimum() -> None:

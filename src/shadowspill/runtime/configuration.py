@@ -252,6 +252,28 @@ def resolve_budget(value: int | None, pool: MemoryPool, name: str) -> int:
     return value
 
 
+def execution_overhead_bytes(pool: MemoryPool) -> int:
+    """Physical budget reserved outside the runtime's suballocatable pool."""
+    physical = pool.physical_capacity
+    return 0 if physical is None else physical - pool.capacity
+
+
+def resolve_physical_execution_budget(value: int | None, pool: MemoryPool) -> int:
+    """Translate a whole-process cap to a logical pool budget, even for subplans.
+
+    Prepared artifacts consistently price physical budgets. Unlike the legacy
+    mixed-domain resolver below, a smaller physical cap still includes the
+    process baseline and external allowance.
+    """
+    if value is None:
+        return pool.capacity
+    if isinstance(value, bool) or not isinstance(value, int):
+        raise TypeError("execution_budget must be an integer byte count or None")
+    return resolve_budget(
+        value - execution_overhead_bytes(pool), pool, "usable execution_budget"
+    )
+
+
 def resolve_execution_budget(value: int | None, pool: MemoryPool) -> int:
     """The execution budget a plan against `pool` is actually given.
 

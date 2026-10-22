@@ -43,6 +43,8 @@ from ._rng import preserve_rng
 from .accelerator import accelerator_device
 from .distributed import Distributed
 from .distributed._preparation import prepared
+from .planning.artifacts import TrainingCaptureArtifacts
+from .prepared import PreparedStep
 
 
 def _cleanup_failed_plan(
@@ -344,6 +346,8 @@ def plan_step(
     memory_bound_flops_per_byte: float = MEMORY_BOUND_FLOPS_PER_BYTE,
     graph_pair_variants: tuple[str, ...] = GRAPH_PAIR_VARIANTS,
     keep_resolutions: bool = False,
+    prepared_step: PreparedStep | None = None,
+    selected_plan: AnnotatedProgramPlan | None = None,
 ) -> PlannedTrainStep:
     """Plan a fixed accumulated forward/objective/backward/update program.
 
@@ -487,6 +491,12 @@ def plan_step(
 
     from .planning.training import build_training
 
+    if selected_plan is not None and prepared_step is None:
+        raise ValueError("selected_plan requires an explicit prepared_step")
+    if prepared_step is not None and distributed is not None:
+        raise NotImplementedError("persistent preparation currently requires one rank")
+    if selected_plan is not None and incumbent is not None:
+        raise ValueError("an exact selected_plan cannot also supply a search incumbent")
     _require_floating_dtype("master_dtype", master_dtype)
     _require_floating_dtype("grad_dtype", grad_dtype)
     data_ordering = StepDataOrdering.resolve(
@@ -556,6 +566,8 @@ def plan_step(
                 memory_bound_flops_per_byte=memory_bound_flops_per_byte,
                 graph_pair_variants=graph_pair_variants,
                 keep_resolutions=keep_resolutions,
+                prepared_step=prepared_step,
+                selected_plan=selected_plan,
             )
         hold_persistent_state(runtime, model, memory.plan_handle)
         return step
@@ -594,6 +606,194 @@ def build_step_programs(
     profiling_options: ProfilingOptions | None = None,
     build_store_mode: StoreMode = "contribute",
     export_bypass_key: str | None = None,
+    master_dtype: torch.dtype | None = None,
+    grad_dtype: torch.dtype | None = None,
+    parameter_metrics: Callable[[torch.Tensor, torch.Tensor], Any] | None = None,
+    fuse_narrow_gradient_accumulation: bool = True,
+    memory_bound_flops_per_byte: float = MEMORY_BOUND_FLOPS_PER_BYTE,
+    graph_pair_variants: tuple[str, ...] = GRAPH_PAIR_VARIANTS,
+) -> tuple[StepProgram, ...]:
+    """Build reusable planning programs; use prepare_step to also retain exports."""
+
+    return _build_step_programs(
+        model,
+        objective=objective,
+        optimizer=optimizer,
+        hyperparams=hyperparams,
+        example_inputs=example_inputs,
+        runtime=runtime,
+        execution=execution,
+        spill=spill,
+        execution_budget=execution_budget,
+        spill_budget=spill_budget,
+        dynamic_scratch_reserve_bytes=dynamic_scratch_reserve_bytes,
+        execution_device=execution_device,
+        partition=partition,
+        optimizer_ordering=optimizer_ordering,
+        orderings=orderings,
+        verbose=verbose,
+        artifact_store=artifact_store,
+        build_store=build_store,
+        profiling_metadata=profiling_metadata,
+        allocation_probe_seeds=allocation_probe_seeds,
+        allocation_probe_repetitions=allocation_probe_repetitions,
+        profiling_options=profiling_options,
+        build_store_mode=build_store_mode,
+        export_bypass_key=export_bypass_key,
+        master_dtype=master_dtype,
+        grad_dtype=grad_dtype,
+        parameter_metrics=parameter_metrics,
+        fuse_narrow_gradient_accumulation=fuse_narrow_gradient_accumulation,
+        memory_bound_flops_per_byte=memory_bound_flops_per_byte,
+        graph_pair_variants=graph_pair_variants,
+    )
+
+
+def prepare_step(
+    model: nn.Module,
+    *,
+    objective: Any,
+    optimizer: Any,
+    hyperparams: Sequence[str] = (),
+    example_inputs: Sequence[Sequence[Any]],
+    runtime: Runtime,
+    execution: str,
+    spill: str,
+    execution_budget: int | None = None,
+    spill_budget: int | None = None,
+    dynamic_scratch_reserve_bytes: int | None = None,
+    execution_device: int | str | torch.device | None = None,
+    partition: PartitionSpec = "auto",
+    optimizer_ordering: Literal["stage_interleaved", "tail"] = "stage_interleaved",
+    orderings: Sequence[StepDataOrdering] | None = None,
+    verbose: bool = True,
+    artifact_store: str | os.PathLike[str] | None = None,
+    build_store: str | os.PathLike[str] | None = None,
+    profiling_metadata: Sequence[object] | None = None,
+    allocation_probe_seeds: int = 1,
+    allocation_probe_repetitions: int = 2,
+    profiling_options: ProfilingOptions | None = None,
+    build_store_mode: StoreMode = "contribute",
+    master_dtype: torch.dtype | None = None,
+    grad_dtype: torch.dtype | None = None,
+    parameter_metrics: Callable[[torch.Tensor, torch.Tensor], Any] | None = None,
+    fuse_narrow_gradient_accumulation: bool = True,
+    memory_bound_flops_per_byte: float = MEMORY_BOUND_FLOPS_PER_BYTE,
+    graph_pair_variants: tuple[str, ...] = GRAPH_PAIR_VARIANTS,
+) -> PreparedStep:
+    """Capture/profile once, retaining explicit computation artifacts for admission.
+
+    The returned PreparedStep can be saved and loaded in another process, searched
+    at multiple budgets, and admitted against independently initialized state.
+    No caller-maintained export bypass key is needed: reuse selects the artifact
+    explicitly, and never guesses the semantics of a Python objective.
+    """
+    from dataclasses import replace
+
+    from shadowspill.runtime.configuration import (
+        execution_overhead_bytes,
+        resolve_physical_execution_budget,
+    )
+
+    from .planning.training.capture import capture_options
+
+    snapshots: list[PreparedStep] = []
+    pool = runtime.pools[execution]
+    logical_budget = resolve_physical_execution_budget(execution_budget, pool)
+
+    def retain(captured: TrainingCaptureArtifacts) -> None:
+        snapshots.append(
+            PreparedStep.from_capture(
+                model,
+                captured,
+                options=capture_options(
+                    partition,
+                    grad_dtype,
+                    fuse_narrow_gradient_accumulation,
+                    memory_bound_flops_per_byte,
+                    graph_pair_variants,
+                ),
+            )
+        )
+
+    programs = _build_step_programs(
+        model,
+        objective=objective,
+        optimizer=optimizer,
+        hyperparams=hyperparams,
+        example_inputs=example_inputs,
+        runtime=runtime,
+        execution=execution,
+        spill=spill,
+        execution_budget=logical_budget,
+        spill_budget=spill_budget,
+        dynamic_scratch_reserve_bytes=dynamic_scratch_reserve_bytes,
+        execution_device=execution_device,
+        partition=partition,
+        optimizer_ordering=optimizer_ordering,
+        orderings=orderings,
+        verbose=verbose,
+        artifact_store=artifact_store,
+        build_store=build_store,
+        profiling_metadata=profiling_metadata,
+        allocation_probe_seeds=allocation_probe_seeds,
+        allocation_probe_repetitions=allocation_probe_repetitions,
+        profiling_options=profiling_options,
+        build_store_mode=build_store_mode,
+        master_dtype=master_dtype,
+        grad_dtype=grad_dtype,
+        parameter_metrics=parameter_metrics,
+        fuse_narrow_gradient_accumulation=fuse_narrow_gradient_accumulation,
+        memory_bound_flops_per_byte=memory_bound_flops_per_byte,
+        graph_pair_variants=graph_pair_variants,
+        capture_sink=retain,
+    )
+    # Search uses whole-process caps; the captured admission facts describe
+    # only the pool. Retain the fixed runtime reservation in every budget.
+    overhead = execution_overhead_bytes(pool)
+    programs = tuple(
+        replace(
+            program,
+            problem=replace(
+                program.problem,
+                source_execution_budget_bytes=(
+                    program.problem.source_execution_budget_bytes + overhead
+                ),
+                fixed_execution_bytes=program.problem.fixed_execution_bytes + overhead,
+            ),
+        )
+        for program in programs
+    )
+    return replace(snapshots[0], programs=programs)
+
+
+def _build_step_programs(
+    model: nn.Module,
+    *,
+    objective: Any,
+    optimizer: Any,
+    hyperparams: Sequence[str] = (),
+    example_inputs: Sequence[Sequence[Any]],
+    runtime: Runtime,
+    execution: str,
+    spill: str,
+    execution_budget: int | None = None,
+    spill_budget: int | None = None,
+    dynamic_scratch_reserve_bytes: int | None = None,
+    execution_device: int | str | torch.device | None = None,
+    partition: PartitionSpec = "auto",
+    optimizer_ordering: Literal["stage_interleaved", "tail"] = "stage_interleaved",
+    orderings: Sequence[StepDataOrdering] | None = None,
+    verbose: bool = True,
+    artifact_store: str | os.PathLike[str] | None = None,
+    build_store: str | os.PathLike[str] | None = None,
+    profiling_metadata: Sequence[object] | None = None,
+    allocation_probe_seeds: int = 1,
+    allocation_probe_repetitions: int = 2,
+    profiling_options: ProfilingOptions | None = None,
+    build_store_mode: StoreMode = "contribute",
+    export_bypass_key: str | None = None,
+    capture_sink: Callable[[TrainingCaptureArtifacts], None] | None = None,
     master_dtype: torch.dtype | None = None,
     grad_dtype: torch.dtype | None = None,
     parameter_metrics: Callable[[torch.Tensor, torch.Tensor], Any] | None = None,
@@ -689,6 +889,7 @@ def build_step_programs(
                 fuse_narrow_gradient_accumulation=fuse_narrow_gradient_accumulation,
                 memory_bound_flops_per_byte=memory_bound_flops_per_byte,
                 graph_pair_variants=graph_pair_variants,
+                capture_sink=capture_sink,
             )
         try:
             abort_plan(runtime)
@@ -709,4 +910,5 @@ __all__ = [
     "build_step_programs",
     "plan_forward",
     "plan_step",
+    "prepare_step",
 ]

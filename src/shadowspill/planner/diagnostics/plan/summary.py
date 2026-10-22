@@ -77,6 +77,35 @@ class PlanSummary:
     #: Extra time inside task intervals above their isolated profiles:
     #: compute/transfer interference and waiting for shared resources.
     task_contention_seconds: float = 0.0
+    #: Logical live device bytes in simulation, excluding runtime fixed costs.
+    device_peak_bytes: int = 0
+    #: Fixed runtime costs plus the certified layout; populated by an annotated
+    #: plan. This is distinct from the physical pool held (the execution budget).
+    physical_execution_peak_bytes: int | None = None
+
+    @property
+    def idle_fraction(self) -> float:
+        return (
+            self.idle_seconds / self.simulated_step_seconds
+            if self.simulated_step_seconds
+            else 0.0
+        )
+
+    @property
+    def fetch_utilization(self) -> float:
+        return (
+            self.fetch_busy_ns / (self.simulated_step_seconds * 1e9)
+            if self.simulated_step_seconds
+            else 0.0
+        )
+
+    @property
+    def evict_utilization(self) -> float:
+        return (
+            self.evict_busy_ns / (self.simulated_step_seconds * 1e9)
+            if self.simulated_step_seconds
+            else 0.0
+        )
 
     @property
     def fetch_blended_bandwidth_bytes_per_second(self) -> float | None:
@@ -104,6 +133,13 @@ class PlanSummary:
 
     def as_dict(self) -> dict[str, object]:
         return {
+            "estimate": True,
+            "device_peak_bytes": self.device_peak_bytes,
+            "physical_execution_peak_bytes": self.physical_execution_peak_bytes,
+            "idle_percent": 100 * self.idle_fraction,
+            "fetch_utilization_percent": 100 * self.fetch_utilization,
+            "evict_utilization_percent": 100 * self.evict_utilization,
+            "recomputing_group_percent": 100 * self.recomputing_group_fraction,
             "simulated_step_seconds": self.simulated_step_seconds,
             "unconstrained_step_seconds": self.unconstrained_step_seconds,
             "recomputation_overhead_seconds": self.recomputation_overhead_seconds,
@@ -177,6 +213,12 @@ class PlanSummary:
             recomputation_overhead_seconds=number("recomputation_overhead_seconds"),
             task_contention_seconds=number("task_contention_seconds"),
             idle_seconds=number("idle_seconds"),
+            device_peak_bytes=count("device_peak_bytes"),
+            physical_execution_peak_bytes=(
+                None
+                if record.get("physical_execution_peak_bytes") is None
+                else count("physical_execution_peak_bytes")
+            ),
             terminal_writeback_seconds=number("terminal_writeback_seconds"),
             recomputing_group_count=count("recomputing_group_count"),
             task_alternative_group_count=count("task_alternative_group_count"),
@@ -267,6 +309,9 @@ def summarize_selected_plan(
                     ),
                 }
     return PlanSummary(
+        device_peak_bytes=max(
+            (p.total_bytes for p in result.simulation.device_peaks), default=0
+        ),
         simulated_step_seconds=makespan_ns / 1e9,
         unconstrained_step_seconds=floor_ns / 1e9,
         recomputation_overhead_seconds=(selected_ns - floor_ns) / 1e9,

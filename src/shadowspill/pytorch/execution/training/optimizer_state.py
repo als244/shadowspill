@@ -71,7 +71,9 @@ class OptimizerState:
             for item in lowered.program.alias_groups
         }
 
-    def state_dict(self) -> tuple[dict[str, object], dict[str, torch.Tensor]]:
+    def state_dict(
+        self, *, include_optimizer: bool = True, include_masters: bool = True
+    ) -> tuple[dict[str, object], dict[str, torch.Tensor]]:
         """Synchronously snapshot optimizer state without stale CUDA pointers,
         with the masters by name.
 
@@ -84,9 +86,16 @@ class OptimizerState:
         budget for it.
         """
 
-        exposed = self.expose_cpu()
+        names = {
+            item.name
+            for item in self._objects
+            if (
+                include_masters if item.name in self.master_names else include_optimizer
+            )
+        }
+        exposed = self.expose_cpu(names=names)
         try:
-            raw = self.optimizer.state_dict()
+            raw = self.optimizer.state_dict() if include_optimizer else {}
             snapshot = cast(
                 dict[str, object],
                 tree_map(
@@ -101,6 +110,7 @@ class OptimizerState:
             return snapshot, {
                 name: self.optimizer_parameters[name].detach().cpu().clone()
                 for name in self.master_names
+                if include_masters
             }
         finally:
             self.restore_spill_only(exposed)
@@ -108,6 +118,9 @@ class OptimizerState:
     def checkpoint_state(
         self,
         writer: PoolCheckpoint,
+        *,
+        include_optimizer: bool = True,
+        include_masters: bool = True,
     ) -> tuple[dict[str, object], dict[str, torch.Tensor]]:
         """Describe state without exposing all its pool payloads on the host."""
         bindings = self.current_bindings()
@@ -128,14 +141,17 @@ class OptimizerState:
             owner = writer.alias(alias, self._size_by_alias[alias])
             return writer.view(owner, value)
 
-        return tree_map(describe, self.optimizer.state_dict()), {
+        return tree_map(
+            describe, self.optimizer.state_dict()
+        ) if include_optimizer else {}, {
             name: describe(self.optimizer_parameters[name])
             for name in self.master_names
+            if include_masters
         }
 
     def load(
         self,
-        value: Mapping[str, object],
+        value: Mapping[str, object] | None,
         masters: Mapping[str, torch.Tensor] | None = None,
     ) -> None:
         """Restore optimizer metadata and write tensor bytes into spill storage,
@@ -143,6 +159,8 @@ class OptimizerState:
 
         The checkpoint has to hold every entry the plan keeps, and ``masters``
         every master; one that lacks any is refused before anything changes.
+        ``value=None`` keeps the freshly initialized optimizer state. The caller
+        must reject this option once the callable has executed an update.
         """
 
         given = dict(masters or {})
@@ -153,11 +171,15 @@ class OptimizerState:
         planned = tuple(
             item for item in self._objects if item.name not in self.master_names
         )
-        restored = restore_optimizer_checkpoint_structure(
-            self.optimizer_parameters,
-            self.optimizer,
-            value,
-            required=tuple(item.name for item in planned),
+        restored = (
+            ()
+            if value is None
+            else restore_optimizer_checkpoint_structure(
+                self.optimizer_parameters,
+                self.optimizer,
+                value,
+                required=tuple(item.name for item in planned),
+            )
         )
         objects = {item.name: item for item in self._objects}
         for entry in restored:
@@ -235,7 +257,7 @@ class OptimizerState:
         return owner
 
     def expose_cpu(
-        self, *, in_place: bool = False
+        self, *, in_place: bool = False, names: set[str] | None = None
     ) -> tuple[ExposedOptimizerTensor, ...]:
         """Point live optimizer state at host copies of its pool bytes.
 
@@ -251,6 +273,8 @@ class OptimizerState:
         exposed: list[ExposedOptimizerTensor] = []
         owners: dict[str, torch.Tensor] = {}
         for item in self._objects:
+            if names is not None and item.name not in names:
+                continue
             actual = current.get(item.name)
             if actual is None:
                 continue

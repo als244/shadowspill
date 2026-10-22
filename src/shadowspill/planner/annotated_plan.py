@@ -9,6 +9,10 @@ from typing import TYPE_CHECKING
 from shadowspill.ir import MemorySchedule, ResidencySpec, TaskAlternativeChoice
 from shadowspill.planner.admission import AdmissionFacts
 from shadowspill.planner.diagnostics import PlanningDiagnostics
+from shadowspill.planner.diagnostics.plan.summary import (
+    PlanSummary,
+    summarize_selected_plan,
+)
 from shadowspill.planner.program_inputs import (
     MemoryBudgets,
     ShadowSpillPlanningProblem,
@@ -68,6 +72,16 @@ class AnnotatedProgramPlan:
     _digest_cache: list[str] = field(default_factory=list, repr=False, compare=False)
 
     @property
+    def summary(self) -> PlanSummary:
+        """Estimated behavior of this exact selected and physically certified plan."""
+        return replace(
+            summarize_selected_plan(replace(self.result, simulation=self.simulation)),
+            physical_execution_peak_bytes=(
+                self.program.fixed_execution_bytes + self.fixed_layout.required_bytes
+            ),
+        )
+
+    @property
     def digest(self) -> str:
         """Stable selected-plan identity, excluding cache and wall-time evidence."""
 
@@ -77,6 +91,7 @@ class AnnotatedProgramPlan:
 
     def _compute_digest(self) -> str:
         value = self.to_dict()
+        value.pop("summary", None)
         selection = dict(_mapping(value["selection"], "selection"))
         selection.pop("from_store", None)
         selection.pop("diagnostics")
@@ -116,6 +131,7 @@ class AnnotatedProgramPlan:
     def to_dict(self) -> dict[str, object]:
         return {
             "schema": _ANNOTATED_PROGRAM_PLAN_SCHEMA,
+            "summary": self.summary.as_dict(),
             "source_program": self.program.to_dict(),
             "memory_budgets": self.memory_budgets.to_dict(),
             "transfer_bandwidths": self.transfer_bandwidths.to_dict(),

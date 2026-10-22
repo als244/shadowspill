@@ -12,7 +12,7 @@ from shadowspill.runtime.failures import (
     RuntimeFailureDiagnostics,
 )
 
-from .api import build_step_programs, plan_forward, plan_step
+from .api import build_step_programs, plan_forward, plan_step, prepare_step
 from .callables import PlannedForward, PlannedTrainStep
 from .contracts import (
     ObjectiveResult,
@@ -51,6 +51,8 @@ from .diagnostics import (
 )
 from .invocation import InvocationResult
 from .partition import PartitionPolicy, PartitionSpec
+from .prepared import PreparedStep
+from .prepared_api import admit_step, search_prepared_steps
 from .profiling import ProfilingOptions
 from .runtime import Runtime
 from .sharing import (
@@ -116,6 +118,7 @@ __all__ = [
     "PlannedForward",
     "PlannedTrainStep",
     "PoolImage",
+    "PreparedStep",
     "ProfilingOptions",
     "Runtime",
     "RuntimeConfigurationError",
@@ -138,6 +141,7 @@ __all__ = [
     "TransferQueue",
     "TransferRecord",
     "TransferRecords",
+    "admit_step",
     "build_step_programs",
     "export_model_state",
     "export_optimizer_state",
@@ -149,9 +153,11 @@ __all__ = [
     "plan_forward",
     "plan_step",
     "plan_step_search",
+    "prepare_step",
     "read_model_state",
     "read_optimizer_state",
     "release_model_state",
+    "search_prepared_steps",
     "shared_input",
     "shared_output",
     "write_pool_image",

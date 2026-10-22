@@ -18,6 +18,7 @@ from shadowspill.planner.search import SearchOptions
 from shadowspill.pytorch.capture.retention import MEMORY_BOUND_FLOPS_PER_BYTE
 from shadowspill.pytorch.graph_pairs import GRAPH_PAIR_VARIANTS
 from shadowspill.pytorch.planning.training.plan import plan_training_programs
+from shadowspill.pytorch.prepared import PreparedStep
 from shadowspill.runtime.plan import PlanMemory
 from shadowspill.step import StepDataOrdering
 from shadowspill.store import ArtifactStore
@@ -39,6 +40,7 @@ from .materialize import (
     rollback_training_failure,
     rollback_training_materialization,
 )
+from .plan import admit_selected_training_program
 from .profile import profile_training_tasks
 from .programs import build_training_programs
 
@@ -70,6 +72,8 @@ def build_training(
     memory_bound_flops_per_byte: float = MEMORY_BOUND_FLOPS_PER_BYTE,
     graph_pair_variants: tuple[str, ...] = GRAPH_PAIR_VARIANTS,
     keep_resolutions: bool = False,
+    prepared_step: PreparedStep | None = None,
+    selected_plan: AnnotatedProgramPlan | None = None,
 ) -> PlannedTrainStep:
     """Compose the independently callable training-planning boundaries.
 
@@ -100,6 +104,7 @@ def build_training(
         fuse_narrow_gradient_accumulation=fuse_narrow_gradient_accumulation,
         memory_bound_flops_per_byte=memory_bound_flops_per_byte,
         graph_pair_variants=graph_pair_variants,
+        prepared_step=prepared_step,
     )
     materialized = materialize_training_state(
         model,
@@ -136,14 +141,27 @@ def build_training(
             timer=timer,
             transfer_bandwidths=transfer_bandwidths,
         )
-        selection = plan_training_programs(
-            programs,
-            stores=artifacts,
-            timer=timer,
-            search_options=chosen,
-            incumbent=None if incumbent is None else incumbent.result,
-            keep_resolutions=keep_resolutions,
-        )
+        if selected_plan is None:
+            selection = plan_training_programs(
+                programs,
+                stores=artifacts,
+                timer=timer,
+                search_options=chosen,
+                incumbent=None if incumbent is None else incumbent.result,
+                keep_resolutions=keep_resolutions,
+            )
+        else:
+            from shadowspill.runtime.configuration import execution_overhead_bytes
+
+            selection = admit_selected_training_program(
+                programs,
+                selected_plan,
+                timer=timer,
+                execution_budget=(
+                    memory.execution_budget + execution_overhead_bytes(memory.execution)
+                ),
+                spill_budget=memory.spill_budget,
+            )
         executable = compile_selected_training_tasks(
             profiled,
             programs,

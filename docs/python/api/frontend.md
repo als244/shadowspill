@@ -894,6 +894,8 @@ plan_step(
     memory_bound_flops_per_byte=MEMORY_BOUND_FLOPS_PER_BYTE,
     graph_pair_variants=GRAPH_PAIR_VARIANTS,
     keep_resolutions=False,
+    prepared_step=None,
+    selected_plan=None,
 )
 ```
 
@@ -1361,14 +1363,12 @@ Releasing the plan therefore releases the state with it: a training callable's
 `state_dict()` and `load_state_dict()` answer only while it is open, and both
 raise afterwards rather than reporting an empty optimizer. Take the checkpoint
 before closing, and resume from one with `load_state_dict()`, which writes the
-values into the storage the plan already owns. The checkpoint has to hold every
-entry of state the plan keeps -- one from an optimizer that never stepped holds
-none -- and one that lacks any is refused before anything changes. Execution failure closes the
+values into the storage the plan already owns. When optimizer state is included,
+the checkpoint must hold every entry the plan keeps. Execution failure closes the
 same way, and a failed step publishes no optimizer update in any case.
 
 `state_dict()` returns an independent snapshot -- for a training callable, the
-three keys `model`, `optimizer` and `step`, which is exactly what
-`load_state_dict()` requires back. A weight with a master copy
+keys `model`, `optimizer` and `step` by default. A weight with a master copy
 (`master_dtype`) is written as its master by default. With
 `state_dict(weights="compute")`, the saved value is the compute weight instead.
 Loading casts the saved representation into the weight and any configured master.
@@ -1388,6 +1388,13 @@ and non-addressable pools and leaves live state in its pool. `weights="compute"`
 selects the compute-only representation. Resume with
 `load_state_dict(torch.load(path, mmap=True, weights_only=True))`; model and
 optimizer values are restored a parameter at a time.
+
+Both methods accept `include_optimizer=False` independently of `weights`.
+This omits optimizer tensors and avoids reading their pool objects. Restore into
+a newly prepared callable: parameter values and the completed step count are
+restored, while its newly initialized optimizer state is retained. A callable
+that has already stepped rejects this restore, preventing accidental reuse of
+old moments. Full optimizer checkpoints remain the default for exact continuation.
 
 ## Exceptions
 
@@ -1475,5 +1482,62 @@ this identifier and the selected state inventory/geometry; it does not hash or
 reconstruct the omitted base. Use an immutable revision or another verified
 identity that also covers the model and precision configuration. Omitting the
 argument preserves full-model checkpoints. `weights="master"|"compute"` retains
-its existing meaning. These arguments currently belong to the planned callable;
-the higher-level trainer checkpoint options do not yet expose base omission.
+its existing meaning. The [Trainer](training.md#checkpoints) exposes the same
+policy through `Trainer(frozen_state_id=...)`, including periodic saving and resume.
+
+## Persistent training computation
+
+`prepare_step` captures and profiles a training objective once, returning a
+`PreparedStep` rather than an executable. It accepts the runtime, objective,
+optimizer, input, precision, store and ordering arguments of
+`build_step_programs`, except `export_bypass_key`. Its `programs` contain one
+planning problem per requested ordering; `save(directory)` and
+`PreparedStep.load(directory)` also retain the captured objective templates and
+position bindings needed for later admission. The artifact contains no initialized
+model state and owns no pool memory. Metadata and exports are trusted local build
+artifacts. Loading checks the schema, PyTorch version and file checksums.
+The artifact records the defining modules of Python `torch.library.custom_op`
+operators used in its graph. Admission imports those providers before loading
+the exports, so lazy registration does not require running the objective again.
+The providers must register their operators when imported. External native or
+dynamically registered operators still need their normal registration setup.
+`PreparedStep.load(directory, ordering=...)` reads only the requested ordering
+when the artifact will be used for admission rather than another full search.
+
+The prepared API uses whole-process execution budgets consistently: the
+`execution_budget` passed to `prepare_step`, each search budget, and admission's
+budget all include the runtime baseline and external allowance. Search retains
+those fixed reservations; admission converts the selected physical budget to the
+live runtime's usable pool capacity and validates the exact layout again.
+
+`search_prepared_steps(candidates, budgets=...)` accepts a mapping of names to
+prepared steps and execution/spill byte pairs. It searches without a runtime or
+GPU, accepts `search_options`, transfer calibration and plan-store options, and
+returns a `StepSearchReport` with one complete plan per feasible budget in
+`winner_plans`. Every plan exposes `summary` estimates and serializes them in its
+JSON. Candidate names do not alter computation identity.
+
+`admit_step(model, prepared_step, selected_plan, **bindings)` binds the selected
+artifact to fresh model state, optimizer and representative inputs. `bindings`
+supply `plan_step`'s runtime, pool names, optimizer, example inputs, precision,
+partition and store options. The selected plan supplies its computation, budgets
+and calibration. The captured objective comes from the artifact. Admission
+checks model-state geometry/aliasing, exact input signatures, capture options,
+optimizer/lowered-program identity and the current physical layout. It performs
+no objective export or plan search. It still creates runtime bindings and loads
+or builds the selected task implementations in the current process. Reuse the
+same build store to retain graph pairs, profiles and compiler artifacts.
+If several prepared orderings lower to the same computation, admission uses the
+first equivalent ordering. Pass `data_ordering=winner.ordering` to preserve the
+search winner's explicit ordering, as Trainer does.
+
+A saved artifact explicitly selects a computation; it is not a source-code cache
+stamp. Python objective changes are not detected by loading it. Build a new
+artifact when changing the computation. The baseline sweep separately fingerprints
+source and environment before choosing an artifact. `plan_step` also accepts
+`prepared_step` and `selected_plan`; the latter requires the former. Use
+`admit_step` when the intention is to admit an exact selected plan, and the
+[Trainer API](training.md#reuse-preparation-across-budgets-and-processes) when
+runtime ownership should remain with the backend. Persistent preparation currently
+supports single-rank training; distributed `plan_step` and `plan_step_search`
+retain their coordinated path.

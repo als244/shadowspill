@@ -378,6 +378,53 @@ def rebind_training_objective(
     return replace(capture, exported=exported)
 
 
+def bind_training_objective(
+    program: torch.export.ExportedProgram,
+    model: nn.Module,
+    schema: ObjectiveSchema,
+    microbatch: Sequence[Any],
+) -> TrainingObjectiveCapture:
+    """Bind an explicitly loaded export to fresh fake state without exporting."""
+
+    for spec in program.graph_signature.input_specs:
+        if spec.kind not in {InputKind.PARAMETER, InputKind.BUFFER}:
+            continue
+        if not isinstance(spec.target, str) or not spec.target.startswith("model."):
+            raise CaptureError("prepared training state target is not rooted at model")
+        name = spec.target.removeprefix("model.")
+        # Export stores non-persistent buffers alongside lifted constants, while
+        # persistent buffers and parameters live in state_dict. Both kinds of
+        # buffer must bind to this model, never to the archived meta placeholder.
+        state = (
+            program.constants
+            if spec.kind is InputKind.BUFFER and not spec.persistent
+            else program.state_dict
+        )
+        state[spec.target] = (
+            model.get_parameter(name)
+            if spec.kind is InputKind.PARAMETER
+            else model.get_buffer(name)
+        )
+    # Partition policies inspect the source module hierarchy. The loaded graph
+    # is the objective; no Python objective is called during admission.
+    module = nn.Module()
+    module.add_module("model", model)
+    return TrainingObjectiveCapture(
+        ExportCapture(
+            program,
+            _flatten_inputs(program, microbatch),
+            tuple(
+                i
+                for i, spec in enumerate(program.graph_signature.output_specs)
+                if spec.kind is OutputKind.USER_OUTPUT
+            ),
+            _export_mutations(program.graph_signature),
+        ),
+        module,
+        schema,
+    )
+
+
 def inference_artifact(capture: ExportCapture) -> GraphArtifact:
     """Create the structural task contract for a functional Export graph."""
 

@@ -219,3 +219,20 @@ own memory facts and the slowest predicted rank duration. Every chosen local
 schedule receives ordinary physical admission. Execution adds no global task
 barriers: transfers and task progress remain local, and communication finishes
 inside each task. See [the distributed API](../python/api/distributed.md).
+
+## Explicit prepared computation
+
+`prepare_step` retains a `PreparedStep`: exported objective templates, independent
+position bindings and measured planning problems. `search_prepared_steps` searches
+those problems across budgets without entering a runtime. `admit_step` reloads the
+captured objective, binds current state, validates the selected program and
+certifies the selected schedule against the actual pools. It does not export the
+objective or search again. `Trainer.prepare_artifacts` and `PreparedTraining`
+provide the same boundary with named microbatch candidates and persisted winners.
+
+This artifact selects a computation explicitly and contains no initialized model
+or optimizer state. Structural build/profile stores still supply reusable task
+artifacts. A case orchestrator must separately decide whether source, environment
+and geometry permit reusing a prepared computation; the baseline sweep includes
+those facts in its preparation-group identity. The persistent path currently
+supports one rank. Distributed training retains coordinated preparation.

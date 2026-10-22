@@ -45,7 +45,7 @@ def parameter_layouts(
         )
         gradient_alias = (
             None
-            if gradient_group is None
+            if gradient_group is None or len(record.contributions) == 1
             else bound.groups.source_names[gradient_group.group_name]
         )
         layouts[record.name] = UpdateLayout(

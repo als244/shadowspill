@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import time
 from dataclasses import replace
 
 from shadowspill.errors import (
@@ -20,18 +21,90 @@ from shadowspill.planner import (
     ProgramPlanResult,
     validate_schedule_feasibility,
 )
-from shadowspill.planner.plan_store import resolve_plan
+from shadowspill.planner.annotated_plan import AnnotatedProgramPlan
+from shadowspill.planner.plan_store import PlanLookup, resolve_plan
 from shadowspill.planner.search import SearchOptions
 from shadowspill.pytorch.distributed import current as distributed_preparation
 from shadowspill.pytorch.planning.admission import (
+    FixedLayoutAttempt,
     FixedLayoutInfeasibleError,
     FixedLayoutSelection,
+    build_fixed_layout_admission,
     placement_facts,
     resolve_fixed_layout_selection,
 )
 
 from ..artifacts import TrainingProgramArtifacts
 from ..stores import PlanningStores
+
+
+def admit_selected_training_program(
+    programs: TrainingProgramArtifacts,
+    selected: AnnotatedProgramPlan,
+    *,
+    timer: PlanningTimer,
+    execution_budget: int,
+    spill_budget: int,
+) -> FixedLayoutSelection:
+    """Certify an exact selection against this runtime, without another search."""
+    from shadowspill.planner.program_inputs import MemoryBudgets
+
+    if selected.memory_budgets != MemoryBudgets(execution_budget, spill_budget):
+        raise AdmissionError("selected plan budgets differ from the runtime request")
+    lowered = programs.lowered
+    if selected.program.program.digest != lowered.program.digest:
+        raise AdmissionError("selected plan computation differs from the bound program")
+    if (
+        selected.result.initial_residency != lowered.initial_residency
+        or selected.result.final_residency != lowered.final_residency
+    ):
+        raise AdmissionError(
+            "selected plan state residency differs from the bound program"
+        )
+    scratch = dynamic_scratch_reserve_bytes(
+        programs.measurements_by_profile,
+        minimum_bytes=programs.dynamic_scratch_reserve_bytes,
+    )
+    with timer.measure("selected_plan_admission"):
+        started = time.perf_counter_ns()
+        facts = programs.admission
+        result = replace(
+            selected.result,
+            program=lowered.program,
+            simulation_config=programs.simulation_config,
+            admission_facts=facts,
+            placement_facts=placement_facts(facts, scratch_reserve_bytes=scratch),
+        )
+        try:
+            admission = build_fixed_layout_admission(
+                result,
+                facts,
+                scratch_reserve_bytes=scratch,
+            )
+        except FixedLayoutInfeasibleError as error:
+            raise AdmissionError(
+                f"selected plan does not fit this runtime: {error}"
+            ) from error
+        elapsed = time.perf_counter_ns() - started
+        result = replace(result, simulation=admission.simulation)
+    return FixedLayoutSelection(
+        plan=PlanLookup(
+            result, from_store=selected.plan_from_store, certificate=admission
+        ),
+        facts=facts,
+        admission=admission,
+        attempts=(
+            FixedLayoutAttempt(
+                requested_object_capacity_bytes=facts.object_capacity_bytes,
+                effective_object_capacity_bytes=facts.object_capacity_bytes,
+                required_bytes=admission.layout.required_bytes,
+                pool_capacity_bytes=facts.pool_capacity_bytes,
+                accepted=True,
+                physical_admission_wall_time_ns=elapsed,
+            ),
+        ),
+        original_object_capacity_bytes=facts.object_capacity_bytes,
+    )
 
 
 def plan_training_programs(

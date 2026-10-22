@@ -85,6 +85,46 @@ def test_compressed_data_scales_and_tied_names_resolve_to_parameter_ownership():
     }
 
 
+@pytest.mark.parametrize("replicas", [1, 4])
+@pytest.mark.parametrize("shard_optimizer", [False, True])
+def test_single_participant_gradient_group_needs_no_collective(
+    monkeypatch, replicas, shard_optimizer
+):
+    from shadowspill.pytorch.distributed._optimizer import _gradient
+
+    monkeypatch.setattr(torch.distributed, "get_rank", lambda: 0)
+    weight = nn.Parameter(torch.arange(16, dtype=torch.float32))
+    members = tuple(range(replicas))
+    group = SimpleNamespace(group_name="replicas")
+    singleton = SimpleNamespace(group_name="one-contributor")
+    bound = SimpleNamespace(
+        control=SimpleNamespace(
+            exchange=lambda *_: [["weight"] for _ in members], members=members
+        ),
+        parameters=(
+            Parameter(
+                "weight", ("weight",), (16,), (1,), "torch.float32", True, members, (0,)
+            ),
+        ),
+        parameter_groups={"weight": (group, singleton)},
+        groups=SimpleNamespace(
+            source_names={"replicas": "replicas", "one-contributor": "one-contributor"}
+        ),
+        shard_optimizer=shard_optimizer,
+    )
+    layout = parameter_layouts(
+        bound, {"weight": weight}, {"weight"}, master_dtype=None
+    )["weight"]
+    assert layout.gradient_group_name is None
+    assert layout.gradient_group_size == 1
+    assert layout.group_size == (replicas if shard_optimizer else 1)
+    gradient = torch.arange(16, dtype=torch.float32)
+    # No process group is registered: an attempted collective fails here.
+    actual = _gradient(gradient, layout)
+    expected = gradient[: 16 // replicas] if shard_optimizer else gradient
+    torch.testing.assert_close(actual, expected)
+
+
 @pytest.mark.parametrize("group_members", [(0, 1, 2, 3), (0, 1)])
 def test_initial_sync_skips_reconstructing_only_a_full_replica_shard_group(
     monkeypatch, group_members

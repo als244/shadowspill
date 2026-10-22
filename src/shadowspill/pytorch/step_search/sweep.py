@@ -10,10 +10,10 @@ from __future__ import annotations
 import time
 from collections import Counter
 from collections.abc import Callable, Mapping, Sequence
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from os import PathLike
 from types import MappingProxyType
-from typing import Any, Literal
+from typing import Any, Literal, Protocol
 
 import torch
 from torch import nn
@@ -138,6 +138,15 @@ class _Build:
             )
 
 
+class _ProgramBuilder(Protocol):
+    def programs(
+        self,
+        candidate: str,
+        accumulation: int,
+        orderings: Sequence[StepDataOrdering],
+    ) -> tuple[tuple[StepProgram, ...], _Exhaustion | None]: ...
+
+
 @dataclass(slots=True)
 class _Sweep:
     """The sweep's running state: what it has built, planned and found best."""
@@ -156,7 +165,7 @@ class _Sweep:
         self,
         geometries: Sequence[tuple[str, int]],
         per_geometry: Sequence[tuple[StepDataOrdering, ...]],
-        build: _Build,
+        build: _ProgramBuilder,
     ) -> None:
         """Walk every geometry, and within it every ordering and budget."""
 
@@ -361,6 +370,20 @@ class _Sweep:
                     f" {time.perf_counter() - started:.1f} s"
                 )
             winners[budget] = plan
+            # A cached search point may predate newer summary fields. Use the
+            # selected plan's physical certificate for its public winner summary.
+            eligible = [
+                i
+                for i, point in enumerate(self.points)
+                if (point.execution_budget_bytes, point.spill_budget_bytes) == budget
+                and point.status == "succeeded"
+                and point.makespan_seconds is not None
+            ]
+            if eligible:
+                index = min(
+                    eligible, key=lambda i: self.points[i].makespan_seconds or 0.0
+                )
+                self.points[index] = replace(self.points[index], summary=plan.summary)
         return winners
 
 

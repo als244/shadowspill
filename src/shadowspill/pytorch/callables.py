@@ -724,6 +724,7 @@ class PlannedTrainStep:
         self,
         *,
         weights: Literal["master", "compute"] = "master",
+        include_optimizer: bool = True,
         frozen_state_id: str | None = None,
     ) -> dict[str, object]:
         """Synchronously return CPU ``model``, ``optimizer``, and ``step`` state.
@@ -733,16 +734,23 @@ class PlannedTrainStep:
         frozen_state_id omits unchanged frozen parameters. The caller must
         initialize that same base and supply the same identity on restore.
         Trainable parameters, buffers and mutated state are always included.
+        ``include_optimizer=False`` omits optimizer state. Restore such a
+        checkpoint into a fresh callable to retain progress with fresh moments.
         """
 
         self._require_open("read a checkpoint from")
         names = self._checkpoint_names(frozen_state_id)
-        optimizer, masters = self._executor.optimizer_state.state_dict()
+        optimizer, masters = self._executor.optimizer_state.state_dict(
+            include_optimizer=include_optimizer, include_masters=weights == "master"
+        )
+        weight_names = _weight_names(self._state.model)
+        names -= {alias for name in masters for alias in weight_names[name]}
         return self._checkpoint_payload(
             self._state.state_dict(names=names),
             optimizer,
             masters,
             weights=weights,
+            include_optimizer=include_optimizer,
             frozen_state_id=frozen_state_id,
         )
 
@@ -751,6 +759,7 @@ class PlannedTrainStep:
         path: str | os.PathLike[str],
         *,
         weights: Literal["master", "compute"] = "master",
+        include_optimizer: bool = True,
         frozen_state_id: str | None = None,
     ) -> None:
         """Write the checkpoint :meth:`state_dict` returns to ``path``, from the pool.
@@ -762,6 +771,8 @@ class PlannedTrainStep:
         with ``load_state_dict(torch.load(path, mmap=True))``. A weight with a
         master copy is written once, as its master by default. With
         ``weights="compute"``, save compute values and upcast them on restore.
+        ``include_optimizer=False`` skips optimizer state and its pool reads;
+        restore into a newly prepared callable with initialized optimizer state.
 
         With frozen_state_id, save trainable parameters, buffers and mutated
         state only. The ID is a caller-supplied identity for the omitted frozen
@@ -772,12 +783,19 @@ class PlannedTrainStep:
         self._require_open("save a checkpoint from")
         names = self._checkpoint_names(frozen_state_id)
         writer = PoolCheckpoint(self._state.bridge)
-        optimizer, masters = self._executor.optimizer_state.checkpoint_state(writer)
+        optimizer, masters = self._executor.optimizer_state.checkpoint_state(
+            writer,
+            include_optimizer=include_optimizer,
+            include_masters=weights == "master",
+        )
+        weight_names = _weight_names(self._state.model)
+        names -= {alias for name in masters for alias in weight_names[name]}
         payload = self._checkpoint_payload(
             self._state.checkpoint_state(writer, names=names),
             optimizer,
             masters,
             weights=weights,
+            include_optimizer=include_optimizer,
             frozen_state_id=frozen_state_id,
         )
         payload["model"] = encode_tensor_state(
@@ -801,9 +819,14 @@ class PlannedTrainStep:
         masters: Mapping[str, torch.Tensor],
         *,
         weights: Literal["master", "compute"] = "master",
+        include_optimizer: bool = True,
         frozen_state_id: str | None = None,
     ) -> dict[str, object]:
-        extra = {} if frozen_state_id is None else {"frozen_state_id": frozen_state_id}
+        extra: dict[str, object] = (
+            {} if frozen_state_id is None else {"frozen_state_id": frozen_state_id}
+        )
+        if include_optimizer:
+            extra["optimizer"] = optimizer
         if weights not in {"master", "compute"}:
             raise ValueError("weights must be 'master' or 'compute'")
         if weights == "compute":
@@ -815,7 +838,6 @@ class PlannedTrainStep:
                 "model": {
                     name: value for name, value in model.items() if name not in omitted
                 },
-                "optimizer": optimizer,
                 "masters": masters,
                 "distributed": self._distributed_layout,
                 "step": self._step,
@@ -823,7 +845,6 @@ class PlannedTrainStep:
             }
         return {
             "model": _with_masters(model, masters, self._state.model),
-            "optimizer": optimizer,
             "step": self._step,
             **extra,
         }
@@ -843,7 +864,9 @@ class PlannedTrainStep:
                 "checkpoint frozen_state_id differs; initialize the same frozen "
                 "base and explicitly supply its identity when restoring"
             )
-        expected_keys = {"model", "optimizer", "step"}
+        expected_keys = {"model", "step"}
+        if "optimizer" in checkpoint:
+            expected_keys.add("optimizer")
         if frozen_state_id is not None:
             expected_keys.add("frozen_state_id")
         if self._distributed_layout is not None:
@@ -852,11 +875,16 @@ class PlannedTrainStep:
                 raise ValueError("checkpoint distributed ownership differs")
         if set(checkpoint) != expected_keys:
             raise RuntimeError("training state_dict keys differ")
+        if "optimizer" not in checkpoint and self._step:
+            raise ValueError(
+                "a checkpoint without optimizer state requires a fresh callable; "
+                "prepare a new Trainer to resume with a fresh optimizer"
+            )
         model_state = checkpoint["model"]
-        optimizer_state = checkpoint["optimizer"]
+        optimizer_state = checkpoint.get("optimizer")
         step = checkpoint["step"]
-        if not isinstance(model_state, Mapping) or not isinstance(
-            optimizer_state, Mapping
+        if not isinstance(model_state, Mapping) or (
+            "optimizer" in checkpoint and not isinstance(optimizer_state, Mapping)
         ):
             raise TypeError("training checkpoint model/optimizer must be mappings")
         model_state = decode_tensor_state(

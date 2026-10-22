@@ -189,6 +189,7 @@ def plan_step_search(
             graph_pair_variants=graph_pair_variants,
         ),
     )
+    winners = sweep.winner_plans()
     return StepSearchReport(
         metadata=dict(metadata or {}),
         budgets=tuple(budgets),
@@ -200,5 +201,5 @@ def plan_step_search(
             if prepared is not None and prepared.specification.symmetric_planning
             else transfer_bandwidths
         ),
-        winner_plans=MappingProxyType(sweep.winner_plans()),
+        winner_plans=MappingProxyType(winners),
     )
