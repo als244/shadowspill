@@ -42,7 +42,7 @@ allocator. This engine adds:
 | `--execution-gib G` | The device budget: the execution pool's physical capacity, with `--external-headroom-gib` (0.5) reserved inside it for allocations outside the pool |
 | `--spill-gib H` | The spill pool in pinned host memory, held whole from the first second |
 | `--host-headroom-gib` | Host memory reserved per process beside the pinned pool (2) |
-| `--artifact-store` | Where builds and plans persist, read where they hit and written where they miss: `default`, the library's own store (`~/.cache/shadowspill`), so every case and every experiment builds each model once; `none`, a store of the case's own that ends with it; or a directory |
+| `--artifact-store` | Where builds and plans persist, read where they hit and written where they miss: `default`, the library's own store (`~/.cache/shadowspill`), for content-addressed graph pairs, task profiles and compiler artifacts; `none`, a store of the case's own that ends with it; or a directory |
 | `--min-tokens-per-microbatch`, `--max-tokens-per-microbatch` | The smallest and largest microbatch the search plans, in tokens; by default one sequence and a replica's whole update |
 | `--orderings` | The microbatch orderings the search tries per geometry: `factors` (every depth x breadth pair, the default) or `depth-first` |
 | `--tokens-per-microbatch` | Optional: one microbatch size, which skips the search over sizes |
@@ -63,6 +63,34 @@ one, divided by the world size since the backend sums the ranks'
 contributions. The optimizer is mlops's AdamW with the contract's dtypes.
 The model is built on meta and materialized by the backend in its pools,
 where its initialization and the checkpoint's values are written.
+
+## Shared preparation across cases
+
+Single-rank sweeps group cases with identical settings except `execution_gib`.
+One preparation worker captures and profiles every candidate geometry once,
+searches all budgets in that group, and saves `PreparedTraining` under
+`output/preparations/<identity>/artifact`. Its profiling runtime uses the largest
+requested pool and exits before the case workers start. The five-size,
+five-budget grid still produces 25 independent case results, with five shared
+preparation groups. Every case initializes its own model/optimizer and admits
+only the selected plan at its actual physical budget.
+
+Group identity includes source contents, environment, host and all other case
+settings. A completed artifact survives process exits and resumed sweeps. Adding
+budgets within the prepared domain only searches existing programs on the CPU;
+increasing the maximum capacity requires preparation again. Worker commands,
+request snapshots, logs and timings live under `attempt-NNN`; preparation produces
+no throughput result row. A case's request names its shared preparation path.
+`artifact_store=none`, reference-verification cases and distributed cases retain
+individual preparation.
+
+The shared store alone does not bypass Python objective export. Explicit prepared
+artifacts provide that boundary. Admission still rebinds graph pairs and current
+state, loads selected kernels and certifies the layout; these phases are recorded
+separately from search. Microbatch slices are cloned so equivalent positions have
+the same storage geometry and can share an export. Positions still have distinct
+data bindings and the first backward still creates gradients before later ones
+accumulate them. Input guards retain their storage-offset and alias checks.
 
 ## What each offload option moves
 
@@ -104,10 +132,18 @@ devices without bfloat16, with no loss scaling, as its quickstart does).
 As the FSDP2 engine: `case.json`, `rank-NNNNN/request.json` (with the
 plan's record and the pools' statistics after planning), `result.json` or
 `failure.json`, `results.json` and `row.json` from the first rank; also
-`plan.json`, the admitted plan in the neutral schema, and `search.json` when
-the backend searched (an accumulation above one). A budget the planner cannot fit is a
+`plan.json`, the admitted plan in the neutral schema, and `search.json` with the candidate/order/budget outcomes and selected-plan estimates. A budget the planner cannot fit is a
 row on the frontier's boundary: its failure says so, under the schema's
 name for the boundary (`cuda_out_of_memory`), and the sweep continues.
+
+The console logs model setup, runtime allocation/calibration, prepared-artifact
+loading and admission as they occur. Before warmup, it prints the selected
+geometry and full ordering, estimated step time and training window, GPU/spill
+peaks, recomputation and idle percentages, time breakdown, and fetch/evict
+utilization, bytes and throughput. These estimates are also saved in the plan
+record. After training, it prints the median measured step and simulator error,
+defined as `100 * (measured / predicted - 1)`, excluding warmup; each rank's
+`result.json` retains this comparison.
 
 The tiny qualification compares every update's loss, masters and moments to
 an unsharded copy compiled whole (`torch.compile(fullgraph=True)`, as the

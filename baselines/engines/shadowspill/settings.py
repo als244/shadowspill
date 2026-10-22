@@ -4,8 +4,7 @@ On top of what every engine takes (``baselines.common.settings``), the
 budgets ShadowSpill plans within: the execution pool on the device and the
 spill pool in pinned host memory, with the headrooms the runtime keeps
 beside them, the artifact store its builds and plans persist in (the
-library's own by default, so every case and every experiment builds each
-model once), the resolution options the planner searches, and the
+library's own by default), the resolution options the planner searches, and the
 microbatch search. One case plans every split of the update into
 microbatches within ``min_tokens_per_microbatch`` and
 ``max_tokens_per_microbatch`` (both optional), each under the
@@ -15,6 +14,9 @@ whole precision contract. There is no recompute fraction here: the planner
 decides what to keep, recompute or spill, so ``recompute`` is none and any
 value is refused; the resolution options are the shares of the flexible
 groups it may recompute, of which it plans each and keeps the best.
+
+Compatible single-rank sweep cases share explicit preparation artifacts across
+execution budgets. The store alone does not bypass objective capture.
 """
 
 from __future__ import annotations
@@ -41,6 +43,9 @@ SOURCE_PATHS = (
 
 #: The environment beside the launcher's that the trainer runs in.
 ENVIRONMENT = "shadowspill"
+
+# Compatible single-rank cases can prepare once and admit separately.
+SHARED_PREPARATION = True
 
 #: ShadowSpill honors every choice of the contract.
 CAPABILITIES = Capabilities("shadowspill")

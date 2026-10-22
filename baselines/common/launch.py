@@ -143,6 +143,8 @@ def main(argv=None):
     parser.add_argument("--engine", required=True, help="baselines.<engine>")
     parser.add_argument("--gpus", type=int, required=True, help="torchrun world size")
     parser.add_argument("--output", type=Path, required=True)
+    parser.add_argument("--preparation-request", type=Path)
+    parser.add_argument("--prepared", type=Path)
     parser.add_argument(
         "--python", help="the trainer's interpreter, a path or an environment name"
     )
@@ -162,6 +164,17 @@ def main(argv=None):
     output = known.output.resolve()
     output.mkdir(parents=True, exist_ok=True)
     case = resolve(known.engine, settings, known.gpus)
+    if known.preparation_request is not None or known.prepared is not None:
+        if not getattr(module, "SHARED_PREPARATION", False):
+            parser.error(f"{known.engine} does not support shared preparation")
+        if known.preparation_request is not None and known.prepared is not None:
+            parser.error("choose preparation or admission, not both")
+        if known.preparation_request is not None:
+            import json
+
+            case["preparation"] = json.loads(known.preparation_request.read_text())
+        else:
+            case["prepared"] = str(known.prepared.resolve())
     write_json(output / "case.json", case)
     trainer = trainer_command(known.engine, python, known.gpus, output)
     sys.stdout.flush()

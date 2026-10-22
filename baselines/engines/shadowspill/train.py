@@ -15,6 +15,7 @@ import contextlib
 import dataclasses
 import functools
 import shutil
+import statistics
 import tempfile
 import time
 from fractions import Fraction
@@ -102,12 +103,72 @@ def plan_record(plan, planning_seconds):
             "transfer_bytes_evicted": plan.transfer_bytes_evicted,
             "transfer_bytes_fetched": plan.transfer_bytes_fetched,
             "captured_stage_count": plan.captured_stage_count,
-            "summary": plan.summary,
+            "summary": plan.summary.as_dict(),
             "phase_timings_ns": dict(plan.phase_timings_ns),
             "data_ordering": plan.data_ordering,
             "optimizer_ordering": plan.optimizer_ordering,
         }
     )
+
+
+def print_plan_summary(summary, geometry, ordering, budget, *, warmup, measured, rank):
+    """Show the selected computation and its estimates before executing any step."""
+    seconds = summary.simulated_step_seconds
+    lines = [
+        f"[shadowspill.plan] rank={rank} selected plan (estimates before training)",
+        f"  geometry: {geometry.sequences_per_microbatch} sequences x "
+        f"{geometry.sequence_length:,} tokens = {geometry.tokens_per_microbatch:,} "
+        f"tokens/microbatch; {geometry.accumulation} microbatches/update/rank; "
+        f"{geometry.tokens_per_step:,} global tokens/update",
+        f"  ordering: depth={ordering.depth}, breadth={ordering.breadth}, "
+        f"reverse_breadth={ordering.reverse_breadth}, pair_loss={ordering.pair_loss}",
+        f"  step: {seconds:.3f}s; "
+        f"{geometry.tokens_per_step / seconds:,.1f} global tokens/s",
+        f"  training window: {(warmup + measured) * seconds:.1f}s "
+        f"({warmup} warmup + {measured} measured updates; excludes setup/teardown)",
+        f"  memory peaks: GPU live {summary.device_peak_bytes / GIB:.3f} GiB; "
+        f"spill {summary.spill_peak_bytes / GIB:.3f} GiB",
+        f"  physical pool budgets: GPU {budget[0] / GIB:g} GiB; "
+        f"spill {budget[1] / GIB:g} GiB",
+    ]
+    if summary.physical_execution_peak_bytes is not None:
+        lines.append(
+            "  planned GPU footprint (layout + fixed costs): "
+            f"{summary.physical_execution_peak_bytes / GIB:.3f} GiB"
+        )
+    lines.extend(
+        [
+            f"  recomputation: {summary.recomputing_group_fraction:.1%} of flexible "
+            f"groups ({summary.recomputing_group_count}/"
+            f"{summary.flexible_group_count}); "
+            f"overhead {summary.recomputation_overhead_seconds:.3f}s",
+            f"  idle: {summary.idle_fraction:.1%} ({summary.idle_seconds:.3f}s)",
+            "  time breakdown: compute floor "
+            f"{summary.unconstrained_step_seconds:.3f}s, "
+            f"recomputation {summary.recomputation_overhead_seconds:.3f}s, "
+            f"contention {summary.task_contention_seconds:.3f}s, "
+            f"idle {summary.idle_seconds:.3f}s, "
+            f"terminal writeback {summary.terminal_writeback_seconds:.3f}s",
+        ]
+    )
+    for name in ("fetch", "evict"):
+        traffic = getattr(summary, f"transfer_bytes_{name}ed")
+        bandwidth = getattr(summary, f"{name}_blended_bandwidth_bytes_per_second")
+        solo = getattr(summary, f"{name}_solo_bandwidth_bytes_per_second") / 1e9
+        concurrent = (
+            getattr(summary, f"{name}_concurrent_bandwidth_bytes_per_second") / 1e9
+        )
+        rate = "n/a" if bandwidth is None else f"{bandwidth / 1e9:.2f} GB/s"
+        lines.append(
+            f"  {name}: utilization {getattr(summary, f'{name}_utilization'):.1%}; "
+            f"{traffic:,} bytes ({traffic / GIB:.3f} GiB); "
+            f"busy {getattr(summary, f'{name}_busy_ns') / 1e9:.3f}s; "
+            f"estimated active throughput {rate}"
+        )
+        lines.append(
+            f"    calibration: solo {solo:.2f} GB/s; concurrent {concurrent:.2f} GB/s"
+        )
+    print("\n".join(lines), flush=True)
 
 
 def boundary(error):
@@ -246,6 +307,21 @@ def train(case, clock):
     """Plan the case's step with the ShadowSpill backend and run every step."""
 
     settings, geometry, precision = case.settings, case.geometry, case.precision
+    print(f"[shadowspill.setup] rank {case.rank}: starting model setup", flush=True)
+    preparation = case.resolved.get("preparation")
+    if preparation is not None:
+        from .preparation import extend_search
+
+        reused = extend_search(preparation, settings)
+        if reused:
+            return runner.Outcome(
+                preparation_only=True,
+                result={
+                    "artifact": preparation["directory"],
+                    "budgets": preparation["budgets"],
+                    "reused_computation": True,
+                },
+            )
     request = settings.request()
     record = case.record
     world, device = case.world, case.device
@@ -301,25 +377,13 @@ def train(case, clock):
     }
 
     def splitter(size):
-        # A microbatch carries its sequence lengths, so every candidate
-        # geometry is its own step to plan, and its own key in the store.
-        lengths = (geometry.sequence_length,) * (size // geometry.sequence_length)
+        from functools import partial
 
-        def microbatches(pair):
-            # Each microbatch's objective is already its share of the
-            # update, so every scale is one.
-            tokens, targets = pair
-            for start in range(0, tokens.shape[1], size):
-                yield (
-                    (
-                        tokens[:, start : start + size],
-                        targets[:, start : start + size],
-                        lengths,
-                    ),
-                    1.0,
-                )
+        from .microbatches import split_microbatches
 
-        return microbatches
+        return partial(
+            split_microbatches, size=size, sequence_length=geometry.sequence_length
+        )
 
     def objective(module, pair):
         # The backend sums the ranks' contributions, so each rank's share
@@ -378,6 +442,7 @@ def train(case, clock):
     )
     snapshots = None
     case.stage = "runtime"
+    print("[shadowspill.setup] opening and calibrating runtime pools", flush=True)
     try:
         with ShadowSpill(
             execution_gib=settings.execution_gib,
@@ -420,7 +485,7 @@ def train(case, clock):
                         "weight_decay": settings.weight_decay,
                     },
                     schedules={"lr": Constant(settings.learning_rate)},
-                    microbatches={f"{size}": splitter(size) for size in sizes},
+                    microbatch_candidates={f"{size}": splitter(size) for size in sizes},
                     backend=backend,
                     master_dtype=None
                     if precision.master_dtype is None
@@ -435,7 +500,61 @@ def train(case, clock):
                         if checkpoint is not None
                         else contextlib.nullcontext()
                     ):
-                        trainer.prepare(data(0), initialize=initialize)
+                        if preparation is not None:
+                            print(
+                                "[shadowspill.setup] preparing computation "
+                                "and searching budgets",
+                                flush=True,
+                            )
+                            artifacts = trainer.prepare_artifacts(
+                                data(0),
+                                initialize=initialize,
+                                budgets=[
+                                    tuple(item) for item in preparation["budgets"]
+                                ],
+                            )
+                            artifacts.save(preparation["directory"])
+                            record["preparation"] = preparation
+                            case.save()
+                            return runner.Outcome(
+                                preparation_only=True,
+                                result={
+                                    "artifact": preparation["directory"],
+                                    "budgets": preparation["budgets"],
+                                    "preparation_seconds": time.perf_counter()
+                                    - planning_started,
+                                    "reused_computation": False,
+                                },
+                            )
+                        from shadowspill.training import PreparedTraining
+
+                        prepared_path = case.resolved.get("prepared")
+                        if prepared_path is not None:
+                            print(
+                                "[shadowspill.setup] loading prepared artifacts: "
+                                f"{prepared_path}",
+                                flush=True,
+                            )
+                        artifact_load_started = time.perf_counter()
+                        prepared = (
+                            None
+                            if prepared_path is None
+                            else PreparedTraining.load(
+                                prepared_path, budget=backend.budget
+                            )
+                        )
+                        if prepared_path is not None:
+                            print(
+                                "[shadowspill.setup] artifacts loaded in "
+                                f"{time.perf_counter() - artifact_load_started:.3f}s; "
+                                "initializing state and admitting the selected plan",
+                                flush=True,
+                            )
+                        trainer.prepare(
+                            data(0), initialize=initialize, prepared=prepared
+                        )
+                        if prepared_path is not None:
+                            record["shared_preparation"] = prepared_path
                     torch.cuda.synchronize()
                     planning_seconds = time.perf_counter() - planning_started
                     if checkpoint is not None:
@@ -465,10 +584,18 @@ def train(case, clock):
                         else trainer.planning.winner(*backend.budget)
                     )
                     if winner is not None:
-                        chosen["ordering"] = {
-                            "depth": winner.ordering.depth,
-                            "breadth": winner.ordering.breadth,
-                        }
+                        chosen["ordering"] = winner.ordering.to_dict()
+                    summary = plan.summary
+                    if trainer.planning is not None:
+                        selected = trainer.planning.winner_plans.get(backend.budget)
+                        if selected is not None:
+                            summary = dataclasses.replace(
+                                summary,
+                                physical_execution_peak_bytes=(
+                                    selected.summary.physical_execution_peak_bytes
+                                ),
+                            )
+                    record["plan"]["summary"] = summary.as_dict()
                     record["microbatch_search"]["chosen"] = chosen
                     record["microbatches_per_step"] = geometry.accumulation
                     record["pools_after_planning"] = {
@@ -499,6 +626,15 @@ def train(case, clock):
                         )
                     device_used = []
                     evidence = None
+                    print_plan_summary(
+                        summary,
+                        geometry,
+                        plan.data_ordering,
+                        backend.budget,
+                        warmup=settings.warmup_steps,
+                        measured=settings.steps,
+                        rank=case.rank,
+                    )
                     clock.ready(f"planning={planning_seconds:.3f}")
                     for step in range(clock.steps):
                         tokens, targets = data(step)
@@ -543,6 +679,18 @@ def train(case, clock):
                         if step == 0 and access is not None:
                             evidence = access.evidence(trainer.model)
                     clock.close()
+                    measured_seconds = statistics.median(clock.cycles)
+                    simulator_error = 100 * (
+                        measured_seconds / summary.simulated_step_seconds - 1
+                    )
+                    print(
+                        f"[shadowspill.measure] rank={case.rank} "
+                        f"median step={measured_seconds:.3f}s; "
+                        f"predicted={summary.simulated_step_seconds:.3f}s; "
+                        f"simulator error={simulator_error:+.2f}% "
+                        "(measured/predicted - 1; warmup excluded)",
+                        flush=True,
+                    )
                     execution = backend.runtime.pool_statistics("execution")
                     spill = backend.runtime.pool_statistics("spill")
             finally:
@@ -570,8 +718,15 @@ def train(case, clock):
                 "device_used_bytes_max": int(max(device_used)),
             },
             "planning_seconds": planning_seconds,
+            "simulation_comparison": {
+                "predicted_step_seconds": summary.simulated_step_seconds,
+                "median_measured_step_seconds": measured_seconds,
+                "simulator_error_percent": simulator_error,
+                "error_definition": "100 * (measured / predicted - 1)",
+            },
         },
         provenance={
+            "shared_preparation": record.get("shared_preparation"),
             "plan": record["plan"],
             "pools_after_planning": record["pools_after_planning"],
             "microbatch_search": record["microbatch_search"],

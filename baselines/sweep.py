@@ -537,7 +537,9 @@ def stop(process):
             process.wait()
 
 
-def run_case(command_line, attempt, settings, world_size, timeout):
+def run_case(
+    command_line, attempt, settings, world_size, timeout, *, classify_result=None
+):
     """Run one attempt to completion, timeout or interruption, recording its
     console, its process and its outcome beside it."""
 
@@ -562,7 +564,9 @@ def run_case(command_line, attempt, settings, world_size, timeout):
         try:
             returncode = process.wait(timeout=timeout)
             try:
-                outcome = classify(attempt, returncode, world_size, settings)
+                outcome = (classify_result or classify)(
+                    attempt, returncode, world_size, settings
+                )
             except (ValueError, KeyError, TypeError) as error:
                 outcome = {"status": "failed", "reason": f"invalid result: {error}"}
             outcome["returncode"] = returncode
@@ -689,12 +693,31 @@ def main(argv=None):
             after = {item["name"] for item in manifest["cases"]}
             changes = (len(after - before), len(before - after))
         write_json(path, manifest)
+        from baselines.common.preparation import groups, preview
+
+        preparation_groups = groups(
+            cases,
+            engine=args.engine,
+            world_size=args.gpus,
+            manifest=manifest,
+            output=output,
+        )
+        unique_preparations = {
+            str(group["directory"]): group for group in preparation_groups.values()
+        }
+        for group in unique_preparations.values():
+            preview(group, engine=args.engine, python=args.python, world_size=args.gpus)
         for name, settings in cases:
             case = output / "cases" / name
             write_json(case / "config.json", settings.as_dict())
             first = launch.command(
                 args.engine, args.python, args.gpus, settings, case / "attempt-001"
             )
+            if name in preparation_groups:
+                first += [
+                    "--prepared",
+                    str(preparation_groups[name]["directory"] / "artifact"),
+                ]
             (case / "command.txt").write_text(shlex.join(first) + "\n")
         report(output, cases, args.engine, args.gpus)
         knobs, label_of = labels(cases, args.gpus)
@@ -703,6 +726,13 @@ def main(argv=None):
             field("interpreter", args.python),
             field("varying", ", ".join(knobs) if knobs else "nothing"),
         ]
+        if unique_preparations:
+            lines.append(
+                field(
+                    "preparations",
+                    f"{len(unique_preparations)} groups; {output / 'preparations'}",
+                )
+            )
         if changes and any(changes):
             lines.append(
                 field(
@@ -758,11 +788,34 @@ def run_cases(args, cases, output, manifest, label_of):
     """Attempt every case that is due, in the matrix's order."""
 
     width = len(str(len(cases)))
+    from baselines.common.preparation import ensure, groups
+
+    preparation_groups = groups(
+        cases,
+        engine=args.engine,
+        world_size=args.gpus,
+        manifest=manifest,
+        output=output,
+    )
+    prepared = {}
     attempted = 0
     for index, (name, settings) in enumerate(cases, 1):
         case = output / "cases" / name
         if not to_attempt(latest(case), args.retry_failed):
             continue
+        group = preparation_groups.get(name)
+        artifact = None
+        if group is not None:
+            key = str(group["directory"])
+            if key not in prepared:
+                prepared[key] = ensure(
+                    group,
+                    engine=args.engine,
+                    python=args.python,
+                    world_size=args.gpus,
+                    timeout=args.case_timeout,
+                )
+            artifact = prepared[key]
         position = f"[{index:>{width}}/{len(cases)}]"
         attempts = list(case.glob("attempt-*"))
         number = (
@@ -771,6 +824,8 @@ def run_cases(args, cases, output, manifest, label_of):
         attempt = case / f"attempt-{number:03d}"
         attempt.mkdir()
         cmd = launch.command(args.engine, args.python, args.gpus, settings, attempt)
+        if artifact is not None:
+            cmd += ["--prepared", str(artifact)]
         (attempt / "command.txt").write_text(shlex.join(cmd) + "\n")
         print(
             "\n".join(
