@@ -19,56 +19,339 @@ verifies the install. Add `--expert-parallel quack`, `te` or `both` for
 mlops's optional expert-parallel backends, which the expert-parallel workloads
 use; that needs the mlops checkout beside this one.
 
-## Minimal example
+## Train with the Trainer API
 
-The trainer takes an ordinary model, objective and iterable. Enter the backend
-before creating accelerator resources. Initialized CPU models retain their state.
+`Trainer` takes a model, loss function and iterable of complete optimizer updates.
+`prepare()` opens the backend and admits a plan that fits. Supply named
+`microbatch_candidates` to search sizes and orderings, or fix both explicitly. `fit()` runs forward, backward
+and AdamW updates with the learning-rate schedule; `close()` releases owned
+resources. Use `step()` for a custom loop.
+
+| Example | Sequence length | Sequences per update | Execution | Microbatch selection |
+|---|---:|---:|---|---|
+| Llama 3 8B full training | 4,096 | 16 | 1 GPU | Fixed: four sequences, 1×4 ordering |
+| Qwen3.5-35B-A3B LoRA | 32,768 | 8 | 1 GPU | Search sizes and orderings |
+| Qwen3-30B-A3B full training | 4,096 | 512 globally; 64 per GPU | Eight GPUs | Search sizes and orderings |
+
+Run these scripts from the checkout after installation. Replace each example
+path with a corpus tokenized using the matching model's tokenizer. `train.bin` contains
+uint32 token IDs and `meta.json` records `vocab_size`. The
+[text data preparation recipe](workloads/recipes/text/prepare_data.py) writes
+this format. Supply at least five complete updates of data.
+
+The small [TokenUpdates helper](workloads/recipes/text/fixed.py) reads text
+windows, shifts targets by one token, and supplies every microbatch size that
+divides the local sequence count. It gives each microbatch independent storage
+and normalizes summed losses by the **global** token count. The Qwen examples
+search sizes and orderings with `microbatch_candidates=data.candidates`; Llama
+fixes both. The total update size stays fixed in every example.
+
+These examples use BF16 compute weights, FP32 masters/gradients/AdamW moments,
+and a warmup-cosine learning-rate schedule. Models are declared on `meta`;
+initialization writes directly into pool-owned storage. The single-GPU examples request 28 GiB of GPU memory
+and a 144 GiB pinned host pool. Adjust budgets for your machine; the planner
+checks feasibility before training. These are example configurations, not
+published performance or memory-fit results.
+
+<details>
+<summary><strong>Llama 3 8B: full training</strong></summary>
+
+Start from random initialization and train all parameters on 4K-token sequences,
+16 sequences per optimizer update. Each microbatch has four sequences (16K
+tokens), so there are four microbatches per update. The fixed 1×4 ordering visits
+all four at each layer before moving to the next layer. ShadowSpill still chooses
+storage, transfers and recomputation within the budget. The
+[complete script](workloads/recipes/text/train_llama3.py) is runnable with:
+
+```bash
+python -m workloads.recipes.text.train_llama3 --data /path/to/llama3-tokens
+```
 
 ```python
 import torch
-from torch import nn
-
-from shadowspill.training import Trainer
+from mlops.optim import AdamW
+from shadowspill.planner import StepDataOrdering
+from shadowspill.training import Trainer, reset_parameters
 from shadowspill.training.backends import ShadowSpill
-from shadowspill.training.schedules import Constant
+from shadowspill.training.schedules import WarmupCosine
+from workloads.models.catalog import build_on_meta
+from workloads.recipes.text.fixed import TokenUpdates
+from workloads.recipes.text.objectives import next_token_prediction
 
-model = nn.Linear(16, 8)
-data = [(torch.randn(64, 16), torch.randn(64, 8)) for _ in range(5)]
-
-def objective(model, batch):
-    inputs, targets = batch
-    return (model(inputs) - targets).square().mean()
-
-with ShadowSpill(execution_gib=2, spill_gib=2) as backend:
-    with Trainer(
-        model,
-        objective=objective,
-        optimizer=torch.optim.AdamW,
-        schedules={"lr": Constant(3e-4)},
-        backend=backend,
-    ) as trainer:
-        trainer.prepare(data[0])
-        trainer.fit(data, steps=5, run_dir="runs/example")
+data_directory = "/path/to/llama3-tokens"
+steps = 5
+# One optimizer update contains 16 sequences, split into four microbatches.
+data = TokenUpdates(data_directory, sequence_length=4096, sequences_per_step=16)
+model = build_on_meta("llama3-8b", dtype="bfloat16")
+trainer = Trainer(
+    model,
+    objective=next_token_prediction,
+    optimizer=AdamW,
+    optimizer_args={"opt_state_dtype": torch.float32},
+    schedules={
+        "lr": WarmupCosine(lr=3e-4, min_lr=3e-5, warmup_steps=1, total_steps=steps)
+    },
+    master_dtype=torch.float32,
+    grad_dtype=torch.float32,
+    microbatches=data.splitter(sequences_per_microbatch=4),
+    backend=ShadowSpill(
+        execution_gib=28,
+        spill_gib=144,
+        # One pass visits all four microbatches at each layer (breadth-first).
+        orderings=[StepDataOrdering(depth=1, breadth=4)],
+    ),
+)
+# Open pools and plan storage/recomputation with the fixed size and ordering.
+trainer.prepare(data.example(), initialize=reset_parameters)
+# Perform forward/backward/AdamW updates, advancing the LR schedule each step.
+trainer.fit(data, steps=steps, run_dir="runs/llama3-8b")
+trainer.close()  # Release the callable and the pools this trainer opened.
 ```
 
-For large models, construct under `torch.device("meta")` and call
-`trainer.prepare(data[0], initialize=your_initializer)`. ShadowSpill allocates
-state in its spill pool before running the initializer, avoiding a full temporary
-CPU model. [SSD spill pools](docs/python/api/ssd.md) use bounded host staging.
+</details>
 
-Use `trainer.step(data)` in a custom loop, or `Forward` for inference.
-The [training API](docs/python/api/training.md) covers microbatches, schedules,
-evaluation, checkpointing and alternate PyTorch execution. The lower-level
-[Python quickstart](docs/python/quickstart.md) exposes planning and runtime
-ownership directly. The [benchmark quickstart](benchmarking/quickstart.md)
-accepts a user experiment factory or a supplied text recipe, and the
-[examples](docs/examples/README.md) show complete workflows. The
-[distributed example](docs/examples/generic-training.md#run-a-distributed-example)
-uses ordinary torchrun, explicit device/groups, per-rank startup traces, and
-separate rank plus aggregate W&B runs.
-For equivalent distributed planning problems, opt into
-[verified symmetric planning](docs/python/api/distributed.md#verified-symmetric-planning)
-with `Distributed(group, symmetric_planning=True)` to share CPU search work.
+<details>
+<summary><strong>Qwen3.5-35B-A3B: LoRA at 32K</strong></summary>
+
+Start from a local Hugging Face checkpoint and train rank-16 adapters on the
+attention projections and routed experts. The base, embeddings, norms and output
+head stay frozen. Each update contains eight 32K-token sequences. The checkpoint
+initializer loads base weights, rebuilds rotary buffers and initializes the
+adapters directly in the training pools. The
+[complete script](workloads/recipes/text/train_qwen35_lora.py) runs with:
+
+```bash
+python -m workloads.recipes.text.train_qwen35_lora \
+  --data /path/to/qwen35-tokens --checkpoint /path/to/Qwen3.5-35B-A3B \
+  --frozen-state-id qwen35-base-v1
+```
+
+The corpus also needs `val.bin`, containing at least two complete validation
+items: 16 sequences, or 524,288 target tokens. Evaluation uses the same held-out windows every two updates and at the
+final update. `metrics.jsonl` records training/evaluation loss, learning rate and
+timing; `search.json` and `plan.json` record the selected plan. Add
+`--wandb-project my-project` to also send metrics and system telemetry to W&B
+(using your W&B login).
+
+The Trainer's `frozen_state_id` enables partial checkpoints: this LoRA run saves
+each adapter parameter once (its FP32 master), adapter optimizer state, and training progress,
+including RNG and data position. Frozen base weights and derived rotary tables
+are omitted. The generic mechanism also retains persistent buffers or frozen
+state that a training graph mutates. Supply an immutable ID for your exact base
+checkpoint and configuration; resume checks that ID and reloads the base from HF.
+
+Checkpoint precision and optimizer state are independent options:
+`trainer.save(path, weights="compute", include_optimizer=False)` saves only
+compute-precision parameters, plus buffers and progress. A new Trainer can
+resume that progress with a fresh optimizer. Periodic saves expose the same
+options as `checkpoint_weights` and `checkpoint_include_optimizer` in `fit`.
+
+The script keeps the latest two checkpoints under `run_dir/checkpoints`. Resume
+from a saved step, optionally using a new output directory:
+
+```bash
+python -m workloads.recipes.text.train_qwen35_lora \
+  --data /path/to/qwen35-tokens --checkpoint /path/to/Qwen3.5-35B-A3B \
+  --frozen-state-id qwen35-base-v1 \
+  --resume runs/qwen35-lora/checkpoints/step_00000004 \
+  --run-dir runs/qwen35-resumed
+```
+
+`steps=5` is the target total, so that command performs the remaining update.
+Keep the same corpus, frozen base and schedule when resuming. W&B logging is
+optional and starts a new run for each invocation; the
+[logger API](docs/python/api/training.md) also accepts W&B run IDs and resume
+options when you want one continuous history.
+
+```python
+import torch
+from mlops.optim import AdamW
+from shadowspill.training import Trainer
+from shadowspill.training.backends import ShadowSpill
+from shadowspill.training.logging import Wandb
+from shadowspill.training.schedules import WarmupCosine
+from workloads.models.construction import build_on_meta
+from workloads.models.qwen35moe.checkpoint import Qwen35MoECheckpoint
+from workloads.models.qwen35moe.implementations.mlops import Model
+from workloads.recipes.text.fixed import TokenUpdates
+from workloads.recipes.text.objectives import next_token_prediction
+
+data_directory = "/path/to/qwen35-tokens"
+checkpoint_directory = "/path/to/Qwen3.5-35B-A3B"
+frozen_state_id = "qwen35-base-v1"  # An immutable ID for your base and configuration.
+run_dir = "runs/qwen35-lora"
+resume = None  # Or a Trainer checkpoint directory from an earlier run.
+wandb_project = None  # Set a project name to enable W&B.
+steps = 5
+# Read next-token examples and supply candidate microbatch sizes.
+data = TokenUpdates(data_directory, sequence_length=32768, sequences_per_step=8)
+
+# Each validation item contains eight 32K sequences, just like a training item.
+# A fresh iterator evaluates the same held-out windows each time.
+def validation_data():
+    return TokenUpdates(
+        data_directory, split="val", sequence_length=32768, sequences_per_step=8
+    )
+
+checkpoint = Qwen35MoECheckpoint(checkpoint_directory)
+model = build_on_meta(
+    Model,
+    config=checkpoint.config,
+    dtype="bfloat16",
+    lora={"rank": 16, "alpha": 32},
+)
+trainer = Trainer(
+    model,
+    objective=next_token_prediction,
+    optimizer=AdamW,
+    optimizer_args={"opt_state_dtype": torch.float32},
+    schedules={
+        "lr": WarmupCosine(lr=2e-4, min_lr=2e-5, warmup_steps=1, total_steps=steps)
+    },
+    master_dtype=torch.float32,
+    grad_dtype=torch.float32,
+    microbatch_candidates=data.candidates,
+    backend=ShadowSpill(execution_gib=28, spill_gib=144),
+    # Save trainable state only, referencing this immutable frozen base ID.
+    frozen_state_id=frozen_state_id,
+)
+# Load the frozen base; on resume, restore saved adapters/optimizer/progress.
+trainer.prepare(data.example(), initialize=checkpoint.initialize, checkpoint=resume)
+# Local JSONL logging is always enabled; W&B is optional.
+logger = None
+if wandb_project is not None:
+    logger = Wandb(
+        project=wandb_project,
+        run_dir=run_dir,
+        config={
+            "model": "Qwen3.5-35B-A3B",
+            "lora_rank": 16,
+            "sequence_length": 32768,
+            "sequences_per_step": 8,
+        },
+    )
+trainer.fit(
+    data,
+    steps=steps,  # Target total updates, including any restored progress.
+    run_dir=run_dir,
+    log_every=1,  # Loss, LR and step timing go to metrics.jsonl and the logger.
+    logger=logger,
+    eval_data=validation_data,
+    eval_every=2,  # Every two training updates, and also at the final update.
+    eval_updates=2,  # Two validation updates: 16 sequences, 524,288 target tokens.
+    checkpoint_every=2,  # Adapter masters once, optimizer, RNG and data position.
+    keep_last=2,  # Retain the two newest checkpoints under run_dir/checkpoints.
+)
+trainer.close()  # Release the callable and its memory pools.
+if logger is not None:
+    logger.close()  # Finish and flush this W&B run.
+```
+
+</details>
+
+<details>
+<summary><strong>Qwen3-30B-A3B: full training on eight GPUs</strong></summary>
+
+This example starts from random initialization and consumes 512 sequences per
+update: 64 distinct 4K-token sequences on each rank. Both kinds of sharding are
+explicit: `DataParallel(shard_weights=True, shard_gradients=True)` shards compute
+weights and gradients in the spill pool; `shard_optimizer=True` independently shards FP32 masters and AdamW moments
+across all eight ranks. Weight fetches all-gather the layer's execution tensors;
+gradient evictions reduce-scatter their contributions. The plan decides when
+those transfers occur and which tensors remain resident between uses.
+
+`prepare()` creates Gloo for coordination before opening the pools, then NCCL
+for tensor collectives. `close()` releases the pools before those groups.
+`DataParallel()` also supports ordinary replicated compute weights and gradient
+reductions; optimizer/master sharding remains enabled by default in either mode.
+`device="auto"` selects the rank's GPU. The
+[complete script](workloads/recipes/text/train_qwen3_distributed.py) requests
+77 GiB of GPU memory and 96 GiB of pinned host memory **per rank** (768 GiB of
+host pools across the node), suitable as a starting configuration for an
+8×80-GB H100 node with sufficient host RAM. Microbatch candidates range from
+one to 32 sequences per rank (4K–128K tokens):
+
+```bash
+torchrun --standalone --nproc-per-node=8 \
+  -m workloads.recipes.text.train_qwen3_distributed --data /path/to/qwen3-tokens
+```
+
+```python
+import torch
+from mlops.optim import AdamW
+from shadowspill.training import DataParallel, Trainer, reset_parameters
+from shadowspill.training.backends import ShadowSpill
+from shadowspill.training.schedules import WarmupCosine
+from workloads.models.catalog import build_on_meta
+from workloads.recipes.text.fixed import TokenUpdates
+from workloads.recipes.text.objectives import next_token_prediction
+
+data_directory = "/path/to/qwen3-tokens"
+steps = 5
+# Trainer creates Gloo for coordination, then NCCL for tensor collectives.
+# Weight fetches all-gather; gradient evictions reduce-scatter.
+parallel = DataParallel(shard_weights=True, shard_gradients=True, timeout=7200)
+if parallel.world_size != 8:
+    raise ValueError("launch this script with eight torchrun processes")
+# Each rank reads 64 distinct sequences; losses use global token normalization.
+# Search sizes from 1 to 32 sequences per microbatch, and all factor orderings.
+data = TokenUpdates(
+    data_directory,
+    sequence_length=4096,
+    sequences_per_step=64,
+    rank=parallel.rank,
+    world_size=parallel.world_size,
+    max_sequences_per_microbatch=32,
+)
+model = build_on_meta("qwen3moe-30b-a3b", dtype="bfloat16")
+trainer = Trainer(
+    model,
+    objective=next_token_prediction,
+    optimizer=AdamW,
+    optimizer_args={"opt_state_dtype": torch.float32},
+    schedules={
+        "lr": WarmupCosine(lr=3e-4, min_lr=3e-5, warmup_steps=1, total_steps=steps)
+    },
+    master_dtype=torch.float32,
+    grad_dtype=torch.float32,
+    microbatch_candidates=data.candidates,
+    backend=ShadowSpill(
+        device="auto", execution_gib=77, spill_gib=96, preparation_timeout=7200
+    ),
+    distributed=parallel,
+    shard_optimizer=True,  # Separately shard FP32 masters and AdamW moments.
+)
+torch.manual_seed(0)
+# Allocate sharded storage, initialize randomly, search sizes/orderings, admit.
+trainer.prepare(data.example(), initialize=reset_parameters)
+trainer.fit(data, steps=steps, run_dir="runs/qwen3-dp8")
+trainer.close()  # Release callables, pools, then the owned process groups.
+```
+
+Each rank reads different corpus windows. Its losses are normalized by all
+512 × 4,096 target tokens, because distributed gradients are summed. Search
+coordinates a compatible collective schedule across ranks. The Trainer writes
+per-rank metrics and plans under the run directory. See
+[distributed ownership](docs/python/api/distributed.md) for subgroup layouts.
+
+</details>
+
+## More control
+
+`trainer.planning` exposes the microbatch search and each budget's selected plan;
+`plan.summary` reports estimated step time, memory peaks, recomputation, idle
+time and transfer utilization. For repeated budgets, use
+`trainer.prepare_artifacts(..., budgets=...)`, save its `PreparedTraining`, and
+pass it to another trainer's `prepare(..., prepared=...)`. Persistent preparation
+currently supports one rank; distributed training uses coordinated preparation.
+
+The [training API](docs/python/api/training.md) covers schedules, evaluation and
+checkpointing. [Reusable planning](docs/examples/reusable-planning.md) shows
+prepare/search/admit separately, and the [low-level training loop](docs/examples/training-lifecycle.md)
+shows explicit runtime ownership. [Examples](docs/examples/README.md) includes
+small models for learning the API. The [benchmark quickstart](benchmarking/quickstart.md)
+measures experiments and plots plans. [SSD spill pools](docs/python/api/ssd.md)
+provide an alternative to pinned host storage for single-rank training.
 
 ## Project structure
 

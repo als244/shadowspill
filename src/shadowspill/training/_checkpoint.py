@@ -26,16 +26,29 @@ def save(
     *,
     distributed: BoundDistributed | None = None,
     weights: Literal["master", "compute"] = "master",
+    include_optimizer: bool = True,
+    frozen_state_id: str | None = None,
 ) -> Path:
     if weights not in {"master", "compute"}:
         raise ValueError("weights must be 'master' or 'compute'")
+
+    def write_state(destination: Path) -> None:
+        options: dict[str, Any] = {"weights": weights}
+        if frozen_state_id is not None:
+            options["frozen_state_id"] = frozen_state_id
+        if not include_optimizer:
+            options["include_optimizer"] = False
+        execution.save(destination, **options)
+
     if distributed is not None:
         distributed.control.agree("checkpoint/weight_representation", weights)
+        distributed.control.agree("checkpoint/include_optimizer", include_optimizer)
+        distributed.control.agree("checkpoint/frozen_state_id", frozen_state_id)
         from shadowspill.pytorch.distributed._checkpoint import save_collective
 
         def write_rank(root: Path) -> None:
             execution.synchronize()
-            execution.save(root / "state.pt", weights=weights)
+            write_state(root / "state.pt")
             torch.save(loop, root / "loop.pt")
 
         return save_collective(
@@ -52,7 +65,7 @@ def save(
     temporary = Path(tempfile.mkdtemp(prefix="." + path.name + "-", dir=path.parent))
     try:
         execution.synchronize()
-        execution.save(temporary / "state.pt", weights=weights)
+        write_state(temporary / "state.pt")
         torch.save(loop, temporary / "loop.pt")
         (temporary / "manifest.json").write_text(
             json.dumps({"version": 1, "step": loop["step"]}, indent=2) + "\n"

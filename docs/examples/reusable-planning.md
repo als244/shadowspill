@@ -1,5 +1,89 @@
 # Reusable planning and budget sweeps
 
+Preparing computation, choosing a plan and admitting a callable are separate
+operations. Prepare once at the largest intended capacities; search many budget
+pairs; admit the chosen plan inside a process with that budget's actual pools.
+
+## Trainer artifacts across processes
+
+The same model factory, objective and microbatch functions must be supplied to
+both trainers. `make_model`, `objective`, `candidates` (named split functions) and `example` below are
+application inputs; the [main examples](../../README.md#train-with-the-trainer-api)
+provide real text workloads. Budget values passed to search are **bytes**.
+
+```python
+import torch
+from shadowspill.training import PreparedTraining, Trainer, reset_parameters
+from shadowspill.training.backends import ShadowSpill
+
+budgets = [(8 << 30, 144 << 30), (16 << 30, 144 << 30), (28 << 30, 144 << 30)]
+trainer = Trainer(
+    make_model(), objective=objective, optimizer=torch.optim.AdamW,
+    microbatch_candidates=candidates,
+    backend=ShadowSpill(execution_gib=28, spill_gib=144),
+)
+prepared = trainer.prepare_artifacts(
+    example, budgets=budgets, initialize=reset_parameters,
+)
+prepared.save("prepared/example")
+trainer.close()
+
+for budget, plan in prepared.search.winner_plans.items():
+    print(budget, plan.summary.as_dict())
+```
+
+That process may exit. A separate case loads the artifact, initializes its own
+weights and optimizer, and admits only its selected plan:
+
+```python
+prepared = PreparedTraining.load("prepared/example")
+trainer = Trainer(
+    make_model(), objective=objective, optimizer=torch.optim.AdamW,
+    microbatch_candidates=candidates,
+    backend=ShadowSpill(execution_gib=8, spill_gib=144),
+)
+trainer.prepare(example, initialize=reset_parameters, prepared=prepared)
+trainer.fit(source, steps=5, run_dir="runs/budget-8")
+trainer.close()
+```
+
+This retains independent initialization, timing and result ownership for each
+case. It skips export and search during admission. Task binding, profile lookup,
+selected-kernel loading and physical certification still happen locally. The
+first executed backward creates each gradient; subsequent backward occurrences
+accumulate it, regardless of which microbatch the selected ordering runs first.
+
+## Lower-level prepare, search and admit
+
+For direct runtime ownership, replace `plan_step` in the
+[training loop](training-lifecycle.md) with:
+
+```python
+from shadowspill.pytorch import prepare_step, search_prepared_steps, admit_step
+
+prepared = prepare_step(
+    model, objective=objective, optimizer=torch.optim.AdamW, hyperparams=("lr",),
+    example_inputs=[batch(4)], runtime=runtime, execution="execution", spill="spill",
+)
+prepared.save("prepared/step")
+search = search_prepared_steps(
+    {"batch4": prepared}, budgets=[(3 << 30, 2 << 30), (4 << 30, 2 << 30)],
+)
+selected = search.winner_plans[(4 << 30, 2 << 30)]
+print(selected.summary.as_dict())
+train_step = admit_step(
+    model, prepared, selected, optimizer=torch.optim.AdamW, hyperparams=("lr",),
+    example_inputs=[batch(4)], runtime=runtime, execution="execution", spill="spill",
+)
+```
+
+Loading `PreparedStep.load(...)` and searching new budgets within its original
+capacity bounds needs no GPU. Loading selects that stored objective deliberately;
+its weights come from the current model. Use the same artifact store for
+preparation and admission. The supported persistent path is currently single rank.
+
+## Planner-only program artifacts
+
 Use `build_step_programs()` when capture, graph-pair construction, compilation,
 profiling, and canonical program lowering should occur once. It returns one
 `StepProgram` per ordering asked for, the depth-first one alone by default; each

@@ -94,6 +94,12 @@ class _Step:
         self.optimizer = spec.optimizer(model)(self.weights.parameters())
         self.objective = spec.objective
         self.observer = spec.parameter_metrics
+        self._frozen_versions = {
+            name: parameter._version
+            for name, parameter in model.named_parameters(remove_duplicate=False)
+            if not parameter.requires_grad
+        }
+        self._restored_frozen: set[str] = set()
         if backend.compile:
             self.objective = torch.compile(
                 self.objective, fullgraph=True, dynamic=False
@@ -135,7 +141,12 @@ class _Step:
         del path
 
     def save(
-        self, path: Path, *, weights: Literal["master", "compute"] = "master"
+        self,
+        path: Path,
+        *,
+        weights: Literal["master", "compute"] = "master",
+        include_optimizer: bool = True,
+        frozen_state_id: str | None = None,
     ) -> None:
         checkpoints.save(
             path,
@@ -144,12 +155,38 @@ class _Step:
             self.steps,
             self.weights.masters,
             weights=weights,
+            include_optimizer=include_optimizer,
+            frozen_state_id=frozen_state_id,
+            mutable_frozen=self._restored_frozen
+            | {
+                name
+                for name, parameter in self.model.named_parameters(
+                    remove_duplicate=False
+                )
+                if name in self._frozen_versions
+                and parameter._version != self._frozen_versions[name]
+            },
         )
 
-    def load_state_dict(self, state: Mapping[str, Any]) -> None:
+    def load_state_dict(
+        self, state: Mapping[str, Any], *, frozen_state_id: str | None = None
+    ) -> None:
+        if "optimizer" not in state and self.steps:
+            raise ValueError(
+                "a checkpoint without optimizer state requires a fresh Trainer; "
+                "use prepare(checkpoint=...) to resume with a fresh optimizer"
+            )
         self.steps = checkpoints.load(
-            dict(state), self.model, self.optimizer, self.weights.masters
+            dict(state),
+            self.model,
+            self.optimizer,
+            self.weights.masters,
+            frozen_state_id=frozen_state_id,
         )
+        if frozen_state_id is not None:
+            self._restored_frozen.update(
+                set(state["model"]) & set(self._frozen_versions)
+            )
 
     def close(self) -> None:
         self.closed = True

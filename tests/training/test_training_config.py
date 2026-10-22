@@ -100,7 +100,7 @@ def test_fp16_model_and_optimizer_precision_survive_config(tmp_path, master):
                 "model": "@tests.training._synthetic:TinyModel",
                 "dtype": "bfloat16",
             },
-            "objective": "@workloads.recipes.text.objectives:model_loss",
+            "objective": "@workloads.recipes.text.objectives:next_token_prediction",
             "optimizer": "@mlops.optim:AdamW",
             "optimizer_args": {},
             "data": {

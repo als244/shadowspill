@@ -1,5 +1,12 @@
 # Distributed planning and training
 
+For ordinary data parallel training under torchrun, the high-level
+[`DataParallel` configuration](training.md#data-parallel-training-and-resource-ownership)
+lets `Trainer.prepare()` create the groups and `Trainer.close()` release them.
+It supports replicated compute weights or transfer-sharded weights/gradients,
+with independent optimizer/master sharding enabled by default. The API below
+provides explicit group and per-parameter ownership control.
+
 Two-device DP has been checked with actual compiled Runtime execution: save and
 recompute, full and sharded optimizer state, FP32/FP16, optional FP32 masters,
 checkpoint restore, Forward evaluation, and distributed quickstart. Real-data
@@ -393,6 +400,9 @@ succeed. The schema remains version 1.
   each owned master slice on restore. Lost precision is not recovered.
 - `trainer.fit(..., checkpoint_weights="compute")` selects the same policy for
   periodic saves.
+- `include_optimizer=False` omits optimizer state on every rank; use
+  `checkpoint_include_optimizer=False` for periodic saves. A new Trainer resumes
+  saved training progress with freshly initialized optimizer state on each rank.
 
 Exactly one weight representation is saved per logical parameter. Optimizer
 moments are separate state. Restore uses bounded CPU transfers rather than

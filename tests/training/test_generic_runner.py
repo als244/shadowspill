@@ -118,7 +118,7 @@ def test_forward_and_evaluation_preserve_training_mode_and_use_updated_state():
         expected = model(data()["features"])
         model.train()
         torch.testing.assert_close(actual, expected)
-    evaluated = trainer.evaluate([data()], batches=1)
+    evaluated = trainer.evaluate([data()], updates=1)
     assert evaluated.mean_loss >= 0
     assert model.training and model[1].training
     trainer.close()

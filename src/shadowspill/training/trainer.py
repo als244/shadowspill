@@ -7,7 +7,8 @@ import json
 import shutil
 import time
 from collections.abc import Callable, Iterable, Mapping, Sequence
-from dataclasses import dataclass, field
+from contextlib import ExitStack
+from dataclasses import dataclass, field, replace
 from itertools import chain, islice
 from pathlib import Path
 from typing import Any, Literal, Self, TextIO, cast
@@ -18,7 +19,7 @@ from torch import nn
 from shadowspill.pytorch._rng import preserve_rng
 from shadowspill.pytorch.distributed import Distributed
 
-from . import _checkpoint
+from . import _checkpoint, checkpoints
 from ._inputs import ScaledObjective, candidate_functions, make_microbatches
 from ._model import (
     OptimizerFactory,
@@ -39,6 +40,8 @@ from ._types import (
 from .backends._spec import StepSpec
 from .forward import Forward
 from .observations import MetricSummary, StepObservations
+from .parallel import DataParallel, _Groups
+from .preparation import PreparedTraining
 
 
 @dataclass(frozen=True)
@@ -79,6 +82,7 @@ class Trainer:
         hyperparams: Sequence[str] = (),
         parameter_groups: ParameterGroups | None = None,
         microbatches: Microbatches | Mapping[str, Microbatches] | None = None,
+        microbatch_candidates: Mapping[str, Microbatches] | None = None,
         backend: Backend | None = None,
         master_dtype: torch.dtype | None = None,
         grad_dtype: torch.dtype | None = None,
@@ -88,9 +92,12 @@ class Trainer:
         ]
         | None = None,
         eval_fn: Objective | None = None,
-        distributed: Distributed | None = None,
+        distributed: Distributed | DataParallel | None = None,
         shard_optimizer: bool = True,
+        frozen_state_id: str | None = None,
     ) -> None:
+        checkpoints.validate_frozen_state_id(frozen_state_id)
+        self.frozen_state_id = frozen_state_id
         if backend is None:
             from .backends import PyTorch
 
@@ -99,7 +106,12 @@ class Trainer:
         self.objective = objective
         self.eval_fn = eval_fn or objective
         self.backend = backend
-        self.distributed = distributed
+        self.distributed = (
+            None if isinstance(distributed, DataParallel) else distributed
+        )
+        self._parallel = distributed if isinstance(distributed, DataParallel) else None
+        self._groups: _Groups | None = None
+        self._owns_backend = False
         self._distributed = None
         self.schedules = dict(schedules or {})
         if any(not callable(fn) for fn in self.schedules.values()):
@@ -118,10 +130,21 @@ class Trainer:
             master_dtype,
             grad_dtype,
             parameter_metrics,
-            distributed,
+            self.distributed,
             shard_optimizer,
         )
-        self.candidates = candidate_functions(microbatches)
+        if microbatch_candidates is not None:
+            if microbatches is not None:
+                raise ValueError(
+                    "choose microbatches or microbatch_candidates, not both"
+                )
+            if not isinstance(microbatch_candidates, Mapping):
+                raise TypeError(
+                    "microbatch_candidates must map names to split functions"
+                )
+        self.candidates = candidate_functions(
+            microbatches if microbatch_candidates is None else microbatch_candidates
+        )
         self.selected_candidate: str | None = None
         self.metric_reducer = metric_reducer
         self.step_count = 0
@@ -153,9 +176,60 @@ class Trainer:
         *,
         initialize: Initializer | None = None,
         checkpoint: str | Path | None = None,
+        prepared: PreparedTraining | None = None,
     ) -> Self:
+        """Open resources as needed, initialize state, search and admit a step.
+
+        ``close()`` releases a backend opened here and managed data-parallel
+        groups. An already-open backend and explicit Distributed groups remain
+        caller-owned. Failed preparation releases owned resources automatically.
+        """
         if self._closed or self._execution is not None:
             raise RuntimeError("Trainer must be open and unprepared")
+        try:
+            self._open_backend()
+            return self._prepare(
+                example_data,
+                initialize=initialize,
+                checkpoint=checkpoint,
+                prepared=prepared,
+            )
+        except BaseException:
+            if (
+                self._owns_backend
+                or self._groups is not None
+                or self._execution is not None
+            ):
+                self.close()
+            raise
+
+    def _open_backend(self) -> None:
+        opener = getattr(self.backend, "open", None)
+        opened = getattr(self.backend, "is_open", True)
+        if self._parallel is not None and self._groups is None:
+            if not callable(opener) or opened:
+                raise ValueError(
+                    "DataParallel requires an unopened ShadowSpill backend"
+                )
+            self._groups = self._parallel._open_control()
+        if callable(opener) and not opened:
+            options = (
+                {} if self._groups is None else {"control_group": self._groups.control}
+            )
+            opener(**options)
+            self._owns_backend = True
+        if self._groups is not None and self.distributed is None:
+            self.distributed = self._groups.bind(self.backend.device)
+            self._spec = replace(self._spec, distributed=self.distributed)
+
+    def _prepare(
+        self,
+        example_data: Any,
+        *,
+        initialize: Initializer | None,
+        checkpoint: str | Path | None,
+        prepared: PreparedTraining | None,
+    ) -> Self:
         if self.distributed is not None:
             bind = getattr(self.backend, "_distributed_binding", None)
             if bind is None:
@@ -178,6 +252,20 @@ class Trainer:
             )
 
             omitted = master_aliases(state, self._distributed)
+        if state is not None:
+            frozen = checkpoints.omitted_frozen_parameters(
+                state, self.model, self.frozen_state_id, missing_parameters=omitted
+            )
+            if initialize is None and any(
+                parameter.is_meta and name in frozen
+                for name, parameter in self.model.named_parameters(
+                    remove_duplicate=False
+                )
+            ):
+                raise ValueError(
+                    "a partial checkpoint requires initialize= for the frozen base"
+                )
+            omitted.update(frozen)
         validate_initialization(
             self.model,
             initialize=initialize,
@@ -215,19 +303,93 @@ class Trainer:
             }
             modes = {name: m.training for name, m in self.model.named_modules()}
             with model_mode(self.model, True):
-                self._execution, self.selected_candidate = self.backend.prepare_step(
-                    self.model, self._spec, examples
-                )
+                if prepared is None:
+                    self._execution, self.selected_candidate = (
+                        self.backend.prepare_step(self.model, self._spec, examples)
+                    )
+                else:
+                    admit = getattr(self.backend, "admit_prepared", None)
+                    if admit is None:
+                        raise NotImplementedError(
+                            "this backend cannot admit prepared artifacts"
+                        )
+                    self._execution, self.selected_candidate = admit(
+                        self.model, self._spec, examples, prepared
+                    )
         self.model = self._execution.model
         for name, module in self.model.named_modules():
             module.training = modes[name]
         if state is not None:
-            self._execution.load_state_dict(state)
+            self._execution.load_state_dict(state, frozen_state_id=self.frozen_state_id)
             assert loop is not None
             self._restore_loop(loop)
         if self._elapsed_started is None:
             self._elapsed_started = time.perf_counter()
         return self
+
+    def prepare_artifacts(
+        self,
+        example_data: Any,
+        *,
+        budgets: Sequence[tuple[int, int]] | None = None,
+        initialize: Initializer | None = None,
+    ) -> PreparedTraining:
+        """Prepare/search without admitting a callable or advancing training.
+
+        Save the result with ``PreparedTraining.save``; another Trainer can pass
+        it to ``prepare(prepared=...)`` after independently initializing state.
+        Budgets are execution/spill byte pairs and must fit this preparation
+        runtime. The backend releases temporary optimizer/profiling state.
+        """
+        if self._closed or self._execution is not None:
+            raise RuntimeError("Trainer must be open and unprepared")
+        if self.distributed is not None or self._parallel is not None:
+            raise NotImplementedError(
+                "persistent preparation currently requires one rank"
+            )
+        try:
+            self._open_backend()
+            return self._prepare_artifacts(
+                example_data, budgets=budgets, initialize=initialize
+            )
+        except BaseException:
+            if self._owns_backend or self._groups is not None:
+                self.close()
+            raise
+
+    def _prepare_artifacts(
+        self,
+        example_data: Any,
+        *,
+        budgets: Sequence[tuple[int, int]] | None,
+        initialize: Initializer | None,
+    ) -> PreparedTraining:
+        prepare = getattr(self.backend, "prepare_artifacts", None)
+        if prepare is None:
+            raise NotImplementedError("this backend cannot prepare reusable artifacts")
+        if self.distributed is not None:
+            raise NotImplementedError(
+                "persistent preparation currently requires one rank"
+            )
+        validate_initialization(self.model, initialize=initialize, state=None)
+
+        def fill(model: nn.Module) -> None:
+            initialize_model(model, initialize=initialize, state=None)
+
+        prepare_model = getattr(self.backend, "initialize_model", None)
+        if prepare_model is None:
+            fill(self.model)
+        else:
+            self.model = prepare_model(self.model, fill)
+        with preserve_rng(self.backend.device), model_mode(self.model, True):
+            examples = {
+                name: make_microbatches(fn, example_data)
+                for name, fn in self.candidates.items()
+            }
+            return cast(
+                PreparedTraining,
+                prepare(self.model, self._spec, examples, budgets=budgets),
+            )
 
     def _require_prepared(self) -> StepExecution:
         if self._execution is None or self._closed:
@@ -308,19 +470,24 @@ class Trainer:
         self,
         source: Iterable[Any] | Callable[[], Iterable[Any]],
         *,
-        batches: int | None = None,
+        updates: int | None = None,
     ) -> EvaluationResult:
+        """Evaluate up to ``updates`` complete source items, without optimizer steps."""
         self._require_prepared()
-        if batches is not None and batches < 1:
-            raise ValueError("eval batches must be positive")
+        if updates is not None and (
+            isinstance(updates, bool) or not isinstance(updates, int) or updates < 1
+        ):
+            raise ValueError("eval updates must be a positive integer")
         assert self.selected_candidate is not None
-        updates = source() if callable(source) else source
-        updates = iter(updates) if batches is None else islice(updates, batches)
+        data_source = source() if callable(source) else source
+        selected = (
+            iter(data_source) if updates is None else islice(data_source, updates)
+        )
         losses: list[float] = []
         metrics: list[tuple[Any, ...]] = []
         contributions: list[float] = []
         started = time.perf_counter()
-        for data in updates:
+        for data in selected:
             parts = make_microbatches(self.candidates[self.selected_candidate], data)
             if self._evaluation is None:
                 objective = ScaledObjective(self.eval_fn)
@@ -369,10 +536,11 @@ class Trainer:
         callbacks: Sequence[Callable[[Trainer, StepResult], None]] = (),
         eval_data: Iterable[Any] | Callable[[], Iterable[Any]] | None = None,
         eval_every: int = 0,
-        eval_batches: int | None = None,
+        eval_updates: int | None = None,
         checkpoint_every: int = 0,
         checkpoint_dir: str | Path | None = None,
         checkpoint_weights: Literal["master", "compute"] = "master",
+        checkpoint_include_optimizer: bool = True,
         keep_last: int = 3,
         startup_diagnostics: bool = False,
     ) -> StepResult | None:
@@ -388,6 +556,12 @@ class Trainer:
             raise ValueError("cadences must be nonnegative and keep_last positive")
         if eval_every and eval_data is None:
             raise ValueError("eval_every requires eval_data")
+        if eval_updates is not None and (
+            isinstance(eval_updates, bool)
+            or not isinstance(eval_updates, int)
+            or eval_updates < 1
+        ):
+            raise ValueError("eval_updates must be a positive integer")
         if checkpoint_every and checkpoint_dir is None and run_dir is None:
             raise ValueError("checkpointing needs checkpoint_dir or run_dir")
         if startup_diagnostics and run_dir is None:
@@ -450,7 +624,7 @@ class Trainer:
                         _log_tables(last.summary, "train", last.step, root, logger)
                 if _due(eval_every, self.step_count, steps):
                     assert eval_data is not None
-                    evaluated = self.evaluate(eval_data, batches=eval_batches)
+                    evaluated = self.evaluate(eval_data, updates=eval_updates)
                     _log(
                         {
                             "step": self.step_count,
@@ -476,6 +650,7 @@ class Trainer:
                     self.save(
                         directory / f"step_{self.step_count:08d}",
                         weights=checkpoint_weights,
+                        include_optimizer=checkpoint_include_optimizer,
                     )
                     if (
                         self._distributed is None
@@ -496,11 +671,17 @@ class Trainer:
         *,
         source: Any = None,
         weights: Literal["master", "compute"] = "master",
+        include_optimizer: bool = True,
     ) -> Path:
         """Save masters by default, or compute weights with ``weights="compute"``.
 
         Only one representation is stored. A compute checkpoint restores masters
         by upcasting and therefore cannot recover their original extra precision.
+        With a configured frozen_state_id, unchanged frozen weights are omitted;
+        initialize the same base before resuming this partial checkpoint.
+        ``include_optimizer=False`` omits optimizer state. A new Trainer can
+        resume its saved progress through ``prepare(checkpoint=...)``, with a
+        freshly initialized optimizer instead of the original moments/counters.
         """
         execution = self._require_prepared()
         source = self._source if source is None else source
@@ -524,14 +705,31 @@ class Trainer:
             },
             distributed=self._distributed,
             weights=weights,
+            include_optimizer=include_optimizer,
+            frozen_state_id=self.frozen_state_id,
         )
 
     def load(self, path: str | Path) -> Self:
         """Restore a prepared runner, preserving its initialized caches."""
         execution = self._require_prepared()
         state, loop = _checkpoint.load(path, distributed=self._distributed)
+        checkpoints.omitted_frozen_parameters(
+            state,
+            self.model,
+            self.frozen_state_id,
+            missing_parameters=(
+                ()
+                if self._distributed is None
+                else {
+                    alias
+                    for parameter in self._distributed.parameters
+                    if parameter.name in state.get("masters", {})
+                    for alias in parameter.aliases
+                }
+            ),
+        )
         execution.synchronize()
-        execution.load_state_dict(state)
+        execution.load_state_dict(state, frozen_state_id=self.frozen_state_id)
         self._restore_loop(loop)
         return self
 
@@ -554,13 +752,20 @@ class Trainer:
     def close(self) -> None:
         if self._closed:
             return
-        if self._evaluation is not None:
-            self._evaluation.close()
-        if self._execution is not None:
-            self._execution.close()
         self._elapsed_seconds = self.elapsed_seconds
         self._elapsed_started = None
         self._closed = True
+        # LIFO cleanup: callables, owned runtime, then owned communication groups.
+        # All cleanup runs even if one closer fails.
+        with ExitStack() as cleanup:
+            if self._groups is not None:
+                cleanup.callback(self._groups.close)
+            if self._owns_backend:
+                cleanup.callback(getattr(self.backend, "close"))
+            if self._execution is not None:
+                cleanup.callback(self._execution.close)
+            if self._evaluation is not None:
+                cleanup.callback(self._evaluation.close)
 
     def __enter__(self) -> Self:
         return self

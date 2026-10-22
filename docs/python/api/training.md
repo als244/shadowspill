@@ -23,22 +23,23 @@ from shadowspill.training import Trainer
 from shadowspill.training.backends import ShadowSpill
 from shadowspill.training.schedules import WarmupCosine
 
-with ShadowSpill(execution_gib=20, spill_gib=64) as backend:
-    with Trainer(
-        model,
-        objective=objective,
-        optimizer=torch.optim.AdamW,
-        optimizer_args={"weight_decay": 0.01},
-        schedules={"lr": WarmupCosine(3e-4, 3e-5, 100, 10000)},
-        backend=backend,
-    ) as trainer:
-        trainer.prepare(example_data)
-        trainer.fit(
-            source, steps=10000, run_dir="runs/example",
-            log_every=10, eval_data=validation, eval_every=100,
-            eval_batches=20, checkpoint_every=500,
-            checkpoint_dir="/storage/checkpoints/example",
-        )
+trainer = Trainer(
+    model,
+    objective=objective,
+    optimizer=torch.optim.AdamW,
+    optimizer_args={"weight_decay": 0.01},
+    schedules={"lr": WarmupCosine(3e-4, 3e-5, 100, 10000)},
+    backend=ShadowSpill(execution_gib=20, spill_gib=64),
+)
+trainer.prepare(example_data)  # Opens pools, searches and admits a callable.
+trainer.fit(
+    source, steps=10000, run_dir="runs/example",
+    log_every=10, eval_data=validation, eval_every=100,
+    eval_updates=20, checkpoint_every=500,
+    checkpoint_dir="/storage/checkpoints/example",
+)
+trainer.close()  # Releases the callable and the backend opened by prepare.
+
 ```
 
 `model`, `objective`, `example_data`, `source` and `validation` are caller inputs.
@@ -54,18 +55,27 @@ to construct them without an external model library.
 | `schedules` | Mapping from hyperparameter name to `fn(update_index)`; default empty |
 | `hyperparams` | Additional dynamic names accepted by `step`; schedule keys are declared automatically |
 | `parameter_groups` | Optional `fn(model)` returning ordinary optimizer group dictionaries after state import |
-| `microbatches` | Optional `fn(data)` yielding `(microbatch_data, loss_scale)`, or named candidate functions |
-| `backend` | `PyTorch()` by default, or an explicitly entered `ShadowSpill(...)` context |
+| `microbatches` | One fixed `fn(data)` yielding `(microbatch_data, loss_scale)`; omitted means the whole update is one microbatch |
+| `microbatch_candidates` | Named mapping of split functions; search these candidates during preparation and retain the winner |
+| `backend` | `PyTorch()` by default, or a `ShadowSpill(...)` configuration; an already-open backend is borrowed |
 | `master_dtype`, `grad_dtype` | Optional optimizer master and gradient accumulation dtypes; neither changes model construction |
 | `parameter_metrics` | Optional pure tensor function `(parameter, gradient) -> metrics`, before optimizer updates |
 | `metric_reducer` | Optional host function of `StepObservations`, returning a scalar mapping or `MetricSummary` |
 | `eval_fn` | Evaluation objective; defaults to the training objective |
-| `distributed` | Optional explicit participant/parameter-replica ownership; see the [distributed guide](distributed.md) |
+| `distributed` | `DataParallel(...)` for managed torchrun groups, or `Distributed(...)` for explicit group/parameter-replica ownership |
 | `shard_optimizer` | `True` by default: shard optimizer state and optional masters over parameter replicas when distributed |
+| `frozen_state_id` | Optional immutable base identity; omit unchanged frozen weights from all this Trainer's checkpoints and require the same identity on restore |
 
 A live optimizer instance belongs to the low-level `plan_step` API. The trainer
 constructs its optimizer after state import, preserving group assignments and
 scheduled tuple values. Unscheduled group-specific constants remain unchanged.
+
+Use `microbatch_candidates=data.candidates` to search sizes: the text helper
+maps sizes to split functions, so every candidate still consumes the same full
+optimizer update. ShadowSpill also searches each size's execution orderings.
+Use `microbatches=split` when the application fixes its own splitting function.
+Supply only one argument. The older mapping form of `microbatches` remains
+accepted for existing callers.
 
 For MLOps AdamW, Trainer defaults BF16 moment storage to stochastic rounding;
 FP16/FP32 moments and parameter storage retain nearest rounding. Set
@@ -75,12 +85,91 @@ rounding in a partial or parameter group also wins. With
 differs, preserving parameter order and the other group settings. Other
 optimizers and caller-owned optimizers passed to `plan_step` keep their settings.
 
+## Data parallel training and resource ownership
+
+`DataParallel` is a configuration; constructing it does not initialize the
+accelerator or process groups. `rank` and `world_size` are available from torchrun before
+preparation, so a data source can partition its input.
+
+```python
+from shadowspill.training import DataParallel
+
+parallel = DataParallel()  # Replicated compute weights; sum gradient contributions.
+# Or, shard compute weights and gradients in the spill pool:
+parallel = DataParallel(shard_weights=True, shard_gradients=True)
+# Pass distributed=parallel to Trainer, using an unopened ShadowSpill backend.
+```
+
+| Mode | Compute weights / gradients | Optimizer state / masters |
+|---|---|---|
+| `DataParallel()` | Replicated weights; gradient reductions across replicas | Sharded by default |
+| `DataParallel(shard_weights=True, shard_gradients=True)` | Weight all-gather on fetch, gradient reduce-scatter on eviction | Sharded by default |
+
+`Trainer(shard_optimizer=True)` is the independent default in both modes; set it
+false for replicated optimizer state and masters. Transfer sharding requires
+symmetric planning; `DataParallel` enables it by default when sharding weights.
+Its `timeout` (seconds) controls group creation and distributed preparation.
+The caller normalizes loss by the global batch/token count; reductions use sums.
+
+`prepare()` creates Gloo before opening the runtime, then NCCL after allocator
+installation. An existing Gloo default group is borrowed. The created groups
+span all torchrun ranks; use explicit `Distributed`/`TransferSharding` with an
+already-open backend for subgroups or model-specific ownership.
+
+`prepare()` and `prepare_artifacts()` open an unopened backend automatically.
+`trainer.close()` closes its callables, then its owned backend, then its owned
+process groups. It is idempotent. Preparation failures perform the same cleanup.
+A backend that was already open remains caller-owned, so a trainer can share it
+with other trainers or `Forward` instances. `ShadowSpill.open()` and `close()`
+provide explicit backend control; context managers remain optional.
+
 ## Preparation and initialization
 
-`trainer.prepare(example_data, initialize=None, checkpoint=None)` performs
+`trainer.prepare(example_data, initialize=None, checkpoint=None, prepared=None)` performs
 initialization, capture, profiling, planning and admission as needed by the
 backend. It returns the trainer and does not increment its update count.
 Representative input shapes and structures must match subsequent calls.
+
+### Reuse preparation across budgets and processes
+
+`trainer.prepare_artifacts(example_data, budgets=None, initialize=None)` initializes
+state, captures and profiles each candidate, and searches the requested budgets
+without admitting a training callable or taking an optimizer step. `budgets` is
+a sequence of `(execution_bytes, spill_bytes)` pairs; omitted means the backend's
+budget. Every pair must fit the preparation runtime. An exhausted candidate is
+recorded as infeasible and other sizes are still considered.
+
+The returned `PreparedTraining` holds `candidates` (named `PreparedStep` artifacts)
+and `search` (a `StepSearchReport`). `search.winner_plans[(execution, spill)]` is
+the complete selected plan, including its estimated `summary`. Infeasible budgets
+have points in the report but no winning plan. `save(directory)` and
+`PreparedTraining.load(directory)` persist the captured computations and selected
+plans; no model weights, gradients, optimizer state, runtime or live callable is
+saved. Load only trusted local artifacts.
+For one case, use `PreparedTraining.load(directory, budget=(execution, spill))`:
+it reads only that budget's winning candidate, ordering and selected plan, while
+retaining its search outcomes and summaries. This avoids parsing every other
+budget's plan in each fresh process. Load without `budget` when extending search
+over all the prepared candidates and orderings.
+
+Create a new backend with the actual case budget and a new Trainer with matching
+model structure, optimizer, precision and microbatch functions. Call
+`trainer.prepare(example_data, initialize=..., prepared=artifacts)` to bind fresh
+state and admit that budget's selected plan. This bypasses objective export and
+search; it still reconstructs task bindings, validates the program and certifies
+the physical layout for the current runtime. Use the same artifact store to reuse
+graph pairs, task profiles and compiler artifacts. A checkpoint can independently
+restore training state. An artifact's computation is authoritative: loading one
+does not compare a new Python objective's source code with the original.
+
+Additional budgets within the prepared domain can be searched on the CPU with
+`shadowspill.pytorch.search_prepared_steps(artifacts.candidates, budgets=...)`.
+Save `PreparedTraining(artifacts.candidates, new_report)` to retain those plans.
+Larger capacities or a different model, precision, optimizer or input geometry
+require preparation again. Persistent preparation currently supports one rank.
+Ordinary distributed `prepare()` retains coordinated capture, search and admission.
+The [reusable planning example](../../examples/reusable-planning.md) shows both
+the Trainer and lower-level boundaries.
 
 ### Preparation and diagnostic random state
 
@@ -198,10 +287,11 @@ are off.
 | `logger` | `None` | Any `logger(record)` callable |
 | `callbacks` | `()` | Functions `(trainer, result)` after each update |
 | `eval_data` | `None` | Iterable, or function creating an iterable per evaluation |
-| `eval_every`, `eval_batches` | `0`, `None` | Evaluation cadence and optional source-item limit |
+| `eval_every`, `eval_updates` | `0`, `None` | Cadence in training updates and number of complete validation source items per evaluation |
 | `checkpoint_every` | `0` | Checkpoint cadence |
 | `checkpoint_dir` | `<run_dir>/checkpoints` | Checkpoint destination when enabled |
 | `checkpoint_weights` | `"master"` | Save masters where available; `"compute"` saves compute weights instead |
+| `checkpoint_include_optimizer` | `True` | Save optimizer state; `False` resumes with a freshly initialized optimizer |
 | `keep_last` | `3` | Number of completed checkpoints to retain |
 | `startup_diagnostics` | `False` | One zero-LR warmup then one traced step before training; requires a compatible optimizer and ShadowSpill backend |
 
@@ -215,11 +305,16 @@ The optional `shadowspill.training.logging.Wandb` helper logs all records with
 the actual step axis and retains the SDK's system telemetry defaults. Importing
 the trainer does not import or start the logging SDK.
 
-`evaluate(source, batches=None)` uses the current model state and eval mode,
+`evaluate(source, updates=None)` uses the current model state and eval mode,
 then restores the model's mode. `EvaluationResult` contains update losses,
 metrics, elapsed seconds, `mean_loss` and a reducer summary. `mean_loss` is the
 arithmetic mean of caller-normalized update losses; use a reducer for another
 aggregation rule.
+
+One validation update is one complete source item, split into microbatches using
+the selected splitter. It performs no gradient or optimizer update. For
+`TokenUpdates(sequences_per_step=8, sequence_length=32768)`, `eval_updates=2`
+evaluates 16 sequences and 524,288 target tokens each time evaluation runs.
 
 ## Startup diagnostics
 
@@ -262,15 +357,45 @@ still counts a loop step; use `diagnose` for uncounted diagnostics.
 
 ## Checkpoints
 
-`save(path, source=None, weights="master")` writes a new checkpoint directory atomically.
+`save(path, source=None, weights="master", include_optimizer=True)` writes a new checkpoint directory atomically.
 It contains `state.pt`, `loop.pt` and a version-1 `manifest.json`. It will not
 replace an existing checkpoint. Each parameter is saved in one representation:
 `weights="master"` saves its master when available and otherwise its compute
 weight. `weights="compute"` saves compute weights, even when masters exist.
 Loading casts saved values into compute weights and any configured masters;
-upcasting compute weights cannot recover discarded master precision. Optimizer
-state is saved independently in both cases. `fit(checkpoint_weights=...)` selects
-the same policy for periodic saves.
+upcasting compute weights cannot recover discarded master precision.
+
+Optimizer state is included by default. Set `include_optimizer=False` to omit it;
+this is independent of the weight precision. For example,
+`trainer.save(path, weights="compute", include_optimizer=False)` saves lower
+precision parameters without optimizer tensors. `fit(checkpoint_weights=...,
+checkpoint_include_optimizer=...)` selects these policies for periodic saves.
+
+A checkpoint without optimizer state can resume through a new Trainer's
+`prepare(example, checkpoint=path)`. It restores weights, update count, schedules,
+RNG and source progress, while the optimizer starts with fresh moments/counters.
+This continues training, but cannot reproduce the original optimizer trajectory.
+Loading such a checkpoint into a callable that has already stepped is rejected;
+prepare a fresh Trainer so existing optimizer state cannot be reused accidentally.
+
+For partial training, configure `Trainer(..., frozen_state_id="base-revision-and-config")`.
+Both periodic saves and `trainer.save()` then omit unchanged frozen parameters.
+Selection uses `requires_grad` and mutations, without relying on adapter names or
+model families. Each trainable parameter is saved once (its master by default),
+alongside optional optimizer state, persistent buffers and mutated frozen state.
+ShadowSpill streams only the
+selected pool objects; it does not copy the frozen model to a CPU snapshot.
+The PyTorch backend retains frozen parameters whose version counters changed.
+
+Resume with the same `frozen_state_id` and initialize the same base before loading:
+`trainer.prepare(example, initialize=load_base, checkpoint=path)`. This is required
+for a meta model whose checkpoint omits frozen weights. `trainer.load(path)` also
+checks the identity before restoring into an already prepared model. The ID is
+caller supplied and should identify an immutable base revision plus configuration;
+the library compares the ID and state inventory, without hashing the base's bytes.
+Omitting `frozen_state_id` keeps full-model checkpoints as the default. The
+[LoRA example](../../../workloads/recipes/text/train_qwen35_lora.py) uses partial
+checkpoints and reads its frozen base from the original HF directory on resume.
 
 For tensor-wrapper weights, compute checkpoints retain the exact component
 payloads and scales. Loading reconstructs their logical type from the receiving
@@ -313,7 +438,8 @@ function without renaming model state or changing the original module's forward.
 `PyTorch(compile=True, device="auto")` executes the same objective with ordinary
 PyTorch autograd; `compile=False` selects eager execution. It accepts CPU and
 accelerator devices. `ShadowSpill(execution_gib=..., spill_gib=...,
-device="auto")` installs its pools on entering the context. It also accepts
+device="auto")` installs its pools when `Trainer.prepare()` opens it, or when
+the caller explicitly calls `backend.open()`. It also accepts
 `artifact_store`, `search_options`, `profiling_options`, `partition`,
 `orderings`, `fuse_narrow_gradient_accumulation=True`, `numa_binding=True`,
 `external_headroom_gib=0.5`, and `reject_overbudget=False`. Every step it
@@ -321,6 +447,12 @@ prepares, one microbatch list or a search over several, builds and plans in
 `artifact_store`, or the library's own store (`~/.cache/shadowspill`) when it
 is `None`, in `contribute` mode: what the store holds is read, and what it
 lacks is built and written back ([the artifact store](../artifact-store.md)).
+
+`orderings` defaults to every depth/breadth factor pair for a candidate's
+microbatch count. Pass a list such as `[StepDataOrdering(depth=1, breadth=4)]`
+to fix it for four microbatches, or a function of the microbatch count to select
+orderings across different candidate sizes. Even with a fixed size and ordering,
+preparation still plans storage, transfers and recomputation within the budget.
 
 `device` can be an explicit local device/index. Automatic selection uses the
 only visible device, or `LOCAL_RANK` when several are visible. It does not map

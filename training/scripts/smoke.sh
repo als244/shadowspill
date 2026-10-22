@@ -14,7 +14,7 @@ for backend in pytorch shadowspill; do
         exit 1
     fi
 done
-short=(eval_every=3 eval_batches=2 checkpoint_every=3 wandb_project=null)
+short=(eval_every=3 eval_microbatches=2 checkpoint_every=3 wandb_project=null)
 pytorch='backend={"@call": "shadowspill.training.backends:PyTorch"}'
 for backend in pytorch shadowspill; do
     extra=()

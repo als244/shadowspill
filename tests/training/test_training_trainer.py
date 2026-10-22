@@ -22,7 +22,7 @@ def _config(tmp_path):
             "@call": "workloads.models.construction:build_on_meta",
             "model": "@tests.training._synthetic:TinyModel",
         },
-        "objective": "@workloads.recipes.text.objectives:model_loss",
+        "objective": "@workloads.recipes.text.objectives:next_token_prediction",
         "optimizer": "@torch.optim:AdamW",
         "optimizer_args": {"lr": 0.01},
         "data": {
@@ -48,7 +48,7 @@ def _config(tmp_path):
             "device": "cpu",
         },
         "eval_every": 3,
-        "eval_batches": 2,
+        "eval_microbatches": 2,
         "checkpoint_every": 3,
     }
     path = tmp_path / "config.json"

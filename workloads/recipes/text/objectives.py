@@ -3,12 +3,14 @@
 from __future__ import annotations
 
 
-def model_loss(model, batch, **options):
+def next_token_prediction(model, batch, **options):
+    """Sum next-token loss; the batch already supplies shifted target tokens."""
     tokens, targets, lengths = batch
     return model.loss(tokens, targets, seq_lens=lengths, reduction="sum", **options)
 
 
-def model_loss_with_metrics(model, batch, **options):
+def next_token_prediction_with_metrics(model, batch, **options):
+    """Next-token loss plus the model's metrics, using already-shifted targets."""
     tokens, targets, lengths = batch
     return model.loss(
         tokens,

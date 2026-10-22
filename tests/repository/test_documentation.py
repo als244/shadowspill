@@ -364,11 +364,18 @@ def test_root_readme_remains_a_minimal_entrypoint() -> None:
     sections = re.findall(r"^## (.+)$", readme, re.MULTILINE)
     assert sections == [
         "Installation",
-        "Minimal example",
+        "Train with the Trainer API",
+        "More control",
         "Project structure",
         "Documentation",
     ]
-    assert len(readme.splitlines()) <= 110
+    examples = re.findall(r"<details>.*?</details>", readme, re.DOTALL)
+    assert len(examples) == 3
+    assert all(
+        "<summary>" in example and "```python" in example for example in examples
+    )
+    collapsed = re.sub(r"<details>.*?</details>", "", readme, flags=re.DOTALL)
+    assert len(collapsed.splitlines()) <= 125
 
 
 def test_architecture_overview_starts_with_purpose_and_visuals() -> None:

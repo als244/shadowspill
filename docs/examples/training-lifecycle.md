@@ -12,6 +12,7 @@ from shadowspill.pytorch import (
     Runtime,
     plan_step,
     import_model_state,
+    release_model_state,
 )
 
 
@@ -60,6 +61,8 @@ for _ in range(10):
 
 torch.save(train_step.state_dict(), "checkpoint.pt")
 train_step.close()
+release_model_state(model, runtime=runtime)
+runtime.close()
 ```
 
 Each call runs the objective and backward pass followed by one optimizer
@@ -104,6 +107,6 @@ dtype=torch.float32)` directly; a logger may copy and read that scalar after
 `train_step(...)` has returned.
 
 `state_dict()` creates an ordinary CPU checkpoint before `torch.save()` begins.
-The example closes the callable and then exits; long-lived embedding processes
-should follow the complete ownership order in [Errors, failures, and
-cleanup](../python/failures.md).
+The example closes the callable, releases imported model state, then closes the
+runtime. Application cleanup should preserve this order on exceptions as well;
+see [Errors, failures, and cleanup](../python/failures.md).

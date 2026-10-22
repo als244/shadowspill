@@ -59,7 +59,7 @@ def run_config(path, overrides=()):
                 optimizer=config.resolve(raw["optimizer"]),
                 optimizer_args=config.resolve(raw.get("optimizer_args", {})),
                 schedules=config.resolve(raw.get("schedules", {})),
-                microbatches=candidates,
+                microbatch_candidates=candidates,
                 backend=backend,
                 master_dtype=config.resolve(raw.get("master_dtype")),
                 grad_dtype=config.resolve(raw.get("grad_dtype")),
@@ -173,10 +173,10 @@ def run_config(path, overrides=()):
         eval_every = raw.get("eval_every", 0)
         evaluation = None
         if eval_every:
-            count = raw.get("eval_batches", 1)
+            count = raw.get("eval_microbatches", 1)
             if count < 1:
                 raise ValueError(
-                    "eval_batches must be positive when evaluation is enabled"
+                    "eval_microbatches must be positive when evaluation is enabled"
                 )
             evaluation = [
                 validation_update(
@@ -197,10 +197,11 @@ def run_config(path, overrides=()):
             tables_every=raw.get("metric_tables_every", 100),
             eval_data=evaluation,
             eval_every=eval_every,
-            eval_batches=1,
+            eval_updates=1,
             checkpoint_every=raw.get("checkpoint_every", 0),
             checkpoint_dir=raw.get("checkpoint_dir"),
             checkpoint_weights=raw.get("checkpoint_weights", "master"),
+            checkpoint_include_optimizer=raw.get("checkpoint_include_optimizer", True),
             keep_last=raw.get("keep_last", 3),
             startup_diagnostics=raw.get("startup_diagnostics", False),
         )

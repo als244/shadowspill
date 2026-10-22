@@ -4,30 +4,40 @@ from __future__ import annotations
 
 import weakref
 from collections.abc import Callable, Mapping, Sequence
+from dataclasses import replace
 from pathlib import Path
 from typing import Any, Literal, Self
 
 import torch
 from torch import nn
 
+from shadowspill.errors import PlanInfeasibleError, PlanSearchExhaustedError
 from shadowspill.memory import SpillPool, pinned_host, transfer_route
 from shadowspill.memory import device as device_pool
 from shadowspill.planner import SearchOptions, StepDataOrdering
 from shadowspill.pytorch import (
     Runtime,
+    admit_step,
     import_model_state,
     plan_forward,
     plan_step,
     plan_step_search,
+    prepare_step,
     release_model_state,
+    search_prepared_steps,
 )
 from shadowspill.pytorch.accelerator import resolve_device
 from shadowspill.pytorch.callables import PlannedForward, PlannedTrainStep
 from shadowspill.pytorch.distributed import BoundDistributed, Distributed
+from shadowspill.pytorch.failures import device_exhausted
 from shadowspill.pytorch.partition import PartitionPolicy
-from shadowspill.search.report import StepSearchReport
+from shadowspill.pytorch.state.registry import registry_for
+from shadowspill.pytorch.step_search.sweep import _refuse_state_left_behind
+from shadowspill.search.geometries import default_orderings
+from shadowspill.search.report import StepSearchPoint, StepSearchReport
 from shadowspill.task.profiling import ProfilingOptions
 
+from ..preparation import PreparedTraining
 from ._spec import StepSpec
 
 GIB = 1 << 30
@@ -48,7 +58,9 @@ class ShadowSpill:
         profiling_options: ProfilingOptions | None = None,
         partition: Literal["auto", "whole"] | PartitionPolicy = "auto",
         fuse_narrow_gradient_accumulation: bool = True,
-        orderings: Callable[[int], Sequence[StepDataOrdering]] | None = None,
+        orderings: Sequence[StepDataOrdering]
+        | Callable[[int], Sequence[StepDataOrdering]]
+        | None = None,
         external_headroom_gib: float = 0.5,
         reject_overbudget: bool = False,
         numa_binding: bool = True,
@@ -73,7 +85,20 @@ class ShadowSpill:
         self.profiling_options = profiling_options
         self.partition = partition
         self.fuse_narrow_gradient_accumulation = fuse_narrow_gradient_accumulation
-        self.orderings = orderings
+        self.orderings: Callable[[int], Sequence[StepDataOrdering]] | None
+        if orderings is None or callable(orderings):
+            self.orderings = orderings
+        else:
+            fixed = tuple(orderings)
+            if not fixed or any(not isinstance(o, StepDataOrdering) for o in fixed):
+                raise ValueError("orderings must contain StepDataOrdering values")
+
+            def fixed_orderings(count: int) -> Sequence[StepDataOrdering]:
+                if any(o.microbatches != count for o in fixed):
+                    raise ValueError("fixed orderings must cover every microbatch")
+                return fixed
+
+            self.orderings = fixed_orderings
         self.external_headroom_bytes = int(external_headroom_gib * GIB)
         self.reject_overbudget = reject_overbudget
         self.numa_binding = numa_binding
@@ -87,9 +112,21 @@ class ShadowSpill:
         self._owned_models: list[nn.Module] = []
         self._sessions: list[_Step | _Forward] = []
 
-    def __enter__(self) -> Self:
+    @property
+    def is_open(self) -> bool:
+        return self.runtime is not None
+
+    def open(self, *, control_group: Any = None) -> Self:
+        """Open pools explicitly, or let Trainer.prepare open them on first use."""
         if self.runtime is not None:
             raise RuntimeError("ShadowSpill backend is already entered")
+        if control_group is not None:
+            if (
+                self.control_group is not None
+                and self.control_group is not control_group
+            ):
+                raise ValueError("backend already names a different control group")
+            self.control_group = control_group
         self.runtime = Runtime(
             numa_binding=self.numa_binding,
             control_group=self.control_group,
@@ -111,6 +148,9 @@ class ShadowSpill:
             },
         )
         return self
+
+    def __enter__(self) -> Self:
+        return self.open()
 
     def __exit__(self, *exception: object) -> None:
         self.close()
@@ -181,6 +221,149 @@ class ShadowSpill:
         )
 
     def prepare_step(
+        self,
+        model: nn.Module,
+        spec: StepSpec,
+        examples: Mapping[str, Sequence[Sequence[Any]]],
+    ) -> tuple[_Step, str]:
+        if spec.distributed is None:
+            prepared = self.prepare_artifacts(model, spec, examples)
+            return self.admit_prepared(model, spec, examples, prepared)
+        return self._prepare_distributed_step(model, spec, examples)
+
+    def prepare_artifacts(
+        self,
+        model: nn.Module,
+        spec: StepSpec,
+        examples: Mapping[str, Sequence[Sequence[Any]]],
+        *,
+        budgets: Sequence[tuple[int, int]] | None = None,
+    ) -> PreparedTraining:
+        """Prepare each candidate once, and search all requested budgets."""
+        if spec.distributed is not None:
+            raise NotImplementedError(
+                "persistent preparation currently requires one rank"
+            )
+        requested = tuple([self.budget] if budgets is None else budgets)
+        if not requested or any(
+            not (0 < execution <= self.budget[0] and 0 < spill <= self.budget[1])
+            for execution, spill in requested
+        ):
+            raise ValueError("preparation budgets must be positive and fit the runtime")
+        model = self._import(model)
+        assert self.runtime is not None
+        arguments = self._planning_args()
+        arguments.pop("search_options")
+        prepared = {}
+        refused: list[StepSearchPoint] = []
+        for name, inputs in examples.items():
+            orderings = tuple((self.orderings or default_orderings)(len(inputs)))
+            held = registry_for(self.runtime).values()
+            try:
+                prepared[name] = prepare_step(
+                    model,
+                    objective=spec.objective,
+                    optimizer=spec.optimizer(model),
+                    hyperparams=spec.hyperparams,
+                    example_inputs=inputs,
+                    master_dtype=spec.master_dtype,
+                    grad_dtype=spec.grad_dtype,
+                    parameter_metrics=spec.parameter_metrics,
+                    fuse_narrow_gradient_accumulation=self.fuse_narrow_gradient_accumulation,
+                    orderings=orderings,
+                    **arguments,
+                )
+            except Exception as error:
+                if not device_exhausted(error):
+                    raise
+                _refuse_state_left_behind(self.runtime, held, name, len(inputs), error)
+                print(
+                    f"candidate {name}: device exhausted during preparation: {error}",
+                    flush=True,
+                )
+                refused.extend(
+                    StepSearchPoint(
+                        name,
+                        len(inputs),
+                        ordering,
+                        execution,
+                        spill,
+                        "infeasible",
+                        None,
+                        None,
+                        str(error),
+                        0.0,
+                    )
+                    for ordering in orderings
+                    for execution, spill in requested
+                )
+        report = (
+            search_prepared_steps(
+                prepared,
+                budgets=requested,
+                artifact_store=self.artifact_store,
+                search_options=self.search_options,
+                progress=lambda message: print(message, flush=True),
+            )
+            if prepared
+            else StepSearchReport(budgets=requested, geometries=(), points=())
+        )
+        if refused:
+            report = replace(report, points=(*report.points, *refused))
+        return PreparedTraining(prepared, report)
+
+    def admit_prepared(
+        self,
+        model: nn.Module,
+        spec: StepSpec,
+        examples: Mapping[str, Sequence[Sequence[Any]]],
+        prepared: PreparedTraining,
+    ) -> tuple[_Step, str]:
+        """Create just the callable selected for this backend's actual pools."""
+        if spec.distributed is not None:
+            raise NotImplementedError(
+                "persistent preparation currently requires one rank"
+            )
+        model = self._import(model, spec.distributed)
+        winner = prepared.search.winner(*self.budget)
+        if winner is None:
+            points = [
+                p
+                for p in prepared.search.points
+                if (p.execution_budget_bytes, p.spill_budget_bytes) == self.budget
+            ]
+            if not points:
+                raise ValueError(
+                    "this budget has not been searched in the prepared artifacts"
+                )
+            message = "no prepared microbatch candidate fits the configured budgets"
+            if any(p.status == "search_exhausted" for p in points):
+                raise PlanSearchExhaustedError(message)
+            if all(p.status == "infeasible" for p in points):
+                raise PlanInfeasibleError(message, kind="prepared_candidates")
+            raise RuntimeError(
+                message + ": " + "; ".join(p.error or p.status for p in points)
+            )
+        chosen = winner.candidate
+        call = admit_step(
+            model,
+            prepared.candidates[chosen],
+            prepared.search.winner_plans[self.budget],
+            data_ordering=winner.ordering,
+            optimizer=spec.optimizer(model),
+            hyperparams=spec.hyperparams,
+            example_inputs=examples[chosen],
+            master_dtype=spec.master_dtype,
+            grad_dtype=spec.grad_dtype,
+            parameter_metrics=spec.parameter_metrics,
+            fuse_narrow_gradient_accumulation=self.fuse_narrow_gradient_accumulation,
+            **self._planning_args(),
+        )
+        session = _Step(model, call, prepared.search)
+        self._sessions.append(session)
+        return session, chosen
+
+    def _prepare_distributed_step(
         self,
         model: nn.Module,
         spec: StepSpec,
@@ -328,9 +511,21 @@ class _Step(_Session[PlannedTrainStep]):
         return diagnose(self.call, microbatches, directory, warmup=warmup)
 
     def save(
-        self, path: Path, *, weights: Literal["master", "compute"] = "master"
+        self,
+        path: Path,
+        *,
+        weights: Literal["master", "compute"] = "master",
+        include_optimizer: bool = True,
+        frozen_state_id: str | None = None,
     ) -> None:
-        self.call.save(path, weights=weights)
+        self.call.save(
+            path,
+            weights=weights,
+            include_optimizer=include_optimizer,
+            frozen_state_id=frozen_state_id,
+        )
 
-    def load_state_dict(self, state: Mapping[str, Any]) -> None:
-        self.call.load_state_dict(state)
+    def load_state_dict(
+        self, state: Mapping[str, Any], *, frozen_state_id: str | None = None
+    ) -> None:
+        self.call.load_state_dict(state, frozen_state_id=frozen_state_id)

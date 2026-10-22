@@ -25,7 +25,7 @@ def objective(model, data):
 def split(data):
     scale = 1.0 / data["target"].numel()
     for start in range(0, len(data["inputs"]), 16):
-        yield {key: value[start:start + 16] for key, value in data.items()}, scale
+        yield {key: value[start:start + 16].clone() for key, value in data.items()}, scale
 
 with ShadowSpill(execution_gib=8, spill_gib=16) as backend:
     with Trainer(

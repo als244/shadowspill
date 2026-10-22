@@ -25,17 +25,30 @@ class Tied(nn.Module):
 
 @pytest.mark.parametrize("weights", ["master", "compute"])
 @pytest.mark.parametrize("restore_master", [False, True])
-def test_single_weight_representation_and_casts(tmp_path, weights, restore_master):
+@pytest.mark.parametrize("include_optimizer", [False, True])
+def test_single_weight_representation_and_casts(
+    tmp_path, weights, restore_master, include_optimizer
+):
     model = Tied()
     master = nn.Parameter(model.weight.detach().float() + 0.0001)
     optimizer = torch.optim.AdamW([master], lr=0.01)
     master.grad = torch.ones_like(master)
     optimizer.step()
     path = tmp_path / "state.pt"
-    checkpoints.save(path, model, optimizer, 7, {"weight": master}, weights=weights)
+    checkpoints.save(
+        path,
+        model,
+        optimizer,
+        7,
+        {"weight": master},
+        weights=weights,
+        include_optimizer=include_optimizer,
+    )
     state = torch.load(path, weights_only=True)
     saved = master.detach() if weights == "master" else model.weight.detach()
-    assert set(state) == {"model", "optimizer", "step"}
+    assert set(state) == {"model", "step"} | (
+        {"optimizer"} if include_optimizer else set()
+    )
     assert state["model"]["weight"].dtype == saved.dtype
     torch.testing.assert_close(state["model"]["weight"], saved, rtol=0, atol=0)
     assert state["model"]["weight"].data_ptr() == state["model"]["alias"].data_ptr()
@@ -44,6 +57,10 @@ def test_single_weight_representation_and_casts(tmp_path, weights, restore_maste
     target_optimizer = torch.optim.AdamW(
         [restored_master if restore_master else target.weight]
     )
+    # Loading parameter-only state must discard old moments, not silently reuse them.
+    target_parameter = target_optimizer.param_groups[0]["params"][0]
+    target_parameter.grad = torch.ones_like(target_parameter)
+    target_optimizer.step()
     assert (
         checkpoints.load(
             state,
@@ -57,16 +74,22 @@ def test_single_weight_representation_and_casts(tmp_path, weights, restore_maste
     assert target.alias is target.weight
     if restore_master:
         torch.testing.assert_close(restored_master, saved.float(), rtol=0, atol=0)
+    if restore_master and include_optimizer:
         torch.testing.assert_close(
             target_optimizer.state[restored_master]["exp_avg"],
             optimizer.state[master]["exp_avg"],
             rtol=0,
             atol=0,
         )
+    if not include_optimizer:
+        assert not target_optimizer.state
 
 
 @pytest.mark.parametrize("weights", ["master", "compute"])
-def test_trainer_periodic_checkpoint_threads_choice(tmp_path, weights):
+@pytest.mark.parametrize("include_optimizer", [False, True])
+def test_trainer_periodic_checkpoint_threads_choice(
+    tmp_path, weights, include_optimizer
+):
     sample = torch.tensor([[2.0, 3.0]], dtype=torch.bfloat16)
 
     def build():
@@ -87,6 +110,7 @@ def test_trainer_periodic_checkpoint_threads_choice(tmp_path, weights):
             run_dir=tmp_path,
             checkpoint_every=1,
             checkpoint_weights=weights,
+            checkpoint_include_optimizer=include_optimizer,
             log_every=0,
         )
         before = trainer._execution.weights.masters["weight"].detach().clone()
@@ -100,6 +124,15 @@ def test_trainer_periodic_checkpoint_threads_choice(tmp_path, weights):
             resumed._execution.weights.masters["weight"], expected, rtol=0, atol=0
         )
         assert resumed.step_count == 1
+        resumed.step(sample)
+        parameter = resumed._execution.weights.masters["weight"]
+        assert resumed._execution.optimizer.state[parameter]["step"].item() == (
+            2 if include_optimizer else 1
+        )
+        if not include_optimizer:
+            with pytest.raises(ValueError, match="fresh Trainer"):
+                resumed.load(checkpoint)
+            assert resumed.step_count == 2
 
 
 def test_invalid_choice_does_not_write_checkpoint(tmp_path):

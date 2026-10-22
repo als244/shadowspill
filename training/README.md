@@ -88,7 +88,9 @@ change the schedule.
 default: save masters where available, otherwise compute weights. Set
 `checkpoint_weights=compute` to save compute weights alone; restore upcasts them
 when masters are configured, without recovering the original higher precision.
-Optimizer state is saved with either choice. The directory contains:
+Optimizer state is saved with either choice unless `checkpoint_include_optimizer=false`.
+A resumed run then restores progress but initializes fresh optimizer moments and
+counters. The directory contains:
 
 | File | Meaning |
 | --- | --- |
@@ -99,6 +101,10 @@ Optimizer state is saved with either choice. The directory contains:
 | `observations.jsonl` | Optional small observation tables |
 | `packing.jsonl` | Document identities and packing statistics |
 | `checkpoints/step_XXXXXXXX/` | Atomic model/optimizer/loop/source checkpoints |
+
+The packed text recipe's `eval_microbatches` sets the number of packed
+microbatches in its validation item. The generic Trainer uses `eval_updates` to
+limit complete validation items; this recipe passes its one combined item.
 
 `wandb_project` enables the optional logger. `step` is the actual completed
 training step; evaluation, tables and training records use the same axis.

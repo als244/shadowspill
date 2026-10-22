@@ -13,7 +13,7 @@
     "dtype": "bfloat16",
     "max_seq_len": 2048
   },
-  "objective": "@workloads.recipes.text.objectives:model_loss",
+  "objective": "@workloads.recipes.text.objectives:next_token_prediction",
   "optimizer": "@mlops.optim:AdamW",
   "optimizer_args": {
     "betas": [
@@ -38,7 +38,7 @@
   },
   "seed": 0,
   "eval_every": 100,
-  "eval_batches": 10,
+  "eval_microbatches": 10,
   "checkpoint_every": 763,
   "wandb_project": "shadowspill-training",
   "schedules": {

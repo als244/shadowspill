@@ -282,6 +282,53 @@ def test_a_family_reads_its_own_layout_back(tmp_path, family):
     assert set(report["written"]) <= set(expected)
 
 
+def test_qwen_lora_initializer_loads_base_and_initializes_only_adapters_and_buffers(
+    tmp_path,
+    monkeypatch,
+):
+    from workloads.lora import configure_lora
+    from workloads.models.shared import checkpoint as checkpoint_module
+
+    opened = []
+    original = checkpoint_module.SafeTensors
+
+    def track(directory):
+        result = original(directory)
+        opened.append(result)
+        return result
+
+    monkeypatch.setattr(checkpoint_module, "SafeTensors", track)
+
+    family, name = "qwen35moe", "qwen35moe-tiny"
+    source = materialized(name)
+    config = source.config
+    save_file(huggingface_state(family, source, config), tmp_path / "model.safetensors")
+    (tmp_path / "config.json").write_text(json.dumps(metadata(family, config)))
+    target = configure_lora(built(name), rank=4, alpha=8)
+    with torch.no_grad():
+        for value in (*target.parameters(), *target.buffers()):
+            value.fill_(float("nan"))
+    checkpoint = reader(family)(tmp_path, max_seq_len=config.max_seq_len)
+    report = checkpoint.initialize(target)
+    assert opened[-1]._closed and not opened[-1]._handles
+    # The initializer is reusable and leaves no mapped checkpoint files behind.
+    report = checkpoint.initialize(target)
+    assert opened[-1]._closed and not opened[-1]._handles
+    assert not checkpoint.reader._handles
+    assert report["unused"] == [] and report["initialized_adapters"]
+    base = dict(source.named_parameters())
+    for name, parameter in target.named_parameters():
+        assert torch.isfinite(parameter).all(), name
+        if name in base:
+            torch.testing.assert_close(parameter, base[name], rtol=0, atol=0)
+        elif name.endswith("_b"):
+            assert torch.count_nonzero(parameter) == 0
+        else:
+            assert torch.count_nonzero(parameter) > 0
+    for name, buffer in target.named_buffers():
+        torch.testing.assert_close(buffer, dict(source.named_buffers())[name])
+
+
 @pytest.mark.parametrize("family", ["llama3", "qwen3"])
 def test_a_tied_head_is_written_once_from_the_embedding(tmp_path, family):
     name = f"{family}-tiny"
