@@ -105,8 +105,11 @@ class Geometry:
         }
 
 
-def add_arguments(parser: argparse.ArgumentParser) -> None:
-    """The geometry flags every engine takes."""
+def add_arguments(
+    parser: argparse.ArgumentParser, *, microbatch_required: bool = True
+) -> None:
+    """The geometry flags every engine takes; the tokens per microbatch are
+    optional for an engine that searches them."""
 
     parser.add_argument(
         "--sequence-length",
@@ -123,7 +126,7 @@ def add_arguments(parser: argparse.ArgumentParser) -> None:
     parser.add_argument(
         "--tokens-per-microbatch",
         type=int,
-        required=True,
+        required=microbatch_required,
         help="tokens per microbatch per rank, in whole sequences",
     )
 

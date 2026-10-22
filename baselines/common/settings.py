@@ -256,7 +256,9 @@ def add_arguments(
     another system's."""
 
     model_flags.add_arguments(parser, implementations)
-    geometry_flags.add_arguments(parser)
+    geometry_flags.add_arguments(
+        parser, microbatch_required=settings_type().tokens_per_microbatch is not None
+    )
     precision_flags.add_arguments(parser, settings_type().precision())
     help = {**HELP, **(help or {})}
     choices = choices or {}

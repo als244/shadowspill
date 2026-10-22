@@ -366,6 +366,17 @@ def readme(name: str, relative: Path, folder: Path, args, spec, cases, matrices)
         if fixed:
             lines.append(f"Every case: {fixed}.")
             lines.append("")
+        first = cases[item["name"]][0][1] if cases[item["name"]] else None
+        if first is not None and getattr(first, "tokens_per_microbatch", 0) is None:
+            sizes = ", ".join(
+                f"{size:,}" for size in first.microbatch_candidates(spec["gpus"])
+            )
+            lines.append(
+                "Each case searches the microbatch size itself, planning every"
+                f" split of the update ({sizes} tokens per microbatch) under"
+                f" `{first.orderings}` orderings, and runs the fastest that fits."
+            )
+            lines.append("")
         listed = grid_lines(matrix, shared)
         for line in listed:
             lines.append(f"* {line}")

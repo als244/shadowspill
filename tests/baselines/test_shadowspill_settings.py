@@ -105,3 +105,41 @@ def test_every_case_shares_the_librarys_store_unless_it_names_another():
         assert from_namespace(parser.parse_args(settings.arguments())) == settings
     with pytest.raises(ValueError, match="artifact_store"):
         Settings.from_dict({**BASE, "artifact_store": ""}).validate(1)
+
+
+def test_one_case_searches_every_split_of_the_update():
+    unpinned = {k: v for k, v in BASE.items() if k != "tokens_per_microbatch"}
+    settings = Settings.from_dict(unpinned)
+    settings.validate(1)
+    # 1,024 tokens of 64-token sequences: 16 sequences, split every way.
+    assert settings.microbatch_candidates(1) == (1024, 512, 256, 128, 64)
+    assert settings.geometry(1).tokens_per_microbatch == 1024
+    bounded = Settings.from_dict(
+        {**unpinned, "min_tokens_per_microbatch": 128, "max_tokens_per_microbatch": 512}
+    )
+    assert bounded.microbatch_candidates(1) == (512, 256, 128)
+    assert bounded.microbatch_candidates(2) == (512, 256, 128)
+    assert Settings.from_dict(BASE).microbatch_candidates(1) == (128,)
+    for case in (
+        settings,
+        bounded,
+        Settings.from_dict({**unpinned, "orderings": "depth-first"}),
+    ):
+        parser = argparse.ArgumentParser()
+        add_arguments(parser)
+        assert from_namespace(parser.parse_args(case.arguments())) == case
+
+
+@pytest.mark.parametrize(
+    "override",
+    [
+        {"orderings": "random"},
+        {"min_tokens_per_microbatch": 2048},
+        {"tokens_per_microbatch": 128, "max_tokens_per_microbatch": 512},
+        {"min_tokens_per_microbatch": 0},
+    ],
+)
+def test_a_search_with_nothing_to_search_is_refused(override):
+    unpinned = {k: v for k, v in BASE.items() if k != "tokens_per_microbatch"}
+    with pytest.raises(ValueError):
+        Settings.from_dict({**unpinned, **override}).validate(1)

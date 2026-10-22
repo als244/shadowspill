@@ -67,6 +67,9 @@ class Outcome:
     provenance: dict[str, Any] = dataclasses.field(default_factory=dict)
     peaks: Mapping[str, int] | None = None
     memory: Callable[[list[dict[str, Any]]], dict[str, Any]] | None = None
+    #: The geometry the engine ran, for one that chose it, such as a
+    #: microbatch size its own search picked; the case's otherwise.
+    geometry: Mapping[str, Any] | None = None
 
 
 class Tokens:
@@ -442,7 +445,10 @@ def finish(case: Case, clock: Clock, outcome: Outcome, source_paths) -> None:
         result_row(
             engine=case.engine,
             status="completed",
-            **case.description,
+            **{
+                **case.description,
+                "geometry": dict(outcome.geometry or case.description["geometry"]),
+            },
             hardware=case.record["hardware"],
             provenance={
                 "source": source_identity(source_paths),

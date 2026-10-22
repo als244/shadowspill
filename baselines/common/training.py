@@ -38,9 +38,17 @@ class TrainingModel(nn.Module):
         return checkpoint.load_into(self.model, **options)
 
     def forward(
-        self, tokens: torch.Tensor, targets: torch.Tensor
+        self,
+        tokens: torch.Tensor,
+        targets: torch.Tensor,
+        sequence_lengths: tuple[int, ...] | None = None,
     ) -> tuple[torch.Tensor, dict[str, torch.Tensor]]:
-        result = self.objective(self.model, tokens, targets, self.sequence_lengths)
+        # A microbatch may carry its own sequence lengths, as one whose
+        # geometry is searched does; otherwise it has the case's.
+        lengths = (
+            self.sequence_lengths if sequence_lengths is None else sequence_lengths
+        )
+        result = self.objective(self.model, tokens, targets, lengths)
         if isinstance(result, tuple):
             loss, metrics = result
             return loss, dict(metrics)

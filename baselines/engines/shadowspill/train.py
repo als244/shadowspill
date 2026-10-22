@@ -294,17 +294,32 @@ def train(case, clock):
                 loaded.update(module.load_checkpoint(checkpoint, copy=copy_value))
 
     data = case.data(int(model.model.config.vocab_size))
-    batch = geometry.tokens_per_microbatch
+    sizes = settings.microbatch_candidates(world)
+    record["microbatch_search"] = {
+        "candidates": list(sizes),
+        "orderings": settings.orderings,
+    }
 
-    def microbatches(pair):
-        # Each microbatch's objective is already its share of the update,
-        # so every scale is one.
-        tokens, targets = pair
-        for start in range(0, tokens.shape[1], batch):
-            yield (
-                (tokens[:, start : start + batch], targets[:, start : start + batch]),
-                1.0,
-            )
+    def splitter(size):
+        # A microbatch carries its sequence lengths, so every candidate
+        # geometry is its own step to plan, and its own key in the store.
+        lengths = (geometry.sequence_length,) * (size // geometry.sequence_length)
+
+        def microbatches(pair):
+            # Each microbatch's objective is already its share of the
+            # update, so every scale is one.
+            tokens, targets = pair
+            for start in range(0, tokens.shape[1], size):
+                yield (
+                    (
+                        tokens[:, start : start + size],
+                        targets[:, start : start + size],
+                        lengths,
+                    ),
+                    1.0,
+                )
+
+        return microbatches
 
     def objective(module, pair):
         # The backend sums the ranks' contributions, so each rank's share
@@ -314,7 +329,7 @@ def train(case, clock):
 
     import mlops
 
-    from shadowspill.planner import SearchOptions
+    from shadowspill.planner import SearchOptions, StepDataOrdering
     from shadowspill.planner.search.algorithms.pressurefit import PressureFit
     from shadowspill.planner.search.algorithms.pressurefit.options import (
         PressureFitOptions,
@@ -370,6 +385,11 @@ def train(case, clock):
             device=device,
             artifact_store=record["artifact_store"],
             search_options=search,
+            # Every depth x breadth pair by default; or the depth-first
+            # walk alone.
+            orderings=None
+            if settings.orderings == "factors"
+            else lambda accumulation: (StepDataOrdering.depth_first(accumulation),),
             profiling_options=profiling,
             fuse_narrow_gradient_accumulation=precision.fuse_narrow_gradient_accumulation,
             external_headroom_gib=settings.external_headroom_gib,
@@ -400,7 +420,7 @@ def train(case, clock):
                         "weight_decay": settings.weight_decay,
                     },
                     schedules={"lr": Constant(settings.learning_rate)},
-                    microbatches={"fixed": microbatches},
+                    microbatches={f"{size}": splitter(size) for size in sizes},
                     backend=backend,
                     master_dtype=None
                     if precision.master_dtype is None
@@ -432,6 +452,25 @@ def train(case, clock):
                     )
                     if trainer.planning is not None:
                         trainer.planning.save(case.directory / "search.json")
+                    # The geometry the search chose is the one the steps run
+                    # and the row names.
+                    batch = int(trainer.selected_candidate)
+                    geometry = dataclasses.replace(
+                        geometry, tokens_per_microbatch=batch
+                    )
+                    chosen = {"tokens_per_microbatch": batch}
+                    winner = (
+                        None
+                        if trainer.planning is None
+                        else trainer.planning.winner(*backend.budget)
+                    )
+                    if winner is not None:
+                        chosen["ordering"] = {
+                            "depth": winner.ordering.depth,
+                            "breadth": winner.ordering.breadth,
+                        }
+                    record["microbatch_search"]["chosen"] = chosen
+                    record["microbatches_per_step"] = geometry.accumulation
                     record["pools_after_planning"] = {
                         name: pool_record(backend.runtime.pool_statistics(name))
                         for name in ("execution", "spill")
@@ -535,8 +574,10 @@ def train(case, clock):
         provenance={
             "plan": record["plan"],
             "pools_after_planning": record["pools_after_planning"],
+            "microbatch_search": record["microbatch_search"],
         },
         memory=memory,
+        geometry=geometry.as_dict(),
     )
 
 

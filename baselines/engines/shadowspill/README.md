@@ -43,13 +43,21 @@ allocator. This engine adds:
 | `--spill-gib H` | The spill pool in pinned host memory, held whole from the first second |
 | `--host-headroom-gib` | Host memory reserved per process beside the pinned pool (2) |
 | `--artifact-store` | Where builds and plans persist, read where they hit and written where they miss: `default`, the library's own store (`~/.cache/shadowspill`), so every case and every experiment builds each model once; `none`, a store of the case's own that ends with it; or a directory |
+| `--min-tokens-per-microbatch`, `--max-tokens-per-microbatch` | The smallest and largest microbatch the search plans, in tokens; by default one sequence and a replica's whole update |
+| `--orderings` | The microbatch orderings the search tries per geometry: `factors` (every depth x breadth pair, the default) or `depth-first` |
+| `--tokens-per-microbatch` | Optional: one microbatch size, which skips the search over sizes |
 | `--resolution-options` | The shares of the flexible groups the planner may recompute, each planned and the best kept: `quarters` (0, 1/4, 1/2, 3/4 and 1, the planner's default), `eighths`, `halves`, or comma-separated exact fractions such as `0,1/2,1` |
 
-The trainer is configured as the quickstart configures ShadowSpill: one
-microbatch candidate at the case's tokens per microbatch (the geometry is a
-sweep dimension, as for every engine, so ShadowSpill's own search over
-candidates is not used), the backend's search over that candidate within
-the budgets choosing the ordering and what to keep, recompute or spill. The
+The trainer is configured as the quickstart configures ShadowSpill. One
+case searches the microbatch size itself: every split of a replica's update
+into whole sequences within `--min-tokens-per-microbatch` and
+`--max-tokens-per-microbatch` (both optional) is a candidate, each tried
+under the `--orderings` (`factors`, every depth x breadth pair, by default;
+or `depth-first`), and the backend's search keeps the fastest that fits the
+budgets, with what to keep, recompute or spill. Each microbatch carries its
+sequence lengths, so every candidate is its own step to plan.
+`--tokens-per-microbatch` pins one size instead. The row names the size and
+ordering the search chose. The
 objective is the shared one, each microbatch's share of the update at scale
 one, divided by the world size since the backend sums the ranks'
 contributions. The optimizer is mlops's AdamW with the contract's dtypes.
