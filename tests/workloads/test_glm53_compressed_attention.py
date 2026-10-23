@@ -44,9 +44,11 @@ def expanded(model, x):
 
 @pytest.mark.cuda
 @pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA is required")
-@pytest.mark.parametrize("lora", [False, True])
+@pytest.mark.parametrize("lora,alpha", [(False, 8), (True, 8), (True, 5)])
 @pytest.mark.parametrize("compiled", [False, True])
-def test_fp8_kv_projection_matches_expanded_attention_and_gradients(lora, compiled):
+def test_fp8_kv_projection_matches_expanded_attention_and_gradients(
+    lora, compiled, alpha
+):
     require_fp8_gemms()
     torch.manual_seed(418)
     model = SparseMLA(Config.tiny(hidden_size=128), "cuda")
@@ -54,7 +56,7 @@ def test_fp8_kv_projection_matches_expanded_attention_and_gradients(lora, compil
     projection = FrozenLinear(parts, spec)
     if lora:
         projection = FrozenLoRALinear(
-            projection, LoRAConfig(rank=8, alpha=8, factor_dtype=torch.float32)
+            projection, LoRAConfig(rank=8, alpha=alpha, factor_dtype=torch.float32)
         )
         # Nonzero B is necessary to test both factor gradients and both
         # absorbed key/value contributions, rather than only the base model.

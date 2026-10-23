@@ -170,15 +170,17 @@ class SparseMLA(nn.Module):
                 .split((c.qk_nope_head_dim, c.v_head_dim), dim=1)
             )
             scale = self.kv_b_proj.lora_config.scale
-            q_latent = q_latent + scale * F.linear(
-                torch.einsum("thd,hdr->thr", query, bk), a.T
-            )
+            update = F.linear(torch.einsum("thd,hdr->thr", query, bk), a.T)
+            if scale != 1.0:
+                update = scale * update
+            q_latent = q_latent + update
         attended = sparse_latent_attention(
             q_latent, latent, indices, scale=c.qk_nope_head_dim**-0.5
         )
         value = torch.einsum("thl,hdl->thd", attended, wv)
         if isinstance(self.kv_b_proj, (LoRALinear, FrozenLoRALinear)):
-            value = value + scale * torch.einsum(
-                "thr,hdr->thd", F.linear(attended, a), bv
-            )
+            update = torch.einsum("thr,hdr->thd", F.linear(attended, a), bv)
+            if scale != 1.0:
+                update = scale * update
+            value = value + update
         return self.o_proj(value.flatten(-2))
