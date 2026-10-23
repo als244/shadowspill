@@ -6,7 +6,6 @@ from contextlib import nullcontext
 import torch
 from mlops import hyper_connection as hc
 from torch import nn
-from torch.nn import functional as F
 
 
 def without_autocast(value):
@@ -59,13 +58,12 @@ class HyperConnection(nn.Module):
         c = self.config
         # FP32 projection must not be downcast by an enclosing autocast context.
         with without_autocast(streams):
-            x = hc.mhc_normalize_streams(streams, eps=c.rms_norm_eps)
-            projected = F.linear(x, self.fn.float())
-            return hc.mhc_coefficients(
+            return hc.mhc_pre(
                 streams,
-                projected,
+                self.fn,
                 self.base,
                 self.scale,
+                eps=c.rms_norm_eps,
                 sinkhorn_eps=c.hc_eps,
                 iterations=c.hc_sinkhorn_iters,
             )

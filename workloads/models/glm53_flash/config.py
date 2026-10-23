@@ -45,6 +45,7 @@ class Config:
     hc_mult: int = 4
     hc_sinkhorn_iters: int = 20
     hc_eps: float = 1e-6
+    hc_coefficient_precision: str = "fp32"
     rms_norm_eps: float = 1e-5
     routed_scaling_factor: float = 2.5
     swiglu_limit: float = 10.0
@@ -59,6 +60,8 @@ class Config:
     lora_head: bool = False
 
     def __post_init__(self):
+        if self.hc_coefficient_precision not in ("fp32", "activation"):
+            raise ValueError("hc_coefficient_precision must be fp32 or activation")
         if self.router_weight_dtype not in (torch.bfloat16, torch.float32):
             raise ValueError("router_weight_dtype must be BF16 or FP32")
         if self.dtype != torch.bfloat16:

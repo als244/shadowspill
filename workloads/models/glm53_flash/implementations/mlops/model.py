@@ -24,16 +24,29 @@ class DecoderLayer(nn.Module):
         )
         self.input_layernorm = RMSNorm(config.hidden_size, config, device)
         self.post_attention_layernorm = RMSNorm(config.hidden_size, config, device)
+        self.hc_coefficient_precision = config.hc_coefficient_precision
         self.attn_hc = HyperConnection(config, device)
         self.ffn_hc = HyperConnection(config, device)
 
     def forward(self, streams, boundaries, cumulative, chunks):
         post, mixing, x = self.attn_hc(streams)
         branch = self.self_attn(self.input_layernorm(x), boundaries, cumulative, chunks)
-        streams = mhc_combine(branch, streams, post, mixing)
+        streams = mhc_combine(
+            branch,
+            streams,
+            post,
+            mixing,
+            coefficient_precision=self.hc_coefficient_precision,
+        )
         post, mixing, x = self.ffn_hc(streams)
         branch = self.mlp(self.post_attention_layernorm(x))
-        return mhc_combine(branch, streams, post, mixing)
+        return mhc_combine(
+            branch,
+            streams,
+            post,
+            mixing,
+            coefficient_precision=self.hc_coefficient_precision,
+        )
 
 
 class Model(nn.Module):

@@ -74,3 +74,38 @@ def test_multimodal_lora_freezes_base_and_selects_only_projection_factors(head):
     )
     assert not model.visual.patch_embed.proj.weight.requires_grad
     assert not model.visual.downsample.weight.requires_grad
+
+
+@pytest.mark.parametrize("precision", ["fp32", "activation"])
+def test_flash_decoder_uses_mhc_semantic_interfaces(monkeypatch, precision):
+    from workloads.models.glm53_flash.config import Config
+    from workloads.models.glm53_flash.implementations.mlops import model as model_module
+    from workloads.models.shared.glm import common
+
+    config = Config.tiny(hc_coefficient_precision=precision)
+    layer = model_module.DecoderLayer(config, 0, "cpu")
+
+    class Branch(nn.Module):
+        def forward(self, x, *metadata):
+            return x * 0.25
+
+    layer.self_attn = Branch()
+    layer.mlp = Branch()
+    calls = []
+    pre, combine = common.hc.mhc_pre, model_module.mhc_combine
+
+    def observed_pre(*args, **kwargs):
+        calls.append("pre")
+        return pre(*args, **kwargs)
+
+    def observed_combine(*args, **kwargs):
+        calls.append(("combine", kwargs["coefficient_precision"]))
+        return combine(*args, **kwargs)
+
+    monkeypatch.setattr(common.hc, "mhc_pre", observed_pre)
+    monkeypatch.setattr(model_module, "mhc_combine", observed_combine)
+    x = torch.randn(3, 4, config.hidden_size, dtype=torch.bfloat16, requires_grad=True)
+    result = layer(x, None, None, None)
+    torch.autograd.grad(result.float().square().mean(), x)
+    assert calls == ["pre", ("combine", precision), "pre", ("combine", precision)]
+    assert result.shape == x.shape and result.dtype == x.dtype
