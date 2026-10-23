@@ -15,6 +15,10 @@ import torch.distributed as dist
 from torch import nn
 
 from shadowspill.ir import TransferPhase, TransferSpec
+from shadowspill.pytorch.distributed._collectives import (
+    all_gather_single,
+    reduce_scatter_single,
+)
 
 if TYPE_CHECKING:
     from shadowspill.runtime import Runtime
@@ -164,7 +168,7 @@ def calibrate_gather(
             torch.cuda.Event(enable_timing=True),  # type: ignore[no-untyped-call]
         )
         start.record()
-        dist.all_gather_into_tensor(full, local, group=group)
+        all_gather_single(full, local, group=group)
         end.record()
         end.synchronize()
         elapsed = torch.tensor(
@@ -263,7 +267,7 @@ def calibrate_gradient(
         start.record()
         full.zero_()
         middle.record()
-        dist.reduce_scatter_tensor(local, full, group=layout.group)
+        reduce_scatter_single(local, full, group=layout.group)
         if layout.replica_group is not None:
             dist.all_reduce(local, group=layout.replica_group)
         end.record()

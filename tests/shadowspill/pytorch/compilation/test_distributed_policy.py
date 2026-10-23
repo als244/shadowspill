@@ -21,15 +21,19 @@ def test_peak_reordering_policy_and_profile_identity(monkeypatch, sharded):
         "get_device_properties",
         lambda _: SimpleNamespace(name="test", major=9, minor=0),
     )
-    with config.patch(reorder_for_peak_memory=True):
+    with config.patch(reorder_for_peak_memory=True, deterministic=False):
         patches = task_compiler_patches()
         assert patches["shape_padding"] is False
         assert patches.get("reorder_for_peak_memory", True) is (not sharded)
+        assert patches.get("deterministic", False) is sharded
         profile = environment.profile_environment(device_ordinal=0, provider_id="test")
         assert f":reorder_for_peak_memory={int(not sharded)}" in profile.compiler_id
+        assert f":deterministic={int(sharded)}" in profile.compiler_id
         with config.patch(patches):
+            assert config.deterministic is sharded
             assert config.reorder_for_peak_memory is (not sharded)
         assert config.reorder_for_peak_memory is True
+        assert config.deterministic is False
 
 
 def test_local_compilation_preserves_requested_order_policy(monkeypatch):

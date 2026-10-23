@@ -13,6 +13,9 @@ import torch.distributed as dist
 from shadowspill.ir import TransferPhase, TransferSpec
 from shadowspill.pytorch.distributed._backing import TransferSharding
 from shadowspill.pytorch.distributed._backing_storage import ShardedStorage
+from shadowspill.pytorch.distributed._collectives import (
+    all_gather_single,
+)
 from shadowspill.pytorch.state import initialization
 
 
@@ -54,7 +57,7 @@ def verify_lazy_publication(rank, root, storage, value, expected, group):
     assert calls == ([True] if rank == root else [])
     assert len(received) == 1
     actual = torch.empty_like(expected)
-    dist.all_gather_into_tensor(actual, received[0], group=group)
+    all_gather_single(actual, received[0], group=group)
     torch.testing.assert_close(actual, expected, rtol=0, atol=0)
 
 
@@ -92,7 +95,7 @@ def main():
                 value = ((torch.arange(length) + rank * 17) % 251).to(torch.uint8)
                 shard = storage.synchronize_owned(value)
                 actual = torch.empty(shard_bytes * size, dtype=torch.uint8)
-                dist.all_gather_into_tensor(actual, shard, group=group)
+                all_gather_single(actual, shard, group=group)
                 expected = torch.zeros_like(actual)
                 expected[:length] = ((torch.arange(length) + root * 17) % 251).to(
                     torch.uint8

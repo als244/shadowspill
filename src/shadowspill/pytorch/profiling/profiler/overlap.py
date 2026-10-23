@@ -21,6 +21,10 @@ from shadowspill.errors import ProfilingError
 from shadowspill.ir import TaskOverlapCost
 from shadowspill.pytorch.distributed import current
 from shadowspill.pytorch.distributed._backing_storage import collective_timing_class
+from shadowspill.pytorch.distributed._collectives import (
+    all_gather_single,
+    reduce_scatter_single,
+)
 from shadowspill.pytorch.distributed._profiling import invocation_batch
 
 if TYPE_CHECKING:
@@ -236,11 +240,11 @@ def _measure_route(
         with torch.cuda.stream(communication):
             for _ in range(copies):
                 if route.operation == "gather":
-                    dist.all_gather_into_tensor(
+                    all_gather_single(
                         buffers[0], buffers[1], group=route.group, async_op=True
                     ).wait()
                 else:
-                    dist.reduce_scatter_tensor(
+                    reduce_scatter_single(
                         buffers[1], buffers[0], group=route.group, async_op=True
                     ).wait()
                     if route.replica_group is not None:

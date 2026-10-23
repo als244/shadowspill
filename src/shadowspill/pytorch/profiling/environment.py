@@ -25,7 +25,9 @@ def profile_environment(
 
     properties = torch.cuda.get_device_properties(device_ordinal)
     bound = distributed_preparation()
-    peak_reordering = task_compiler_patches().get(
+    patches = task_compiler_patches()
+    deterministic = patches.get("deterministic", inductor_config.deterministic)
+    peak_reordering = patches.get(
         "reorder_for_peak_memory", inductor_config.reorder_for_peak_memory
     )
     return ProfileEnvironment(
@@ -41,6 +43,7 @@ def profile_environment(
             "shadowspill-functional-task-compiler/v1:torch-inductor"
             f":emulate_precision_casts={int(inductor_config.emulate_precision_casts)}"
             f":reorder_for_peak_memory={int(peak_reordering)}"
+            f":deterministic={int(deterministic)}"
         ),
         provider_id=provider_id,
         export_bypass_key=export_bypass_key,

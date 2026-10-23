@@ -12,6 +12,9 @@ from typing import Any
 import torch
 import torch.distributed as dist
 
+from shadowspill.pytorch.distributed._collectives import (
+    all_gather_single,
+)
 from shadowspill.pytorch.representations import (
     map_tensor,
     storage_view,
@@ -662,7 +665,7 @@ def _storage_bytes(
             if owner.numel() >= sharding.execution_bytes
             else torch.empty(sharding.execution_bytes, dtype=torch.uint8)
         )
-        dist.all_gather_into_tensor(full, shard, group=sharding.host_group)
+        all_gather_single(full, shard, group=sharding.host_group)
         if owner.numel() < sharding.execution_bytes:
             owner[: item.size_bytes].copy_(full[: item.size_bytes])
         return owner
