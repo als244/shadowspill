@@ -106,6 +106,16 @@ can recover substantial execution-pool capacity, even in a forward-only plan.
 The CLI saves the exact prompt/token IDs, options, metadata, build/plan artifacts,
 per-call times/top tokens/log probabilities and final logits. Repeatable finite logits are a smoke check, not a substitute for reference-model numerical parity.
 
+## KDA projection boundary
+
+The MLOps implementation passes separate Q/K/V projections to
+`mlops.causal_conv_silu_qkv`. Packed sequence resets, SiLU and checkpoint
+convolution dtypes are unchanged. Frozen convolution weights use a VJP that
+reads separate Q/K/V gradients and writes contiguous projection gradients;
+full weight training retains the ordinary composition. Layout kernels and
+provider dispatch live in MLOps. The family owns projections, Q/K normalization,
+decay/beta/output gates and the attention call.
+
 ## Development status
 
 The importer is tested on synthetic checkpoints -- dense, and FP8 with 128x128

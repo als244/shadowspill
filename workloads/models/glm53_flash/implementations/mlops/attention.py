@@ -58,11 +58,16 @@ class KDA(nn.Module):
 
     def forward(self, x, boundaries, cumulative, chunks):
         c = self.config
-        packed = torch.cat((self.q_proj(x), self.k_proj(x), self.v_proj(x)), -1)
-        packed = mlops.causal_conv_silu(packed, self.conv1d.weight, cumulative, chunks)
+        projected = mlops.causal_conv_silu_qkv(
+            self.q_proj(x),
+            self.k_proj(x),
+            self.v_proj(x),
+            self.conv1d.weight,
+            cumulative,
+            chunks,
+        )
         q, k, v = (
-            t.reshape(-1, c.linear_num_heads, c.linear_head_dim)
-            for t in packed.chunk(3, -1)
+            t.reshape(-1, c.linear_num_heads, c.linear_head_dim) for t in projected
         )
         q, k = mlops.l2_norm(q), mlops.l2_norm(k)
         raw = self.forget_gate.f_b_proj(self.forget_gate.f_a_proj(x)).reshape_as(q)
