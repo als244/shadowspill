@@ -233,11 +233,12 @@ def _run_commands(
         cache_root: Path | None = None
         if options.empty_caches:
             cache_parent = (
-                output_directory / ".empty_caches"
+                None
                 if options.cache_directory is None
                 else options.cache_directory.expanduser().resolve()
             )
-            cache_parent.mkdir(parents=True, exist_ok=True)
+            if cache_parent is not None:
+                cache_parent.mkdir(parents=True, exist_ok=True)
             cache_root = Path(
                 tempfile.mkdtemp(prefix=f"{prefix}-", dir=cache_parent)
             ) / ("warm" if is_warm else "reference" if is_reference else "plan")

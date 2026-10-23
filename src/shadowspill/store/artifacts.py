@@ -99,7 +99,7 @@ class ArtifactStore:
     """Where one planning call reads and writes its artifacts.
 
     Two trees under one versioned root. ``build`` holds what a run pays for
-    and another run can reuse: exports, the compiler caches, graph pairs,
+    and another run can reuse: exports, graph pairs,
     optimizer captures and profiles. ``planning`` holds what a run decided:
     the program it was given,
     the requests put to the planner, its results, and the plans callables run,
@@ -269,7 +269,7 @@ class ArtifactStore:
             False,
             {
                 "build": "what a run pays for and another can reuse: exports,"
-                " the compiler caches, graph pairs, optimizer captures, profiles",
+                " graph pairs, optimizer captures, profiles",
                 "planning": "what a run decided: the programs it was given,"
                 " the requests put to the planner, its results, and the plans"
                 " callables run",
@@ -556,11 +556,15 @@ this one and replans.
 `build/` is what a run pays for and another run can reuse:
 
 - `build/exports/`: normalized Export archives and manifests.
-- `build/inductor/`: files managed internally by the framework's compiler.
 - `build/graph_pairs/`: structural AOT graph pairs.
 - `build/optimizers/`: traced optimizer updates, keyed by the
   optimizer, the objects it binds, its hyperparameters and its stage split.
 - `build/profiling/`: hardware/compiler-specific layouts and task measurements.
+
+Compiler intermediates live outside this store, in node-local temporary storage
+by default. The frontend supports an optional cache root override; see
+`docs/python/artifact-store.md`. Older stores may still contain `build/inductor/`;
+new runs do not write compiler files there.
 
 `planning/` is what a run decided:
 

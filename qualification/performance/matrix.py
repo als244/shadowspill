@@ -475,12 +475,7 @@ def _run_cell(
     if arguments.empty_caches:
         # The cell starts from nothing: a store, an Inductor cache and a
         # Triton cache of its own, removed once it ends.
-        (output / ".empty_caches").mkdir(parents=True, exist_ok=True)
-        cache_root = Path(
-            tempfile.mkdtemp(
-                prefix=f"{manifest.identity}-", dir=output / ".empty_caches"
-            )
-        )
+        cache_root = Path(tempfile.mkdtemp(prefix=f"shadowspill-{manifest.identity}-"))
         environment = dict(os.environ)
         environment["TORCHINDUCTOR_CACHE_DIR"] = str(cache_root / "torchinductor")
         environment["TRITON_CACHE_DIR"] = str(cache_root / "triton")

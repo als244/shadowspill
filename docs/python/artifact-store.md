@@ -153,11 +153,18 @@ millions of entries. A graph pair's key covers the structural contract, the
 differentiation options and the retention policy together, so one entry is
 one digest like everything else.
 
-Two directories are deliberately not content-addressed, and both say why in
-their names. `build/inductor/` is PyTorch's own cache, laid out by PyTorch and
-subdivided by `export_bypass_key`: one directory per revision, named for
-it and followed by twelve hex characters of its digest, or `default` when no
-revision was given.
+Compiler intermediates are disposable and live **outside** the artifact store.
+The default root is PyTorch's temporary cache (`/tmp/torchinductor_<user>` on a
+standard Linux setup); no launch-time override is needed. Set
+`TORCHINDUCTOR_CACHE_DIR=/path/to/cache` only when an alternate root is wanted.
+ShadowSpill uses `<root>/shadowspill/<revision>-<digest>/` for Inductor and its
+`triton/` child for Triton. The revision is `export_bypass_key`, or `default`;
+rank-specific artifact stores share this compiler cache on a node. PyTorch and
+Triton own their content addressing and locking. A cache miss recompiles;
+copying a report or artifact store does not require these compiler files.
+Existing `build/inductor/` directories are legacy caches and are left untouched.
+
+One directory is deliberately not content-addressed:
 `planning/plans/<model class>/<capture identity>/<plan digest>/` groups plan
 manifests under the qualified name of the class they were planned for, because
 a person reading a store wants the plans for one model rather than a digest they
@@ -183,9 +190,10 @@ produces programs and plans nothing. `plan_program()` takes only
 `artifact_store` and `plan_store`: it plans a program it is given and builds
 nothing.
 
-Long-running or reproducible work should pass an explicit local-filesystem
-directory. Network filesystems are unsuitable for compiler caches and
-high-frequency atomic artifact publication.
+Long-running or reproducible work should pass an explicit artifact directory.
+Compiler caches stay on node-local temporary storage by default, separately from
+persistent exports, graph pairs, profiles and plans. Local storage is also
+preferable for high-frequency artifact publication.
 
 ## Store modes
 
@@ -213,11 +221,13 @@ each other's. So a run can keep its plans to itself and still contribute the
 builds it paid for.
 
 `build_store_mode` also decides where PyTorch compiles. Only `contribute`
-points Inductor and Triton at the store's own cache. Every other mode runs
+points Inductor and Triton at the external compiler cache. Every other mode runs
 them in a private temporary directory, with the process-local compiler caches
 cleared on the way in and out, so an earlier plan in this process cannot
 serve an entry the mode was told not to read. `refresh` publishes what it
-built there back into the store afterwards; `reuse` and `require` discard it.
+built there back into the external cache afterwards; `reuse` and `require`
+discard it. The artifact store records the cache path as provenance; it does
+not contain the compiler files.
 
 `export_bypass_key` is the other invalidation control. It marks the
 lower-level implementations a build was measured against, so a kernel change

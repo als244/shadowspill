@@ -5,8 +5,8 @@ modes that gate reading and writing. Two kinds of artifact need PyTorch to handl
 them at all, and they are here:
 
 - the exported program archive, which only `torch.export` can write and read;
-- the compiler's own cache tree, which is managed by the compiler rather than by
-  us, and whose lookups are routed through process-global environment variables.
+- the compiler's disposable cache tree, outside the artifact store, whose
+  lookups follow TORCHINDUCTOR_CACHE_DIR (or PyTorch's node-local default).
 
 A `FrameworkArtifacts` wraps a store and adds those two. A second frontend writes
 its own, and the neutral store needs no callback, no optional parameter and no
@@ -23,6 +23,7 @@ import tempfile
 import threading
 from collections.abc import Iterator, Mapping
 from contextlib import contextmanager, suppress
+from contextvars import ContextVar
 from pathlib import Path
 from typing import Any
 
@@ -37,6 +38,9 @@ from shadowspill.store.artifacts import (
 
 _PYTORCH_CACHE_ENVIRONMENT = "TORCHINDUCTOR_CACHE_DIR"
 _CACHE_ENVIRONMENT_LOCK = threading.RLock()
+_ACTIVE_CACHE_ROOT: ContextVar[Path | None] = ContextVar(
+    "compiler_cache_root", default=None
+)
 _LAYOUT_SCHEMA = artifact_schema("artifact_store")
 _EXPORT_SCHEMA = artifact_schema("pytorch.export")
 
@@ -49,65 +53,86 @@ class FrameworkArtifacts:
     def __init__(self, store: ArtifactStore) -> None:
         self.store = store
 
+    @staticmethod
+    def _cache_root() -> Path:
+        active = _ACTIVE_CACHE_ROOT.get()
+        if active is not None:
+            return active
+        from torch._inductor.runtime.cache_dir_utils import default_cache_dir
+
+        # Compiler intermediates are disposable and numerous. Honor the user's
+        # cache location (normally node-local TMPDIR), independently of the
+        # persistent store containing graph contracts, profiles and plans.
+        return (
+            Path(os.environ.get(_PYTORCH_CACHE_ENVIRONMENT) or default_cache_dir())
+            .expanduser()
+            .resolve()
+        )
+
     @property
     def compiler_cache(self) -> Path:
         revision = self.store.export_bypass_key or "default"
         identity = hashlib.sha256(revision.encode()).hexdigest()[:12]
-        return self.store.build / "inductor" / f"{safe_label(revision)}-{identity}"
+        return self._cache_root() / "shadowspill" / f"{safe_label(revision)}-{identity}"
 
     @contextmanager
     def activate(self) -> Iterator[None]:
-        """Route process-global compiler cache lookups for one planning call."""
+        """Use an external compiler cache while preserving store isolation modes."""
 
         if self.store.build_writes_enabled or self.store.plan_policy.write_enabled:
             self.store.initialize()
         with _CACHE_ENVIRONMENT_LOCK:
+            root_token = _ACTIVE_CACHE_ROOT.set(self._cache_root())
             previous = os.environ.get(_PYTORCH_CACHE_ENVIRONMENT)
             previous_triton = os.environ.get("TRITON_CACHE_DIR")
+            destination = self.compiler_cache
             isolated = (
                 not self.store.build_reads_enabled
                 or not self.store.build_writes_enabled
             )
-            with tempfile.TemporaryDirectory(
-                prefix="shadowspill-plan-",
-            ) as temporary:
-                active = Path(temporary) if isolated else self.compiler_cache
-                clear_caches = _clear_compiler_caches if isolated else None
-                if clear_caches is not None:
-                    clear_caches()
-                os.environ[_PYTORCH_CACHE_ENVIRONMENT] = str(active)
-                os.environ["TRITON_CACHE_DIR"] = str(active / "triton")
-                completed = False
-                try:
-                    yield
-                    completed = True
-                finally:
+            try:
+                with tempfile.TemporaryDirectory(
+                    prefix="shadowspill-plan-"
+                ) as temporary:
+                    active = Path(temporary) if isolated else destination
+                    clear_caches = _clear_compiler_caches if isolated else None
                     if clear_caches is not None:
                         clear_caches()
-                    if previous is None:
-                        os.environ.pop(_PYTORCH_CACHE_ENVIRONMENT, None)
-                    else:
-                        os.environ[_PYTORCH_CACHE_ENVIRONMENT] = previous
-                    if previous_triton is None:
-                        os.environ.pop("TRITON_CACHE_DIR", None)
-                    else:
-                        os.environ["TRITON_CACHE_DIR"] = previous_triton
+                    os.environ[_PYTORCH_CACHE_ENVIRONMENT] = str(active)
+                    os.environ["TRITON_CACHE_DIR"] = str(active / "triton")
+                    completed = False
+                    try:
+                        yield
+                        completed = True
+                    finally:
+                        if clear_caches is not None:
+                            clear_caches()
+                        if previous is None:
+                            os.environ.pop(_PYTORCH_CACHE_ENVIRONMENT, None)
+                        else:
+                            os.environ[_PYTORCH_CACHE_ENVIRONMENT] = previous
+                        if previous_triton is None:
+                            os.environ.pop("TRITON_CACHE_DIR", None)
+                        else:
+                            os.environ["TRITON_CACHE_DIR"] = previous_triton
 
-                if completed and self.store.build_writes_enabled and isolated:
-                    _publish_cache_tree(
-                        active,
-                        self.compiler_cache,
-                        overwrite=self.store.build_policy.overwrite,
-                    )
-                if self.store.build_writes_enabled:
-                    self.store.record(
-                        category="pytorch",
-                        kind="inductor_cache",
-                        digest=None,
-                        path=self.compiler_cache,
-                        access="managed",
-                        schema=None,
-                    )
+                    if completed and self.store.build_writes_enabled and isolated:
+                        _publish_cache_tree(
+                            active,
+                            destination,
+                            overwrite=self.store.build_policy.overwrite,
+                        )
+                    if self.store.build_writes_enabled:
+                        self.store.record(
+                            category="pytorch",
+                            kind="inductor_cache",
+                            digest=None,
+                            path=destination,
+                            access="managed",
+                            schema=None,
+                        )
+            finally:
+                _ACTIVE_CACHE_ROOT.reset(root_token)
 
     def archive_export(
         self,
@@ -296,10 +321,14 @@ def _publish_cache_tree(source: Path, destination: Path, *, overwrite: bool) -> 
         try:
             os.replace(source, destination)
         except OSError as error:
-            if error.errno != errno.EXDEV:
+            if error.errno == errno.EXDEV:
+                _copy_cache_tree_atomically(source, destination, overwrite=overwrite)
+                return
+            if error.errno not in (errno.EEXIST, errno.ENOTEMPTY):
                 raise
-            _copy_cache_tree_atomically(source, destination)
-        return
+            # Another rank published first; merge into its complete directory.
+        else:
+            return
 
     for source_path in sorted(source.rglob("*")):
         relative = source_path.relative_to(source)
@@ -335,7 +364,9 @@ def _publish_cache_tree(source: Path, destination: Path, *, overwrite: bool) -> 
                 temporary.unlink()
 
 
-def _copy_cache_tree_atomically(source: Path, destination: Path) -> None:
+def _copy_cache_tree_atomically(
+    source: Path, destination: Path, *, overwrite: bool
+) -> None:
     """Publish a cache tree across filesystems through a sibling staging path."""
 
     staging = Path(
@@ -346,7 +377,12 @@ def _copy_cache_tree_atomically(source: Path, destination: Path) -> None:
     )
     try:
         shutil.copytree(source, staging, dirs_exist_ok=True)
-        os.replace(staging, destination)
+        try:
+            os.replace(staging, destination)
+        except OSError as error:
+            if error.errno not in (errno.EEXIST, errno.ENOTEMPTY):
+                raise
+            _publish_cache_tree(staging, destination, overwrite=overwrite)
     finally:
         shutil.rmtree(staging, ignore_errors=True)
 

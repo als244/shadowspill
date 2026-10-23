@@ -1,8 +1,8 @@
 """Run one test with fresh Inductor and Triton caches, removed afterwards.
 
 This covers direct compiler calls and PyTorch work outside ShadowSpill planning.
-The public planning APIs select compiler caches within their artifact store,
-so tests must also pass a test-local temporary store to every planning call.
+The public planning APIs use this compiler cache root too. Tests also pass a
+test-local temporary artifact store for graphs, measurements and plans.
 Neither layer should read a user's persistent cache or another test's artifacts.
 
     python isolated_cache.py <command> [argument ...]
