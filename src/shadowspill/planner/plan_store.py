@@ -973,6 +973,9 @@ def _key(
         # topology, so the same program under a different pool is a
         # different question and must not read a cached answer.
         "placement_digest": placement.digest if placement is not None else None,
+        # Earlier placement searches could stop at an unchanged schedule after
+        # one capacity refinement. Their cached infeasible verdicts must miss.
+        **({"placement_search_revision": 2} if placement is not None else {}),
     }
     encoded = json.dumps(payload, sort_keys=True, separators=(",", ":"))
     return hashlib.sha256(encoded.encode()).hexdigest()

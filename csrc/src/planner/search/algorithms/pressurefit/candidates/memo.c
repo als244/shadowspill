@@ -97,11 +97,13 @@ static uint32_t hash_index_next(const HashIndex *index, uint32_t slot) {
 
 static uint64_t schedule_memo_hash(
     Fingerprint residency,
+    Fingerprint pressure,
     uint8_t rule,
     uint8_t fetch_headroom
 ) {
     uint64_t hash = UINT64_C(1469598103934665603);
     hash = shadowspill_candidate_hash_bytes(hash, &residency, sizeof(residency));
+    hash = shadowspill_candidate_hash_bytes(hash, &pressure, sizeof(pressure));
     hash = shadowspill_candidate_hash_bytes(hash, &rule, sizeof(rule));
     return shadowspill_candidate_hash_bytes(hash, &fetch_headroom, sizeof(fetch_headroom));
 }
@@ -166,6 +168,7 @@ static Fingerprint indexed_schedule_fingerprint(
 static ScheduleMemoEntry *find_schedule_memo(
     CandidateWorkspace *workspace,
     Fingerprint residency,
+    Fingerprint pressure,
     uint8_t rule,
     uint8_t fetch_headroom,
     uint64_t hash
@@ -175,7 +178,8 @@ static ScheduleMemoEntry *find_schedule_memo(
         ScheduleMemoEntry *entry = &cache->entries[index];
         if (entry->hash == hash && entry->rule == rule &&
             entry->fetch_headroom == fetch_headroom &&
-            shadowspill_candidate_fingerprint_equal(entry->residency, residency)) {
+            shadowspill_candidate_fingerprint_equal(entry->residency, residency) &&
+            shadowspill_candidate_fingerprint_equal(entry->pressure, pressure)) {
             return entry;
         }
     }
@@ -406,6 +410,7 @@ int shadowspill_candidate_simulate_cached(
 static ScheduleMemoEntry *append_schedule_memo(
     CandidateWorkspace *workspace,
     Fingerprint residency,
+    Fingerprint pressure,
     uint8_t rule,
     uint8_t fetch_headroom,
     uint64_t hash
@@ -424,6 +429,7 @@ static ScheduleMemoEntry *append_schedule_memo(
         return NULL;
     }
     entry->residency = residency;
+    entry->pressure = pressure;
     entry->rule = rule;
     entry->hash = hash;
     entry->fetch_headroom = fetch_headroom;
@@ -437,14 +443,28 @@ int shadowspill_candidate_emit_cached(
     uint8_t rule,
     uint8_t fetch_headroom
 ) {
+    /* Capacity refinement and local repair pressure affect fetch packing
+     * even when the reducer keeps exactly the same residency. */
+    const size_t pressure_bytes = (size_t)facts->device_count *
+        facts->boundary_count * sizeof(*facts->extra_pressure);
+    const Fingerprint pressure = facts->extra_pressure == NULL
+        ? (Fingerprint){0U, 0U}
+        : (Fingerprint){
+            .low = shadowspill_candidate_hash_bytes(
+                UINT64_C(1469598103934665603), facts->extra_pressure, pressure_bytes),
+            .high = shadowspill_candidate_hash_bytes_high(
+                UINT64_C(1099511628211), facts->extra_pressure, pressure_bytes),
+        };
     uint64_t hash = schedule_memo_hash(
         workspace->current_residency,
+        pressure,
         rule,
         fetch_headroom
     );
     ScheduleMemoEntry *entry = find_schedule_memo(
         workspace,
         workspace->current_residency,
+        pressure,
         rule,
         fetch_headroom,
         hash
@@ -472,6 +492,7 @@ int shadowspill_candidate_emit_cached(
     return append_schedule_memo(
         workspace,
         workspace->current_residency,
+        pressure,
         rule,
         fetch_headroom,
         hash

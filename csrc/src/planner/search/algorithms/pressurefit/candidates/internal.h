@@ -70,12 +70,13 @@ typedef struct Fingerprint {
 typedef struct ScheduleMemoEntry {
     uint64_t hash;
     Fingerprint residency;
+    Fingerprint pressure;
     uint8_t rule;
     uint8_t fetch_headroom;
     ShadowSpillIndexedSchedule schedule;
 } ScheduleMemoEntry;
 
-/* The last few emitted schedules, by (residency, rule, headroom).
+/* The last few emitted schedules, by (residency, pressure, rule, headroom).
  *
  * Re-emission hits are recency-local: a candidate that keeps its residency
  * while it adjusts placement asks for the same schedule again within a few
@@ -268,6 +269,7 @@ typedef struct CandidateSearch {
     uint64_t placed_makespan_ns;
     /* The plan last placed, by fingerprint: placing it again is skipped. */
     Fingerprint placed_identity;
+    uint64_t placed_required_bytes;
     /* Where the last simulation came up short, and how many times in a row
      * it has come up short there: a repeat asks the reducer for more. */
     uint32_t last_error_task;

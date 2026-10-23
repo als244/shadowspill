@@ -548,16 +548,23 @@ static StageOutcome search_place(CandidateSearch *search) {
     const int refused = search->options->deterministic
         ? candidate_refuses(search)
         : shared_refuses(search);
-    if (refused ||
-        shadowspill_candidate_fingerprint_equal(
-            search->placed_identity, search->simulation_entry->identity
-        )) {
+    if (refused) {
         return STAGE_NEXT;
     }
-    search->placed_identity = search->simulation_entry->identity;
     const uint64_t pool_bytes = search->problem->context.placement == NULL
         ? 0U
         : search->problem->context.placement->pool_capacity_bytes;
+    if (shadowspill_candidate_fingerprint_equal(
+            search->placed_identity, search->simulation_entry->identity
+        )) {
+        /* A small capacity step can leave all fetch triggers unchanged.
+         * The same unplaced schedule still needs refinement; a duplicate
+         * measurement is avoidable, but the next capacity round is not. */
+        return search->placed_required_bytes > pool_bytes
+            ? search_refine_capacity(search, search->placed_required_bytes, pool_bytes)
+            : STAGE_NEXT;
+    }
+    search->placed_identity = search->simulation_entry->identity;
     ++search->diagnostic->placements_attempted;
     /*
      * The simulation cache keeps makespans, not timelines: its entries drop
@@ -592,8 +599,10 @@ static StageOutcome search_place(CandidateSearch *search) {
         placed == 0 ? required_bytes : 0U
     );
     if (placed != 0) {
+        search->placed_required_bytes = 0U;
         return STAGE_NEXT;
     }
+    search->placed_required_bytes = required_bytes;
     shadowspill_candidate_trace_measurement(
         search->workspace,
         &search->simulation,
