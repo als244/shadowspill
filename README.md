@@ -30,6 +30,7 @@ resources. Use `step()` for a custom loop.
 | Example | Sequence length | Sequences per update | Execution | Microbatch selection |
 |---|---:|---:|---|---|
 | Llama 3 8B full training | 4,096 | 16 | 1 GPU | Fixed: four sequences, 1×4 ordering |
+| GLM-5.3-Flash LoRA | 32,768 | 8 globally; 1 per GPU | Eight GPUs | Fixed: one sequence per rank |
 | Qwen3.5-35B-A3B LoRA | 32,768 | 8 | 1 GPU | Search sizes and orderings |
 | Qwen3-30B-A3B full training | 4,096 | 512 globally; 64 per GPU | Eight GPUs | Search sizes and orderings |
 
@@ -46,8 +47,10 @@ and normalizes summed losses by the **global** token count. The Qwen examples
 search sizes and orderings with `microbatch_candidates=data.candidates`; Llama
 fixes both. The total update size stays fixed in every example.
 
-These examples use BF16 compute weights, FP32 masters/gradients/AdamW moments,
-and a warmup-cosine learning-rate schedule. Models are declared on `meta`;
+These examples use FP32 masters/gradients/AdamW moments and a warmup-cosine
+learning-rate schedule. GLM preserves the checkpoint's mixed frozen storage
+precision, including FP8 routed experts; the other examples use BF16 compute
+weights. Models are declared on `meta`;
 initialization writes directly into pool-owned storage. The single-GPU examples request 28 GiB of GPU memory
 and a 144 GiB pinned host pool. Adjust budgets for your machine; the planner
 checks feasibility before training. These are example configurations, not
@@ -107,6 +110,65 @@ trainer.prepare(data.example(), initialize=reset_parameters)
 trainer.fit(data, steps=steps, run_dir="runs/llama3-8b")
 trainer.close()  # Release the callable and the pools this trainer opened.
 ```
+
+</details>
+
+<details>
+<summary><strong>GLM-5.3-Flash: eight-GPU LoRA at 32K</strong></summary>
+
+The [training recipe](workloads/recipes/text/train_glm53_flash_lora.py) loads a
+local Hugging Face checkpoint and trains rank-32 LoRA adapters on real text with
+held-out validation. The [eight-GPU launcher](workloads/recipes/text/glm53_flash_lora_32k_8gpu.sh)
+uses one 32,768-token sequence per rank: 262,144 target tokens per update.
+Weights, gradients and optimizer state are sharded across all eight DP ranks.
+Frozen routed experts retain FP8 weights and quantization scales and use the
+SonicMoE FP8 LoRA path. Frozen BF16/FP32 tensors keep checkpoint storage precision;
+compressed dense projections dequantize to BF16 for GEMMs. Adapters use BF16
+compute with FP32 masters, gradients and AdamW moments.
+
+Prepare text with this checkpoint's tokenizer. The preparation script records
+hashes of `tokenizer.json` and `tokenizer_config.json`; training verifies both
+before loading weights. For example, this dataset revision supplies real text
+and the first whole-document batches are held out for validation:
+
+```bash
+HF_HOME=/path/to/large-cache python -m workloads.recipes.text.prepare_data \
+  --tokenizer /path/to/GLM-5.3-Flash \
+  --dataset HuggingFaceFW/fineweb-edu \
+  --revision 87f09149ef4734204d70ed1d046ddc9ca3f2b8f9 \
+  --files 'sample/10BT/000_00000.parquet' \
+  --out /path/to/glm-tokens --val-tokens 1048576
+
+bash workloads/recipes/text/glm53_flash_lora_32k_8gpu.sh \
+  --data /path/to/glm-tokens --checkpoint /path/to/GLM-5.3-Flash \
+  --frozen-state-id glm53-flash-exact-checkpoint-revision \
+  --run-dir /path/to/glm32k-run
+```
+
+The launcher defaults to 100 updates, with evaluation and adapter checkpoints
+every 10 updates. Supply at least 100 complete global training updates and one
+complete validation update. `--steps`, `--schedule-steps`, `--execution-gib` and
+`--spill-gib` can be overridden on the command line. Keep the checkpoint on
+storage with room for the full base; initialization writes into the sharded
+spill pools with bounded staging. The starting budgets are 76 GiB execution and
+96 GiB pinned host spill per rank (768 GiB pinned host memory across the node,
+plus process and staging overhead). The planner also reserves 2 GiB external GPU
+headroom. This configuration is being qualified on eight 80 GB H100s; it is not
+yet a completed 32K checkpoint-training performance result.
+
+`metrics.jsonl` records train/validation loss and timing, and the run directory
+also contains the configuration, selected plan and partial checkpoints.
+Supply an immutable `--frozen-state-id` for the exact base checkpoint. Resume by
+adding `--resume /path/to/glm32k-run/checkpoints/step_00000010`, keeping the same
+corpus, base ID and total schedule; `--steps` is the final total step count.
+Frozen base weights are reloaded from the original checkpoint on resume.
+
+For a learning sanity check, add `--repeat-training-batch
+--minimum-relative-loss-drop 0.01`; normal training advances through the corpus.
+For five-step Nsight capture, add `--nsys-start-step 2 --nsys-steps 5` and launch
+under `nsys profile --capture-range=cudaProfilerApi --capture-range-end=stop`.
+Inductor/Triton compiler intermediates use node-local temporary storage by
+default and are separate from the saved run artifacts.
 
 </details>
 

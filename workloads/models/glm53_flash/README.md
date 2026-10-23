@@ -435,4 +435,25 @@ at execution. Architecture, quantized checkpoint mappings and task partitioning
 remain in this workload. The checkpoint reader and the compressed dense
 projections come from `mlops.sequential_moe.precision`; the MoE itself is
 `mlops.moe` / `expert_lora`.
+
+## Real-text LoRA recipe
+
+`workloads.recipes.text.train_glm53_flash_lora` loads a local checkpoint into
+sharded backing storage and trains on a corpus tokenized with that checkpoint.
+It defaults to 32K sequences, checkpoint FP8 expert storage and GEMMs, BF16
+dense GEMMs/adapters, and FP32 adapter masters, gradients and AdamW moments.
+Launch with `torchrun --standalone --nproc-per-node=8 -m` and provide
+`--checkpoint`, `--data`, `--frozen-state-id`, and `--run-dir`. The corpus
+`meta.json` must contain `tokenizer_sha256` for both `tokenizer.json` and
+`tokenizer_config.json` from the base checkpoint.
+
+Each rank consumes distinct sequences; objectives sum globally normalized
+next-token loss. `global_mean_loss` reports the global token mean, while the
+Trainer's ordinary `loss` remains the rank's contribution. Held-out evaluation
+and adapter-only checkpoints are enabled. `--resume` restores adapters,
+optimizer, schedules/RNG and data progress with the same base identity.
+`--layer-limit` is an explicit debugging prefix, never a full-model result.
+Full-model 32K training qualification is in progress; see the experiment results
+before relying on this as a qualified configuration.
+
 Router weights default to BF16 for random model construction; `Config(router_weight_dtype=torch.float32)` opts into FP32. Checkpoint import preserves source router storage by default (BF16 in GLM-5.3-Flash). `build_model(router_weight_dtype=torch.float32)` or the real-text recipe’s `--router-weight-dtype fp32` explicitly widens only router weights. Quickstart accepts `router_weight_dtype="float32"`. Routing logits remain FP32.

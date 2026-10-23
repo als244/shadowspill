@@ -2,7 +2,7 @@
 
     python -m workloads.recipes.text.prepare_data --tokenizer <name or path> \\
         --dataset <hub dataset> --files <file pattern> --out <directory> \\
-        [--shards N] [--text-column text] [--val-tokens N]
+        [--revision REV] [--shards N] [--text-column text] [--val-tokens N]
 
 Reads ``--shards`` parquet files of the dataset -- ``--files`` names them, with
 ``{}`` for the shard's index, formatted as Python does -- tokenizes the text
@@ -29,11 +29,14 @@ from typing import Any
 import numpy as np
 import pyarrow.parquet as pq
 
+from workloads.recipes.text.tokenizer import tokenizer_identity
+
 
 def arguments() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     parser.add_argument("--tokenizer", required=True)
     parser.add_argument("--dataset", required=True)
+    parser.add_argument("--revision", help="Dataset commit or tag on the Hub")
     parser.add_argument("--files", required=True)
     parser.add_argument("--out", required=True, type=Path)
     parser.add_argument("--shards", type=int, default=1)
@@ -133,6 +136,12 @@ def write_meta(
         "train_tokens": counts["train_tokens"],
         **extra,
     }
+    directory = Path(name)
+    if all(
+        (directory / file).is_file()
+        for file in ("tokenizer.json", "tokenizer_config.json")
+    ):
+        meta["tokenizer_sha256"] = tokenizer_identity(directory)
     (out / "meta.json").write_text(json.dumps(meta, indent=2) + "\n")
     return meta
 
@@ -145,7 +154,8 @@ def main() -> None:
     tokenizer = AutoTokenizer.from_pretrained(args.tokenizer)
     files = [args.files.format(shard) for shard in range(args.shards)]
     downloads = (
-        hf_hub_download(args.dataset, name, repo_type="dataset") for name in files
+        hf_hub_download(args.dataset, name, repo_type="dataset", revision=args.revision)
+        for name in files
     )
     counts = tokenize(
         tokenizer,
@@ -154,7 +164,14 @@ def main() -> None:
         text_column=args.text_column,
         val_tokens=args.val_tokens,
     )
-    meta = write_meta(args.out, tokenizer, args.tokenizer, counts, dataset=args.dataset)
+    meta = write_meta(
+        args.out,
+        tokenizer,
+        args.tokenizer,
+        counts,
+        dataset=args.dataset,
+        revision=args.revision,
+    )
     print(json.dumps(meta, indent=2))
     print(f"done in {counts['seconds']:.0f}s")
 
