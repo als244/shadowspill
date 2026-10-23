@@ -94,14 +94,18 @@ def test_device_only_registered_optimizer_uses_fake_contract() -> None:
 
     assert captured.update is not None
     assert "mlops.adamw_.default" in captured.update.operator_targets
-    # Everything the update computes with is on the device. A hyperparameter
-    # is not: it is a scalar the update reads and passes to its kernel, so it
-    # stays on the host, where writing the next step's value copies nothing.
+    # Hyperparameters and the integral step counter are CPU kernel arguments.
+    # Only parameter, gradient and moment payloads enter the execution pool.
     for binding in captured.bindings:
         expected = (
-            "cpu" if binding.role is OptimizerTensorRole.HYPERPARAMETER else "cuda"
+            "cpu" if (
+                binding.role is OptimizerTensorRole.HYPERPARAMETER
+                or binding.name == "optimizer.weight.step"
+            ) else "cuda"
         )
         assert binding.tensor.device.type == expected
+        if binding.name == "optimizer.weight.step":
+            assert binding.mutable and not binding.spillable
 
 
 def test_state_kept_at_another_precision_is_captured_at_it() -> None:

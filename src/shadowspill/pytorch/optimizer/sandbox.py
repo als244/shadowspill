@@ -181,7 +181,7 @@ def fake_device_optimizer(
     optimizer: torch.optim.Optimizer,
     name_by_id: Mapping[int, str],
 ) -> tuple[torch.optim.Optimizer, dict[int, str]]:
-    """Replace serializable optimizer tensors with FakeTensor CUDA values.
+    """Replace optimizer payloads with fake CUDA values, retaining CPU counters.
 
     PyTorch's optimizer protocol defines parameters through ``param_groups``
     and per-parameter tensors through ``state``.  Restricting conversion to
@@ -204,12 +204,25 @@ def fake_device_optimizer(
             return existing
         if value.layout is not torch.strided:
             raise CaptureError("optimizer fake capture requires strided tensors")
+        # Integral CPU control values (for example a custom op's step argument)
+        # stay on the host. Floating payloads retain device execution geometry,
+        # including scalar moments and torch.optim's tensor bias correction.
         with mode:
             raw = torch.empty_strided(
                 tuple(value.shape),
                 tuple(value.stride()),
                 dtype=value.dtype,
-                device=DEVICE_TYPE,
+                device=(
+                    "cpu"
+                    if (
+                        not parameter
+                        and value.device.type == "cpu"
+                        and value.ndim == 0
+                        and not value.is_floating_point()
+                        and not value.is_complex()
+                    )
+                    else DEVICE_TYPE
+                ),
             )
             result: torch.Tensor
             if parameter:

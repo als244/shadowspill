@@ -22,6 +22,7 @@ import torch.distributed as dist
 from torch import nn
 
 from shadowspill.pytorch import ProfilingOptions
+from shadowspill.runtime.occupancy import live_allocations
 from shadowspill.training import Distributed, Trainer
 from shadowspill.training.backends import ShadowSpill
 from shadowspill.training.observations import parameter_norms
@@ -278,6 +279,22 @@ def run(args):
                         torch.testing.assert_close(value, original, rtol=0, atol=0)
                         assert value._version == version
                         assert value.data_ptr() == pointer
+                    if args.optimizer == "mlops":
+                        call = trainer._execution.call
+                        bindings = call._executor.optimizer_state.current_bindings()
+                        counters = {
+                            name: binding.tensor
+                            for name, binding in bindings.items()
+                            if name.startswith("optimizer.") and name.endswith(".step")
+                        }
+                        assert counters and all(
+                            value.device.type == "cpu" for value in counters.values()
+                        )
+                        assert not set(counters).intersection(
+                            item.name
+                            for item in call._executor.run.lowered.optimizer_objects
+                        )
+                        log("host_counter_placement_checked", counters=len(counters))
                     report = trainer.plan
                     assert report.execution_device == local_rank
                     assert report.program.devices[0].index == local_rank
@@ -357,6 +374,16 @@ def run(args):
                             loss.backward()
                         reference_optimizer.step()
                         result = trainer.step(data(rank, step))
+                        if args.optimizer == "mlops":
+                            assert all(
+                                value.item() == step + 1 for value in counters.values()
+                            )
+                            assert all(
+                                item.object_id is None
+                                for item in live_allocations(
+                                    backend.runtime, "execution"
+                                )
+                            )
                         if args.parameter_metrics:
                             assert result.parameter_metrics
                             assert all(

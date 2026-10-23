@@ -9,6 +9,7 @@ import torch
 from torch import nn
 
 from qualification.profiling import CORRECTNESS_PROFILING
+from shadowspill.runtime.occupancy import live_allocations
 from shadowspill.training import Forward, Trainer
 from shadowspill.training.backends import ShadowSpill
 
@@ -175,6 +176,18 @@ def test_mutable_buffer_survives_diagnostics_and_repeated_training(tmp_path):
         trainer.prepare(batch)
         call = trainer._execution.call
         initial = call.state_dict()
+        optimizer_state = call._executor.optimizer_state
+        counters = {
+            name: binding.tensor
+            for name, binding in optimizer_state.current_bindings().items()
+            if name.startswith("optimizer.") and name.endswith(".step")
+        }
+        assert counters and all(
+            value.device.type == "cpu" for value in counters.values()
+        )
+        assert not set(counters).intersection(
+            item.name for item in call._executor.run.lowered.optimizer_objects
+        )
         cpu_rng = torch.get_rng_state()
         device_rng = torch.cuda.get_rng_state()
         diagnostic = trainer.diagnose(batch, directory=tmp_path / "startup")
@@ -202,6 +215,31 @@ def test_mutable_buffer_survives_diagnostics_and_repeated_training(tmp_path):
             assert state["counter"].item() == step
             for name, value in reference.state_dict().items():
                 torch.testing.assert_close(state[name], value, rtol=2e-4, atol=2e-5)
+            assert all(value.item() == step for value in counters.values())
+            assert all(
+                item.object_id is None
+                for item in live_allocations(backend.runtime, "execution")
+            )
+        checkpoint = trainer.save(tmp_path / "host-counter-checkpoint")
+        trainer.step(batch)
+        expected_state = call.state_dict()
+        trainer.load(checkpoint)
+        assert all(value.item() == 3 for value in counters.values())
+        trainer.step(batch)
+        actual_leaves, actual_tree = torch.utils._pytree.tree_flatten(call.state_dict())
+        expected_leaves, expected_tree = torch.utils._pytree.tree_flatten(
+            expected_state
+        )
+        assert actual_tree == expected_tree
+        for actual, expected in zip(actual_leaves, expected_leaves, strict=True):
+            if isinstance(actual, torch.Tensor):
+                torch.testing.assert_close(actual, expected, rtol=0, atol=0)
+            else:
+                assert actual == expected
+        assert all(
+            item.object_id is None
+            for item in live_allocations(backend.runtime, "execution")
+        )
 
 
 class RandomNetwork(Network):
@@ -235,12 +273,13 @@ def test_first_stochastic_update_is_independent_of_preparation_and_diagnostics(
     }
     results = []
     with ShadowSpill(
-        device="cuda:0", execution_gib=2, spill_gib=1,
-        artifact_store=tmp_path / "artifacts", partition="whole",
+        device="cuda:0",
+        execution_gib=2,
+        spill_gib=1,
+        artifact_store=tmp_path / "artifacts",
+        partition="whole",
         search_options=SearchOptions(
-            algorithm=PressureFit(
-                PressureFitOptions(resolution_options=(Fraction(0),))
-            )
+            algorithm=PressureFit(PressureFitOptions(resolution_options=(Fraction(0),)))
         ),
     ) as backend:
         for ordinal, (profile_warmup, diagnostic_warmup) in enumerate(
@@ -250,10 +289,14 @@ def test_first_stochastic_update_is_independent_of_preparation_and_diagnostics(
                 CORRECTNESS_PROFILING, warmup_iterations=profile_warmup
             )
             with Trainer(
-                copy.deepcopy(source), objective=objective, optimizer=AdamW,
+                copy.deepcopy(source),
+                objective=objective,
+                optimizer=AdamW,
                 optimizer_args={
-                    "lr": 0.001, "gradient_dtype": "parameter",
-                    "opt_state_dtype": dtype, "parameter_rounding": "stochastic",
+                    "lr": 0.001,
+                    "gradient_dtype": "parameter",
+                    "opt_state_dtype": dtype,
+                    "parameter_rounding": "stochastic",
                     "opt_state_rounding": "stochastic",
                 },
                 backend=backend,
@@ -266,7 +309,8 @@ def test_first_stochastic_update_is_independent_of_preparation_and_diagnostics(
                 assert torch.equal(torch.cuda.get_rng_state(backend.device), device_rng)
                 if diagnostic_warmup is not None:
                     trainer.diagnose(
-                        batch, directory=tmp_path / f"diagnostic-{ordinal}",
+                        batch,
+                        directory=tmp_path / f"diagnostic-{ordinal}",
                         warmup=diagnostic_warmup,
                     )
                     assert torch.equal(torch.get_rng_state(), cpu_rng)
