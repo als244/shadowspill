@@ -41,7 +41,7 @@ def main(
         Model,
         config=checkpoint.config,
         dtype="bfloat16",
-        lora={"rank": 16, "alpha": 32},
+        lora={"rank": 32, "alpha": 32},
     )
     trainer = Trainer(
         model,
@@ -68,7 +68,7 @@ def main(
             run_dir=run_dir,
             config={
                 "model": "Qwen3.5-35B-A3B",
-                "lora_rank": 16,
+                "lora_rank": 32,
                 "sequence_length": 32768,
                 "sequences_per_step": 8,
             },

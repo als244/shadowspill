@@ -210,8 +210,8 @@ def test_preset_lora_defaults_are_configure_loras_own():
     setup, _, _ = text.recipe(parser, args)
     trainable = setup(device=torch.device("cuda:0"))["metadata"]["trainable"]
     assert (trainable["rank"], trainable["alpha"], trainable["factor_dtype"]) == (
-        16,
-        16.0,
+        32,
+        32.0,
         "bfloat16",
     )
 

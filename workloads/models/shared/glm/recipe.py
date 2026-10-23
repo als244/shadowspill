@@ -31,7 +31,7 @@ def experiment(
     sequence_length=1024,
     sequences_per_step=8,
     sequences_per_microbatch=(1, 2, 4),
-    lora_rank=16,
+    lora_rank=32,
     lora_alpha=32.0,
     lora_dtype="bfloat16",
     lora_head=False,

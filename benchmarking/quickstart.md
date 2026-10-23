@@ -699,7 +699,7 @@ embeddings, router, normalization, and shared experts remain frozen by default.
 | Flag | Default | Meaning |
 | --- | --- | --- |
 | `--lora` | off | Train LoRA factors instead of all base weights. |
-| `--lora-rank`, `--lora-alpha` | 16, 16 | Factor rank and scaling numerator. |
+| `--lora-rank`, `--lora-alpha` | 32, 32 | Factor rank and scaling numerator. |
 | `--lora-dtype` | `bfloat16` | Factor storage/compute dtype; `--model-dtype` still controls the base. |
 | `--lora-target MODULE_GLOB` | preset targets | Repeat to replace the default target selection. |
 | `--lora-head frozen\|lora\|full` | `frozen` | Head trainability. |
@@ -715,7 +715,7 @@ each is passed to it as `lora_rank`, `lora_alpha` or `lora_dtype` beside
 `--factory-args`, and a factory that does not take those names is refused.
 The [GLM-5.3-Flash factory](../workloads/models/glm53_flash/quickstart.py) and
 [GLM-5.3 factory](../workloads/models/glm53/quickstart.py) take all three. Both
-default to rank-16 BF16 LoRA factors, alpha 32, FP32 accumulated gradients,
+default to rank-32 BF16 LoRA factors, alpha 32, FP32 accumulated gradients,
 and BF16 Adam moments.
 
 For data-parallel text presets and supporting factories, `--distributed

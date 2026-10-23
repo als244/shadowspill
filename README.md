@@ -113,7 +113,7 @@ trainer.close()  # Release the callable and the pools this trainer opened.
 <details>
 <summary><strong>Qwen3.5-35B-A3B: LoRA at 32K</strong></summary>
 
-Start from a local Hugging Face checkpoint and train rank-16 adapters on the
+Start from a local Hugging Face checkpoint and train rank-32 adapters on the
 attention projections and routed experts. The base, embeddings, norms and output
 head stay frozen. Each update contains eight 32K-token sequences. The checkpoint
 initializer loads base weights, rebuilds rotary buffers and initializes the
@@ -198,7 +198,7 @@ model = build_on_meta(
     Model,
     config=checkpoint.config,
     dtype="bfloat16",
-    lora={"rank": 16, "alpha": 32},
+    lora={"rank": 32, "alpha": 32},
 )
 trainer = Trainer(
     model,
@@ -225,7 +225,7 @@ if wandb_project is not None:
         run_dir=run_dir,
         config={
             "model": "Qwen3.5-35B-A3B",
-            "lora_rank": 16,
+            "lora_rank": 32,
             "sequence_length": 32768,
             "sequences_per_step": 8,
         },

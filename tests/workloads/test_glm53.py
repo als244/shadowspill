@@ -40,7 +40,7 @@ def test_normal_glm_architecture_and_lora_defaults_are_distinct_from_flash():
     assert model.layers[0].self_attn.kv_a_proj_with_mqa.out_features == 128
     assert all(p.dtype == torch.bfloat16 for p in model.parameters() if p.requires_grad)
     defaults = inspect.signature(experiment).parameters
-    assert defaults["lora_rank"].default == 16
+    assert defaults["lora_rank"].default == 32
     assert defaults["lora_dtype"].default == "bfloat16"
     assert defaults["grad_dtype"].default == "float32"
 

@@ -50,6 +50,7 @@ class Config:
     swiglu_limit: float = 10.0
     initializer_range: float = 0.02
     dtype: torch.dtype = torch.bfloat16
+    router_weight_dtype: torch.dtype = torch.bfloat16
     expert_storage: str = "bf16"
     gemm_precision: str = "bf16"
     lora_rank: int = 0
@@ -58,6 +59,8 @@ class Config:
     lora_head: bool = False
 
     def __post_init__(self):
+        if self.router_weight_dtype not in (torch.bfloat16, torch.float32):
+            raise ValueError("router_weight_dtype must be BF16 or FP32")
         if self.dtype != torch.bfloat16:
             raise ValueError(
                 "The GLM sparse-attention implementation currently requires BF16"

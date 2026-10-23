@@ -97,7 +97,9 @@ class MoE(nn.Module):
             c.hidden_size,
             c.moe_intermediate_size,
         )
-        router = torch.empty(experts, hidden, device=device, dtype=torch.float32)
+        router = torch.empty(
+            experts, hidden, device=device, dtype=c.router_weight_dtype
+        )
         nn.init.normal_(router, std=c.initializer_range)
         self.router = nn.Parameter(router)
         self.register_buffer(

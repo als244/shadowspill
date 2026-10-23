@@ -15,8 +15,8 @@ from workloads.models.shared.routed_lora import add_factors
 def configure_lora(
     model,
     *,
-    rank=16,
-    alpha=16.0,
+    rank=32,
+    alpha=32.0,
     factor_dtype="bfloat16",
     targets=None,
     head="frozen",

@@ -437,14 +437,14 @@ def _parser() -> argparse.ArgumentParser:
         "--lora-rank",
         type=int,
         default=None,
-        help="LoRA factor rank; the presets' own 16 when not given. With"
+        help="LoRA factor rank; the presets' own 32 when not given. With"
         " --factory it reaches the factory as lora_rank",
     )
     parser.add_argument(
         "--lora-alpha",
         type=float,
         default=None,
-        help="LoRA scaling numerator; the presets' own 16 when not given."
+        help="LoRA scaling numerator; the presets' own 32 when not given."
         " With --factory it reaches the factory as lora_alpha",
     )
     parser.add_argument(

@@ -165,7 +165,7 @@ The direct importer can declare a frozen compressed base with trainable factors:
 
 ```python
 model = source.build_model(
-    lora_rank=16,
+    lora_rank=32,
     lora_alpha=32,
     lora_factor_dtype=torch.bfloat16,
     lora_head=False,
@@ -419,3 +419,4 @@ at execution. Architecture, quantized checkpoint mappings and task partitioning
 remain in this workload. The checkpoint reader and the compressed dense
 projections come from `mlops.sequential_moe.precision`; the MoE itself is
 `mlops.moe` / `expert_lora`.
+Router weights default to BF16 for random model construction; `Config(router_weight_dtype=torch.float32)` opts into FP32. Checkpoint import preserves source router storage by default (BF16 in GLM-5.3-Flash). `build_model(router_weight_dtype=torch.float32)` or the real-text recipe’s `--router-weight-dtype fp32` explicitly widens only router weights. Quickstart accepts `router_weight_dtype="float32"`. Routing logits remain FP32.
