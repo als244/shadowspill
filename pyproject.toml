@@ -11,7 +11,7 @@ requires-python = ">=3.12"
 dependencies = ["matplotlib>=3.9", "numpy>=2.0"]
 
 [project.optional-dependencies]
-pytorch = ["torch>=2.13,<2.14"]
+pytorch = ["torch>=2.13,<2.14", "nvidia-ml-py>=13.580,<14"]
 training = [
   "huggingface-hub>=1.0",
   "matplotlib>=3.9",

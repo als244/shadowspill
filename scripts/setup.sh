@@ -174,6 +174,9 @@ print(f"GPU: {torch.cuda.get_device_name(torch.cuda.current_device())}")
 from importlib.metadata import version
 
 import mlops  # noqa: F401  -- the operation library installed alongside
+import pynvml  # noqa: F401  -- whole-device memory sampling
+
+print(f"NVML bindings: {version('nvidia-ml-py')}")
 
 print(f"mlops: {version('mlops')}")
 PY

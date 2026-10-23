@@ -1,17 +1,48 @@
-"""Publish per-GPU throughput plots, a four-panel summary, and a linked table."""
+"""Publish matched throughput curves and grouped runtime bars for three phases."""
 
 from __future__ import annotations
 
 import argparse
 import csv
-import hashlib
 import html
 import json
 import math
 from pathlib import Path
 
 from baselines.common import write_json
-from baselines.moe_layer.config import Shape
+from baselines.moe_layer.config import MODEL_SHAPES, summarize
+from baselines.moe_layer.implementations.registry import BACKENDS
+
+PHASES = {"forward": "Forward", "backward": "Backward", "total": "Forward + backward"}
+
+
+def phase_timings(result, attempt):
+    """Recover event timings from legacy raw samples without mixing in wall time."""
+    if "phase_timings" in result:
+        return result["phase_timings"]
+    ranks = [
+        json.loads(path.read_text())
+        for path in sorted(attempt.glob("rank-*/result.json"))
+    ]
+    phases = {}
+    for phase, key in (
+        ("forward", "forward_gpu_seconds"),
+        ("backward", "backward_gpu_seconds"),
+        ("total", "gpu_seconds"),
+    ):
+        if ranks and all(
+            all(key in sample for sample in rank["samples"]) for rank in ranks
+        ):
+            timing = summarize(
+                [[sample[key] for sample in rank["samples"]] for rank in ranks]
+            )
+            phases[phase] = {
+                **timing,
+                "effective_tflops_per_gpu": result["request"]["flops_per_rank"][phase]
+                / timing["median_seconds"]
+                / 1e12,
+            }
+    return phases
 
 
 def collect(root):
@@ -28,93 +59,244 @@ def collect(root):
             else {"status": "running_or_interrupted"}
         )
         backend, precision, training, tokens = case.relative_to(root / "cases").parts
-        row = {
-            "backend": backend,
-            "precision": precision,
-            "training": training,
-            "tokens_per_rank": int(tokens.removeprefix("tokens-")),
-            "status": outcome["status"],
-            "path": str(attempt.relative_to(root)),
-        }
+        row = dict(
+            backend=backend,
+            precision=precision,
+            training=training,
+            tokens_per_rank=int(tokens.removeprefix("tokens-")),
+            status=outcome["status"],
+            path=str(attempt.relative_to(root)),
+        )
+        if row["status"] != "completed":
+            failures = [
+                json.loads(p.read_text()) for p in attempt.glob("rank-*/failure.json")
+            ]
+            row["failure_stages"] = ", ".join(
+                sorted({f.get("stage", "unknown") for f in failures})
+            )
         if row["status"] == "completed":
             result = json.loads((attempt / "result.json").read_text())
             if not result["performance_result"]:
                 continue
+            request = result["request"]
             row.update(
-                world_size=result["request"]["world_size"],
-                lora_rank=result["request"]["shape"]["lora_rank"],
-                **{
-                    key: result["request"]["shape"][key]
-                    for key in ("width", "hidden", "experts", "top_k")
-                },
-                milliseconds=result["timing"]["median_seconds"] * 1000,
-                tflops_per_gpu=result["effective_tflops_per_gpu"],
-                gpu_event_tflops_per_gpu=result["gpu_event_tflops_per_gpu"],
+                world_size=request["world_size"],
+                **request["shape"],
+                wall_milliseconds=result["timing"]["median_seconds"] * 1000,
+                wall_tflops_per_gpu=result["effective_tflops_per_gpu"],
                 peak_allocated_gib=result["peak_allocated_bytes"] / 2**30,
-                spread_min_seconds=result["timing"]["min_seconds"],
-                spread_max_seconds=result["timing"]["max_seconds"],
             )
+            for phase, timing in phase_timings(result, attempt).items():
+                row.update(
+                    {
+                        f"{phase}_milliseconds": timing["median_seconds"] * 1000,
+                        f"{phase}_tflops_per_gpu": timing["effective_tflops_per_gpu"],
+                        f"{phase}_min_milliseconds": timing["min_seconds"] * 1000,
+                        f"{phase}_max_milliseconds": timing["max_seconds"] * 1000,
+                    }
+                )
         rows.append(row)
+    order = {backend: index for index, backend in enumerate(BACKENDS)}
     return sorted(
         rows,
         key=lambda row: (
             row["precision"],
             row["training"],
             row["tokens_per_rank"],
-            {"sonicmoe": 0, "quackmoe": 1}[row["backend"]],
+            order.get(row["backend"], len(order)),
         ),
     )
 
 
-def draw_curves(axis, rows, *, precision, training, tokens):
-    available = False
-    for backend, color, marker in (
-        ("sonicmoe", "#3268db", "o"),
-        ("quackmoe", "#008b83", "D"),
-    ):
-        points = sorted(
-            [
-                row
-                for row in rows
-                if row["precision"] == precision
-                and row["training"] == training
-                and row["backend"] == backend
-                and row["status"] == "completed"
-            ],
-            key=lambda row: row["tokens_per_rank"],
-        )
-        if not points:
+def collect_memory(root, rows):
+    """Flat per-rank/per-phase memory table, retaining allocator/device distinctions."""
+    memory_rows = []
+    for row in rows:
+        attempt = root / row["path"]
+        if row["status"] == "completed":
+            result = json.loads((attempt / "result.json").read_text())
+            measurements = result.get("memory_by_rank", {})
+        else:
+            # A validation failure must not discard completed memory observations.
+            measurements = {
+                str(int(p.parent.name.removeprefix("rank-"))): json.loads(
+                    p.read_text()
+                )["memory"]
+                for p in attempt.glob("rank-*/measurements.json")
+            }
+        for rank, phases in measurements.items():
+            for phase, values in phases.items():
+                item = {
+                    key: row[key]
+                    for key in ("backend", "precision", "training", "tokens_per_rank")
+                }
+                item.update(rank=int(rank), phase=phase, status=row["status"])
+                for key, value in values.items():
+                    if key in ("before", "after"):
+                        item.update(
+                            {
+                                f"{key}_{name.removesuffix('_bytes')}_gib": count
+                                / 2**30
+                                for name, count in value.items()
+                            }
+                        )
+                    elif key.endswith("_bytes"):
+                        item[key.removesuffix("_bytes") + "_gib"] = (
+                            None if value is None else value / 2**30
+                        )
+                    else:
+                        item[key] = value
+                memory_rows.append(item)
+    return memory_rows
+
+
+def validate_inputs(root, rows):
+    """Reject a comparison if matching ranks received different seeded data."""
+    seen = {}
+    for row in rows:
+        if row["status"] != "completed":
             continue
-        available = True
-        world = points[0]["world_size"]
-        line = (
-            "DP · SonicMoE (1 GPU)"
-            if backend == "sonicmoe"
-            else f"EP · QuackMoE ({world} GPUs)"
-        )
-        axis.plot(
-            [point["tokens_per_rank"] for point in points],
-            [point["tflops_per_gpu"] for point in points],
-            label=line,
-            color=color,
-            marker=marker,
-            linewidth=2.5,
-            markersize=7,
-        )
-    axis.set_xscale("log", base=2)
-    axis.set_xlim(min(tokens) / 1.12, max(tokens) * 1.12)
-    axis.set_xticks(
-        tokens,
-        [f"{token // 1024}K" if token % 1024 == 0 else str(token) for token in tokens],
+        for path in (root / row["path"]).glob("rank-*/request.json"):
+            request = json.loads(path.read_text())
+            if "input_fingerprint" not in request:
+                continue  # Legacy results predate the explicit fingerprint record.
+            key = (
+                request["seed"],
+                request["rank"],
+                request["tokens"],
+                request["shape"]["width"],
+            )
+            value = (
+                request["input_seed"],
+                request["gradient_seed"],
+                request["input_fingerprint"],
+                request["gradient_fingerprint"],
+            )
+            if key in seen and seen[key] != value:
+                raise ValueError(f"seeded DP/EP input mismatch for {key}: {path}")
+            seen[key] = value
+    return len(seen)
+
+
+def plot_options(root, rows):
+    path = root / "manifest.json"
+    manifest = json.loads(path.read_text()) if path.exists() else {}
+    options = [
+        item.get("options", {})
+        for item in manifest.get("backend_manifests", {"sweep": manifest}).values()
+    ]
+    tokens = sorted(
+        {row["tokens_per_rank"] for row in rows}
+        | {token for item in options for token in item.get("tokens", [])}
     )
+    tokens = tokens or [2048, 4096, 8192, 16384, 32768, 65536]
+    selected = {row["backend"] for row in rows} | {
+        backend for item in options for backend in item.get("backends", [])
+    }
+    backends = [backend for backend in BACKENDS if backend in selected]
+    backends = backends or ["sonicmoe", "deepep", "hybridep", "ncclep"]
+    dimensions = ("width", "hidden", "experts", "top_k")
+    shapes = {tuple(row[key] for key in dimensions) for row in rows if "width" in row}
+    if len(shapes) > 1:
+        raise ValueError("a plot comparison requires one shared MoE layer shape")
+    if shapes:
+        shape = next(iter(shapes))
+    else:
+        entry = options[0] if options else {}
+        preset = MODEL_SHAPES[entry.get("model", "glm53-flash")]
+        shape = tuple(
+            entry.get(key) or default
+            for key, default in zip(dimensions, preset, strict=True)
+        )
+    ranks = {
+        row["lora_rank"]
+        for row in rows
+        if row["training"] == "lora" and "lora_rank" in row
+    }
+    ranks |= {item["lora_rank"] for item in options if "lora_rank" in item}
+    if len(ranks) > 1:
+        raise ValueError("a plot comparison requires one shared LoRA rank")
+    return tokens, backends, shape, next(iter(ranks), 32)
+
+
+def draw_panel(axis, rows, *, precision, training, tokens, backends, phase, metric):
+    labels = [
+        f"{token // 1024}K" if token % 1024 == 0 else str(token) for token in tokens
+    ]
+    width = 0.82 / len(backends)
+    available = False
+    for index, backend in enumerate(backends):
+        entry = BACKENDS[backend]
+        points = {
+            row["tokens_per_rank"]: row
+            for row in rows
+            if row["precision"] == precision
+            and row["training"] == training
+            and row["backend"] == backend
+        }
+        key = (
+            f"{phase}_{'tflops_per_gpu' if metric == 'throughput' else 'milliseconds'}"
+        )
+        values = [points.get(token, {}).get(key, math.nan) for token in tokens]
+        available |= any(math.isfinite(value) for value in values)
+        if metric == "throughput":
+            axis.plot(
+                tokens,
+                values,
+                label=entry.label,
+                color=entry.color,
+                marker=entry.marker,
+                linewidth=2.2,
+                markersize=6,
+            )
+        else:
+            positions = [
+                group + (index - (len(backends) - 1) / 2) * width
+                for group in range(len(tokens))
+            ]
+            axis.bar(
+                positions,
+                values,
+                width=width * 0.92,
+                label=entry.label,
+                color=entry.color,
+            )
+            for position, token in zip(positions, tokens, strict=True):
+                state = points.get(token, {}).get("status")
+                if state and state != "completed":
+                    label = (
+                        "OOM" if state == "out_of_memory" else state.replace("_", " ")
+                    )
+                    axis.text(
+                        position,
+                        0.02,
+                        label,
+                        transform=axis.get_xaxis_transform(),
+                        rotation=90,
+                        ha="center",
+                        va="bottom",
+                        fontsize=8,
+                        color=entry.color,
+                    )
+    if metric == "throughput":
+        axis.set_xscale("log", base=2)
+        axis.set_xlim(min(tokens) / 1.15, max(tokens) * 1.15)
+        axis.set_xticks(tokens, labels)
+    else:
+        axis.set_xticks(range(len(tokens)), labels)
+        axis.set_xlim(-0.55, len(tokens) - 0.45)
     axis.set_ylim(bottom=0)
     axis.grid(axis="y", color="#e3e8ef", linewidth=0.8)
     axis.set_axisbelow(True)
     if not available:
         axis.text(
-            0.5, 0.5, "Measurements pending", transform=axis.transAxes, ha="center"
+            0.5,
+            0.5,
+            "Measurements pending",
+            transform=axis.transAxes,
+            ha="center",
+            color="#617087",
         )
-    return available
 
 
 def main(argv=None):
@@ -124,46 +306,36 @@ def main(argv=None):
     args = parser.parse_args(argv)
     root = args.results.resolve()
     rows = collect(root)
-    tokens = sorted({row["tokens_per_rank"] for row in rows})
-    manifest_path = root / "manifest.json"
-    if manifest_path.exists():
-        manifest = json.loads(manifest_path.read_text())
-        manifests = manifest.get("backend_manifests", {"sweep": manifest})
-        requested = {
-            token
-            for entry in manifests.values()
-            for token in entry.get("options", {}).get("tokens", [])
-        }
-        tokens = sorted(set(tokens) | requested)
-    tokens = tokens or [4096, 8192, 16384, 32768, 65536, 131072]
-    ranks = sorted(
-        {
-            row["lora_rank"]
-            for row in rows
-            if row["training"] == "lora" and "lora_rank" in row
-        }
-    )
-    rank_label = ", ".join(map(str, ranks)) if ranks else "16"
-    shapes = {
-        tuple(row[key] for key in ("width", "hidden", "experts", "top_k"))
-        for row in rows
-        if "width" in row
-    }
-    if len(shapes) > 1:
-        raise ValueError("a plot comparison requires one shared MoE layer shape")
-    shape = Shape(*next(iter(shapes))) if shapes else Shape()
+    validated_input_groups = validate_inputs(root, rows)
+    memory_rows = collect_memory(root, rows)
+    tokens, backends, (width, hidden, experts, top_k), rank = plot_options(root, rows)
     shape_label = (
-        f"{shape.experts} experts · top-{shape.top_k} · "
-        rf"$d_{{\mathrm{{model}}}}={shape.width}$ · "
-        rf"$d_{{\mathrm{{FFN}}}}={shape.hidden}$"
+        f"{experts} experts · top-{top_k} · model width {width} · "
+        f"expert hidden {hidden} · LoRA rank {rank}"
     )
-    write_json(root / "results.json", {"rows": rows})
+    write_json(
+        root / "results.json",
+        {
+            "rows": rows,
+            "memory_by_rank_and_phase": memory_rows,
+            "validated_input_groups": validated_input_groups,
+            "plot_denominator": (
+                "GPU events; median of per-iteration maximum across ranks"
+            ),
+        },
+    )
     if rows:
         fields = list(dict.fromkeys(key for row in rows for key in row))
-        with (root / "results.csv").open("w") as stream:
+        with (root / "results.csv").open("w", newline="") as stream:
             writer = csv.DictWriter(stream, fieldnames=fields)
             writer.writeheader()
             writer.writerows(rows)
+    if memory_rows:
+        fields = list(dict.fromkeys(key for row in memory_rows for key in row))
+        with (root / "memory.csv").open("w", newline="") as stream:
+            writer = csv.DictWriter(stream, fieldnames=fields)
+            writer.writeheader()
+            writer.writerows(memory_rows)
     import matplotlib
 
     matplotlib.use("Agg")
@@ -171,243 +343,157 @@ def main(argv=None):
 
     plt.rcParams.update(
         {
-            "font.family": "STIXGeneral",
-            "mathtext.fontset": "stix",
-            "font.size": 14,
-            "axes.titlesize": 20,
-            "axes.labelsize": 16,
+            "font.family": "DejaVu Sans",
+            "font.size": 12,
             "axes.spines.top": False,
             "axes.spines.right": False,
             "axes.edgecolor": "#8190a5",
             "text.color": "#14263f",
             "axes.labelcolor": "#14263f",
-            "xtick.color": "#45566e",
-            "ytick.color": "#45566e",
             "savefig.facecolor": "white",
         }
     )
     figures = root / "figures"
     figures.mkdir(exist_ok=True)
     names = []
-    for precision, label in (("bf16", "BF16"), ("fp8_current", "FP8")):
-        for training, mode in (
-            ("full", "Full training"),
-            ("lora", f"LoRA · rank {rank_label}, BF16 adapters"),
-        ):
-            figure, axis = plt.subplots(figsize=(9.5, 6.2))
-            figure.subplots_adjust(left=0.12, right=0.97, top=0.76, bottom=0.23)
+    panels = [
+        ("bf16", "BF16", "full", "Full training"),
+        ("bf16", "BF16", "lora", f"LoRA (rank {rank})"),
+        ("fp8_current", "FP8", "full", "Full training"),
+        ("fp8_current", "FP8", "lora", f"LoRA (rank {rank})"),
+    ]
+    for metric in ("throughput", "runtime"):
+        for phase, phase_label in PHASES.items():
+            figure, axes = plt.subplots(
+                2, 2, figsize=(16, 11.5), sharex=True, sharey=True
+            )
+            figure.subplots_adjust(
+                left=0.085, right=0.98, top=0.78, bottom=0.17, hspace=0.28, wspace=0.14
+            )
             figure.suptitle(
-                "MoE layer · Router and expert FFNs",
-                x=0.12,
-                ha="left",
-                y=0.97,
-                fontsize=21,
+                f"MoE layer · {phase_label} · {metric}", y=0.975, fontsize=24
             )
-            figure.text(0.12, 0.89, shape_label, fontsize=15, color="#45566e")
+            figure.text(0.5, 0.925, shape_label, ha="center", fontsize=15)
+            unit = "tflops_per_gpu" if metric == "throughput" else "milliseconds"
+            value_key = f"{phase}_{unit}"
+            maximum = max(
+                (row[value_key] for row in rows if value_key in row), default=1
+            )
+            for index, (axis, (precision, label, training, mode)) in enumerate(
+                zip(axes.flat, panels, strict=True)
+            ):
+                draw_panel(
+                    axis,
+                    rows,
+                    precision=precision,
+                    training=training,
+                    tokens=tokens,
+                    backends=backends,
+                    phase=phase,
+                    metric=metric,
+                )
+                axis.set_title(
+                    f"({chr(97 + index)}) {label} · {mode}",
+                    loc="left",
+                    fontsize=17,
+                    pad=12,
+                )
+                axis.set_ylim(0, max(1, maximum * 1.12))
+                axis.tick_params(labelsize=13)
+            handles, labels = axes[0, 0].get_legend_handles_labels()
+            figure.legend(
+                handles,
+                labels,
+                loc="upper center",
+                bbox_to_anchor=(0.5, 0.89),
+                ncol=2,
+                frameon=False,
+                fontsize=15,
+            )
+            ylabel = (
+                "Effective TFLOP/s per GPU"
+                if metric == "throughput"
+                else "Runtime (ms)"
+            )
             figure.text(
-                0.12, 0.83, f"{label}   |   {mode}", fontsize=16, color="#45566e"
+                0.02, 0.48, ylabel, rotation="vertical", va="center", fontsize=18
             )
-            available = draw_curves(
-                axis, rows, precision=precision, training=training, tokens=tokens
-            )
-            axis.set_xlabel("Tokens per rank", labelpad=10)
-            axis.set_ylabel("Effective TFLOP/s per GPU", labelpad=9)
-            if available:
-                axis.legend(frameon=False, loc="best", fontsize=13)
+            figure.text(0.53, 0.11, "Tokens per rank", ha="center", fontsize=18)
             figure.text(
-                0.12,
-                0.105,
-                "Forward + backward · real top-k routing · "
-                "median wall time, slowest EP rank",
+                0.085,
+                0.065,
+                "GPU-event time · median of the slowest rank per iteration · "
+                "combined phase measured directly",
                 fontsize=11,
                 color="#617087",
             )
             figure.text(
-                0.12,
-                0.065,
-                "EP includes dispatch/combine. DP is single-GPU compute; "
-                "optimizer and DP gradient sync excluded.",
-                fontsize=10,
+                0.085,
+                0.035,
+                "EP includes dispatch/combine. DP measures replicated local compute. "
+                "Optimizer and DP gradient sync excluded.",
+                fontsize=11,
                 color="#617087",
             )
-            name = f"{precision}-{training}"
+            name = f"moe-layer-{phase}-{metric}"
             names.append(name)
             for extension in ("png", "pdf", "svg"):
                 figure.savefig(figures / f"{name}.{extension}", dpi=args.dpi)
             plt.close(figure)
-    figure, axes = plt.subplots(2, 2, figsize=(16, 12), sharex=True, sharey=True)
-    figure.subplots_adjust(
-        left=0.095, right=0.975, top=0.80, bottom=0.16, hspace=0.33, wspace=0.17
-    )
-    figure.suptitle("MoE layer · Router and expert FFNs", y=0.975, fontsize=27)
-    figure.text(0.5, 0.925, shape_label, ha="center", fontsize=20, color="#45566e")
-    max_tflops = max(
-        (row["tflops_per_gpu"] for row in rows if "tflops_per_gpu" in row),
-        default=1,
-    )
-    y_max = math.ceil(max_tflops * 1.08 / 100) * 100
-    legend = {}
-    for index, (axis, (precision, label, training, mode)) in enumerate(
-        zip(
-            axes.flat,
-            (
-                ("bf16", "BF16", "full", "Full training"),
-                ("bf16", "BF16", "lora", f"LoRA (rank {rank_label})"),
-                ("fp8_current", "FP8", "full", "Full training"),
-                ("fp8_current", "FP8", "lora", f"LoRA (rank {rank_label})"),
-            ),
-            strict=True,
-        )
-    ):
-        draw_curves(axis, rows, precision=precision, training=training, tokens=tokens)
-        axis.set_title(
-            f"({chr(97 + index)})  {label} · {mode}",
-            loc="left",
-            fontsize=21,
-            pad=16,
-        )
-        axis.set_ylim(0, y_max)
-        axis.tick_params(labelsize=17, pad=6)
-        handles, labels = axis.get_legend_handles_labels()
-        legend.update(zip(labels, handles, strict=True))
-    if legend:
-        figure.legend(
-            legend.values(),
-            legend.keys(),
-            loc="upper center",
-            bbox_to_anchor=(0.5, 0.895),
-            ncol=2,
-            frameon=False,
-            fontsize=18,
-            columnspacing=3,
-        )
-    figure.text(
-        0.025,
-        0.48,
-        "Effective TFLOP/s per GPU",
-        rotation="vertical",
-        va="center",
-        fontsize=22,
-    )
-    figure.text(0.535, 0.095, "Tokens per rank", ha="center", fontsize=22)
-    figure.text(
-        0.095,
-        0.052,
-        "Forward + backward · real top-k routing · median wall time, slowest EP rank",
-        fontsize=14,
-        color="#617087",
-    )
-    figure.text(
-        0.095,
-        0.027,
-        "EP includes dispatch/combine; DP excludes gradient sync. "
-        "No optimizer. LoRA adapters: BF16.",
-        fontsize=14,
-        color="#617087",
-    )
-    for extension in ("png", "pdf", "svg"):
-        figure.savefig(figures / f"moe-layer-four-panel.{extension}", dpi=args.dpi)
-    plt.close(figure)
     lines = [
-        "# MoE layer microbenchmark",
+        "# MoE layer results",
         "",
-        "[Open plots and table](index.html) · [Raw table](results.csv) · "
-        "[JSON](results.json) · [Source/configuration](manifest.json)",
+        shape_label,
         "",
-        "[Four-panel summary: PNG](figures/moe-layer-four-panel.png) · "
-        "[PDF](figures/moe-layer-four-panel.pdf) · "
-        "[SVG](figures/moe-layer-four-panel.svg)",
-        "",
-        f"Router plus expert FFNs: model dimension {shape.width}, expert FFN "
-        f"dimension {shape.hidden}, {shape.experts} experts, "
-        f"top-{shape.top_k} routing. "
-        "SonicMoE uses one GPU; QuackMoE's group size is shown in each plot. "
-        "TFLOP/s is per GPU.",
-        "",
-        "Forward/backward includes routing and EP dispatch/combine, but excludes "
-        "optimizer updates, DP gradient synchronization, and the replicated "
-        "EP router's optimizer-step reduction. FP8 uses E4M3 current per-row "
-        "scaling, BF16 activation transport, and BF16 LoRA adapters. "
-        "Gradients accumulate into FP32 parameters; SonicMoE BF16 autograd casts "
-        "can round intermediate weight gradients to BF16.",
-        "",
-        "Useful FLOPs count a multiply-add as two: "
-        "full training = 18 T K D H + 6 T D E; "
-        "LoRA = 12 T K D H + 4 T D E + 6 T K r (2D + 3H). "
-        "Padding, activation/routing elementwise work and internal "
-        "recomputation are excluded from the numerator.",
+        "Six figures show the same samples: three throughput line plots and "
+        "three grouped runtime bar plots. Each figure has BF16/FP8 rows and "
+        "full-training/LoRA columns. Missing results are not treated as zero.",
         "",
     ]
     for name in names:
-        lines += [f"[![{name}](figures/{name}.png)](figures/{name}.pdf)", ""]
+        lines += [
+            f"[{name}](figures/{name}.png) · [PDF](figures/{name}.pdf) · "
+            f"[SVG](figures/{name}.svg)",
+            "",
+        ]
     lines += [
-        "| Precision | Training | Backend | Tokens/rank | Status | "
-        "F+B ms | TFLOP/s/GPU | Peak PyTorch GiB | Raw evidence |",
-        "|---|---|---|---:|---|---:|---:|---:|---|",
+        "Values: [CSV](results.csv) · [JSON](results.json) · "
+        "[Per-rank memory](memory.csv). GPU event intervals "
+        "include launch gaps and communication dependencies. Wall-clock totals "
+        "remain in the table. Phase maxima can belong to different ranks; "
+        "combined runtime is measured directly, not calculated by adding medians.",
+        "",
+        "| Backend | Precision / training | Tokens/rank | Forward ms | "
+        "Backward ms | Combined ms | Status |",
+        "|---|---|---:|---:|---:|---:|---|",
     ]
     for row in rows:
-        metrics = [
-            f"{row[key]:.2f}" if key in row else "—"
-            for key in ("milliseconds", "tflops_per_gpu", "peak_allocated_gib")
+        values = [
+            f"{row[f'{phase}_milliseconds']:.3f}"
+            if f"{phase}_milliseconds" in row
+            else "—"
+            for phase in PHASES
         ]
         lines.append(
-            f"| {row['precision']} | {row['training']} | {row['backend']} | "
-            f"{row['tokens_per_rank']} | {row['status']} | {' | '.join(metrics)} | "
-            f"[logs/data]({row['path']}/) |"
+            f"| {BACKENDS[row['backend']].label} | "
+            f"{row['precision']} / {row['training']} | {row['tokens_per_rank']} | "
+            f"{' | '.join(values)} | [{row['status']}]({row['path']}/) |"
         )
     (root / "README.md").write_text("\n".join(lines) + "\n")
-    cards = "".join(
-        f'<a href="figures/{name}.pdf"><img src="figures/{name}.png" alt="{name}"></a>'
+    images = "\n".join(
+        f'<h2>{html.escape(name)}</h2><a href="figures/{name}.pdf">'
+        f'<img style="width:100%;max-width:1400px" src="figures/{name}.png"></a>'
         for name in names
     )
-    headers = [
-        "Precision",
-        "Mode",
-        "Backend",
-        "Tokens/rank",
-        "Status",
-        "F+B ms",
-        "TFLOP/s/GPU",
-        "Evidence",
-    ]
-    table = "".join(
-        "<tr>"
-        + "".join(
-            f"<td>{html.escape(str(value))}</td>"
-            for value in [
-                r["precision"],
-                r["training"],
-                r["backend"],
-                r["tokens_per_rank"],
-                r["status"],
-                f"{r['milliseconds']:.2f}" if "milliseconds" in r else "—",
-                f"{r['tflops_per_gpu']:.2f}" if "tflops_per_gpu" in r else "—",
-            ]
-        )
-        + f'<td><a href="{r["path"]}/console.log">log</a> · '
-        f'<a href="{r["path"]}/result.json">data</a></td></tr>'
-        for r in rows
-    )
     (root / "index.html").write_text(
-        (Path(__file__).parent / "index_header.html").read_text()
-        + cards
-        + "</div><table><tr>"
-        + "".join(f"<th>{x}</th>" for x in headers)
-        + "</tr>"
-        + table
-        + "</table>"
+        '<!doctype html><meta charset="utf-8"><title>MoE layer benchmark</title>'
+        '<body style="font-family:system-ui;margin:2rem">'
+        f"<h1>MoE layer benchmark</h1><p>{html.escape(shape_label)}</p>"
+        '<p><a href="results.csv">CSV</a> · <a href="results.json">JSON</a> · '
+        '<a href="memory.csv">Per-rank memory</a> · '
+        f'<a href="README.md">Case status and raw logs</a></p>{images}</body>'
     )
-    write_json(
-        root / "render-manifest.json",
-        {
-            "renderer_sha256": hashlib.sha256(Path(__file__).read_bytes()).hexdigest(),
-            "table_sha256": hashlib.sha256(
-                (root / "results.json").read_bytes()
-            ).hexdigest(),
-            "matplotlib": matplotlib.__version__,
-            "dpi": args.dpi,
-        },
-    )
+    print(f"Wrote six four-panel figures to {figures}")
 
 
 if __name__ == "__main__":

@@ -18,8 +18,9 @@ outside the tracked source files.
 ## Environment
 
 Three environments hold the trainers, and each engine the launcher starts
-names its own (`ENVIRONMENT` in its settings); the MoE layer benchmark
-names none and runs in any environment that holds its kernels
+names its own (`ENVIRONMENT` in its settings). The MoE layer runner chooses
+an interpreter per implementation: the MLOps environment for SonicMoE and
+QuackMoE, and `nvidia-training` for DeepEP, HybridEP, and NcclEP
 (`moe_layer/README.md`).
 
 `baselines/scripts/setup.sh` creates the `baselines` Conda environment:
@@ -198,7 +199,7 @@ and a corpus whose vocabulary exceeds the model's is refused.
 
 | Directory | Implementation | Qualification |
 |---|---|---|
-| [`moe_layer/`](moe_layer/README.md) | One Qwen MoE router/expert layer: SonicMoE DP1 versus QuackMoE EP8; BF16/FP8 and full/LoRA | Its own sweep, with `--tiny` as the smoke-test geometry: every case checks that its output and gradients are present and finite, the trained gradients float32, and under LoRA that no frozen weight has one |
+| [`moe_layer/`](moe_layer/README.md) | One Qwen- or GLM-shaped router/expert layer: SonicMoE DP8 (optional DP1), EP8 DeepEP / HybridEP / NcclEP, and optional QuackMoE; BF16/FP8 and full/LoRA | Its own sweep, with `--tiny` as the smoke-test geometry: every case checks that its output and gradients are present and finite, the trained gradients float32, and under LoRA that no frozen weight has one |
 | [`engines/shadowspill/`](engines/shadowspill/README.md) | ShadowSpill through `Trainer` over the `ShadowSpill` backend, full or LoRA, with the device and spill budgets (pinned host memory) as the configuration, a corpus and a checkpoint | Tiny cases whose every update is compared with the reference copy compiled whole (`PRECISION.md`) |
 | [`engines/fsdp2/`](engines/fsdp2/README.md) | Native PyTorch FSDP2, full or LoRA, with recompute, both activation offloaders, CPU offload, the torchao scenarios, a corpus and a checkpoint; local experts, no EP | As ShadowSpill's |
 | [`engines/deepspeed/`](engines/deepspeed/README.md) | DeepSpeed ZeRO stages 1 to 3, full or LoRA, with optimizer and parameter offload, activation checkpointing and CPU checkpointing, DeepCompile with its offloads, a corpus and a checkpoint | As ShadowSpill's, with and without DeepCompile |

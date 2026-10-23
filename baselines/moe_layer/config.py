@@ -9,7 +9,8 @@ class Shape:
     hidden: int = 768
     experts: int = 128
     top_k: int = 8
-    lora_rank: int = 16
+    lora_rank: int = 32
+    lora_alpha: float = 32.0
 
     def __post_init__(self):
         if min(asdict(self).values()) < 1 or self.top_k > self.experts:
@@ -54,3 +55,46 @@ def summarize(samples_by_rank):
         "min_seconds": min(maximum),
         "max_seconds": max(maximum),
     }
+
+
+MODEL_SHAPES = {
+    "qwen3-30b-a3b": (2048, 768, 128, 8),
+    "glm53-flash": (4096, 2048, 288, 8),
+}
+
+
+def add_shape_arguments(parser):
+    parser.add_argument("--model", choices=list(MODEL_SHAPES), default="qwen3-30b-a3b")
+    for name in ("width", "hidden", "experts", "top-k"):
+        parser.add_argument("--" + name, type=int)
+    parser.add_argument("--lora-alpha", type=float)
+    parser.add_argument(
+        "--router-weight-dtype",
+        choices=["bf16", "fp32"],
+        default="bf16",
+        help="Router weight storage; logits and gradient accumulation stay FP32",
+    )
+
+
+def requested_shape(args, world_size=1):
+    dimensions = dict(
+        zip(
+            ("width", "hidden", "experts", "top_k"),
+            MODEL_SHAPES[args.model],
+            strict=True,
+        )
+    )
+    dimensions.update(
+        {
+            name: getattr(args, name)
+            for name in dimensions
+            if getattr(args, name) is not None
+        }
+    )
+    if args.tiny:
+        dimensions.update(width=128, hidden=128, experts=max(world_size, 8), top_k=2)
+    return Shape(
+        **dimensions,
+        lora_rank=args.lora_rank,
+        lora_alpha=32.0 if args.lora_alpha is None else args.lora_alpha,
+    )
