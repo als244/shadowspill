@@ -7,6 +7,8 @@ import torch
 import torch.nn as nn
 from mlops.modules import LanguageModelHead
 
+from workloads.models.qwen35.lora import SHARED_TARGETS as LORA_SHARED_TARGETS
+from workloads.models.qwen35.lora import TARGETS as LORA_TARGETS
 from workloads.models.shared.decoder import (
     Packing,
     RotaryEmbedding,
@@ -134,6 +136,9 @@ class Model(nn.Module):
     """State-dict-compatible optimized twin of the pure reference."""
 
     SUPPORTS_PACKED = True
+
+    LORA_TARGETS = LORA_TARGETS
+    LORA_SHARED_TARGETS = LORA_SHARED_TARGETS
 
     def __init__(self, config: Config) -> None:
         super().__init__()

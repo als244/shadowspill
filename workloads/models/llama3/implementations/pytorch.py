@@ -5,6 +5,8 @@ from __future__ import annotations
 import torch
 import torch.nn as nn
 
+from workloads.models.llama3.lora import SHARED_TARGETS as LORA_SHARED_TARGETS
+from workloads.models.llama3.lora import TARGETS as LORA_TARGETS
 from workloads.models.shared.decoder import (
     RMSNorm,
     RotaryEmbedding,
@@ -82,6 +84,9 @@ class Block(nn.Module):
 
 class Model(nn.Module):
     SUPPORTS_PACKED = True
+
+    LORA_TARGETS = LORA_TARGETS
+    LORA_SHARED_TARGETS = LORA_SHARED_TARGETS
 
     def __init__(self, config: Config) -> None:
         super().__init__()

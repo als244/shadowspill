@@ -204,6 +204,7 @@ def test_shared_expert_lora_is_explicit():
     names = [name for name, p in model.named_parameters() if p.requires_grad]
     assert any(".moe.shared." in name and "lora_" in name for name in names)
     assert all("lora_" in name for name in names)
+    assert not any(".shared.gate.lora_" in name for name in names)
 
 
 @pytest.mark.parametrize("implementation,family", MODELS)
@@ -264,3 +265,29 @@ def test_routed_factors_follow_the_declared_shapes(implementation, family):
         ]
         assert banks and not any(bank.requires_grad for bank in banks)
         assert module.lora_gate_up_a.requires_grad
+
+
+@pytest.mark.parametrize("implementation,family", MODELS)
+def test_family_presets_exclude_control_projections(implementation, family):
+    model = tiny_model(implementation, family)
+    # A new small control projection must not be silently picked up by defaults.
+    model.control_probe = torch.nn.Linear(32, 2, bias=False)
+    configure_lora(model, rank=4, alpha=4)
+    assert model.LORA_TARGETS
+    assert not hasattr(model.control_probe, "lora_config")
+    assert not model.control_probe.weight.requires_grad
+    for name, module in model.named_modules():
+        if name.endswith("w_ba"):
+            assert not hasattr(module, "lora_config")
+            assert not module.weight.requires_grad
+        if name.endswith("w_qkvz"):
+            assert hasattr(module, "lora_config")
+            assert module.lora_b.shape[0] == module.out_features
+
+
+def test_qwen35_explicit_targets_can_override_family_defaults():
+    model = configure_lora(
+        tiny_model("mlops", "qwen35"), rank=4, targets=["blocks.0.mixer.w_ba"]
+    )
+    assert hasattr(model.blocks[0].mixer.w_ba, "lora_config")
+    assert not hasattr(model.blocks[0].mixer.w_qkvz, "lora_config")

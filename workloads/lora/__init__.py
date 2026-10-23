@@ -23,8 +23,8 @@ def configure_lora(
     shared_experts=False,
     trainable_base=(),
 ):
-    """Select every linear projection but the head, and the routed experts of
-    every module that declares them, by default.
+    """Use the model family's ``LORA_TARGETS`` by default. Custom models without
+    a preset select their linear projections and declared routed experts.
 
     Inside a module that declares routed experts (``expert_shapes``) nothing
     else is selected unless ``shared_experts`` adds its linear projections
@@ -60,15 +60,19 @@ def configure_lora(
         return next((root for root in roots if name.startswith(root + ".")), None)
 
     if targets is None:
+        preset = getattr(model, "LORA_TARGETS", None)
         targets = [
             name
             for name, module in modules.items()
-            if name in owners
-            or (
-                isinstance(module, nn.Linear)
-                and name != "lm_head"
-                and within(name, owners) is None
-                and within(name, closed) is None
+            if (preset is None or any(fnmatchcase(name, pattern) for pattern in preset))
+            and (
+                name in owners
+                or (
+                    isinstance(module, nn.Linear)
+                    and name != "lm_head"
+                    and within(name, owners) is None
+                    and within(name, closed) is None
+                )
             )
         ]
     selected = []
@@ -78,12 +82,17 @@ def configure_lora(
             raise ValueError(f"target {pattern!r} matched no modules")
         selected += [name for name in names if name not in selected]
     if shared_experts:
+        shared_preset = getattr(model, "LORA_SHARED_TARGETS", None)
         selected += [
             name
             for name, module in modules.items()
             if isinstance(module, nn.Linear)
             and (owner := within(name, owners)) is not None
             and module is not getattr(modules[owner], "router", None)
+            and (
+                shared_preset is None
+                or any(fnmatchcase(name, pattern) for pattern in shared_preset)
+            )
             and name not in selected
         ]
     routed = [

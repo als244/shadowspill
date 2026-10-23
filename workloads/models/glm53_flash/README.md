@@ -457,3 +457,9 @@ Full-model 32K training qualification is in progress; see the experiment results
 before relying on this as a qualified configuration.
 
 Router weights default to BF16 for random model construction; `Config(router_weight_dtype=torch.float32)` opts into FP32. Checkpoint import preserves source router storage by default (BF16 in GLM-5.3-Flash). `build_model(router_weight_dtype=torch.float32)` or the real-text recipe’s `--router-weight-dtype fp32` explicitly widens only router weights. Quickstart accepts `router_weight_dtype="float32"`. Routing logits remain FP32.
+
+
+LoRA defaults are declared in [`lora.py`](lora.py), shared by the family's
+implementations; explicit caller targets override the defaults. The five KDA
+control/output-gate projections are frozen; attention Q/K/V/O and MLA
+projections, dense MLP projections, and routed expert factors are adapted.

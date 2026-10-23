@@ -60,6 +60,21 @@ def test_multimodal_lora_freezes_base_and_selects_only_projection_factors(head):
     }
     assert "visual.blocks.0.attn.qkv.lora_a" in trainable
     assert "layers.0.self_attn.q_proj.lora_b" in trainable
+    gates = (
+        "forget_gate.f_a_proj",
+        "forget_gate.f_b_proj",
+        "b_proj",
+        "g_a_proj",
+        "g_b_proj",
+    )
+    for layer in model.layers:
+        if hasattr(layer.self_attn, "forget_gate"):
+            for name in gates:
+                module = layer.self_attn.get_submodule(name)
+                assert isinstance(module, nn.Linear)
+                assert not module.weight.requires_grad
+                assert not hasattr(module, "lora_config")
+    assert "layers.0.mlp.gate_proj.lora_b" in trainable
     assert "layers.1.mlp.lora_gate_up_a" in trainable
     assert not model.layers[1].mlp.w13.requires_grad
     assert ("lm_head.lora_a" in trainable) is head

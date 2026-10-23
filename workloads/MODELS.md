@@ -420,3 +420,36 @@ not require copying the decoder or changing the trainer/planner.
 Reusable LoRA modules belong in MLOps. Model-family target selection belongs
 with the examples. The generic trainer and planner operate on the resulting
 PyTorch model and never import this catalog or the workload packages.
+
+
+## Family LoRA targets
+
+Each family declares its default module globs in `models/<family>/lora.py`.
+Both implementations expose the same `LORA_TARGETS`; `configure_lora(targets=...)`
+can override them explicitly. New linear modules are not automatically adapted
+by a family preset. The head remains frozen unless its existing option selects it.
+
+| Family | Default adapted projections | Frozen controls |
+| --- | --- | --- |
+| Llama3, Qwen3 | Q/K/V/O and dense SwiGLU projections | Norms and other non-projection state |
+| Qwen3.5 dense | Full-attention Q/K/V/O, packed DeltaNet QKV+Z/out, dense SwiGLU | DeltaNet `w_ba`, decay state, convolution |
+| OLMoE, Qwen3 MoE | Q/K/V/O and routed expert factors | Router; shared experts by default |
+| Qwen3.5 MoE | Full-attention Q/K/V/O, DeltaNet QKV+Z/out, routed expert factors | `w_ba`, router, shared mixing gate |
+| GLM-5.3 | MLA Q/KV/O projections, dense MLP, routed expert factors | Indexer, router, shared experts |
+| GLM-5.3-Flash | KDA Q/K/V/O, MLA Q/KV/O, dense MLP, routed expert factors | Five KDA gate projections, indexer, router, mHC, convolution, shared experts |
+
+For GLM Flash the excluded KDA projections are `forget_gate.f_a_proj`,
+`forget_gate.f_b_proj`, `b_proj`, `g_a_proj`, and `g_b_proj`. The large MLP
+`gate_proj` remains a main feed-forward target. Existing optional vision
+projection targets are explicitly listed in the Flash preset.
+
+Qwen3.5 retains its packed QKV+Z projection: adapting `in_proj_z` alongside
+`in_proj_qkv` and `out_proj` follows the
+[Axolotl Qwen3.5 recipe](https://docs.axolotl.ai/docs/models/qwen3.5.html#gated-deltanet-linear-attention).
+The tiny beta/decay projections (`w_ba`) are excluded. An explicit
+`shared_experts=True` selects only the family's `SHARED_TARGETS` (large
+shared-expert projections), not its scalar mixing gate or router.
+
+These preset changes alter adapter parameter sets. An adapter checkpoint created
+with the previous all-linear defaults may contain gate factors that are no
+longer present; select the old targets explicitly when continuing that run.

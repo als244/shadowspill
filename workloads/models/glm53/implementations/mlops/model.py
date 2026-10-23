@@ -4,6 +4,8 @@ import torch
 from mlops.modules import LanguageModelHead
 from torch import nn
 
+from workloads.models.glm53.lora import SHARED_TARGETS as LORA_SHARED_TARGETS
+from workloads.models.glm53.lora import TARGETS as LORA_TARGETS
 from workloads.models.shared.glm.common import RMSNorm
 from workloads.models.shared.glm.lora import enable_lora
 from workloads.models.shared.glm.moe import DenseMLP, MoE
@@ -30,6 +32,9 @@ class DecoderLayer(nn.Module):
 
 
 class Model(nn.Module):
+    LORA_TARGETS = LORA_TARGETS
+    LORA_SHARED_TARGETS = LORA_SHARED_TARGETS
+
     def __init__(self, config, *, device="cuda", vision_config=None):
         super().__init__()
         if vision_config is not None:

@@ -75,3 +75,9 @@ model = Model(PRESETS["9b"])
 declares the same model on `meta`, and the quickstart runs it with
 `python -m benchmarking.quickstart --model qwen35-9b`. The
 [model catalog](../../MODELS.md) covers dtypes, LoRA, inputs and the loss.
+
+
+LoRA defaults are declared in [`lora.py`](lora.py), shared by the family's
+implementations; explicit caller targets override the defaults. DeltaNet
+`w_ba` (beta/decay) stays frozen. Packed QKV+Z and the output projection remain
+targets, alongside the full-attention projections and dense MLP/routed experts.
