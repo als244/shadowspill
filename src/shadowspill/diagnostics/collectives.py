@@ -31,6 +31,38 @@ class CollectiveRecord:
 
 
 @dataclass(frozen=True, slots=True)
+class HostCopyRecord:
+    """Device-event interval around one physical copy within a transformed transfer."""
+
+    copy_id: str
+    source: str
+    bytes: int
+    task_id: str | None
+    execution_task_id: str | None
+    object_id: int | None
+    alias_group_id: str | None
+    action_ordinal: int | None
+    issued_at_ns: int | None
+    started_at_ns: int | None
+    finished_at_ns: int | None
+
+
+@dataclass(frozen=True, slots=True)
+class HostCopyTrace:
+    capacity: int = 0
+    dropped: int = 0
+    errors: int = 0
+    missing_timings: int = 0
+    records: tuple[HostCopyRecord, ...] = ()
+
+    def as_dict(self) -> dict[str, object]:
+        return {
+            **asdict(self),
+            "complete": not (self.dropped or self.errors or self.missing_timings),
+        }
+
+
+@dataclass(frozen=True, slots=True)
 class CollectiveTrace:
     """Bounded collective capture; missing timing is explicit, never zero.
 
@@ -48,6 +80,8 @@ class CollectiveTrace:
     errors: int = 0
     missing_timings: int = 0
     records: tuple[CollectiveRecord, ...] = ()
+    # None distinguishes historical captures that did not measure copy phases.
+    host_copies: HostCopyTrace | None = None
 
     @property
     def complete(self) -> bool:
@@ -62,4 +96,7 @@ class CollectiveTrace:
             "missing_timings": self.missing_timings,
             "complete": self.complete,
             "records": [record.as_dict() for record in self.records],
+            "host_copies": (
+                None if self.host_copies is None else self.host_copies.as_dict()
+            ),
         }

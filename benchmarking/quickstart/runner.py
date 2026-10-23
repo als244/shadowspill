@@ -307,8 +307,19 @@ class Tour:
         progress_log = paths.root / "progress.log"
         progress_log.parent.mkdir(parents=True, exist_ok=True)
         self.log_handle = progress_log.open("w")
-        self.plan_log = PlanLog(self.log_handle, sys.stdout)
-        print(f"  progress log: {progress_log}   (tail -f it to follow)")
+        show_phases = (
+            not torch.distributed.is_initialized() or torch.distributed.get_rank() == 0
+        )
+        self.plan_log = PlanLog(
+            self.log_handle, sys.stdout, show_phases=show_phases
+        )
+        print(f"  progress log: {progress_log}")
+        if show_phases:
+            print(
+                "  profiling includes first-use kernel compilation/autotuning;"
+                " these setup times are separate from measured step time",
+                flush=True,
+            )
 
     def _build_model(self):
         factory = self.experiment.get("model_factory")
@@ -918,11 +929,11 @@ def print_closing(ledger: Ledger, request: Request) -> None:
         print(f"  host staging limit    {gib(spill.staging_bytes):>12}")
     else:
         print(f"  spill arena ({kind})  {gib(capacity):>12}   not local host memory")
-    print(f"  peak resident         {gib(peak):>12}")
-    print(f"  resident at exit      {gib(resident):>12}")
+    print(f"  process peak resident {gib(peak):>12}")
+    print(f"  process RSS at exit   {gib(resident):>12}")
     if ceiling is not None:
         print(
             f"  cgroup ceiling        {gib(ceiling):>12}"
-            f"   ({gib(max(0, ceiling - peak))} unused at the peak)"
+            "   shared by processes in the cgroup"
         )
     print()

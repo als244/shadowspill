@@ -3,6 +3,7 @@
 import json
 import sys
 from dataclasses import replace
+from fractions import Fraction
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -234,21 +235,16 @@ def test_small_object_threshold_reaches_the_search_and_the_record(monkeypatch):
         parse_arguments()
 
 
-def test_pinned_resolution_builds_only_the_selectable_variant():
+@pytest.mark.parametrize("resolution", ["0", "1", "0,1", "quarters"])
+def test_pinned_resolution_keeps_both_variants_for_accounting(resolution):
     parser = _parser()
-    assert graph_pair_variants(parser.parse_args(["--factory", "x:y"])) == (
-        "save",
-        "recompute",
+    args = parser.parse_args(["--factory", "x:y", "--resolution-options", resolution])
+    assert graph_pair_variants(args) == ("save", "recompute")
+    # Profiling both variants does not broaden the requested search.
+    policy = search_policy(args)
+    assert policy.algorithm.options.resolution_options == tuple(
+        Fraction(value) for value in args.resolution_options
     )
-    assert graph_pair_variants(
-        parser.parse_args(["--factory", "x:y", "--resolution-options", "1"])
-    ) == ("recompute",)
-    assert graph_pair_variants(
-        parser.parse_args(["--factory", "x:y", "--resolution-options", "0"])
-    ) == ("save",)
-    assert graph_pair_variants(
-        parser.parse_args(["--factory", "x:y", "--resolution-options", "0,1"])
-    ) == ("save", "recompute")
 
 
 def test_write_cap_declines_only_a_plan_above_it(monkeypatch):

@@ -14,8 +14,9 @@ from shadowspill.training import Forward, Trainer
 
 
 @pytest.mark.parametrize("fixed", [False, True])
+@pytest.mark.parametrize("variants", [None, ("recompute",), ("save",)])
 def test_search_and_forward_share_imported_state_and_build_store(
-    monkeypatch, tmp_path, fixed
+    monkeypatch, tmp_path, fixed, variants
 ):
     imported, released, builds, searches, plans, forwards = [], [], [], [], [], []
 
@@ -94,6 +95,7 @@ def test_search_and_forward_share_imported_state_and_build_store(
             spill_gib=3,
             device="cuda:0",
             search_options=policy,
+            **({} if variants is None else {"graph_pair_variants": variants}),
             orderings=[StepDataOrdering.depth_first(2)] if fixed else None,
         ) as backend,
         Trainer(
@@ -115,6 +117,9 @@ def test_search_and_forward_share_imported_state_and_build_store(
         assert searches[0]["artifact_store"] is None
         assert len(plans[0]["example_inputs"]) == 2
         assert len(builds) == 1
+        expected_variants = variants or ("save", "recompute")
+        assert builds[0]["graph_pair_variants"] == expected_variants
+        assert plans[0]["graph_pair_variants"] == expected_variants
         if fixed:
             assert builds[0]["orderings"] == (StepDataOrdering.depth_first(2),)
             with pytest.raises(ValueError, match="every microbatch"):
@@ -127,6 +132,7 @@ def test_search_and_forward_share_imported_state_and_build_store(
             assert len(imported) == 1
             assert forwards[0]["share_slab_with"] is trainer._execution.call
             assert "execution_budget" not in forwards[0]
+            assert "graph_pair_variants" not in forwards[0]
             assert forwards[0]["artifact_store"] == plans[0]["artifact_store"]
     assert len(released) == 1 and released[0] is imported[0]
 
@@ -145,6 +151,7 @@ def test_preparation_continues_after_one_microbatch_candidate_exhausts_device(
     backend.orderings = lambda count: [StepDataOrdering.depth_first(count)]
     backend.artifact_store = backend.search_options = None
     backend.fuse_narrow_gradient_accumulation = True
+    backend.graph_pair_variants = ("recompute",)
     backend._import = lambda model: model
     backend._planning_args = lambda: {"search_options": None}
     spec = SimpleNamespace(
@@ -180,3 +187,50 @@ def test_preparation_continues_after_one_microbatch_candidate_exhausts_device(
         p.candidate == "large" and p.status == "infeasible"
         for p in bundle.search.points
     )
+
+
+@pytest.mark.parametrize("microbatches", [1, 2])
+def test_distributed_build_and_search_use_requested_variants(monkeypatch, microbatches):
+    monkeypatch.setattr(module, "resolve_device", lambda _: torch.device("cuda:0"))
+    backend = module.ShadowSpill(
+        execution_gib=2, spill_gib=3, graph_pair_variants=("recompute",)
+    )
+    backend._import = lambda model, distributed: model
+    model = torch.nn.Linear(3, 1)
+    spec = SimpleNamespace(
+        distributed=object(),
+        shard_optimizer=True,
+        objective=object(),
+        optimizer=lambda model: object(),
+        hyperparams=(),
+        master_dtype=None,
+        grad_dtype=None,
+        parameter_metrics=None,
+    )
+    searches, plans = [], []
+
+    def search(model, **kwargs):
+        searches.append(kwargs)
+        winner = SimpleNamespace(
+            candidate="batch", ordering=StepDataOrdering.depth_first(microbatches)
+        )
+        return SimpleNamespace(
+            winner=lambda *_: winner,
+            winner_plans={backend.budget: "selected"},
+            planned_lanes=None,
+        )
+
+    def plan(model, **kwargs):
+        plans.append(kwargs)
+        return SimpleNamespace(plan_report=None)
+
+    monkeypatch.setattr(module, "plan_step_search", search)
+    monkeypatch.setattr(module, "plan_step", plan)
+    _, chosen = backend.prepare_step(
+        model, spec, {"batch": [(torch.ones(1, 3),)] * microbatches}
+    )
+    assert chosen == "batch"
+    assert len(searches) == int(microbatches > 1)
+    assert len(plans) == 1
+    for request in [*searches, *plans]:
+        assert request["graph_pair_variants"] == ("recompute",)

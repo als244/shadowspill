@@ -92,8 +92,8 @@ def note_host_memory(log: Any, label: str) -> None:
     resident, peak = host_memory()
     ceiling = host_memory_ceiling()
     message = (
-        f"host memory {gib(resident)} resident, {gib(peak)} peak"
-        f"{'' if ceiling is None else f' of {gib(ceiling)}'}: {label}"
+        f"process host memory {gib(resident)} resident, {gib(peak)} peak"
+        f"{'' if ceiling is None else f'; shared cgroup limit {gib(ceiling)}'}: {label}"
     )
     if log is not None:
         log.note(message)
@@ -113,16 +113,14 @@ def deltas(label: str, values: list[float], worst_key: str = "") -> str:
 
 
 class PlanLog:
-    """Stream planner phase lines to a log file; keep stdout for the story.
+    """Record all phase lines and mirror rank-zero progress to the terminal.
 
-    Every line written while this sink is installed lands in the log with a
-    wall-clock stamp, so the file reads like ``plan_step``'s own progress and
-    can be followed live. Planner phase lines (``[shadowspill.plan …]``,
-    ``PressureFit: …``) go only to the file; everything else also reaches the
-    terminal.
+    PressureFit's detailed search trace stays in the file. Planner stage
+    boundaries and structural-profile counts remain visible during long builds.
     """
 
-    def __init__(self, handle: Any, stdout: Any) -> None:
+    def __init__(self, handle: Any, stdout: Any, *, show_phases: bool = True) -> None:
+        self._show_phases = show_phases
         self._handle = handle
         self._stdout = stdout
         self._started = time.perf_counter()
@@ -138,7 +136,9 @@ class PlanLog:
         # so track line boundaries across calls.
         for line in text.splitlines(keepends=True):
             if self._line_start:
-                self._quiet = line.startswith(("[shadowspill.plan", "PressureFit:"))
+                self._quiet = line.startswith("PressureFit:") or (
+                    line.startswith("[shadowspill.plan") and not self._show_phases
+                )
                 self._handle.write(time.strftime("%H:%M:%S "))
             self._handle.write(line)
             if not self._quiet:

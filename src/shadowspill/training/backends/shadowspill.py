@@ -30,6 +30,10 @@ from shadowspill.pytorch.accelerator import resolve_device
 from shadowspill.pytorch.callables import PlannedForward, PlannedTrainStep
 from shadowspill.pytorch.distributed import BoundDistributed, Distributed
 from shadowspill.pytorch.failures import device_exhausted
+from shadowspill.pytorch.graph_pairs import (
+    GRAPH_PAIR_VARIANTS,
+    validate_graph_pair_variants,
+)
 from shadowspill.pytorch.partition import PartitionPolicy
 from shadowspill.pytorch.state.registry import registry_for
 from shadowspill.pytorch.step_search.sweep import _refuse_state_left_behind
@@ -57,6 +61,7 @@ class ShadowSpill:
         search_options: SearchOptions | None = None,
         profiling_options: ProfilingOptions | None = None,
         partition: Literal["auto", "whole"] | PartitionPolicy = "auto",
+        graph_pair_variants: tuple[str, ...] = GRAPH_PAIR_VARIANTS,
         fuse_narrow_gradient_accumulation: bool = True,
         orderings: Sequence[StepDataOrdering]
         | Callable[[int], Sequence[StepDataOrdering]]
@@ -84,6 +89,7 @@ class ShadowSpill:
         self.search_options = search_options
         self.profiling_options = profiling_options
         self.partition = partition
+        self.graph_pair_variants = validate_graph_pair_variants(graph_pair_variants)
         self.fuse_narrow_gradient_accumulation = fuse_narrow_gradient_accumulation
         self.orderings: Callable[[int], Sequence[StepDataOrdering]] | None
         if orderings is None or callable(orderings):
@@ -271,6 +277,7 @@ class ShadowSpill:
                     parameter_metrics=spec.parameter_metrics,
                     fuse_narrow_gradient_accumulation=self.fuse_narrow_gradient_accumulation,
                     orderings=orderings,
+                    graph_pair_variants=self.graph_pair_variants,
                     **arguments,
                 )
             except Exception as error:
@@ -357,6 +364,7 @@ class ShadowSpill:
             grad_dtype=spec.grad_dtype,
             parameter_metrics=spec.parameter_metrics,
             fuse_narrow_gradient_accumulation=self.fuse_narrow_gradient_accumulation,
+            graph_pair_variants=self.graph_pair_variants,
             **self._planning_args(),
         )
         session = _Step(model, call, prepared.search)
@@ -380,6 +388,7 @@ class ShadowSpill:
             grad_dtype=spec.grad_dtype,
             parameter_metrics=spec.parameter_metrics,
             fuse_narrow_gradient_accumulation=self.fuse_narrow_gradient_accumulation,
+            graph_pair_variants=self.graph_pair_variants,
             **self._planning_args(),
         )
         report = None

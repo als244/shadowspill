@@ -30,6 +30,9 @@
   .card { border: 1px solid var(--line); border-left: 4px solid #4f6fd8; border-radius: 8px; padding: 6px 12px; min-width: 120px; background: var(--bg); }
   .card .k { color: var(--muted); font-size: 12px; }
   .card .v { font: 600 18px/1.3 ui-monospace, SFMono-Regular, Menlo, monospace; }
+  table { width: 100%; border-collapse: collapse; font: 12px ui-monospace, Menlo, monospace; }
+  th, td { padding: 5px 10px; border-bottom: 1px solid var(--line); text-align: right; }
+  th:first-child, td:first-child { text-align: left; }
   #tip { position: fixed; pointer-events: none; background: var(--ink); color: var(--bg); padding: 6px 8px; border-radius: 6px; font: 12px/1.35 ui-monospace, Menlo, monospace; white-space: pre; display: none; z-index: 5; max-width: 60vw; }
 </style>
 </head>
@@ -53,18 +56,25 @@
     "forward": "#1e3a5f", "backward": "#4e342e", "optimizer": "#616161", "recompute": "#ffd600",
     "parameter": "#5c6bc0", "optimizer_state": "#b39ddb", "gradient": "#ec407a", "activation": "#26a69a",
     "buffer": "#dce775", "output": "#ffa726",
+    "host to device copy": "#228be6", "device to host copy": "#00a2a8",
+    "H2D copy": "#228be6", "D2H copy": "#00a2a8",
+    "all-gather": "#7950f2", "reduce-scatter": "#e8590c", "all-reduce": "#d6336c",
+    "copy / dispatch / wait (unsplit)": "#adb5bd", "dispatch / wait / other work": "#74808b",
   };
   const FALLBACK = ["#f06292", "#ba68c8", "#4dd0e1", "#aed581", "#ffb74d", "#a1887f"];
   let fallbackIndex = 0;
   const color = (name) => PALETTE[name] || (PALETTE[name] = FALLBACK[fallbackIndex++ % FALLBACK.length]);
   const fmtGiB = (v) => v >= 100 ? v.toFixed(0) + " GiB" : v >= 10 ? v.toFixed(1) + " GiB" : v.toFixed(2) + " GiB";
-  const fmtBytes = (b) => b >= 2 ** 30 ? (b / 2 ** 30).toFixed(2) + " GiB" : b >= 2 ** 20 ? (b / 2 ** 20).toFixed(1) + " MiB" : (b / 1024).toFixed(0) + " KiB";
+  const fmtBytes = (b) => b >= 2 ** 30 ? (b / 2 ** 30).toFixed(2) + " GiB" : b >= 2 ** 20 ? (b / 2 ** 20).toFixed(1) + " MiB" : b >= 1024 ? (b / 1024).toFixed(0) + " KiB" : b + " B";
   const fmtS = (s) => s >= 10 ? s.toFixed(2) + " s" : s.toFixed(3) + " s";
+
+  const fmtDuration = (s) => s < 0.001 ? (s * 1e6).toFixed(2) + " µs" : (s * 1e3).toFixed(3) + " ms";
+  const preciseBytes = (b) => b == null ? "unavailable" : fmtBytes(b) + " (" + b.toLocaleString() + " bytes)";
 
   document.getElementById("plan").textContent = DATA.plan || "";
   document.getElementById("sub").textContent = DATA.clock + " · step of " + fmtS(DATA.end_seconds)
     + (DATA.summary && DATA.summary.assumed_fetch_solo_gbps != null
-      ? " · planned solo/concurrent: fetch " + DATA.summary.assumed_fetch_solo_gbps.toFixed(1)
+      ? " · planned host-copy solo/concurrent: fetch " + DATA.summary.assumed_fetch_solo_gbps.toFixed(1)
         + "/" + DATA.summary.assumed_fetch_concurrent_gbps.toFixed(1) + " GB/s, evict "
         + DATA.summary.assumed_evict_solo_gbps.toFixed(1) + "/"
         + DATA.summary.assumed_evict_concurrent_gbps.toFixed(1) + " GB/s" : "")
@@ -203,13 +213,15 @@
       ["peak spill memory", fmtGiB(S.spill_peak_gib)],
       ["peak execution memory", S.execution_peak_gib == null ? "n/a" : fmtGiB(S.execution_peak_gib)],
       ["idle", S.idle_percent.toFixed(1) + "%"],
-      ["recompute", S.recompute_percent.toFixed(1) + "%"],
+      ["recompute overhead (profile estimate)", S.recompute_percent == null ? "n/a" : S.recompute_percent.toFixed(1) + "%"],
       ["fetch lane util", S.fetch_utilization_percent.toFixed(1) + "%"],
       ["evict lane util", S.evict_utilization_percent.toFixed(1) + "%"],
-      ["fetched", fmtGiB(S.fetch_gib)],
-      ["evicted", fmtGiB(S.evict_gib)],
-      ["fetch rate / planned blend", rate(S.fetch_gbps, S.assumed_fetch_gbps)],
-      ["evict rate / planned blend", rate(S.evict_gbps, S.assumed_evict_gbps)],
+      ["full objects fetched", fmtGiB(S.fetch_gib)],
+      ["full objects evicted", fmtGiB(S.evict_gib)],
+      ["host bytes fetched", fmtGiB(S.fetch_host_gib ?? S.fetch_gib)],
+      ["host bytes evicted", fmtGiB(S.evict_host_gib ?? S.evict_gib)],
+      ["effective fetch / planned blend", rate(S.fetch_gbps, S.assumed_fetch_gbps)],
+      ["effective evict / planned blend", rate(S.evict_gbps, S.assumed_evict_gbps)],
     ];
     const root = document.createElement("div"); root.className = "panel";
     const h2 = document.createElement("h2"); h2.textContent = "Summary"; h2.style.fontSize = "16px"; h2.style.margin = "0 0 8px"; root.append(h2);
@@ -217,25 +229,30 @@
     cards.forEach(([k, v]) => { const c = document.createElement("div"); c.className = "card"; const kk = document.createElement("div"); kk.className = "k"; kk.textContent = k; const vv = document.createElement("div"); vv.className = "v"; vv.textContent = v; c.append(kk, vv); row.append(c); });
     root.append(row);
     const explanation = document.createElement("p"); explanation.className = "meta";
-    explanation.textContent = "Lane utilization is busy time / step time. Blended rates are bytes / busy time. The planned blend uses simulated overlap and excludes per-transfer latency; trace rates use measured intervals. Trace values omit any untimed transfers.";
+    explanation.textContent = "Lane utilization is busy time / step time. Effective rates count full execution-object bytes / complete transfer time, including any collective phases and waits. Host-copy bytes are listed separately. These rates are not PCIe or NVLink bandwidth. The planned blend uses simulated transfer intervals; trace rates use measured intervals and omit untimed transfers. Recompute overhead compares isolated pair profiles; it is not a directly timed kernel interval."
+      + (S.recompute_percent == null ? " Recompute overhead is unavailable because a selected pair lacks its save or recompute profile." : "");
     root.append(explanation); document.getElementById("panels").prepend(root);
   }
 
   // --- the lanes: fetch, compute, evict -------------------------------------------
   if (DATA.compute) {
-    const lanes = [["fetch", "fetch", DATA.fetch], ["compute", "compute", DATA.compute], ["evict", "evict", DATA.evict]];
+    const phaseItems = (direction) => DATA.transfer_phases
+      ? DATA.transfer_phases[direction].map((p) => [p.start_ns / 1e9, p.end_ns / 1e9, p.execution_bytes, p.label, p.alias_group_id, p.host_bytes, p])
+      : DATA[direction];
+    const fetchItems = phaseItems("fetch"), evictItems = phaseItems("evict");
+    const lanes = [["fetch", "fetch", fetchItems], ["compute", "compute", DATA.compute], ["evict", "evict", evictItems]];
     const meta = DATA.fetch.length + " fetches · " + DATA.compute.length + " tasks · " + DATA.evict.length + " evictions";
     const panel = makePanel("fetch, compute and evict lanes", meta, 3 * 62 + BOTTOM + TOP);
     const objectNames = new Set();
-    DATA.fetch.concat(DATA.evict).forEach((s) => objectNames.add(s[3]));
+    fetchItems.concat(evictItems).forEach((s) => objectNames.add(s[3]));
     const group = (title, names, suffix) => {
       const head = document.createElement("span"); head.className = "head"; head.textContent = title; panel.legend.append(head);
       names.forEach((n) => { const s = document.createElement("span"); s.style.setProperty("--c", color(n)); s.textContent = n + suffix; panel.legend.append(s); });
       const gap = document.createElement("span"); gap.className = "gap"; panel.legend.append(gap);
     };
-    group("fetch and evict bars, by the object moved:", Array.from(objectNames), "");
+    group(DATA.transfer_phases ? "fetch and evict bars, by operation:" : "fetch and evict bars, by object:", Array.from(objectNames), "");
     group("compute bars, by the task's phase:", ["forward", "backward", "optimizer"], " tasks");
-    const rc = document.createElement("span"); rc.style.setProperty("--c", color("recompute")); rc.textContent = "recompute: the first part of a backward task that regenerates, its profiled cost beyond the save variant"; panel.legend.append(rc);
+    const rc = document.createElement("span"); rc.style.setProperty("--c", color("recompute")); rc.textContent = "recompute shading: estimated extra pair time from profiles, drawn at backward start; not a measured boundary"; panel.legend.append(rc);
     const LANE_H = 62, BAR = 44;
     panel.draw = (ctx) => {
       const W = panel.canvas.clientWidth;
@@ -265,7 +282,7 @@
         };
         for (const it of items) {
           if (kind === "compute" && it[4] > 0) {
-            // a recompute backward: its regeneration first, then the backward itself
+            // Visualize the profile-derived estimate; its position is not measured.
             const split = Math.min(it[1], it[0] + it[4]);
             paint(it[0], split, "recompute");
             paint(split, it[1], it[2]);
@@ -302,10 +319,108 @@
       let best = null;
       for (const it of items) { if (it[0] - tol <= t && t <= it[1] + tol) { best = it; if (it[0] <= t && t <= it[1]) break; } }
       if (!best) return null;
-      if (kind === "compute") return best[3] + "\n" + best[2] + " task  " + fmtS(best[0]) + " → " + fmtS(best[1]) + "  (" + ((best[1] - best[0]) * 1e3).toFixed(2) + " ms)" + (best[4] > 0 ? "\nrecompute: " + (best[4] * 1e3).toFixed(2) + " ms of it regenerates" : "");
+      if (kind === "compute") return best[3] + "\n" + best[2] + " task  " + fmtS(best[0]) + " → " + fmtS(best[1]) + "  (" + ((best[1] - best[0]) * 1e3).toFixed(2) + " ms)" + (best[4] == null ? "\nrecompute overhead unavailable: missing comparison profile" : best[4] > 0 ? "\nprofiled pair overhead: " + (best[4] * 1e3).toFixed(2) + " ms (estimate)" : "");
       const seconds = best[1] - best[0];
-      return label + ": " + best[3] + "  " + fmtBytes(best[2]) + "\n" + best[4] + "  " + fmtS(best[0]) + " → " + fmtS(best[1]) + "  (" + (seconds * 1e3).toFixed(2) + " ms" + (seconds > 0 ? ", " + (best[2] / seconds / 1e9).toFixed(1) + " GB/s" : "") + ")";
+      if (best[6]) {
+        const p = best[6];
+        let detail = p.label + " · " + fmtDuration(seconds) + "\n" + p.timing
+          + "\n" + (p.start_ns / 1e9).toFixed(9) + " → " + (p.end_ns / 1e9).toFixed(9) + " s";
+        if (p.kind === "copy") {
+          detail += "\nphysical host copy: " + preciseBytes(p.bytes)
+            + (seconds > 0 ? " · " + (p.bytes / seconds / 1e9).toFixed(3) + " GB/s" : "");
+        } else if (p.kind === "collective") {
+          detail += "\ninput " + preciseBytes(p.input_bytes) + "\noutput " + preciseBytes(p.output_bytes)
+            + "\ngroup " + p.group + " · " + p.group_size + " ranks · sequence " + p.group_sequence
+            + "\npayload sizes, not fabric traffic; duration includes NCCL peer waits";
+        } else {
+          detail += "\nno bytes or bandwidth attributed to this unresolved interval";
+        }
+        return detail + "\n" + p.transfer_id + " · " + p.alias_group_id
+          + "\nparent host payload " + preciseBytes(p.host_bytes)
+          + "\nparent execution object " + preciseBytes(p.execution_bytes)
+          + "\nwhole transfer " + fmtDuration((p.parent_end_ns - p.parent_start_ns) / 1e9);
+      }
+      return label + ": " + best[3] + "  full object " + fmtBytes(best[2]) + "\nhost copy " + fmtBytes(best[5] ?? best[2]) + "\n" + best[4] + "  " + fmtS(best[0]) + " → " + fmtS(best[1]) + "  (" + (seconds * 1e3).toFixed(2) + " ms" + (seconds > 0 ? ", " + (best[2] / seconds / 1e9).toFixed(1) + " effective GB/s" : "") + ")";
     };
+  }
+
+  // Collective events share the parent timeline's clock and are a breakdown,
+  // never additional step time. Keep missing timing and capture loss visible.
+  if (DATA.collectives && DATA.collectives.enabled) {
+    const ledger = DATA.collectives;
+    const records = ledger.records || [];
+    const timed = records.filter((r) => r.started_at_ns != null && r.finished_at_ns != null);
+    const operations = Array.from(new Set(timed.map((r) => r.operation)));
+    const labels = {all_gather: "gather", reduce_scatter: "scatter", all_reduce: "reduce", all_to_all: "all-to-all"};
+    const sourceColors = {fetch: "#00897b", evict: "#d81b60", task: "#7e57c2"};
+    const rowHeight = 42, barHeight = 26;
+    const status = ledger.complete ? "capture complete" : "capture incomplete";
+    const panel = makePanel("Collectives inside transfers and tasks", timed.length + "/" + records.length + " timed · " + status + " · dropped " + (ledger.dropped || 0) + ", errors " + (ledger.errors || 0) + ", missing timing " + (ledger.missing_timings || 0), Math.max(1, operations.length) * rowHeight + TOP + BOTTOM);
+    const note = document.createElement("p"); note.className = "meta";
+    note.textContent = "These intervals are already included in the fetch, evict or compute bars above. Input/output bytes are per-rank tensor payloads, not fabric traffic. Collective durations include waiting for peers inside NCCL.";
+    panel.root.append(note);
+    Array.from(new Set(timed.map((r) => r.source))).forEach((source) => {
+      const item = document.createElement("span"); item.style.setProperty("--c", sourceColors[source] || "#546e7a"); item.textContent = "inside " + source; panel.legend.append(item);
+    });
+    const rows = operations.map((op) => timed.filter((r) => r.operation === op));
+    panel.draw = (ctx) => {
+      rows.forEach((items, row) => {
+        const y = TOP + row * rowHeight + (rowHeight - barHeight) / 2;
+        ctx.textAlign = "right"; ctx.fillStyle = getComputedStyle(document.body).getPropertyValue("--muted");
+        ctx.fillText(labels[operations[row]] || operations[row], LEFT - 8, y + barHeight / 2 + 4);
+        for (const item of items) {
+          const a = item.started_at_ns / 1e9, b = item.finished_at_ns / 1e9;
+          if (b < view.t0 || a > view.t1) continue;
+          const x0 = Math.max(LEFT, tToX(panel, a)), x1 = Math.min(panel.canvas.clientWidth - RIGHT, tToX(panel, b));
+          ctx.fillStyle = sourceColors[item.source] || "#546e7a"; ctx.fillRect(x0, y, Math.max(0.6, x1 - x0), barHeight);
+        }
+      });
+      timeAxis(ctx, panel);
+    };
+    panel.hover = (x, y) => {
+      const row = Math.floor((y - TOP) / rowHeight);
+      if (row < 0 || row >= rows.length || x < LEFT) return null;
+      const t = xToT(panel, x), tol = (view.t1 - view.t0) / plotWidth(panel);
+      const item = rows[row].find((r) => r.started_at_ns / 1e9 <= t && t <= r.finished_at_ns / 1e9)
+        || rows[row].find((r) => r.started_at_ns / 1e9 - tol <= t && t <= r.finished_at_ns / 1e9 + tol);
+      if (!item) return null;
+      return item.operation + " inside " + item.source + "\ngroup " + item.group + " · " + item.group_size + " ranks · sequence " + item.group_sequence
+        + "\n" + fmtS(item.started_at_ns / 1e9) + " → " + fmtS(item.finished_at_ns / 1e9) + " (" + ((item.finished_at_ns - item.started_at_ns) / 1e6).toFixed(3) + " ms)"
+        + "\ninput " + preciseBytes(item.input_bytes) + "\noutput " + preciseBytes(item.output_bytes)
+        + "\n" + (item.alias_group_id || item.execution_task_id || item.task_id || item.collective_id);
+    };
+  }
+
+  if (DATA.transfer_phases) {
+    const phases = DATA.transfer_phases;
+    const root = document.createElement("div"); root.className = "panel";
+    const title = document.createElement("h2"); title.textContent = "Host-copy and collective accounting"; root.append(title);
+    const table = document.createElement("table");
+    const header = document.createElement("tr");
+    ["Operation / parent", "Count", "Host bytes", "Collective input", "Collective output", "Summed time", "Busy time", "Throughput GB/s"].forEach((label) => {
+      const cell = document.createElement("th"); cell.textContent = label; header.append(cell);
+    });
+    table.append(header);
+    for (const row of phases.summary) {
+      const tr = document.createElement("tr");
+      [row.label + " / " + row.source, row.count.toLocaleString(), row.copy_bytes == null ? "—" : fmtBytes(row.copy_bytes),
+        row.input_bytes == null ? "—" : fmtBytes(row.input_bytes), row.output_bytes == null ? "—" : fmtBytes(row.output_bytes),
+        fmtDuration(row.duration_sum_ns / 1e9), fmtDuration(row.busy_ns / 1e9),
+        row.throughput_gbps == null ? "—" : row.throughput_gbps.toFixed(2)].forEach((value) => {
+          const cell = document.createElement("td"); cell.textContent = value; tr.append(cell);
+        });
+      table.append(tr);
+    }
+    root.append(table);
+    const note = document.createElement("p"); note.className = "meta";
+    note.textContent = "Busy time is the union of intervals within each row; summed time adds their durations. Rows may overlap each other and computation. Collective input/output sizes are per-rank tensor payloads, not link traffic. Throughput is payload bytes / busy time: physical host bytes for copies, assembled output bytes for all-gather, full input bytes for reduce-scatter, and one tensor's bytes for all-reduce. Collective throughput is algorithmic, not physical link bandwidth. CUDA-event intervals include dispatch gaps between their markers. "
+      + "Host-copy timing unavailable for " + phases.unresolved_copy_transfers.fetch + " fetches (" + fmtBytes(phases.unresolved_host_bytes.fetch)
+      + ") and " + phases.unresolved_copy_transfers.evict + " evictions (" + fmtBytes(phases.unresolved_host_bytes.evict) + "). Gray regions remain unsplit; they are not reported as memcpy time."
+      + (phases.copy_capture ? " Transformed-copy capture " + (phases.copy_capture.complete ? "complete" : "incomplete")
+        + "; dropped " + phases.copy_capture.dropped + ", errors " + phases.copy_capture.errors + ", missing timing " + phases.copy_capture.missing_timings + "."
+        : " This capture predates separate host-copy events for transformed transfers.")
+      + (phases.unmatched_records ? " " + phases.unmatched_records + " timed records could not be joined to a parent transfer." : "");
+    root.append(note); document.getElementById("panels").append(root);
   }
 
   // --- the pools: stacked areas ------------------------------------------------

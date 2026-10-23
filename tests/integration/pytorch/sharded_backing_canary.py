@@ -281,6 +281,19 @@ def main():
                 end_runtime_trace(runtime._runtime_handle)
                 runtime_trace = read_runtime_trace(runtime._runtime_handle)
                 origin.release()
+                args.trace_output.mkdir(parents=True, exist_ok=True)
+                (args.trace_output / f"collectives-rank-{rank}.json").write_text(
+                    json.dumps(
+                        {
+                            "collectives": collective_trace,
+                            "runtime_events": [
+                                event.as_dict() for event in runtime_trace.events
+                            ],
+                        },
+                        indent=2,
+                    )
+                    + "\n"
+                )
                 expected_evictions = args.steps * args.passes
                 expected_replicas = expected_evictions if replicas is not None else 0
                 assert len(collective_trace["records"]) == (
@@ -309,19 +322,45 @@ def main():
                         assert (
                             record["finished_at_ns"] <= completion.lane_finished_at_ns
                         )
-                args.trace_output.mkdir(parents=True, exist_ok=True)
-                (args.trace_output / f"collectives-rank-{rank}.json").write_text(
-                    json.dumps(
-                        {
-                            "collectives": collective_trace,
-                            "runtime_events": [
-                                event.as_dict() for event in runtime_trace.events
-                            ],
-                        },
-                        indent=2,
-                    )
-                    + "\n"
+                copies = collective_trace["host_copies"]
+                assert not any(
+                    copies[name] for name in ("dropped", "errors", "missing_timings")
+                ), copies
+                copy_multiplier = (
+                    2 if replicas is None or dist.get_rank(replicas) == 0 else 1
                 )
+                assert len(copies["records"]) == expected_evictions * copy_multiplier
+                for record in copies["records"]:
+                    # TRANSFER_COMPLETED records TransferDirection (fetch=0),
+                    # not RuntimeActionKind (fetch=2).
+                    direction = 0 if record["source"] == "fetch" else 1
+                    completion = next(
+                        event
+                        for event in runtime_trace.events
+                        if event.kind.name == "TRANSFER_COMPLETED"
+                        and event.task_id == record["task_id"]
+                        and event.object_id == object_id
+                        and event.detail_0 == direction
+                    )
+                    assert record["bytes"] == capacity * 4
+                    assert completion.lane_started_at_ns <= record["started_at_ns"]
+                    assert (
+                        record["started_at_ns"]
+                        <= record["finished_at_ns"]
+                        <= completion.lane_finished_at_ns
+                    )
+                    if record["source"] == "evict":
+                        collectives = [
+                            r
+                            for r in collective_trace["records"]
+                            if r["source"] == "evict"
+                            and r["task_id"] == record["task_id"]
+                        ]
+                        assert collectives
+                        assert (
+                            max(r["finished_at_ns"] for r in collectives)
+                            <= record["started_at_ns"]
+                        )
                 print(
                     json.dumps({"rank": rank, "collective_trace_passed": True}),
                     flush=True,

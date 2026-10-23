@@ -164,20 +164,12 @@ def search_policy(arguments: argparse.Namespace) -> SearchOptions:
 
 
 def graph_pair_variants(arguments: argparse.Namespace) -> tuple[str, ...]:
-    """The graph-pair variants the build constructs.
+    """Build both variants so every search has a measured compute baseline.
 
-    Both, unless the resolution options pin every flexible group one way:
-    a search asked to recompute everything can only ever select
-    ``recompute``, so building ``save`` as well would capture, compile and
-    profile a choice nobody can make, and the saved values the profiling
-    of that variant holds are what crowd a large stage out of the pool.
+    Resolution options restrict planner choices, not lowering or profiling.
+    Even an all-recompute search needs save profiles to price its overhead.
     """
 
-    shares = {Fraction(share) for share in arguments.resolution_options}
-    if shares == {Fraction(1)}:
-        return ("recompute",)
-    if shares == {Fraction(0)}:
-        return ("save",)
     return GRAPH_PAIR_VARIANTS
 
 
@@ -497,7 +489,8 @@ def _parser() -> argparse.ArgumentParser:
         " default), 'eighths', 'halves', or a comma-separated list of exact"
         " fractions such as 0,1/2,7/8,1. More shares plan more programs per"
         " point; on the llama3 frontier eighths cost 1.75x the search for a"
-        " median gain of nothing",
+        " median gain of nothing. Both save and recompute variants are always"
+        " lowered and profiled for accounting",
     )
     parser.add_argument(
         "--minimum-evict-kib",

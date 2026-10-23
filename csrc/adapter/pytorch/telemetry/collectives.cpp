@@ -5,6 +5,7 @@
 
 #include <ATen/record_function.h>
 #include <ATen/cuda/CUDAEvent.h>
+#include <c10/cuda/CUDAStream.h>
 #include <torch/csrc/distributed/c10d/ProcessGroup.hpp>
 #include <torch/csrc/distributed/c10d/ProcessGroupNCCL.hpp>
 #include <torch/library.h>
@@ -51,13 +52,23 @@ struct Record {
   std::shared_ptr<at::cuda::CUDAEvent> stop;
 };
 
+struct HostCopyRecord {
+  ShadowSpillTraceContext context{};
+  uint64_t bytes = 0;
+  std::shared_ptr<at::cuda::CUDAEvent> start;
+  std::shared_ptr<at::cuda::CUDAEvent> stop;
+};
+
 struct Session {
   ShadowSpillRuntime* runtime;
   size_t capacity;
   std::atomic<uint64_t> dropped{0};
   std::atomic<uint64_t> errors{0};
+  std::atomic<uint64_t> copy_dropped{0};
+  std::atomic<uint64_t> copy_errors{0};
   std::mutex mutex;
   std::vector<std::unique_ptr<Record>> records;
+  std::vector<std::unique_ptr<HostCopyRecord>> copies;
   at::CallbackHandle callback = at::INVALID_CALLBACK_HANDLE;
 };
 
@@ -198,6 +209,7 @@ void begin(int64_t capacity) {
   TORCH_CHECK(owner->runtime != nullptr, "collective tracing needs a bound runtime");
   owner->capacity = static_cast<size_t>(capacity);
   owner->records.reserve(owner->capacity);
+  owner->copies.reserve(owner->capacity);
   std::atomic_store(&session, owner);
   try {
     owner->callback = at::addGlobalCallback(
@@ -248,14 +260,78 @@ Dict end() {
         {"issued_at_ns", optional_id(record->context.issued_at_ns)},
         {"started_at_ns", start}, {"finished_at_ns", stop}}));
   }
+  c10::impl::GenericList copies(c10::AnyType::get());
+  uint64_t copy_missing = 0;
+  for (const auto& record : owner->copies) {
+    auto start = instant(*owner, record->start);
+    auto stop = instant(*owner, record->stop);
+    copy_missing += start.isNone() || stop.isNone();
+    copies.push_back(dictionary({
+        {"bytes", static_cast<int64_t>(record->bytes)},
+        {"task_id", optional_id(record->context.task_id)},
+        {"object_id", optional_id(record->context.object_id)},
+        {"action_ordinal", optional_id(record->context.action_ordinal)},
+        {"source", record->context.source == 1 ? "fetch" : "evict"},
+        {"issued_at_ns", optional_id(record->context.issued_at_ns)},
+        {"started_at_ns", start}, {"finished_at_ns", stop}}));
+  }
   return dictionary({{"capacity", static_cast<int64_t>(owner->capacity)},
                      {"dropped", static_cast<int64_t>(owner->dropped.load())},
                      {"errors", static_cast<int64_t>(owner->errors.load())},
                      {"missing_timings", static_cast<int64_t>(missing)},
-                     {"records", records}});
+                     {"records", records},
+                     {"host_copies", dictionary({
+                         {"capacity", static_cast<int64_t>(owner->capacity)},
+                         {"dropped", static_cast<int64_t>(owner->copy_dropped.load())},
+                         {"errors", static_cast<int64_t>(owner->copy_errors.load())},
+                         {"missing_timings", static_cast<int64_t>(copy_missing)},
+                         {"records", copies}})}});
 }
 
 } // namespace
+
+int shadowspill_pytorch_copy_host_device(
+    const ShadowSpillBackend* backend, ShadowSpillBackendStream stream,
+    bool fetch, void* destination, const void* source, uint64_t bytes) {
+  auto owner = std::atomic_load(&session);
+  HostCopyRecord* record = nullptr;
+  if (owner) {
+    try {
+      ShadowSpillTraceContext context{};
+      if (shadowspill_trace_context(owner->runtime, &context) && context.source != 0) {
+        std::lock_guard<std::mutex> lock(owner->mutex);
+        if (owner->copies.size() == owner->capacity) {
+          ++owner->copy_dropped;
+        } else {
+          auto item = std::make_unique<HostCopyRecord>();
+          item->context = context;
+          item->bytes = bytes;
+          item->start = std::make_shared<at::cuda::CUDAEvent>(cudaEventDefault);
+          item->stop = std::make_shared<at::cuda::CUDAEvent>(cudaEventDefault);
+          owner->copies.push_back(std::move(item));
+          record = owner->copies.back().get();
+          record->start->record(c10::cuda::getCurrentCUDAStream());
+        }
+      }
+    } catch (...) {
+      ++owner->copy_errors;
+    }
+  }
+  const int status = fetch
+      ? backend->copy_host_to_device(backend->state, destination, source, bytes, stream)
+      : backend->copy_device_to_host(backend->state, destination, source, bytes, stream);
+  if (record) {
+    try {
+      record->stop->record(c10::cuda::getCurrentCUDAStream());
+    } catch (...) {
+      ++owner->copy_errors;
+    }
+    if (status != 0) {
+      ++owner->copy_errors;
+    }
+  }
+  return status;
+}
 
 TORCH_LIBRARY_FRAGMENT(shadowspill, m) {
   m.def("_collective_trace_begin(int capacity) -> ()", &begin);

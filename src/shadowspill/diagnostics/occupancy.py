@@ -51,6 +51,8 @@ from urllib.parse import quote, unquote
 
 from shadowspill.schema import ARTIFACT_VERSION
 
+from .transfer_phases import transfer_phase_data
+
 GIB = float(1 << 30)
 
 #: Which object of several sharing one storage slot at the same time names
@@ -123,8 +125,9 @@ class TaskSpan:
     end_ns: int
     #: The regeneration this task carries: for the backward task of an
     #: alternative chosen as ``recompute``, the group's profiled time beyond
-    #: its ``save`` option's. Zero for every other task.
-    overhead_ns: int = 0
+    #: its ``save`` option's. None when either profile is unavailable;
+    #: zero for every other task. This is not a measured kernel boundary.
+    overhead_ns: int | None = 0
 
 
 @dataclass(frozen=True, slots=True)
@@ -137,6 +140,9 @@ class TransferSpan:
     object_id: str | None
     category: str
     trigger_task_id: str
+    #: Full execution object served by this transfer; ``bytes`` above counts
+    #: only the host-copy payload. Neither measures collective fabric traffic.
+    execution_bytes: int
 
 
 def _category_rank(name: str) -> tuple[int, str]:
@@ -331,11 +337,12 @@ class ProgramFacts:
     recompute_tasks: frozenset[str] = frozenset()
     #: What regenerating costs, by the program's own profiles: for every
     #: alternative chosen as ``recompute``, its tasks' profiled time less the
-    #: ``save`` option's. The planner's recomputation overhead.
-    recompute_overhead_ns: int = 0
+    #: ``save`` option's. None if any selected recompute group lacks either
+    #: profile; an unavailable baseline must never be priced as zero.
+    recompute_overhead_ns: int | None = 0
     #: The same, per task: each group's overhead on its backward task (the
     #: one that re-runs the forward), or its last task when it has none.
-    overhead_by_task: dict[str, int] = field(default_factory=dict)
+    overhead_by_task: dict[str, int | None] = field(default_factory=dict)
 
     @classmethod
     def build(
@@ -346,20 +353,25 @@ class ProgramFacts:
         chosen = {item["group_id"]: item["option_id"] for item in selections}
         tasks = {task["task_id"]: task for task in program["tasks"]}
         runtime = {
-            profile["profile_id"]: int(profile.get("runtime_ns", 0))
+            profile["profile_id"]: int(profile["runtime_ns"])
             for profile in program.get("profiles", ())
+            if profile.get("runtime_ns") is not None
         }
 
-        def profiled(task_ids: Iterable[str]) -> int:
-            return sum(
-                runtime.get(str(tasks[task_id].get("profile_id")), 0)
-                for task_id in task_ids
-                if task_id in tasks
-            )
+        def profiled(task_ids: Iterable[str]) -> int | None:
+            total = 0
+            for task_id in task_ids:
+                task = tasks.get(task_id)
+                profile_id = None if task is None else task.get("profile_id")
+                if profile_id not in runtime:
+                    return None
+                total += runtime[profile_id]
+            return total
 
         recompute: set[str] = set()
         overhead = 0
-        overhead_by_task: dict[str, int] = {}
+        overhead_known = True
+        overhead_by_task: dict[str, int | None] = {}
         for group in program.get("task_alternative_groups", ()):
             if chosen.get(group["group_id"]) != "recompute":
                 continue
@@ -369,16 +381,26 @@ class ProgramFacts:
             }
             regenerating = list(options.get("recompute", ()))
             recompute.update(regenerating)
-            extra = profiled(regenerating) - profiled(options.get("save", ()))
-            overhead += extra
+            selected_ns = profiled(regenerating)
+            save_ns = profiled(options["save"]) if "save" in options else None
+            extra = (
+                None
+                if selected_ns is None or save_ns is None
+                else selected_ns - save_ns
+            )
+            if extra is None:
+                overhead_known = False
+            else:
+                overhead += extra
             carriers = [
                 task_id
                 for task_id in regenerating
                 if str(tasks.get(task_id, {}).get("phase")) == "backward"
             ] or regenerating[-1:]
-            if carriers and extra > 0:
+            if carriers and (extra is None or extra > 0):
+                previous = overhead_by_task.get(carriers[-1], 0)
                 overhead_by_task[carriers[-1]] = (
-                    overhead_by_task.get(carriers[-1], 0) + extra
+                    None if previous is None or extra is None else previous + extra
                 )
         task_order = {task_id: index for index, task_id in enumerate(active_ids)}
         task_phase = {
@@ -498,7 +520,7 @@ class ProgramFacts:
             task_inputs=task_inputs,
             task_outputs=task_outputs,
             recompute_tasks=frozenset(recompute),
-            recompute_overhead_ns=max(overhead, 0),
+            recompute_overhead_ns=max(overhead, 0) if overhead_known else None,
             overhead_by_task=overhead_by_task,
         )
 
@@ -707,6 +729,7 @@ def spill_occupancy(
                 None if holder is None else holder.object_id,
                 UNATTRIBUTED if holder is None else holder.category,
                 trigger,
+                facts.alias_size[alias_id],
             )
         )
         return start_ns, end_ns
@@ -1083,6 +1106,10 @@ class PlanOccupancy:
     #: On a traced view, how many lease instants no traced event named, so
     #: they were interpolated between task boundaries.
     interpolated_leases: int = 0
+    #: Independent NCCL intervals, already included in their parent task or
+    #: transfer. Preserve capture completeness so missing data stays explicit.
+    collectives: Mapping[str, Any] | None = None
+    transfer_phases: Mapping[str, Any] | None = None
 
     @property
     def untimed_transfers(self) -> int:
@@ -1104,6 +1131,11 @@ class PlanOccupancy:
         if self.view == "unconstrained":
             return "unconstrained: every object resident, tasks at their profiled floor"
         if self.view == "all_save":
+            if self.facts.recompute_tasks:
+                return (
+                    "cheapest available profiles: includes recompute; "
+                    "this is not a measured all-save baseline"
+                )
             return (
                 "all save: every alternative at its cheapest, every object resident,"
                 " tasks at their profiled floor"
@@ -1180,7 +1212,7 @@ def attribute(
         busy = _busy_ns((t["start_ns"], t["end_ns"]) for t in copies)
         if busy:
             assumed[direction + "_blended_bandwidth_bytes_per_second"] = (
-                sum(t["bytes"] for t in copies) * 1e9 / busy
+                sum(facts.alias_size[t["alias_group_id"]] for t in copies) * 1e9 / busy
             )
     return PlanOccupancy(
         "traced" if diagnostics is not None else "simulated",
@@ -1192,6 +1224,8 @@ def attribute(
         clock,
         assumed,
         0 if placed is None else placed.interpolated,
+        None if diagnostics is None else diagnostics.get("collectives"),
+        None if diagnostics is None else transfer_phase_data(program, diagnostics),
     )
 
 
@@ -1337,9 +1371,10 @@ def summarize(
     it with nothing computing; recompute is the plan's regeneration overhead
     -- what its recompute alternatives cost beyond their save alternatives,
     by the program's profiles, the number the planner reports -- as a share
-    of the span; a lane's utilisation is the share of the span it is busy,
-    its bytes the total it moved, and its rate those bytes over that time,
-    beside the rate the plan was priced at.
+    of the span (unknown without save profiles). A lane's utilisation is the
+    share of the span it is busy. Its effective rate counts full execution
+    object bytes over complete transfer time, including collective phases.
+    Host-copy bytes are reported separately; neither is fabric bandwidth.
     """
 
     tasks = result.tasks
@@ -1362,6 +1397,14 @@ def summarize(
     }
     lane_bytes = {
         direction: sum(
+            span.execution_bytes
+            for span in result.transfers
+            if span.direction == direction
+        )
+        for direction in ("fetch", "evict")
+    }
+    host_bytes = {
+        direction: sum(
             span.bytes for span in result.transfers if span.direction == direction
         )
         for direction in ("fetch", "evict")
@@ -1375,11 +1418,15 @@ def summarize(
         "spill_peak_gib": result.spill.peak()[0] / GIB,
         "execution_peak_gib": None if pool is None else pool.peak()[0] / GIB,
         "idle_percent": 100.0 * max(span_ns - compute_ns, 0) / span_ns,
-        "recompute_percent": 100.0 * recompute_ns / span_ns,
+        "recompute_percent": (
+            None if recompute_ns is None else 100.0 * recompute_ns / span_ns
+        ),
         "fetch_utilization_percent": 100.0 * lane_ns["fetch"] / span_ns,
         "evict_utilization_percent": 100.0 * lane_ns["evict"] / span_ns,
         "fetch_gib": lane_bytes["fetch"] / GIB,
         "evict_gib": lane_bytes["evict"] / GIB,
+        "fetch_host_gib": host_bytes["fetch"] / GIB,
+        "evict_host_gib": host_bytes["evict"] / GIB,
         # the rate this view achieved, bytes over lane time, against the rate
         # the plan was priced at
         "fetch_gbps": (
@@ -1545,7 +1592,7 @@ def page_data(
             span.end_ns / 1e9,
             span.phase,
             span.name,
-            span.overhead_ns / 1e9,
+            None if span.overhead_ns is None else span.overhead_ns / 1e9,
         ]
         for span in sorted(result.tasks, key=lambda span: span.start_ns)
     ]
@@ -1554,13 +1601,18 @@ def page_data(
             [
                 span.start_ns / 1e9,
                 span.end_ns / 1e9,
-                span.bytes,
+                span.execution_bytes,
                 span.category,
                 span.alias_group_id,
+                span.bytes,
             ]
             for span in sorted(result.transfers, key=lambda span: span.start_ns)
             if span.direction == direction
         ]
+    if result.collectives is not None:
+        data["collectives"] = result.collectives
+    if result.transfer_phases is not None:
+        data["transfer_phases"] = result.transfer_phases
     return data
 
 
@@ -1917,6 +1969,8 @@ SUMMARY_COLUMNS = (
     "evict_utilization_percent",
     "fetch_gib",
     "evict_gib",
+    "fetch_host_gib",
+    "evict_host_gib",
     "fetch_gbps",
     "evict_gbps",
     "assumed_fetch_gbps",
@@ -2022,6 +2076,8 @@ def _summary_rows(
                 "evict_utilization_percent": summary["evict_utilization_percent"],
                 "fetch_gib": summary["fetch_gib"],
                 "evict_gib": summary["evict_gib"],
+                "fetch_host_gib": summary["fetch_host_gib"],
+                "evict_host_gib": summary["evict_host_gib"],
                 "fetch_gbps": summary["fetch_gbps"],
                 "evict_gbps": summary["evict_gbps"],
                 "assumed_fetch_gbps": summary["assumed_fetch_gbps"],

@@ -56,3 +56,39 @@ def test_dropped_or_unmeasured_collectives_make_trace_incomplete():
         )
         assert not captured.complete
         assert not captured.as_dict()["complete"]
+
+
+def test_host_copy_phase_retains_bytes_ownership_and_separate_completeness():
+    captured = decode_collectives(
+        {
+            "records": [],
+            "host_copies": {
+                "capacity": 2,
+                "dropped": 1,
+                "records": [
+                    {
+                        "source": "fetch",
+                        "bytes": 128,
+                        "task_id": 9,
+                        "object_id": 4001,
+                        "action_ordinal": 3,
+                        "issued_at_ns": 100,
+                        "started_at_ns": 200,
+                        "finished_at_ns": 300,
+                    }
+                ],
+            },
+        },
+        groups={},
+        tasks={9: ("task_000009", "execution_000012")},
+        aliases={4001: "alias_000002"},
+    )
+    assert captured.complete  # Collective capture is independently complete.
+    copies = captured.as_dict()["host_copies"]
+    assert not copies["complete"] and copies["dropped"] == 1
+    record = copies["records"][0]
+    assert record["bytes"] == 128
+    assert record["execution_task_id"] == "execution_000012"
+    assert record["alias_group_id"] == "alias_000002"
+    assert record["finished_at_ns"] - record["started_at_ns"] == 100
+    assert decode_collectives({}, groups={}, tasks={}, aliases={}).host_copies is None

@@ -60,9 +60,9 @@ int enqueue_transfer(
         if (transfer->replicas && transfer->replicas->getRank() != 0) {
           return 0;
         }
-        return backend->copy_host_to_device(
-            backend->state, static_cast<char*>(destination) + transfer->offset,
-            source, static_cast<uint64_t>(transfer->shard_bytes), stream);
+        return shadowspill_pytorch_copy_host_device(
+            backend, stream, true, static_cast<char*>(destination) + transfer->offset,
+            source, static_cast<uint64_t>(transfer->shard_bytes));
       }
       auto* mutable_source = const_cast<void*>(source);
       if (transfer->logical_bytes < transfer->execution_bytes) {
@@ -87,20 +87,20 @@ int enqueue_transfer(
         options.asyncOp = true;
         transfer->replicas->allreduce(values, options)->blockCurrentStream();
       }
-      return backend->copy_device_to_host(
-          backend->state, destination, owned.data_ptr(),
-          static_cast<uint64_t>(transfer->shard_bytes), stream);
+      return shadowspill_pytorch_copy_host_device(
+          backend, stream, false, destination, owned.data_ptr(),
+          static_cast<uint64_t>(transfer->shard_bytes));
     }
     if (!fetch) {
-      return backend->copy_device_to_host(
-          backend->state, destination,
+      return shadowspill_pytorch_copy_host_device(
+          backend, stream, false, destination,
           static_cast<const char*>(source) + transfer->offset,
-          static_cast<uint64_t>(transfer->shard_bytes), stream);
+          static_cast<uint64_t>(transfer->shard_bytes));
     }
     auto* owned = static_cast<char*>(destination) + transfer->offset;
-    const int status = backend->copy_host_to_device(
-        backend->state, owned, source,
-        static_cast<uint64_t>(transfer->shard_bytes), stream);
+    const int status = shadowspill_pytorch_copy_host_device(
+        backend, stream, true, owned, source,
+        static_cast<uint64_t>(transfer->shard_bytes));
     if (status != 0 || transfer->group->getSize() == 1) {
       return status;
     }

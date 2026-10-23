@@ -22,6 +22,12 @@ ShadowSpillRuntime *shadowspill_pytorch_bound_runtime(void);
 #ifdef __cplusplus
 }
 
+/* Time only the physical host copy inside a transformed transfer. The trace
+   owns these events; outside an armed trace this just delegates to the backend. */
+int shadowspill_pytorch_copy_host_device(
+    const ShadowSpillBackend* backend, ShadowSpillBackendStream stream,
+    bool fetch, void* destination, const void* source, uint64_t bytes);
+
 /* Opens a profiler range for an operator's scope; a no-op without one. The
    range is the runtime's: the adapter keeps no profiler of its own. */
 struct RangeGuard {

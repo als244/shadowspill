@@ -1155,3 +1155,98 @@ def test_blended_rates_follow_plan_overlap_on_both_clocks():
     cards = dict(summary_cards(actual))
     assert "planned blend" in next(k for k in cards if k.startswith("Fetch rate"))
     assert "assumed_fetch_gbps" in SUMMARY_COLUMNS
+
+
+@pytest.mark.parametrize(
+    "missing", ["save_option", "save_profile", "recompute_profile"]
+)
+def test_missing_pair_baseline_is_unknown_instead_of_full_pair_overhead(missing):
+    from shadowspill.diagnostics.occupancy import page_data
+
+    program = _program()
+    if missing == "save_option":
+        group = program["task_alternative_groups"][0]
+        group["options"] = [o for o in group["options"] if o["option_id"] != "save"]
+        program["tasks"] = [t for t in program["tasks"] if t["task_id"] != "t3"]
+    else:
+        removed = "p_save" if missing == "save_profile" else "p_recompute"
+        program["profiles"] = [
+            p for p in program["profiles"] if p["profile_id"] != removed
+        ]
+    result = attribute(_selection("recompute"), program)
+    assert result.facts.recompute_overhead_ns is None
+    assert result.facts.overhead_by_task["t3r"] is None
+    assert summarize(result)["recompute_percent"] is None
+    page = page_data(result)
+    assert next(row for row in page["compute"] if row[3] == "t3r")[4] is None
+
+
+def test_sharded_transfer_rates_count_full_objects_and_keep_host_bytes_separate():
+    from shadowspill.diagnostics.occupancy import page_data
+
+    program, selection = _program(), _selection()
+    for alias in program["alias_groups"]:
+        if alias["alias_group_id"] not in {"A_w", "A_a"}:
+            continue
+        shard = alias["size_bytes"] // 8
+        alias["transfer"] = {
+            "spill_size_bytes": shard,
+            "fetch": [
+                {"kind": "copy", "bytes": shard},
+                {"kind": "timed", "bytes": 7 * shard, "duration_ns": S // 4},
+            ],
+            "evict": [{"kind": "copy", "bytes": shard}],
+        }
+    for transfer in selection["simulation_result"]["transfer_intervals"]:
+        if transfer["alias_group_id"] in {"A_w", "A_a"}:
+            transfer["bytes"] //= 8
+    result = attribute(selection, program)
+    summary = summarize(result)
+    assert summary["fetch_gbps"] == pytest.approx(172 * MIB / (2 * S))
+    assert summary["evict_gbps"] == pytest.approx(64 * MIB / S)
+    assert summary["assumed_fetch_gbps"] == summary["fetch_gbps"]
+    assert summary["assumed_evict_gbps"] == summary["evict_gbps"]
+    assert summary["fetch_host_gib"] == (100 / 8 + 8 + 64 / 8) / 1024
+    assert summary["evict_host_gib"] == 8 / 1024
+    page = page_data(result)
+    weight = next(row for row in page["fetch"] if row[4] == "A_w")
+    assert weight[2] == 100 * MIB and weight[5] == 100 * MIB // 8
+    assert result.facts.alias_spill_size["A_w"] == 100 * MIB // 8
+
+
+def test_collective_rows_preserve_clock_and_coverage_without_double_counting():
+    from shadowspill.diagnostics.occupancy import page_data
+
+    diagnostics = _diagnostics()
+    before = summarize(attribute(_selection(), _program(), diagnostics=diagnostics))
+    records = [
+        {
+            "operation": "all_gather",
+            "source": "fetch",
+            "started_at_ns": 2 * S,
+            "finished_at_ns": 3 * S,
+            "input_bytes": 10,
+            "output_bytes": 80,
+        },
+        {
+            "operation": "reduce_scatter",
+            "source": "task",
+            "started_at_ns": None,
+            "finished_at_ns": None,
+            "input_bytes": 80,
+            "output_bytes": 10,
+        },
+    ]
+    diagnostics["collectives"] = {
+        "enabled": True,
+        "complete": False,
+        "dropped": 0,
+        "errors": 0,
+        "missing_timings": 1,
+        "records": records,
+    }
+    result = attribute(_selection(), _program(), diagnostics=diagnostics)
+    page = page_data(result)
+    assert page["collectives"] == diagnostics["collectives"]
+    assert page["summary"] == before
+    assert "collectives" not in page_data(attribute(_selection(), _program()))
