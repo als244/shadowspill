@@ -27,6 +27,7 @@ def experiment(
     *,
     device,
     checkpoint=None,
+    initialization="random",
     tiny=False,
     sequence_length=1024,
     sequences_per_step=8,
@@ -34,8 +35,10 @@ def experiment(
     lora_rank=32,
     lora_alpha=32.0,
     lora_dtype="bfloat16",
+    router_weight_dtype=None,
     lora_head=False,
     grad_dtype="float32",
+    master_dtype=None,
     opt_state_dtype="bfloat16",
     opt_state_rounding=None,
     gemm_precision="bf16",
@@ -50,8 +53,10 @@ def experiment(
 ):
     """Return the ordinary quickstart factory contract.
 
-    Supply a local HF checkpoint, or explicitly select the small random fixture
-    with `tiny=True`. A compressed checkpoint's experts (FP8 or NVFP4) load as
+    Supply a local HF checkpoint for metadata, or select the small fixture
+    with `tiny=True`. By default, checkpoint-shaped state is randomly initialized
+    without reading weight payloads. Use `initialization="checkpoint"` to load
+    actual weights. A compressed checkpoint's experts (FP8 or NVFP4) load as
     one-copy block-scaled FP8 (``expert_storage="fp8_block"``, an FP8
     checkpoint's bytes as they are) whose GEMMs run in FP8; ``"fp8"`` is the
     two-copy container and ``"bf16"`` decodes them. Its dense projections
@@ -61,6 +66,10 @@ def experiment(
     `GLMStages`; by default the planner chooses. This text-only recipe does
     not imply full-checkpoint numerical qualification.
     """
+    if initialization not in ("random", "checkpoint"):
+        raise ValueError("initialization must be 'random' or 'checkpoint'")
+    if tiny and initialization == "checkpoint":
+        raise ValueError("tiny=True has no checkpoint weights to load")
     if (checkpoint is not None) == bool(tiny):
         raise ValueError("Choose a checkpoint directory or tiny=True")
     distributed = dist.is_initialized()
@@ -88,8 +97,12 @@ def experiment(
         "bfloat16": torch.bfloat16,
         "float16": torch.float16,
     }
+    if router_weight_dtype not in (None, "bfloat16", "float32"):
+        raise ValueError("router_weight_dtype must be None, bfloat16 or float32")
     if lora_dtype not in dtypes or grad_dtype not in dtypes:
         raise ValueError("LoRA/gradient dtypes must be float32, bfloat16 or float16")
+    if master_dtype is not None and master_dtype not in dtypes:
+        raise ValueError("master_dtype must be None, float32, bfloat16 or float16")
     if opt_state_dtype not in (*dtypes, "parameter"):
         raise ValueError(
             "the optimizer state dtype must be float32, bfloat16, float16 or parameter"
@@ -133,7 +146,12 @@ def experiment(
         lora_head=lora_head,
     )
     config = (
-        config_type.tiny(hidden_size=128, expert_storage=expert_storage, **lora)
+        config_type.tiny(
+            hidden_size=128,
+            expert_storage=expert_storage,
+            router_weight_dtype=dtypes[router_weight_dtype or "bfloat16"],
+            **lora,
+        )
         if tiny
         else source.config_from_metadata(source.metadata)
     )
@@ -148,7 +166,7 @@ def experiment(
         nonlocal source
         if tiny:
             # Only the explicitly small fixture constructs initialized state.
-            # Real checkpoints instead declare meta tensors and stream into spill.
+            # Checkpoint-shaped models declare meta tensors, then fill spill.
             selected = torch.device(device)
             with torch.random.fork_rng(devices=[selected]):
                 torch.manual_seed(seed)
@@ -157,17 +175,41 @@ def experiment(
             source = checkpoint_type(
                 checkpoint, gemm_precision=gemm_precision, expert_storage=expert_storage
             )
-        return source.build_model(layer_limit=layer_limit, **lora)
+        return source.build_model(
+            layer_limit=layer_limit,
+            router_weight_dtype=dtypes.get(router_weight_dtype),
+            **lora,
+        )
 
     def initialize(model, adopted=frozenset()):
         from shadowspill.pytorch import initialize_storage_
 
+        from .initialization import InitializationProgress, initialize_random
+
+        progress = (
+            InitializationProgress(model, mode=initialization, adopted=adopted)
+            if rank == 0
+            else None
+        )
         try:
-            with torch.random.fork_rng(devices=[]):
-                torch.manual_seed(seed)
-                source.load_into(
-                    model, adopted=adopted, write_tensor=initialize_storage_
+            if initialization == "random":
+                initialize_random(
+                    model,
+                    seed=seed,
+                    device=device,
+                    adopted=adopted,
+                    write_tensor=initialize_storage_,
+                    progress=progress,
                 )
+            else:
+                with torch.random.fork_rng(devices=[]):
+                    torch.manual_seed(seed)
+                    source.load_into(
+                        model,
+                        adopted=adopted,
+                        write_tensor=initialize_storage_,
+                        on_tensor=progress,
+                    )
         finally:
             close_source()
 
@@ -247,6 +289,7 @@ def experiment(
         "candidates": candidates,
         "plan_options": {
             "grad_dtype": dtypes[grad_dtype],
+            "master_dtype": dtypes.get(master_dtype),
             **({"partition": GLMStages()} if partition == "glm_stages" else {}),
         },
         "units_per_step": total,
@@ -256,6 +299,8 @@ def experiment(
             "architecture": architecture,
             "checkpoint": None if tiny else str(source.directory),
             "tiny": tiny,
+            "initialization": initialization,
+            "initialization_device": torch.device(device).type,
             "sequence_length": sequence_length,
             "sequences_per_step": sequences_per_step,
             "layer_limit": layer_limit,
@@ -263,6 +308,7 @@ def experiment(
             "lora_alpha": lora_alpha,
             "lora_dtype": lora_dtype,
             "grad_dtype": grad_dtype,
+            "master_dtype": master_dtype,
             "optimizer": "mlops.optim.AdamW",
             "opt_state_dtype": opt_state_dtype,
             "opt_state_rounding": opt_state_rounding,

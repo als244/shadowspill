@@ -37,7 +37,8 @@ class KDA(nn.Module):
         self.q_proj = linear(c.hidden_size, width, c, device)
         self.k_proj = linear(c.hidden_size, width, c, device)
         self.v_proj = linear(c.hidden_size, width, c, device)
-        # HF's keep-in-FP32 storage rule applies to the convolution.
+        # Random training follows HF's FP32 convolution rule. The checkpoint
+        # importer instead preserves its stored dtype (BF16 in the release).
         self.conv1d = nn.Conv1d(
             3 * width,
             3 * width,

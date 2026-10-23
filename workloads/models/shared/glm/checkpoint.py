@@ -308,10 +308,17 @@ class GLMCheckpoint:
         lora_factor_dtype=torch.float32,
         lora_head=False,
         include_vision=False,
+        router_weight_dtype=None,
     ):
-        """Declare final shapes/dtypes on meta and validate every copy up front."""
+        """Declare checkpoint storage on meta and validate every copy up front.
+
+        Router weights retain checkpoint dtype unless router_weight_dtype
+        explicitly requests BF16 or FP32. Routing logits remain FP32.
+        """
         if self.inventory is not None:
             raise RuntimeError("Use a fresh GLMCheckpoint to build another model")
+        if router_weight_dtype not in (None, torch.bfloat16, torch.float32):
+            raise ValueError("router_weight_dtype must be None, BF16 or FP32")
         c = self.config_from_metadata(self.metadata, gemm_precision=self.gemm_precision)
         # The routed experts' checkpoint format chooses their default storage:
         # dense stays bf16, compressed (FP8, NVFP4) becomes one-copy block FP8.
@@ -333,6 +340,8 @@ class GLMCheckpoint:
             lora_factor_dtype=lora_factor_dtype,
             lora_head=lora_head,
         )
+        if router_weight_dtype is not None:
+            c = replace(c, router_weight_dtype=router_weight_dtype)
         if layer_limit is not None:
             if not 1 <= layer_limit <= c.num_hidden_layers:
                 raise ValueError("layer_limit must select a nonempty decoder prefix")
@@ -396,6 +405,44 @@ class GLMCheckpoint:
             else:
                 source = self.source_name(name.removesuffix(".compute"))
                 self.copies.append(Copy(name, source))
+        # The checkpoint, not a randomly initialized model's training defaults,
+        # owns frozen storage precision. In particular, HF stores mHC projections
+        # and KDA convolutions in BF16 even though their arithmetic may use FP32.
+        # Resolve joined tensors as a unit so mixed source dtypes cannot silently
+        # round one component. Quantized containers already declare their exact
+        # physical component dtypes above.
+        source_dtypes = {}
+        for copy in self.copies:
+            dtype = self.weights.source.tensor(copy.source, meta=True).dtype
+            source_dtypes.setdefault(copy.destination, set()).add(dtype)
+        parameters = dict(model.named_parameters())
+        buffers = dict(model.named_buffers())
+        for name, dtypes in source_dtypes.items():
+            if len(dtypes) != 1:
+                raise ValueError(f"Mixed checkpoint dtypes for joined tensor {name}")
+            dtype = next(iter(dtypes))
+            if router_weight_dtype is not None and name.endswith(".mlp.router"):
+                dtype = router_weight_dtype
+            value = targets[name]
+            if dtype == value.dtype:
+                continue
+            if name not in parameters and name not in buffers:
+                raise ValueError(
+                    f"Checkpoint dtype differs for physical component {name}"
+                )
+            if not value.is_floating_point() or not dtype.is_floating_point:
+                raise ValueError(
+                    f"Unsupported checkpoint storage dtype for {name}: {dtype}"
+                )
+            parent, _, leaf = name.rpartition(".")
+            owner = model.get_submodule(parent)
+            value = torch.empty_like(value, dtype=dtype)
+            if name in parameters:
+                value = nn.Parameter(
+                    value, requires_grad=parameters[name].requires_grad
+                )
+            setattr(owner, leaf, value)
+        targets = physical_state(model)
         for copy in self.copies:
             source = self.weights.source.tensor(copy.source, meta=True)
             target = copy.view(targets)
@@ -404,9 +451,13 @@ class GLMCheckpoint:
                     f"{copy.source}: {tuple(source.shape)} does not match "
                     f"{copy.destination}: {tuple(target.shape)}"
                 )
-            if source.dtype != target.dtype and not (
-                source.is_floating_point() and target.dtype == torch.float32
-            ):
+            router_override = (
+                router_weight_dtype is not None
+                and copy.destination.endswith(".mlp.router")
+                and source.dtype in (torch.bfloat16, torch.float32)
+                and target.dtype == router_weight_dtype
+            )
+            if source.dtype != target.dtype and not router_override:
                 raise ValueError(
                     f"Unsupported dtype conversion {copy.source}: "
                     f"{source.dtype} -> {target.dtype}"
@@ -460,6 +511,15 @@ class GLMCheckpoint:
             "expert_storage": c.expert_storage,
             "checkpoint_expert_format": self.expert_format,
             "converted_expert_banks": len(self.conversions),
+            "storage_dtype_bytes": {
+                str(dtype): sum(
+                    t.numel() * t.element_size()
+                    for t in targets.values()
+                    if t.dtype == dtype
+                )
+                for dtype in sorted({t.dtype for t in targets.values()}, key=str)
+            },
+            "checkpoint_storage_preserved": not self.conversions,
             "gemm_precision": c.gemm_precision,
             "lora_rank": c.lora_rank,
             "lora_alpha": c.lora_alpha,
@@ -474,7 +534,13 @@ class GLMCheckpoint:
 
     @torch.no_grad()
     def load_into(
-        self, model, *, progress=None, adopted=frozenset(), write_tensor=None
+        self,
+        model,
+        *,
+        progress=None,
+        adopted=frozenset(),
+        write_tensor=None,
+        on_tensor=None,
     ):
         """Fill supplied state in place; retain no tensor payload between copies.
 
@@ -484,7 +550,8 @@ class GLMCheckpoint:
         read only on a storage's owner and distribute it. The default writes
         ordinary tensors without requiring a runtime. LoRA initialization keeps
         its existing RNG sequence; representation conversions use the ordinary
-        per-expert path.
+        per-expert path. ``on_tensor(name)`` reports each destination after
+        its bytes have been published, including distributed shard copies.
         """
         if self.inventory is None:
             raise RuntimeError("Call build_model() before loading")
@@ -504,6 +571,8 @@ class GLMCheckpoint:
             else:
                 nn.init.zeros_(value)
             target.copy_(value)
+            if on_tensor is not None:
+                on_tensor(name)
         grouped = {}
         for copy in self.copies:
             if copy.destination in adopted:
@@ -556,6 +625,8 @@ class GLMCheckpoint:
             else:
                 write_tensor(target, fill)
             done += len(copies)
+            if on_tensor is not None:
+                on_tensor(destination)
             if progress is not None and not filled:
                 progress(done, total, copies[-1].source)
         # Banks that change form: decoded and quantized an expert at a time,
@@ -589,6 +660,8 @@ class GLMCheckpoint:
                     progress(done, total, prefix)
             for destination, staging in stagings.items():
                 targets[destination].copy_(staging)
+                if on_tensor is not None:
+                    on_tensor(destination)
             del stagings
 
     def close(self):

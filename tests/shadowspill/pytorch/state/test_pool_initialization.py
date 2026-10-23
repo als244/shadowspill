@@ -373,3 +373,30 @@ def test_whole_copy_reads_the_pool_source_without_reading_the_destination(monkey
         declarations[0].copy_(declarations[1])
     assert reads == [1]
     torch.testing.assert_close(values[0], values[1], rtol=0, atol=0)
+
+
+def test_pool_copy_releases_temporary_storages_without_cyclic_gc(monkeypatch):
+    """A slice must not keep its entire source bank alive after publication."""
+    import gc
+    import weakref
+    from types import SimpleNamespace
+
+    from shadowspill.pytorch.state import initialization
+
+    registry = SimpleNamespace(storage=lambda key: None)
+    monkeypatch.setattr(initialization, "registry_for", lambda runtime: registry)
+    was_enabled = gc.isenabled()
+    gc.disable()
+    try:
+        with initialization.pool_values(object()):
+            for _ in range(4):
+                bank = torch.empty(1024, dtype=torch.uint8)
+                source = torch.ones(16, dtype=torch.uint8)
+                bank_ref, source_ref = weakref.ref(bank), weakref.ref(source)
+                bank[:16].copy_(source)
+                del bank, source
+                assert bank_ref() is None
+                assert source_ref() is None
+    finally:
+        if was_enabled:
+            gc.enable()

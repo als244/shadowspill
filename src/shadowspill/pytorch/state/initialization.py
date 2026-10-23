@@ -277,9 +277,7 @@ class pool_values(TorchDispatchMode):  # type: ignore[no-untyped-call]
                     )
                     return copy_destination
 
-        def read(value: Any) -> Any:
-            if isinstance(value, torch.Tensor) and is_wrapper(value):
-                return map_tensor(value, read)
+        def read_leaf(value: Any) -> Any:
             if not isinstance(value, torch.Tensor) or value.device.type != "cpu":
                 return value
             identity = int(value.untyped_storage()._cdata)
@@ -307,6 +305,14 @@ class pool_values(TorchDispatchMode):  # type: ignore[no-untyped-call]
             originals[_view_key(replacement)] = value
             return replacement
 
+        def read(value: Any) -> Any:
+            # Keep wrapper recursion in map_tensor, not in this closure.
+            # A self-referencing callback forms a GC cycle that can retain
+            # whole multi-GiB scratch storages through a tiny copy destination.
+            if isinstance(value, torch.Tensor) and is_wrapper(value):
+                return map_tensor(value, read_leaf)
+            return read_leaf(value)
+
         result = function(*tree_map(read, args), **tree_map(read, kwargs))
         mutated: set[int] = set()
         for index, argument in enumerate(schema.arguments):
@@ -326,9 +332,7 @@ class pool_values(TorchDispatchMode):  # type: ignore[no-untyped-call]
             int(owner.untyped_storage()._cdata): item for item, owner in staged.values()
         }
 
-        def restore(value: Any) -> Any:
-            if isinstance(value, torch.Tensor) and is_wrapper(value):
-                return map_tensor(value, restore)
+        def restore_leaf(value: Any) -> Any:
             if not isinstance(value, torch.Tensor):
                 return value
             item = by_staging.get(int(value.untyped_storage()._cdata))
@@ -344,6 +348,11 @@ class pool_values(TorchDispatchMode):  # type: ignore[no-untyped-call]
                 value.stride(),
                 value.storage_offset(),
             )
+
+        def restore(value: Any) -> Any:
+            if isinstance(value, torch.Tensor) and is_wrapper(value):
+                return map_tensor(value, restore_leaf)
+            return restore_leaf(value)
 
         return tree_map(restore, result)
 

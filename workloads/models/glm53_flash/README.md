@@ -91,10 +91,11 @@ frozen tensors where they lie and writes only LoRA factors, optimizer state and
 activations; `GLMCheckpoint.load_into(model, adopted=...)` skips the adopted
 copies.
 
-Every mHC parameter -- the projection, bias and scale -- is kept in FP32, as
-Megatron-Core keeps them, and the coefficients are computed in FP32 while the
-streams stay in the model's dtype. The checkpoint stores the projection in
-BF16, which widens to FP32 on import.
+Checkpoint import preserves the source dtype of each direct-copy tensor,
+including BF16 mHC projections, routers and KDA convolutions. mHC bias/scale
+and KDA control tensors remain checkpoint FP32. The mHC projection and
+coefficients still compute in FP32 while residual streams stay BF16. Random
+model construction retains its separate FP32 training defaults.
 
 The `--minimum-evict-kib` option configures the ordinary planner's small-object
 policy (default 1024 KiB; zero allows every object to be evicted). Objects below
@@ -323,13 +324,27 @@ python -m benchmarking.quickstart \
   --output-dir /local/results/glm-tiny
 ```
 
-A local checkpoint uses the same factory and retains bounded, direct-to-spill
-initialization. For example, to investigate a four-layer LoRA prefix:
+With a local checkpoint, quickstart defaults to `initialization="random"`.
+It reads configuration and safetensors headers, declares the checkpoint's exact
+physical shapes and dtypes (including BF16/FP32 controls and FP8 data/scales),
+and fills them without reading weight payloads. FP8 experts retain one block-scaled
+copy and FP8 GEMMs; initialization uses bounded FP32 scratch. Generated values
+are synthetic and seeded, with positive quantization scales and zero LoRA B
+factors. This mode currently supports dense and block-FP8 storage; other
+compressed dense formats and two-orientation expert storage require checkpoint
+initialization.
+
+Set `"initialization":"checkpoint"` in `--factory-args` to load real weights.
+Both modes report initialization bytes, throughput and ETA; these rates include
+initialization/assembly and shard distribution, not just disk reads. Real-text
+training below continues to load actual checkpoint weights.
+
+For example, to load a four-layer LoRA prefix:
 
 ```bash
 python -m benchmarking.quickstart \
   --factory workloads.models.glm53_flash.quickstart:experiment \
-  --factory-args '{"checkpoint":"/local/models/GLM-5.3-Flash-NVFP4","layer_limit":4,"sequence_length":1024,"sequences_per_step":8,"sequences_per_microbatch":[1,2,4]}' \
+  --factory-args '{"checkpoint":"/local/models/GLM-5.3-Flash-NVFP4","initialization":"checkpoint","layer_limit":4,"sequence_length":1024,"sequences_per_step":8,"sequences_per_microbatch":[1,2,4]}' \
   --lora-rank 32 --minimum-evict-kib 128 \
   --search-budget-gib 16,24 --run-budget-gib 24 --spill-gib 64 \
   --ssd-spill /local/spill --steps 3 --resolution-plans \
@@ -341,7 +356,7 @@ qualification claims for a full checkpoint training run. Omit `layer_limit`
 for all 45 layers and provision spill capacity for the actual checkpoint plus
 trainable state and saved activations. Do not assume the prefix budgets suffice.
 
-Factory arguments: `checkpoint` or `tiny`; `sequence_length`;
+Factory arguments: `checkpoint` or `tiny`; `initialization`; `sequence_length`;
 `sequences_per_step`; `sequences_per_microbatch`; `lora_rank`;
 `lora_alpha`; `lora_dtype`; `lora_head`; `grad_dtype`; `opt_state_dtype`;
 `opt_state_rounding`; `gemm_precision`; `expert_storage`; `layer_limit`;
@@ -392,7 +407,8 @@ torchrun --standalone --nproc-per-node=8 -m benchmarking.rank_device \
   --steps 5 --output-dir /local/results/glm-dp-sharded
 ```
 
-That example uses the factory's rank-16 BF16 LoRA defaults. Its original FP8
+That example uses random initialization and the factory's rank-32 BF16 LoRA
+defaults. Add `"initialization":"checkpoint"` to load weights. Its original FP8
 checkpoint model occupies about 303 GiB including factors, before gradients,
 optimizer state and activations. Eight 96 GiB spill pools allocate 768 GiB of host
 memory in total; reserve additional memory for initialization, compilation and

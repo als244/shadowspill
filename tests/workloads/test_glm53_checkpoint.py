@@ -234,3 +234,62 @@ def test_lora_factors_start_as_lora_does(tmp_path):
     }
     assert "layers.1.mlp.lora_gate_up_a" in trainable
     assert "layers.1.mlp.w13" not in trainable
+
+
+def test_checkpoint_controls_frozen_storage_without_changing_mhc_arithmetic(tmp_path):
+    _write(tmp_path, fp8_experts=True)
+    path = tmp_path / "model.safetensors"
+    tensors = safetensors_torch.load_file(str(path))
+    names = [
+        name
+        for name in tensors
+        if name.endswith(
+            (
+                "hc_attn_fn",
+                "hc_ffn_fn",
+                "q_conv1d.weight",
+                "k_conv1d.weight",
+                "v_conv1d.weight",
+            )
+        )
+    ]
+    assert names
+    for name in names:
+        tensors[name] = tensors[name].bfloat16()
+    safetensors_torch.save_file(tensors, str(path))
+    model, inventory = _load(tmp_path, lora_rank=4)
+    assert inventory["checkpoint_storage_preserved"]
+    for layer in model.layers:
+        assert layer.attn_hc.fn.dtype == torch.bfloat16
+        assert layer.ffn_hc.fn.dtype == torch.bfloat16
+        assert layer.attn_hc.base.dtype == torch.float32
+        assert not layer.attn_hc.fn.requires_grad
+        if hasattr(layer.self_attn, "conv1d"):
+            assert layer.self_attn.conv1d.weight.dtype == torch.bfloat16
+    # Widening during arithmetic preserves every stored BF16 value exactly.
+    module = model.layers[0].attn_hc
+    streams = torch.randn(2, model.config.hc_mult, model.config.hidden_size).bfloat16()
+    actual = module(streams)
+    module.fn = nn.Parameter(module.fn.float(), requires_grad=False)
+    expected = module(streams)
+    for a, b in zip(actual, expected, strict=True):
+        torch.testing.assert_close(a, b, rtol=0, atol=0)
+
+
+@pytest.mark.parametrize("override", [None, torch.float32])
+def test_router_storage_defaults_to_checkpoint_with_explicit_fp32_opt_in(
+    tmp_path, override
+):
+    _, original = _write(tmp_path, fp8_experts=False)
+    with GLMCheckpoint(tmp_path) as source:
+        model = _materialized(source.build_model(router_weight_dtype=override))
+        source.load_into(model)
+    expected_dtype = override or torch.bfloat16
+    for old, new in zip(original.layers, model.layers, strict=True):
+        if hasattr(new.mlp, "router"):
+            assert old.mlp.router.dtype == torch.bfloat16
+            assert new.mlp.router.dtype == expected_dtype
+            torch.testing.assert_close(
+                new.mlp.router, old.mlp.router.to(expected_dtype)
+            )
+            assert new.mlp.e_score_correction_bias.dtype == torch.float32
