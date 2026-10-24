@@ -348,6 +348,14 @@ streams the same named storage in bounded views. Callbacks must consume/fill eac
 view before returning and must not retain it. Checkpoint file formats belong to
 helpers above this interface, not the allocator or task dispatcher.
 
+Worker shard descriptions preserve offsets into the original tensor storage.
+Load/export callbacks see only valid owned elements; padded tail elements are
+zeroed internally. Master initialization converts directly from the corresponding
+local compute-weight shard into each bounded destination chunk. Optimizer bindings
+record their associated parameter explicitly, including names containing dots.
+This shard-loading path is qualified independently; distributed Executor admission
+and distributed checkpoint publication remain pending.
+
 `save_checkpoint(executor, path, metadata={...})` streams persistent tensor storage
 into one atomic archive. `load_checkpoint(executor, path)` fills the same bounded
 views and returns the caller metadata. The initial helper requires the same

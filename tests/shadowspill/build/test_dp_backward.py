@@ -22,6 +22,7 @@ from shadowspill.communication.requests import collective_requests
 from shadowspill.ir import MemoryLocation
 from shadowspill.pytorch.executable import restore_executable
 from shadowspill.step.ordering import StepDataOrdering
+from tests.shadowspill.build._shard_loading import check_shard_loading
 
 
 @pytest.mark.cuda
@@ -49,6 +50,7 @@ def test_one_gpu_build_profiles_padding_and_owned_gradient_accumulation(
         parallelism=Parallelism.dp(ranks_per_replica=2, num_replicas=2),
     )
     source.save(tmp_path / "program.ssp")
+    check_shard_loading(source)
     assert source.parallelism.world_size == 4
     assert len(source.bindings["gradient_templates"]) == 1
     completion = source.bindings["gradient_templates"][0]

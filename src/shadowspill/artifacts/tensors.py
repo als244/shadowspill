@@ -25,6 +25,16 @@ def tensor_geometry(program: Program) -> dict[str, Mapping[str, Any]]:
     for item in program.bindings.get("optimizer_bindings", ()):
         if item["object_id"] is not None:
             result.setdefault(item["object_id"], {**item, "storage_offset": 0})
+    for item in program.bindings.get("persistent_gradients", ()):
+        result.setdefault(
+            item["gradient_object_id"],
+            {
+                "shape": item["shape"],
+                "stride": (1,),
+                "storage_offset": 0,
+                "dtype": item["dtype"],
+            },
+        )
     return result
 
 

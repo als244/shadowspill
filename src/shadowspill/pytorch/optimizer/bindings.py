@@ -79,7 +79,11 @@ def tensor_bindings(
     seen: set[int] = set()
 
     def add(
-        name: str, role: OptimizerTensorRole, tensor: torch.Tensor, mutable: bool
+        name: str,
+        role: OptimizerTensorRole,
+        tensor: torch.Tensor,
+        mutable: bool,
+        parameter_name: str | None = None,
     ) -> None:
         if id(tensor) in seen:
             return
@@ -100,13 +104,17 @@ def tensor_bindings(
             or tensor.ndim != 0
             or tensor.device.type != "cpu"
         )
-        bindings.append(OptimizerTensorBinding(name, role, tensor, mutable, spillable))
+        bindings.append(
+            OptimizerTensorBinding(
+                name, role, tensor, mutable, spillable, parameter_name=parameter_name
+            )
+        )
 
     for parameter in optimizer_parameters(optimizer):
         name = name_by_id.get(id(parameter))
         if name is None or not parameter.requires_grad:
             continue
-        add(name, OptimizerTensorRole.PARAMETER, parameter, True)
+        add(name, OptimizerTensorRole.PARAMETER, parameter, True, name)
         if parameter.grad is None:
             if require_gradients:
                 raise CaptureError(f"optimizer capture has no gradient for {name!r}")
@@ -116,9 +124,16 @@ def tensor_bindings(
                 OptimizerTensorRole.GRADIENT,
                 parameter.grad,
                 False,
+                name,
             )
         for path, tensor in _tensor_leaves(optimizer.state.get(parameter, {})):
-            add(f"optimizer.{name}.{path}", OptimizerTensorRole.STATE, tensor, True)
+            add(
+                f"optimizer.{name}.{path}",
+                OptimizerTensorRole.STATE,
+                tensor,
+                True,
+                name,
+            )
     for group_index, group in enumerate(optimizer.param_groups):
         for path, tensor in _tensor_leaves(
             {key: value for key, value in group.items() if key != "params"}
@@ -194,6 +209,7 @@ def step_bindings(
                 empty_representation(copy, parameters[name]),
                 True,
                 True,
+                parameter_name=name,
             )
         )
     return tuple(result)

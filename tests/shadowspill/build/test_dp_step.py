@@ -22,6 +22,7 @@ from shadowspill import (
 from shadowspill.artifacts.tensors import tensor_geometry
 from shadowspill.parallelism.views import owned_view_offsets
 from shadowspill.pytorch.executable import restore_executable
+from tests.shadowspill.build._shard_loading import check_shard_loading
 
 
 @pytest.mark.cuda
@@ -53,6 +54,7 @@ def test_step_build_measure_plan_and_local_owned_updates(
     assert not optimizer.state
     assert all(parameter.is_meta for parameter in model.parameters())
     assert program.bindings["distributed_training_lowered"] == "step"
+    check_shard_loading(program)
     profiles = measure_program(program, warmup_seconds=0.001, measure_seconds=0.002)
     for key in program.bindings["collective_tasks"]:
         profiles.tasks[key] = TaskProfile(workspace_bytes=0)

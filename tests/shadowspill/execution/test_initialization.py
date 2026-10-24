@@ -13,6 +13,7 @@ def storage(bindings, geometry, values):
     return SimpleNamespace(
         plan=SimpleNamespace(program=SimpleNamespace(bindings=bindings)),
         geometry=geometry,
+        regions={},
         aliases={name: name for name in geometry},
         initial=set(values),
         sizes={

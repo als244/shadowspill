@@ -13,6 +13,7 @@ from shadowspill.ir import MemoryLocation
 from shadowspill.parallelism.views import owned_view_offsets
 from shadowspill.runtime.plan import RuntimeBridge
 
+from .tensor_regions import tensor_regions
 from .views import StorageViews
 
 
@@ -43,6 +44,7 @@ class Storage:
                 )
             logical_rank = 0
         self.owned_offsets = owned_view_offsets(plan.program, logical_rank)
+        self.regions = tensor_regions(plan.program, logical_rank)
         self.aliases = {o.object_id: o.alias_group_id for o in plan.program.objects}
         self.sizes = {a.alias_group_id: a.size_bytes for a in plan.program.alias_groups}
         self.shared_aliases = dict(shared_aliases or {})

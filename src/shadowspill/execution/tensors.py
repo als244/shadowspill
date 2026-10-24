@@ -10,6 +10,7 @@ import torch
 
 from shadowspill.artifacts.tensors import registration_name
 
+from .initialization import fill_default
 from .storage import dtype_of
 
 if TYPE_CHECKING:
@@ -22,6 +23,8 @@ class TensorChunk:
 
     ``shape`` describes the original tensor. ``offset`` indexes its storage,
     not a flattened logical view; tied/strided views share one initialization.
+    Distributed loaders receive only this worker's valid region. ``offset`` is
+    still relative to the complete tensor storage; physical padding is internal.
     """
 
     name: str
@@ -58,7 +61,7 @@ def tensor_entries(
         ):
             yield item["name"], item["object_id"], item.get("initialization")
     if bindings["kind"] == "forward_backward":
-        for item in bindings["gradients"]:
+        for item in bindings.get("persistent_gradients", bindings["gradients"]):
             yield "gradient." + item["parameter_name"], item["gradient_object_id"], None
     for item in bindings.get("fixed_inputs", ()):
         yield (
@@ -135,15 +138,24 @@ def visit_tensors(
         geometry = state.geometry[object_id]
         dtype = dtype_of(geometry)
         owner = state.host(alias).view(dtype)
+        region = state.regions.get(object_id)
+        if region is not None and owner.numel() != region.capacity:
+            raise ValueError(f"spill lease does not match the declared shard: {name}")
+        length = owner.numel() if region is None else region.length
+        offset = 0 if region is None else region.offset
+        if region is not None:
+            geometry = region.geometry
+        if initialize:
+            owner[length:].zero_()
         width = max(1, chunk_bytes // dtype.itemsize)
-        for start in range(0, owner.numel(), width):
-            destination = owner[start : start + width]
+        for start in range(0, length, width):
+            destination = owner[start : min(start + width, length)]
             request = TensorChunk(
                 prefix + name,
                 tuple(geometry["shape"]),
                 dtype,
-                start,
-                owner.numel(),
+                offset + start,
+                owner.numel() if region is None else region.storage_elements,
                 tuple(geometry["stride"]),
                 geometry.get("storage_offset", 0),
             )
@@ -155,38 +167,6 @@ def visit_tensors(
                 and initializer
                 and initializer["kind"] != "external"
             ):
-                _fill(state, destination, start, geometry, initializer, named)
+                fill_default(state, object_id, destination, start, initializer, named)
             else:
                 callback(request, destination)
-
-
-def _fill(
-    state: Storage,
-    destination: torch.Tensor,
-    start: int,
-    geometry: Mapping[str, Any],
-    initializer: Mapping[str, Any],
-    named: Mapping[str, str],
-) -> None:
-    kind = initializer["kind"]
-    if kind == "constant":
-        destination.fill_(initializer["value"])
-    elif kind == "value":
-        value = torch.as_tensor(initializer["value"], dtype=destination.dtype)
-        if value.numel() == 1:
-            destination.fill_(value.item())
-        else:
-            if not value.is_contiguous() or tuple(value.shape) != tuple(
-                geometry["shape"]
-            ):
-                raise ValueError("initializer shape differs from the built tensor")
-            destination.copy_(value.reshape(-1)[start : start + destination.numel()])
-    elif kind == "parameter":
-        object_id = named[initializer["name"]]
-        source_geometry = state.geometry[object_id]
-        if any(geometry[key] != source_geometry[key] for key in ("shape", "stride")):
-            raise ValueError("parameter initializer requires matching storage layouts")
-        source = state.host(state.aliases[object_id]).view(dtype_of(source_geometry))
-        destination.copy_(source[start : start + destination.numel()])
-    else:
-        raise ValueError(f"unknown tensor initializer: {kind}")

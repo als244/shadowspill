@@ -69,6 +69,8 @@ class OptimizerTensorBinding:
     mutable: bool
     spillable: bool
     component_path: tuple[str, ...] = ()
+    # Ownership is explicit; consumers must not parse dotted parameter names.
+    parameter_name: str | None = None
 
     @property
     def logical_name(self) -> str:
