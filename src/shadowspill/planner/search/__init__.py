@@ -320,7 +320,9 @@ def default_algorithm() -> SearchAlgorithm:
     """The search that ships, as an instance built with its own defaults."""
 
     if not _DEFAULT:
-        raise RuntimeError("no default search algorithm has been installed")
+        from .algorithms.pressurefit import pressurefit
+
+        set_default_algorithm(pressurefit)
     return _DEFAULT[0]
 
 

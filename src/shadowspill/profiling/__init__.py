@@ -1,25 +1,23 @@
-"""What a task cost, and whether it kept its allocation promise.
+"""Phase exports, loaded only when requested during caller migration."""
 
-Framework-neutral: measuring a task needs a framework, but storing what was
-measured, reading it back, and checking that a run's allocations matched the
-contract do not. the frontend's profiling package measures; this holds the
-result.
+from importlib import import_module
+from typing import Any
 
-`store` is the profile store and the modes that gate it; `manifest_store` caches
-one compiled manifest per profile key, for the toolchain it was told it caches
-for; `invariant` is the allocation-path check a profiled run has to satisfy;
-`metadata` is what a profile records about the machine it ran on; `timing` is the
-clock a measurement is taken against.
-"""
+_PUBLIC = {
+    "derive_invariant_allocation_path": ".invariant",
+    "CompiledManifestStore": ".manifest_store",
+    "ProfilingMetadata": ".metadata",
+    "ProfileStore": ".store",
+    "apply_profiles": ".apply",
+}
 
-from .invariant import derive_invariant_allocation_path
-from .manifest_store import CompiledManifestStore
-from .metadata import ProfilingMetadata
-from .store import ProfileStore
 
-__all__ = [
-    "CompiledManifestStore",
-    "ProfileStore",
-    "ProfilingMetadata",
-    "derive_invariant_allocation_path",
-]
+def __getattr__(name: str) -> Any:
+    if name not in _PUBLIC:
+        raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+    value = getattr(import_module(_PUBLIC[name], __name__), name)
+    globals()[name] = value
+    return value
+
+
+__all__ = list(_PUBLIC)
