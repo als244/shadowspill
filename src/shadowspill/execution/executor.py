@@ -7,15 +7,12 @@ import torch
 
 from shadowspill.artifacts.plan import Plan
 from shadowspill.pytorch.invocation import InvocationResult, ReusableCompletionEvent
-from shadowspill.runtime.plan import clear_tasks
-from shadowspill.runtime.plan.lifecycle import abort_plan, adopt_plan, release_plan
 
-from .admission import prepare
 from .dispatch import dispatch
 from .inputs import stage_inputs
 from .results import collect_outputs
-from .setup import open_worker
-from .storage import Storage, TensorChunk
+from .tensors import TensorChunk, visit_tensors
+from .worker import create_paths
 
 
 class Executor:
@@ -35,30 +32,25 @@ class Executor:
         self._plan_released = False
         self._initialized = False
         self._failure: BaseException | None = None
-        self.runtime, self._memory, self._bridge = open_worker(
-            plan, device, external_headroom_bytes
+        self.runtime, self._paths = create_paths(plan, device, external_headroom_bytes)
+        self._completion = ReusableCompletionEvent(
+            self.runtime._runtime_handle, torch.device("cuda", device)
         )
-        try:
-            self._storage = Storage(plan, self._bridge, torch.device("cuda", device))
-            self._tasks, self._acquisition = prepare(plan, self._bridge)
-            self._completion = ReusableCompletionEvent(
-                self.runtime._runtime_handle, self._storage.device
-            )
-            adopt_plan(self.runtime, self._memory.plan_handle)
-        except BaseException:
-            self._bridge.objects.unregister(self._bridge.objects.registered_aliases())
-            abort_plan(self.runtime, self._memory.plan_handle)
-            self.runtime.close()
-            raise
 
     def initialize(
         self,
         fill_tensor: Callable[[TensorChunk, torch.Tensor], None],
         *,
         chunk_bytes: int = 64 << 20,
+        restore: bool = False,
     ) -> None:
         self.synchronize()
-        self._storage.visit_state(fill_tensor, chunk_bytes, initialize=True)
+        self._initialized = False
+        path = self._paths[0]
+        visit_tensors(
+            path.storage, fill_tensor, chunk_bytes, initialize=True, restore=restore
+        )
+        path.controls.initialize(fill_tensor, chunk_bytes=chunk_bytes, restore=restore)
         self._initialized = True
 
     def export_tensors(
@@ -68,7 +60,12 @@ class Executor:
         chunk_bytes: int = 64 << 20,
     ) -> None:
         self.synchronize()
-        self._storage.visit_state(write_chunk, chunk_bytes, initialize=False)
+        if not self._initialized:
+            raise RuntimeError("initialize persistent tensors before exporting them")
+        visit_tensors(
+            self._paths[0].storage, write_chunk, chunk_bytes, initialize=False
+        )
+        self._paths[0].controls.export(write_chunk, chunk_bytes=chunk_bytes)
 
     def run(
         self,
@@ -83,25 +80,21 @@ class Executor:
         self.synchronize()
         if not self._initialized:
             raise RuntimeError("initialize persistent tensors before run")
-        if hyperparams:
-            raise NotImplementedError(
-                "runtime hyperparameter bindings are not implemented yet"
-            )
-        if accumulate_gradients:
-            raise NotImplementedError(
-                "cross-invocation gradient accumulation is not implemented yet"
-            )
-        self._bridge.require_initial_residency(self.plan.schedule.initial_residency)
-        stage_inputs(self._storage, args, kwargs, input_loader)
+        if accumulate_gradients and len(self._paths) != 2:
+            raise ValueError("this Plan has no gradient-accumulation invocation path")
+        path = self._paths[int(accumulate_gradients)]
+        path.bridge.require_initial_residency(path.plan.schedule.initial_residency)
+        path.controls.apply(hyperparams or {})
+        stage_inputs(path.storage, args, kwargs, input_loader)
         try:
-            for task in self._tasks:
-                dispatch(task, self._storage)
-            payload = collect_outputs(self._storage, self._acquisition)
+            for task in path.tasks:
+                dispatch(task, path.storage, path.controls)
+            payload = collect_outputs(path.storage, path.acquisition)
             wait = self._completion.record()
 
             def finish() -> None:
                 wait()
-                self._bridge.wait_until_idle()
+                path.bridge.wait_until_idle()
 
             self._pending = InvocationResult(
                 payload,
@@ -136,12 +129,8 @@ class Executor:
                 self.synchronize()
             finally:
                 self._completion.release()
-                self._storage.clear_views()
-                clear_tasks(self._bridge)
-                self._bridge.objects.unregister(
-                    self._bridge.objects.registered_aliases()
-                )
-                release_plan(self.runtime, self._memory.plan_handle)
+                for path in reversed(self._paths):
+                    path.close(self.runtime)
                 self._plan_released = True
         # A caller-held output may prevent runtime shutdown. Allow close() to
         # be retried after it is released without destroying plan handles twice.
@@ -151,5 +140,10 @@ class Executor:
     def __enter__(self) -> Self:
         return self
 
-    def __exit__(self, *exc: object) -> None:
-        self.close()
+    def __exit__(self, exc_type: object, exc: BaseException | None, tb: object) -> None:
+        try:
+            self.close()
+        except BaseException as cleanup:
+            if exc is None:
+                raise
+            exc.add_note(f"Executor cleanup also failed: {cleanup}")

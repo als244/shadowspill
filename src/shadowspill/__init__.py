@@ -26,6 +26,9 @@ _PUBLIC = {
     "plan_program": "planning.plan",
     "sweep_programs": "planning.sweep",
     "write_report": "reporting",
+    "Executor": "execution",
+    "TrainingResult": "execution",
+    "TensorChunk": "execution",
 }
 
 

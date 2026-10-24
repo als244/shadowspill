@@ -4,6 +4,7 @@ import importlib.abc
 import sys
 from pathlib import Path
 
+import pytest
 import torch
 import torch._inductor.compile_fx as compiler
 import triton
@@ -36,7 +37,7 @@ compiler.compile_fx = compiler.compile_fx_inner = triton.compile = (
     Runtime._calibrate
 ) = forbidden
 sys.meta_path.insert(0, BlockPhases())
-from shadowspill.execution import Executor  # noqa: E402
+from shadowspill import Executor  # noqa: E402
 
 directory = Path(sys.argv[1])
 plan = Plan.load(directory / "plan.ssp")
@@ -54,10 +55,22 @@ def cpu(value):
 
 
 executor = Executor(plan)
-executor.initialize(fill, chunk_bytes=40)
+executor.initialize(fill, chunk_bytes=40, restore=oracle["restore"])
+assert (
+    sum(executor.runtime._installed.admitted_layout_bytes.values())
+    == plan.memory_layout.fixed_slice_bytes
+)
+with pytest.raises(ValueError, match="unknown runtime hyperparameters"):
+    executor.run(
+        input_loader=lambda i: oracle["examples"][i], hyperparams={"unknown": 1}
+    )
 previous, previous_value = None, None
-for outputs, state in oracle["expected"]:
-    pending = executor.run(input_loader=lambda i: oracle["examples"][i])
+for index, (outputs, state) in enumerate(oracle["expected"]):
+    pending = executor.run(
+        input_loader=lambda i: oracle["examples"][i],
+        hyperparams=oracle["hyperparams"][index],
+        accumulate_gradients=oracle["accumulate"][index],
+    )
     result = pending.result()
     actual_outputs = (
         result
@@ -67,6 +80,12 @@ for outputs, state in oracle["expected"]:
     torch.testing.assert_close(cpu(actual_outputs), outputs)
     if previous is not None:
         torch.testing.assert_close(cpu(previous), previous_value)
+    if isinstance(result, dict) and "view" in result:
+        assert (
+            result["input"].untyped_storage()._cdata
+            == result["view"].untyped_storage()._cdata
+        )
+        result["weight"].zero_()  # A caller snapshot must not change stored parameters.
     previous, previous_value = actual_outputs, cpu(actual_outputs)
     actual = {}
 
@@ -83,6 +102,17 @@ for outputs, state in oracle["expected"]:
     assert actual.keys() == state.keys()
     for name, expected in state.items():
         torch.testing.assert_close(actual[name].reshape(expected.shape), expected)
+if plan.program.bindings["kind"] == "forward":
+    first = executor.run(
+        args=[oracle["examples"][0][0]], kwargs=[oracle["examples"][0][1]]
+    )
+    assert not first.resolved
+    second = executor.run(input_loader=lambda i: oracle["examples"][i])
+    assert first.resolved
+    torch.testing.assert_close(cpu(second.result()), oracle["expected"][-1][0])
+    del first, second
+with pytest.raises(Exception, match="caller-owned device outputs"):
+    executor.close()
 del pending, result, actual_outputs, previous
 executor.close()
 print("Qualified three saved-plan invocations", flush=True)

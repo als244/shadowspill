@@ -247,3 +247,44 @@
   strengthened cold-import worker tests and tied-parameter replay regressions.
   Focused typing and lint pass. Saved-plan execution remains a milestone under
   active development; the outstanding contracts above still block caller migration.
+
+### Runtime controls and gradient invocation modes (in progress)
+
+- Initial saved-plan execution checkpoint committed/pushed as `daeac9ca`.
+- Executor is now exported from the small top-level API. Per-call tensor
+  hyperparameters use their captured names; omitted values use captured defaults.
+  Bounded CPU counters stay on the host, while device controls have planned
+  storage. Unknown names/shapes are rejected before dispatch.
+- Persistent tensor initialization validates coverage, supports scalar/array
+  defaults and parameter-derived masters, and offers `restore=True` for a loader
+  supplying complete saved state. Initialization/export use bounded spill views.
+  Small lifted constant values travel in the Program; other constants are named
+  loader inputs. Unresolved initialization must fail explicitly.
+- Forward/backward Plans now contain fresh and accumulate paths. CPU planning
+  derives both from the same Program/profiles, checks the shared arena capacity,
+  and saves both paths in one archive with deduplicated code. Fresh calls retain
+  creator kernels; they do not pay an unnecessary fetch of old gradients.
+- Executor admits both paths into one GPU arena and shares persistent runtime
+  object identities. Gradient storage is initialized to zero by default; a
+  full-state restore can supply existing gradients before the first call.
+- Numerical checks pass for fresh → accumulate → fresh calls, restored gradients,
+  restored AdamW state, tied parameters, and changing tensor learning rates.
+  CPU artifact/IR/planner/simulator regression remains 516 passing tests.
+- Final lifecycle/cold-worker regression is running. Distributed execution,
+  provider qualification, Trainer/quickstart migration and legacy cleanup remain.
+- Additional output qualification exposed a pre-existing capture limitation:
+  forwarding an input/parameter directly was rejected as not stage-produced.
+  Build now inserts a profiled snapshot for returned input/state storage, retaining
+  alias relationships among returned views. This implements caller ownership
+  without exposing the reusable arena or allowing output edits to change weights.
+  Literal CUDA tensors emitted by export are normalized to bounded host constants.
+  The cold-worker alias/constant test passes, including output mutation and later
+  calls. Mixed-dtype aliases of the same returned input storage remain an explicit
+  unsupported case (caller can return explicit copies).
+- Completed this checkpoint: 24 build/profiling/execution tests pass, including
+  cold workers with disabled compilers/calibration, one shared arena for both
+  gradient modes, restoring optimizer/gradient state, output aliasing, automatic
+  invocation waiting and retrying close after releasing caller-held outputs.
+  The independent CPU regression has 516 passing tests; focused typing/lint pass.
+  Next is normal-caller migration, while keeping provider/distributed extension
+  work explicit rather than claiming the dense qualification covers all backends.

@@ -468,10 +468,14 @@ class PlanObjects:
             if alias_id in self._registered
         }
 
-    def adopt_registered(self, objects: Mapping[str, int]) -> None:
-        """Adopt objects registered by a compatible provisional bridge."""
+    def adopt_registered(
+        self, objects: Mapping[str, int], *, borrowed: bool = False
+    ) -> None:
+        """Bind objects from a compatible bridge, optionally leaving ownership there."""
 
         for alias_id, runtime_object_id in objects.items():
+            if borrowed:
+                self._borrowed.add(alias_id)
             self._size(alias_id)
             self._registered.add(alias_id)
             self._record_runtime_object(alias_id, runtime_object_id)

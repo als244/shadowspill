@@ -2,6 +2,6 @@
 
 from .executor import Executor
 from .results import TrainingResult
-from .storage import TensorChunk
+from .tensors import TensorChunk
 
 __all__ = ["Executor", "TensorChunk", "TrainingResult"]
