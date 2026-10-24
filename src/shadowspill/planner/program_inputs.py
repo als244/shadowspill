@@ -20,6 +20,7 @@ from shadowspill.planner.serialization import (
     _simulation_config_to_dict,
     _string,
 )
+from shadowspill.planning.budgets import MemoryBudgets as MemoryBudgets
 from shadowspill.schema import artifact_schema
 from shadowspill.simulator import SimulationConfig
 
@@ -129,36 +130,6 @@ class TransferBandwidths:
             evict_latency_ns=_optional_integer(
                 data.get("evict_latency_ns"), f"{path}.evict_latency_ns"
             ),
-        )
-
-
-@dataclass(frozen=True, slots=True)
-class MemoryBudgets:
-    """Physical execution and spill budgets for one annotated plan."""
-
-    execution_bytes: int
-    spill_bytes: int
-
-    def __post_init__(self) -> None:
-        if self.execution_bytes <= 0:
-            raise ValueError("execution memory budget must be positive")
-        if self.spill_bytes < 0:
-            raise ValueError("spill memory budget must be non-negative")
-
-    def to_dict(self) -> dict[str, int]:
-        return {
-            "execution_bytes": self.execution_bytes,
-            "spill_bytes": self.spill_bytes,
-        }
-
-    @classmethod
-    def from_value(cls, value: object, path: str = "memory_budgets") -> MemoryBudgets:
-        data = _mapping(value, path)
-        return cls(
-            execution_bytes=_integer(
-                data.get("execution_bytes"), f"{path}.execution_bytes"
-            ),
-            spill_bytes=_integer(data.get("spill_bytes"), f"{path}.spill_bytes"),
         )
 
 

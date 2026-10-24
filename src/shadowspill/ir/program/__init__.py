@@ -68,7 +68,8 @@ class ShadowSpillProgram:
 
     def __post_init__(self) -> None:
         require_shapes(self)
-        identities = index_identities(self)
+        require_tuple(self.profiles, "program.profiles")
+        identities = index_identities(self, tuple(p.profile_id for p in self.profiles))
         check_alias_groups(self, identities)
         check_objects(self, identities)
         exclusive_pairs = check_alternative_groups(self, identities)

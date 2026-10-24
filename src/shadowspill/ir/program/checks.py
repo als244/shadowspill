@@ -10,7 +10,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any
+from typing import Any, Protocol
 
 from ..validation import (
     fail,
@@ -18,10 +18,24 @@ from ..validation import (
     require,
     require_tuple,
 )
+from .alternatives import TaskAlternativeGroup
 from .enums import SharedResidencyPolicy
+from .specs import AliasGroupSpec, DeviceSpec, ObjectSpec, TaskSpec
 
-if TYPE_CHECKING:
-    from . import ShadowSpillProgram
+
+class ProgramStructure(Protocol):
+    """The graph checks need no task costs or runtime resources."""
+
+    @property
+    def devices(self) -> tuple[DeviceSpec, ...]: ...
+    @property
+    def alias_groups(self) -> tuple[AliasGroupSpec, ...]: ...
+    @property
+    def objects(self) -> tuple[ObjectSpec, ...]: ...
+    @property
+    def tasks(self) -> tuple[TaskSpec, ...]: ...
+    @property
+    def task_alternative_groups(self) -> tuple[TaskAlternativeGroup, ...]: ...
 
 
 @dataclass(frozen=True, slots=True)
@@ -38,14 +52,13 @@ class Identities:
     object_by_id: Mapping[str, Any]
 
 
-def require_shapes(program: ShadowSpillProgram) -> None:
+def require_shapes(program: ProgramStructure) -> None:
     """Every collection is a tuple, and a program has at least one device."""
 
     for name, value in (
         ("devices", program.devices),
         ("alias_groups", program.alias_groups),
         ("objects", program.objects),
-        ("profiles", program.profiles),
         ("tasks", program.tasks),
         ("task_alternative_groups", program.task_alternative_groups),
     ):
@@ -53,7 +66,9 @@ def require_shapes(program: ShadowSpillProgram) -> None:
     require(bool(program.devices), "program.devices", "must not be empty")
 
 
-def index_identities(program: ShadowSpillProgram) -> Identities:
+def index_identities(
+    program: ProgramStructure, profile_keys: tuple[str, ...]
+) -> Identities:
     """Index every id, refusing duplicates, and keep the two lookups checks need."""
 
     device_ids = index_unique(
@@ -66,9 +81,7 @@ def index_identities(program: ShadowSpillProgram) -> Identities:
     object_ids = index_unique(
         (item.object_id for item in program.objects), "program.objects"
     )
-    profile_ids = index_unique(
-        (profile.profile_id for profile in program.profiles), "program.profiles"
-    )
+    profile_ids = index_unique(profile_keys, "program.task_definitions")
     task_ids = index_unique((task.task_id for task in program.tasks), "program.tasks")
     group_ids = index_unique(
         (group.group_id for group in program.task_alternative_groups),
@@ -90,7 +103,7 @@ def index_identities(program: ShadowSpillProgram) -> Identities:
     )
 
 
-def check_alias_groups(program: ShadowSpillProgram, ids: Identities) -> None:
+def check_alias_groups(program: ProgramStructure, ids: Identities) -> None:
     """Every alias group names a device the program declares."""
 
     for index, alias_group in enumerate(program.alias_groups):
@@ -101,7 +114,7 @@ def check_alias_groups(program: ShadowSpillProgram, ids: Identities) -> None:
         )
 
 
-def check_objects(program: ShadowSpillProgram, ids: Identities) -> None:
+def check_objects(program: ProgramStructure, ids: Identities) -> None:
     """Every object sits inside the alias group it names."""
 
     for index, item in enumerate(program.objects):
@@ -123,7 +136,7 @@ def check_objects(program: ShadowSpillProgram, ids: Identities) -> None:
 
 
 def check_alternative_groups(
-    program: ShadowSpillProgram, ids: Identities
+    program: ProgramStructure, ids: Identities
 ) -> set[frozenset[str]]:
     """Each group's options name known tasks, and no task is in two groups.
 
@@ -185,7 +198,7 @@ def check_alternative_groups(
 
 
 def check_tasks(
-    program: ShadowSpillProgram,
+    program: ProgramStructure,
     ids: Identities,
     exclusive_pairs: set[frozenset[str]],
 ) -> None:

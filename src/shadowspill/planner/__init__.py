@@ -1,78 +1,53 @@
-"""Framework-neutral memory and recomputation planning."""
+"""Phase exports, loaded only when requested during caller migration."""
 
-from shadowspill.step import StepDataOrdering
+from importlib import import_module
+from typing import Any
 
-from .admission import (
-    AdmissionFacts,
-    StorageHandoff,
-    TaskAdmissionSpec,
-    TaskAllocationStep,
-    TaskAllocationStepKind,
-)
-from .diagnostics import (
-    CandidateDiagnostic,
-    GraphPairOutcome,
-    PlanningDiagnostics,
-    PlanningRepairDiagnostics,
-    PlanningSectionTiming,
-    PlanningWorkDiagnostics,
-    ReductionStep,
-    ResolvedProgramDiagnostics,
-    TaskAlternativeChoiceDiagnostic,
-)
-from .plan import plan_program, summarize_plan, validate_schedule_feasibility
-from .request import GenericPlanningOptions, OptionRecord
-from .result import (
-    ProgramPlanResult,
-    ResidentSlice,
-)
-from .search import SearchAlgorithm, SearchOptions, answer_no_worse_than, toolkit
-from .search.algorithms.pressurefit import pressurefit
-from .search.toolkit import (
-    DEFAULT_RESOLUTION_OPTIONS,
-    NAMED_RESOLUTION_OPTIONS,
-    CostedAlternatives,
-    Resolution,
-    named_resolution_options,
-    resolutions,
-    validate_resolution_options,
-    validate_search_inputs,
-)
+_PUBLIC = {
+    "StepDataOrdering": "shadowspill.step",
+    "AdmissionFacts": ".admission",
+    "StorageHandoff": ".admission",
+    "TaskAdmissionSpec": ".admission",
+    "TaskAllocationStep": ".admission",
+    "TaskAllocationStepKind": ".admission",
+    "CandidateDiagnostic": ".diagnostics",
+    "GraphPairOutcome": ".diagnostics",
+    "PlanningDiagnostics": ".diagnostics",
+    "PlanningRepairDiagnostics": ".diagnostics",
+    "PlanningSectionTiming": ".diagnostics",
+    "PlanningWorkDiagnostics": ".diagnostics",
+    "ReductionStep": ".diagnostics",
+    "ResolvedProgramDiagnostics": ".diagnostics",
+    "TaskAlternativeChoiceDiagnostic": ".diagnostics",
+    "plan_program": ".plan",
+    "summarize_plan": ".plan",
+    "validate_schedule_feasibility": ".plan",
+    "GenericPlanningOptions": ".request",
+    "OptionRecord": ".request",
+    "ProgramPlanResult": ".result",
+    "ResidentSlice": ".result",
+    "SearchAlgorithm": ".search",
+    "SearchOptions": ".search",
+    "answer_no_worse_than": ".search",
+    "toolkit": ".search",
+    "pressurefit": ".search.algorithms.pressurefit",
+    "DEFAULT_RESOLUTION_OPTIONS": ".search.toolkit",
+    "NAMED_RESOLUTION_OPTIONS": ".search.toolkit",
+    "CostedAlternatives": ".search.toolkit",
+    "Resolution": ".search.toolkit",
+    "named_resolution_options": ".search.toolkit",
+    "resolutions": ".search.toolkit",
+    "validate_resolution_options": ".search.toolkit",
+    "validate_search_inputs": ".search.toolkit",
+}
 
-__all__ = [
-    "DEFAULT_RESOLUTION_OPTIONS",
-    "NAMED_RESOLUTION_OPTIONS",
-    "AdmissionFacts",
-    "CandidateDiagnostic",
-    "CostedAlternatives",
-    "GenericPlanningOptions",
-    "GraphPairOutcome",
-    "OptionRecord",
-    "PlanningDiagnostics",
-    "PlanningRepairDiagnostics",
-    "PlanningSectionTiming",
-    "PlanningWorkDiagnostics",
-    "ProgramPlanResult",
-    "ReductionStep",
-    "ResidentSlice",
-    "Resolution",
-    "ResolvedProgramDiagnostics",
-    "SearchAlgorithm",
-    "SearchOptions",
-    "StepDataOrdering",
-    "StorageHandoff",
-    "TaskAdmissionSpec",
-    "TaskAllocationStep",
-    "TaskAllocationStepKind",
-    "TaskAlternativeChoiceDiagnostic",
-    "answer_no_worse_than",
-    "named_resolution_options",
-    "plan_program",
-    "pressurefit",
-    "resolutions",
-    "summarize_plan",
-    "toolkit",
-    "validate_resolution_options",
-    "validate_schedule_feasibility",
-    "validate_search_inputs",
-]
+
+def __getattr__(name: str) -> Any:
+    if name not in _PUBLIC:
+        raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+    value = getattr(import_module(_PUBLIC[name], __name__), name)
+    globals()[name] = value
+    return value
+
+
+__all__ = list(_PUBLIC)
