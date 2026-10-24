@@ -73,7 +73,7 @@ if(Torch_FOUND)
   file(GLOB SHADOWSPILL_TORCH_CUDA_HEADERS "${TORCH_INSTALL_PREFIX}/../nvidia/*/include")
   target_include_directories(shadowspill_pytorch SYSTEM BEFORE PRIVATE
     ${SHADOWSPILL_NCCL_INCLUDE_DIR} ${SHADOWSPILL_TORCH_CUDA_HEADERS})
-  target_sources(shadowspill_pytorch PRIVATE storage/cpu.cpp storage/device.cpp storage/sharded.cpp telemetry/collectives.cpp profiling/collectives.cpp)
+  target_sources(shadowspill_pytorch PRIVATE storage/cpu.cpp storage/device.cpp storage/sharded.cpp telemetry/collectives.cpp profiling/collectives.cpp profiling/allocations.cpp)
   target_link_libraries(shadowspill_pytorch PRIVATE ${TORCH_LIBRARIES})
   target_compile_definitions(
     shadowspill_pytorch

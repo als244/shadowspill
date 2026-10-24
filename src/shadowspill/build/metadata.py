@@ -5,6 +5,7 @@ from __future__ import annotations
 from typing import Any
 
 from torch import Tensor
+from torch._subclasses.fake_tensor import FakeTensor
 from torch.export.graph_signature import InputKind
 from torch.fx import GraphModule
 from torch.utils._pytree import treespec_dumps
@@ -12,6 +13,7 @@ from torch.utils._pytree import treespec_dumps
 from shadowspill.pytorch.capture.aot import ExportCapture
 from shadowspill.pytorch.capture.artifacts import GraphArtifact
 from shadowspill.pytorch.guards import InputSignature
+from shadowspill.task.inputs import TaskInputRole
 
 
 def module_paths(graph: GraphModule) -> tuple[str, ...]:
@@ -53,9 +55,33 @@ def task_inputs(artifact: GraphArtifact) -> dict[str, Any]:
         "tensor_positions": artifact.tensor_argument_positions,
         "tensor_aliases": artifact.tensor_argument_alias_groups,
         "tensor_geometry": [item.identity() for item in artifact.tensor_inputs],
+        "provenance": [_input_source(item) for item in artifact.input_provenance],
         "static_values": [
             [index, value]
             for index, value in enumerate(artifact.example_arguments)
             if not isinstance(value, Tensor)
         ],
     }
+
+
+def _input_source(item: Any) -> dict[str, Any]:
+    record = {
+        "role": item.role.value,
+        "source": item.source,
+        "consumer_targets": item.consumer_targets,
+    }
+    value = item.representative_value
+    if (
+        item.role
+        in {
+            TaskInputRole.CONSTANT,
+            TaskInputRole.CONTROL,
+            TaskInputRole.OPTIMIZER_HYPERPARAMETER,
+        }
+        and isinstance(value, Tensor)
+        and not isinstance(value, FakeTensor)
+        and value.device.type == "cpu"
+        and value.numel() <= 4096
+    ):
+        record["value"] = value.tolist()
+    return record

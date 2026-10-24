@@ -20,6 +20,7 @@ _PUBLIC = {
     "TaskProfile": "artifacts",
     "SweepResult": "artifacts",
     "apply_profiles": "profiling.apply",
+    "measure_program": "profiling.measure",
     "MemoryBudgets": "planning.budgets",
     "CommunicationInfo": "communication",
     "plan_program": "planning.plan",

@@ -9,8 +9,10 @@
   `codex:offline-refactor`. MLOps is clean at `0274515`.
 - Preparation validation: 100 CPU tests passed, two CUDA tests skipped. The frozen
   commit script was validated through complete/resumed runs in a disposable clone.
-- Current milestone: CPU-only artifacts, profile application, planning, persistence,
-  simulation, and reports. Later milestones remain pending.
+- Completed checkpoints: CPU-only artifacts/planning/reports, the three model
+  builders, and CPU selection of example/update orderings. Current work is
+  standalone single-GPU profiling and allocation qualification; execution and
+  caller/distributed migration remain pending.
 
 ### Findings
 
@@ -155,3 +157,37 @@
 - Full-step archives also pass CPU-only planning, restoration and report checks.
   General measurement, physical admission and Executor remain the next milestone;
   these numerical tests deliberately use an independent binding replay oracle.
+
+### Ordinary-allocator measurement (in progress)
+
+- Full-step checkpoint committed and pushed as `e3ac333d`.
+- Added a bounded native observer using PyTorch's allocator trace callback. It
+  records original allocation requests, frees, streams, device and pool identity
+  without installing ShadowSpill's allocator or creating runtime pools. Overflow
+  fails explicitly; raw pointers are normalized away before saving profiles.
+- Public `measure_program` restores packaged tasks, prepares one stage pair at a
+  time, uses actual forward-produced saved values for backward, times with CUDA
+  events, and checks observed output roots/aliases against compiler contracts.
+  Task definitions/digests do not change during measurement.
+- Basic tests cover 37-byte requests versus native rounded segments, bounded
+  telemetry, output views (including empty views), input mutations, anonymous
+  retained memory, and private-stream work joined back to the task stream.
+- Saved forward/backward and full-step Programs profile with the native
+  allocator. A fresh-process test blocks build/runtime/store imports and compiler
+  entrypoints, starts with empty compiler caches, and successfully measures the
+  saved Program. Default stage coverage and explicit subsets are checked.
+- Found a legacy convention: allocation contracts include output destruction,
+  while the layout measurement's temporary trace excludes output frees. Keep
+  both records, preserving complete lifetimes without weakening validation.
+- Cross-allocator qualification now passes for every finalized task form of the
+  two-stage AdamW fixture: native observations and runtime allocator observations
+  agree on allocation contracts, workspace peaks and output/input aliases.
+  This caught and fixed a charging error: the runtime aligns addresses to 256
+  bytes but charges requested sizes; it does not round each extent to 256 bytes.
+  Observed workspace totals alone do not qualify a Plan for execution; physical
+  layout/admission and runtime/provider overhead checks are still required.
+- Latest CPU regression: 516 artifact/IR/planner/simulator tests passed. New
+  profiling modules pass focused strict mypy. Seven profiling tests pass,
+  including fresh-worker restoration and cross-allocator qualification. Coverage
+  currently establishes the small dense/optimizer cases, not all opaque providers
+  or data-dependent allocation paths. Next: CPU physical layout and execution.
