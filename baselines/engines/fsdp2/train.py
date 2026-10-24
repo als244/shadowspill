@@ -23,6 +23,7 @@ from torch.distributed.fsdp import (
 )
 
 from baselines.common import recompute_layers, runner
+from baselines.common.annotations import checkpoint_contexts, phase
 from baselines.engines.fsdp2 import settings as engine_settings
 from baselines.engines.fsdp2.settings import configure_prefetch
 from workloads.full_model import HEAD_LOSS_METRIC
@@ -170,12 +171,21 @@ def train(case, clock):
     for index in range(len(blocks)):
         block = blocks[index]
         if index in checkpointed:
-            block = checkpoint_wrapper(block, preserve_rng_state=False)
+            # Keep compile's checkpoint context unchanged. Eager captures can
+            # label the exact replay (including non-reentrant early stopping).
+            trace_options = (
+                {"context_fn": checkpoint_contexts}
+                if settings.nsys_capture and not settings.compile_blocks
+                else {}
+            )
+            block = checkpoint_wrapper(
+                block, preserve_rng_state=False, **trace_options
+            )
         if settings.activation_offload == "cpu":
             block = offload_wrapper(block)
         blocks[index] = block
     if settings.activation_offload == "overlapped":
-        from baselines.engines.fsdp2.offload_overlapped import blocks_context
+        from baselines.engines.fsdp2.offload import blocks_context
 
         blocks_context(list(blocks), use_pin_memory=settings.pin_memory)
     mesh = init_device_mesh("cuda", (world,), mesh_dim_names=("dp",))
@@ -287,17 +297,20 @@ def train(case, clock):
             # Do not leave stale gathered copies across an optimizer update.
             model.set_reshard_after_backward(settings.reshard_after_backward or last)
             start = index * batch
-            loss, metrics = model(
-                tokens[:, start : start + batch], targets[:, start : start + batch]
-            )
-            loss.backward()
+            with phase("forward", settings.nsys_capture):
+                loss, metrics = model(
+                    tokens[:, start : start + batch], targets[:, start : start + batch]
+                )
+            with phase("backward", settings.nsys_capture):
+                loss.backward()
             loss_sum += loss.detach().float()
             head_sum += metrics.get(HEAD_LOSS_METRIC, loss.detach()).float()
         if world > 1:
             for parameter in pinned:
                 if parameter.grad is not None:
                     dist.all_reduce(parameter.grad, op=dist.ReduceOp.AVG)
-        optimizer.step()
+        with phase("optimizer", settings.nsys_capture):
+            optimizer.step()
         if settings.float8:
             from torchao.float8 import precompute_float8_dynamic_scale_for_fsdp
 

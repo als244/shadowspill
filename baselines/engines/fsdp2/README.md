@@ -69,6 +69,12 @@ before anything launches.
 
 ### FSDP2
 
+Random initialization runs on each shard's accelerator mesh, staging one
+module's offloaded shards at a time and copying into their original CPU storage.
+This preserves parameter identity and pinning while using DTensor's supported
+distributed RNG; initializing CPU storage directly can repeat random values
+across layers. Checkpoint values are loaded after initialization.
+
 | Option | FSDP2's call | What the engine enforces |
 |---|---|---|
 | `--offload-policy cpu`, `--[no-]pin-memory` | `fully_shard(offload_policy=CPUOffloadPolicy(pin_memory))`. Parameters, gradients and optimizer state move together; FSDP2 has no switch for one of them alone | The optimizer steps on the host. Refused with torchao's `--optimizer cpu-offload` |
@@ -92,6 +98,12 @@ before anything launches.
 | Option | torchtune's call | What the engine enforces |
 |---|---|---|
 | `--activation-offload overlapped` | `OffloadActivations`, vendored as `offload_overlapped.py` with its license: the saved values copied to pinned host memory on side streams, overlapping compute, entered at the first block and left after the last so the embedding and head stay on the device | Composes with `--recompute`: a recomputed block offloads its input |
+
+The vendored offloader is unchanged. The harness calls it on the default
+compute stream it requires and records its transfer stream on each block's
+gathered parameter allocations before FSDP's post-forward hook releases them.
+Holding a saved view does not prevent FSDP from releasing its storage; the
+allocation must remain unavailable for reuse until its offload copy completes.
 
 ### torchao
 

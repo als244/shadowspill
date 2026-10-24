@@ -13,7 +13,8 @@ DIR is an experiment's output directory (``baselines.experiment``), SWEEP one
 of its sweeps and CASE one of that sweep's cases, by its name or the digest
 that ends it. The case runs again as its sweep ran it, with the sweep's
 engine, world size and trainer interpreter and the case's settings, with
-``nsys_capture`` on, so the runner opens the capture at the first measured
+any saved preparation from the case's launch command, and ``nsys_capture``
+on, so the runner opens the capture at the first measured
 update and closes it after the last; ``--warmup-steps`` and ``--steps``
 change how many updates run, ``--devices`` the GPUs it runs on
 (``CUDA_VISIBLE_DEVICES``), and ``--capture whole`` records the whole run,
@@ -30,6 +31,13 @@ the console of nsys and the trainer, ``trace.json`` with what was asked,
 and the trainer's own files with the row it wrote, which says it is not a
 throughput result. The sweeps, the summary and the report never read a
 trace's directory.
+
+FSDP2's eager checkpoints and DeepSpeed's checkpoints also label the original
+forward and the actual recomputation with ``baseline.phase`` NVTX ranges.
+FSDP2 labels the full forward/backward calls and both engines label optimizer
+calls. These are host launch scopes: correlate CUDA APIs with kernel events
+to measure GPU work instead of using the host range durations. Compiled FSDP2
+blocks retain their compiler checkpoint context and do not get replay scopes.
 """
 
 from __future__ import annotations
@@ -187,18 +195,20 @@ def main(argv=None) -> None:
     if output.exists() and any(output.iterdir()):
         parser.error(f"{output} is not empty")
     output.mkdir(parents=True, exist_ok=True)
-    command = profile_command(
-        nsys,
-        args,
+    trainer = launch.command(
+        manifest["engine"],
+        manifest["python"],
+        manifest["world_size"],
+        settings,
         output,
-        launch.command(
-            manifest["engine"],
-            manifest["python"],
-            manifest["world_size"],
-            settings,
-            output,
-        ),
     )
+    recorded_command = case / "command.txt"
+    if recorded_command.is_file():
+        recorded = shlex.split(recorded_command.read_text())
+        if "--prepared" in recorded:
+            index = recorded.index("--prepared")
+            trainer += ["--prepared", recorded[index + 1]]
+    command = profile_command(nsys, args, output, trainer)
     (output / "command.txt").write_text(shlex.join(command) + "\n")
     write_json(
         output / "trace.json",

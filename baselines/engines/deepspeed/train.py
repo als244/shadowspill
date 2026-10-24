@@ -17,6 +17,7 @@ import torch
 from torch import nn
 
 from baselines.common import recompute_layers, runner
+from baselines.common.annotations import phase
 from baselines.common.reference import Access
 from baselines.common.training import TrainingModel, pinned_parameters
 from baselines.engines.deepspeed import settings as engine_settings
@@ -29,9 +30,10 @@ class Checkpointed(nn.Module):
     attribute is named as PyTorch's wrapper names it, so the same name
     stripping applies."""
 
-    def __init__(self, block):
+    def __init__(self, block, *, annotations=False):
         super().__init__()
         self._checkpoint_wrapped_module = block
+        self.annotations = annotations
 
     def forward(self, hidden, *rest, **kwargs):
         import deepspeed
@@ -46,7 +48,11 @@ class Checkpointed(nn.Module):
             hidden = hidden.detach().requires_grad_(True)
 
         def block(value):
-            return self._checkpoint_wrapped_module(value, *rest, **kwargs)
+            # DeepSpeed's reentrant checkpoint disables autograd on its first
+            # forward and enables it only when replaying that forward.
+            label = "recompute" if torch.is_grad_enabled() else "checkpoint_forward"
+            with phase(label, self.annotations):
+                return self._checkpoint_wrapped_module(value, *rest, **kwargs)
 
         return deepspeed.checkpointing.checkpoint(block, hidden)
 
@@ -251,7 +257,9 @@ def train(case, clock):
             profile=False,
         )
         for index in checkpointed:
-            blocks[index] = Checkpointed(blocks[index])
+            blocks[index] = Checkpointed(
+                blocks[index], annotations=settings.nsys_capture
+            )
     trainable = [p for p in model.parameters() if p.requires_grad]
     engine, optimizer, _, _ = deepspeed.initialize(
         model=model, model_parameters=trainable, config=config
@@ -315,7 +323,8 @@ def train(case, clock):
             head_sum += metrics.get(HEAD_LOSS_METRIC, loss.detach()).float()
             if reference is not None and index == microbatches - 1:
                 access.snapshot(model)
-            engine.step()
+            with phase("optimizer", settings.nsys_capture):
+                engine.step()
         clock.end(step, loss_sum, head_sum)
         if reference is not None:
             reference.check(model, optimizer, loss_sum, expected_loss)

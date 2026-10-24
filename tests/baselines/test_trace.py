@@ -89,6 +89,47 @@ def test_the_options_reach_nsys(experiment, tmp_path):
         assert option in command
 
 
+def test_a_trace_reuses_the_cases_saved_preparation(tmp_path):
+    from baselines.engines.shadowspill.settings import Settings as ShadowSpillSettings
+
+    sweep = tmp_path / "sweeps" / "shadowspill"
+    case = sweep / "cases" / "ex12__abcdef12"
+    artifact = tmp_path / "prepared computation"
+    write_json(
+        sweep / "manifest.json",
+        {"engine": "shadowspill", "world_size": 1, "python": "/opt/py/bin/python"},
+    )
+    write_json(
+        case / "config.json",
+        ShadowSpillSettings.from_dict({**TINY, "execution_gib": 12}).as_dict(),
+    )
+    (case / "command.txt").write_text(
+        shlex.join(
+            ["python", "-m", "baselines.common.launch", "--prepared", str(artifact)]
+        )
+        + "\n"
+    )
+    output = tmp_path / "trace"
+    trace.main(
+        [
+            str(tmp_path),
+            "shadowspill",
+            "abcdef12",
+            "--nsys",
+            "/opt/nsys",
+            "--dry-run",
+            "--steps",
+            "3",
+            "--output",
+            str(output),
+        ]
+    )
+    command = shlex.split((output / "command.txt").read_text())
+    assert command[command.index("--prepared") + 1] == str(artifact)
+    assert command[command.index("--steps") + 1] == "3"
+    assert command[command.index("--output") + 1] == str(output)
+
+
 def test_a_case_is_named_once(experiment):
     with pytest.raises(SystemExit):
         trace.main([str(experiment), "fsdp2", "nonesuch", "--nsys", "/opt/nsys"])
