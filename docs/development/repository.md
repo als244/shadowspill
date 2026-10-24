@@ -49,6 +49,19 @@ arguments beyond its corpus path.
 
 ```text
 src/shadowspill/
+├── artifacts/             portable Program, Profiles, ProfiledProgram and Plan archives
+├── build/                 capture, compile and lower finalized task definitions
+│   └── lowering/          bind compiled tasks into portable IR
+├── communication/         calibration and reusable communication information
+│   └── binding/           resolve logical groups into calibration participants
+├── execution/             saved-plan workers, initialization and bounded tensor export
+│   └── distributed/       collective and shard-storage execution bindings
+├── checkpoint/            streamed checkpoint format over Executor tensor access
+├── parallelism/           logical groups, parameter placement and storage declarations
+├── planning/              CPU-only profile binding, scheduling and physical layout
+│   ├── admission/         resolve saved memory evidence without a live pool
+│   └── training/          bind example/update orderings and gradient completion
+├── reporting/             CPU-only reports and timeline/summary output
 ├── ir/                    framework-neutral values and indexed projections
 │   └── program/           the program: its vocabularies, specs, alternatives,
 │                          and the checks it must satisfy
@@ -67,9 +80,9 @@ src/shadowspill/
 │   │                      budgets, the report
 │   └── admission/         what a plan needs of a live runtime: its layout, the
 │                          budget it seals, what it selected
-├── profiling/             what a task cost, and whether it kept its allocation
-│                          promise: the profile store, the compiled-manifest
-│                          cache, the invariant, the metadata, the clock
+├── profiling/             ordinary-allocator task timing and memory measurement;
+│   │                      CPU-only application of measured or manually supplied profiles
+│   └── observation/       bounded allocator observations and lifetime decoding
 ├── task/                  one task's shape and provenance, framework-free
 │   ├── storage.py         the storage contract: roots, output views, mutations
 │   ├── allocations.py     what a task promised about its allocations, and the

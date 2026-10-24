@@ -174,6 +174,6 @@ Divide per-rank FLOPs by seconds and 1e12; do not multiply by EP group size agai
 Useful options: `--model`, shape overrides `--width/--hidden/--experts/--top-k`,
 `--dp-size` (8), `--ep-size` (8), `--lora-rank` (32), `--lora-alpha` (32),
 `--nvidia-python`, `--warmup` (5), `--iterations` (20), `--timeout` (1800),
-`--fresh-workers`, `--dry-run`, `--tiny`, `--resume`, and `--retry-failed`. The legacy default model
+`--fresh-workers`, `--dry-run`, `--tiny`, `--resume`, and `--retry-failed`. The original default model
 is Qwen and the default backend subset remains SonicMoE/QuackMoE; select the GLM
 preset and four requested backends explicitly as above.

@@ -25,20 +25,10 @@ def add_memory_budget_arguments(parser: argparse.ArgumentParser) -> None:
             "(default: 512; 0 reserves no allowance)"
         ),
     )
-    parser.add_argument(
-        "--reject-overbudget",
-        action=argparse.BooleanOptionalAction,
-        default=False,
-        help=(
-            "reject external and whole-process memory overruns "
-            "(default: disabled; pool bounds remain enforced)"
-        ),
-    )
+    parser.set_defaults(reject_overbudget=True)
 
 
 def _memory_budget_defaults(options: argparse.Namespace) -> None:
-    if not isinstance(options.reject_overbudget, bool):
-        raise ValueError("reject-overbudget must be a bool")
     if getattr(options, "external_headroom_mib", None) is None:
         options.external_headroom_mib = 512
     if options.external_headroom_mib < 0:

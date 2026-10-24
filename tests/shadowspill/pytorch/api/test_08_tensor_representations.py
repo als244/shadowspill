@@ -1,4 +1,4 @@
-"""Full planned updates, inference and checkpointing for physical tensor state."""
+"""Legacy frontend updates and checkpointing for physical tensor state."""
 
 from __future__ import annotations
 
@@ -15,7 +15,8 @@ from shadowspill.planner.search.algorithms.pressurefit import (
     PressureFit,
     PressureFitOptions,
 )
-from shadowspill.training import Forward, Trainer
+from shadowspill.training import Forward
+from shadowspill.training._legacy_trainer import Trainer as LegacyTrainer
 from shadowspill.training.backends import ShadowSpill
 from tests.shadowspill.pytorch.state.representations import model
 
@@ -59,7 +60,7 @@ def test_planned_packed_parameter_gradients(tmp_path):
             artifact_store=tmp_path / "artifacts",
             profiling_options=CORRECTNESS_PROFILING,
         ) as backend,
-        Trainer(
+        LegacyTrainer(
             source,
             objective=objective,
             optimizer=torch.optim.SGD,
@@ -123,7 +124,7 @@ def _run(tmp_path, monkeypatch, *, recompute):
                 ),
             ),
         ) as backend,
-        Trainer(
+        LegacyTrainer(
             source,
             objective=objective,
             optimizer=torch.optim.SGD,

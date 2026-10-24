@@ -17,8 +17,6 @@ from typing import Any, Literal
 from qualification.numerical.cases import build_case
 from qualification.precision import dtype_overrides
 from shadowspill.memory import SpillPool
-from shadowspill.planner import StepDataOrdering
-from shadowspill.store import StoreMode
 from workloads.numerical import ModelImplementation, NumericalCase
 from workloads.precision import TrainingDtypes
 
@@ -88,19 +86,6 @@ class CaseRequest:
             case_options=self.case_options,
         )
 
-    def data_ordering_arguments(self) -> dict[str, Any]:
-        """The plan_step keyword arguments this request's walk asks for."""
-
-        if self.data_ordering is None:
-            return {}
-        ordering = StepDataOrdering.from_label(self.data_ordering)
-        return {
-            "depth": ordering.depth,
-            "breadth": ordering.breadth,
-            "reverse_breadth": ordering.reverse_breadth,
-            "pair_loss": ordering.pair_loss,
-        }
-
 
 @dataclass(frozen=True, slots=True)
 class PlannedRequest:
@@ -113,14 +98,8 @@ class PlannedRequest:
     checkpoint_step: int
     require_pressure: bool
     external_headroom_mib: int = 512
-    reject_overbudget: bool = False
-    artifact_store: Path | None = None
-    build_store: Path | None = None
-    plan_store: Path | None = None
+    reject_overbudget: bool = True
     profiling_metadata: list[object] | None = None
-    build_store_mode: StoreMode = "contribute"
-    plan_store_mode: StoreMode = "contribute"
-    export_bypass_key: str | None = None
     detailed_artifacts: bool = False
     #: Where this case spills to. ``None`` means the pinned-host pool every
     #: local case uses; other gates supply SSD or remote storage.

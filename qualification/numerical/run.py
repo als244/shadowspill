@@ -121,26 +121,6 @@ def _parser() -> argparse.ArgumentParser:
         ),
     )
     parser.add_argument(
-        "--artifact-store",
-        type=Path,
-        help="roots both stores (run mode defaults below the result dir)",
-    )
-    parser.add_argument("--build-store", type=Path)
-    parser.add_argument("--plan-store", type=Path)
-    for tree in ("build", "plan"):
-        parser.add_argument(
-            f"--{tree}-store-mode",
-            choices=("contribute", "reuse", "require", "refresh"),
-            default="contribute",
-            help=f"what this run may do about a {tree} artifact the store does"
-            " not hold: contribute writes it back, reuse persists nothing,"
-            " require refuses",
-        )
-    parser.add_argument(
-        "--export-bypass-key",
-        help="explicit implementation identity for custom-kernel invalidation",
-    )
-    parser.add_argument(
         "--reference-dir",
         type=Path,
         default=DEFAULT_REFERENCE_DIRECTORY,
@@ -155,7 +135,7 @@ def _parser() -> argparse.ArgumentParser:
         "--detailed-artifacts",
         action="store_true",
         help=(
-            "persist the complete PlanReport, plan records, and per-task "
+            "persist per-task runtime traces alongside the saved phase artifacts; "
             "step traces; compact correctness evidence is the default"
         ),
     )
@@ -277,13 +257,7 @@ def _dispatch(
             steps=arguments.steps,
             checkpoint_step=checkpoint_step,
             require_pressure=not arguments.allow_fully_resident,
-            artifact_store=arguments.artifact_store,
-            build_store=arguments.build_store,
-            plan_store=arguments.plan_store,
             profiling_metadata_argument=arguments.profiling_metadata,
-            build_store_mode=arguments.build_store_mode,
-            plan_store_mode=arguments.plan_store_mode,
-            export_bypass_key=arguments.export_bypass_key,
             reference_directory=arguments.reference_dir,
             regenerate_reference=arguments.regenerate_reference,
             detailed_artifacts=arguments.detailed_artifacts,
@@ -314,13 +288,7 @@ def _dispatch(
                 ),
                 checkpoint_step=checkpoint_step,
                 require_pressure=not arguments.allow_fully_resident,
-                artifact_store=arguments.artifact_store,
-                build_store=arguments.build_store,
-                plan_store=arguments.plan_store,
                 profiling_metadata=profiling_metadata_value,
-                build_store_mode=arguments.build_store_mode,
-                plan_store_mode=arguments.plan_store_mode,
-                export_bypass_key=arguments.export_bypass_key,
                 detailed_artifacts=arguments.detailed_artifacts,
                 spill_pool=spill,
             )

@@ -18,12 +18,8 @@ rest of its life, and both arms must be readers of the same cached choices.
 What the gate asserts is that planning a step does not change what that step
 computes.
 
-The opt-in [`numerical_ssd` gate](../README.md#ssd-numerical-qualification)
-runs this same matrix against an SSD spill pool, preserving references, model
-and dtype defaults, tolerances, and checkpoint replay. Select
-`--spill-pool ssd --ssd-directory /local/ssd` for a direct numerical run.
-SSD staging, chunk size and queue depth are configurable; the reference arm
-continues to use ordinary PyTorch memory.
+The phase runner currently qualifies pinned-host spill. SSD and remote execution
+have not been migrated to this path.
 
 Pure PyTorch is the default and formal numerical authority. The optional
 external implementation is selected explicitly:
@@ -57,12 +53,29 @@ Optimizer updates are grouped by captured training stage and placed immediately
 after that stage's final-microbatch backward task by default. Pass
 `--optimizer-ordering tail` only for an explicit ordering comparison.
 
-The store flags are the ones every surface uses: `--artifact-store` roots
-both trees, `--build-store` and `--plan-store` override either, and
-`--build-store-mode`/`--plan-store-mode` say what the run does with each; the
-four modes are defined in [the artifact store
-guide](../../docs/python/artifact-store.md#store-modes), and `contribute` is the
-default. Run mode defaults the store below the result directory.
+The planned arm uses four separate processes, shared with the performance gate:
+
+1. `prepare.py`: construct the case, call `build_step`, save `program.ssp` and
+   exact CPU initialization/input values in `inputs.pt`.
+2. `qualification.pipeline.profile`: load the Program, measure task timing/memory
+   with the ordinary allocator, save `profiles.ssp`, `profiled.ssp` and
+   `communication.ssp`.
+3. `qualification.pipeline.plan`: load the saved evidence and plan on CPU, with
+   devices hidden and no PyTorch import. Save `plan.ssp` and `summary.json`.
+4. `planned.py`: start a fresh execution worker, load Plan into Executor,
+   initialize through bounded buffers, run and compare.
+
+Each result has a sibling `<case>.phases/` directory containing these artifacts,
+settings, and `phases.json` timings. The archives are retained independently of
+compiler caches. To replan a case, edit its `settings.json` and run:
+
+```bash
+python -m qualification.pipeline.plan /path/to/case.phases
+```
+
+`run.py` only orchestrates the reference and these phases. Shared process,
+initialization and observation code lives in `qualification/pipeline/`; there is
+no second model construction or profiling path inside execution.
 
 The command verifies five optimizer updates, two heterogeneous accumulated
 microbatches per update, a step-three checkpoint whose replay agrees with the
@@ -104,21 +117,17 @@ records all tolerances and planning phase timings used for that run, and, when
 a cell fails, the category of each failure -- a reference disagreement, a
 replay that did not reproduce, a budget exceeded -- with the failing tensor
 counts split into model state and optimizer state. Physical
-qualification measures process memory after planning, after each of the five
-steps, and after both replay steps. With `--reject-overbudget`, the observed
-process high-water must remain within the declared cap; by default an overrun
-is reported without failing the gate. In both modes the gate requires one
-initial execution-pool arena allocation, no steady-state pool-arena allocation,
-bounded execution/spill peaks, and no allocator callback or pointer-lookup
-failure.
-By default, the JSON contains compact correctness, physical-budget, planning,
-and step-summary evidence and planning artifacts are not retained. Add
-`--detailed-artifacts` to write the complete PlanReport, per-task traces, and
-the step's plan record. A plan record is the framework-free
-request the search was given -- program, initial and final residency,
-simulation config, search options, admission and placement facts -- beside the
-answer it returned, with a digest over each, so one run's plan can be compared
-against another's without either being repeated.
+qualification checks setup, every update, and checkpoint replay. Executor always
+enforces the total device allowance, including external memory; bounded pools,
+sealed event inventories, zero steady-state allocation/event growth, and clean
+allocator callbacks remain required.
+
+The result JSON records numerical comparisons, physical evidence, phase timings,
+per-step device/host elapsed times, and paths to the saved archives. Device elapsed
+time includes transfers and dispatch gaps; it is not labeled compute-only time.
+`--detailed-artifacts` additionally retains bounded runtime traces for each step.
+Checkpoint writing and restoration stream Executor-owned tensors in bounded
+chunks instead of creating a second full-state device image.
 
 The SM80+ matrix retains the original roughly billion-parameter models and
 execution budgets: Llama 1,179,699,200 parameters / 10 GiB; Qwen 1,006,955,408 /
@@ -140,10 +149,6 @@ The numerical and performance launchers accept `--external-headroom-mib`
 the initial process baseline, when sizing the execution pool. Zero reserves no
 external allowance. It does not change model or reference identity.
 
-The independent `--reject-overbudget` flag defaults to **off**. Without it,
-external and whole-process memory overruns are measured and reported. With it,
-they fail the run. `--no-reject-overbudget` explicitly restores reporting mode.
-Neither setting resizes the pool or permits pool overflow; actual device OOMs
-still fail. Banners and artifacts record both controls, including
-`external_headroom_bytes`, `reject_overbudget`, `physical_budget_enforced`, and
-`physical_budget_within_limit`.
+Whole-process and external memory overruns fail qualification. The obsolete
+`--reject-overbudget`/`--no-reject-overbudget` switches are removed; the execution
+API always enforces its admitted budget.

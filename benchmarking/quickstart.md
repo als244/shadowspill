@@ -125,4 +125,4 @@ These small regression runs qualify the pipeline, not model performance.
 Rerunning execution creates another attempt directory. Plan identities prevent
 old measurements from being reported as belonging to a newly selected plan.
 The numerical report exporters for the old quickstart format remain under the
-legacy migration path until updated.
+private migration path until updated.

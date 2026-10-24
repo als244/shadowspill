@@ -16,7 +16,6 @@ NEUTRAL_ROOTS = (
     ROOT / "src" / "shadowspill" / "ir",
     ROOT / "src" / "shadowspill" / "pipeline",
     ROOT / "src" / "shadowspill" / "planner",
-    ROOT / "src" / "shadowspill" / "profiling",
     ROOT / "src" / "shadowspill" / "runtime",
     ROOT / "src" / "shadowspill" / "search",
     ROOT / "src" / "shadowspill" / "simulator",

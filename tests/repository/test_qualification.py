@@ -18,14 +18,17 @@ def test_suite_planning_calls_specify_artifact_stores() -> None:
                 continue
             function = node.func
             name = (
-                function.id if isinstance(function, ast.Name)
-                else function.attr if isinstance(function, ast.Attribute)
+                function.id
+                if isinstance(function, ast.Name)
+                else function.attr
+                if isinstance(function, ast.Attribute)
                 else None
             )
             if name not in {"plan_step", "plan_forward"}:
                 continue
             stores = [
-                keyword.value for keyword in node.keywords
+                keyword.value
+                for keyword in node.keywords
                 if keyword.arg in {"artifact_store", "build_store"}
             ]
             if not stores or any(
@@ -33,6 +36,6 @@ def test_suite_planning_calls_specify_artifact_stores() -> None:
                 for value in stores
             ):
                 missing.append(f"{path.relative_to(ROOT)}:{node.lineno}")
-    assert not missing, (
-        "Suite planning needs a temporary artifact store: " + ", ".join(missing)
+    assert not missing, "Suite planning needs a temporary artifact store: " + ", ".join(
+        missing
     )

@@ -1,4 +1,4 @@
-"""torchrun: frozen FP8 data/scales use local shards through public training."""
+"""torchrun: frozen FP8 data/scales use local shards through the legacy frontend."""
 
 from __future__ import annotations
 
@@ -17,7 +17,7 @@ from torch.nn import functional as F
 
 from shadowspill.pytorch import ProfilingOptions
 from shadowspill.pytorch.state.storage import persistent_state
-from shadowspill.training import Trainer
+from shadowspill.training._legacy_trainer import Trainer as LegacyTrainer
 from shadowspill.training.backends import ShadowSpill
 from workloads.recipes.text.distributed import data_parallel_groups
 
@@ -78,7 +78,7 @@ def main():
                 reference = copy.deepcopy(model).to(backend.device)
                 generator = torch.Generator().manual_seed(100 + rank)
                 data = (torch.randn(3, 128, generator=generator), dist.get_world_size())
-                with Trainer(
+                with LegacyTrainer(
                     model,
                     objective=objective,
                     optimizer=torch.optim.SGD,

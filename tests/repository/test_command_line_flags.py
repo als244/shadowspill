@@ -106,6 +106,10 @@ def _readers(path: Path) -> list[Path]:
             *sorted(path.parent.glob("*.py")),
             ROOT / "workloads/recipes/text/quickstart.py",
         ]
+    if path == ROOT / "workloads/recipes/text/train_llama3.py":
+        return [path, *sorted((path.parent / "llama3").glob("*.py"))]
+    if path.parent == ROOT / "baselines/moe_layer":
+        return list(path.parent.rglob("*.py"))
     package_commands = {
         ROOT / "qualification/numerical/run.py",
         ROOT / "qualification/performance/run.py",

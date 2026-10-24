@@ -12,9 +12,7 @@ from dataclasses import asdict
 from typing import Any
 
 from shadowspill.schema import artifact_schema
-from shadowspill.store import StorePolicy
 
-from ..planning_phases import planning_breakdown
 from .compare import Comparison
 from .execution import PlannedRun
 from .measures import (
@@ -59,11 +57,11 @@ def qualification_artifact(
         **_checkpoint_replay(run, comparison),
         **_plan_records(run),
         **_pools(run),
-        **_caches(request, run),
+        **_artifacts(run),
         **_digests(run, comparison),
     }
     if request.detailed_artifacts:
-        qualification_result["plan_diagnostics"] = run.report.diagnostics.as_dict()
+        qualification_result["plan_diagnostics"] = run.plan.diagnostics.to_dict()
         qualification_result["planned_step_diagnostics"] = run.step_diagnostics
     _record_gates(qualification_result, request, run)
     return qualification_result
@@ -85,28 +83,11 @@ def _record_gates(
         qualification_result["reference_state_digest"]
         == qualification_result["planned_state_digest"]
     )
-    # A store mode that disables reads must actually have served nothing. The
-    # policy the mode implies is the authority on whether reads were allowed,
-    # so there is no second flag to disagree with it; a tree that was allowed
-    # to read is not asked to prove anything.
-    build_reads = StorePolicy.for_mode(request.build_store_mode).read_enabled
-    plan_reads = StorePolicy.for_mode(request.plan_store_mode).read_enabled
-    qualification_result["store_modes_honoured"] = bool(
-        (
-            build_reads
-            or (
-                qualification_result["profile_cache_hits"] == 0
-                and qualification_result["aot_graph_pair_cache_misses"]
-                == qualification_result["aot_unique_stage_contracts"]
-            )
-        )
-        and (plan_reads or qualification_result["planned_program_cache_hits"] == 0)
-    )
     qualification_result["graph_pair_selection_required"] = False
     transfer_pressure_passed = transfer_pressure_gate_passed(
         required=request.require_pressure,
-        evicted_bytes=run.report.transfer_bytes_evicted,
-        fetched_bytes=run.report.transfer_bytes_fetched,
+        evicted_bytes=run.plan.summary["evict_bytes"],
+        fetched_bytes=run.plan.summary["fetch_bytes"],
     )
     qualification_result["transfer_pressure_gate_passed"] = transfer_pressure_passed
     qualification_result["pressure_gate_passed"] = transfer_pressure_passed
@@ -134,7 +115,7 @@ def _case_identity(
         "require_pressure": request.require_pressure,
         "external_headroom_bytes": request.external_headroom_mib << 20,
         "reject_overbudget": request.reject_overbudget,
-        "physical_budget_enforced": request.reject_overbudget,
+        "physical_budget_enforced": True,
         "physical_budget_within_limit": (
             int(run.runtime_statistics.peak_process_physical_bytes)
             <= request.device_budget
@@ -156,16 +137,6 @@ def _case_identity(
             "data_ordering": request.case.data_ordering,
             "profiling_metadata": run.workload_metadata,
         },
-        "planning_cache_request": {
-            "directory": (
-                None
-                if request.artifact_store is None
-                else str(request.artifact_store.resolve())
-            ),
-            "build_store_mode": request.build_store_mode,
-            "plan_store_mode": request.plan_store_mode,
-            "export_bypass_key": request.export_bypass_key,
-        },
         "device_budget_bytes": request.device_budget,
         "tolerances": {
             "loss_rtol": LOSS_RELATIVE_TOLERANCE,
@@ -185,12 +156,8 @@ def _timings(run: PlannedRun, comparison: Comparison) -> dict[str, Any]:
     return {
         "planning_seconds": run.planning_seconds,
         "phase_seconds": run.phase_seconds,
-        "planning_breakdown_seconds": planning_breakdown(
-            run.phase_seconds, planning_seconds=run.planning_seconds
-        ),
-        "search_seconds": run.phase_seconds.get("search", 0.0),
         "planned_step_seconds": run.timings,
-        "planned_compute_seconds": run.compute_timings,
+        "planned_device_seconds": run.device_timings,
         "planned_step_summaries": run.step_summaries,
         "reference_step_seconds": comparison.reference["step_seconds"],
         "reference_compute_seconds": comparison.reference.get(
@@ -291,22 +258,20 @@ def _checkpoint_replay(run: PlannedRun, comparison: Comparison) -> dict[str, Any
 def _plan_records(run: PlannedRun) -> dict[str, Any]:
     """What the plan chose and what it predicted the step would cost."""
 
-    selections = tuple(
-        (item.group_id, item.option_id) for item in run.report.execution_plan.selections
-    )
+    selections = tuple((item.group_id, item.option_id) for item in run.plan.selections)
     available_recomputation_savings, selected_recomputation_savings = (
         recomputation_savings_bytes(
-            run.report.execution_plan.program.task_alternative_groups,
-            run.report.execution_plan.selections,
+            run.plan._costed_program.task_alternative_groups,
+            run.plan.selections,
             {
                 group.alias_group_id: group.size_bytes
-                for group in run.report.execution_plan.program.alias_groups
+                for group in run.plan._costed_program.alias_groups
             },
         )
     )
     return {
-        "transfer_bytes_evicted": run.report.transfer_bytes_evicted,
-        "transfer_bytes_fetched": run.report.transfer_bytes_fetched,
+        "transfer_bytes_evicted": run.plan.summary["evict_bytes"],
+        "transfer_bytes_fetched": run.plan.summary["fetch_bytes"],
         "selected_recomputation": any(
             option != "save" for _group, option in selections
         ),
@@ -314,19 +279,13 @@ def _plan_records(run: PlannedRun) -> dict[str, Any]:
         "maximum_recomputation_savings_bytes": available_recomputation_savings,
         "selected_recomputation_savings_bytes": selected_recomputation_savings,
         "task_alternative_group_count": len(selections),
-        "task_count": len(
-            run.report.execution_plan.program.selected_tasks(
-                run.report.execution_plan.selections
-            )
-        ),
-        "action_count": len(run.report.transfer_actions),
-        "predicted_makespan_seconds": run.report.predicted_makespan_ns / 1e9,
-        "predicted_device_peak_bytes": run.report.predicted_device_peak_bytes,
-        "predicted_spill_peak_bytes": run.report.predicted_spill_peak_bytes,
-        "predicted_fragmentation_bytes": (
-            run.report.execution_plan.admission.predicted_fragmentation_bytes
-        ),
-        "fixed_slab_bytes": run.report.fixed_slab_bytes,
+        "task_count": len(run.plan._costed_program.selected_tasks(run.plan.selections)),
+        "action_count": len(run.plan.schedule.actions),
+        "predicted_makespan_seconds": run.plan.summary["duration_seconds"],
+        "predicted_device_peak_bytes": run.plan.summary["execution_peak_bytes"],
+        "predicted_spill_peak_bytes": run.plan.summary["spill_peak_bytes"],
+        "fixed_layout_slack_bytes": run.plan.memory_layout.slack_bytes,
+        "fixed_slab_bytes": run.plan.memory_layout.required_bytes,
     }
 
 
@@ -420,23 +379,13 @@ def _pools(run: PlannedRun) -> dict[str, Any]:
     }
 
 
-def _caches(request: PlannedRequest, run: PlannedRun) -> dict[str, Any]:
-    """Which caches served the run, and the plan records it wrote."""
+def _artifacts(run: PlannedRun) -> dict[str, Any]:
+    """Record the phase archives that actually produced this run."""
+    from qualification.performance.readings import _artifact_identity
 
     return {
-        "profile_cache_hits": run.report.profile_cache_hits,
-        "profile_cache_misses": run.report.profile_cache_misses,
-        "profile_unique_keys": run.report.profile_unique_keys,
-        "captured_stage_count": run.report.captured_stage_count,
-        "aot_unique_stage_contracts": run.report.aot_unique_stage_contracts,
-        "aot_graph_pair_cache_hits": run.report.aot_graph_pair_cache_hits,
-        "aot_graph_pair_cache_misses": run.report.aot_graph_pair_cache_misses,
-        "planned_program_cache_hits": run.report.planned_program_cache_hits,
-        "planned_program_cache_misses": run.report.planned_program_cache_misses,
-        "build_store_mode": request.build_store_mode,
-        "plan_store_mode": request.plan_store_mode,
-        "plan_records": run.plan_records,
-        "plan_report_artifact": run.plan_report_artifact,
+        "phase_artifacts": str(run.plan_path.parent),
+        "plan_artifact": _artifact_identity(run.plan_path),
     }
 
 

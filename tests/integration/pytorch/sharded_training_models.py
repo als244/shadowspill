@@ -1,4 +1,4 @@
-"""torchrun: public sharded training on dense and MoE MLOps models."""
+"""torchrun: legacy sharded training on dense and MoE MLOps models."""
 
 from __future__ import annotations
 
@@ -13,7 +13,7 @@ import torch
 import torch.distributed as dist
 
 from shadowspill.pytorch import ProfilingOptions
-from shadowspill.training import Trainer
+from shadowspill.training._legacy_trainer import Trainer as LegacyTrainer
 from shadowspill.training.backends import ShadowSpill
 from workloads.recipes.text.distributed import data_parallel_groups
 
@@ -146,7 +146,7 @@ def main():
                         float(64 * world),
                     )
 
-                with Trainer(
+                with LegacyTrainer(
                     source,
                     objective=objective,
                     optimizer=optimizer_type,

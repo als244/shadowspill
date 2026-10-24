@@ -95,10 +95,7 @@ def test_an_unrelated_gpu_still_fails_runtime_and_simulator_checks(failure) -> N
     arguments = Namespace(groups=3, steps_per_group=4, skip_checkpoint=True)
     regression = regression_comparison(manifest, arguments, device_name="RTX 2080 Ti")
     planned = SimpleNamespace(
-        report=SimpleNamespace(
-            predicted_makespan_ns=1_000_000_000, predicted_device_peak_bytes=1 << 30
-        ),
-        training=SimpleNamespace(_step=13),
+        summary={"duration_seconds": 1.0, "execution_peak_bytes": 1 << 30},
     )
     warm = SimpleNamespace(warm_objectives=[1.0], checkpoint_restored=False)
     measured = SimpleNamespace(
@@ -131,6 +128,7 @@ def test_an_unrelated_gpu_still_fails_runtime_and_simulator_checks(failure) -> N
         runtime=SimpleNamespace(
             pool_statistics=lambda _: SimpleNamespace(peak_allocated_bytes=0)
         ),
+        logical_steps=13,
         execution_statistics=statistics,
         runtime_delta=delta,
         physical_statuses=[],

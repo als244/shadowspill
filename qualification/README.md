@@ -1,5 +1,13 @@
 # Qualification
 
+The numerical and performance runners use **build → profile → CPU plan → fresh
+execution worker**. Phase archives are retained beside each result; compiler
+caches remain separate. See the [numerical runner](numerical/README.md) and
+[performance runner](performance/README.md) for commands, artifacts and protocol.
+Pinned-host spill is the migrated execution path. SSD/remote runners are not yet
+qualified against the saved-plan API.
+
+
 `qualification/` contains the gate orchestrator, case runners and acceptance
 checks. Start with `python -m qualification.gates`; the orchestrator calls the
 matrix runners, which launch each case in a fresh process. All planning and
@@ -7,7 +15,8 @@ execution use the public `shadowspill` APIs.
 
 ```text
 qualification/
-├── gates.py         the five gates in one run
+├── gates.py         the three default gates in one run
+├── pipeline/        shared build, profile, plan and worker helpers
 ├── numerical/
 │   ├── README.md
 │   ├── run.py       one reference/planned correctness cell
@@ -40,7 +49,7 @@ corrupt both.
 
 **Every gate builds from nothing.** The unit suite gives each planning call a
 temporary store, and every matrix gate runs with `--empty-caches`: each cell
-starts from an empty artifact store and empty Inductor and Triton caches of
+starts from fresh phase artifacts and empty Inductor and Triton caches of
 its own, removed afterwards. A gate judges the code as it is, never reading
 an earlier run's builds, profiles or plans, nor the user's own store.
 
@@ -68,10 +77,11 @@ uncommitted changes: a cell's saved numbers do not record which revision produce
 the directory name is what makes a result readable later as a reference, and a
 revision alone does not identify a tree that was modified.
 
-Both matrices write their usual artifacts into those directories -- per-cell
-JSON and log, plan report, plan record, `summary.json`, and the run's artifact
-store -- so a gate run leaves exactly what a matrix run by hand leaves, under a
-name that says what produced it.
+Both matrices retain per-cell JSON and logs, `summary.json`, and a `.phases/`
+directory beside each result. That directory contains the Program, Profiles,
+ProfiledProgram, CommunicationInfo and Plan archives, exact case inputs, settings
+and phase timings. Compiler caches are separate and disposable. The saved Plan
+supports an execution-only rerun without repeating build or profiling.
 A failing gate stops the ones that would follow unless `--continue-after-failure`
 is given, and `--keep-going` lets a matrix finish its remaining cells after
 one cell fails.
@@ -163,12 +173,10 @@ An explicit pytest --test-dtype choice overrides SHADOWSPILL_TEST_DTYPE; either
 overrides automatic selection. CPU-only suite runs retain BF16 storage fixtures.
 For example, a gate config can contain {"suite": ["--test-dtype", "float16"]}.
 
-Correctness tests and the numerical gate use fixed-count task profiling:
-exact-task warmups and allocation probes still run, followed by the configured
-sample count, with no minimum conditioning or measurement duration. This keeps
-small test kernels from adding seconds to every fresh-process case. The shared
-policy lives in `qualification.profiling`; performance measurements keep
-the production profiling policy.
+The migrated numerical and performance gates use `measure_program` with its
+ordinary allocator and time-based profiling. Existing low-level suite fixtures
+retain their fixed-count policy in `qualification.profiling`. Neither phase
+runner installs the execution allocator until its fresh execution worker.
 
 CTest prints each canary's start and result while the suite runs, with a
 heartbeat after 30 seconds without output. Each canary retains its CMake
@@ -186,6 +194,7 @@ package or layer of forwarding scripts.
 | `numerical/matrix.py`, `performance/matrix.py` | Choose cases and launch isolated case processes. |
 | `numerical/run.py`, `performance/run.py` | Actual command-line implementation for one case. |
 | `numerical/`, `performance/` helpers | Case definitions, execution phases, measurements and verdicts. |
+| `pipeline/` | Shared phase launching, saved artifacts, bounded tensor initialization/export and execution observations. |
 | `device_defaults.py`, `precision.py`, `profiling.py` | Shared hardware, dtype and profiling policies. |
 | `remote/`, `remote_perf/` | The same matrices using a configured remote spill pool. |
 | `tests/qualification/` (repository root) | Tests for gate behavior. |
@@ -208,7 +217,7 @@ python -m qualification.numerical.matrix \
 ```
 
 Compact correctness evidence is the default. An `--empty-caches` run starts
-every reference and planned subprocess with an empty artifact store and empty
+every reference and planned subprocess with empty
 Inductor and Triton caches, in a temporary directory removed afterwards, so a
 case cannot be served anything an earlier run or another case left behind. Use
 `--detailed-artifacts` only for an investigation that needs full PlanReports,
@@ -288,18 +297,9 @@ python -m qualification.performance.matrix \
   --keep-going
 ```
 
-Both matrices give each cell its own artifact store under the output
-directory, and both take `--build-store-mode` and `--plan-store-mode` to say
-what a cell does with each tree of it; the four modes are defined in
-[the artifact store guide](../docs/python/artifact-store.md#store-modes).
-`contribute` is the default: a cell reuses whatever matches by digest and
-keeps what it had to build. `--empty-caches`, which the gates always pass,
-puts the store and the compiler caches in a temporary directory of the cell's
-own (of each subprocess, in the numerical matrix), removed afterwards; a tree
-named by `--build-store` or `--plan-store` is still used. The
-numerical matrix asks for `reuse` on its planning tree unless
-`--detailed-artifacts` is given, because there is nothing to keep from a cell
-that only has to agree.
+Both matrices retain each cell's phase archives beside its result. The
+`--empty-caches` option isolates and removes compiler caches only; it does not
+remove Program, Profiles or Plan archives. Store modes are not runner options.
 
 Both matrix launchers follow the planning-evaluation logging protocol: every
 cell opens with a labeled START block (model, data geometry, budgets), the
@@ -453,8 +453,7 @@ Trainer keep BF16 model defaults on every architecture; FP16 is an explicit
 choice there.
 
 Other fixes apply on every GPU: automatic mlops implementation selection,
-checkpoint dtype preservation, external-memory reporting unless
-`--reject-overbudget` is selected, and incomplete-trace reporting. A throughput
+checkpoint dtype preservation, enforced external-memory accounting, and incomplete-trace reporting. A throughput
 floor applies only to the hardware and configuration it measured. These
 changes preserve the default training precision but can affect kernel
 selection, diagnostic output and gate verdicts.
@@ -491,13 +490,9 @@ The numerical and performance launchers accept `--external-headroom-mib`
 the initial process baseline, when sizing the execution pool. Zero reserves no
 external allowance. It does not change model or reference identity.
 
-The independent `--reject-overbudget` flag defaults to **off**. Without it,
-external and whole-process memory overruns are measured and reported. With it,
-they fail the run. `--no-reject-overbudget` explicitly restores reporting mode.
-Neither setting resizes the pool or permits pool overflow; actual device OOMs
-still fail. Banners and artifacts record both controls, including
-`external_headroom_bytes`, `reject_overbudget`, `physical_budget_enforced`, and
-`physical_budget_within_limit`.
+Device budgets include process/runtime overhead and are always enforced by
+Executor. External headroom remains configurable; the old enforcement switches
+are removed.
 
 ### CPU threads and local references
 

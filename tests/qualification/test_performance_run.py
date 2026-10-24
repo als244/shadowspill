@@ -87,18 +87,13 @@ def test_performance_defaults_and_all_dtype_overrides_reach_the_case() -> None:
         assert command[command.index("--" + field.replace("_", "-")) + 1] == value
 
 
-def test_a_cell_with_empty_caches_plans_in_its_own_store() -> None:
+def test_a_cell_keeps_artifacts_beside_result_and_compiler_caches_separate() -> None:
     from pathlib import Path
 
     from qualification.performance.matrix import _cell_command, _parser
 
     manifest = _manifest_with_overrides("llama3", "mlops", spill_budget_gib=None)
     arguments = _parser().parse_args(["--empty-caches"])
-    own = _cell_command(
-        manifest, arguments, Path("out"), Path("out/cell.json"), {}, store=Path("tmp/s")
-    )
-    assert own[own.index("--artifact-store") + 1] == "tmp/s"
-    shared = _cell_command(manifest, arguments, Path("out"), Path("out/cell.json"), {})
-    assert shared[shared.index("--artifact-store") + 1] == str(
-        Path("out") / "artifact_store" / manifest.identity
-    )
+    command = _cell_command(manifest, arguments, Path("out"), Path("out/cell.json"), {})
+    assert "out/cell.json" in command
+    assert not any("store" in arg for arg in command)

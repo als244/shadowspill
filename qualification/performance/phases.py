@@ -1,342 +1,141 @@
-"""One cell, phase by phase: calibrate, plan, warm, then measure."""
+"""Warm/checkpoint and measure an already loaded Executor; no preparation work."""
 
-from __future__ import annotations
-
-import argparse
-import gc
 import time
+from argparse import Namespace
+from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, cast
+from typing import Any
 
 import torch
 
-from qualification.performance.cases import FullModelManifest
-from qualification.plan_record import write_plan_record
-from qualification.runtime_evidence import (
-    adapter_statistics,
-    check_physical_budget,
-    measured_rate_clause,
-)
-from shadowspill.memory import device, pinned_host, transfer_route
-from shadowspill.pytorch import (
-    Runtime,
-    plan_step,
-)
-from workloads.models.shared.training import LEARNING_RATE
+from qualification.pipeline.observe import Observe
+from qualification.runtime_evidence import adapter_statistics, check_physical_budget
+from shadowspill import Executor, load_checkpoint, save_checkpoint
+from shadowspill.execution.tensors import TensorChunk
 
-from ..planning_phases import planning_breakdown, planning_summary
-from .readings import (
-    _calibration_suspect,
-    _phase_seconds,
-    _profile_metadata,
-    _report_runtime_transfer_capabilities,
-    _wait_idle,
-)
+from .cases import FullModelManifest
 
 
-@dataclass(frozen=True, slots=True)
-class _PlannedCase:
-    """What planning produced, and what it wrote about itself."""
-
-    training: Any
-    report: Any
-    phase_seconds: dict[str, float]
-    planning_seconds: float
-    plan_path: Path
-    plan_records: object
-
-
-@dataclass(frozen=True, slots=True)
-class _WarmStep:
-    """The warm step and the checkpoint round trip taken around it."""
-
-    checkpoint_step: int
+@dataclass(frozen=True)
+class WarmStep:
     checkpoint_seconds: float
-    checkpoint_restored: bool | None
     restore_seconds: float
+    checkpoint_restored: bool | None
     warm_seconds: float
     warm_objectives: list[float]
-    warm_diagnostics: Any
-    execution_baseline: Any
+    warm_diagnostics: dict[str, Any]
+    execution_baseline: object
 
 
-@dataclass(frozen=True, slots=True)
-class _Measurements:
-    """Every timed quantity the measured groups produced."""
-
+@dataclass(frozen=True)
+class Measurements:
     group_seconds: list[float]
     host_group_seconds: list[float]
     group_tokens_per_second: list[float]
     cycle_seconds: list[float]
-    entry_delay_seconds: list[float]
-    selected_spans: list[float]
     dispatch_seconds: list[float]
-    prior_invocation_drain_seconds: list[float]
     measured_objectives: list[list[float]]
 
 
-def _calibrated_runtime(
-    manifest: FullModelManifest,
-    spill: Any = None,
-) -> tuple[Runtime, dict[str, object], int]:
-    """Open the runtime and calibrate it, retrying a bimodal measurement.
+def optimizer_steps(executor: Executor) -> int:
+    steps = {}
 
-    The runtime owns its physical capacities. Register and calibrate those
-    capacities before anonymous workload state claims the host pages that
-    will otherwise back the spill arena and alter sustained DMA bandwidth.
+    def collect(chunk: TensorChunk, value: torch.Tensor) -> None:
+        if chunk.name.startswith("optimizer.") and chunk.name.endswith(".step"):
+            steps[chunk.name] = int(value)
 
-    Bidirectional-concurrent calibration is bimodal despite the runtime-first
-    lifecycle (solo variance is expected and not the anomaly), and a degraded
-    calibration steers planning toward a different, higher-traffic plan. The
-    concurrent/solo ratio separates the two modes; a legitimately high solo at
-    most triggers one benign extra probe. Persistently low results are
-    recorded and planning proceeds against the final measurement.
-    """
-
-    runtime = Runtime(
-        pools={
-            "execution": device(
-                physical_capacity=manifest.device_physical_capacity_bytes,
-                external_headroom=manifest.external_headroom_bytes,
-                reject_overbudget=manifest.reject_overbudget,
-            ),
-            # A peer's region when one was named, pinned host otherwise.
-            # Everything else about the cell is unchanged, which is what makes
-            # the two runs comparable.
-            "spill": spill
-            if spill is not None
-            else pinned_host(capacity=manifest.spill_budget_bytes),
-        },
-        routes={
-            "fetch": transfer_route(source="spill", destination="execution"),
-            "evict": transfer_route(source="execution", destination="spill"),
-        },
-    )
-    calibration_attempts = 1
-    while calibration_attempts < 4 and _calibration_suspect(runtime):
-        print(
-            "suspect bidirectional-concurrent calibration "
-            f"(attempt {calibration_attempts}); recalibrating",
-            flush=True,
-        )
-        runtime.calibrate_transfer_capabilities()
-        calibration_attempts += 1
-    return runtime, _report_runtime_transfer_capabilities(runtime), calibration_attempts
+    executor.export_tensors(collect)
+    if not steps or len(set(steps.values())) != 1:
+        raise AssertionError(f"optimizer counters disagree or are absent: {steps}")
+    return next(iter(steps.values()))
 
 
-def _plan_case(
-    case: Any,
-    manifest: FullModelManifest,
-    arguments: argparse.Namespace,
-    *,
-    runtime: Runtime,
-    cache: Path,
-    output: Path,
-    planning_spill_budget: int,
-) -> _PlannedCase:
-    """Plan the step, then save the plan report and its records beside it."""
-
-    planning_started = time.perf_counter()
-    training = plan_step(
-        case.model,
-        objective=case.objective,
-        optimizer=case.optimizer,
-        **manifest.dtypes.plan_arguments(),
-        hyperparams=("lr",),
-        example_inputs=case.microbatches,
-        runtime=runtime,
-        execution="execution",
-        spill="spill",
-        spill_budget=planning_spill_budget,
-        optimizer_ordering="stage_interleaved",
-        verbose=True,
-        artifact_store=cache,
-        build_store=arguments.build_store,
-        plan_store=arguments.plan_store,
-        build_store_mode=arguments.build_store_mode,
-        plan_store_mode=arguments.plan_store_mode,
-        profiling_metadata=_profile_metadata(case.microbatches),
-        export_bypass_key=arguments.export_bypass_key,
-    )
-    planning_seconds = time.perf_counter() - planning_started
-    report = training.plan_report
-    phases = _phase_seconds(report)
-    plan_path = output.with_name(f"{output.stem}_plan_report.pt")
-    torch.save(report, plan_path)
-    fixtures = [
-        write_plan_record(
-            result=report.search_result,
-            directory=output.parent / f"{output.stem}_plan_records",
-        )
-    ]
-    print(
-        planning_summary(
-            manifest.identity,
-            planning_breakdown(phases, planning_seconds=planning_seconds),
-        ),
-        flush=True,
-    )
-    return _PlannedCase(
-        training=training,
-        report=report,
-        phase_seconds=phases,
-        planning_seconds=planning_seconds,
-        plan_path=plan_path,
-        plan_records=fixtures,
-    )
-
-
-def _warm_step(
-    training: Any,
-    case: Any,
-    arguments: argparse.Namespace,
-    physical_statuses: list[object],
-) -> _WarmStep:
-    """Take the warm step, and the checkpoint round trip around it."""
-
-    checkpoint: dict[str, object] | None = None
-    checkpoint_seconds = 0.0
-    checkpoint_step = training._step
+def warm_step(
+    executor: Executor,
+    observer: Observe,
+    inputs: Sequence[tuple[Any, ...]],
+    arguments: Namespace,
+    directory: Path,
+    physical_statuses: list[int],
+) -> WarmStep:
+    checkpoint = directory / "checkpoint.ssp"
+    checkpoint_seconds = restore_seconds = 0.0
+    restored = None
     if not arguments.skip_checkpoint:
-        checkpoint_started = time.perf_counter()
-        checkpoint = training.state_dict()
-        checkpoint_seconds = time.perf_counter() - checkpoint_started
-        checkpoint_step = cast(int, checkpoint["step"])
-    warm_started = time.perf_counter()
-    warm_result = training(
-        case.microbatches,
-        hyperparams={"lr": LEARNING_RATE},
-        runtime_trace=True,
-        profiler_annotations=arguments.profiler_annotations,
-    )
-    if warm_result.diagnostics is None:
-        raise AssertionError("full-model warm trace omitted diagnostics")
-    warm_diagnostics = warm_result.diagnostics.result()
-    warm_seconds = time.perf_counter() - warm_started
-    warm_objectives = [float(value) for value in warm_result.objectives]
-    # The warm step's cycle would otherwise close at the first measured
-    # step's origin and be counted with the group: close it here and
-    # discard it, so every group closes exactly its own steps.
-    training.mark_cycle_end()
-    training.invocation_timings()
-    physical_statuses.append(check_physical_budget())
-
-    restore_seconds = 0.0
-    checkpoint_restored: bool | None = None
-    if checkpoint is not None:
-        restore_started = time.perf_counter()
-        training.load_state_dict(checkpoint)
-        restore_seconds = time.perf_counter() - restore_started
-        checkpoint_restored = training._step == checkpoint_step
-    del checkpoint, warm_result
-    gc.collect()
-    _wait_idle(training)
-    return _WarmStep(
-        checkpoint_step=checkpoint_step,
-        checkpoint_seconds=checkpoint_seconds,
-        checkpoint_restored=checkpoint_restored,
-        restore_seconds=restore_seconds,
-        warm_seconds=warm_seconds,
-        warm_objectives=warm_objectives,
-        warm_diagnostics=warm_diagnostics,
-        execution_baseline=adapter_statistics(),
-    )
-
-
-def _announce_prediction(
-    manifest: FullModelManifest, report: Any, runtime: Any
-) -> None:
-    """State the plan's prediction, and the rates it was made against.
-
-    It is said before the first group so the measured lines below can be read
-    against it as they appear, and with its rates because that is what it is
-    only as good as.
-    """
-
-    predicted_step_seconds = report.predicted_makespan_ns / 1e9
-    planned = report.summary
-    print(
-        f"simulator predicts {manifest.identity}: "
-        f"{predicted_step_seconds:.4f} s/step, "
-        f"{manifest.tokens_per_step / predicted_step_seconds:.2f} tokens/s "
-        f"(planned with: fetch "
-        f"{planned.fetch_solo_bandwidth_bytes_per_second / 1e9:.1f}/"
-        f"{planned.fetch_concurrent_bandwidth_bytes_per_second / 1e9:.1f} GB/s, evict "
-        f"{planned.evict_solo_bandwidth_bytes_per_second / 1e9:.1f}/"
-        f"{planned.evict_concurrent_bandwidth_bytes_per_second / 1e9:.1f} GB/s"
-        " solo/concurrent"
-        f"{measured_rate_clause(runtime)})"
-        f"; unconstrained throughput "
-        f"{planned.unconstrained_step_seconds:.4f} s/step, "
-        f"{manifest.tokens_per_step / planned.unconstrained_step_seconds:.2f}"
-        f" tokens/s",
-        flush=True,
-    )
-
-
-def _measure_groups(
-    training: Any,
-    case: Any,
-    manifest: FullModelManifest,
-    arguments: argparse.Namespace,
-    physical_statuses: list[object],
-) -> _Measurements:
-    """Run the timed groups, closing each group's cycles before it is read."""
-
-    measured = _Measurements([], [], [], [], [], [], [], [], [])
-    for group in range(arguments.groups):
-        retained_results: list[Any] = []
-        group_started = time.perf_counter()
-        for step in range(arguments.steps_per_group):
-            call_started = time.perf_counter()
-            step_result = training(
-                case.microbatches,
-                hyperparams={"lr": LEARNING_RATE},
-                profiler_annotations=arguments.profiler_annotations,
-            )
-            measured.dispatch_seconds.append(time.perf_counter() - call_started)
-            measured.prior_invocation_drain_seconds.append(
-                training._collect_prior_invocation_drain_seconds()
-            )
-            retained_results.append(step_result)
-            print(
-                f"{manifest.identity} group {group + 1}/{arguments.groups} "
-                f"step {step + 1}/{arguments.steps_per_group} submitted",
-                flush=True,
-            )
-        # The group's last cycle closes where a next step would begin,
-        # after required terminal work has drained, just like the next origin.
-        training.mark_cycle_end()
-        _wait_idle(training)
-        measured.host_group_seconds.append(time.perf_counter() - group_started)
-        timings = training.invocation_timings()
-        if len(timings) != arguments.steps_per_group:
-            raise AssertionError(
-                f"group {group + 1} closed {len(timings)} cycles for "
-                f"{arguments.steps_per_group} steps"
-            )
-        measured.cycle_seconds.extend(item.cycle_seconds for item in timings)
-        measured.entry_delay_seconds.extend(
-            item.entry_delay_seconds for item in timings
+        started = time.perf_counter()
+        save_checkpoint(
+            executor, checkpoint, metadata={"step": optimizer_steps(executor)}
         )
-        measured.selected_spans.extend(item.selected_span_seconds for item in timings)
-        elapsed = sum(item.cycle_seconds for item in timings)
+        checkpoint_seconds = time.perf_counter() - started
+    result, summary, trace = observer.traced(inputs, step=0)
+    losses = [float(value) for value in result.losses]
+    del result
+    executor.synchronize()
+    physical_statuses.append(check_physical_budget())
+    if not arguments.skip_checkpoint:
+        started = time.perf_counter()
+        metadata = load_checkpoint(executor, checkpoint)
+        restored = optimizer_steps(executor) == metadata["step"]
+        restore_seconds = time.perf_counter() - started
+    observer.idle()
+    return WarmStep(
+        checkpoint_seconds,
+        restore_seconds,
+        restored,
+        summary["host_seconds"],
+        losses,
+        trace,
+        adapter_statistics(),
+    )
+
+
+def measure_groups(
+    executor: Executor,
+    observer: Observe,
+    inputs: Sequence[tuple[Any, ...]],
+    manifest: FullModelManifest,
+    arguments: Namespace,
+    physical_statuses: list[int],
+) -> Measurements:
+    measured = Measurements([], [], [], [], [], [])
+    for group in range(arguments.groups):
+        retained = []
+        observer.idle()
+        started = time.perf_counter()
+        for step in range(arguments.steps_per_group):
+            # Close each cycle where the next starts, including terminal copies
+            # and caller dispatch costs. No compilation or tuning occurs here.
+            observer.idle()
+            observer.events[step].record()
+            dispatched = time.perf_counter()
+            retained.append(executor.run(args=inputs))
+            measured.dispatch_seconds.append(time.perf_counter() - dispatched)
+        observer.idle()
+        observer.events[arguments.steps_per_group].record()
+        observer.events[arguments.steps_per_group].synchronize()
+        measured.host_group_seconds.append(time.perf_counter() - started)
+        cycles = [
+            observer.events[i].elapsed_time(observer.events[i + 1]) / 1000
+            for i in range(arguments.steps_per_group)
+        ]
+        measured.cycle_seconds.extend(cycles)
+        elapsed = sum(cycles)
         measured.group_seconds.append(elapsed)
         measured.group_tokens_per_second.append(
-            manifest.tokens_per_step * arguments.steps_per_group / elapsed
+            manifest.tokens_per_step * len(cycles) / elapsed
         )
-        for step_result in retained_results:
+        for handle in retained:
             measured.measured_objectives.append(
-                [float(value) for value in step_result.objectives]
+                [float(value) for value in handle.result().losses]
             )
-        # StepResult tensors are caller-owned runtime outputs.  Only the
-        # scalar qualification evidence is retained across groups.
-        del step_result, retained_results
+        del handle, retained
+        executor.synchronize()
+        observer.idle()
         physical_statuses.append(check_physical_budget())
         print(
-            f"{manifest.identity} group {group + 1}: "
-            f"{elapsed / arguments.steps_per_group:.6f}s/step, "
+            f"{manifest.identity} group {group + 1}/{arguments.groups}: "
+            f"{elapsed / len(cycles):.6f}s/step, "
             f"{measured.group_tokens_per_second[-1]:.2f} tokens/s",
             flush=True,
         )

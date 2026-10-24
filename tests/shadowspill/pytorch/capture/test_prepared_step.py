@@ -233,7 +233,13 @@ torch.testing.assert_close(
 )
 """
     result = subprocess.run(
-        [sys.executable, "-c", code, str(tmp_path)],
+        [
+            sys.executable,
+            *(["-S"] if sys.flags.no_site else []),
+            "-c",
+            code,
+            str(tmp_path),
+        ],
         capture_output=True,
         text=True,
         timeout=60,
@@ -262,7 +268,7 @@ bundle = PreparedTraining.load(sys.argv[1])
 print(json.dumps([plan.digest for plan in bundle.search.winner_plans.values()]))
 """
     result = subprocess.run(
-        [sys.executable, "-c", code, str(path)],
+        [sys.executable, *(["-S"] if sys.flags.no_site else []), "-c", code, str(path)],
         check=True,
         text=True,
         capture_output=True,

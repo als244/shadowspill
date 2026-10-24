@@ -90,6 +90,12 @@ reordering. Tied parameter contributions preserve both creation and mutation
 dependencies. `operator_recompute` controls operator retention during build;
 the planner separately chooses among saved stage variants.
 
+For differing example shapes or static metadata, both training builders accept
+`example_calls=[(args0, kwargs0), (args1, kwargs1)]` instead of
+`example_args`/`example_kwargs`/`num_examples`. Matching signatures reuse captures;
+each example retains its own signature and constants through save/load. The
+default one-example-plus-count form remains sufficient for uniform inputs.
+
 `build_step` takes the same training arguments plus `optimizer=optimizer`, whose
 parameters must belong to the supplied model. It discovers optimizer tensor
 shapes and initialization defaults without allocating persistent state or
@@ -267,7 +273,19 @@ forward form. An `inputs` mapping can supply flat task arguments by profile key
 when automatic values are unsuitable or control semantics are unknown.
 
 Measurement records durations, allocation lifetimes, output aliases and observed
-fixed memory. The build/target setup must match. It does not compile or change
+fixed memory. Completed native frees permit a later equal-sized allocation on
+the same allocation stream to reuse that slot, independent of native addresses.
+This lets fixed placement share a task-local slot across sequential temporaries;
+otherwise it would reserve every temporary until task completion. Different
+extents or streams remain separate leases. The saved allocation contract still
+describes requests and ownership, independently of native pointer choices.
+
+`external_headroom_bytes` (512 MiB by default) additionally reserves
+worker headroom in that fixed-memory total; Executor inherits this saved setting.
+This is conservative: profiling observes loaded library/context memory, while
+the worker reserves headroom above its startup baseline. Planning therefore
+includes the reservation before fitting the task arena into the total GPU budget.
+The build/target setup must match. It does not compile or change
 task definitions. Provider resources that cannot yet be observed completely
 remain an execution-qualification concern; they are not silently treated as zero.
 
@@ -470,12 +488,12 @@ it. Stateful schedules use the same methods. Default Python, NumPy and PyTorch
 RNG states are preserved; custom generators remain application-owned. Loop state
 supports small plain Python containers and CPU tensors/arrays, without pickle.
 Checkpoints are single bounded-stream archives; partial weight-only export and
-legacy checkpoint conversion are separate from this full-resume path.
+model checkpoint conversion are separate from this full-resume path.
 
 This milestone qualifies local `build_step` plans and read-only evaluation sharing
 trained parameter storage. Distributed Trainer callers and old recipe migration
 are still pending. Remaining model/prepare callers explicitly use the private
-legacy implementation until migrated; the public Trainer has only the new API.
+private implementation until migrated; the public Trainer has only the new API.
 
 ### Logical parallelism and the first distributed simulation path
 

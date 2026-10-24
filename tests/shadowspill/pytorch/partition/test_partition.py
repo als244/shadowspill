@@ -184,19 +184,19 @@ class _PlainBlock(nn.Module):
 @pytest.mark.parametrize("partition,stage_count", [("auto", 4), ("whole", 1)])
 def test_forward_callback_keeps_registered_module_paths(partition, stage_count):
     """Strict Export's closure paths must not collapse a repeated model."""
-    from shadowspill.pytorch.planning.forward.capture import (
-        _restore_registered_module_paths,
-        _select_forward,
+    from shadowspill.pytorch.capture.forward import (
+        restore_module_paths,
+        select_forward,
     )
 
     model = _NestedRepeatedNetwork().eval()
     inputs = (torch.randn(2, 8),)
     with torch.no_grad():
         expected = model(*inputs).square().sum()
-    view = _select_forward(model, lambda model, x: model(x).square().sum())
+    view = select_forward(model, lambda model, x: model(x).square().sum())
     with torch.no_grad():
         captured = capture_forward(model, inputs)
-        _restore_registered_module_paths(captured, model, view)
+        restore_module_paths(captured, model, view)
         split = partition_export(captured, model, partition=partition)
     assert len(split.stages) == stage_count
     assert set(captured.exported_program.state_dict) == set(model.state_dict())

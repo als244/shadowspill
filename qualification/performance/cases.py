@@ -89,7 +89,7 @@ class FullModelManifest(FullModelSpec):
     remote_regression_tokens_per_second: float | None = None
     predecessor_tokens_per_second: float | None = None
     external_headroom_bytes: int = 512 << 20
-    reject_overbudget: bool = False
+    reject_overbudget: bool = True
 
 
 def _manifest(model: str, implementation: ModelImplementation) -> FullModelManifest:

@@ -13,7 +13,6 @@ import os
 import re
 import shutil
 import signal
-import sys
 import tempfile
 import time
 from collections.abc import Sequence
@@ -29,6 +28,7 @@ from qualification.performance.cases import (
     manifest_for,
     manifests,
 )
+from qualification.pipeline.process import python_command
 from qualification.precision import (
     add_dtype_arguments,
     dtype_arguments,
@@ -40,15 +40,14 @@ from ..matrix_logging import MatrixConsole, format_bytes, utc_now
 
 # Cell logs may carry one leading "[<utc>] " stamp added by the matrix tee.
 _PLAN_PROGRESS = re.compile(
-    r"^(?:\[[^\]]*\] )?\[shadowspill\.plan \+\s*[0-9.]+s\]\s+"
+    r"^(?:\[[^\]]*\] )?(?:\[shadowspill\.plan \+\s*[0-9.]+s\]\s+)?"
     r"(?P<phase>[A-Za-z0-9_]+): "
-    r"(?P<state>started|finished|failed)(?:\s+in\s+.*)?$"
+    r"(?P<state>started|finished|failed|starting|completed)(?:\s+in\s+.*)?$"
 )
-_PLAN_LINE = re.compile(r"^(?:\[[^\]]*\] )?(?P<line>\[shadowspill\.plan .*)$")
 
 
 def _active_planning_phases(log_text: str) -> tuple[str, ...]:
-    """Recover the open phase stack from verbose planning output."""
+    """Recover unfinished phases from current or earlier qualification logs."""
 
     active: list[str] = []
     for line in log_text.splitlines():
@@ -56,7 +55,7 @@ def _active_planning_phases(log_text: str) -> tuple[str, ...]:
         if match is None:
             continue
         phase = match.group("phase")
-        if match.group("state") == "started":
+        if match.group("state") in {"started", "starting"}:
             active.append(phase)
             continue
         for index in range(len(active) - 1, -1, -1):
@@ -93,13 +92,9 @@ def _write_parent_failure(
     else:
         message = f"qualification subprocess exited with status {return_code}"
     if phase is not None:
-        message += f" during planning phase {phase!r}"
+        message += f" during qualification phase {phase!r}"
     message += "; no Python traceback was available"
-    progress_lines = [
-        match.group("line")
-        for match in map(_PLAN_LINE.match, text.splitlines())
-        if match is not None
-    ]
+    progress_lines = [line for line in text.splitlines() if _PLAN_PROGRESS.match(line)]
     failure: dict[str, object] = {
         "schema": artifact_schema("full_model_subprocess_failure"),
         "identity": manifest_identity,
@@ -284,24 +279,10 @@ def _parser() -> argparse.ArgumentParser:
         type=Path,
         default=Path("qualification/results/full_model"),
     )
-    for tree in ("build", "plan"):
-        parser.add_argument(
-            f"--{tree}-store-mode",
-            choices=("contribute", "reuse", "require", "refresh"),
-        )
-        parser.add_argument(
-            f"--{tree}-store",
-            type=Path,
-            help=(
-                f"put the {tree} tree under this directory instead of the "
-                "per-cell artifact store, so a planner change can be measured "
-                "against a cold store without disturbing the shared one"
-            ),
-        )
     parser.add_argument(
         "--execution-budget-gib",
         type=int,
-        help="execution pool physical budget in GiB (default: 16; 10 below SM80)",
+        help="total GPU allowance in GiB (default: 16; 10 below SM80)",
     )
     add_dtype_arguments(parser)
     add_memory_budget_arguments(parser)
@@ -310,10 +291,9 @@ def _parser() -> argparse.ArgumentParser:
         "--empty-caches",
         action="store_true",
         help=(
-            "start every cell with an empty artifact store and empty Inductor "
+            "start every cell with empty Inductor "
             "and Triton caches, in a temporary directory removed afterwards, so "
-            "nothing is reused from an earlier run or another cell; a tree "
-            "--build-store or --plan-store names is still used"
+            "nothing is reused from an earlier run or another cell"
         ),
     )
     parser.add_argument("--plan-only", action="store_true")
@@ -331,11 +311,10 @@ def _parser() -> argparse.ArgumentParser:
         "--checkpoint",
         action="store_true",
         help=(
-            "opt into the anonymous full-state checkpoint/restore protocol; "
-            "the matrix default is a throughput probe without that copy"
+            "opt into streamed checkpoint/restore; "
+            "the matrix default skips checkpoint I/O"
         ),
     )
-    parser.add_argument("--export-bypass-key")
     parser.add_argument(
         "--cells",
         nargs="*",
@@ -388,29 +367,15 @@ def _cell_command(
     output: Path,
     artifact: Path,
     planning_budgets: dict[str, int],
-    *,
-    store: Path | None = None,
 ) -> list[str]:
-    """The command line one cell is run as, in its own process: its artifact
-    store is ``store``, else the cell's own under ``output``."""
+    """Launch one cell; its phase archives sit beside its result artifact."""
 
-    command = [
-        sys.executable,
-        "-m",
+    command = python_command(
         "qualification.performance.run",
         manifest.family,
         manifest.implementation,
-        str(artifact),
-        "--artifact-store",
-        str(store or output / "artifact_store" / manifest.identity),
-    ]
-    for tree in ("build", "plan"):
-        store_mode = getattr(arguments, f"{tree}_store_mode")
-        if store_mode is not None:
-            command.extend((f"--{tree}-store-mode", store_mode))
-        root = getattr(arguments, f"{tree}_store")
-        if root is not None:
-            command.extend((f"--{tree}-store", str(root)))
+        artifact,
+    )
     if arguments.plan_only:
         command.append("--plan-only")
     elif not arguments.checkpoint:
@@ -436,16 +401,9 @@ def _cell_command(
     command.extend(
         ("--external-headroom-mib", str(manifest.external_headroom_bytes >> 20))
     )
-    command.append(
-        "--reject-overbudget"
-        if manifest.reject_overbudget
-        else "--no-reject-overbudget"
-    )
     canonical = manifest_for(manifest.family, manifest.implementation)
     if manifest.spill_budget_bytes != canonical.spill_budget_bytes:
         command.extend(("--spill-budget-gib", str(manifest.spill_budget_bytes >> 30)))
-    if arguments.export_bypass_key is not None:
-        command.extend(("--export-bypass-key", arguments.export_bypass_key))
     remote_spill = getattr(arguments, "remote_spill", None)
     if remote_spill is not None:
         command.extend(("--remote-spill", remote_spill))
@@ -473,8 +431,7 @@ def _run_cell(
     environment: dict[str, str] | None = None
     cache_root: Path | None = None
     if arguments.empty_caches:
-        # The cell starts from nothing: a store, an Inductor cache and a
-        # Triton cache of its own, removed once it ends.
+        # Compiler caches are temporary; phase archives remain beside the result.
         cache_root = Path(tempfile.mkdtemp(prefix=f"shadowspill-{manifest.identity}-"))
         environment = dict(os.environ)
         environment["TORCHINDUCTOR_CACHE_DIR"] = str(cache_root / "torchinductor")
@@ -485,7 +442,6 @@ def _run_cell(
         output,
         artifact,
         planning_budgets,
-        store=None if cache_root is None else cache_root / "shadowspill",
     )
     started = time.perf_counter()
     started_at = utc_now()

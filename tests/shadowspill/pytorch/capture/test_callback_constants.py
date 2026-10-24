@@ -8,7 +8,7 @@ from torch import nn
 from torch.export.graph_signature import InputKind
 
 from shadowspill.pytorch.capture.aot import capture_forward
-from shadowspill.pytorch.planning.forward.capture import _select_forward
+from shadowspill.pytorch.capture.forward import select_forward
 
 
 class _WithConstants(nn.Module):
@@ -29,7 +29,7 @@ def test_inline_constants_capture_decompose_and_archive(callback):
     x = torch.tensor([[1.0, 2.0], [-3.0, 4.0]])
     expected = model(x)
     if callback:
-        _select_forward(model, lambda module, value: module(value))
+        select_forward(model, lambda module, value: module(value))
     captured = capture_forward(model, [x])
     program = captured.exported_program
     state_targets = {

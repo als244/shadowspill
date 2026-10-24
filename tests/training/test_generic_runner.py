@@ -249,7 +249,7 @@ def test_core_tuple_hyperparameters_broadcast_to_each_group():
 
 
 def test_core_forward_callback_keeps_state_names_and_original_model_call():
-    from shadowspill.pytorch.planning.forward.capture import _select_forward
+    from shadowspill.pytorch.capture.forward import select_forward
 
     model = nn.Sequential(nn.Linear(3, 2), nn.Sigmoid())
     original = copy.deepcopy(model)
@@ -258,7 +258,7 @@ def test_core_forward_callback_keeps_state_names_and_original_model_call():
     def callback(m, x):
         return {"sum": m(x["left"]) + m(x["right"])}
 
-    _select_forward(model, callback)
+    select_forward(model, callback)
     exported = torch.export.export(model, (inputs,), strict=True)
     torch.testing.assert_close(exported.module()(inputs), callback(original, inputs))
     assert [

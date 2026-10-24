@@ -11,138 +11,62 @@ import json
 import traceback
 from pathlib import Path
 
-import torch
-
 from qualification.device_defaults import (
     add_memory_budget_arguments,
     performance_defaults,
 )
-from qualification.model_state import import_case_model, release_case_model
-from qualification.precision import (
-    add_dtype_arguments,
-    dtype_overrides,
-)
-from qualification.runtime_evidence import (
-    check_physical_budget,
-)
+from qualification.pipeline.process import profile_and_plan, run_phase
+from qualification.precision import add_dtype_arguments
 from shadowspill.schema import artifact_schema
-from workloads.full_model import build_case
 
-from .baseline import regression_comparison
-from .manifest import (
-    _manifest_with_overrides,
-    _planning_spill_budget,
-)
-from .phases import (
-    _announce_prediction,
-    _calibrated_runtime,
-    _measure_groups,
-    _plan_case,
-    _warm_step,
-)
-from .verdict import _measured_result, _plan_only_result
-
-
-def _remote_spill_pool(arguments: argparse.Namespace) -> object | None:
-    """The peer's pool named by ``--remote-spill``, or ``None`` for pinned host.
-
-    Parsed here rather than in the matrix so a cell run by hand behaves exactly
-    as one the matrix spawned, which is the whole reason the option travels as
-    a string. Imported lazily: a local run should not load the network library
-    to decide it does not need it.
-    """
-
-    value = getattr(arguments, "remote_spill", None)
-    if value is None:
-        return None
-    host, _, rest = value.partition(":")
-    port, _, size = rest.partition(":")
-    if not host or not port.isdigit() or not size.isdigit():
-        raise SystemExit(f"--remote-spill must read HOST:PORT:BYTES, not {value!r}")
-    from shadowspill.network import remote
-
-    return remote(capacity=int(size), host=host, port=int(port))
+from .manifest import _planning_spill_budget
+from .prepare import manifest_for_run
 
 
 def _run(arguments: argparse.Namespace) -> dict[str, object]:
-    manifest = _manifest_with_overrides(
-        arguments.family,
-        arguments.implementation,
-        spill_budget_gib=arguments.spill_budget_gib,
-        execution_budget_gib=arguments.execution_budget_gib,
-        external_headroom_mib=arguments.external_headroom_mib,
-        reject_overbudget=arguments.reject_overbudget,
-        **dtype_overrides(arguments),
-    )
-    print("DTYPES: " + manifest.dtypes.description(), flush=True)
-    print(
-        f"EXTERNAL HEADROOM: {manifest.external_headroom_bytes >> 20} MiB "
-        f"(reserved for pool sizing); REJECT OVERBUDGET: {manifest.reject_overbudget}",
-        flush=True,
-    )
-    planning_spill_budget = _planning_spill_budget(
-        manifest,
-        planning_spill_budget_gib=arguments.planning_spill_budget_gib,
-    )
-    output = arguments.output.expanduser().resolve()
-    output.parent.mkdir(parents=True, exist_ok=True)
-    cache = (
-        arguments.artifact_store.expanduser().resolve()
-        if arguments.artifact_store is not None
-        else output.parent / "artifact_store" / manifest.identity
-    )
-    runtime, capabilities, calibration_attempts = _calibrated_runtime(
-        manifest, _remote_spill_pool(arguments)
-    )
-    regression = regression_comparison(
-        manifest, arguments, device_name=torch.cuda.get_device_name()
-    )
-    print("THROUGHPUT BASELINE: " + regression.reason, flush=True)
-    case = import_case_model(build_case(manifest, seed=arguments.seed), runtime=runtime)
-    with case.implementations():
-        planned = _plan_case(
-            case,
-            manifest,
-            arguments,
-            runtime=runtime,
-            cache=cache,
-            output=output,
-            planning_spill_budget=planning_spill_budget,
+    if arguments.remote_spill is not None:
+        raise NotImplementedError(
+            "phase qualification currently supports host spill only"
         )
-        physical_statuses = [check_physical_budget()]
-        if arguments.plan_only:
-            result = _plan_only_result(
-                manifest,
-                planned,
-                physical_statuses,
-                planning_spill_budget=planning_spill_budget,
-                capabilities=capabilities,
-            )
-        else:
-            warm = _warm_step(planned.training, case, arguments, physical_statuses)
-            _announce_prediction(manifest, planned.report, runtime)
-            measured = _measure_groups(
-                planned.training, case, manifest, arguments, physical_statuses
-            )
-            result = _measured_result(
-                manifest,
-                arguments,
-                planned,
-                warm,
-                measured,
-                runtime=runtime,
-                physical_statuses=physical_statuses,
-                planning_spill_budget=planning_spill_budget,
-                capabilities=capabilities,
-                calibration_attempts=calibration_attempts,
-                regression=regression,
-            )
-        planned.training.close()
-        # Qualification never reuses the model; an export copy would stack an
-        # anonymous full-model allocation on the registered spill arena.
-        release_case_model(case, runtime=runtime)
-        runtime.close()
-        return result
+    manifest = manifest_for_run(arguments)
+    print("DTYPES: " + manifest.dtypes.description(), flush=True)
+    output = arguments.output.expanduser().resolve()
+    directory = output.with_suffix(".phases")
+    directory.mkdir(parents=True, exist_ok=True)
+    arguments.output = output
+    (directory / "arguments.json").write_text(
+        json.dumps(vars(arguments), default=str, indent=2)
+    )
+    (directory / "manifest.json").write_text(json.dumps(manifest.as_dict(), indent=2))
+    (directory / "settings.json").write_text(
+        json.dumps(
+            {
+                "execution_bytes": manifest.device_physical_capacity_bytes,
+                "external_headroom_bytes": manifest.external_headroom_bytes,
+                "spill_bytes": _planning_spill_budget(
+                    manifest,
+                    planning_spill_budget_gib=arguments.planning_spill_budget_gib,
+                ),
+            },
+            indent=2,
+        )
+    )
+    run_phase(directory, "build", "qualification.performance.prepare", directory)
+    profile_and_plan(directory)
+    if arguments.plan_only:
+        from shadowspill import Plan
+
+        from .verdict import plan_result
+
+        return {
+            **plan_result(Plan.load(directory / "plan.ssp"), directory),
+            "schema": artifact_schema("full_model_qualification"),
+            "manifest": manifest.as_dict(),
+            "plan_only": True,
+            "passed": True,
+        }
+    run_phase(directory, "execute", "qualification.performance.execute", directory)
+    return json.loads(output.read_text())
 
 
 def main() -> int:
@@ -153,7 +77,7 @@ def main() -> int:
     parser.add_argument(
         "--execution-budget-gib",
         type=int,
-        help="execution pool physical budget in GiB (default: 16; 10 below SM80)",
+        help="total GPU allowance in GiB (default: 16; 10 below SM80)",
     )
     add_dtype_arguments(parser)
     add_memory_budget_arguments(parser)
@@ -173,8 +97,8 @@ def main() -> int:
         "--skip-checkpoint",
         action="store_true",
         help=(
-            "run the throughput protocol without the anonymous full-state "
-            "checkpoint copy; this is a runtime probe, not checkpoint qualification"
+            "run the throughput protocol without the streamed checkpoint/restore; "
+            "this is a runtime probe, not checkpoint qualification"
         ),
     )
     parser.add_argument(
@@ -185,16 +109,6 @@ def main() -> int:
             "external profiler can attribute time to the task that spent it"
         ),
     )
-    parser.add_argument("--artifact-store", type=Path)
-    parser.add_argument("--build-store", type=Path)
-    parser.add_argument("--plan-store", type=Path)
-    for tree in ("build", "plan"):
-        parser.add_argument(
-            f"--{tree}-store-mode",
-            choices=("contribute", "reuse", "require", "refresh"),
-            default="contribute",
-        )
-    parser.add_argument("--export-bypass-key")
     parser.add_argument(
         "--spill-budget-gib",
         type=int,
@@ -203,7 +117,7 @@ def main() -> int:
     parser.add_argument(
         "--planning-spill-budget-gib",
         type=int,
-        help="use a smaller planning budget within the runtime spill pool",
+        help="use a smaller spill capacity for both the saved Plan and execution",
     )
     parser.add_argument(
         "--remote-spill",

@@ -9,11 +9,11 @@ from __future__ import annotations
 
 import os
 import subprocess
-import sys
 from argparse import Namespace
 from pathlib import Path
 from typing import Literal
 
+from qualification.pipeline.process import python_command
 from qualification.precision import dtype_arguments
 from workloads.numerical import ModelImplementation
 
@@ -36,18 +36,12 @@ def orchestrate(
     steps: int,
     checkpoint_step: int,
     require_pressure: bool,
-    artifact_store: Path | None,
-    build_store: Path | None,
-    plan_store: Path | None,
     profiling_metadata_argument: str | None,
-    build_store_mode: str,
-    plan_store_mode: str,
-    export_bypass_key: str | None,
     reference_directory: Path,
     regenerate_reference: bool,
     detailed_artifacts: bool,
     external_headroom_mib: int | None = None,
-    reject_overbudget: bool = False,
+    reject_overbudget: bool = True,
     model_dtype: str | None = None,
     master_dtype: str | None = None,
     grad_dtype: str | None = None,
@@ -62,7 +56,7 @@ def orchestrate(
         implementation=model_implementation,
     )
     result = result_directory / f"{prefix}.json"
-    base = [sys.executable, "-m", "qualification.numerical.run"]
+    base = python_command("qualification.numerical.run")
     options = [
         "--seed",
         str(seed),
@@ -124,21 +118,8 @@ def orchestrate(
             env=environment,
         )
     planned_options = list(spill_options or ())
-    planned_options.append(
-        "--reject-overbudget" if reject_overbudget else "--no-reject-overbudget"
-    )
     if external_headroom_mib is not None:
         planned_options.extend(("--external-headroom-mib", str(external_headroom_mib)))
-    selected_cache = artifact_store or result_directory / "artifact_store"
-    planned_options.extend(("--artifact-store", str(selected_cache)))
-    for flag, path in (("--build-store", build_store), ("--plan-store", plan_store)):
-        if path is not None:
-            planned_options.extend((flag, str(path)))
-    for tree, mode in (("build", build_store_mode), ("plan", plan_store_mode)):
-        if mode != "contribute":
-            planned_options.extend((f"--{tree}-store-mode", mode))
-    if export_bypass_key is not None:
-        planned_options.extend(("--export-bypass-key", export_bypass_key))
     if detailed_artifacts:
         planned_options.append("--detailed-artifacts")
     subprocess.run(

@@ -10,5 +10,12 @@ if __name__ == "__main__":
         raise SystemExit(main(report_only=True, headroom_mib=int(sys.argv[2])))
     for headroom in (0, 256):
         subprocess.run(
-            [sys.executable, __file__, sys.argv[1], str(headroom)], check=True
+            [
+                sys.executable,
+                *(["-S"] if sys.flags.no_site else []),
+                __file__,
+                sys.argv[1],
+                str(headroom),
+            ],
+            check=True,
         )

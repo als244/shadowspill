@@ -1,5 +1,10 @@
 # Frontend and lifecycle API
 
+For the public build → profile → plan → execute API, start with the
+[phase guide](../../architecture/offline-pipeline.md). This page documents the
+lower-level runtime and transitional frontend used by existing integrations.
+Normal phase callers need pools only inside Executor, after planning.
+
 The symbols on this page are exported by `shadowspill.memory` or
 `shadowspill.pytorch`: the pool and route configuration a runtime is built
 from, the runtime itself, the state-import operations, the planning entry
@@ -1414,6 +1419,10 @@ execution; both retain the first failure the C runtime reported and its task
 identity, reached through `Runtime.last_failure` as `RuntimeFailureDiagnostics`.
 
 ## `Distributed`
+
+`TransferSharding` supplies weight and gradient storage groups to this older
+live-group API. New builders use the central `Parallelism` declaration instead;
+see the [phase API guide](../../architecture/offline-pipeline.md).
 
 The optional `Distributed` binding supplies process groups and logical parameter
 replicas to preparation. It is available from both `shadowspill.pytorch` and

@@ -8,7 +8,7 @@ while API pages define individual contracts.
 ## Suggested order
 
 Start with the [generic trainer example](generic-training.md) for ordinary models
-and iterable data. The [README's expandable training examples](../../README.md#train-with-the-trainer-api)
+and iterable data. The [README's expandable training examples](../../README.md#model-recipes)
 show Llama 3 full training, Qwen3.5 LoRA and eight-rank Qwen3 training with both
 transfer and optimizer sharding. The [example model catalog](../../workloads/MODELS.md) lists
 architectures, dimensions, dtypes, trainable parameters, and model recipes.

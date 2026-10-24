@@ -15,8 +15,7 @@ from shadowspill.memory import device
 
 
 @pytest.mark.parametrize("bf16", [False, True])
-@pytest.mark.parametrize("reject", [False, True])
-def test_explicit_zero_survives_hardware_defaults(bf16, reject):
+def test_explicit_zero_survives_hardware_defaults(bf16):
     numerical = numerical_parser().parse_args(
         [
             "run",
@@ -24,12 +23,9 @@ def test_explicit_zero_survives_hardware_defaults(bf16, reject):
             "out",
             "--external-headroom-mib",
             "0",
-            *(["--reject-overbudget"] if reject else []),
         ]
     )
-    performance = performance_parser().parse_args(
-        ["--external-headroom-mib", "0", *(["--reject-overbudget"] if reject else [])]
-    )
+    performance = performance_parser().parse_args(["--external-headroom-mib", "0"])
     numerical_defaults(numerical, hardware={"bf16": bf16})
     performance_defaults(performance, hardware={"bf16": bf16})
     assert numerical.external_headroom_mib == performance.external_headroom_mib == 0
@@ -46,7 +42,7 @@ def test_explicit_zero_survives_hardware_defaults(bf16, reject):
         reject_overbudget=manifest.reject_overbudget,
     )
     assert pool.external_headroom == 0
-    assert pool.reject_overbudget == numerical.reject_overbudget == reject
+    assert pool.reject_overbudget == numerical.reject_overbudget is True
 
 
 @pytest.mark.parametrize("headroom", [0, 512])
@@ -60,7 +56,7 @@ def test_numerical_reports_external_overshoot_but_enforces_pool_contracts(
         device_budget=cap, external_headroom_mib=headroom, reject_overbudget=reject
     )
     run = SimpleNamespace(
-        report=SimpleNamespace(predicted_device_peak_bytes=cap - 1),
+        plan=SimpleNamespace(summary={"execution_peak_bytes": cap - 1}),
         physical_statuses=[43] if failure == "runtime" else [0],
     )
     result = {
@@ -92,10 +88,7 @@ def test_performance_reports_external_overshoot_but_enforces_other_checks(
     )
     arguments = Namespace(groups=3, steps_per_group=4, skip_checkpoint=True)
     planned = SimpleNamespace(
-        report=SimpleNamespace(
-            predicted_makespan_ns=1_000_000_000, predicted_device_peak_bytes=1 << 30
-        ),
-        training=SimpleNamespace(_step=13),
+        summary={"duration_seconds": 1.0, "execution_peak_bytes": 1 << 30},
     )
     statistics = SimpleNamespace(
         peak_process_physical_bytes=manifest.device_physical_capacity_bytes + (1 << 30),
@@ -114,6 +107,7 @@ def test_performance_reports_external_overshoot_but_enforces_other_checks(
                 peak_allocated_bytes=manifest.spill_budget_bytes + (failure == "spill")
             )
         ),
+        logical_steps=13,
         execution_statistics=statistics,
         runtime_delta=dict.fromkeys(
             (

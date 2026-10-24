@@ -162,7 +162,7 @@ ShadowSpill uses `<root>/shadowspill/<revision>-<digest>/` for Inductor and its
 rank-specific artifact stores share this compiler cache on a node. PyTorch and
 Triton own their content addressing and locking. A cache miss recompiles;
 copying a report or artifact store does not require these compiler files.
-Existing `build/inductor/` directories are legacy caches and are left untouched.
+Existing `build/inductor/` directories are compiler caches and are left untouched.
 
 One directory is deliberately not content-addressed:
 `planning/plans/<model class>/<capture identity>/<plan digest>/` groups plan

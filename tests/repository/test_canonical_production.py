@@ -41,9 +41,17 @@ def test_production_does_not_import_reference_implementations() -> None:
 def test_avoided_vocabulary_stays_out_of_production_sources() -> None:
     """The words docs/development/naming.md tells us not to use."""
     avoided = re.compile(r"\bnative\b", re.IGNORECASE)
+    # "native" is PyTorch's actual allocator backend, observed during the GPU
+    # profiling phase; it must not become a synonym for ShadowSpill's C library.
+    allocator_sources = (
+        PYTHON_ROOT / "profiling",
+        PYTHON_ROOT / "communication",
+        C_ROOT / "adapter/pytorch/profiling",
+    )
     offenders = [
         f"{path.relative_to(ROOT)}: {match}"
         for path in _production_sources()
+        if not any(path.is_relative_to(root) for root in allocator_sources)
         for match in set(avoided.findall(path.read_text(encoding="utf-8")))
     ]
     assert offenders == []

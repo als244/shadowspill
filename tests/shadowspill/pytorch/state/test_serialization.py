@@ -9,7 +9,8 @@ from shadowspill.pytorch.state.serialization import (
     decode_tensor_state,
     encode_tensor_state,
 )
-from shadowspill.training import Trainer, checkpoints
+from shadowspill.training import checkpoints
+from shadowspill.training._legacy_trainer import Trainer
 from shadowspill.training._model import initialize_model
 from shadowspill.training.backends import PyTorch
 from tests.shadowspill.pytorch.state.representations import ScaledWeight, model
@@ -73,7 +74,7 @@ def test_wrapper_checkpoint_publishes_or_preserves_compute(tmp_path, weights):
 
 
 @pytest.mark.parametrize("weights", ["master", "compute"])
-def test_cpu_trainer_updates_logical_master_and_resumes(tmp_path, weights):
+def test_private_cpu_trainer_updates_logical_master_and_resumes(tmp_path, weights):
     sample = torch.arange(24, dtype=torch.float32).reshape(3, 8) / 24
 
     def trainer():

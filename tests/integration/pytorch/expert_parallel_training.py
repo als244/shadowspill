@@ -1,7 +1,7 @@
 """torchrun: accumulated FP32-state EP training against eager EP + torch AdamW.
 
 Run save and recompute separately with --resolution 0 and --resolution 1. This
-checks planner/optimizer ownership; the eager reference shares MLOps' EP kernels.
+checks legacy planner/optimizer ownership; the eager reference shares EP kernels.
 """
 
 from __future__ import annotations
@@ -20,7 +20,7 @@ from shadowspill.planner import SearchOptions, StepDataOrdering
 from shadowspill.planner.search.algorithms.pressurefit import PressureFit
 from shadowspill.planner.search.algorithms.pressurefit.options import PressureFitOptions
 from shadowspill.pytorch import ProfilingOptions
-from shadowspill.training import Trainer
+from shadowspill.training._legacy_trainer import Trainer as LegacyTrainer
 from shadowspill.training.backends import ShadowSpill
 from workloads.recipes.text.expert_parallel import experiment
 
@@ -126,7 +126,7 @@ def main():
                 from mlops.optim import AdamW
 
                 try:
-                    with Trainer(
+                    with LegacyTrainer(
                         source,
                         objective=recipe["objective"],
                         microbatches=lambda values: values,

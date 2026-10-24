@@ -103,8 +103,8 @@ def _budget_checks(
     return (
         (
             "budget",
-            run.report.predicted_device_peak_bytes <= request.device_budget,
-            f"predicted device peak {run.report.predicted_device_peak_bytes} "
+            run.plan.summary["execution_peak_bytes"] <= request.device_budget,
+            f"predicted device peak {run.plan.summary['execution_peak_bytes']} "
             f"over budget {request.device_budget}",
         ),
         (
@@ -190,11 +190,6 @@ def record_verdict(
         ("pressure", result["transfer_pressure_gate_passed"], "transfer pressure gate"),
         *_budget_checks(result, request, run),
         *_runtime_checks(result),
-        (
-            "store",
-            result["store_modes_honoured"],
-            "a store whose mode disables reads still served a hit",
-        ),
     )
     failures = [
         {"category": category, "detail": detail}

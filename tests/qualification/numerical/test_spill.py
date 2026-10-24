@@ -59,7 +59,9 @@ def test_ssd_changes_only_the_planned_arm(tmp_path):
     host = commands(options)
     on_ssd = commands(replace(options, spill_pool=pool))
     # The warm-up and the reference arm never see the spill pool.
-    assert [command[3] for command in host] == ["_warm", "_reference", "_planned"]
+    assert [
+        command[command.index("qualification.numerical.run") + 1] for command in host
+    ] == ["_warm", "_reference", "_planned"]
     assert on_ssd[:2] == host[:2]
     assert on_ssd[2] == host[2] + spill_arguments(pool)
 

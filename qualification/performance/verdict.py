@@ -6,6 +6,7 @@ import argparse
 import math
 import statistics
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any
 
 from qualification.performance.cases import FullModelManifest
@@ -13,14 +14,13 @@ from qualification.runtime_evidence import (
     adapter_statistics,
     statistics_dict,
 )
-from shadowspill.pytorch import (
-    Runtime,
-)
+from shadowspill import Plan
+from shadowspill.runtime import Runtime
 from shadowspill.schema import artifact_schema
 
 from .baseline import RegressionComparison
-from .phases import _Measurements, _PlannedCase, _WarmStep
-from .readings import _artifact_identity, _runtime_delta, _wait_idle
+from .phases import Measurements, WarmStep
+from .readings import _artifact_identity, _runtime_delta
 
 _MINIMUM_REGRESSION_RATIO = 0.95
 
@@ -65,14 +65,15 @@ class _Gates:
 def _gate_verdicts(
     manifest: FullModelManifest,
     arguments: argparse.Namespace,
-    planned: _PlannedCase,
-    warm: _WarmStep,
-    measured: _Measurements,
+    plan: Plan,
+    warm: WarmStep,
+    measured: Measurements,
     *,
     runtime: Runtime,
+    logical_steps: int,
     execution_statistics: Any,
     runtime_delta: dict[str, int],
-    physical_statuses: list[object],
+    physical_statuses: list[int],
     regression: RegressionComparison,
 ) -> _Gates:
     """Decide every gate, each one naming the kind of failure it reports."""
@@ -82,7 +83,7 @@ def _gate_verdicts(
     median_step_seconds = float(statistics.median(measured.cycle_seconds))
     median_throughput = manifest.tokens_per_step / median_step_seconds
     authority = regression.floor if regression.applicable else None
-    predicted_seconds = planned.report.predicted_makespan_ns / 1e9
+    predicted_seconds = plan.summary["duration_seconds"]
     simulator_relative_error = (
         (median_step_seconds - predicted_seconds) / predicted_seconds
         if predicted_seconds > 0.0
@@ -111,11 +112,11 @@ def _gate_verdicts(
         ),
         logical_steps_passed=bool(
             (arguments.skip_checkpoint or warm.checkpoint_restored)
-            and planned.training._step == expected_logical_steps
+            and logical_steps == expected_logical_steps
         ),
         physical_passed=bool(
             not any(physical_statuses)
-            and planned.report.predicted_device_peak_bytes
+            and plan.summary["execution_peak_bytes"]
             <= manifest.device_physical_capacity_bytes
             and (
                 not manifest.reject_overbudget
@@ -143,109 +144,79 @@ def _gate_verdicts(
     )
 
 
-def _plan_only_result(
-    manifest: FullModelManifest,
-    planned: _PlannedCase,
-    physical_statuses: list[object],
-    *,
-    planning_spill_budget: int,
-    capabilities: dict[str, object],
-) -> dict[str, object]:
-    """The artifact for a cell that was asked to plan and stop."""
+def plan_result(plan: Plan, directory: Path) -> dict[str, Any]:
+    import json
 
-    report = planned.report
+    recorded = json.loads((directory / "phases.json").read_text())
+    phases = {key: recorded[key] for key in ("build", "profile", "plan")}
+    summary = plan.summary
     return {
-        "schema": artifact_schema("full_model_qualification"),
-        "manifest": manifest.as_dict(),
-        "plan_only": True,
-        "passed": not any(physical_statuses),
-        "planning_seconds": planned.planning_seconds,
-        "phase_seconds": planned.phase_seconds,
-        "predicted_makespan_seconds": report.predicted_makespan_ns / 1e9,
-        "predicted_device_peak_bytes": report.predicted_device_peak_bytes,
-        "predicted_spill_peak_bytes": report.predicted_spill_peak_bytes,
-        "transfer_bytes_evicted": report.transfer_bytes_evicted,
-        "transfer_bytes_fetched": report.transfer_bytes_fetched,
-        "plan_report_artifact": _artifact_identity(planned.plan_path),
-        "plan_records": planned.plan_records,
-        "physical_budget_statuses": physical_statuses,
-        "planning_spill_budget_bytes": planning_spill_budget,
-        "runtime_transfer_capabilities": capabilities,
+        "planning_seconds": sum(phases.values()),
+        "phase_seconds": phases,
+        "predicted_makespan_seconds": summary["duration_seconds"],
+        "predicted_device_peak_bytes": summary["execution_peak_bytes"],
+        "predicted_spill_peak_bytes": summary["spill_peak_bytes"],
+        "transfer_bytes_evicted": summary["evict_bytes"],
+        "transfer_bytes_fetched": summary["fetch_bytes"],
+        "plan_artifact": _artifact_identity(directory / "plan.ssp"),
+        "phase_artifacts": str(directory),
+        "communication_info": plan.communication_info.to_dict(),
     }
 
 
-def _measured_result(
+def measured_result(
     manifest: FullModelManifest,
     arguments: argparse.Namespace,
-    planned: _PlannedCase,
-    warm: _WarmStep,
-    measured: _Measurements,
+    plan: Plan,
+    warm: WarmStep,
+    measured: Measurements,
     *,
     runtime: Runtime,
-    physical_statuses: list[object],
-    planning_spill_budget: int,
-    capabilities: dict[str, object],
-    calibration_attempts: int,
+    logical_steps: int,
+    physical_statuses: list[int],
     regression: RegressionComparison,
-) -> dict[str, object]:
-    """The artifact for a measured cell: what was seen, and what it is judged to be."""
+    directory: Path,
+) -> dict[str, Any]:
+    from dataclasses import asdict
 
-    # Releasing the retained StepResult tensors above enqueues retirements
-    # through the free callback, after the last per-group drain.  Sample
-    # the gate evidence at a quiesced boundary so pending_retirements
-    # reflects a leak rather than a race with the worker.
-    _wait_idle(planned.training)
     execution_statistics = adapter_statistics()
     runtime_delta = _runtime_delta(warm.execution_baseline, execution_statistics)
     gates = _gate_verdicts(
         manifest,
         arguments,
-        planned,
+        plan,
         warm,
         measured,
         runtime=runtime,
+        logical_steps=logical_steps,
         execution_statistics=execution_statistics,
         runtime_delta=runtime_delta,
         physical_statuses=physical_statuses,
         regression=regression,
     )
-    report = planned.report
     return {
         "schema": artifact_schema("full_model_qualification"),
         "manifest": manifest.as_dict(),
         "plan_only": False,
         "passed": gates.passed,
-        "protocol_complete": gates.protocol_complete,
+        **plan_result(plan, directory),
+        **asdict(measured),
         "groups": arguments.groups,
         "steps_per_group": arguments.steps_per_group,
-        "planning_seconds": planned.planning_seconds,
-        "phase_seconds": planned.phase_seconds,
+        "protocol_complete": gates.protocol_complete,
         "checkpoint_seconds": warm.checkpoint_seconds,
-        "checkpoint_skipped": bool(arguments.skip_checkpoint),
-        "warm_seconds": warm.warm_seconds,
-        "restore_seconds": warm.restore_seconds,
+        "checkpoint_skipped": arguments.skip_checkpoint,
         "checkpoint_restored": warm.checkpoint_restored,
+        "restore_seconds": warm.restore_seconds,
+        "warm_seconds": warm.warm_seconds,
         "warm_objectives": warm.warm_objectives,
-        "warm_diagnostics": warm.warm_diagnostics.as_dict(),
-        "measured_objectives": measured.measured_objectives,
+        "warm_diagnostics": warm.warm_diagnostics,
         "objectives_finite": gates.objectives_finite,
-        "logical_steps": planned.training._step,
+        "logical_steps": logical_steps,
         "expected_logical_steps": gates.expected_logical_steps,
         "logical_steps_passed": gates.logical_steps_passed,
-        "group_seconds": measured.group_seconds,
-        "group_tokens_per_second": measured.group_tokens_per_second,
         "median_step_seconds": gates.median_step_seconds,
-        "cycle_seconds": measured.cycle_seconds,
-        "entry_delay_seconds": measured.entry_delay_seconds,
-        "host_group_seconds": measured.host_group_seconds,
         "median_tokens_per_second": gates.median_throughput,
-        "selected_task_span_seconds": measured.selected_spans,
-        "median_selected_task_span_seconds": float(
-            statistics.median(measured.selected_spans)
-        ),
-        "dispatch_seconds": measured.dispatch_seconds,
-        "prior_invocation_drain_seconds": measured.prior_invocation_drain_seconds,
-        "predicted_makespan_seconds": report.predicted_makespan_ns / 1e9,
         "simulator_relative_error": gates.simulator_relative_error,
         "simulator_gate_passed": gates.simulator_passed,
         "regression_comparison": regression.as_dict(),
@@ -253,33 +224,16 @@ def _measured_result(
         "regression_throughput_ratio": gates.regression_ratio,
         "regression_gate_passed": gates.regression_passed,
         "predecessor_throughput_ratio": gates.predecessor_ratio,
-        "predicted_device_peak_bytes": report.predicted_device_peak_bytes,
-        "predicted_spill_peak_bytes": report.predicted_spill_peak_bytes,
-        "transfer_bytes_evicted": report.transfer_bytes_evicted,
-        "transfer_bytes_fetched": report.transfer_bytes_fetched,
         "physical_budget_statuses": physical_statuses,
         "physical_budget_passed": gates.physical_passed,
-        "reject_overbudget": manifest.reject_overbudget,
-        "physical_budget_enforced": manifest.reject_overbudget,
-        "physical_budget_within_limit": (
-            int(execution_statistics.peak_process_physical_bytes)
-            <= manifest.device_physical_capacity_bytes
-        ),
+        "physical_budget_enforced": True,
         "peak_process_physical_bytes": int(
             execution_statistics.peak_process_physical_bytes
         ),
-        # Measured external memory outside the allocation pool, which is what the
-        # configured external headroom is a prediction of. Recorded so the
-        # prediction can be set from measurement rather than from a round number.
         "observed_external_high_water_bytes": int(
             execution_statistics.observed_external_high_water_bytes
         ),
-        "planning_spill_budget_bytes": planning_spill_budget,
-        "calibration_attempts": calibration_attempts,
         "strict_runtime_passed": gates.strict_runtime,
         "runtime_delta": runtime_delta,
         "runtime_statistics": statistics_dict(execution_statistics),
-        "runtime_transfer_capabilities": capabilities,
-        "plan_report_artifact": _artifact_identity(planned.plan_path),
-        "plan_records": planned.plan_records,
     }

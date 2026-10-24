@@ -16,7 +16,7 @@ def _manifest_with_overrides(
     spill_budget_gib: int | None,
     execution_budget_gib: int | None = None,
     external_headroom_mib: int | None = None,
-    reject_overbudget: bool = False,
+    reject_overbudget: bool = True,
     model_dtype: str | None = None,
     master_dtype: str | None = None,
     grad_dtype: str | None = None,

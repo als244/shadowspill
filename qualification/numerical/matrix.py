@@ -20,6 +20,7 @@ from qualification.device_defaults import (
     numerical_defaults,
 )
 from qualification.numerical.cases import DEFAULT_DEVICE_BUDGETS
+from qualification.pipeline.process import python_command
 from qualification.precision import (
     add_dtype_arguments,
     dtype_arguments,
@@ -120,7 +121,7 @@ class _CaseOptions:
     detailed_artifacts: bool
     spill_pool: SpillPool | None = None
     external_headroom_mib: int | None = None
-    reject_overbudget: bool = False
+    reject_overbudget: bool = True
     model_dtype: str | None = None
     master_dtype: str | None = None
     grad_dtype: str | None = None
@@ -169,7 +170,7 @@ def _case_commands(
     choice, for the rest of its life, and both arms must be readers.
     """
 
-    base = [sys.executable, "-m", "qualification.numerical.run"]
+    base = python_command("qualification.numerical.run")
     shared = options.case_arguments()
     commands: list[list[str]] = [
         [*base, "_warm", family, "--model-implementation", implementation, *shared]
@@ -197,9 +198,6 @@ def _case_commands(
         implementation,
         *shared,
     ]
-    planned.append(
-        "--reject-overbudget" if options.reject_overbudget else "--no-reject-overbudget"
-    )
     if options.external_headroom_mib is not None:
         planned.extend(("--external-headroom-mib", str(options.external_headroom_mib)))
     planned.extend(spill_arguments(options.spill_pool))
@@ -222,14 +220,9 @@ def _run_commands(
     return_code = 0
     for command in commands:
         command_environment = dict(options.environment)
-        mode = command[3]  # after: python -m qualification.numerical.run
+        mode = command[command.index("qualification.numerical.run") + 1]
         is_warm = mode == "_warm"
         is_reference = mode == "_reference"
-        plan_cache = (
-            (output_directory / "artifact_store" / prefix)
-            if options.cache_directory is None
-            else options.cache_directory.expanduser().resolve() / prefix
-        )
         cache_root: Path | None = None
         if options.empty_caches:
             cache_parent = (
@@ -243,19 +236,12 @@ def _run_commands(
                 tempfile.mkdtemp(prefix=f"{prefix}-", dir=cache_parent)
             ) / ("warm" if is_warm else "reference" if is_reference else "plan")
             cache_root.mkdir(parents=True, exist_ok=False)
-            plan_cache = cache_root / "shadowspill"
             command_environment["TORCHINDUCTOR_CACHE_DIR"] = str(
                 cache_root / "torchinductor"
             )
             command_environment["TRITON_CACHE_DIR"] = str(cache_root / "triton")
-        if not (is_warm or is_reference):
-            command.extend(("--artifact-store", str(plan_cache)))
-            if options.detailed_artifacts:
-                command.append("--detailed-artifacts")
-            else:
-                # Nothing to keep from a cell that only has to agree, so it
-                # reads what is there and leaves the store as it found it.
-                command.extend(("--plan-store-mode", "reuse"))
+        if not (is_warm or is_reference) and options.detailed_artifacts:
+            command.append("--detailed-artifacts")
         phase = (
             "kernel warm-up: compile and tune, record nothing"
             if is_warm
@@ -433,8 +419,8 @@ def _parser() -> argparse.ArgumentParser:
         "--empty-caches",
         action="store_true",
         help=(
-            "start every subprocess with an empty artifact store and empty "
-            "Inductor and Triton caches, in a temporary directory removed "
+            "start every subprocess with empty Inductor and Triton caches "
+            "in a temporary directory removed "
             "afterwards, so nothing is reused from an earlier run or another "
             "case"
         ),

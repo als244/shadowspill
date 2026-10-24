@@ -84,7 +84,7 @@ def transfer_rows(plan: Plan) -> list[dict[str, Any]]:
                 "collective_bytes": collective_bytes,
                 "start_seconds": item.start_ns / 1e9,
                 "duration_seconds": duration,
-                # The native simulator retains the composite interval, not
+                # The simulator retains the composite interval, not
                 # individual leg timestamps. Do not report it as memcpy speed.
                 "throughput_gb_per_second": None
                 if collective

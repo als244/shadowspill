@@ -116,7 +116,7 @@ def test_ssd_is_opt_in_and_reuses_the_numerical_matrix() -> None:
         keep_going=True,
         options=("--ssd-directory", "/local/ssd", "--ssd-staging-mib", "128"),
     )
-    assert command[3] == "qualification.numerical.matrix"
+    assert command[command.index("-m") + 1] == "qualification.numerical.matrix"
     assert "qualification/results/numerical_ssd_test" in command
     assert command[-2:] == ("--spill-pool", "ssd")
     assert "--keep-going" in command

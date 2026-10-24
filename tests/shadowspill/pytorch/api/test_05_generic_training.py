@@ -1,4 +1,4 @@
-"""Run in a fresh process after the unchanged qualification baseline."""
+"""Transitional legacy Trainer coverage; saved-plan tests live in training/."""
 
 from __future__ import annotations
 
@@ -10,7 +10,8 @@ from torch import nn
 
 from qualification.profiling import CORRECTNESS_PROFILING
 from shadowspill.runtime.occupancy import live_allocations
-from shadowspill.training import Forward, Trainer
+from shadowspill.training import Forward
+from shadowspill.training._legacy_trainer import Trainer as LegacyTrainer
 from shadowspill.training.backends import ShadowSpill
 
 pytestmark = [pytest.mark.fresh_process, pytest.mark.cuda]
@@ -79,7 +80,7 @@ def test_shadowspill_generic_candidates_shared_forward_and_checkpoint(tmp_path):
             artifact_store=tmp_path / "artifacts",
             profiling_options=CORRECTNESS_PROFILING,
         ) as backend,
-        Trainer(
+        LegacyTrainer(
             model,
             objective=objective,
             optimizer=torch.optim.AdamW,
@@ -165,7 +166,7 @@ def test_mutable_buffer_survives_diagnostics_and_repeated_training(tmp_path):
             partition="whole",
             profiling_options=CORRECTNESS_PROFILING,
         ) as backend,
-        Trainer(
+        LegacyTrainer(
             model,
             objective=objective,
             optimizer=AdamW,
@@ -288,7 +289,7 @@ def test_first_stochastic_update_is_independent_of_preparation_and_diagnostics(
             backend.profiling_options = replace(
                 CORRECTNESS_PROFILING, warmup_iterations=profile_warmup
             )
-            with Trainer(
+            with LegacyTrainer(
                 copy.deepcopy(source),
                 objective=objective,
                 optimizer=AdamW,

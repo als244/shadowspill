@@ -76,6 +76,19 @@ def test_full_model_launcher_recovers_killed_planning_phase() -> None:
     assert _termination_signal(-9) == "SIGKILL"
 
 
+def test_full_model_launcher_recovers_killed_phase_worker() -> None:
+    log = "\n".join(
+        (
+            "build: starting",
+            "build: completed in 5.000s",
+            "profile: starting",
+            "profile: completed in 2.000s",
+            "plan: starting",
+        )
+    )
+    assert _active_planning_phases(log) == ("plan",)
+
+
 def test_performance_gate_preserves_the_three_default_mlops_workloads() -> None:
     """Hardware-aware judging does not change the default workload matrix."""
 

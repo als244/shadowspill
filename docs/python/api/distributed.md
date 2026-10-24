@@ -1,6 +1,16 @@
 # Distributed planning and training
 
-For ordinary data parallel training under torchrun, the high-level
+The new phase API declares ownership through `Parallelism`, builds and measures
+DP compute on one representative device, and models communication separately in
+`CommunicationInfo`. Its public distributed Executor is still guarded pending
+multi-device memory/completion qualification. See the
+[phase API guide](../../architecture/offline-pipeline.md) for those declarations
+and current limitations. The results below describe the older runtime path;
+they do not qualify the new saved-plan Executor.
+
+## Compatibility path for callers still being migrated
+
+In the older backend API, the high-level
 [`DataParallel` configuration](training.md#data-parallel-training-and-resource-ownership)
 lets `Trainer.prepare()` create the groups and `Trainer.close()` release them.
 It supports replicated compute weights or transfer-sharded weights/gradients,
@@ -24,7 +34,8 @@ entering Runtime or the `ShadowSpill` backend. Process groups belong to the call
 ```python
 import torch
 import torch.distributed as dist
-from shadowspill.training import Distributed, Trainer
+from shadowspill.training import Distributed
+from shadowspill.training._legacy_trainer import Trainer
 from shadowspill.training.backends import ShadowSpill
 
 # Launch with torchrun. device="auto" resolves LOCAL_RANK against visible GPUs.

@@ -32,6 +32,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from qualification.pipeline.process import python_command
+
 #: Gate names in the order they run. The suite is first because it is the
 #: cheapest and catches what would make the measured gates meaningless.
 #:
@@ -141,10 +143,7 @@ def _commands(
         # No -q here: pyproject already passes one, and a second makes it
         # -qq, which drops the closing count the summary reads.
         return (
-            sys.executable,
-            "-u",
-            "-m",
-            "pytest",
+            *python_command("pytest"),
             "tests",
             "-p",
             "no:cacheprovider",
@@ -168,17 +167,14 @@ def _commands(
         raise KeyError(f"no command is defined for the gate {name!r}")
     module, output_flag = matrices[name]
     command = [
-        sys.executable,
-        "-u",
-        "-m",
-        module,
+        *python_command(module),
         output_flag,
         str(_RESULTS / f"{name}_{run}"),
     ]
     if keep_going:
         command.append("--keep-going")
-    # A gate judges the code as it is: every cell builds from nothing, in an
-    # artifact store and compiler caches of its own, removed afterwards.
+    # Every cell builds with fresh compiler caches. Those caches are temporary;
+    # the phase archives remain available for inspection and reruns.
     command.append("--empty-caches")
     command += options
     if name == "numerical_ssd":

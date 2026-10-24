@@ -9,6 +9,7 @@ directory is split between task-oriented guides and the `api/` reference.
 How to use the system and how to read what it produces.
 
 - [Quickstart](quickstart.md)
+- [Independent build, profile, plan and execution APIs](../architecture/offline-pipeline.md)
 - [Artifact store](artifact-store.md)
 - [PyTorch allocator integration](allocator.md)
 - [Errors, failures, and cleanup](failures.md)
@@ -35,12 +36,16 @@ ordered outward from the framework-neutral layer to the PyTorch frontend.
 - [Planning and step diagnostics](api/diagnostics.md)
 - [Timing: the step on the device clock](api/timing.md)
 
-The supported user entrypoints are imported from `shadowspill.memory` and
-`shadowspill.pytorch`, and the optional high-level `shadowspill.training`.
+The phase entrypoints are imported from `shadowspill`: builders, measurement,
+profile application, planning, artifact classes, Executor and Trainer. The older
+entrypoints in `shadowspill.memory` and `shadowspill.pytorch` remain during
+repository caller migration. `shadowspill.training` supplies training-loop tools.
 `shadowspill.ssd` and `shadowspill.network` configure additional spill storage.
 The lower-level packages `shadowspill.ir`,
 `shadowspill.step`, `shadowspill.task`, `shadowspill.store`,
-`shadowspill.profiling`, `shadowspill.planner`, `shadowspill.search`,
+`shadowspill.planner`, `shadowspill.search`,
 `shadowspill.simulator`, `shadowspill.diagnostics` and `shadowspill.runtime`
 are public for tooling, experiments, and independent planning. None of them
 imports a framework, so any of them can be read without one.
+`shadowspill.profiling` is the GPU measurement phase and imports PyTorch; artifact
+loading, profile application, planning and reporting remain CPU-only.

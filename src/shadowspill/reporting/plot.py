@@ -78,7 +78,7 @@ def plot_plan(plan: Plan, path: Path) -> None:
         )
         memory.set_xlabel("Time (ms)")
     else:
-        # Native simulation currently records peaks, not an allocation event
+        # Simulation currently records peaks, not an allocation event
         # history. Do not invent a memory curve from task/transfer intervals.
         memory.bar(
             [0, 1],

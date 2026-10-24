@@ -9,7 +9,7 @@ always be redrawn without the GPU that produced it.
 from shadowspill.plots import plot_step_search, plot_step_run
 
 plot_step_search(report, "figures")
-plot_step_run(outcomes, "figures", tokens_per_step=65536)
+plot_step_run(outcomes, "figures", units_per_step=65536)
 ```
 
 `StepSearchReport` is `shadowspill.search`'s, so drawing a figure from a saved

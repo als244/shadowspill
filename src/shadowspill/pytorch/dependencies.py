@@ -37,7 +37,7 @@ def operator_dependencies(graph: torch.fx.GraphModule) -> tuple[dict[str, str], 
     """Describe non-ATen ops without serializing live Python/module objects.
 
     Ordinary custom_op definitions carry their importable defining module.
-    Native/dynamic registrations need an explicit provider binding, which the
+    C-extension/dynamic registrations need an explicit provider binding, which the
     initial single-GPU path deliberately refuses instead of silently depending
     on imports or resources from the build process.
     """

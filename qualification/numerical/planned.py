@@ -3,19 +3,32 @@
 from __future__ import annotations
 
 import json
+import sys
 import time
+from pathlib import Path
+
+from qualification.pipeline.process import profile_and_plan, run_phase
 
 from .compare import compare_planned_run
 from .evidence import qualification_artifact
 from .execution import run_planned_case
+from .prepare import load_request, save_request
 from .request import PlannedRequest
 from .verdict import qualification_failed, record_verdict
 
 
 def planned_worker(request: PlannedRequest) -> None:
-    """Qualify one case, write its artifact, and fail if any check did."""
+    """Orchestrate independent preparation and execution processes."""
+    directory = request.result_path.with_suffix(".phases").resolve()
+    save_request(request, directory)
+    run_phase(directory, "build", "qualification.numerical.prepare", directory)
+    profile_and_plan(directory)
+    run_phase(directory, "execute", "qualification.numerical.planned", directory)
 
-    run = run_planned_case(request)
+
+def execute(directory: Path) -> None:
+    request = load_request(directory)
+    run = run_planned_case(request, directory)
     comparison = compare_planned_run(request, run)
     started = time.perf_counter()
     result = qualification_artifact(request, run, comparison)
@@ -30,3 +43,7 @@ def planned_worker(request: PlannedRequest) -> None:
     )
     if failures:
         raise qualification_failed(request, failures)
+
+
+if __name__ == "__main__":
+    execute(Path(sys.argv[1]))

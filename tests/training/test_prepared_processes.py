@@ -26,6 +26,7 @@ def test_prepared_training_survives_process_exit_and_changes_budget(
         result = subprocess.run(
             [
                 sys.executable,
+                *(["-S"] if sys.flags.no_site else []),
                 "-m",
                 "tests.training.test_prepared_processes",
                 mode,
@@ -47,6 +48,7 @@ def test_prepared_llama_rebinds_rotary_buffers_in_fresh_processes(tmp_path):
         result = subprocess.run(
             [
                 sys.executable,
+                *(["-S"] if sys.flags.no_site else []),
                 "-m",
                 "tests.training.test_prepared_processes",
                 mode,
@@ -69,6 +71,7 @@ def test_managed_data_parallel_opens_groups_after_runtime_and_trains(tmp_path):
     result = subprocess.run(
         [
             sys.executable,
+            *(["-S"] if sys.flags.no_site else []),
             "-m",
             "tests.training.test_prepared_processes",
             "parallel",
@@ -98,6 +101,7 @@ def test_trainer_partial_checkpoint_streams_and_restores_without_the_frozen_base
     result = subprocess.run(
         [
             sys.executable,
+            *(["-S"] if sys.flags.no_site else []),
             "-m",
             "tests.training.test_prepared_processes",
             "checkpoint",

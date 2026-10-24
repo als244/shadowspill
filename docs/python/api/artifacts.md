@@ -1,172 +1,135 @@
-# Reusable planning artifacts
+# Phase artifacts
 
-The values that cross the boundary between building a program, planning it,
-and running it. They are immutable, content-addressed and JSON-serializable,
-and their stable digests exclude store paths and measured orchestration wall
-time, so where and how long something took never changes what it is.
-`StepProgram` comes from `shadowspill.step`, because it describes a training
-step rather than a planning answer; `ShadowSpillPlanningProblem`,
-`AnnotatedProgramPlan`, `MemoryBudgets` and `TransferBandwidths` come from
-`shadowspill.planner.program`.
-
-Three of them form one chain:
+The public pipeline passes inspectable artifacts between independent phases:
 
 ```text
-build_step_programs() ->  tuple[StepProgram, ...], one per ordering
-                          (.problem is a ShadowSpillPlanningProblem)
-plan_program()        ->  AnnotatedProgramPlan
-summarize_plan()      ->  PlanSummaryLookup | None, the same question answered
-                          from the summary beside the stored plan
+build_forward / build_forward_backward / build_step → Program
+measure_program                                   → Profiles
+apply_profiles(Program, Profiles)                  → ProfiledProgram
+plan_program(ProfiledProgram, ...)                 → Plan
+Executor(Plan)                                     → execution worker
 ```
 
-See [program and annotated-plan JSON](../planning-json.md) for the complete
-schema hierarchy and key-by-key interpretation, and [the artifact
-store](../artifact-store.md#identity) for what each digest holds.
+Import these names from `shadowspill`. Building finalizes task implementations
+and may require a representative GPU. Measurement uses the ordinary PyTorch
+allocator. Applying profiles, planning, inspecting archives and writing reports
+require neither an accelerator nor ShadowSpill pools. Executor sets up pools in a fresh
+worker. See the [phase architecture](../../architecture/offline-pipeline.md)
+for the full API and current qualification limits.
 
-## `StepProgram`
+## Program
 
-One element of [`build_step_programs()`](frontend.md#build_step_programs)'s
-result: everything capture, profiling and canonical lowering produced for one
-step under one ordering, with nothing planned yet. It records the `StepDataOrdering` the step was
-lowered with, since a different walk is a different program. It contains:
+`Program` describes one concrete invocation: input signatures, task alternatives,
+storage and dependencies. Its fields include `devices`, `alias_groups`, `objects`,
+`tasks`, `task_definitions`, `initial_residency`, `final_residency` and
+`task_alternative_groups`. Task definitions have compatibility identities and
+known workspace information, but no invented durations.
 
-- `problem`, the `ShadowSpillPlanningProblem` every invocation of the step runs;
-- `optimizer_ordering` and `data_ordering`;
-- `signature_digests`, one per microbatch input signature;
-- `profiling_metadata`, `unique_profile_count` and `captured_stage_count`;
-- `transfer_capabilities_json`, the calibration the program was measured under;
-- `phase_timings_ns`, `store_directories` and `cache_artifacts`.
+`name` and `sources` carry semantic module/parameter names alongside internal IDs.
+`parallelism` declares logical ranks/groups independently of live process groups.
+`setup` identifies the target and relevant builds. Finalized code is packaged in
+`executables`; `bindings` records its portable input, output and initialization
+requirements. Checkpoint tensors and live backend resources remain external.
 
-`semantic_labels_json` contains optional frontend annotations keyed by task
-and object ID: stage/microbatch provenance, parameter paths, gradient and
-optimizer names, and output origins. `to_dict()` serializes it as
-`semantic_labels`; old archives without it read as `{}`. These labels are
-excluded from `digest`, like timing/cache evidence. They can enrich
-[PressureFit trace analysis](../pressurefit-trace.md#semantic-labels-and-positions).
+Training builders accept either `example_args`, `example_kwargs` and
+`num_examples`, or optional `example_calls=[(args, kwargs), ...]` for different
+shapes/static metadata. Planning chooses example and optimizer ordering from the
+same built Program; changing ordering does not require rebuilding it.
 
-`StepProgram.digest` identifies planning content rather than how long or where
-it was produced. `to_json()` and `from_json()` carry it as a portable corpus.
+## Profiles and TaskProfile
+
+`Profiles` is an editable collection for one hardware/runtime setup. Its `tasks`
+map uses the Program's profile keys; each `TaskProfile` has plain numeric
+`duration_seconds` and `workspace_bytes`, optional resource/overlap costs, and
+ordinary metadata. `fixed_device_bytes` accounts for retained context/provider
+memory and declared worker headroom. Measurement records allocation/lifetime
+contracts and output aliases in addition to peak sizes.
 
 ```python
-from pathlib import Path
+from shadowspill import Profiles, TaskProfile
 
-from shadowspill.step import StepProgram
-from shadowspill.pytorch import build_step_programs
-
-(step_program,) = build_step_programs(
-    model,
-    objective=objective,
-    optimizer=build_optimizer,
-    example_inputs=example_inputs,
-    runtime=runtime,
-    execution="device",
-    spill="spill",
-    artifact_store=artifact_store,
+replacement = Profiles(
+    setup=profiles.setup,
+    tasks={key: TaskProfile(duration_seconds=0.0072)},
 )
-Path("program.json").write_text(step_program.to_json())
-
-loaded = StepProgram.from_json(Path("program.json").read_text())
+profiles = profiles.merge(replacement)
+profiles.save("profiles.ssp")
 ```
 
-## `ShadowSpillPlanningProblem`
+Later supplied fields overwrite earlier ones; omitted fields are retained.
+Manually supplied values default to estimates. Estimated memory supports
+simulation only. Timing estimates can reuse complete measured memory evidence.
+`apply_profiles` requires every compute task's duration and unresolved memory;
+it never silently fills missing values. Framework collective costs and resources
+come separately from `CommunicationInfo` during planning.
 
-A self-contained problem: the only input `plan_program()` needs. It holds its
-`role` (`"step"` or `"forward"`), the canonical
-`ShadowSpillProgram`, its `initial_residency` and `final_residency`, the
-`SimulationConfig` describing the machine, the `AdmissionFacts`, the
-`source_execution_budget_bytes` it was profiled under with the
-`maximum_execution_budget_bytes` and `maximum_spill_budget_bytes` it may be
-replanned within, and the `fixed_execution_bytes`, `object_reserve_bytes` and
-`dynamic_scratch_reserve_bytes` deductions that reconcile a budget with a pool
-capacity.
+## ProfiledProgram
 
-It carries no `SearchOptions`. A program states what problem it is, and how
-to search that problem belongs to whoever plans it, so options are passed to
-`plan_program()` and a saved program answers any of them. This is also what
-keeps a saved program readable when the planner gains an option: nothing about
-the measured problem changed, so its identity does not move.
+`apply_profiles(program, profiles)` returns a read-only `ProfiledProgram`.
+It contains `program`, `task_profiles`, `setup`, `fixed_device_bytes` and metadata.
+Its `profiles` property gives an editable copy. Later edits to the original
+collection cannot change the applied artifact.
 
-```text
-ShadowSpillPlanningProblem.machine_inputs(
-    *,
-    execution_budget_bytes=None,
-    spill_budget_bytes=None,
-    transfer_bandwidths=None,
-) -> tuple[SimulationConfig, AdmissionFacts]
-```
+Save/load includes both Program and profiles, without references to their
+original folders. The same artifact can be planned against different budgets,
+communication assumptions and supported task orderings.
 
-| argument | type | default | meaning |
-|---|---|---|---|
-| `execution_budget_bytes` | `int` \| `None` | `None` | Device bytes to rebase on; the problem's own `source_execution_budget_bytes` when `None`, and never above `maximum_execution_budget_bytes`. |
-| `spill_budget_bytes` | `int` \| `None` | `None` | Spill bytes to rebase on; the `SimulationConfig`'s own spill capacity when `None`, and never above `maximum_spill_budget_bytes`. |
-| `transfer_bandwidths` | `TransferBandwidths` \| `None` | `None` | Rates to price copies at; the problem's own `transfer_bandwidths` when `None`. |
+## Plan
 
-Rebases the budget-dependent inputs without changing the program, and returns
-the `SimulationConfig` and `AdmissionFacts` a search at those budgets and rates
-plans against. A requested budget above the runtime capacity the program was
-compiled and profiled under raises `ValueError`: nothing was measured there. A
-budget that leaves no positive pool or object capacity raises
-`PlanInfeasibleError` with kind `analytic_capacity`, `required_bytes` the
-smallest budget that leaves one object byte, and `capacity_bytes` the budget
-asked for. That is an answer about the program rather than a malformed request,
-so a step search records the point as infeasible and plans the next. Use
-`to_json()`, `from_json()`, or `from_value()` for serialization.
+`plan_program` returns a `Plan` or raises a diagnostic planning exception.
+The Plan exposes `program`, `profiled_program`, `memory_budgets`,
+`communication_info`, `schedule`, `selections`, `timeline`, `memory_layout`,
+`diagnostics`, and a computed `summary`.
+
+`MemoryBudgets.execution_bytes` is the total per-rank GPU allowance, including
+fixed overhead; `spill_bytes` is separate. `CommunicationInfo` carries topology,
+rates/latencies and optional measured communication evidence. Compatible measured
+costs take precedence; supplied rates/topology fill gaps.
+
+`simulation_only_reasons` explains why a Plan cannot execute. Workspace peaks
+alone do not prove physical allocation order or safe storage reuse. With complete
+memory evidence, planning certifies a fixed layout and completion dependencies;
+execution still checks its target, dependencies, resources and physical budget.
+Estimated memory never qualifies a Plan for execution.
 
 ```python
-from shadowspill.planner import plan_program
-from shadowspill.planner.program import TransferBandwidths
+from shadowspill import Plan, write_report
 
-annotated = plan_program(
-    loaded.problem,
-    execution_budget=16 << 30,
-    spill_budget=96 << 30,
-    transfer_bandwidths=TransferBandwidths(
-        fetch_solo_bytes_per_second=28_000_000_000,
-        fetch_concurrent_bytes_per_second=28_000_000_000,
-        evict_solo_bytes_per_second=28_000_000_000,
-        evict_concurrent_bytes_per_second=28_000_000_000,
-    ),
-    artifact_store=artifact_store,
-)
+plan.save("training-plan.ssp")
+loaded = Plan.load("training-plan.ssp")
+print(loaded.summary)
+write_report(loaded, "report")
 ```
 
-## `AnnotatedProgramPlan`
+The saved bundle includes task payloads, profiles, schedule, layout and logical
+bindings. Model code and preparation caches are not needed to load it. Checkpoint
+weights and compatible runtime/provider libraries remain external. The public
+distributed Executor is still guarded pending full distributed qualification;
+a portable logical-rank declaration alone is not execution certification.
 
-A selected and physically admitted plan: the answer `plan_program()` gives, and
-what a callable runs. It contains:
+## SweepResult
 
-- `program`, the source `ShadowSpillPlanningProblem`;
-- `memory_budgets` and `transfer_bandwidths`, the inputs it was planned for;
-- `result`, the full `ProgramPlanResult` with its diagnostics;
-- `effective_facts`, the admission topology in force;
-- `fixed_layout`, the fixed physical layout, and its digest;
-- `simulation_admission` and `simulation`, the simulator's admission and
-  `SimulationResult`;
-- `attempts`, every capacity-refinement attempt;
-- `plan_from_store`, whether it was read back rather than planned here;
-- `wall_time_ns`, with `search_wall_time_ns`,
-  `physical_admission_wall_time_ns` and `orchestration_wall_time_ns` splitting
-  it.
+`sweep_programs` is an optional CPU loop over named ProfiledPrograms and memory
+budgets. `SweepResult.cases` keeps each candidate/budget's Plan or diagnostic
+failure. `best_per_budget` selects the fastest successful simulation for each
+budget. Users can also loop over `plan_program` directly.
 
-`to_json()` preserves the complete selected schedule and diagnostic evidence.
-`from_json()` revalidates digests, residency, simulation, layout identity, and
-timing reconciliation. `digest` excludes store and wall-time evidence, and is
-computed once and kept, because serializing a whole plan is expensive and
-several callers want the same answer.
+## Persistence and reports
 
-See [Physical admission and offset
-handling](../../architecture/physical-admission.md) for the fixed layout,
-dynamic reserves, causal reuse edges, and capacity-refinement contract.
+`Program`, `Profiles`, `ProfiledProgram`, `Plan`, `SweepResult` and
+`CommunicationInfo` provide `save(path)` and `load(path)`. Each save produces one
+archive containing a versioned JSON description and checksummed payloads.
+Shared executable payloads are deduplicated within that archive. Inductor/Triton
+caches are separate and never required to pass artifacts between phases.
 
-## Small value objects
+`write_report(plan_or_sweep, directory)` is separate from persistence and is
+CPU-only. It writes the simulated timeline and memory/budget summaries. No
+runtime allocator or automatic profiling is invoked to render a report.
 
-`MemoryBudgets` records the physical `execution_bytes` and `spill_bytes` one
-plan was made for. `TransferBandwidths` records `fetch_solo_bytes_per_second`,
-`fetch_concurrent_bytes_per_second`, `evict_solo_bytes_per_second`, and
-`evict_concurrent_bytes_per_second`, an optional rational scaling factor
-(`scale_numerator`, `scale_denominator`), optional `fetch_latency_ns` and
-`evict_latency_ns`, and a `calibration_digest` and `provenance` naming where
-the measurement came from. The latencies are optional so a record written
-without them still reads, and so an override that names only bandwidths leaves
-a program's own latencies in place. Both participate in annotated-plan
-identity as calibration metadata; simulated transfer timing ignores them.
+## StepProgram
+
+`StepProgram`, `ShadowSpillPlanningProblem`, `AnnotatedProgramPlan` and
+`TransferBandwidths` belong to the older preparation path still present for
+unmigrated internals. New callers should use the phase artifacts above. The
+[older JSON reference](../planning-json.md) documents those migration types;
+its combined build/profile/store workflow is not the current public pipeline.

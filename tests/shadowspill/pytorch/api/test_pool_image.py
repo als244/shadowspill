@@ -110,8 +110,19 @@ def _write_image(tmp_path, image_path):
     """Write the image in a process of its own: a process opens one runtime,
     and the test's own runtime is the one that adopts the image."""
     completed = subprocess.run(
-        [sys.executable, __file__, str(tmp_path), str(image_path)],
-        env={**os.environ, "PYTHONPATH": str(ROOT)},
+        [
+            sys.executable,
+            *(["-S"] if sys.flags.no_site else []),
+            __file__,
+            str(tmp_path),
+            str(image_path),
+        ],
+        env={
+            **os.environ,
+            "PYTHONPATH": os.pathsep.join(
+                (str(ROOT), os.environ.get("PYTHONPATH", ""))
+            ),
+        },
         capture_output=True,
         text=True,
         check=False,
