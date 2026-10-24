@@ -9,6 +9,7 @@ import torch
 import torch.distributed as dist
 from torch import nn
 
+from shadowspill.pytorch.optimizer.sharding import validate_flat_shards
 from shadowspill.pytorch.representations import is_wrapper
 
 from ._optimizer import UpdateLayout
@@ -102,16 +103,7 @@ def validate_optimizer(
 ) -> None:
     if not any(layout.group_size > 1 for layout in layouts.values()):
         return
-    known = type(optimizer) in {torch.optim.Adam, torch.optim.AdamW, torch.optim.SGD}
-    declared = getattr(optimizer, "supports_flat_parameter_shards", False) is True
-    if not known and not declared:
-        raise TypeError(
-            "the current flat-shard ownership policy requires independent "
-            "elementwise updates; this optimizer has not declared that optional "
-            "capability. Use shard_optimizer=False to retain complete tensor "
-            "shapes. This restriction belongs to the ownership policy, not "
-            "the general optimizer interface"
-        )
+    validate_flat_shards(optimizer)
 
 
 def fill_parameter(

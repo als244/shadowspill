@@ -7,6 +7,7 @@ import torch
 from torch import nn
 
 from shadowspill.errors import CaptureError
+from shadowspill.parallelism.ownership import ParameterOwnership
 from shadowspill.pytorch.capture.artifacts import GraphArtifact
 from shadowspill.pytorch.optimizer import OptimizerCapture, capture_optimizer
 from shadowspill.pytorch.optimizer.artifacts import OptimizerTensorRole
@@ -30,7 +31,7 @@ from shadowspill.pytorch.optimizer.starts import (
     ValueStart,
 )
 
-from .precision import with_master_parameters
+from .optimizer_parameters import local_optimizer_parameters
 from .training_capture import TrainingCapture
 
 
@@ -47,6 +48,7 @@ def capture_update(
     *,
     gradient_dtype: torch.dtype | None,
     master_dtype: torch.dtype | None = None,
+    parameter_ownership: tuple[ParameterOwnership, ...] = (),
 ) -> BuiltOptimizer:
     named = dict(model.named_parameters())
     trained = training_parameters_with_gradients(training.examples, named)
@@ -54,8 +56,13 @@ def capture_update(
     copied, names = copy_optimizer_to_meta(
         optimizer, {id(value): name for name, value in named.items()}
     )
-    copied, names, compute_copies = with_master_parameters(
-        copied, names, named, trained, master_dtype
+    copied, names, compute_copies = local_optimizer_parameters(
+        copied,
+        names,
+        named,
+        trained,
+        master_dtype,
+        {item.name: item for item in parameter_ownership},
     )
     parameters = {names[id(value)]: value for value in optimizer_parameters(copied)}
     declared = declare_optimizer_state(parameters, copied, receives_gradient=trained)
