@@ -11,6 +11,7 @@ except PackageNotFoundError:  # pragma: no cover - source tree without install
 
 _PUBLIC = {
     "build_forward": "build.forward",
+    "build_forward_backward": "build.training",
     "Program": "artifacts",
     "Profiles": "artifacts",
     "ProfiledProgram": "artifacts",

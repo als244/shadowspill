@@ -14,8 +14,8 @@ from shadowspill.pytorch.capture.artifacts import (
 from shadowspill.pytorch.capture.storage import TaskStorageContract
 from shadowspill.pytorch.representations import RootInputKey, tensor_components
 from shadowspill.step import StepDataOrdering
+from shadowspill.task.geometry import TaskStorageGeometry
 from shadowspill.task.inputs import TaskInputRole
-from shadowspill.task.layout import CompiledTaskLayout
 from shadowspill.task.slots import ObjectSlot
 
 from ...graph_pairs import (
@@ -30,7 +30,7 @@ from ..catalog import (
     serialized_dtype_role,
     tensor_value_role,
 )
-from ..profiles import TaskProfileCatalog
+from ..geometry import TaskGeometry
 from ..task_binding import (
     TaskBindingResolver,
     TaskStorageHandoff,
@@ -47,7 +47,7 @@ from .artifacts import (
 def bind_training_boundaries(
     captures: tuple[PartitionedTrainingCapture, ...],
     objects: TrainingObjects,
-    profiles: TaskProfileCatalog,
+    profiles: TaskGeometry,
     metadata: tuple[str | None, ...],
 ) -> TrainingBoundaries:
     root_objects = tuple(
@@ -105,7 +105,7 @@ def _bind_canonical_stage_boundary(
     prior_boundaries: list[tuple[str, ...]],
     root_objects: dict[RootInputKey, str],
     catalog: ObjectCatalog,
-    profiles: TaskProfileCatalog,
+    profiles: TaskGeometry,
     metadata_digest: str | None,
 ) -> tuple[str, ...]:
     leaves, _ = tree_flatten(stage.example.output)
@@ -135,7 +135,7 @@ def _bind_canonical_stage_boundary(
         catalog,
         pair.forward,
         inputs,
-        profiles.layout(pair.forward, metadata_digest).geometry,
+        profiles.geometry(pair.forward, metadata_digest),
         storage_contract=profiles.contract(pair.forward),
     )
     ids: list[str] = []
@@ -208,7 +208,7 @@ def prepare_training_variants(
     captures: tuple[PartitionedTrainingCapture, ...],
     objects: TrainingObjects,
     boundaries: TrainingBoundaries,
-    profiles: TaskProfileCatalog,
+    profiles: TaskGeometry,
     metadata: tuple[str | None, ...],
     ordering: StepDataOrdering,
 ) -> tuple[tuple[dict[str, PreparedStageVariant], ...], ...]:
@@ -247,7 +247,7 @@ def _prepare_stage_variants(
     stage: DifferentiatedStage,
     objects: TrainingObjects,
     boundaries: TrainingBoundaries,
-    profiles: TaskProfileCatalog,
+    profiles: TaskGeometry,
     metadata_digest: str | None,
     parameter_ids: set[str],
     *,
@@ -333,7 +333,7 @@ def _prepare_stage_variant(
     option: GraphPairVariant,
     objects: TrainingObjects,
     boundaries: TrainingBoundaries,
-    profiles: TaskProfileCatalog,
+    profiles: TaskGeometry,
     metadata_digest: str | None,
     parameter_ids: set[str],
     canonical_outputs: tuple[str, ...],
@@ -353,7 +353,7 @@ def _prepare_stage_variant(
         forward_inputs,
         canonical_outputs,
         objects.catalog,
-        profiles.layout(pair.forward, metadata_digest),
+        profiles.geometry(pair.forward, metadata_digest),
         profiles.contract(pair.forward),
         problem=(
             f"microbatch={position}, stage={stage_index}, "
@@ -432,7 +432,7 @@ def _variant_backward_contributions(
     backward_inputs: tuple[ObjectSlot, ...],
     objects: TrainingObjects,
     boundaries: TrainingBoundaries,
-    profiles: TaskProfileCatalog,
+    profiles: TaskGeometry,
     metadata_digest: str | None,
     parameter_ids: set[str],
 ) -> tuple[tuple[ObjectSlot, ...], tuple[TaskStorageHandoff, ...]]:
@@ -447,7 +447,7 @@ def _variant_backward_contributions(
             objects.gradient_by_parameter,
             boundaries.cotangents,
             objects.catalog,
-            profiles.layout(pair.backward, metadata_digest),
+            profiles.geometry(pair.backward, metadata_digest),
             profiles.contract(pair.backward),
         )
     except CaptureError as exc:
@@ -464,7 +464,7 @@ def _stage_forward_outputs(
     forward_inputs: tuple[ObjectSlot, ...],
     canonical_outputs: tuple[str, ...],
     inventory: ObjectCatalog,
-    compiled_layout: CompiledTaskLayout,
+    compiled_layout: TaskStorageGeometry,
     storage_contract: TaskStorageContract,
     *,
     problem: str,
@@ -486,7 +486,7 @@ def _stage_forward_outputs(
         inventory,
         pair.forward,
         forward_inputs,
-        compiled_layout.geometry,
+        compiled_layout,
         storage_contract=storage_contract,
     )
     internal_root_ids = frozenset(
@@ -598,7 +598,7 @@ def _stage_backward_contributions(
     gradient_by_parameter: dict[str, str],
     cotangent_by_activation: dict[tuple[int, str], str],
     inventory: ObjectCatalog,
-    compiled_layout: CompiledTaskLayout,
+    compiled_layout: TaskStorageGeometry,
     storage_contract: TaskStorageContract,
 ) -> tuple[tuple[ObjectSlot, ...], tuple[TaskStorageHandoff, ...]]:
     input_by_position = {slot.leaf_index: slot.object_id for slot in forward_inputs}
@@ -606,7 +606,7 @@ def _stage_backward_contributions(
         inventory,
         pair.backward,
         backward_inputs,
-        compiled_layout.geometry,
+        compiled_layout,
         storage_contract=storage_contract,
     )
     output_leaves = {item.leaf_index for item in storage_contract.output_views}

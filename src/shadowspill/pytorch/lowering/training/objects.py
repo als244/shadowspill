@@ -57,9 +57,10 @@ def lower_training_storage_layout(
 def register_training_objects(
     model: nn.Module,
     captures: tuple[PartitionedTrainingCapture, ...],
-    optimizer: OptimizerCapture,
+    optimizer: OptimizerCapture | None,
     *,
     device_id: str,
+    gradient_dtypes: Mapping[str, torch.dtype] | None = None,
 ) -> TrainingObjects:
     catalog = ObjectCatalog(device_id=device_id)
     registrations, parameter_objects = register_model_state(model, catalog)
@@ -68,22 +69,19 @@ def register_training_objects(
         base_captures,
         catalog,
     )
+    dtypes = dict(gradient_dtypes or {})
+    if optimizer is not None:
+        dtypes = {
+            binding.name.removeprefix("gradient."): binding.tensor.dtype
+            for binding in optimizer.bindings
+            if binding.role is OptimizerTensorRole.GRADIENT
+        }
     gradients = _register_gradients(
         model,
         catalog,
         parameter_objects,
-        receives_gradient={
-            binding.name.removeprefix("gradient.")
-            for binding in optimizer.bindings
-            if binding.role is OptimizerTensorRole.GRADIENT
-        },
-        # The optimizer's capture says what dtype the step keeps each
-        # gradient at, which is the dtype the backward produces it in.
-        dtypes={
-            binding.name.removeprefix("gradient."): binding.tensor.dtype
-            for binding in optimizer.bindings
-            if binding.role is OptimizerTensorRole.GRADIENT
-        },
+        receives_gradient=dtypes,
+        dtypes=dtypes,
     )
     gradient_by_parameter = {
         item.parameter_object_id: item.gradient_object_id for item in gradients
@@ -91,11 +89,10 @@ def register_training_objects(
     gradient_by_parameter.update(
         {f"model.{item.parameter_name}": item.gradient_object_id for item in gradients}
     )
-    optimizer_objects = _register_optimizer_objects(
-        optimizer,
-        catalog,
-        gradients,
-        model,
+    optimizer_objects = (
+        _register_optimizer_objects(optimizer, catalog, gradients, model)
+        if optimizer is not None
+        else ()
     )
     return TrainingObjects(
         catalog,
