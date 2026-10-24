@@ -191,3 +191,29 @@
   including fresh-worker restoration and cross-allocator qualification. Coverage
   currently establishes the small dense/optimizer cases, not all opaque providers
   or data-dependent allocation paths. Next: CPU physical layout and execution.
+
+### CPU physical admission checkpoint
+
+- Ordinary-allocator measurement is committed/pushed as `ae3e6ea7`.
+- Complete saved allocation traces now drive physical placement entirely on CPU.
+  Saved evidence is reconciled against the compiler storage contract before it
+  reaches admission. Estimated memory remains simulation-only; inconsistent
+  traces/layouts are rejected. Plan archives contain placement and admission
+  facts and validate their program/schedule identities and total GPU capacity.
+- Moved pure allocation/output projection out of PyTorch planning. A type-only
+  runtime import also needed removal to keep this path framework-independent.
+- Physical admission exposed a build metadata bug: in-place accumulated gradient
+  outputs had been labeled new replacement storage. Input-alias updates now
+  remain mutations. Numerical task behavior was already correct; the ownership
+  declaration was not.
+- Training tasks now use runtime-compatible internal IDs, stable across example
+  traversal choices. Semantic task names remain separate and appear in reports.
+  Caller-owned terminal outputs use dynamic leases outside the reusable arena.
+- Validation: 516 CPU artifact/IR/planner/simulator tests and eight GPU build /
+  measurement tests passed; fresh CPU workers block framework/runtime imports,
+  round-trip physical Plans and reports, and check negative evidence cases.
+  Focused strict typing and lint pass. Main checkout remains clean.
+- Next: execute the saved Plan in a fresh worker using the existing runtime
+  transfer/task boundaries, without build, profiling, calibration, or a model
+  object. Then qualify repeated invocations, gradient persistence and bounded
+  initialization before integrating Trainer and quickstart.

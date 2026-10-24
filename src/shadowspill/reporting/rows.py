@@ -16,6 +16,9 @@ def task_rows(plan: Plan) -> list[dict[str, Any]]:
             {
                 "task_id": task.task_id,
                 "name": definition.name or task.task_id,
+                "binding": plan.program.bindings.get("task_names", {}).get(
+                    task.task_id, ""
+                ),
                 "modules": ", ".join(definition.module_paths),
                 "profile_key": definition.profile_key,
                 "phase": task.phase,

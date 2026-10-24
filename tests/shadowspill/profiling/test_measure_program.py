@@ -57,6 +57,18 @@ def test_saved_training_program_measurement_without_runtime_pools(
         program, stages=[0], warmup_seconds=0, measure_seconds=0.001
     )
     assert 1 < len(subset.tasks) < len(profiles.tasks)
+    planned = subprocess.run(
+        [
+            sys.executable,
+            "-S",
+            str(Path(__file__).with_name("_plan_saved.py")),
+            str(tmp_path),
+        ],
+        env={**os.environ, "CUDA_VISIBLE_DEVICES": ""},
+        capture_output=True,
+        text=True,
+    )
+    assert planned.returncode == 0, planned.stdout + planned.stderr
     if not with_optimizer:
         environment = dict(os.environ)
         environment["TORCHINDUCTOR_CACHE_DIR"] = str(tmp_path / "fresh-inductor")

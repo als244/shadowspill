@@ -10,11 +10,13 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from enum import StrEnum
+from typing import TYPE_CHECKING
 
-from shadowspill.runtime import (
-    AdmissionReplayOperation as PoolAdmissionOperation,
-)
-from shadowspill.runtime import AdmissionReplayResult
+if TYPE_CHECKING:
+    from shadowspill.runtime import (
+        AdmissionReplayOperation as PoolAdmissionOperation,
+    )
+    from shadowspill.runtime import AdmissionReplayResult
 
 
 class AdmissionReplayPurpose(StrEnum):

@@ -1,8 +1,8 @@
 # Independent build, profile and planning phases
 
-The refactor is being implemented in phases. The CPU path described here works;
-GPU measurement, execution admission and caller migration are
-still in progress on `codex/offline-pipeline-refactor`.
+The refactor is being implemented in phases. The CPU path, builders and
+ordinary-allocator GPU measurement work; saved-plan execution and caller
+migration are still in progress on `codex/offline-pipeline-refactor`.
 
 ```python
 from shadowspill import (
@@ -153,10 +153,17 @@ Workspace totals permit logical simulation. They do **not** establish allocation
 order, storage handoffs, charged alignment, persistent provider allocations or
 the task code required for execution. Built Programs now contain packaged
 task code that has been tested in a fresh process with empty compiler caches.
-The initial CPU artifacts nevertheless expose
-`simulation_only_reasons` and no physical `memory_layout`. A later milestone
-adds complete allocation evidence and execution admission without
-promoting estimates into execution facts.
+With complete observed allocation evidence, planning also constructs a physical
+`memory_layout` entirely on CPU. It validates the saved traces against compiler
+storage contracts, allocates ranges, and includes dependencies needed for safe
+range reuse in the simulated timeline. Layout and admission facts travel in the
+Plan archive, with identities checked against its program and schedule.
+
+Estimated memory, missing code, or incomplete allocation evidence keep a Plan
+simulation-only, as reported by `simulation_only_reasons`. Inconsistent evidence
+is an error. Physical placement is necessary for execution but does not replace
+the worker's dependency, provider-resource and available-memory checks. The
+new saved-plan Executor is the next implementation milestone.
 
 Implementation ownership:
 
