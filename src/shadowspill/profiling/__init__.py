@@ -9,6 +9,7 @@ _PUBLIC = {
     "ProfilingMetadata": ".metadata",
     "ProfileStore": ".store",
     "apply_profiles": ".apply",
+    "measure_program": ".measure",
 }
 
 

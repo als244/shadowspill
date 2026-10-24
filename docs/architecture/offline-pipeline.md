@@ -136,6 +136,19 @@ The native simulator currently records memory peaks rather than a complete
 allocation history. Reports therefore show peak-versus-capacity bars alongside
 the compute/transfer timeline; they do not invent a memory curve.
 
+`measure_program(program)` restores the finalized tasks on a representative GPU
+and returns a reusable Profiles collection. It uses PyTorch's ordinary native
+allocator with bounded allocation observation, not ShadowSpill pools. By default
+it measures all unique task forms; `stages=[...]` selects stage indices and omits
+standalone optimizer work. Backward inputs include saved values from the exact
+forward form. An `inputs` mapping can supply flat task arguments by profile key
+when automatic values are unsuitable or control semantics are unknown.
+
+Measurement records durations, allocation lifetimes, output aliases and observed
+fixed memory. The build/target setup must match. It does not compile or change
+task definitions. Provider resources that cannot yet be observed completely
+remain an execution-qualification concern; they are not silently treated as zero.
+
 Workspace totals permit logical simulation. They do **not** establish allocation
 order, storage handoffs, charged alignment, persistent provider allocations or
 the task code required for execution. Built Programs now contain packaged
@@ -150,6 +163,8 @@ Implementation ownership:
 - `artifacts/`: immutable phase results, editable profile collections, archive codec.
 - `build/`: model capture, finalized task packaging, static memory and lowering.
 - `profiling/apply.py`: CPU validation/application of supplied profiles.
+- `profiling/measure.py` and `profiling/observation/`: ordinary GPU measurement
+  and normalized allocator observations; separate from execution setup.
 - `planning/`: public CPU planning/sweep and capacity/cost conversion.
 - `communication/`: saved communication assumptions; calibration will be separate.
 - `reporting/`: semantic task/transfer tables and timeline/memory figures.
