@@ -210,7 +210,25 @@ def test_result_uses_slowest_rank_per_cycle(tmp_path):
     assert outcome["status"] == "completed"
     assert outcome["step_seconds"] == 10
     assert outcome["host_peak_rss_bytes"] == 2 * 789
+    assert outcome["host_peak_bytes"] == 2 * 789
     assert outcome["performance_result"] is True
+
+
+def test_existing_shadowspill_outcome_uses_plan_host_peak_when_read(tmp_path):
+    attempt = tmp_path / "attempt-001"
+    settings = Settings(**TINY, steps=2)
+    completed_attempt(attempt, settings)
+    path = attempt / "row.json"
+    value = json.loads(path.read_text())
+    value["engine"] = "shadowspill"
+    value["memory"]["shadowspill"] = [{"predicted_spill_peak_bytes": 42}]
+    write_json(path, value)
+    outcome = classify(attempt, 0, 2, settings)
+    assert outcome["host_peak_bytes"] == 42
+    del outcome["host_peak_bytes"]
+    write_json(attempt / "outcome.json", outcome)
+    assert latest(tmp_path)["host_peak_bytes"] == 42
+    assert "host_peak_bytes" not in json.loads((attempt / "outcome.json").read_text())
 
 
 @pytest.mark.parametrize(

@@ -167,8 +167,10 @@ metrics is inside the time. Planning (capture, profiling, search and
 admission) is timed apart as `planning_seconds` and excluded. The row's
 `peak_allocated_bytes` is the execution pool's measured peak occupancy over
 the process (the runtime's statistics), `peak_reserved_bytes` the execution
-budget, the pool's physical capacity, and `host_peak_rss_bytes` the process
-high-water mark, which holds the whole pinned spill pool;
+budget, the pool's physical capacity. `host_peak_bytes`, used for Host GiB
+in the tables and plots, is the sum of the plans' peak spill bytes over ranks.
+`host_peak_rss_bytes` retains the process high-water marks, which include the
+whole pinned spill pool;
 `memory.shadowspill` records both pools' statistics, the
 plan's predicted peaks and the device's used bytes beside them. PyTorch's
 own allocator counters are not read: ShadowSpill installs its allocator in

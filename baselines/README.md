@@ -179,9 +179,11 @@ sequence length, sequences per step, device and world size, which title
 them, two figures: global tokens per second against peak device
 memory, and against peak host memory. Each completed throughput row is a
 point, colored and marked by engine; each engine's Pareto frontier against
-device memory is solid and outlined on both figures, and the rest faint. A
-table per group lists its points with the settings that vary among that
-engine's rows and marks the frontier; out-of-memory rows are listed as the
+device memory is solid and outlined on both figures, and the rest faint.
+Step curves on the device-memory figure show each engine's best observed
+throughput within each memory budget, starting at its smallest successful
+configuration. A table per group lists its points with the settings that
+vary among that engine's rows and marks the frontier; out-of-memory rows are listed as the
 boundary. Figures are PNG, SVG and PDF,
 with `rows.csv` of every point and `index.html` linking them.
 

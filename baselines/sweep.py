@@ -65,8 +65,8 @@ from pathlib import Path
 
 from baselines.common import launch, write_json
 from baselines.common.provenance import ROOT, environment_identity, source_identity
+from baselines.common.results import host_peak_bytes, validate_row, varied
 from baselines.common.results import row as result_row
-from baselines.common.results import validate_row, varied
 from baselines.report import DERIVED_GEOMETRY
 
 #: The short code a case's folder name gives a setting; any other setting
@@ -275,6 +275,7 @@ def classify(attempt, returncode, world_size, settings):
         "performance_result": bool(measurement.get("performance_result", True)),
         "peak_allocated_bytes": memory["peak_allocated_bytes"],
         "peak_reserved_bytes": memory["peak_reserved_bytes"],
+        "host_peak_bytes": host_peak_bytes(row),
         "host_peak_rss_bytes": memory["host_peak_rss_bytes"],
     }
 
@@ -297,7 +298,15 @@ def latest(case):
     path = attempts[-1] / "outcome.json"
     if not path.exists():
         return {"status": "interrupted", "attempt": attempts[-1].name}
-    return json.loads(path.read_text())
+    outcome = json.loads(path.read_text())
+    if outcome["status"] == "completed" and "host_peak_bytes" not in outcome:
+        row_path = path.with_name("row.json")
+        outcome["host_peak_bytes"] = (
+            host_peak_bytes(json.loads(row_path.read_text()))
+            if row_path.is_file()
+            else outcome["host_peak_rss_bytes"]
+        )
+    return outcome
 
 
 def failure_row(attempt, outcome, settings, world_size, engine, manifest):
@@ -437,6 +446,7 @@ def ended_block(position, name, outcome, attempt):
     status = outcome["status"]
     lines = [f"CASE {OUTCOME_WORDS.get(status, status).upper()} {position} {name}"]
     if status == "completed":
+        host = outcome.get("host_peak_bytes", outcome["host_peak_rss_bytes"])
         lines.append(
             field(
                 "throughput",
@@ -449,7 +459,7 @@ def ended_block(position, name, outcome, attempt):
                 "memory",
                 f"GPU {outcome['peak_reserved_bytes'] / 2**30:.2f} GiB held"
                 f" ({outcome['peak_allocated_bytes'] / 2**30:.2f} in use),"
-                f" host {outcome['host_peak_rss_bytes'] / 2**30:.2f} GiB",
+                f" host {host / 2**30:.2f} GiB",
             )
         )
         if not outcome.get("performance_result", True):
@@ -491,6 +501,7 @@ def report(output, cases, engine, world_size):
     ]
     for name, settings in cases:
         outcome = latest(output / "cases" / name)
+        host = outcome.get("host_peak_bytes", outcome.get("host_peak_rss_bytes"))
         rows.append({"case": name, "settings": settings.as_dict(), **outcome})
         status = outcome["status"]
         eligible = status == "completed" and outcome.get("performance_result", False)
@@ -514,9 +525,7 @@ def report(output, cases, engine, world_size):
             _cell(outcome.get("peak_allocated_bytes"), "{:.2f}")
             if outcome.get("peak_allocated_bytes") is None
             else f"{outcome['peak_allocated_bytes'] / 2**30:.2f}",
-            _cell(outcome.get("host_peak_rss_bytes"), "{:.2f}")
-            if outcome.get("host_peak_rss_bytes") is None
-            else f"{outcome['host_peak_rss_bytes'] / 2**30:.2f}",
+            _cell(None if host is None else host / 2**30, "{:.2f}"),
             evidence,
         ]
         text.append("| " + " | ".join(cells) + " |")

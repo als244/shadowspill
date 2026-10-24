@@ -10,13 +10,15 @@ share, the model, training mode, sequence length, sequences per step, device
 and world size, which title the group's figures, and each group has two
 figures: global tokens per
 second against the peak device memory of the binding rank (``-device``),
-and against the host memory the ranks' processes peaked at in sum
+and against peak host memory summed over ranks
 (``-host``). Every completed throughput row is a point, colored and marked
 by engine. Each engine's Pareto frontier against device memory, the rows no
 other row of that engine beats on both throughput and device memory, is
-drawn solid and outlined on both figures, and the rest faint. The group's
-table lists every point with the settings that vary among its engine's rows
-of the group, and marks the frontier. Rows that ran out of device memory are
+drawn solid and outlined on both figures, and the rest faint. On the device
+figure, a step curve carries each engine's best observed throughput forward
+to larger memory budgets. The group's table lists every point with the
+settings that vary among its engine's rows of the group, and marks the
+frontier. Rows that ran out of device memory are
 the boundary and are listed with the group. Each figure is written as PNG,
 SVG and PDF, and ``index.html`` links them all.
 """
@@ -31,7 +33,7 @@ from collections import defaultdict
 from pathlib import Path
 from typing import Any
 
-from baselines.common.results import read_rows, varied
+from baselines.common.results import host_peak_bytes, read_rows, varied
 
 #: The device-memory peak a point's abscissa is, by the ``--memory`` choice.
 MEMORY_KEYS = {
@@ -128,7 +130,7 @@ def point(row: dict[str, Any], memory: str = "allocated") -> dict[str, Any] | No
         "step_seconds": float(measurement["step_seconds"]),
         "useful_tflops_per_gpu": measurement.get("useful_tflops_per_gpu"),
         "device_gib": float(peaks[MEMORY_KEYS[memory]]) / 2**30,
-        "host_gib": float(peaks["host_peak_rss_bytes"]) / 2**30,
+        "host_gib": host_peak_bytes(row) / 2**30,
         "settings": settings_of(row),
         "precision": row["precision"],
         "path": row.get("_path", ""),
@@ -303,6 +305,26 @@ def draw(key, group, output: Path, *, memory: str, dpi: int) -> list[Path]:
                     label=engine if chosen else None,
                     zorder=3 if chosen else 2,
                 )
+        if name == "device" and group["points"]:
+            # Keep the scatter's limits fixed while extending every engine's
+            # last plateau to the same right edge. No curve precedes its
+            # smallest successful configuration.
+            left, right = axis.get_xlim()
+            axis.set_xlim(left, right)
+            for engine in group["engines"]:
+                curve = group["frontiers"][engine]
+                if not curve:
+                    continue
+                color, _ = styles[engine]
+                axis.step(
+                    [item[column] for item in curve] + [right],
+                    [item["tokens_per_second"] for item in curve]
+                    + [curve[-1]["tokens_per_second"]],
+                    where="post",
+                    color=color,
+                    linewidth=1.6,
+                    zorder=2.5,
+                )
         axis.set_xlabel(caption.format(memory=memory))
         axis.set_ylabel("global tokens per second")
         axis.set_ylim(bottom=0)
@@ -434,7 +456,9 @@ def write_index(output: Path, sections: list[dict[str, Any]], memory: str) -> No
         f"({html.escape(memory)}), and against the ranks' summed peak host memory. "
         "Each point is a completed case, colored and marked by engine; each "
         "engine's Pareto frontier against device memory is solid and outlined "
-        "on both figures, the rest faint. Each "
+        "on both figures, the rest faint. Step curves on the device-memory "
+        "figure show each engine's best observed throughput within each "
+        "memory budget, starting at its smallest successful configuration. Each "
         "table lists the points with their settings, and out-of-memory rows "
         "are the boundary.</p>",
         '<p><a href="rows.csv">CSV of every point</a></p>',

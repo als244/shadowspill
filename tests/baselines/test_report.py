@@ -62,6 +62,16 @@ def test_only_completed_throughput_rows_are_points():
     assert group_key(boundary("fsdp2")) == ("llama3-8b", "full", 4096, 0, "RTX 5090", 1)
 
 
+def test_shadowspill_host_plot_and_table_use_plan_spill_peaks():
+    value = completed("shadowspill", 1000.0, 8.0, 144.0)
+    value["memory"]["shadowspill"] = [
+        {"predicted_spill_peak_bytes": 40 * 2**30},
+        {"predicted_spill_peak_bytes": 50 * 2**30},
+    ]
+    assert point(value)["host_gib"] == 90.0
+    assert value["memory"]["host_peak_rss_bytes"] == 144 * 2**30
+
+
 def test_groups_hold_their_points_frontiers_boundary_and_varied_keys():
     rows = [
         completed("fsdp2", 1000.0, 8.0, 2.0, recompute=0.0),

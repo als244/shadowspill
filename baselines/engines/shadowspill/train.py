@@ -27,7 +27,7 @@ import torch.distributed as dist
 from baselines.common import runner
 from baselines.common.provenance import hardware_identity
 from baselines.common.reference import Access
-from baselines.common.results import memory_peaks
+from baselines.common.results import host_peak_bytes, memory_peaks
 from baselines.common.training import TrainingModel
 from baselines.engines.shadowspill import settings as engine_settings
 from workloads.full_model import HEAD_LOSS_METRIC
@@ -300,6 +300,10 @@ def memory(all_ranks):
         "the execution budget, the pool's physical capacity"
     )
     value["shadowspill"] = [row["shadowspill_memory"] for row in all_ranks]
+    value["host_peak_bytes"] = host_peak_bytes(
+        {"engine": "shadowspill", "memory": value}
+    )
+    value["host_peak_aggregation"] = "sum of per-rank planned peak spill bytes"
     return value
 
 

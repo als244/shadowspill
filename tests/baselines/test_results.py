@@ -7,6 +7,7 @@ import pytest
 from baselines.common import results
 from baselines.common.results import (
     RESULT_SCHEMA,
+    host_peak_bytes,
     memory_peaks,
     read_rows,
     row,
@@ -110,6 +111,25 @@ def test_device_peaks_are_the_binding_rank_and_host_peaks_are_summed():
     assert combined["peak_reserved_bytes"] == 20
     assert combined["host_peak_rss_bytes"] == 11
     assert "sum" in combined["host_peak_rss_aggregation"]
+    assert combined["host_peak_bytes"] == 11
+
+
+def test_shadowspill_host_peak_uses_all_rank_plans_and_preserves_rss():
+    value = completed_row(engine="shadowspill")
+    value["memory"]["shadowspill"] = [
+        {"predicted_spill_peak_bytes": 10},
+        {"predicted_spill_peak_bytes": 20},
+    ]
+    assert host_peak_bytes(value) == 30
+    assert value["memory"]["host_peak_rss_bytes"] == 3
+    value["memory"]["shadowspill"][1] = {}
+    assert host_peak_bytes(value) == 3
+
+
+def test_host_peak_accepts_rows_written_before_the_common_field():
+    value = completed_row()
+    del value["memory"]["host_peak_bytes"]
+    assert host_peak_bytes(value) == 3
 
 
 def test_read_rows_keeps_the_last_attempt_of_a_case(tmp_path):

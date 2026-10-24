@@ -142,19 +142,39 @@ def validate_row(value: Mapping[str, Any]) -> None:
         raise ValueError(f"a {value['status']} row carries its failure")
 
 
-def memory_peaks(rank_results: list[Mapping[str, Any]]) -> dict[str, int]:
+def memory_peaks(rank_results: list[Mapping[str, Any]]) -> dict[str, Any]:
     """Device peaks are the maximum over ranks (the binding device); the host
     peak is the sum of per-process high-water marks, not a simultaneous
     node measurement, and says so in its name."""
 
+    host = sum(int(r["host_peak_rss_bytes"]) for r in rank_results)
     return {
         "peak_allocated_bytes": max(
             int(r["peak_allocated_bytes"]) for r in rank_results
         ),
         "peak_reserved_bytes": max(int(r["peak_reserved_bytes"]) for r in rank_results),
-        "host_peak_rss_bytes": sum(int(r["host_peak_rss_bytes"]) for r in rank_results),
+        "host_peak_bytes": host,
+        "host_peak_aggregation": "sum of per-process high-water marks",
+        "host_peak_rss_bytes": host,
         "host_peak_rss_aggregation": "sum of per-process high-water marks",
     }
+
+
+def host_peak_bytes(value: Mapping[str, Any]) -> int:
+    """Host memory reported in tables and plots, including existing rows.
+
+    ShadowSpill's plan accounts for peak spill occupancy; process RSS also
+    includes unused capacity in its preallocated pool. Keep that RSS as raw
+    evidence and report the sum of the plans' peaks when available.
+    """
+
+    memory = value["memory"]
+    ranks = memory.get("shadowspill") if value["engine"] == "shadowspill" else None
+    if ranks and all(
+        rank.get("predicted_spill_peak_bytes") is not None for rank in ranks
+    ):
+        return sum(int(rank["predicted_spill_peak_bytes"]) for rank in ranks)
+    return int(memory.get("host_peak_bytes", memory["host_peak_rss_bytes"]))
 
 
 def varied(values_by_key: Mapping[Any, Mapping[str, Any]]) -> list[str]:
