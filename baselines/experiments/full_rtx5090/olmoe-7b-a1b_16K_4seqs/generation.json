@@ -1,0 +1,122 @@
+{
+  "schema_version": 1,
+  "template": "full",
+  "inputs": {
+    "template": "full",
+    "model": "olmoe-7b-a1b",
+    "implementation": "mlops",
+    "lora": {
+      "rank": 16,
+      "alpha": 16.0
+    },
+    "sequence_length": 16384,
+    "tokens_per_step": 65536,
+    "gpus": 1,
+    "device": "NVIDIA GeForce RTX 5090",
+    "gpu_memory_gib": 32.0,
+    "host_memory_gib": 188.0,
+    "checkpoint": null,
+    "corpus": null,
+    "setting": [
+      "warmup_steps=1",
+      "steps=1",
+      "seed=0"
+    ],
+    "description": "Full training of OLMoE 7B-A1B on one RTX 5090, with four 16K sequences per update, initialized weights and synthetic tokens. Compare throughput, GPU memory and host memory across the three engines."
+  },
+  "derived": {
+    "model": "olmoe-7b-a1b",
+    "implementation": "mlops",
+    "lora": {
+      "rank": 16,
+      "alpha": 16.0
+    },
+    "gpus": 1,
+    "sequence_length": 16384,
+    "tokens_per_step": 65536,
+    "microbatches": [
+      16384,
+      32768,
+      65536
+    ],
+    "accumulated_microbatches": [
+      16384,
+      32768
+    ],
+    "single_microbatch": [
+      65536
+    ],
+    "recompute": [
+      0,
+      0.25,
+      0.5,
+      0.75,
+      1
+    ],
+    "recomputed": [
+      0.25,
+      0.5,
+      0.75,
+      1
+    ],
+    "execution_budgets": [
+      8,
+      12,
+      16,
+      24,
+      28
+    ],
+    "summary_budgets": [
+      8,
+      12,
+      16,
+      24,
+      28,
+      32
+    ],
+    "spill_gib": 160
+  },
+  "cases": {
+    "shadowspill": 15,
+    "deepspeed": 54,
+    "fsdp2": 75
+  },
+  "generated_at": "2026-10-21T19:17:26-04:00",
+  "generator": {
+    "git_head": "d8a16c2b8271b65715e38c066e767c5fa810d091",
+    "git_dirty": true
+  },
+  "updated_at": "2026-10-23T02:13:59.318888-04:00",
+  "manual_overrides": {
+    "reason": "User requested OLMoE 7B full training with 16K sequence length and four sequences per step; retain the full-training precision/data contract and apply the recent sweep simplifications.",
+    "previous_folder": "olmoe-7b-a1b_4K_16seqs",
+    "shared": {
+      "sequence_length": 16384,
+      "tokens_per_step": 65536,
+      "warmup_steps": 1,
+      "steps": 1,
+      "seed": 0
+    },
+    "shadowspill": {
+      "spill_gib": 160,
+      "orderings": "factors"
+    },
+    "deepspeed": {
+      "zero_stage": 3,
+      "offload_optimizer": "cpu",
+      "offload_param": [
+        "none",
+        "cpu"
+      ],
+      "reason": "Preserve the full-training template: optimizer offload is fixed, while GPU-resident and CPU-offloaded parameters are compared."
+    },
+    "fsdp2": {
+      "offload_policy": "cpu",
+      "reshard_after_forward": true,
+      "reshard_after_backward": true,
+      "forward_prefetch": 0,
+      "backward_prefetch": "auto"
+    },
+    "deduplication": "Sweep both gradient-sync modes for every accumulated case; use only per-microbatch when all four sequences form one microbatch. Do not sweep resharding or explicit prefetch depth."
+  }
+}

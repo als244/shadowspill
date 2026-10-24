@@ -1,0 +1,21 @@
+{
+  "schema_version": 1,
+  "defaults": {
+    "spill_gib": 160,
+    "orderings": "factors"
+  },
+  "grid": {
+    "tokens_per_microbatch": [
+      16384,
+      32768,
+      65536
+    ],
+    "execution_gib": [
+      8,
+      12,
+      16,
+      24,
+      28
+    ]
+  }
+}

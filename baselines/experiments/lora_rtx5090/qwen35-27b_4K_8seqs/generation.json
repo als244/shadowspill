@@ -1,0 +1,66 @@
+{
+  "schema_version": 1,
+  "template": "lora",
+  "inputs": {
+    "template": "lora",
+    "model": "qwen35-27b",
+    "implementation": "mlops",
+    "lora": {
+      "rank": 16,
+      "alpha": 16.0
+    },
+    "sequence_length": 4096,
+    "tokens_per_step": 32768,
+    "gpus": 1,
+    "device": "NVIDIA GeForce RTX 5090",
+    "gpu_memory_gib": 32.0,
+    "host_memory_gib": 188.0,
+    "checkpoint": "Qwen3.6-27B",
+    "corpus": "qwen35",
+    "setting": [],
+    "description": "LoRA fine-tuning of Qwen3.6 27B from its checkpoint on one 32 GiB GPU, its frozen base larger than the GPU: the throughput each engine reaches within the GPU memory it holds, and the host memory it needs."
+  },
+  "derived": {
+    "model": "qwen35-27b",
+    "implementation": "mlops",
+    "lora": {
+      "rank": 16,
+      "alpha": 16.0
+    },
+    "gpus": 1,
+    "sequence_length": 4096,
+    "tokens_per_step": 32768,
+    "checkpoint": "{models}/Qwen3.6-27B",
+    "corpus": "{corpora}/qwen35",
+    "variables": {
+      "models": "the directory holding the Hugging Face checkpoints, one directory per checkpoint",
+      "corpora": "the directory holding the tokenized corpora prepare_corpus writes, one directory per tokenizer family"
+    },
+    "microbatches": [4096, 8192, 16384, 32768],
+    "accumulated_microbatches": [4096, 8192, 16384],
+    "single_microbatch": [32768],
+    "recompute": [0, 0.25, 0.5, 0.75, 1],
+    "recomputed": [0.25, 0.5, 0.75, 1],
+    "execution_budgets": [8, 12, 16, 24, 28],
+    "summary_budgets": [8, 12, 16, 24, 28, 32],
+    "spill_gib": 160
+  },
+  "cases": {
+    "shadowspill": 20,
+    "fsdp2": 105,
+    "deepspeed": 72
+  },
+  "post_generation_changes": [
+    "2026-10-22: fixed DeepSpeed offload_param to cpu; retained offload_optimizer none/cpu. Case counts reflect this edit.",
+    "2026-10-22: set ShadowSpill spill_gib to 160, overriding the generated 144 GiB pool.",
+    "2026-10-22: fixed FSDP2 reshard_after_forward and reshard_after_backward to their true defaults; retained prefetch and gradient synchronization sweeps.",
+    "2026-10-22: crossed both gradient synchronization modes with every FSDP2 configuration that accumulates multiple microbatches, including all recomputation and activation-offload settings; single-microbatch cases run once. Removed redundant native-prefetch grids already covered by the main grids. FSDP2 has 126 distinct cases.",
+    "2026-10-22: reduced the screening sweep to one warmup and one measured update per case after reviewing within-case timing variation in the Llama sweep and corrected FSDP runs.",
+    "2026-10-22: removed the 21 explicit-prefetch tuning cases at the user's request; all FSDP2 cases use default forward overlap and automatic backward prefetch (0/auto). FSDP2 has 105 cases and the full experiment has 197."
+  ],
+  "generated_at": "2026-10-22T18:02:35-04:00",
+  "generator": {
+    "git_head": "5dcde2100c25fc7ba8f71a98709b424d60c24c8f",
+    "git_dirty": false
+  }
+}

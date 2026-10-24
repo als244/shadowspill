@@ -1,19 +1,16 @@
 {
   "schema_version": 1,
   "defaults": {
-    "zero_stage": 3
+    "zero_stage": 3,
+    "offload_param": "cpu"
   },
   "grid": [
     {
-      "tokens_per_microbatch": [4096, 8192, 16384, 32768, 65536],
       "recompute": [0],
-      "offload_param": ["none", "cpu"],
       "offload_optimizer": ["none", "cpu"]
     },
     {
-      "tokens_per_microbatch": [4096, 8192, 16384, 32768, 65536],
       "recompute": [0.25, 0.5, 0.75, 1],
-      "offload_param": ["none", "cpu"],
       "offload_optimizer": ["none", "cpu"],
       "activation_offload": ["none", "cpu"]
     }

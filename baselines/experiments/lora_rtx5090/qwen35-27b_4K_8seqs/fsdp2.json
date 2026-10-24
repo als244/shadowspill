@@ -1,0 +1,23 @@
+{
+  "schema_version": 1,
+  "defaults": {
+    "offload_policy": "cpu",
+    "reshard_after_forward": true,
+    "reshard_after_backward": true,
+    "forward_prefetch": 0,
+    "backward_prefetch": "auto"
+  },
+  "grid": [
+    {
+      "tokens_per_microbatch": [4096, 8192, 16384],
+      "recompute": [0, 0.25, 0.5, 0.75, 1],
+      "activation_offload": ["none", "cpu", "overlapped"],
+      "gradient_sync": ["per-microbatch", "last-microbatch"]
+    },
+    {
+      "tokens_per_microbatch": [32768],
+      "recompute": [0, 0.25, 0.5, 0.75, 1],
+      "activation_offload": ["none", "cpu", "overlapped"]
+    }
+  ]
+}

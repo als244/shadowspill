@@ -18,15 +18,15 @@ under a folder for its kind and hardware. Full training on one 32 GiB GPU,
 |---|---|
 | [`llama3-8b_4K_16seqs`](full_rtx5090/llama3-8b_4K_16seqs/README.md) | Llama 3 8B |
 | [`qwen35-9b_4K_16seqs`](full_rtx5090/qwen35-9b_4K_16seqs/README.md) | Qwen3.5 9B |
-| [`olmoe-7b-a1b_4K_16seqs`](full_rtx5090/olmoe-7b-a1b_4K_16seqs/README.md) | OLMoE 7B-A1B |
+| [`olmoe-7b-a1b_16K_4seqs`](full_rtx5090/olmoe-7b-a1b_16K_4seqs/README.md) | OLMoE 7B-A1B, four 16K sequences per update |
 | [`llama3-1b_4K_8seqs_loss-curves`](full_rtx5090/llama3-1b_4K_8seqs_loss-curves/README.md) | Llama-3.2-1B's loss curves from its checkpoint in three engines |
 
 LoRA from a checkpoint on one 32 GiB GPU, `lora_rtx5090/`:
 
 | Folder | Scenario |
 |---|---|
-| [`qwen35-27b_4K_16seqs`](lora_rtx5090/qwen35-27b_4K_16seqs/README.md) | Qwen3.6 27B |
-| [`qwen35moe-35b-a3b_4K_16seqs`](lora_rtx5090/qwen35moe-35b-a3b_4K_16seqs/README.md) | Qwen3.5 35B-A3B |
+| [`qwen35-27b_4K_8seqs`](lora_rtx5090/qwen35-27b_4K_8seqs/README.md) | Qwen3.6 27B |
+| [`qwen35moe-35b-a3b_32K_1seqs`](lora_rtx5090/qwen35moe-35b-a3b_32K_1seqs/README.md) | Qwen3.5 35B-A3B, one 32K sequence per update |
 | [`qwen3moe-30b-a3b_4K_16seqs`](lora_rtx5090/qwen3moe-30b-a3b_4K_16seqs/README.md) | Qwen3 30B-A3B |
 
 [`demo`](demo/README.md) checks the whole experiment path in minutes: Llama 3
@@ -234,7 +234,9 @@ A run ends with `baselines.report` over every row the experiment holds,
 drawn against the GPU memory each engine held, and `baselines.summary`,
 which gives each engine's outcomes, the fastest case of each engine within
 each budget of `summary_budgets_gib`, and each engine's frontier, with the
-report's figures embedded. Either runs again on its own:
+report's figures embedded. The GPU-memory scatter plot includes step curves
+showing each engine's best observed throughput within each memory budget.
+Either runs again on its own:
 
 ```bash
 python -m baselines.summary baselines/experiments/<experiment>/output \

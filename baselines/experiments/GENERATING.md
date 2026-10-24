@@ -9,9 +9,9 @@ afterwards as it needs; an experiment can as well be written without it.
 ## A command
 
 ```bash
-python -m baselines.generate_experiment lora_rtx5090/qwen35-27b_4K_16seqs \
+python -m baselines.generate_experiment lora_rtx5090/qwen35-27b_4K_8seqs \
   --template lora --model qwen35-27b --checkpoint Qwen3.6-27B --corpus qwen35 \
-  --sequence-length 4096 --tokens-per-step 65536 \
+  --sequence-length 4096 --tokens-per-step 32768 \
   --device "NVIDIA GeForce RTX 5090" --gpu-memory-gib 32 --host-memory-gib 188 \
   --description "LoRA fine-tuning of Qwen3.6 27B from its checkpoint on one 32 GiB GPU" \
   [--variable models=<dir> --variable corpora=<dir>]
