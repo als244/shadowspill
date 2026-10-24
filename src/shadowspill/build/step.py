@@ -24,6 +24,7 @@ def build_step(
     partition: PartitionSpec = "auto",
     operator_recompute: RetentionPolicy | None = None,
     grad_dtype: torch.dtype | None = None,
+    master_dtype: torch.dtype | None = None,
     target: str | torch.device = "cuda",
 ) -> Program:
     """Capture gradients and local updates without initializing persistent state.
@@ -32,6 +33,9 @@ def build_step(
     changed. Saved defaults describe lazily created optimizer state; actual
     tensor contents are supplied at execution. CPU planning chooses when each
     independent update runs after its required gradient writes and weight reads.
+    ``master_dtype`` optionally captures separate optimizer parameters; model
+    compute precision is unchanged. ``grad_dtype`` controls stored gradients
+    independently. Optimizer state dtypes come from that optimizer's own rules.
     """
     return _build_training(
         model,
@@ -43,5 +47,6 @@ def build_step(
         partition=partition,
         operator_recompute=operator_recompute,
         grad_dtype=grad_dtype,
+        master_dtype=master_dtype,
         target=target,
     )

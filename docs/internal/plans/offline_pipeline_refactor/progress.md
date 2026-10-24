@@ -10,9 +10,11 @@
 - Preparation validation: 100 CPU tests passed, two CUDA tests skipped. The frozen
   commit script was validated through complete/resumed runs in a disposable clone.
 - Completed checkpoints: CPU-only artifacts/planning/reports, the three model
-  builders, and CPU selection of example/update orderings. Current work is
-  standalone single-GPU profiling and allocation qualification; execution and
-  caller/distributed migration remain pending.
+  builders, CPU selection of example/update orderings, standalone profiling,
+  physical admission, and saved-plan execution for the qualified dense fixtures.
+  Independent communication calibration and bounded checkpoint helpers also work.
+  Current work is precision/provider qualification and normal caller migration;
+  distributed support and final legacy removal remain pending.
 
 ### Findings
 
@@ -323,3 +325,22 @@
 - Continuing with precision qualification while the Trainer constructor question
   remains pending. Master-weight capture must migrate without changing compute
   or gradient dtype, and execution must initialize/export masters explicitly.
+
+### Mixed-precision qualification
+
+- `build_step(..., master_dtype=...)` now captures geometry-only master parameters,
+  discovers optimizer state at that precision, and includes gradient casts and
+  compute-weight refreshes in the compiled update. `grad_dtype` stays independent.
+  Model compute weights and the supplied optimizer remain unchanged during build.
+- Executor initializes masters from their named compute weights in bounded
+  chunks and exports them explicitly as `master.<parameter-name>`. Full-resume
+  checkpoints preserve both representations and CPU optimizer controls.
+- Numerical tests cover BF16 compute weights with FP32 masters/moments and both
+  BF16 and FP32 gradient storage. Three updates, including checkpoint overwrite /
+  restore after the first update, match independent eager calculations.
+- Current regression: **31** build/profiling/execution tests and **522** CPU
+  artifact/IR/planner/simulator tests pass. Focused strict typing and lint pass.
+  This still qualifies dense/local operators, not every MLOps/custom provider.
+- Latest logs: `validation/precision-regression.log` and
+  `validation/precision-cpu.log`. Design records are being tracked explicitly so
+  the branch retains the agreed interfaces along with implementation progress.

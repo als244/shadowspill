@@ -94,6 +94,15 @@ their required gradient writes and all remaining reads of old weights;
 Program and profiles. Opaque updates and unsupported first-use state creation
 are currently rejected explicitly.
 
+`master_dtype=torch.float32` captures separate optimizer master weights while
+preserving the model's compute dtype. `grad_dtype` independently selects stored
+gradient precision. The optimizer determines moment/state dtypes from its own
+rules. Execution initializes masters from compute weights using bounded chunks;
+exports/checkpoints name them `master.<parameter-name>`. The update contains the
+gradient conversion and write-back to compute weights, so those costs and
+allocations are profiled and planned. Build does not modify the supplied model
+or optimizer.
+
 ```python
 from shadowspill import TaskProfile
 
