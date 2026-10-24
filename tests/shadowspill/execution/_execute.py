@@ -33,15 +33,27 @@ class BlockPhases(importlib.abc.MetaPathFinder):
             raise AssertionError(f"execution imported {fullname}")
 
 
-compiler.compile_fx = compiler.compile_fx_inner = triton.compile = (
-    Runtime._calibrate
-) = forbidden
+compiler.compile_fx = compiler.compile_fx_inner = Runtime._calibrate = forbidden
 sys.meta_path.insert(0, BlockPhases())
 from shadowspill import Executor, load_checkpoint, save_checkpoint  # noqa: E402
 
 directory = Path(sys.argv[1])
 plan = Plan.load(directory / "plan.ssp")
 oracle = torch.load(directory / "oracle.pt", weights_only=True)
+lazy_kernels = set(oracle.get("lazy_kernels", ()))
+compiled_kernels = []
+
+
+def compilation_finished(**event):
+    # Patching triton.compile misses the compiler imported inside JITFunction.
+    # This listener sees real compilation, including that internal entry point.
+    if not event["cache_hit"]:
+        name = event["src"].name
+        assert name in lazy_kernels, f"execution compiled unexpected kernel: {name}"
+        compiled_kernels.append(name)
+
+
+triton.knobs.compilation.listener = compilation_finished
 
 
 def fill(request, chunk):
@@ -65,6 +77,7 @@ with pytest.raises(ValueError, match="unknown runtime hyperparameters"):
         input_loader=lambda i: oracle["examples"][i], hyperparams={"unknown": 1}
     )
 previous, previous_value = None, None
+first_invocation_compiles = None
 for index, (outputs, state) in enumerate(oracle["expected"]):
     pending = executor.run(
         input_loader=lambda i: oracle["examples"][i],
@@ -72,6 +85,10 @@ for index, (outputs, state) in enumerate(oracle["expected"]):
         accumulate_gradients=oracle["accumulate"][index],
     )
     result = pending.result()
+    if first_invocation_compiles is None:
+        first_invocation_compiles = len(compiled_kernels)
+    else:
+        assert len(compiled_kernels) == first_invocation_compiles, compiled_kernels
     actual_outputs = (
         result
         if plan.program.bindings["kind"] == "forward"
@@ -99,7 +116,10 @@ for index, (outputs, state) in enumerate(oracle["expected"]):
         )
 
     executor.export_tensors(collect, chunk_bytes=40)
-    assert actual.keys() == state.keys()
+    assert actual.keys() == state.keys(), {
+        "unexpected": actual.keys() - state.keys(),
+        "missing": state.keys() - actual.keys(),
+    }
     for name, expected in state.items():
         torch.testing.assert_close(actual[name].reshape(expected.shape), expected)
     if index == 0:
@@ -120,4 +140,5 @@ with pytest.raises(Exception, match="caller-owned device outputs"):
     executor.close()
 del pending, result, actual_outputs, previous
 executor.close()
+assert set(compiled_kernels) == lazy_kernels, compiled_kernels
 print("Qualified three saved-plan invocations", flush=True)

@@ -196,6 +196,14 @@ contract. They are not certified by this stateless-Python-op qualification.
 Likewise, the registration digest is not a fingerprint of all transitive native
 libraries or proof that a provider's internal autotuning/resources are portable.
 
+MLOps AdamW also passes cold-worker execution with BF16 compute weights, FP32
+gradients/masters/moments, CPU step counters, changing learning rates and
+checkpoint restore against independent PyTorch updates. Its fixed-block Triton
+kernel compiles lazily in an empty cache; this does not select a new algorithm,
+change the observed allocation requests, or recompile on subsequent updates.
+Such fixed provider compilation is allowed by the build contract. This check
+does not qualify providers that perform autotuning or recreate shared resources.
+
 Implementation ownership:
 
 - `artifacts/`: immutable phase results, editable profile collections, archive codec.
