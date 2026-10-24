@@ -58,6 +58,7 @@ def communication_transfers(
                     tensor_bytes=record["padded_bytes"],
                     dtype=record["dtype"],
                     setup=source.setup,
+                    inplace=True,
                 )
                 for group in record["groups"]
             ]

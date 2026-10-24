@@ -25,17 +25,22 @@ class CollectiveProbe:
         output_elements = (
             elements // count if request.operation == "reduce_scatter" else elements
         )
-        self.input = torch.full(
-            (input_elements,),
-            self.value,
-            dtype=getattr(torch, request.dtype.removeprefix("torch.")),
-            device=device,
-        )
-        self.output = (
-            self.input
-            if request.operation == "all_reduce"
-            else torch.empty(output_elements, dtype=self.input.dtype, device=device)
-        )
+        dtype = getattr(torch, request.dtype.removeprefix("torch."))
+        if request.operation == "all_gather" and request.inplace:
+            self.output = torch.empty(output_elements, dtype=dtype, device=device)
+            self.input = self.output.narrow(
+                0, dist.get_rank(group) * input_elements, input_elements
+            )
+            self.input.fill_(self.value)
+        else:
+            self.input = torch.full(
+                (input_elements,), self.value, dtype=dtype, device=device
+            )
+            self.output = (
+                self.input
+                if request.operation == "all_reduce"
+                else torch.empty(output_elements, dtype=dtype, device=device)
+            )
         self.stream = None
         if device.type == "cuda":
             self.stream = torch.cuda.Stream(device=device)  # type: ignore[no-untyped-call]

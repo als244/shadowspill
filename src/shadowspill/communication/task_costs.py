@@ -44,6 +44,7 @@ def task_collectives(program: "Program") -> dict[str, tuple[CollectiveRequest, .
                 tuple(group),
                 description["tensor_bytes"],
                 description["dtype"],
+                inplace=description.get("inplace"),
             )
             for group in description["groups"]
         )
@@ -59,7 +60,13 @@ def task_collectives(program: "Program") -> dict[str, tuple[CollectiveRequest, .
             )
         for task in tasks:
             _validate_buffers(
-                objects, task, requests[0], inplace=description.get("inplace", False)
+                objects,
+                task,
+                requests[0],
+                inplace=(
+                    requests[0].operation == "all_gather"
+                    and requests[0].inplace is True
+                ),
             )
         result[key] = requests
     return result

@@ -14,6 +14,19 @@ if TYPE_CHECKING:
 _OPERATIONS = {"all_gather", "reduce_scatter", "all_reduce"}
 
 
+def _inplace(row: Mapping[str, Any]) -> bool:
+    value = row.get("inplace")
+    if value is None:
+        value = row["operation"] == "all_reduce"
+    if (
+        type(value) is not bool
+        or (row["operation"] == "all_reduce" and not value)
+        or (row["operation"] == "reduce_scatter" and value)
+    ):
+        raise ValueError("unsupported collective buffer aliasing")
+    return value
+
+
 @dataclass(frozen=True)
 class CollectiveCost:
     duration_seconds: float
@@ -26,6 +39,7 @@ def validate_measurement(row: Mapping[str, Any]) -> None:
     """Validate a plain observation; setup/ranks are part of its compatibility."""
     if row.get("operation") not in _OPERATIONS:
         raise ValueError("collective measurement has an unsupported operation")
+    _inplace(row)
     ranks = row.get("ranks", ())
     if not ranks or any(type(rank) is not int or rank < 0 for rank in ranks):
         raise ValueError("collective measurement requires ordered logical ranks")
@@ -61,6 +75,7 @@ def collective_cost(
     tensor_bytes: int,
     dtype: str,
     setup: Mapping[str, Any],
+    inplace: bool | None = None,
 ) -> CollectiveCost:
     """Prefer exact observations; otherwise estimate a synchronous flat ring.
 
@@ -76,6 +91,7 @@ def collective_cost(
         setup=setup,
         topology=info.topology,
         duration_seconds=0.0,
+        inplace=inplace,
     )
     validate_measurement(request)
     count = len(ranks)
@@ -87,7 +103,9 @@ def collective_cost(
     traffic = factor * (count - 1) * chunk
     fields = ("operation", "ranks", "tensor_bytes", "dtype", "setup", "topology")
     for row in reversed(info.measurements):
-        if all(plain(row[field]) == plain(request[field]) for field in fields):
+        if _inplace(row) == _inplace(request) and all(
+            plain(row[field]) == plain(request[field]) for field in fields
+        ):
             return CollectiveCost(
                 row["duration_seconds"],
                 traffic,

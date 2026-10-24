@@ -60,6 +60,7 @@ def test_measurement_requires_exact_group_geometry_dtype_and_setup(tmp_path):
     assert cost(loaded, setup={"gpu": "different"}).source == "ring"
     assert cost(loaded, ranks=tuple(reversed(range(8)))).source == "ring"
     assert cost(loaded, "reduce_scatter").source == "ring"
+    assert cost(loaded, inplace=True).source == "ring"
     moved = replace(
         loaded,
         topology={"node0": tuple(range(4)), "node1": tuple(range(4, 8))},

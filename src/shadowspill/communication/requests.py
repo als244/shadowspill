@@ -25,10 +25,19 @@ class CollectiveRequest:
     ranks: tuple[int, ...]
     tensor_bytes: int
     dtype: str
+    inplace: bool | None = None
 
     def __post_init__(self) -> None:
         if self.operation not in {"all_gather", "reduce_scatter", "all_reduce"}:
             raise ValueError(f"unsupported collective operation: {self.operation}")
+        if self.inplace is None:
+            object.__setattr__(self, "inplace", self.operation == "all_reduce")
+        if (
+            type(self.inplace) is not bool
+            or (self.operation == "all_reduce" and not self.inplace)
+            or (self.operation == "reduce_scatter" and self.inplace)
+        ):
+            raise ValueError("unsupported collective buffer aliasing")
         if (
             not self.ranks
             or any(type(rank) is not int or rank < 0 for rank in self.ranks)
@@ -87,6 +96,7 @@ def collective_requests(
                     ranks=group,
                     tensor_bytes=shard["padded_bytes"],
                     dtype=shard["dtype"],
+                    inplace=True,
                 )
                 for group in shard["groups"]
             )

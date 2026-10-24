@@ -103,6 +103,7 @@ def test_planner_keeps_local_copies_and_full_gather_as_distinct_phases(tmp_path)
                 "tensor_bytes": 64,
                 "dtype": "torch.uint8",
                 "duration_seconds": 2e-6,
+                "inplace": True,
                 "setup": {"gpu": "fixture"},
                 "topology": info.topology,
             },

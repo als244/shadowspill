@@ -26,7 +26,7 @@ def test_saved_program_derives_unique_gathers_with_logical_order(tmp_path):
     source.save(tmp_path / "program.ssp")
     requests = collective_requests(Program.load(tmp_path / "program.ssp"), None)
     assert requests == (
-        CollectiveRequest("all_gather", (3, 1, 0, 2), 64, "torch.uint8"),
+        CollectiveRequest("all_gather", (3, 1, 0, 2), 64, "torch.uint8", inplace=True),
     )
     assert collective_requests(source, []) == ()
     assert collective_requests(
@@ -53,6 +53,8 @@ def test_saved_program_derives_unique_gathers_with_logical_order(tmp_path):
         {"tensor_bytes": 0},
         {"tensor_bytes": 4.0},
         {"dtype": "float32"},
+        {"inplace": True},
+        {"inplace": "yes"},
     ],
 )
 def test_probe_rejects_ambiguous_or_unaligned_requests(changes):

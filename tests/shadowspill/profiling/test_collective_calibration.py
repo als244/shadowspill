@@ -26,9 +26,10 @@ def _worker(worker, rendezvous):
     bound = None
     try:
         requests = tuple(
-            CollectiveRequest(op, group, 64, "torch.float32")
+            CollectiveRequest(op, group, 64, "torch.float32", inplace=inplace)
             for group in ((3, 0), (2, 1), (3, 1, 0, 2))
             for op in ("all_gather", "reduce_scatter", "all_reduce")
+            for inplace in ((False, True) if op == "all_gather" else (None,))
         )
         bound = GroupBindings(
             identity="calibration",
@@ -63,6 +64,11 @@ def _worker(worker, rendezvous):
             probe = CollectiveProbe(
                 request, bound.for_members(request.ranks), torch.device("cpu")
             )
+            same_storage = (
+                probe.input.untyped_storage()._cdata
+                == probe.output.untyped_storage()._cdata
+            )
+            assert same_storage == request.inplace
             for _ in range(4):
                 assert probe.sample() > 0
             if request.operation == "all_gather":
@@ -103,7 +109,14 @@ def _worker(worker, rendezvous):
                 info,
                 **{
                     key: row[key]
-                    for key in ("operation", "ranks", "tensor_bytes", "dtype", "setup")
+                    for key in (
+                        "operation",
+                        "ranks",
+                        "tensor_bytes",
+                        "dtype",
+                        "setup",
+                        "inplace",
+                    )
                 },
             )
             assert cost.source == "measurement"
@@ -167,6 +180,7 @@ def _gpu_worker(worker, rendezvous):
             measure_seconds=0.01,
         )
         assert info.measurements[0]["ranks"] == (1, 0)
+        assert info.measurements[0]["inplace"]
         assert info.measurements[0]["duration_seconds"] > 0
         assert info.topology == {"node0": (0, 1)}
         rows = [None, None]

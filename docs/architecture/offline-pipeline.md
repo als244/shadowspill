@@ -167,6 +167,12 @@ full tensor on each all-reduce participant. Sizes must contain whole elements in
 each shard. Duplicate probes are removed. Calls without Program, overrides or
 rank_map retain the original local host-only behavior.
 
+Gather probes accept `inplace=True` when the input shard occupies its ordered
+slot inside the full output buffer. Program-derived weight gathers select this
+form. Calibration preserves that layout, and cost lookup distinguishes it from
+a gather with separate buffers. All-reduce is in-place; reduce-scatter currently
+uses separate buffers.
+
 Derived requests cover lowered weight fetches, gradient completion and update
 publication tasks. Model-owned communication requires its own lowering before
 automatic derivation is supported. Exact observed collective
