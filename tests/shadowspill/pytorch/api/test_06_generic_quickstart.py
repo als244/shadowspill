@@ -9,7 +9,7 @@ import pytest
 import torch
 from torch import nn
 
-from benchmarking.quickstart import run
+from benchmarking.quickstart._legacy import run
 from qualification.profiling import CORRECTNESS_PROFILING
 
 pytestmark = [pytest.mark.fresh_process, pytest.mark.cuda]

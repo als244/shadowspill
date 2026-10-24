@@ -255,3 +255,8 @@ def main():
         return execute(arguments, request, setup, control_group=dist.group.WORLD)
     finally:
         dist.destroy_process_group()
+
+
+if __name__ == "__main__":
+    # Temporary entry point for model/distributed recipes awaiting migration.
+    raise SystemExit(main())

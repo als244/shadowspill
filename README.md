@@ -1,5 +1,11 @@
 # ShadowSpill
 
+**Refactor branch:** the public API now separates build, measurement, CPU planning
+and saved-plan execution. Start with the [phase API guide](docs/architecture/offline-pipeline.md)
+or [quickstart](benchmarking/quickstart.md). `Trainer(plan, ...)` consumes an already
+prepared Plan. The older model/prepare recipes below are explicitly routed through
+a private migration implementation until their evaluation/distributed paths are migrated.
+
 ShadowSpill turns a fixed-shape PyTorch forward or training step into a
 memory-budgeted callable: it decides what to keep on the device, what to spill
 and fetch back, and what to recompute, then proves the answer fits the declared
@@ -19,9 +25,11 @@ verifies the install. Add `--expert-parallel quack`, `te` or `both` for
 mlops's optional expert-parallel backends, which the expert-parallel workloads
 use; that needs the mlops checkout beside this one.
 
-## Train with the Trainer API
+## Model recipes awaiting migration
 
-`Trainer` takes a model, loss function and iterable of complete optimizer updates.
+These recipes currently use the private model/prepare Trainer. The new public
+`Trainer(plan, ...)` is documented in the phase guide above. The migration
+implementation takes a model, loss function and iterable of complete updates.
 `prepare()` opens the backend and admits a plan that fits. Supply named
 `microbatch_candidates` to search sizes and orderings, or fix both explicitly. `fit()` runs forward, backward
 and AdamW updates with the learning-rate schedule; `close()` releases owned
@@ -74,7 +82,8 @@ python -m workloads.recipes.text.train_llama3 --data /path/to/llama3-tokens
 import torch
 from mlops.optim import AdamW
 from shadowspill.planner import StepDataOrdering
-from shadowspill.training import Trainer, reset_parameters
+from shadowspill.training import reset_parameters
+from shadowspill.training._legacy_trainer import Trainer
 from shadowspill.training.backends import ShadowSpill
 from shadowspill.training.schedules import WarmupCosine
 from workloads.models.catalog import build_on_meta
@@ -228,7 +237,7 @@ options when you want one continuous history.
 ```python
 import torch
 from mlops.optim import AdamW
-from shadowspill.training import Trainer
+from shadowspill.training._legacy_trainer import Trainer
 from shadowspill.training.backends import ShadowSpill
 from shadowspill.training.logging import Wandb
 from shadowspill.training.schedules import WarmupCosine
@@ -341,7 +350,8 @@ torchrun --standalone --nproc-per-node=8 \
 ```python
 import torch
 from mlops.optim import AdamW
-from shadowspill.training import DataParallel, Trainer, reset_parameters
+from shadowspill.training import DataParallel, reset_parameters
+from shadowspill.training._legacy_trainer import Trainer
 from shadowspill.training.backends import ShadowSpill
 from shadowspill.training.schedules import WarmupCosine
 from workloads.models.catalog import build_on_meta

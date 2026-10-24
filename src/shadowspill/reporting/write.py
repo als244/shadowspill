@@ -49,7 +49,9 @@ def _csv(path: Path, rows: list[dict[str, Any]]) -> None:
             writer.writerows(rows)
 
 
-def write_report(result: Plan | SweepResult, path: str | Path) -> Path:
+def write_report(
+    result: Plan | SweepResult, path: str | Path, *, plots: bool = True
+) -> Path:
     """Write index.html, numeric evidence and figures, without touching a GPU."""
     destination = Path(path)
     destination.mkdir(parents=True, exist_ok=True)
@@ -59,7 +61,7 @@ def write_report(result: Plan | SweepResult, path: str | Path) -> Path:
         for index, case in enumerate(result.cases):
             label = f"case-{index:04d}"
             if case.plan is not None:
-                write_report(case.plan, destination / label)
+                write_report(case.plan, destination / label, plots=plots)
                 content.append(
                     f'<li><a href="{label}/index.html">{escape(case.candidate)}'
                     f" — {case.memory_budgets.execution_bytes} bytes</a></li>"
@@ -100,17 +102,27 @@ def write_report(result: Plan | SweepResult, path: str | Path) -> Path:
             )
             + "\n"
         )
-        plot_plan(result, destination)
+        if plots:
+            plot_plan(result, destination)
         note = (
-            "<p>Simulation only: "
-            + escape("; ".join(result.simulation_only_reasons))
-            + "</p>"
+            (
+                "<p>Simulation only: "
+                + escape("; ".join(result.simulation_only_reasons))
+                + "</p>"
+            )
+            if result.simulation_only_reasons
+            else "<p>Plan includes physical allocation evidence.</p>"
+        )
+        figure = (
+            '<img src="timeline.svg" alt="Simulated compute, transfers and memory">'
+            if plots
+            else ""
         )
         html = _page(
             result.program.name or "Plan report",
             note
             + _table([result.summary])
-            + '<img src="timeline.svg" alt="Simulated compute, transfers and memory">'
+            + figure
             + "<details open><summary>Tasks</summary>"
             + _table(tasks)
             + "</details>"

@@ -194,7 +194,7 @@ def test_text_dp_scaling_is_in_the_recipe_and_preserves_local_metrics(monkeypatc
 
 
 def test_quickstart_releases_resources_after_imported_state(monkeypatch):
-    from benchmarking.quickstart import runner
+    from benchmarking.quickstart._legacy import runner
 
     events = []
     tour = object.__new__(runner.Tour)
@@ -219,7 +219,7 @@ def test_quickstart_threads_are_configurable_per_rank():
 
 
 def test_symmetric_cli_override_preserves_the_callers_specification(monkeypatch):
-    from benchmarking.quickstart import runner
+    from benchmarking.quickstart._legacy import runner
     from shadowspill.pytorch import Distributed
 
     parser = _parser()
