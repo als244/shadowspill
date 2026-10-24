@@ -3,15 +3,24 @@
 from typing import Any
 
 from shadowspill.artifacts.plan import Plan
+from shadowspill.communication.task_costs import task_collective_cost, task_collectives
 
 
 def task_rows(plan: Plan) -> list[dict[str, Any]]:
     tasks = {item.task_id: item for item in plan.program.tasks}
     definitions = {item.profile_key: item for item in plan.program.task_definitions}
+    collectives = task_collectives(plan.program)
+    costs = {
+        key: task_collective_cost(requests, plan.communication_info, plan.program.setup)
+        for key, requests in collectives.items()
+    }
     rows = []
     for interval in plan.timeline.task_intervals:
         task = tasks[interval.task_id]
         definition = definitions[task.profile_id]
+        requests = collectives.get(task.profile_id)
+        cost = costs.get(task.profile_id)
+        duration = (interval.end_ns - interval.start_ns) / 1e9
         rows.append(
             {
                 "task_id": task.task_id,
@@ -22,10 +31,32 @@ def task_rows(plan: Plan) -> list[dict[str, Any]]:
                 "modules": ", ".join(definition.module_paths),
                 "profile_key": definition.profile_key,
                 "phase": task.phase,
+                "resource": task.resource.kind.value,
                 "start_seconds": interval.start_ns / 1e9,
-                "duration_seconds": (interval.end_ns - interval.start_ns) / 1e9,
+                "duration_seconds": duration,
                 "workspace_bytes": interval.workspace_bytes,
                 "stall_seconds": interval.stall_ns / 1e9,
+                **(
+                    {
+                        "collective_operation": None
+                        if requests is None
+                        else requests[0].operation,
+                        "collective_cost_source": None if cost is None else cost.source,
+                        "collective_tensor_bytes": None
+                        if requests is None
+                        else requests[0].tensor_bytes,
+                        "collective_ring_equivalent_bytes": None
+                        if cost is None
+                        else cost.transfer_bytes,
+                        "collective_ring_equivalent_gb_per_second": None
+                        if cost is None
+                        else (
+                            cost.transfer_bytes / duration / 1e9 if duration else 0.0
+                        ),
+                    }
+                    if collectives
+                    else {}
+                ),
             }
         )
     return rows

@@ -6,26 +6,40 @@ from dataclasses import replace
 
 from shadowspill.artifacts._values import freeze
 from shadowspill.artifacts.profiled_program import ProfiledProgram
-from shadowspill.artifacts.profiles import Profiles
+from shadowspill.artifacts.profiles import Profiles, TaskProfile
 from shadowspill.artifacts.program import Program
+from shadowspill.communication.task_costs import task_collectives
 
 
 def apply_profiles(program: Program, profiles: Profiles) -> ProfiledProgram:
-    """Require a duration and complete workspace size for every task form.
+    """Require compute durations and complete workspace sizes for every form.
 
     Static workspace/overhead may come from build. A supplied workspace can
     exceed a static bound but cannot erase compiler-visible memory. Estimates
     remain explicit and do not qualify an artifact for execution.
+    Explicit framework collectives get their durations from CommunicationInfo
+    during planning; they still require complete workspace information here.
     """
     profiles = Profiles.from_dict(profiles.to_dict())
     if program.setup and freeze(program.setup) != freeze(profiles.setup):
         raise ValueError("profile setup differs from the Program target/build setup")
     missing: list[str] = []
     applied = {}
+    communication = task_collectives(program)
     for definition in program.task_definitions:
         key = definition.profile_key
         record = profiles.tasks.get(key)
-        if record is None or record.duration_seconds is None:
+        if key in communication:
+            record = record or TaskProfile()
+            if (
+                record.duration_seconds is not None
+                or record.resource_phases
+                or record.overlap_costs
+            ):
+                raise ValueError(
+                    f"{key}: supply collective timing through CommunicationInfo"
+                )
+        elif record is None or record.duration_seconds is None:
             missing.append(f"{key}: duration_seconds")
         if record is None:
             if definition.workspace_bytes is None:
@@ -78,5 +92,5 @@ def apply_profiles(program: Program, profiles: Profiles) -> ProfiledProgram:
         raise ValueError("incomplete profiles:\n  " + "\n  ".join(missing))
     assert overhead is not None
     result = ProfiledProgram(program, applied, profiles.setup, overhead, metadata)
-    result._costed_ir()  # Validate resource phase timing against the supplied duration.
+    result._compute_profiles()  # Validate timings without inventing collective costs.
     return result

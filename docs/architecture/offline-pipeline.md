@@ -174,6 +174,23 @@ scale-up/out rate, overlapping-group contention, or communicator memory admissio
 The CPU/Gloo coordination and single-GPU copy paths are tested; multi-GPU NCCL
 calibration has an acceptance test but is not yet hardware-qualified.
 
+The IR also supports explicit framework collective tasks with declared input,
+output and completion dependencies. Their durations are resolved from
+CommunicationInfo during planning, so applying compute profiles does not require
+a process group or a dummy zero-time collective measurement. Workspace information
+is still required; unknown workspace does not become zero. The saved
+ProfiledProgram retains an unspecified duration for these collective forms until
+planning. Model/provider operations that communicate internally retain their
+ordinary measured task duration.
+
+Explicit framework collectives share the ordered communication resource used by
+weight fetch gathers. Their buffers and scratch remain live while the task is in
+flight, and consumers depend on completion. Reports show a separate collective
+lane and label ring-equivalent traffic. The analytic CPU test exercises overlap
+with independent compute and replans with different collective timings from the
+same saved ProfiledProgram. This IR support does not yet enable distributed
+training builders or certify distributed Executor resources.
+
 The GPU allowance includes fixed runtime/provider overhead. Planning subtracts
 that overhead before scheduling objects/workspace, and reporting adds it back to
 the total peak. Spill capacity is separate. No physical memory is allocated to

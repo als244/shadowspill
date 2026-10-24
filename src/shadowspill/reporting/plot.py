@@ -3,6 +3,7 @@
 from pathlib import Path
 
 from shadowspill.artifacts.plan import Plan
+from shadowspill.ir import ResourceKind
 
 from .rows import transfer_rows
 
@@ -15,11 +16,16 @@ def plot_plan(plan: Plan, path: Path) -> None:
     FigureCanvasAgg(figure)
     timeline, memory = figure.subplots(2, 1)
     lanes = {"compute": 2, "fetch": 1, "evict": 0}
+    has_collectives = any(
+        task.resource_kind is ResourceKind.COMMUNICATION
+        for task in plan.timeline.task_intervals
+    )
     for task in plan.timeline.task_intervals:
+        collective = task.resource_kind is ResourceKind.COMMUNICATION
         timeline.broken_barh(
             [(task.start_ns / 1e6, (task.end_ns - task.start_ns) / 1e6)],
-            (1.7, 0.6),
-            facecolors="#526ab2",
+            (2.7 if collective else 1.7, 0.6),
+            facecolors="#8c5fa8" if collective else "#526ab2",
         )
     for transfer in transfer_rows(plan):
         timeline.broken_barh(
@@ -31,7 +37,10 @@ def plot_plan(plan: Plan, path: Path) -> None:
             if transfer["direction"] == "fetch"
             else "#348573",
         )
-    timeline.set_yticks([0, 1, 2], ["Evict transfer", "Fetch transfer", "Compute"])
+    labels = ["Evict transfer", "Fetch transfer", "Compute"]
+    if has_collectives:
+        labels.append("Collective tasks")
+    timeline.set_yticks(range(len(labels)), labels)
     timeline.set_title(f"{plan.program.name or 'Program'} — simulated timeline")
     timeline.set_xlabel("Time (ms)")
     if any(row["kind"] == "copy_and_collective" for row in transfer_rows(plan)):

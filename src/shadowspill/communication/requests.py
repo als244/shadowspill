@@ -2,9 +2,10 @@
 
 from collections.abc import Mapping, Sequence
 from dataclasses import asdict, dataclass
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
-from shadowspill.artifacts.program import Program
+if TYPE_CHECKING:
+    from shadowspill.artifacts.program import Program
 
 _WIDTHS = {
     "torch.uint8": 1,
@@ -57,7 +58,7 @@ class CollectiveRequest:
 
 
 def collective_requests(
-    program: Program | None,
+    program: "Program | None",
     overrides: Sequence[Mapping[str, Any]] | None,
 ) -> tuple[CollectiveRequest, ...]:
     """Deduplicate probes, retaining order within each logical participant group.
@@ -87,6 +88,13 @@ def collective_requests(
                 )
                 for group in shard["groups"]
             )
+        from .task_costs import task_collectives
+
+        rows.extend(
+            request.to_dict()
+            for requests in task_collectives(program).values()
+            for request in requests
+        )
     requests = {
         CollectiveRequest(**{**row, "ranks": tuple(row["ranks"])}) for row in rows
     }

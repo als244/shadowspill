@@ -105,6 +105,10 @@ class Program(Artifact):
             self, "executables", MappingProxyType(dict(self.executables))
         )
         object.__setattr__(self, "bindings", freeze(self.bindings))
+        if self.bindings.get("collective_tasks"):
+            from shadowspill.communication.task_costs import task_collectives
+
+            task_collectives(self)
 
     @property
     def digest(self) -> str:

@@ -15,7 +15,7 @@ def simulation_inputs(
     budgets: MemoryBudgets,
     communication: CommunicationInfo,
 ) -> tuple[ShadowSpillProgram, SimulationConfig]:
-    program = profiled._costed_ir()
+    program = profiled._costed_ir(communication)
     spec = profiled.program.parallelism
     world_size = 1 if spec is None else spec.world_size
     if len(program.devices) != 1:

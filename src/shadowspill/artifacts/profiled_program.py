@@ -1,19 +1,23 @@
-"""An immutable snapshot of structure and complete supplied task costs."""
+"""Compute profiles and memory evidence; communication is priced during planning."""
 
 from __future__ import annotations
 
 from collections.abc import Mapping
 from dataclasses import dataclass, replace
 from types import MappingProxyType
-from typing import Any, ClassVar
+from typing import TYPE_CHECKING, Any, ClassVar
 
-from shadowspill.ir import ShadowSpillProgram
+from shadowspill.communication.task_costs import task_collective_cost, task_collectives
+from shadowspill.ir import ShadowSpillProgram, TaskResourcePhase
 from shadowspill.ir import TaskProfile as CostedTaskProfile
 
 from ._values import digest, freeze, nonnegative_int, plain
 from .archive import Artifact
 from .profiles import Profiles, TaskProfile
 from .program import Program
+
+if TYPE_CHECKING:
+    from shadowspill.communication.info import CommunicationInfo
 
 
 @dataclass(frozen=True)
@@ -33,8 +37,19 @@ class ProfiledProgram(Artifact):
             raise ValueError(
                 "applied profiles must cover exactly the Program task forms"
             )
+        communication = task_collectives(self.program)
         for key, profile in self.task_profiles.items():
-            if profile.duration_seconds is None or profile.workspace_bytes is None:
+            if key in communication and (
+                profile.duration_seconds is not None
+                or profile.resource_phases
+                or profile.overlap_costs
+            ):
+                raise ValueError(
+                    f"{key}: collective timing belongs to CommunicationInfo"
+                )
+            if profile.workspace_bytes is None or (
+                profile.duration_seconds is None and key not in communication
+            ):
                 raise ValueError(f"incomplete applied profile: {key}")
         object.__setattr__(
             self, "task_profiles", MappingProxyType(dict(self.task_profiles))
@@ -66,14 +81,14 @@ class ProfiledProgram(Artifact):
                 result.append(key)
         return tuple(result)
 
-    def _costed_ir(self) -> ShadowSpillProgram:
-        """The single internal representation consumed by search/simulation."""
+    def _compute_profiles(self) -> tuple[CostedTaskProfile, ...]:
+        """Validate supplied timing, without assigning placeholder collective costs."""
         definitions = {item.profile_key: item for item in self.program.task_definitions}
         profiles = []
         for key, item in self.task_profiles.items():
-            assert (
-                item.duration_seconds is not None and item.workspace_bytes is not None
-            )
+            if item.duration_seconds is None:
+                continue  # Framework communication is priced only during planning.
+            assert item.workspace_bytes is not None
             profiles.append(
                 CostedTaskProfile(
                     key,
@@ -82,6 +97,37 @@ class ProfiledProgram(Artifact):
                     definitions[key].compatibility_digest,
                     item.resource_phases or (),
                     item.overlap_costs or (),
+                )
+            )
+        return tuple(profiles)
+
+    def _costed_ir(
+        self, communication_info: CommunicationInfo | None = None
+    ) -> ShadowSpillProgram:
+        """The single internal representation consumed by search/simulation."""
+        profiles = list(self._compute_profiles())
+        definitions = {item.profile_key: item for item in self.program.task_definitions}
+        for key, requests in task_collectives(self.program).items():
+            if communication_info is None:
+                raise ValueError("explicit collective tasks require CommunicationInfo")
+            cost = task_collective_cost(
+                requests, communication_info, self.program.setup
+            )
+            workspace = self.task_profiles[key].workspace_bytes
+            assert workspace is not None
+            profiles.append(
+                CostedTaskProfile(
+                    key,
+                    round(cost.duration_seconds * 1e9),
+                    workspace,
+                    definitions[key].compatibility_digest,
+                    # Framework reductions and sharded-weight gathers share an
+                    # ordered communication stream. Keep that contention visible.
+                    (
+                        TaskResourcePhase(
+                            round(cost.duration_seconds * 1e9), "sharded_collectives"
+                        ),
+                    ),
                 )
             )
         from shadowspill.planning.workspace import transient_output_workspace
