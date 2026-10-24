@@ -187,6 +187,15 @@ stages, tied weights, bounded initialization/export and repeated calls. Runtime
 tensor hyperparameters and per-call gradient accumulation also work. General
 provider qualification and normal caller migration remain in progress.
 
+Packaged tasks retain importable Python custom-op registration modules, their
+source digests and operator schemas. Measurement and execution restore/check
+these registrations before loading task code; the original model need not be
+imported. Native or dynamically created registrations, cross-module kernel
+overrides and provider-owned resources still require a provider initialization
+contract. They are not certified by this stateless-Python-op qualification.
+Likewise, the registration digest is not a fingerprint of all transitive native
+libraries or proof that a provider's internal autotuning/resources are portable.
+
 Implementation ownership:
 
 - `artifacts/`: immutable phase results, editable profile collections, archive codec.

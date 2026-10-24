@@ -20,6 +20,7 @@ from shadowspill.pytorch.compilation.inductor.compiler import (
     task_compiler_patches,
 )
 from shadowspill.pytorch.compilation.inductor.manifest import toolchain
+from shadowspill.pytorch.dependencies import operator_dependencies
 from shadowspill.task.manifest import ExecutableTaskManifest
 from shadowspill.task.storage import TaskStorageContract
 
@@ -31,6 +32,7 @@ class BuiltTask:
     manifest: ExecutableTaskManifest
     payload: bytes
     memory: dict[str, Any]
+    dependencies: tuple[dict[str, str], ...] = ()
 
 
 @dataclass
@@ -75,6 +77,7 @@ def _package(compiled: Any, contract: TaskStorageContract) -> BuiltTask | None:
 
 
 def compile_task(artifact: GraphArtifact) -> BuiltTask:
+    dependencies = operator_dependencies(artifact.graph_module)
     # Each forward/backward task is explicit; packaging must not save hidden
     # autograd state merely because its original arguments require gradients.
     inputs: tuple[Any, ...] = tuple(
@@ -109,4 +112,4 @@ def compile_task(artifact: GraphArtifact) -> BuiltTask:
                 result = invoke()
     if result is None:
         raise CompilationError("task build did not produce portable code and geometry")
-    return result
+    return BuiltTask(result.manifest, result.payload, result.memory, dependencies)
