@@ -231,6 +231,7 @@ class CScheduleAdmissionResult(ctypes.Structure):
         ("action_completion_deltas", ctypes.POINTER(ctypes.c_int64)),
         ("action_capacity", ctypes.c_uint32),
         ("reuse_predecessor_actions", ctypes.POINTER(ctypes.c_uint32)),
+        ("reuse_predecessor_tasks", ctypes.POINTER(ctypes.c_uint32)),
         ("reuse_successor_tasks", ctypes.POINTER(ctypes.c_uint32)),
         ("reuse_successor_actions", ctypes.POINTER(ctypes.c_uint32)),
         ("reuse_capacity", ctypes.c_uint32),

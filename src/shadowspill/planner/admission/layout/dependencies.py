@@ -58,7 +58,11 @@ _CTYPES = {
 
 #: What each result column is kept as. Task and action columns carry the
 #: library's 32-bit no-index marker, which read signed is `NONE`.
-_KEPT = {np.uint64: np.uint64, np.uint32: np.int32, np.uint8: np.uint8}
+_KEPT: dict[type[np.generic], type[np.generic]] = {
+    np.uint64: np.uint64,
+    np.uint32: np.int32,
+    np.uint8: np.uint8,
+}
 
 
 def _kept(values: np.ndarray, dtype: type[np.generic]) -> np.ndarray:
@@ -145,33 +149,43 @@ def recover_reuse_dependencies(
 def simulator_reuse_dependencies(
     dependencies: FixedLayoutReuses,
 ) -> tuple[MemoryReuseDependency, ...]:
-    """Project cross-lane eviction proofs into simulator dependencies."""
-
-    evictions = dependencies.predecessor_purpose == _EVICTION
-    predecessors = dependencies.predecessor_action[evictions]
-    if (predecessors == NONE).any():
-        raise ValueError("eviction reuse lacks its action identity")
+    """Preserve every cross-task reuse proof, including communication tasks."""
     task_ids = dependencies.task_ids
     edges: set[MemoryReuseDependency] = set()
-    for predecessor, action, task in zip(
-        predecessors.tolist(),
-        dependencies.successor_action[evictions].tolist(),
-        dependencies.successor_task[evictions].tolist(),
+    for purpose, predecessor_action, predecessor_task, action, task in zip(
+        dependencies.predecessor_purpose.tolist(),
+        dependencies.predecessor_action.tolist(),
+        dependencies.predecessor_task.tolist(),
+        dependencies.successor_action.tolist(),
+        dependencies.successor_task.tolist(),
         strict=True,
     ):
-        if action != NONE:
-            edges.add(MemoryReuseDependency(predecessor, successor_action_index=action))
-        elif task != NONE:
-            edges.add(
-                MemoryReuseDependency(predecessor, successor_task_id=task_ids[task])
-            )
-        else:  # pragma: no cover - validated by recovery
+        eviction = purpose == _EVICTION
+        if eviction and predecessor_action == NONE:
+            raise ValueError("eviction reuse lacks its action identity")
+        if not eviction and predecessor_task == NONE:
+            raise ValueError("task reuse lacks its task identity")
+        if action == NONE and task == NONE:
             raise ValueError("fixed-layout reuse lacks a successor")
+        if not eviction and action == NONE and predecessor_task == task:
+            # Intra-task reuse is governed by the task's allocation contract.
+            continue
+        edges.add(
+            MemoryReuseDependency(
+                predecessor_action_index=predecessor_action if eviction else None,
+                predecessor_task_id=None if eviction else task_ids[predecessor_task],
+                successor_action_index=None if action == NONE else action,
+                successor_task_id=task_ids[task] if action == NONE else None,
+            )
+        )
     return tuple(
         sorted(
             edges,
             key=lambda item: (
-                item.predecessor_action_index,
+                item.predecessor_task_id or "",
+                -1
+                if item.predecessor_action_index is None
+                else item.predecessor_action_index,
                 item.successor_task_id or "",
                 -1
                 if item.successor_action_index is None

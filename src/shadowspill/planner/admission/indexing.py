@@ -11,6 +11,7 @@ import ctypes
 from array import array
 from dataclasses import dataclass
 from itertools import repeat
+from typing import cast
 
 import numpy as np
 
@@ -163,7 +164,10 @@ def _compiled_tasks(
     from the facts' columns in the template's task order.
     """
 
-    cached = simulation.derived.get("admission_tasks")
+    cached = cast(
+        tuple[object, tuple[tuple[object, ...], int, int]] | None,
+        simulation.derived.get("admission_tasks"),
+    )
     if cached is not None and cached[0] is facts.tasks:
         return cached[1]
     columns = facts.task_columns
@@ -191,7 +195,7 @@ def _compiled_tasks(
         found = aliases[positions]
         if (found < 0).any():
             raise KeyError(columns.alias_ids[int(positions[np.argmax(found < 0)])])
-        return found
+        return cast(np.ndarray, found)
 
     workspace_offsets, workspace = _gather(columns.workspace_offsets, order)
     fresh_offsets, fresh = _gather(columns.fresh_offsets, order)
@@ -276,7 +280,7 @@ def _allocation_slots(
             raise ValueError(
                 "an allocation step names an ordinal its task never allocated"
             )
-        return allocations[by_key[at]]
+        return cast(np.ndarray, allocations[by_key[at]])
 
     source = np.arange(count, dtype=np.int64)
     reusing = np.flatnonzero(allocates & (reuses >= 0))
@@ -352,6 +356,7 @@ def evaluate_schedule_admission(
     action_completion = (ctypes.c_int64 * max(1, action_count))()
     reuse_capacity = action_count
     reuse_predecessors = (ctypes.c_uint32 * max(1, reuse_capacity))()
+    reuse_predecessor_tasks = (ctypes.c_uint32 * max(1, reuse_capacity))()
     reuse_tasks = (ctypes.c_uint32 * max(1, reuse_capacity))()
     reuse_actions = (ctypes.c_uint32 * max(1, reuse_capacity))()
     result = CScheduleAdmissionResult(
@@ -362,19 +367,33 @@ def evaluate_schedule_admission(
         action_completion_deltas=action_completion,
         action_capacity=action_count,
         reuse_predecessor_actions=reuse_predecessors,
+        reuse_predecessor_tasks=reuse_predecessor_tasks,
         reuse_successor_tasks=reuse_tasks,
         reuse_successor_actions=reuse_actions,
         reuse_capacity=reuse_capacity,
     )
     library = planner_api()
-    status = int(
-        library.shadowspill_evaluate_schedule_admission(
-            ctypes.byref(simulation.program),
-            ctypes.byref(admission.value),
-            ctypes.byref(indexed),
-            ctypes.byref(result),
+    while True:
+        status = int(
+            library.shadowspill_evaluate_schedule_admission(
+                ctypes.byref(simulation.program),
+                ctypes.byref(admission.value),
+                ctypes.byref(indexed),
+                ctypes.byref(result),
+            )
         )
-    )
+        if (
+            status != Status.INVALID_ARGUMENT
+            or result.reuse_count <= result.reuse_capacity
+        ):
+            break
+        result.reuse_capacity = result.reuse_count
+        arrays = [(ctypes.c_uint32 * result.reuse_capacity)() for _ in range(4)]
+        reuse_predecessors, reuse_predecessor_tasks, reuse_tasks, reuse_actions = arrays
+        result.reuse_predecessor_actions = reuse_predecessors
+        result.reuse_predecessor_tasks = reuse_predecessor_tasks
+        result.reuse_successor_tasks = reuse_tasks
+        result.reuse_successor_actions = reuse_actions
     if status != 0:
         if status == Status.NO_FEASIBLE_CANDIDATE:
             raise ValueError(
@@ -391,19 +410,26 @@ def evaluate_schedule_admission(
     dependencies: list[MemoryReuseDependency] = []
     for index in range(int(result.reuse_count)):
         predecessor = int(reuse_predecessors[index])
+        predecessor_task = int(reuse_predecessor_tasks[index])
         successor_task = int(reuse_tasks[index])
         successor_action = int(reuse_actions[index])
         if successor_task != NO_INDEX:
             dependencies.append(
                 MemoryReuseDependency(
-                    predecessor,
+                    None if predecessor == NO_INDEX else predecessor,
+                    predecessor_task_id=None
+                    if predecessor_task == NO_INDEX
+                    else simulation.task_ids[predecessor_task],
                     successor_task_id=simulation.task_ids[successor_task],
                 )
             )
         else:
             dependencies.append(
                 MemoryReuseDependency(
-                    predecessor,
+                    None if predecessor == NO_INDEX else predecessor,
+                    predecessor_task_id=None
+                    if predecessor_task == NO_INDEX
+                    else simulation.task_ids[predecessor_task],
                     successor_action_index=successor_action,
                 )
             )

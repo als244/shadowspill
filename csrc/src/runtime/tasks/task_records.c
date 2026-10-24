@@ -416,6 +416,11 @@ ShadowSpillTaskRecord *shadowspill_task_create_record(
     }
     record->plan_owner = plan;
     record->task_id = description->task_id;
+    if (pthread_mutex_init(&record->completion_lock, NULL) != 0) {
+        free(record);
+        return NULL;
+    }
+    record->completion_lock_initialized = 1U;
     if (copy_task_scalars(record, description, boundary_kind) != 0 ||
         allocate_task_arrays(record) != 0 ||
         copy_allocation_contract(record, description) != 0 ||

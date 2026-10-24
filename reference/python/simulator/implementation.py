@@ -19,6 +19,7 @@ from shadowspill.ir import (
 from shadowspill.simulator.model import (
     CapacityViolation,
     DeviceMemoryPeak,
+    MemoryReuseDependency,
     MemorySnapshot,
     SimulationAdmission,
     SimulationConfig,
@@ -149,21 +150,23 @@ class _Simulator:
             item.action_index: item
             for item in (() if admission is None else admission.action_deltas)
         }
-        self.task_reuse_dependencies: dict[str, tuple[int, ...]] = {}
-        self.action_reuse_dependencies: dict[int, tuple[int, ...]] = {}
+        self.task_reuse_dependencies: dict[str, tuple[MemoryReuseDependency, ...]] = {}
+        self.action_reuse_dependencies: dict[
+            int, tuple[MemoryReuseDependency, ...]
+        ] = {}
         if admission is not None:
-            task_dependencies: dict[str, list[int]] = {}
-            action_dependencies: dict[int, list[int]] = {}
+            task_dependencies: dict[str, list[MemoryReuseDependency]] = {}
+            action_dependencies: dict[int, list[MemoryReuseDependency]] = {}
             for dependency in admission.reuse_dependencies:
                 if dependency.successor_task_id is not None:
                     task_dependencies.setdefault(
                         dependency.successor_task_id, []
-                    ).append(dependency.predecessor_action_index)
+                    ).append(dependency)
                 else:
                     assert dependency.successor_action_index is not None
                     action_dependencies.setdefault(
                         dependency.successor_action_index, []
-                    ).append(dependency.predecessor_action_index)
+                    ).append(dependency)
             self.task_reuse_dependencies = {
                 key: tuple(values) for key, values in task_dependencies.items()
             }
@@ -245,14 +248,23 @@ class _Simulator:
             )
         for dependency in self.admission.reuse_dependencies:
             predecessor = dependency.predecessor_action_index
-            if predecessor >= action_count:
+            if predecessor is not None and predecessor >= action_count:
                 raise ValueError(
                     f"memory-reuse predecessor action {predecessor} is unknown"
                 )
-            if self.schedule.actions[predecessor].kind is not MemoryActionKind.EVICT:
+            if (
+                predecessor is not None
+                and self.schedule.actions[predecessor].kind
+                is not MemoryActionKind.EVICT
+            ):
                 raise ValueError(
                     f"memory-reuse predecessor action {predecessor} is not an eviction"
                 )
+            if (
+                dependency.predecessor_task_id is not None
+                and dependency.predecessor_task_id not in self.task_by_id
+            ):
+                raise ValueError("memory-reuse predecessor task is unknown")
             successor_task = dependency.successor_task_id
             if successor_task is not None and successor_task not in self.task_by_id:
                 raise ValueError(
@@ -376,24 +388,50 @@ class _Simulator:
 
     def _task_start_delta(self, task: TaskSpec, default: int) -> int:
         admitted = self.task_physical_deltas.get(task.task_id)
-        return default if admitted is None else admitted.start_bytes
+        return (
+            self._unlisted_delta(default) if admitted is None else admitted.start_bytes
+        )
 
     def _task_completion_delta(self, task: TaskSpec, default: int) -> int:
         admitted = self.task_physical_deltas.get(task.task_id)
-        return default if admitted is None else admitted.completion_bytes
+        return (
+            self._unlisted_delta(default)
+            if admitted is None
+            else admitted.completion_bytes
+        )
 
     def _action_trigger_delta(self, action_index: int, default: int) -> int:
         admitted = self.action_physical_deltas.get(action_index)
-        return default if admitted is None else admitted.trigger_bytes
+        return (
+            self._unlisted_delta(default)
+            if admitted is None
+            else admitted.trigger_bytes
+        )
 
     def _action_completion_delta(self, action_index: int, default: int) -> int:
         admitted = self.action_physical_deltas.get(action_index)
-        return default if admitted is None else admitted.completion_bytes
+        return (
+            self._unlisted_delta(default)
+            if admitted is None
+            else admitted.completion_bytes
+        )
 
-    def _reuse_dependencies_complete(self, predecessors: tuple[int, ...]) -> bool:
+    def _unlisted_delta(self, default: int) -> int:
+        if (
+            self.admission is not None
+            and self.admission.unlisted_delta_bytes is not None
+        ):
+            return self.admission.unlisted_delta_bytes
+        return default
+
+    def _reuse_dependencies_complete(
+        self, predecessors: tuple[MemoryReuseDependency, ...]
+    ) -> bool:
         return all(
-            predecessor in self.completed_transfer_actions
-            for predecessor in predecessors
+            dependency.predecessor_task_id in self.completed
+            if dependency.predecessor_task_id is not None
+            else dependency.predecessor_action_index in self.completed_transfer_actions
+            for dependency in predecessors
         )
 
     def _resource_key(self, task: TaskSpec) -> tuple[str, ResourceKind, int]:

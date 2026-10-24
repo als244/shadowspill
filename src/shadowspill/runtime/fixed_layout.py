@@ -14,6 +14,7 @@ class RuntimePlacementKind(IntEnum):
     ACTION_DESTINATION = 2
     DYNAMIC_TASK_ALLOCATION = 3
     DYNAMIC_ACTION_DESTINATION = 4
+    TASK_START = 5  # Dependency target only; never an allocation placement.
 
 
 @dataclass(frozen=True, slots=True)
@@ -31,7 +32,7 @@ class RuntimeFixedPlacement:
 
 @dataclass(frozen=True, slots=True)
 class RuntimeFixedDependency:
-    """One eviction-completion proof required by a shared fixed range."""
+    """Completion dependency; NO_ID action ordinal names the task's completion."""
 
     predecessor_task_id: int
     predecessor_action_ordinal: int

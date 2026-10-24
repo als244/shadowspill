@@ -780,7 +780,7 @@ ShadowSpillStatus shadowspill_after_task_record(
         ? count_task_retirements_locked(runtime, record->task_id)
         : 0U;
     if (status == SHADOWSPILL_STATUS_OK &&
-        (record->action_count != 0U || retirement_count != 0U)) {
+        (record->action_count != 0U || retirement_count != 0U || record->completion_required)) {
         status = record_task_completion_event(
             runtime, compute_stream, &task_completion_event
         );
@@ -788,6 +788,9 @@ ShadowSpillStatus shadowspill_after_task_record(
             status = attach_task_retirements_locked(
                 runtime, record->task_id, task_completion_event
             );
+        }
+        if (status == SHADOWSPILL_STATUS_OK) {
+            status = shadowspill_task_publish_completion(record, task_completion_event);
         }
         if (status == SHADOWSPILL_STATUS_OK) {
             status = instantiate_actions_locked(

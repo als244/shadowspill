@@ -31,6 +31,8 @@ int main(void) {
     REPORT(ShadowSpillAllocationEvent);
     REPORT(ShadowSpillTraceConfig);
     REPORT(ShadowSpillSimulationDevice);
+    REPORT(ShadowSpillSimulationProgram);
+    REPORT(ShadowSpillScheduleAdmissionResult);
     REPORT(ShadowSpillTransferRouteKey);
     REPORT(ShadowSpillTransferCalibrationConfig);
     REPORT(ShadowSpillTransferProfile);

@@ -89,6 +89,7 @@ class CProgram(ctypes.Structure):
         ("final_aliases", ctypes.POINTER(ctypes.c_uint32)),
         ("final_locations", ctypes.POINTER(ctypes.c_uint8)),
         ("reuse_predecessor_actions", ctypes.POINTER(ctypes.c_uint32)),
+        ("reuse_predecessor_tasks", ctypes.POINTER(ctypes.c_uint32)),
         ("reuse_successor_tasks", ctypes.POINTER(ctypes.c_uint32)),
         ("reuse_successor_actions", ctypes.POINTER(ctypes.c_uint32)),
         ("alias_spill_size_bytes", ctypes.POINTER(ctypes.c_uint64)),

@@ -339,6 +339,7 @@ def index_simulation_template(
         final_aliases=final_aliases,
         final_locations=final_locations,
         reuse_predecessor_actions=empty_u32,
+        reuse_predecessor_tasks=empty_u32,
         reuse_successor_tasks=empty_u32,
         reuse_successor_actions=empty_u32,
         alias_spill_size_bytes=arena.u64(

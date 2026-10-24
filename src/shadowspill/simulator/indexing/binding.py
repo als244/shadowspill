@@ -8,7 +8,6 @@ from dataclasses import dataclass
 import numpy as np
 
 from shadowspill.ir import (
-    MemoryActionKind,
     MemorySchedule,
     ResourceKind,
     ShadowSpillProgram,
@@ -22,7 +21,6 @@ from shadowspill.ir.indexing import (
 )
 
 from ..capi import (
-    NO_INDEX,
     CDevice,
     CProgram,
 )
@@ -31,6 +29,7 @@ from ..model import (
     SimulationConfig,
 )
 from .arrays import _i64_array, _u8_array, _u32_array, _u64_array
+from .reuse import reuse_arrays
 from .template import IndexedSimulationTemplate, index_simulation_template
 
 #: The binding's marker for a delta the admission leaves to the simulator.
@@ -73,6 +72,7 @@ class _AdmissionArrays:
     action_trigger_deltas: ctypes.Array[ctypes.c_int64]
     action_completion_deltas: ctypes.Array[ctypes.c_int64]
     reuse_predecessors: ctypes.Array[ctypes.c_uint32]
+    reuse_predecessor_tasks: ctypes.Array[ctypes.c_uint32]
     reuse_successor_tasks: ctypes.Array[ctypes.c_uint32]
     reuse_successor_actions: ctypes.Array[ctypes.c_uint32]
     devices: ctypes.Array[CDevice] | None
@@ -128,61 +128,10 @@ def _no_admission() -> _AdmissionArrays:
         action_trigger_deltas=_i64_array(()),
         action_completion_deltas=_i64_array(()),
         reuse_predecessors=_u32_array(()),
+        reuse_predecessor_tasks=_u32_array(()),
         reuse_successor_tasks=_u32_array(()),
         reuse_successor_actions=_u32_array(()),
         devices=None,
-    )
-
-
-def _reuse_arrays(
-    template: IndexedSimulationTemplate,
-    schedule: MemorySchedule,
-    admission: SimulationAdmission,
-) -> tuple[
-    ctypes.Array[ctypes.c_uint32],
-    ctypes.Array[ctypes.c_uint32],
-    ctypes.Array[ctypes.c_uint32],
-]:
-    """Index each memory-reuse edge: one evict, and the task or action that waits."""
-
-    predecessor_actions: list[int] = []
-    successor_tasks: list[int] = []
-    successor_actions: list[int] = []
-    for dependency in admission.reuse_dependencies:
-        predecessor = dependency.predecessor_action_index
-        if predecessor >= len(schedule.actions):
-            raise ValueError(
-                f"memory-reuse predecessor action is unknown: {predecessor}"
-            )
-        if schedule.actions[predecessor].kind is not MemoryActionKind.EVICT:
-            raise ValueError(
-                f"memory-reuse predecessor must be an EVICT action: {predecessor}"
-            )
-        predecessor_actions.append(predecessor)
-        if dependency.successor_task_id is None:
-            assert dependency.successor_action_index is not None
-            if dependency.successor_action_index >= len(schedule.actions):
-                raise ValueError(
-                    "memory-reuse successor action is unknown: "
-                    f"{dependency.successor_action_index}"
-                )
-            successor_tasks.append(NO_INDEX)
-            successor_actions.append(dependency.successor_action_index)
-        else:
-            try:
-                successor_tasks.append(
-                    template.task_index[dependency.successor_task_id]
-                )
-            except KeyError as exc:
-                raise ValueError(
-                    "memory-reuse successor task is unknown: "
-                    f"{dependency.successor_task_id!r}"
-                ) from exc
-            successor_actions.append(NO_INDEX)
-    return (
-        _u32_array(tuple(predecessor_actions)),
-        _u32_array(tuple(successor_tasks)),
-        _u32_array(tuple(successor_actions)),
     )
 
 
@@ -220,9 +169,12 @@ def _admission_arrays(
             f"devices; expected {sorted(template.device_ids)}, "
             f"got {sorted(physical_capacity)}"
         )
-    reuse_predecessors, reuse_successor_tasks, reuse_successor_actions = _reuse_arrays(
-        template, schedule, admission
-    )
+    (
+        reuse_predecessors,
+        reuse_predecessor_tasks,
+        reuse_successor_tasks,
+        reuse_successor_actions,
+    ) = reuse_arrays(template, schedule, admission)
     # Every entry starts at the default for what the admission leaves out, and
     # the entries it lists are written over it.
     unlisted = (
@@ -238,9 +190,9 @@ def _admission_arrays(
         task_completion[index] = item.completion_bytes
     action_trigger = np.full(len(schedule.actions), unlisted, dtype=np.int64)
     action_completion = action_trigger.copy()
-    for index, item in action_deltas.items():
-        action_trigger[index] = item.trigger_bytes
-        action_completion[index] = item.completion_bytes
+    for index, delta in action_deltas.items():
+        action_trigger[index] = delta.trigger_bytes
+        action_completion[index] = delta.completion_bytes
     return _AdmissionArrays(
         initial_physical=_u64_array(
             tuple(initial_by_device[item] for item in template.device_ids)
@@ -250,6 +202,7 @@ def _admission_arrays(
         action_trigger_deltas=_i64_array(action_trigger),
         action_completion_deltas=_i64_array(action_completion),
         reuse_predecessors=reuse_predecessors,
+        reuse_predecessor_tasks=reuse_predecessor_tasks,
         reuse_successor_tasks=reuse_successor_tasks,
         reuse_successor_actions=reuse_successor_actions,
         devices=(CDevice * len(template.device_ids))(
@@ -323,6 +276,7 @@ def _bind_schedule(
     c_program.task_start_physical_deltas = physical.task_start_deltas
     c_program.task_completion_physical_deltas = physical.task_completion_deltas
     c_program.reuse_predecessor_actions = physical.reuse_predecessors
+    c_program.reuse_predecessor_tasks = physical.reuse_predecessor_tasks
     c_program.reuse_successor_tasks = physical.reuse_successor_tasks
     c_program.reuse_successor_actions = physical.reuse_successor_actions
     return _Projection(

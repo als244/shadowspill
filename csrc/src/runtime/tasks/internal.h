@@ -80,6 +80,11 @@ struct ShadowSpillTaskRecord {
     _Atomic uint64_t submission_invocation;
     _Atomic uint64_t acknowledgement_sequence;
     _Atomic uint8_t invocation_active;
+    pthread_mutex_t completion_lock;
+    ShadowSpillEventLease *completion_event;
+    uint64_t completion_invocation;
+    uint8_t completion_lock_initialized;
+    uint8_t completion_required;
     uint8_t boundary_kind;
     struct ShadowSpillTaskRecord *hash_next;
     struct ShadowSpillTaskRecord *ownership_next;
@@ -235,6 +240,14 @@ ShadowSpillTaskRecord *shadowspill_task_find_unlocked(
 );
 
 void shadowspill_task_destroy_record(ShadowSpillTaskRecord *record);
+
+ShadowSpillStatus shadowspill_task_publish_completion(
+    const ShadowSpillTaskRecord *record, ShadowSpillEventLease *event
+);
+
+int shadowspill_task_snapshot_completion(
+    ShadowSpillTaskRecord *record, uint64_t invocation, ShadowSpillEventLease **event
+);
 
 int shadowspill_task_compare_release_bindings(const void *left, const void *right);
 

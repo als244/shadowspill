@@ -93,7 +93,8 @@ shadowspill_abort_task_handle(
  * Attribute allocator activity to one non-execution scope. This is used by
  * structural profiling and other isolated measurements that need causal
  * retirement fences without pretending to execute an admitted task. The end
- * call records a completion event only when the scope retired allocations.
+ * call records completion when the scope retired allocations or another task
+ * or allocation depends on this task's completion.
  *
  * `plan_id` names the plan the measurement is for. A scope deliberately runs
  * outside any task, so there is no task here for the runtime to read a plan

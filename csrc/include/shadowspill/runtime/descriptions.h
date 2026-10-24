@@ -237,6 +237,8 @@ typedef enum ShadowSpillFixedPlacementKind {
     SHADOWSPILL_FIXED_ACTION_DESTINATION = 2,
     SHADOWSPILL_DYNAMIC_TASK_ALLOCATION = 3,
     SHADOWSPILL_DYNAMIC_ACTION_DESTINATION = 4,
+    /* Dependency target only: not an allocation placement. */
+    SHADOWSPILL_FIXED_TASK_START = 5,
 } ShadowSpillFixedPlacementKind;
 
 /*
@@ -258,9 +260,9 @@ typedef struct ShadowSpillFixedPlacementDescription {
 } ShadowSpillFixedPlacementDescription;
 
 /*
- * One cross-lane address-reuse proof. The predecessor must be an admitted
- * eviction action. The successor names a fixed task allocation or fixed fetch
- * destination using the same task-local identity as its placement.
+ * One completion proof. predecessor_action_ordinal=NO_ID names completion of
+ * the task itself; otherwise it names an admitted eviction action. A successor
+ * names a fixed allocation/destination, or TASK_START with successor_ordinal=NO_ID.
  */
 typedef struct ShadowSpillFixedDependencyDescription {
     uint64_t predecessor_task_id;

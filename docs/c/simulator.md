@@ -29,9 +29,16 @@ When `use_admission_accounting` is set, physical deltas replace synthetic
 workspace accounting. Fetch destination bytes are charged at action trigger
 and released or published at the declared completion transition.
 
+Memory-reuse edges name exactly one predecessor: `reuse_predecessor_actions`
+for eviction completion, or `reuse_predecessor_tasks` for task completion.
+The other entry is `SHADOWSPILL_SIMULATOR_NO_INDEX`. A null task-predecessor
+array means every edge names an eviction. Successors can be tasks or fetch
+actions. A slow communication task therefore retains its physical ranges until
+completion, even when later computation on a different lane finishes first.
+
 ### Task phases and measured overlap
 
-ABI 3 adds optional timing tables. Empty tables preserve isolated task timing.
+Optional timing tables preserve isolated task timing when empty.
 `task_phase_offsets[task:task+2]` selects sequential
 `ShadowSpillTaskResourcePhase` records. Their durations must sum to
 `task_runtime_ns[task]`; an empty row treats the entire task as computation.

@@ -293,7 +293,13 @@ runtime's pool, route, event, and object owners:
   `ShadowSpillFixedDependencyDescription` proofs behind every reused address --
   and reserves the single parent slice.
   `shadowspill_plan_seal_fixed_layout()` resolves the task and action
-  identities after task admission and makes the layout immutable. Allocation
+  identities after task admission and makes the layout immutable. A dependency
+  with `predecessor_action_ordinal=SHADOWSPILL_RUNTIME_NO_ID` names task
+  completion; other values name eviction completion. `SHADOWSPILL_FIXED_TASK_START`
+  is a dependency target, with no successor ordinal or placement, for tasks
+  consuming results from another stream. Each referenced producer retains one
+  completion event per invocation; stream waits never substitute a previous
+  invocation's event and never require a device-wide synchronization. Allocation
   callbacks then validate task, ordinal, size and ownership before returning
   the admitted offset. See [physical admission and offset
   handling](../architecture/physical-admission.md) for the layout certificate

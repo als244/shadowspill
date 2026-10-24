@@ -135,6 +135,9 @@ typedef struct ShadowSpillSimulationProgram {
     const uint32_t *final_aliases;
     const uint8_t *final_locations;
     const uint32_t *reuse_predecessor_actions;
+    /* Exactly one task/action predecessor per edge. NULL means all action
+       predecessors; otherwise absent identities use SIMULATOR_NO_INDEX. */
+    const uint32_t *reuse_predecessor_tasks;
     const uint32_t *reuse_successor_tasks;
     const uint32_t *reuse_successor_actions;
     /* Optional location-specific sizes and ordered transfer recipes. Empty

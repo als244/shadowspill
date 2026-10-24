@@ -79,6 +79,14 @@ void shadowspill_task_destroy_record(ShadowSpillTaskRecord *record) {
     if (record == NULL) {
         return;
     }
+    if (record->completion_event != NULL) {
+        (void)shadowspill_event_lease_release(
+            record->plan_owner->runtime, record->completion_event
+        );
+    }
+    if (record->completion_lock_initialized) {
+        pthread_mutex_destroy(&record->completion_lock);
+    }
     for (uint32_t index = 0U; index < record->input_count; ++index) {
         shadowspill_object_release(record->inputs[index]);
     }

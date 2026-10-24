@@ -160,11 +160,13 @@ static void free_action_buffers(
     free(workspace->action_trigger_deltas);
     free(workspace->action_completion_deltas);
     free(workspace->reuse_predecessor_actions);
+    free(workspace->reuse_predecessor_tasks);
     free(workspace->reuse_successor_tasks);
     free(workspace->reuse_successor_actions);
     workspace->action_trigger_deltas = NULL;
     workspace->action_completion_deltas = NULL;
     workspace->reuse_predecessor_actions = NULL;
+    workspace->reuse_predecessor_tasks = NULL;
     workspace->reuse_successor_tasks = NULL;
     workspace->reuse_successor_actions = NULL;
     workspace->action_capacity = 0U;
@@ -298,6 +300,14 @@ static int reserve_lease_buffers(
          sizeof(*workspace->allocation_offsets), operation_count, 0},
         {(void **)&workspace->dependencies, sizeof(*workspace->dependencies),
          reuse_dependency_count, 1},
+        {(void **)&workspace->reuse_predecessor_actions,
+         sizeof(*workspace->reuse_predecessor_actions), reuse_dependency_count, 1},
+        {(void **)&workspace->reuse_predecessor_tasks,
+         sizeof(*workspace->reuse_predecessor_tasks), reuse_dependency_count, 1},
+        {(void **)&workspace->reuse_successor_tasks,
+         sizeof(*workspace->reuse_successor_tasks), reuse_dependency_count, 1},
+        {(void **)&workspace->reuse_successor_actions,
+         sizeof(*workspace->reuse_successor_actions), reuse_dependency_count, 1},
         {(void **)&workspace->live_leases, sizeof(*workspace->live_leases),
          lease_count, 1},
         {(void **)&workspace->lease_aliases, sizeof(*workspace->lease_aliases),
@@ -351,12 +361,6 @@ static int reserve_action_buffers(
          sizeof(*workspace->action_trigger_deltas), action_count, 1},
         {(void **)&workspace->action_completion_deltas,
          sizeof(*workspace->action_completion_deltas), action_count, 1},
-        {(void **)&workspace->reuse_predecessor_actions,
-         sizeof(*workspace->reuse_predecessor_actions), action_count, 1},
-        {(void **)&workspace->reuse_successor_tasks,
-         sizeof(*workspace->reuse_successor_tasks), action_count, 1},
-        {(void **)&workspace->reuse_successor_actions,
-         sizeof(*workspace->reuse_successor_actions), action_count, 1},
     };
     if (reserve_buffers(specs, sizeof(specs) / sizeof(*specs)) != 0) {
         return -1;

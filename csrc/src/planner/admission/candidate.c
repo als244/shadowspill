@@ -134,16 +134,19 @@ static int project_result(
             if (predecessor_task >= tasks || successor_task < predecessor_task) {
                 return -1;
             }
-            continue;
+            if (successor_action == UINT32_MAX && successor_task == predecessor_task) {
+                continue;
+            }
         }
-        if (predecessor_action >= schedule->action_count ||
-            schedule->action_kinds[predecessor_action] !=
-                SHADOWSPILL_MEMORY_EVICT ||
-            workspace->projected_reuse_count >= workspace->action_capacity) {
+        if ((predecessor_action != UINT32_MAX &&
+             (predecessor_action >= schedule->action_count ||
+              schedule->action_kinds[predecessor_action] != SHADOWSPILL_MEMORY_EVICT)) ||
+            workspace->projected_reuse_count >= workspace->reuse_dependency_capacity) {
             return -1;
         }
         const uint32_t projected = workspace->projected_reuse_count++;
         workspace->reuse_predecessor_actions[projected] = predecessor_action;
+        workspace->reuse_predecessor_tasks[projected] = predecessor_task;
         workspace->reuse_successor_tasks[projected] =
             successor_action == UINT32_MAX
                 ? successor_task : SHADOWSPILL_SIMULATOR_NO_INDEX;
@@ -215,6 +218,7 @@ ShadowSpillStatus shadowspill_admit_indexed_schedule(
         workspace->action_completion_deltas;
     program->reuse_dependency_count = workspace->projected_reuse_count;
     program->reuse_predecessor_actions = workspace->reuse_predecessor_actions;
+    program->reuse_predecessor_tasks = workspace->reuse_predecessor_tasks;
     program->reuse_successor_tasks = workspace->reuse_successor_tasks;
     program->reuse_successor_actions = workspace->reuse_successor_actions;
     workspace->decision_digest = replay_result->decision_digest;
@@ -240,6 +244,7 @@ ShadowSpillStatus shadowspill_evaluate_schedule_admission(
     int64_t *action_completion = result->action_completion_deltas;
     const uint32_t action_capacity = result->action_capacity;
     uint32_t *reuse_predecessors = result->reuse_predecessor_actions;
+    uint32_t *reuse_predecessor_tasks = result->reuse_predecessor_tasks;
     uint32_t *reuse_tasks = result->reuse_successor_tasks;
     uint32_t *reuse_actions = result->reuse_successor_actions;
     const uint32_t reuse_capacity = result->reuse_capacity;
@@ -252,6 +257,7 @@ ShadowSpillStatus shadowspill_evaluate_schedule_admission(
         .action_completion_deltas = action_completion,
         .action_capacity = action_capacity,
         .reuse_predecessor_actions = reuse_predecessors,
+        .reuse_predecessor_tasks = reuse_predecessor_tasks,
         .reuse_successor_tasks = reuse_tasks,
         .reuse_successor_actions = reuse_actions,
         .reuse_capacity = reuse_capacity,
@@ -296,7 +302,11 @@ ShadowSpillStatus shadowspill_evaluate_schedule_admission(
     result->error_largest_free_range_bytes =
         replay.error_largest_free_range_bytes;
     if (status == SHADOWSPILL_STATUS_OK) {
-        if (workspace.projected_reuse_count > reuse_capacity) {
+        result->reuse_count = workspace.projected_reuse_count;
+        if (workspace.projected_reuse_count > reuse_capacity ||
+            (workspace.projected_reuse_count != 0U &&
+             (reuse_predecessors == NULL || reuse_predecessor_tasks == NULL ||
+              reuse_tasks == NULL || reuse_actions == NULL))) {
             shadowspill_candidate_admission_workspace_destroy(&workspace);
             return SHADOWSPILL_STATUS_INVALID_ARGUMENT;
         }
@@ -327,6 +337,10 @@ ShadowSpillStatus shadowspill_evaluate_schedule_admission(
             );
         }
         if (result->reuse_count != 0U) {
+            memcpy(
+                reuse_predecessor_tasks, workspace.reuse_predecessor_tasks,
+                (size_t)result->reuse_count * sizeof(*reuse_predecessor_tasks)
+            );
             memcpy(
                 reuse_predecessors,
                 workspace.reuse_predecessor_actions,

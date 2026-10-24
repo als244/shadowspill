@@ -129,7 +129,10 @@ answer. Input pointers are borrowed; output structs are the caller's.
   allocation, reservation and fragmentation peaks, the physical byte delta
   each task and action causes, and the reuse dependencies the schedule
   implies. Every array on the `ShadowSpillScheduleAdmissionResult` is
-  caller-owned.
+  caller-owned. Reuse results retain both task and eviction predecessors, with
+  the unused identity set to `NO_INDEX`. If the reuse arrays are too small,
+  `reuse_count` reports the required size with `INVALID_ARGUMENT`; callers can
+  resize and repeat the evaluation.
 - `shadowspill_admission_operation_bounds()` reports how many operations and
   leases a schedule will produce, so the caller can size the arrays the
   builder fills. It is pure arithmetic over the facts and schedule and

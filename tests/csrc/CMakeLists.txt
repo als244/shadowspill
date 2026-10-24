@@ -164,6 +164,12 @@ target_link_libraries(
 add_test(NAME shadowspill_fixed_layout_canary COMMAND shadowspill_fixed_layout_canary)
 set_tests_properties(shadowspill_fixed_layout_canary PROPERTIES TIMEOUT 10)
 
+add_executable(shadowspill_task_completion_canary runtime/task_completion_canary.c)
+target_link_libraries(shadowspill_task_completion_canary PRIVATE
+  shadowspill shadowspill_backend_mock shadowspill_build_options Threads::Threads)
+add_test(NAME shadowspill_task_completion_canary COMMAND shadowspill_task_completion_canary)
+set_tests_properties(shadowspill_task_completion_canary PROPERTIES TIMEOUT 10)
+
 add_executable(
   shadowspill_admission_replay_canary
   runtime/admission_replay_canary.c

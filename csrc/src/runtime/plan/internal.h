@@ -20,6 +20,7 @@
 typedef struct ShadowSpillFixedRuntimeDependency {
     ShadowSpillFixedDependencyDescription description;
     struct ShadowSpillQueuedAction *predecessor_action;
+    ShadowSpillTaskRecord *predecessor_task;
 } ShadowSpillFixedRuntimeDependency;
 
 typedef struct ShadowSpillFixedLayoutState {

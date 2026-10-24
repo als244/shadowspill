@@ -39,19 +39,27 @@ ShadowSpillStatus shadowspill_before_task_handle(
         record->input_count,
         atomic_load_explicit(&runtime->actions.count, memory_order_acquire)
     );
-    ShadowSpillStatus status = shadowspill_acquire_object_bindings(
-        runtime,
-        record->plan_owner,
-        record->task_id,
-        record->unique_inputs,
-        record->unique_input_count,
-        record->input_unique_indices,
-        record->unique_first_positions,
-        record->input_count,
-        compute_stream,
-        record->input_bindings,
-        record->input_count
+    ShadowSpillStatus status = shadowspill_fixed_layout_insert_dependency_waits(
+        record->plan_owner, SHADOWSPILL_FIXED_TASK_START, record->task_id,
+        SHADOWSPILL_RUNTIME_NO_ID,
+        atomic_load_explicit(&record->invocation_count, memory_order_acquire) + 1U,
+        compute_stream
     );
+    if (status == SHADOWSPILL_STATUS_OK) {
+        status = shadowspill_acquire_object_bindings(
+            runtime,
+            record->plan_owner,
+            record->task_id,
+            record->unique_inputs,
+            record->unique_input_count,
+            record->input_unique_indices,
+            record->unique_first_positions,
+            record->input_count,
+            compute_stream,
+            record->input_bindings,
+            record->input_count
+        );
+    }
     if (status == SHADOWSPILL_STATUS_OK &&
         shadowspill_enter_claimed_task_scope(runtime, record) != 0) {
         status = SHADOWSPILL_STATUS_INVALID_STATE;

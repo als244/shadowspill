@@ -141,11 +141,12 @@ static int valid_dependency(
     const ShadowSpillFixedDependencyDescription *dependency
 ) {
     return dependency->predecessor_task_id != SHADOWSPILL_RUNTIME_NO_ID &&
-        dependency->predecessor_action_ordinal != SHADOWSPILL_RUNTIME_NO_ID &&
         dependency->successor_task_id != SHADOWSPILL_RUNTIME_NO_ID &&
-        dependency->successor_ordinal != SHADOWSPILL_RUNTIME_NO_ID &&
-        (dependency->successor_kind == SHADOWSPILL_FIXED_TASK_ALLOCATION ||
-         dependency->successor_kind == SHADOWSPILL_FIXED_ACTION_DESTINATION);
+        ((dependency->successor_kind == SHADOWSPILL_FIXED_TASK_START &&
+          dependency->successor_ordinal == SHADOWSPILL_RUNTIME_NO_ID) ||
+         (dependency->successor_ordinal != SHADOWSPILL_RUNTIME_NO_ID &&
+          (dependency->successor_kind == SHADOWSPILL_FIXED_TASK_ALLOCATION ||
+           dependency->successor_kind == SHADOWSPILL_FIXED_ACTION_DESTINATION)));
 }
 
 static void clear_metadata(ShadowSpillFixedLayoutState *layout) {
@@ -471,6 +472,9 @@ static int snapshot_dependency_event(
     ShadowSpillEventLease **event
 ) {
     *event = NULL;
+    if (dependency->predecessor_task != NULL) {
+        return shadowspill_task_snapshot_completion(dependency->predecessor_task, invocation, event);
+    }
     ShadowSpillQueuedAction *action = dependency->predecessor_action;
     if (action == NULL || action->object == NULL || invocation == 0U) {
         return -1;
@@ -957,14 +961,28 @@ static ShadowSpillStatus resolve_dependency(
         shadowspill_task_table_acquire(
             &plan->tasks, item->predecessor_task_id
         );
-    if (predecessor == NULL ||
-        item->predecessor_action_ordinal >= predecessor->action_count ||
+    if (predecessor == NULL) {
+        return SHADOWSPILL_STATUS_PLAN_VIOLATION;
+    }
+    if (item->predecessor_action_ordinal == SHADOWSPILL_RUNTIME_NO_ID) {
+        if (item->predecessor_task_id == item->successor_task_id &&
+            item->successor_kind != SHADOWSPILL_FIXED_ACTION_DESTINATION) {
+            return SHADOWSPILL_STATUS_PLAN_VIOLATION;
+        }
+        dependency->predecessor_task = predecessor;
+        predecessor->completion_required = 1U;
+    } else if (item->predecessor_action_ordinal >= predecessor->action_count ||
         predecessor->actions[item->predecessor_action_ordinal].kind !=
             SHADOWSPILL_RUNTIME_EVICT) {
         return SHADOWSPILL_STATUS_PLAN_VIOLATION;
+    } else {
+        dependency->predecessor_action =
+            &predecessor->queued_actions[item->predecessor_action_ordinal];
     }
-    dependency->predecessor_action =
-        &predecessor->queued_actions[item->predecessor_action_ordinal];
+    if (item->successor_kind == SHADOWSPILL_FIXED_TASK_START) {
+        return shadowspill_task_table_acquire(&plan->tasks, item->successor_task_id) == NULL
+            ? SHADOWSPILL_STATUS_PLAN_VIOLATION : SHADOWSPILL_STATUS_OK;
+    }
     uint64_t successor_object_id = SHADOWSPILL_RUNTIME_NO_ID;
     if (item->successor_kind == SHADOWSPILL_FIXED_ACTION_DESTINATION) {
         ShadowSpillTaskRecord *successor_record =

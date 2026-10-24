@@ -112,6 +112,7 @@ add_library(
   src/runtime/sync/stream_interval.c
   src/runtime/sync/timing.c
   src/runtime/tasks/task_boundaries.c
+  src/runtime/tasks/task_completion.c
   src/runtime/tasks/task_scope.c
   src/runtime/tasks/task_table.c
   src/runtime/tasks/task_records.c

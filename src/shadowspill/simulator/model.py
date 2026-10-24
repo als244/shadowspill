@@ -143,14 +143,36 @@ class ActionPhysicalDelta:
 
 @dataclass(frozen=True, slots=True)
 class MemoryReuseDependency:
-    """Require one eviction action to complete before a successor may run."""
+    """Require task or eviction completion before reusing a physical byte range."""
 
-    predecessor_action_index: int
+    predecessor_action_index: int | None = None
     successor_task_id: str | None = None
     successor_action_index: int | None = None
+    predecessor_task_id: str | None = None
 
     def __post_init__(self) -> None:
-        _require_non_negative(self.predecessor_action_index, "predecessor_action_index")
+        if (self.predecessor_action_index is None) == (
+            self.predecessor_task_id is None
+        ):
+            raise ValueError(
+                "exactly one memory-reuse predecessor task or action is required"
+            )
+        if self.predecessor_action_index is not None:
+            _require_non_negative(
+                self.predecessor_action_index, "predecessor_action_index"
+            )
+        if self.predecessor_task_id is not None and (
+            not self.predecessor_task_id
+            or self.predecessor_task_id.strip() != self.predecessor_task_id
+        ):
+            raise ValueError(
+                "predecessor_task_id must be a non-empty normalized string"
+            )
+        if (
+            self.predecessor_task_id is not None
+            and self.predecessor_task_id == self.successor_task_id
+        ):
+            raise ValueError("a task cannot wait for its own completion")
         if (self.successor_task_id is None) == (self.successor_action_index is None):
             raise ValueError(
                 "exactly one memory-reuse successor task or action is required"

@@ -80,11 +80,13 @@ def simulation_admission_from_replay(
         else:  # pragma: no cover - enum exhaustiveness guard
             raise ValueError(f"unsupported admission purpose {step.purpose!r}")
 
-    _validate_implicit_task_dependencies(replay, tasks, schedule)
+    _validate_task_dependencies(replay, tasks, schedule)
     dependencies = tuple(
         _simulation_dependency(item)
         for item in replay.dependencies
         if item.predecessor_purpose is AdmissionReplayPurpose.EVICTION
+        or item.successor_action_index is not None
+        or item.predecessor_task_id != item.successor_task_id
     )
     task_deltas = {
         task_id: _task_peak_deltas(deltas) for task_id, deltas in task_sequences.items()
@@ -110,7 +112,7 @@ def simulation_admission_from_replay(
     return result
 
 
-def _validate_implicit_task_dependencies(
+def _validate_task_dependencies(
     replay: AdmissionReplay,
     tasks: tuple[TaskSpec, ...],
     schedule: MemorySchedule,
@@ -143,20 +145,23 @@ def _validate_implicit_task_dependencies(
 def _simulation_dependency(
     dependency: CausalAdmissionDependency,
 ) -> MemoryReuseDependency:
-    # Keep this helper narrow: task-completion predecessors are already
-    # ordered by the compute stream and need no extra simulator edge.
-    predecessor = dependency.predecessor_action_index
-    if predecessor is None:
+    eviction = dependency.predecessor_purpose is AdmissionReplayPurpose.EVICTION
+    predecessor = dependency.predecessor_action_index if eviction else None
+    task = None if eviction else dependency.predecessor_task_id
+    if eviction and predecessor is None:
         raise ValueError("simulator dependency lacks its eviction action")
     if dependency.successor_action_index is not None:
         return MemoryReuseDependency(
             predecessor,
             successor_action_index=dependency.successor_action_index,
+            predecessor_task_id=task,
         )
     successor_task = dependency.successor_task_id
     if successor_task is None:
         raise ValueError("simulator dependency lacks its successor")
-    return MemoryReuseDependency(predecessor, successor_task_id=successor_task)
+    return MemoryReuseDependency(
+        predecessor, successor_task_id=successor_task, predecessor_task_id=task
+    )
 
 
 def _append_task_delta(
@@ -218,8 +223,16 @@ def _validate_projection(
             f"projected={net}, pool={replay.pool.final_allocated_bytes}"
         )
     for dependency in admission.reuse_dependencies:
-        if dependency.predecessor_action_index >= action_count:
+        if (
+            dependency.predecessor_action_index is not None
+            and dependency.predecessor_action_index >= action_count
+        ):
             raise ValueError("admission dependency predecessor action is unknown")
+        if (
+            dependency.predecessor_task_id is not None
+            and dependency.predecessor_task_id not in task_ids
+        ):
+            raise ValueError("admission dependency predecessor task is unknown")
         if (
             dependency.successor_action_index is not None
             and dependency.successor_action_index >= action_count

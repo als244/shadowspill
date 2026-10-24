@@ -16,10 +16,11 @@ from pathlib import Path
 
 import pytest
 
+from shadowspill.planner.capi import CScheduleAdmissionResult
 from shadowspill.planner.search.algorithms.pressurefit.capi import CPressureFitOptions
 from shadowspill.runtime import abi
 from shadowspill.schema import ARTIFACT_VERSION
-from shadowspill.simulator.capi import CDevice
+from shadowspill.simulator.capi import CDevice, CProgram
 from shadowspill.status import ABI_VERSION, Status
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -37,6 +38,8 @@ _MIRRORS = {
     "ShadowSpillAllocationEvent": abi.AllocationEvent,
     "ShadowSpillTraceConfig": abi.TraceConfig,
     "ShadowSpillSimulationDevice": CDevice,
+    "ShadowSpillSimulationProgram": CProgram,
+    "ShadowSpillScheduleAdmissionResult": CScheduleAdmissionResult,
     "ShadowSpillTransferRouteKey": abi.TransferRouteKey,
     "ShadowSpillTransferCalibrationConfig": abi.TransferCalibrationConfig,
     "ShadowSpillTransferProfile": abi.TransferProfile,

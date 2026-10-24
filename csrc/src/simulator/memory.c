@@ -4,7 +4,7 @@
 #include "internal.h"
 
 /* One successor-indexed list: `offsets` holds `count + 1` entries and
- * `predecessors` the predecessor action of every dependency whose successor
+ * `predecessors` the edge index of every dependency whose successor
  * (read from `successors`) is below `count`, grouped by that successor. */
 static void index_reuse(
     const ShadowSpillSimulationProgram *program,
@@ -23,8 +23,7 @@ static void index_reuse(
     }
     for (uint32_t edge = 0; edge < program->reuse_dependency_count; ++edge) {
         if (successors[edge] < count) {
-            predecessors[offsets[successors[edge]]++] =
-                program->reuse_predecessor_actions[edge];
+            predecessors[offsets[successors[edge]]++] = edge;
         }
     }
     /* Filling advanced every start to the next one's; move them back. */

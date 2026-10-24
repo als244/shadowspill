@@ -76,6 +76,7 @@ typedef struct ShadowSpillCandidateAdmissionWorkspace {
     int64_t *action_trigger_deltas;
     int64_t *action_completion_deltas;
     uint32_t *reuse_predecessor_actions;
+    uint32_t *reuse_predecessor_tasks;
     uint32_t *reuse_successor_tasks;
     uint32_t *reuse_successor_actions;
     uint32_t action_capacity;

@@ -91,8 +91,15 @@ static int dependencies_complete(
         ? work->task_reuse_predecessors
         : work->action_reuse_predecessors;
     for (uint32_t index = offsets[successor]; index < offsets[successor + 1U]; ++index) {
-        if (work->transfers[predecessors[index]].state !=
-            SHADOWSPILL_TRANSFER_COMPLETE) {
+        const uint32_t edge = predecessors[index];
+        const uint32_t task = program->reuse_predecessor_tasks == NULL
+            ? SHADOWSPILL_SIMULATOR_NO_INDEX : program->reuse_predecessor_tasks[edge];
+        if (task != SHADOWSPILL_SIMULATOR_NO_INDEX) {
+            if (work->tasks[task].state != SHADOWSPILL_TASK_COMPLETE) {
+                return 0;
+            }
+        } else if (work->transfers[program->reuse_predecessor_actions[edge]].state !=
+                   SHADOWSPILL_TRANSFER_COMPLETE) {
             return 0;
         }
     }
