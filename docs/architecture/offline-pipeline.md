@@ -235,6 +235,17 @@ streams the same named storage in bounded views. Callbacks must consume/fill eac
 view before returning and must not retain it. Checkpoint file formats belong to
 helpers above this interface, not the allocator or task dispatcher.
 
+`save_checkpoint(executor, path, metadata={...})` streams persistent tensor storage
+into one atomic archive. `load_checkpoint(executor, path)` fills the same bounded
+views and returns the caller metadata. The initial helper requires the same
+Program identity; memory budgets and scheduling order may differ. It preserves
+storage geometry, exact dtypes and CPU optimizer controls. Chunk sizes can differ
+between writing and reading. Each tensor is a packed archive member, so there
+are no per-tensor filesystem writes or complete-model host snapshots. Format,
+geometry and checksum checks precede successful initialization. Application
+scheduler/RNG state belongs in the caller's JSON metadata; it is not discovered
+implicitly.
+
 Returned views of input or parameter storage become owned snapshots during build.
 Those copies are compiled and profiled as part of the task. Views sharing that
 storage still share their returned snapshot; changing it cannot change stored

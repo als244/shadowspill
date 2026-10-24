@@ -37,7 +37,7 @@ compiler.compile_fx = compiler.compile_fx_inner = triton.compile = (
     Runtime._calibrate
 ) = forbidden
 sys.meta_path.insert(0, BlockPhases())
-from shadowspill import Executor  # noqa: E402
+from shadowspill import Executor, load_checkpoint, save_checkpoint  # noqa: E402
 
 directory = Path(sys.argv[1])
 plan = Plan.load(directory / "plan.ssp")
@@ -102,6 +102,11 @@ for index, (outputs, state) in enumerate(oracle["expected"]):
     assert actual.keys() == state.keys()
     for name, expected in state.items():
         torch.testing.assert_close(actual[name].reshape(expected.shape), expected)
+    if index == 0:
+        checkpoint = directory / "checkpoint.ssp"
+        save_checkpoint(executor, checkpoint, metadata={"completed": 1}, chunk_bytes=40)
+        executor.initialize(lambda request, chunk: chunk.zero_(), restore=True)
+        assert load_checkpoint(executor, checkpoint, chunk_bytes=28) == {"completed": 1}
 if plan.program.bindings["kind"] == "forward":
     first = executor.run(
         args=[oracle["examples"][0][0]], kwargs=[oracle["examples"][0][1]]
