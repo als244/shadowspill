@@ -5,7 +5,7 @@ from contextlib import nullcontext
 import torch
 import torch.distributed as dist
 
-from shadowspill.training import Trainer
+from shadowspill.training._legacy_trainer import Trainer
 
 
 class NsightTrainer(Trainer):

@@ -5,7 +5,7 @@ import argparse
 import torch
 from mlops.optim import AdamW
 
-from shadowspill.training import Trainer
+from shadowspill.training._legacy_trainer import Trainer
 from shadowspill.training.backends import ShadowSpill
 from shadowspill.training.logging import Wandb
 from shadowspill.training.schedules import WarmupCosine

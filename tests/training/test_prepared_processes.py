@@ -154,7 +154,8 @@ def _worker(mode: str, directory: Path, budget: int, custom_ops: bool = False) -
 
     from qualification.profiling import CORRECTNESS_PROFILING
     from shadowspill.pytorch import read_model_state
-    from shadowspill.training import DataParallel, PreparedTraining, Trainer
+    from shadowspill.training import DataParallel, PreparedTraining
+    from shadowspill.training._legacy_trainer import Trainer
     from shadowspill.training.backends import ShadowSpill
 
     torch.manual_seed(720)
@@ -270,7 +271,8 @@ def _llama_worker(mode, directory, budget):
     from qualification.profiling import CORRECTNESS_PROFILING
     from shadowspill.planner import StepDataOrdering
     from shadowspill.pytorch import read_model_state
-    from shadowspill.training import PreparedTraining, Trainer
+    from shadowspill.training import PreparedTraining
+    from shadowspill.training._legacy_trainer import Trainer
     from shadowspill.training.backends import ShadowSpill
     from workloads.models.llama3.config import Config
     from workloads.models.llama3.implementations.mlops import Model
@@ -334,7 +336,7 @@ def _llama_worker(mode, directory, budget):
 def _checkpoint_worker(directory):
     from qualification.profiling import CORRECTNESS_PROFILING
     from shadowspill.pytorch import read_model_state
-    from shadowspill.training import Trainer
+    from shadowspill.training._legacy_trainer import Trainer
     from shadowspill.training.backends import ShadowSpill
     from tests.training.test_training_checkpoints import PartlyTrained
 

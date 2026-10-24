@@ -9,7 +9,8 @@ import argparse
 import torch
 from mlops.optim import AdamW
 
-from shadowspill.training import DataParallel, Trainer, reset_parameters
+from shadowspill.training import DataParallel, reset_parameters
+from shadowspill.training._legacy_trainer import Trainer
 from shadowspill.training.backends import ShadowSpill
 from shadowspill.training.schedules import WarmupCosine
 from workloads.models.catalog import build_on_meta

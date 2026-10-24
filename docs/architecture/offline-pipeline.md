@@ -271,3 +271,53 @@ parameters. Mixed-dtype views of one returned input storage currently require
 explicit model-side copies. TensorChunk includes stride and storage offset for
 loaders handling noncontiguous registrations; chunk offsets address physical
 storage rather than a flattened logical tensor.
+
+### Trainer over a saved Plan
+
+`Trainer(plan, ...)` runs in the same fresh execution worker as Executor. It does
+not accept a model, compile, profile, calibrate communication, or plan. The usual
+caller can let it create the Executor; advanced callers pass `executor=existing`.
+The latter remains caller-owned. A separate launcher (for example, quickstart)
+starts the worker; Trainer does not hide a child process behind its methods.
+
+```python
+from shadowspill import Plan, Trainer
+
+with Trainer(
+    Plan.load("training.ssp"),
+    schedules={"optimizer_group.0.lr": lambda completed: 1e-3 / (completed + 1)},
+) as trainer:
+    trainer.initialize(fill_tensor)  # same bounded-buffer callback as Executor
+    result = trainer.step(
+        args=[(features0,), (features1,)],
+        kwargs=[{"targets": targets0}, {"targets": targets1}],
+    )
+    trainer.save("checkpoint.ssp")
+```
+
+The Plan fixes the number and structure of rank-local examples. `step` accepts
+Executor's sequences or indexed `input_loader`, waits for completion and returns
+host-only losses/metrics. It sums the objective's contributions without adding
+normalization. Schedules receive the zero-based completed-update count and may
+only set declared runtime hyperparameters; a tensor-valued optimizer learning
+rate during build makes it such an input. Per-call values override schedules.
+
+`fit(source, steps=N)` takes an iterable whose items are keyword argument maps
+for `step`; `N` is the total completed-update target, including resumed updates.
+For example, each item can be `{"args": [(features,)], "kwargs": [{"targets":
+targets}]}`. No new batch wrapper or automatic input sharding is required.
+`run_dir`, logging/table cadences, callbacks and periodic checkpoints are optional.
+Callbacks run before the checkpoint for that update.
+
+`load("checkpoint.ssp")` restores all persistent tensors and loop progress.
+A source with `state_dict`/`load_state_dict` resumes before the next `fit` reads
+it. Stateful schedules use the same methods. Default Python, NumPy and PyTorch
+RNG states are preserved; custom generators remain application-owned. Loop state
+supports small plain Python containers and CPU tensors/arrays, without pickle.
+Checkpoints are single bounded-stream archives; partial weight-only export and
+legacy checkpoint conversion are separate from this full-resume path.
+
+This milestone qualifies local `build_step` plans. Integrated evaluation sharing
+trained parameter storage, distributed Trainer callers and old recipe migration
+are still pending. Remaining model/prepare callers explicitly use the private
+legacy implementation until migrated; the public Trainer has only the new API.

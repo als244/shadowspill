@@ -87,7 +87,8 @@ def save_checkpoint(
     encoded as JSON data. This helper does not discover application state.
     """
     # Reject non-JSON metadata before streaming model-sized payloads.
-    encoded(dict(metadata or {}))
+    if len(encoded(dict(metadata or {}))) > 16 << 20:
+        raise ValueError("checkpoint metadata exceeds 16 MiB")
     destination = Path(path)
     destination.parent.mkdir(parents=True, exist_ok=True)
     temporary: str | None = None
@@ -106,19 +107,19 @@ def save_checkpoint(
                 except BaseException:
                     writer.abort()
                     raise
-                archive.writestr(
-                    "manifest.json",
-                    encoded(
-                        {
-                            "format": "shadowspill.checkpoint",
-                            "version": 1,
-                            "byteorder": sys.byteorder,
-                            "program": executor.plan.program.digest,
-                            "tensors": writer.entries,
-                            "metadata": dict(metadata or {}),
-                        }
-                    ),
+                manifest = encoded(
+                    {
+                        "format": "shadowspill.checkpoint",
+                        "version": 1,
+                        "byteorder": sys.byteorder,
+                        "program": executor.plan.program.digest,
+                        "tensors": writer.entries,
+                        "metadata": dict(metadata or {}),
+                    }
                 )
+                if len(manifest) > 16 << 20:
+                    raise ValueError("checkpoint manifest exceeds 16 MiB")
+                archive.writestr("manifest.json", manifest)
             stream.flush()
             os.fsync(stream.fileno())
         os.replace(temporary, destination)

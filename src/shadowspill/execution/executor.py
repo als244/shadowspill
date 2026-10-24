@@ -27,6 +27,7 @@ class Executor:
         if rank_map is not None and dict(rank_map) != {0: 0}:
             raise NotImplementedError("this milestone supports a single logical rank")
         self.plan = plan
+        self.device = torch.device("cuda", device)
         self._pending: InvocationResult[Any] | None = None
         self._closed = False
         self._plan_released = False

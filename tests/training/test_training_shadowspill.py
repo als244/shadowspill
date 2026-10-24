@@ -10,7 +10,8 @@ import torch
 
 import shadowspill.training.backends.shadowspill as module
 from shadowspill.planner import StepDataOrdering
-from shadowspill.training import Forward, Trainer
+from shadowspill.training import Forward
+from shadowspill.training._legacy_trainer import Trainer
 
 
 @pytest.mark.parametrize("fixed", [False, True])

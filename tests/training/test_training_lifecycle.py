@@ -6,7 +6,8 @@ from types import SimpleNamespace
 import pytest
 import torch
 
-from shadowspill.training import DataParallel, Trainer
+from shadowspill.training import DataParallel
+from shadowspill.training._legacy_trainer import Trainer
 from shadowspill.training.backends import PyTorch
 from shadowspill.training.schedules import WarmupCosine
 

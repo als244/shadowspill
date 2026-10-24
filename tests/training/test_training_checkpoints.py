@@ -9,7 +9,8 @@ import pytest
 import torch
 import torch.nn as nn
 
-from shadowspill.training import Trainer, checkpoints
+from shadowspill.training import checkpoints
+from shadowspill.training._legacy_trainer import Trainer
 from shadowspill.training.backends import PyTorch
 
 

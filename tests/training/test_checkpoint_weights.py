@@ -6,7 +6,8 @@ import pytest
 import torch
 from torch import nn
 
-from shadowspill.training import Trainer, checkpoints
+from shadowspill.training import checkpoints
+from shadowspill.training._legacy_trainer import Trainer
 from shadowspill.training.backends import PyTorch
 
 

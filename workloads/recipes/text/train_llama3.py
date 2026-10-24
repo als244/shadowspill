@@ -6,7 +6,8 @@ import torch
 from mlops.optim import AdamW
 
 from shadowspill.planner import StepDataOrdering
-from shadowspill.training import Trainer, reset_parameters
+from shadowspill.training import reset_parameters
+from shadowspill.training._legacy_trainer import Trainer
 from shadowspill.training.backends import ShadowSpill
 from shadowspill.training.schedules import WarmupCosine
 from workloads.models.catalog import build_on_meta

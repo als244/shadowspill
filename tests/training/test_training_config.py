@@ -88,7 +88,8 @@ def test_a_config_on_mlops_asks_it_for_weight_gradients_at_its_grad_dtype(
 def test_fp16_model_and_optimizer_precision_survive_config(tmp_path, master):
     import torch
 
-    from shadowspill.training import Trainer, reset_parameters
+    from shadowspill.training import reset_parameters
+    from shadowspill.training._legacy_trainer import Trainer
     from shadowspill.training.backends import PyTorch
     from tests.training._synthetic import write_dataset
 

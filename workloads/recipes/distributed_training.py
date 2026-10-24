@@ -10,7 +10,8 @@ import torch.distributed as dist
 from torch import nn
 
 from shadowspill.pytorch import ProfilingOptions
-from shadowspill.training import Distributed, Trainer
+from shadowspill.training import Distributed
+from shadowspill.training._legacy_trainer import Trainer
 from shadowspill.training.backends import ShadowSpill
 from shadowspill.training.logging import DistributedLogger
 from shadowspill.training.schedules import Constant

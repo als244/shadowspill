@@ -19,6 +19,29 @@ if TYPE_CHECKING:
     from shadowspill.execution import Executor
 
 
+def _manifest(archive: zipfile.ZipFile, executor: Executor) -> dict[str, Any]:
+    if archive.getinfo("manifest.json").file_size > 16 << 20:
+        raise ValueError("checkpoint manifest exceeds 16 MiB")
+    manifest = json.loads(archive.read("manifest.json"))
+    if (
+        manifest.get("format") != "shadowspill.checkpoint"
+        or manifest.get("version") != 1
+        or manifest.get("byteorder") != sys.byteorder
+        or manifest.get("program") != executor.plan.program.digest
+        or not isinstance(manifest.get("metadata"), dict)
+    ):
+        raise ValueError("checkpoint format or Program identity differs")
+    return cast(dict[str, Any], manifest)
+
+
+def checkpoint_metadata(
+    executor: Executor, path: str | os.PathLike[str]
+) -> dict[str, Any]:
+    """Read loop compatibility information before restoring any tensors."""
+    with zipfile.ZipFile(path) as archive:
+        return dict(_manifest(archive, executor)["metadata"])
+
+
 class _Reader:
     def __init__(self, archive: zipfile.ZipFile, manifest: dict[str, Any]):
         self.archive = archive
@@ -101,17 +124,7 @@ def load_checkpoint(
     Executor uninitialized. All persistent tensors, including CPU controls, load.
     """
     with zipfile.ZipFile(path) as archive:
-        if archive.getinfo("manifest.json").file_size > 16 << 20:
-            raise ValueError("checkpoint manifest exceeds 16 MiB")
-        manifest = json.loads(archive.read("manifest.json"))
-        if (
-            manifest.get("format") != "shadowspill.checkpoint"
-            or manifest.get("version") != 1
-            or manifest.get("byteorder") != sys.byteorder
-            or manifest.get("program") != executor.plan.program.digest
-            or not isinstance(manifest.get("metadata"), dict)
-        ):
-            raise ValueError("checkpoint format or Program identity differs")
+        manifest = _manifest(archive, executor)
         reader = _Reader(archive, manifest)
         try:
             executor.initialize(reader.fill, chunk_bytes=chunk_bytes, restore=True)

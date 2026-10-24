@@ -32,6 +32,7 @@ _PUBLIC = {
     "TensorChunk": "execution",
     "save_checkpoint": "checkpoint",
     "load_checkpoint": "checkpoint",
+    "Trainer": "training.trainer",
 }
 
 

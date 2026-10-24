@@ -9,7 +9,8 @@ import pytest
 import torch
 from torch import nn
 
-from shadowspill.training import Forward, Trainer, reset_parameters
+from shadowspill.training import Forward, reset_parameters
+from shadowspill.training._legacy_trainer import Trainer
 from shadowspill.training.backends import PyTorch
 from shadowspill.training.observations import parameter_norms
 from shadowspill.training.schedules import WarmupCosine

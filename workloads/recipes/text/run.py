@@ -9,7 +9,8 @@ from pathlib import Path
 
 import torch
 
-from shadowspill.training import Trainer, config, reset_parameters
+from shadowspill.training import config, reset_parameters
+from shadowspill.training._legacy_trainer import Trainer
 from shadowspill.training.backends import PyTorch
 from shadowspill.training.logging import Wandb
 from shadowspill.training.observations import MetricSummary, parameter_scalars

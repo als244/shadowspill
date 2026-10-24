@@ -1,21 +1,26 @@
-"""Generic training and forward execution for ordinary PyTorch models."""
+"""Training over saved plans; legacy helpers load only for unmigrated callers."""
 
-from shadowspill.pytorch.distributed import Distributed, TransferSharding
+from importlib import import_module
+from typing import Any
 
-from ._model import reset_parameters
-from .forward import Forward
-from .parallel import DataParallel
-from .preparation import PreparedTraining
-from .trainer import EvaluationResult, StepResult, Trainer
+_PUBLIC = {
+    "Trainer": ".trainer",
+    "StepResult": ".results",
+    "DataParallel": ".parallel",
+    "Distributed": "shadowspill.pytorch.distributed",
+    "TransferSharding": "shadowspill.pytorch.distributed",
+    "Forward": ".forward",
+    "PreparedTraining": ".preparation",
+    "reset_parameters": "._model",
+}
 
-__all__ = [
-    "DataParallel",
-    "Distributed",
-    "EvaluationResult",
-    "Forward",
-    "PreparedTraining",
-    "StepResult",
-    "Trainer",
-    "TransferSharding",
-    "reset_parameters",
-]
+
+def __getattr__(name: str) -> Any:
+    if name not in _PUBLIC:
+        raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+    value = getattr(import_module(_PUBLIC[name], __name__), name)
+    globals()[name] = value
+    return value
+
+
+__all__ = list(_PUBLIC)
