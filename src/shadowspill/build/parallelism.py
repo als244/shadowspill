@@ -61,9 +61,22 @@ def validate_forward(
         )
 
 
-def require_single_rank(spec: Parallelism) -> None:
-    if spec.world_size != 1:
+def validate_step(
+    spec: Parallelism, parameters: tuple[ParameterOwnership, ...]
+) -> None:
+    validate_forward(spec, parameters)
+    if spec.world_size == 1:
+        return
+    if any(
+        item.trainable
+        and (
+            len(item.optimizer.groups[0]) == 1
+            or item.weights.groups != item.optimizer.groups
+            or item.gradients.groups != item.optimizer.groups
+        )
+        for item in parameters
+    ):
         raise NotImplementedError(
-            "logical parallelism is resolved, but distributed task/transfer lowering "
-            "is not implemented in the new builders yet"
+            "initial distributed steps require weights, gradients and optimizer "
+            "data sharded over the same groups; differing layouts need redistribution"
         )

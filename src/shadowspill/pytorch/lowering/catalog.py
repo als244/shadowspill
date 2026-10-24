@@ -235,6 +235,14 @@ class ObjectCatalog:
             persistence=persistence,
         )
 
+    def pad_alias(self, alias_id: str, size_bytes: int) -> None:
+        """Extend a residency bundle for equal shards, preserving existing views."""
+        if alias_id not in self._alias_sizes:
+            raise CaptureError(f"unknown storage alias: {alias_id}")
+        if size_bytes < self._alias_sizes[alias_id]:
+            raise CaptureError("padding cannot shrink an existing storage alias")
+        self._alias_sizes[alias_id] = size_bytes
+
     def validate_canonical_output_view(
         self,
         object_id: str,

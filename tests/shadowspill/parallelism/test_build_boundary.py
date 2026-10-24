@@ -36,16 +36,27 @@ def test_model_inventory_deduplicates_ties_and_includes_buffers():
     assert all(value.is_meta for value in model.parameters())
 
 
-def test_pending_full_step_lowering_fails_before_cuda(monkeypatch):
+def test_unsupported_full_step_redistribution_fails_before_cuda(monkeypatch):
     def forbidden(*args, **kwargs):
         raise AssertionError("validation reached GPU initialization")
 
     monkeypatch.setattr(torch.cuda, "init", forbidden)
     model = Tied()
-    with pytest.raises(NotImplementedError, match="distributed task/transfer lowering"):
+    with pytest.raises(
+        NotImplementedError, match="differing layouts need redistribution"
+    ):
         build_step(
             model,
-            parallelism=Parallelism.dp(ranks_per_replica=8),
+            parallelism=Parallelism(
+                ranks_per_replica=8,
+                groups={"all_ranks": (tuple(range(8)),)},
+                default_parameter_storage=ParameterStorage(
+                    group="all_ranks",
+                    weights="sharded",
+                    gradients="replicated",
+                    optimizer="sharded",
+                ),
+            ),
             objective=lambda model, x: x.sum(),
             optimizer=torch.optim.SGD(model.parameters(), lr=0.1),
         )

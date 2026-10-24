@@ -56,6 +56,20 @@ def place_optimizer(
             phase="optimizer",
         )
         insertions.setdefault(position, []).append(task)
+        for publication in component.get("publications", ()):
+            publish_id = f"{identifier}.publish.{publication['name']}"
+            destination = publication["destination"]
+            insertions[position].append(
+                TaskSpec(
+                    publish_id,
+                    ResourceSpec(device_id, ResourceKind.COMMUNICATION),
+                    publication["profile_key"],
+                    dependencies=(identifier,),
+                    inputs=(publication["source"], destination),
+                    mutations=(MutationSpec(destination),),
+                    phase="weight_communication",
+                )
+            )
         entries[identifier] = {
             "task_id": identifier,
             "input_slots": component["inputs"],

@@ -11,6 +11,8 @@ from torch.utils._pytree import treespec_dumps
 from shadowspill.artifacts.program import Program
 from shadowspill.ir import DeviceSpec, MemoryLocation, Persistence, ResidencySpec
 from shadowspill.parallelism import Parallelism
+from shadowspill.parallelism.ownership import ParameterOwnership
+from shadowspill.planning.training.communication import order_collectives
 from shadowspill.planning.training.gradients import complete_gradients
 from shadowspill.planning.training.identity import canonicalize_tasks
 from shadowspill.planning.training.optimizer import place_optimizer
@@ -30,6 +32,7 @@ from .catalog import CompiledTasks
 from .controls import register_device_controls
 from .gradients import gradient_templates
 from .optimizer import optimizer_templates
+from .owned_optimizer import owned_optimizer
 from .training_templates import stage_templates
 
 
@@ -42,6 +45,7 @@ def lower_training(
     update: BuiltOptimizer | None = None,
     gradient_operations: dict[str, GradientOperations] | None = None,
     parallelism: Parallelism | None = None,
+    parameter_ownership: tuple[ParameterOwnership, ...] = (),
 ) -> Program:
     captures = captured.examples
     trained = training_parameters_with_gradients(
@@ -54,7 +58,7 @@ def lower_training(
         objects = register_training_objects(
             captured.model,
             captures,
-            None if update is None else update.captured,
+            None if update is None or parameter_ownership else update.captured,
             device_id="cuda_0",
             gradient_dtypes={
                 name: gradient_dtype or parameter.dtype
@@ -62,16 +66,33 @@ def lower_training(
                 if name in trained
             },
         )
-        objects = register_device_controls(objects, update)
         boundaries = bind_training_boundaries(
             captures, objects, geometry, (None,) * len(captures)
         )
         templates = stage_templates(captures, objects, boundaries, geometry)
-        updates, optimizer_bindings = optimizer_templates(update, objects, geometry)
         completions, gradient_bindings = (
             ([], {})
             if gradient_operations is None
             else gradient_templates(gradient_operations, objects, geometry)
+        )
+        owned: dict[str, Any] = {}
+        publications: dict[str, Any] = {}
+        if update is not None and parameter_ownership:
+            objects, owned, publications = owned_optimizer(
+                update,
+                objects,
+                parameter_ownership,
+                completions,
+                geometry,
+                gradient_bindings["collective_tasks"],
+            )
+        objects = register_device_controls(objects, update)
+        updates, optimizer_bindings = optimizer_templates(
+            update,
+            objects,
+            geometry,
+            owned_names=owned.get("names"),
+            publications=publications,
         )
     alias_by_object = {
         item.object_id: item.alias_group_id for item in objects.catalog.objects()
@@ -87,6 +108,7 @@ def lower_training(
     sequence = place_optimizer(
         sequence, updates, ordering="tail", aliases=alias_by_object, device_id="cuda_0"
     )
+    order_collectives(sequence)
     task_names = canonicalize_tasks(sequence)
     initial, final = derive_training_residency(
         objects, boundaries, tuple(sequence.tasks)
@@ -155,13 +177,20 @@ def lower_training(
             **(
                 {
                     "gradient_templates": completions,
-                    "distributed_training_lowered": "gradients",
+                    "distributed_training_lowered": (
+                        "gradients" if update is None else "step"
+                    ),
                 }
                 if gradient_operations is not None
                 else {}
             ),
             "kind": "forward_backward" if update is None else "step",
             "optimizer_templates": updates,
+            **(
+                {"owned_parameter_views": owned["owned_parameter_views"]}
+                if owned
+                else {}
+            ),
             "task_names": task_names,
             "num_examples": len(captures),
             "training_templates": templates,

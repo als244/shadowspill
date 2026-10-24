@@ -23,6 +23,7 @@ from shadowspill.ir import (
     AliasGroupSpec,
     DeviceSpec,
     MemoryLocation,
+    MutationSpec,
     ObjectSpec,
     ResidencySpec,
     ResourceKind,
@@ -208,6 +209,71 @@ def test_planning_prices_completion_and_retains_buffers_until_consumed(tmp_path)
     )
     write_report(results[0], tmp_path / "report")
     assert (tmp_path / "report" / "timeline.svg").exists()
+
+
+def test_inplace_weight_publication_waits_for_update_without_duplicate_full_storage():
+    source = collective_program(workspace=8)
+    source = replace(
+        source,
+        objects=(*source.objects, ObjectSpec("owned_weight", "weight", 0, 32)),
+        tasks=(
+            *source.tasks[:-1],
+            replace(
+                source.tasks[-1],
+                inputs=("reduced", "owned_weight"),
+                mutations=(MutationSpec("owned_weight"),),
+            ),
+            TaskSpec(
+                "publish",
+                ResourceSpec("rank0", ResourceKind.COMMUNICATION),
+                "gather",
+                dependencies=("consume",),
+                inputs=("owned_weight", "weight"),
+                mutations=(MutationSpec("weight"),),
+            ),
+        ),
+        task_definitions=(
+            *source.task_definitions,
+            TaskDefinition("gather", "gather", 0),
+        ),
+        bindings={
+            **source.bindings,
+            "collective_tasks": {
+                **source.bindings["collective_tasks"],
+                "gather": {
+                    "operation": "all_gather",
+                    "groups": ((1, 0),),
+                    "tensor_bytes": 64,
+                    "dtype": "torch.float32",
+                    "inplace": True,
+                },
+            },
+        },
+    )
+    info = replace(
+        communication(10e-6),
+        scale_up_bytes_per_second=1e9,
+        scale_up_latency_seconds=0,
+    )
+    plan = plan_program(
+        apply_profiles(source, compute_profiles()),
+        memory_budgets=MemoryBudgets(256, 1024),
+        communication_info=info,
+        search_options=options(),
+    )
+    times = {row.task_id: row for row in plan.timeline.task_intervals}
+    assert times["publish"].start_ns >= times["consume"].end_ns
+    assert plan.summary["execution_peak_bytes"] == 120
+    with pytest.raises(ValueError, match="in-place gather views"):
+        replace(
+            source,
+            objects=tuple(
+                replace(item, size_bytes=16)
+                if item.object_id == "owned_weight"
+                else item
+                for item in source.objects
+            ),
+        )
 
 
 def test_collective_descriptions_must_match_local_task_and_group_geometry():

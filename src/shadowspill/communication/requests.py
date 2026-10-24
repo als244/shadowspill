@@ -64,8 +64,8 @@ def collective_requests(
     """Deduplicate probes, retaining order within each logical participant group.
 
     Explicit overrides replace derivation; an empty list requests no collectives.
-    The initial distributed lowering exposes weight gathers. Training and
-    model-owned communication need their own lowered descriptors first.
+    Forward and training lowering expose weight gathers and gradient completion.
+    Model-owned communication needs its own lowered descriptors first.
     """
     rows: list[Mapping[str, Any]] = list(overrides) if overrides is not None else []
     if overrides is None and program is not None:
@@ -73,7 +73,8 @@ def collective_requests(
             program.parallelism is not None
             and program.parallelism.world_size > 1
             and program.bindings.get("kind") != "forward"
-            and program.bindings.get("distributed_training_lowered") != "gradients"
+            and program.bindings.get("distributed_training_lowered")
+            not in {"gradients", "step"}
         ):
             raise ValueError(
                 "this Program has no supported distributed training communication "

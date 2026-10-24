@@ -167,9 +167,9 @@ full tensor on each all-reduce participant. Sizes must contain whole elements in
 each shard. Duplicate probes are removed. Calls without Program, overrides or
 rank_map retain the original local host-only behavior.
 
-Derived requests cover lowered weight gathers and explicit gradient-completion
-tasks. Full training updates and model-owned communication require their own
-lowering before automatic derivation is supported. Exact observed collective
+Derived requests cover lowered weight fetches, gradient completion and update
+publication tasks. Model-owned communication requires its own lowering before
+automatic derivation is supported. Exact observed collective
 timings do not infer a general scale-up/out rate, overlapping-group contention,
 or communicator memory admission.
 The CPU/Gloo coordination and single-GPU copy paths are tested; multi-GPU NCCL
@@ -438,9 +438,9 @@ fields only from `default_parameter_storage`. `parallelism.group(name)` supplies
 a typed reference exposing static membership and size, without creating a live
 communicator.
 
-The initial distributed build paths support forward and forward/backward
-computation with replicated local parameters and optional weight storage sharding.
-They build and measure on one representative GPU without a process group. Planning then
+The initial distributed build paths support forward, forward/backward and full-step
+computation with replicated local parameters and storage sharding. They build and
+measure on one representative GPU without a process group. Planning then
 models local host-shard copies followed by the full weight all-gather:
 
 ```python
@@ -467,9 +467,8 @@ These rates are illustrative. The shared schedule describes one symmetric rank
 and uses the slowest corresponding group instance's transfer cost. Memory and
 traffic totals are **per rank**, not summed over the job. These distributed Plans
 are currently simulation-only: communicator resources, distributed allocation
-admission and execution binding still need qualification. Distributed full-step
-builds still reject the configuration before CUDA setup rather than silently
-building a local update. Model-sharded execution, distributed inputs, and
+admission and execution binding still need qualification. Model-sharded execution,
+distributed inputs, and
 already-reduced-gradient overrides also remain pending.
 
 `build_forward_backward` additionally supports sharded gradient storage. Local
@@ -485,7 +484,23 @@ already-reduced shard. Measurement on one GPU covers the local padding/addition
 tasks, without executing collectives. Collective scratch must be supplied if
 unresolved; a manual estimate permits simulation only. The archive/planning path
 is tested in a process that forbids Torch, build and runtime imports. Replicated
-gradient storage, full-step lowering and distributed execution remain later work.
+gradient storage and distributed execution remain later work.
+
+`build_step` supports the common case with weights, gradients and optimizer data
+sharded over the same groups. Gradient completion feeds shard-shaped local
+optimizer inputs. Masters and moments have independent owned allocations.
+The compute-weight shard is a view of the full compute buffer, with its logical
+group-relative offset recorded for worker binding. An explicit in-place all-gather
+publishes the updated weights after the local update. Update placement waits for
+all contributions and reads of old weights, including aliased views.
+
+This initial path keeps the full compute-weight buffer available during the
+update; the plan accounts for that allocation and any required fetch. It does not
+claim shard-only device residency during optimization. Differing component groups
+need explicit redistribution and are currently rejected. The saved local AdamW
+updates are checked over four logical owners on one GPU, including padded tails,
+with and without FP32 masters. This validates local math and bindings, not NCCL
+execution. Collectives and communicator memory still require separate qualification.
 
 CommunicationInfo accepts flat scale-up/scale-out rates and latencies plus
 `measurements`, a sequence of plain mappings. An observation contains

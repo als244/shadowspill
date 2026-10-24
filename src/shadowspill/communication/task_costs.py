@@ -58,14 +58,23 @@ def task_collectives(program: "Program") -> dict[str, tuple[CollectiveRequest, .
                 f"{key}: collective groups must cover logical ranks exactly once"
             )
         for task in tasks:
-            _validate_buffers(objects, task, requests[0])
+            _validate_buffers(
+                objects, task, requests[0], inplace=description.get("inplace", False)
+            )
         result[key] = requests
     return result
 
 
 def _validate_buffers(
-    objects: Mapping[str, ObjectSpec], task: TaskSpec, request: CollectiveRequest
+    objects: Mapping[str, ObjectSpec],
+    task: TaskSpec,
+    request: CollectiveRequest,
+    *,
+    inplace: bool = False,
 ) -> None:
+    if inplace:
+        _validate_inplace_gather(objects, task, request)
+        return
     if len(task.inputs) != 1:
         raise ValueError(f"{task.task_id}: collective requires one packed input tensor")
     source = objects[task.inputs[0]]
@@ -97,6 +106,34 @@ def _validate_buffers(
     if source.size_bytes != input_bytes:
         raise ValueError(
             f"{task.task_id}: collective input bytes disagree with geometry"
+        )
+
+
+def _validate_inplace_gather(
+    objects: Mapping[str, ObjectSpec], task: TaskSpec, request: CollectiveRequest
+) -> None:
+    if (
+        request.operation != "all_gather"
+        or len(task.inputs) != 2
+        or task.outputs
+        or tuple(item.object_id for item in task.mutations) != task.inputs[1:]
+    ):
+        raise ValueError(
+            f"{task.task_id}: in-place gather needs an owned view "
+            "and mutable full buffer"
+        )
+    source, target = (objects[value] for value in task.inputs)
+    chunk = request.tensor_bytes // len(request.ranks)
+    if (
+        source.alias_group_id != target.alias_group_id
+        or target.offset_bytes != 0
+        or source.size_bytes != chunk
+        or target.size_bytes != request.tensor_bytes
+        or source.offset_bytes % chunk != 0
+        or source.offset_bytes + chunk > target.size_bytes
+    ):
+        raise ValueError(
+            f"{task.task_id}: in-place gather views disagree with padded shard geometry"
         )
 
 

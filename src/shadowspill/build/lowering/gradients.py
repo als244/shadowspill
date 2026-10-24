@@ -4,13 +4,12 @@ from typing import Any
 
 import torch
 
-from shadowspill.artifacts._values import digest
-from shadowspill.artifacts.program import TaskDefinition
 from shadowspill.ir import ObjectRole, Persistence
 from shadowspill.pytorch.lowering.training.artifacts import TrainingObjects
 
 from ..gradient_ops import GradientOperations
 from .catalog import CompiledTasks
+from .collectives import declare_collective
 
 
 def gradient_templates(
@@ -18,16 +17,26 @@ def gradient_templates(
     objects: TrainingObjects,
     compiled: CompiledTasks,
 ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
-    templates, collectives, persistent = [], {}, []
+    templates, persistent = [], []
+    collectives: dict[str, Any] = {}
     for binding in objects.gradients:
         name = binding.parameter_name
         item = operations[name]
         reduction = item.reduction
-        example = item.accumulation.example_arguments[0]
-        assert isinstance(example, torch.Tensor)
+        example = item.owned
+        persistent_result = item.accumulation is not None
 
-        stored = _buffer(objects, example, reduction.result_elements, Persistence.RUN)
-        new = _buffer(objects, example, reduction.result_elements, Persistence.STEP)
+        stored = _buffer(
+            objects,
+            example,
+            reduction.result_elements,
+            Persistence.RUN if persistent_result else Persistence.STEP,
+        )
+        new = (
+            _buffer(objects, example, reduction.result_elements, Persistence.STEP)
+            if persistent_result
+            else None
+        )
         padding = None
         if item.padding is not None:
             padding = {
@@ -41,17 +50,10 @@ def gradient_templates(
             description = {
                 "operation": phase.operation,
                 "groups": phase.groups,
-                "tensor_bytes": phase.input_elements * item.dtype.itemsize,
-                "dtype": str(item.dtype),
+                "tensor_bytes": phase.input_elements * example.dtype.itemsize,
+                "dtype": str(example.dtype),
             }
-            key = "collective_" + digest(description)
-            compiled.definitions[key] = TaskDefinition(
-                key,
-                key,
-                None,
-                f"{phase.operation} gradients",
-            )
-            collectives[key] = description
+            key = declare_collective(description, compiled, collectives)
             phases.append({"profile_key": key, "operation": phase.operation})
         templates.append(
             {
@@ -61,8 +63,10 @@ def gradient_templates(
                 "new": new,
                 "padding": padding,
                 "phases": phases,
-                "accumulation_key": compiled.key(
-                    item.accumulation, (f"{name}.grad accumulation",)
+                "accumulation_key": (
+                    compiled.key(item.accumulation, (f"{name}.grad accumulation",))
+                    if item.accumulation is not None
+                    else None
                 ),
             }
         )
@@ -71,7 +75,7 @@ def gradient_templates(
                 "parameter_name": name,
                 "gradient_object_id": stored,
                 "shape": (reduction.result_elements,),
-                "dtype": str(item.dtype),
+                "dtype": str(example.dtype),
             }
         )
     return templates, {

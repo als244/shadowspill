@@ -2,6 +2,7 @@
 
 from collections.abc import Callable
 from dataclasses import dataclass
+from typing import Literal
 
 import torch
 from torch import nn
@@ -20,9 +21,9 @@ from .training_capture import TrainingCapture
 @dataclass(frozen=True)
 class GradientOperations:
     reduction: GradientReduction
-    dtype: torch.dtype
+    owned: torch.Tensor
     padding: GraphArtifact | None
-    accumulation: GraphArtifact
+    accumulation: GraphArtifact | None
 
 
 def capture_gradient_operations(
@@ -30,6 +31,8 @@ def capture_gradient_operations(
     training: TrainingCapture,
     ownership: tuple[ParameterOwnership, ...],
     gradient_dtype: torch.dtype | None,
+    *,
+    destination: Literal["gradients", "optimizer"] = "gradients",
 ) -> dict[str, GradientOperations]:
     """Capture only local work, using the model's existing fake device mode."""
     trained = training_parameters_with_gradients(
@@ -43,12 +46,17 @@ def capture_gradient_operations(
             if parameter.name not in trained:
                 continue
             value = training.model.get_parameter(parameter.name)
-            if not value.is_contiguous():
+            if (
+                not value.is_contiguous()
+                or value.storage_offset() != 0
+                or value.untyped_storage().nbytes()
+                != value.numel() * value.element_size()
+            ):
                 raise NotImplementedError(
                     "distributed gradient lowering currently requires "
-                    "contiguous parameters"
+                    "contiguous whole-storage parameters"
                 )
-            reduction = gradient_reduction(parameter)
+            reduction = gradient_reduction(parameter, destination=destination)
             if (
                 not reduction.phases
                 or reduction.phases[0].operation != "reduce_scatter"
@@ -62,9 +70,9 @@ def capture_gradient_operations(
             owned = torch.empty(
                 (reduction.result_elements,), dtype=dtype, device=value.device
             )
-            addition = _accumulation(owned)
+            addition = _accumulation(owned) if destination == "gradients" else None
             result[parameter.name] = GradientOperations(
-                reduction, dtype, padding, addition
+                reduction, owned, padding, addition
             )
     return result
 

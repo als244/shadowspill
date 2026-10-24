@@ -13,6 +13,14 @@ def weight_shards(
     by_name = {name: parameter for parameter in parameters for name in parameter.names}
     aliases = {item.object_id: item.alias_group_id for item in program.objects}
     sizes = {item.alias_group_id: item.size_bytes for item in program.alias_groups}
+    registered_sizes: dict[str, int] = {}
+    object_by_id = {item.object_id: item for item in program.objects}
+    for entry in program.bindings["registrations"]:
+        item = object_by_id[entry["object_id"]]
+        registered_sizes[item.alias_group_id] = max(
+            registered_sizes.get(item.alias_group_id, 0),
+            item.offset_bytes + item.size_bytes,
+        )
     geometry = program.bindings["model_tensor_geometry"]
     shards: dict[str, Any] = {}
     for entry in program.bindings["registrations"]:
@@ -26,7 +34,7 @@ def weight_shards(
         record = {
             "groups": groups,
             "shard_bytes": chunk,
-            "logical_bytes": sizes[alias],
+            "logical_bytes": registered_sizes[alias],
             "padded_bytes": chunk * count,
             # The native weight gather operates on bytes, independently of
             # parameter representation. Padding still respects tensor elements.

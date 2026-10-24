@@ -13,11 +13,17 @@ from .catalog import CompiledTasks
 
 
 def optimizer_templates(
-    update: BuiltOptimizer | None, objects: TrainingObjects, compiled: CompiledTasks
+    update: BuiltOptimizer | None,
+    objects: TrainingObjects,
+    compiled: CompiledTasks,
+    *,
+    owned_names: dict[str, str] | None = None,
+    publications: dict[str, Any] | None = None,
 ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
     if update is None:
         return [], {}
     names = optimizer_object_ids(objects.gradients, objects.optimizer_objects)
+    names.update(owned_names or {})
     components = []
     for index, component in enumerate(update.captured.update_tasks):
         artifact = component.artifact
@@ -46,6 +52,11 @@ def optimizer_templates(
                     names[name] for name in component.mutation_names if name in names
                 ],
                 "replacements": [view.leaf_index for view in contract.output_views],
+                "publications": [
+                    {"name": name, **(publications or {})[name]}
+                    for name in component.mutation_names
+                    if name in (publications or {})
+                ],
             }
         )
     bindings = [

@@ -20,8 +20,8 @@ from .optimizer import capture_update
 from .parallelism import (
     attach_parallelism,
     model_parallelism,
-    require_single_rank,
     validate_forward,
+    validate_step,
 )
 from .training_capture import capture_training_model
 
@@ -76,7 +76,7 @@ def _build_training(
 ) -> Program:
     spec, parameters = model_parallelism(model, parallelism)
     if optimizer is not None:
-        require_single_rank(spec)
+        validate_step(spec, parameters)
     else:
         validate_forward(spec, parameters)
     device = resolve_device(target)
@@ -102,12 +102,17 @@ def _build_training(
     gradient_operations = None
     if spec.world_size > 1:
         gradient_operations = capture_gradient_operations(
-            model, captured, parameters, grad_dtype
+            model,
+            captured,
+            parameters,
+            grad_dtype,
+            destination="gradients" if optimizer is None else "optimizer",
         )
         for operation in gradient_operations.values():
             if operation.padding is not None:
                 artifacts.append(operation.padding)
-            artifacts.append(operation.accumulation)
+            if operation.accumulation is not None:
+                artifacts.append(operation.accumulation)
     update = (
         None
         if optimizer is None
@@ -117,6 +122,7 @@ def _build_training(
             captured,
             gradient_dtype=grad_dtype,
             master_dtype=master_dtype,
+            parameter_ownership=parameters if spec.world_size > 1 else (),
         )
     )
     if update is not None:
@@ -134,6 +140,7 @@ def _build_training(
         update=update,
         gradient_operations=gradient_operations,
         parallelism=spec,
+        parameter_ownership=parameters if spec.world_size > 1 else (),
     )
     program = replace(
         program, bindings={**program.bindings, "compiled_device_index": device.index}
