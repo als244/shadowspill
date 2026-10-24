@@ -36,6 +36,7 @@ class BlockPhases(importlib.abc.MetaPathFinder):
 compiler.compile_fx = compiler.compile_fx_inner = Runtime._calibrate = forbidden
 sys.meta_path.insert(0, BlockPhases())
 from shadowspill import Executor, load_checkpoint, save_checkpoint  # noqa: E402
+from tests.shadowspill.execution._stream_checks import StreamChecks  # noqa: E402
 
 directory = Path(sys.argv[1])
 plan = Plan.load(directory / "plan.ssp")
@@ -67,6 +68,7 @@ def cpu(value):
 
 
 executor = Executor(plan)
+streams = StreamChecks(executor) if oracle.get("check_task_streams") else None
 executor.initialize(fill, chunk_bytes=40, restore=oracle["restore"])
 assert (
     sum(executor.runtime._installed.admitted_layout_bytes.values())
@@ -79,11 +81,14 @@ with pytest.raises(ValueError, match="unknown runtime hyperparameters"):
 previous, previous_value = None, None
 first_invocation_compiles = None
 for index, (outputs, state) in enumerate(oracle["expected"]):
-    pending = executor.run(
-        input_loader=lambda i: oracle["examples"][i],
-        hyperparams=oracle["hyperparams"][index],
-        accumulate_gradients=oracle["accumulate"][index],
-    )
+    with torch.cuda.stream(None if streams is None else streams.begin(index)):
+        pending = executor.run(
+            input_loader=lambda i: oracle["examples"][i],
+            hyperparams=oracle["hyperparams"][index],
+            accumulate_gradients=oracle["accumulate"][index],
+        )
+        if streams is not None:
+            streams.check()
     result = pending.result()
     if first_invocation_compiles is None:
         first_invocation_compiles = len(compiled_kernels)

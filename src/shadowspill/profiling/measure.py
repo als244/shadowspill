@@ -18,6 +18,7 @@ from shadowspill.pytorch.toolchain import build_setup
 from .device_memory import external_device_bytes
 from .inputs import prepare_inputs
 from .jobs import stage_jobs
+from .streams import MeasurementStreams
 from .task import measure_task
 
 
@@ -34,7 +35,8 @@ class _Session:
         self.warmup, self.measurement = warmup, measurement
         self.functions: dict[str, Any] = {}
         self.profiles = Profiles(setup=plain(program.setup))
-        self.persistent = 0
+        self.streams = MeasurementStreams(program, device)
+        self.persistent = self.streams.retained_bytes
         self.external = external_device_bytes(device)
 
     def function(self, key: str) -> Any:
@@ -52,14 +54,15 @@ class _Session:
     def measure(self, key: str, arguments: Sequence[Any]) -> None:
         if key in self.profiles.tasks:
             return
-        result = measure_task(
-            self.function(key),
-            arguments,
-            self.program.bindings["manifests"][key],
-            device=self.device,
-            warmup_seconds=self.warmup,
-            measure_seconds=self.measurement,
-        )
+        with torch.cuda.stream(self.streams[key]):
+            result = measure_task(
+                self.function(key),
+                arguments,
+                self.program.bindings["manifests"][key],
+                device=self.device,
+                warmup_seconds=self.warmup,
+                measure_seconds=self.measurement,
+            )
         self.profiles.tasks[key] = replace(result, compatibility_digest=key)
         self.persistent += sum(result.metadata["warmup_persistent_bytes"])
         external = external_device_bytes(self.device)
@@ -80,7 +83,9 @@ class _Session:
         if backward is None or backward["profile_key"] in self.profiles.tasks:
             return
         # Saved tensors come from this exact forward and retain their true aliases.
-        leaves, _ = tree_flatten(self.function(key)(*arguments))
+        with torch.cuda.stream(self.streams[key]):
+            leaves, _ = tree_flatten(self.function(key)(*arguments))
+        self.streams[key].synchronize()
         values = {
             slot["object_id"]: arguments[slot["leaf_index"]]
             for slot in forward["inputs"]
@@ -165,6 +170,8 @@ def measure_program(
             "fixed_device_source": "NVML minus native cache, plus retained data",
             "external_device_bytes": session.external,
             "retained_device_bytes": session.persistent,
+            "resource_streams": session.streams.description,
+            "stream_workspace_bytes": session.streams.retained_bytes,
             "input_policy": "automatic values; geometry preserved; caller overrides",
             "execution_qualification": "pending physical admission",
         }

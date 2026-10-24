@@ -16,6 +16,7 @@ from shadowspill import (
 )
 from shadowspill.artifacts._values import plain
 from shadowspill.build import build_forward, build_forward_backward, build_step
+from shadowspill.ir import ResourceKind
 from tests.shadowspill.build.test_forward import Network as ForwardNetwork
 from tests.shadowspill.build.test_training import Network, ResidualNetwork, objective
 from tests.shadowspill.execution._oracle import oracle
@@ -26,6 +27,7 @@ from tests.shadowspill.execution._oracle import oracle
     "kind,variant,tied",
     [
         ("forward", None, False),
+        ("forward", "streams", False),
         ("forward_backward", "save", False),
         ("forward_backward", "recompute", True),
         ("step", "save", True),
@@ -69,8 +71,30 @@ def test_saved_plan_executes_without_build_or_measurement(
             )
         else:
             program = build_forward_backward(template, **common)
+    if variant == "streams":
+        program = replace(
+            program,
+            tasks=tuple(
+                replace(
+                    task,
+                    resource=replace(
+                        task.resource,
+                        kind=(
+                            ResourceKind.COMMUNICATION
+                            if index % 3 == 1
+                            else ResourceKind.COMPUTE
+                        ),
+                        lane=int(index % 3 == 2),
+                    ),
+                )
+                for index, task in enumerate(program.tasks)
+            ),
+        )
     profiles = measure_program(program, warmup_seconds=0.001, measure_seconds=0.002)
-    if variant:
+    if variant == "streams":
+        assert len(profiles.metadata["resource_streams"]) > 1
+        assert profiles.metadata["stream_workspace_bytes"] > 0
+    elif variant:
         bindings = plain(program.bindings)
         bindings["training_templates"] = [
             [
@@ -94,7 +118,9 @@ def test_saved_plan_executes_without_build_or_measurement(
     )
     plan.save(tmp_path / "plan.ssp")
     oracle_kind = "forward_backward" if kind == "backward_residual" else kind
-    torch.save(oracle(model, examples, oracle_kind), tmp_path / "oracle.pt")
+    expected = oracle(model, examples, oracle_kind)
+    expected["check_task_streams"] = variant == "streams"
+    torch.save(expected, tmp_path / "oracle.pt")
     worker = subprocess.run(
         [
             sys.executable,

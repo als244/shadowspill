@@ -202,6 +202,15 @@ that overhead before scheduling objects/workspace, and reporting adds it back to
 the total peak. Spill capacity is separate. No physical memory is allocated to
 perform this calculation.
 
+Task resource lanes bind to stable CUDA streams in the worker. Native task and
+physical-reuse dependencies insert stream waits; independent lanes can overlap.
+Each invocation joins its lanes before output acquisition and result completion,
+including when successive calls originate on different caller streams. Retained
+BLAS workspaces are initialized before the fixed execution arena is admitted.
+Profiling includes per-resource library capacity in fixed memory, and the saved
+setup records the BLAS backend and workspace settings. The cuBLAS/cuBLASLt bound
+is conservative when the libraries share a workspace.
+
 `sweep_programs({name: profiled_program, ...}, memory_budgets=[...],
 communication_info=...)` is an optional loop. It keeps every successful Plan,
 diagnostic failures, and a `best_per_budget` lookup. It does not construct or

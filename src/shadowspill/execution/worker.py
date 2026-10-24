@@ -8,6 +8,7 @@ import torch
 from shadowspill.artifacts.device import require_compiled_device
 from shadowspill.artifacts.plan import Plan
 from shadowspill.planning.shared import shared_memory
+from shadowspill.pytorch.resource_streams import ResourceStreams
 from shadowspill.runtime import Runtime
 from shadowspill.runtime.plan import RuntimeBridge, clear_tasks
 from shadowspill.runtime.plan.lifecycle import (
@@ -82,13 +83,32 @@ def create_paths(
     device: int,
     external_headroom_bytes: int,
     plans: Mapping[str, Plan] | None = None,
-) -> tuple[Runtime, tuple[ExecutionPath, ...], dict[str, ExecutionPath]]:
+) -> tuple[
+    Runtime, tuple[ExecutionPath, ...], dict[str, ExecutionPath], ResourceStreams
+]:
     plans = dict(plans or {})
     joint = shared_memory(plan, plans) if plans else None
-    runtime, memory, bridge = open_worker(plan, device, external_headroom_bytes)
+    runtime = open_worker(plan, device, external_headroom_bytes)
     paths = []
     named = {}
     try:
+        selected = [
+            (task, candidate)
+            for candidate in (plan, plan._accumulation_plan, *plans.values())
+            if candidate is not None
+            for task in candidate._costed_program.selected_tasks(candidate.selections)
+        ]
+        streams = ResourceStreams(
+            torch.device("cuda", device), (task.resource for task, _ in selected)
+        )
+        # Retained library allocations must precede fixed-arena admission.
+        # Framework-only communication streams do not need a BLAS workspace.
+        streams.initialize_blas(
+            task.resource
+            for task, candidate in selected
+            if task.profile_id in candidate.program.executables
+        )
+        memory, bridge = open_path(runtime, plan, device)
         other = plan._accumulation_plan
         extra = (
             ()
@@ -129,7 +149,7 @@ def create_paths(
                 shared=paths[0].storage,
                 shared_aliases=joint.aliases[name],
             )
-        return runtime, tuple(paths), named
+        return runtime, tuple(paths), named, streams
     except BaseException:
         for path in reversed([*paths, *named.values()]):
             path.close(runtime)

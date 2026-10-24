@@ -13,4 +13,7 @@ def build_setup(device: torch.device) -> dict[str, Any]:
         "cuda": torch.version.cuda,
         "gpu": torch.cuda.get_device_name(device),
         "capability": list(torch.cuda.get_device_capability(device)),
+        "blas_backend": str(torch.backends.cuda.preferred_blas_library()),
+        "blas_workspace_bytes": torch.backends.cuda.cublas_workspace_size(),
+        "blaslt_workspace_bytes": torch.backends.cuda.cublaslt_workspace_size(),
     }

@@ -15,6 +15,7 @@ import torch
 
 from shadowspill.pytorch.accelerator import accelerator_device, is_accelerator
 from shadowspill.pytorch.bindings import dematerialize, occupants, retainers
+from shadowspill.pytorch.workspaces import initialize_blas
 from shadowspill.runtime.bootstrap import RuntimeInstallError
 from shadowspill.runtime.configuration import RuntimeConfigurationError
 from shadowspill.runtime.occupancy import PoolAllocation
@@ -39,9 +40,6 @@ REQUIRED_STORAGE_OPERATIONS: Final = (
     "_after_task_boundary",
     "_transfer_acquired_storage_to_caller",
 )
-
-_WARMUP_SHAPE: Final = (2048, 2048)
-
 
 class PyTorchFrontend:
     """PyTorch's answers to everything the runtime cannot do for itself."""
@@ -131,26 +129,7 @@ class PyTorchFrontend:
         deterministic low-address placement.
         """
 
-        get_handle = getattr(torch._C, "_cuda_getCurrentBlasHandle", None)
-        if get_handle is None or not callable(get_handle):
-            raise RuntimeInstallError(
-                "this PyTorch build lacks the required CUDA provider initializer"
-            )
-        torch.cuda.set_device(device_ordinal)
-        get_handle()
-
-        device = accelerator_device(device_ordinal)
-        left = torch.empty(_WARMUP_SHAPE, dtype=torch.bfloat16, device=device)
-        right = torch.empty(_WARMUP_SHAPE, dtype=torch.bfloat16, device=device)
-        output = torch.empty(_WARMUP_SHAPE, dtype=torch.bfloat16, device=device)
-        try:
-            torch.mm(left, right, out=output)
-            torch.cuda.current_stream(device_ordinal).synchronize()
-        finally:
-            del output
-            del right
-            del left
-            torch.cuda.current_stream(device_ordinal).synchronize()
+        initialize_blas(accelerator_device(device_ordinal))
 
     # The objects standing on a lease
 

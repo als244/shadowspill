@@ -41,7 +41,7 @@ class Executor:
         self._plan_released = False
         self._initialized = False
         self._failure: BaseException | None = None
-        self.runtime, self._paths, self._named_paths = create_paths(
+        self.runtime, self._paths, self._named_paths, self._streams = create_paths(
             plan, device, external_headroom_bytes, self.plans
         )
         self._completion = ReusableCompletionEvent(
@@ -124,8 +124,10 @@ class Executor:
         path.controls.apply(hyperparams or {})
         stage_inputs(path.storage, args, kwargs, input_loader)
         try:
-            for task in path.tasks:
-                dispatch(task, path.storage, path.controls)
+            with self._streams.invocation() as streams:
+                for task in path.tasks:
+                    with torch.cuda.stream(streams[task.task.resource]):
+                        dispatch(task, path.storage, path.controls)
             payload = collect_outputs(path.storage, path.acquisition)
             wait = self._completion.record()
 

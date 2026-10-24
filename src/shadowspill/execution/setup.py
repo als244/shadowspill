@@ -15,7 +15,7 @@ from shadowspill.runtime.plan.lifecycle import PlanMemory, begin_plan
 
 def open_worker(
     plan: Plan, device: int, external_headroom_bytes: int
-) -> tuple[Runtime, PlanMemory, RuntimeBridge]:
+) -> Runtime:
     if plan.simulation_only_reasons:
         raise ValueError(
             "Plan is simulation-only: " + "; ".join(plan.simulation_only_reasons)
@@ -48,8 +48,7 @@ def open_worker(
     try:
         if build_setup(torch.device("cuda", device)) != plain(plan.program.setup):
             raise ValueError("Plan build/target identity differs from this worker")
-        memory, bridge = open_path(runtime, plan, device)
-        return runtime, memory, bridge
+        return runtime
     except BaseException:
         runtime.close()
         raise
