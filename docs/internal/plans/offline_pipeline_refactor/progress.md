@@ -288,3 +288,21 @@
   The independent CPU regression has 516 passing tests; focused typing/lint pass.
   Next is normal-caller migration, while keeping provider/distributed extension
   work explicit rather than claiming the dense qualification covers all backends.
+
+### Independent communication calibration
+
+- Executor/runtime-control checkpoint committed and pushed as `d18bbdd2`.
+- Added public `measure_communication()` using ordinary pinned-host buffers and
+  CUDA streams/events. No execution pools, model tasks, build, ArtifactStore or
+  runtime initialization are imported. Solo rates/startup are fitted from a size
+  sweep; concurrent directions use disjoint buffers. Raw observations, sample
+  variability and fit errors remain inspectable in CommunicationInfo metadata.
+- This measures one local GPU and current host placement. It does not claim a
+  multi-GPU aggregate rate or complete distributed collective support. Those
+  remain in the explicitly deferred distributed milestone.
+- Validation: six numerical/failure fit checks and a cold-worker GPU calibration
+  and archive round-trip test pass. Native allocation returns to baseline;
+  focused lint and strict typing pass.
+- Trainer migration is awaiting the user's answer on its public constructor:
+  `Trainer(plan, ...)` with optional supplied Executor versus retaining the old
+  model/prepare orchestration. Independent checkpoint work continues meanwhile.

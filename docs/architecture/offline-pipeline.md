@@ -117,6 +117,15 @@ The communication description is saved alongside the plan, independently of
 compute measurements. Collective calibration, topology-aware collective estimates,
 and distributed transfer layouts are deferred to the distributed milestone.
 
+`measure_communication()` optionally measures pinned-host copies on one GPU,
+using ordinary PyTorch allocation and CUDA events. It returns CommunicationInfo;
+save it independently and pass it to any later planning run. A size sweep fits
+startup latency and bandwidth, and simultaneous copies measure overlapping lane
+rates. Raw medians, sample counts, variability and fit errors are retained in
+metadata. These are local measurements under the caller's host placement, not
+aggregate multi-GPU bandwidth. Neither planning nor execution triggers this probe.
+Buffer use is bounded by twice the largest requested size on each of host and GPU.
+
 The GPU allowance includes fixed runtime/provider overhead. Planning subtracts
 that overhead before scheduling objects/workspace, and reporting adds it back to
 the total peak. Spill capacity is separate. No physical memory is allocated to
@@ -177,7 +186,7 @@ Implementation ownership:
 - `profiling/measure.py` and `profiling/observation/`: ordinary GPU measurement
   and normalized allocator observations; separate from execution setup.
 - `planning/`: public CPU planning/sweep and capacity/cost conversion.
-- `communication/`: saved communication assumptions; calibration will be separate.
+- `communication/`: saved communication assumptions and standalone GPU calibration.
 - `reporting/`: semantic task/transfer tables and timeline/memory figures.
 - `ir/` and existing native planner/simulator: shared structural validation and engines.
 

@@ -23,6 +23,7 @@ _PUBLIC = {
     "measure_program": "profiling.measure",
     "MemoryBudgets": "planning.budgets",
     "CommunicationInfo": "communication",
+    "measure_communication": "communication.measure",
     "plan_program": "planning.plan",
     "sweep_programs": "planning.sweep",
     "write_report": "reporting",
