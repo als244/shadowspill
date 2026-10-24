@@ -64,6 +64,9 @@ class PlanObjects:
         self._size_by_alias: dict[str, int] = {
             item.alias_group_id: item.size_bytes for item in program.alias_groups
         }
+        self._spill_size_by_alias = {
+            item.alias_group_id: item.spill_size_bytes for item in program.alias_groups
+        }
         # An alias group's role, so a range the runtime reports as bound to an
         # object can say what the object is for. The runtime deliberately does
         # not know this; the program does.
@@ -222,7 +225,13 @@ class PlanObjects:
             raise PlanningError(f"unknown program object {object_id!r}") from exc
 
     def register_spill_bytes(
-        self, alias_id: str, *, address: int, size: int, retain_spill_copy: bool
+        self,
+        alias_id: str,
+        *,
+        address: int,
+        size: int,
+        retain_spill_copy: bool,
+        transfer_address: int = 0,
     ) -> None:
         """Register one object from host bytes the caller already holds.
 
@@ -231,12 +240,14 @@ class PlanObjects:
         memory lives.
         """
 
-        expected = self._size(alias_id)
+        expected = self._spill_size(alias_id)
         if size != expected:
             raise PlanningError(
                 f"host payload for {alias_id!r} has {size} bytes; "
                 f"the plan requires {expected}"
             )
+        if expected != self._size(alias_id) and transfer_address == 0:
+            raise PlanningError("sharded host storage requires a transfer descriptor")
         if expected == 0:
             self._registered.add(alias_id)
             self._zero_generations.setdefault(alias_id, 0)
@@ -247,18 +258,22 @@ class PlanObjects:
             register_object(
                 self.runtime,
                 runtime_object_id,
-                expected,
+                self._size(alias_id),
                 pool_id=self.spill_pool_id,
                 retain_spill_copy=bool(retain_spill_copy),
                 initially_resident=True,
                 source_address=address,
+                source_size_bytes=expected,
+                transfer_address=transfer_address,
             ),
             "register host object",
         )
         self._registered.add(alias_id)
         self._bind_plan_object(alias_id)
 
-    def reserve_spill(self, alias_id: str, *, retain_spill_copy: bool) -> None:
+    def reserve_spill(
+        self, alias_id: str, *, retain_spill_copy: bool, transfer_address: int = 0
+    ) -> None:
         """Allocate an initial spill lease for direct bounded initialization.
 
         The caller must fill the lease before dispatch; no source allocation or
@@ -267,8 +282,9 @@ class PlanObjects:
         self.register_spill_bytes(
             alias_id,
             address=0,
-            size=self._size(alias_id),
+            size=self._spill_size(alias_id),
             retain_spill_copy=retain_spill_copy,
+            transfer_address=transfer_address,
         )
 
     def adopt_persistent_object(
@@ -296,7 +312,7 @@ class PlanObjects:
         require_status(
             self.library,
             self.library.shadowspill_pytorch_validate_object_binding(
-                pool_id, current_object_id, pool_pointer, size_bytes
+                pool_id, current_object_id, pool_pointer, self._spill_size(alias_id)
             ),
             f"validate persistent object {alias_id}",
         )
@@ -338,6 +354,8 @@ class PlanObjects:
 
         if alias_id in self._registered:
             return
+        if self._spill_size(alias_id) != self._size(alias_id) and transfer_address == 0:
+            raise PlanningError("sharded host storage requires a transfer descriptor")
         if not self.requires_storage(alias_id):
             self._registered.add(alias_id)
             self._zero_generations.setdefault(alias_id, 0)
@@ -360,7 +378,7 @@ class PlanObjects:
         self._bind_plan_object(alias_id)
 
     def write_spill_bytes(self, alias_id: str, *, address: int, size: int) -> None:
-        expected = self._size(alias_id)
+        expected = self._spill_size(alias_id)
         if size != expected:
             raise RuntimeExecutionError(
                 f"runtime storage for {alias_id!r} has {size} bytes; "
@@ -383,7 +401,7 @@ class PlanObjects:
         )
 
     def read_spill_bytes(self, alias_id: str, *, address: int, size: int) -> None:
-        expected = self._size(alias_id)
+        expected = self._spill_size(alias_id)
         if size != expected:
             raise RuntimeExecutionError(
                 f"writeback storage for {alias_id!r} has {size} bytes; "
@@ -529,7 +547,7 @@ class PlanObjects:
         :meth:`read_spill_bytes` copies them out instead.
         """
 
-        size = self._size(alias_id)
+        size = self._spill_size(alias_id)
         pool = next(
             (
                 item
@@ -551,7 +569,13 @@ class PlanObjects:
         )
         if status != 0 or not snapshot.has_lease or not snapshot.current:
             return None
+        if snapshot.size_bytes != size:
+            raise RuntimeExecutionError("physical spill capacity differs from the Plan")
         return (int(snapshot.pointer), size) if snapshot.pointer else None
+
+    def _spill_size(self, alias_id: str) -> int:
+        self._size(alias_id)  # Same diagnostic for an unknown alias.
+        return self._spill_size_by_alias[alias_id]
 
     def _size(self, alias_id: str) -> int:
         try:

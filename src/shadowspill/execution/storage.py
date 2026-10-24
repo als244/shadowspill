@@ -32,6 +32,7 @@ class Storage:
         shared_aliases: Mapping[str, str] | None = None,
         extra_initial: Iterable[str] = (),
         logical_rank: int | None = None,
+        transfer_descriptors: Mapping[str, int] | None = None,
     ):
         self.plan, self.bridge, self.device = plan, bridge, device
         if logical_rank is None:
@@ -79,7 +80,11 @@ class Storage:
             a.alias_group_id: a.retain_spill_copy for a in plan.program.alias_groups
         }
         for alias in self.initial - bridge.objects.registered_aliases():
-            bridge.objects.reserve_spill(alias, retain_spill_copy=retain[alias])
+            bridge.objects.reserve_spill(
+                alias,
+                retain_spill_copy=retain[alias],
+                transfer_address=(transfer_descriptors or {}).get(alias, 0),
+            )
 
     def owner(self, alias: str) -> torch.Tensor:
         if alias not in self.owners:

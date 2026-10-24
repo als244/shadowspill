@@ -347,6 +347,8 @@ typedef struct ShadowSpillObjectSnapshot {
 
 typedef struct ShadowSpillObjectLocationSnapshot {
     uint64_t object_id;
+    /* Payload bytes in pool_id, excluding allocator alignment/padding. A host
+     * shard may be smaller than ShadowSpillObjectSnapshot.size_bytes. */
     uint64_t size_bytes;
     uint64_t authoritative_version;
     uint64_t version;

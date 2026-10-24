@@ -248,7 +248,9 @@ ShadowSpillStatus shadowspill_object_location_snapshot(
         ? NULL : location->lease;
     *snapshot = (ShadowSpillObjectLocationSnapshot){
         .object_id = object->object_id,
-        .size_bytes = object->size_bytes,
+        .size_bytes = shadowspill_object_pool_bytes(
+            object, shadowspill_runtime_pool(runtime, pool_id)
+        ),
         .authoritative_version = object->authoritative_version,
         .version = location == NULL ? 0U : location->version,
         .allocation_id = lease == NULL ? 0U : lease->allocation_id,

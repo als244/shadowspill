@@ -357,6 +357,72 @@ static int objects(ShadowSpillRuntime *runtime) {
     return 0;
 }
 
+static void retain_shard(void *context) { ++*(int *)context; }
+static void release_shard(void *context) { --*(int *)context; }
+
+static int unused_shard_transfer(
+    void *context, const ShadowSpillBackend *backend,
+    ShadowSpillBackendStream stream, uint8_t fetch,
+    void *destination, const void *source
+) {
+    (void)context; (void)backend; (void)stream; (void)fetch;
+    (void)destination; (void)source;
+    return -1; /* This test never fetches or evicts. */
+}
+
+/* Host views must expose the stored shard, never the full execution extent. */
+static int shard_locations(ShadowSpillRuntime *runtime) {
+    int references = 0;
+    const ShadowSpillObjectTransfer transfer = {
+        .spill_size_bytes = 32U, .context = &references,
+        .retain = retain_shard, .release = release_shard,
+        .enqueue = unused_shard_transfer,
+    };
+    const ShadowSpillObjectDescription object = {
+        .object_id = OBJECT_ID + 2U, .size_bytes = 256U,
+        .initial_pool_id = SPILL_POOL, .initially_resident = 1U,
+        .retain_spill_copy = 1U, .transfer = &transfer,
+    };
+    ShadowSpillObjectLocationSnapshot host = {0}, device = {0};
+    ShadowSpillObjectSnapshot logical = {0};
+    REQUIRE(
+        shadowspill_register_object(runtime, &object) == SHADOWSPILL_STATUS_OK &&
+            references == 1 &&
+            shadowspill_object_snapshot(runtime, object.object_id, &logical) ==
+                SHADOWSPILL_STATUS_OK &&
+            shadowspill_object_location_snapshot(runtime, object.object_id,
+                SPILL_POOL, &host) == SHADOWSPILL_STATUS_OK &&
+            shadowspill_object_location_snapshot(runtime, object.object_id,
+                DEVICE_POOL, &device) == SHADOWSPILL_STATUS_OK,
+        "cannot inspect sharded storage"
+    );
+    REQUIRE(
+        logical.size_bytes == 256U && device.size_bytes == 256U &&
+            host.size_bytes == 32U && host.has_lease && host.current,
+        "location snapshot must distinguish host and execution bytes"
+    );
+    const uint64_t address = (uint64_t)(uintptr_t)host.pointer;
+    REQUIRE(
+        shadowspill_pytorch_validate_object_binding(SPILL_POOL, object.object_id,
+            address, 32U) == SHADOWSPILL_STATUS_OK &&
+        shadowspill_pytorch_validate_object_binding(SPILL_POOL, object.object_id,
+            address, 256U) == SHADOWSPILL_STATUS_INVALID_STATE,
+        "host view must not expose bytes outside its shard"
+    );
+    unsigned char payload[32] = {17}, copy[32] = {0};
+    REQUIRE(
+        shadowspill_write_object(runtime, object.object_id, SPILL_POOL,
+            payload, sizeof(payload)) == SHADOWSPILL_STATUS_OK &&
+        shadowspill_read_object(runtime, object.object_id, SPILL_POOL,
+            copy, sizeof(copy)) == SHADOWSPILL_STATUS_OK &&
+        memcmp(payload, copy, sizeof(copy)) == 0 &&
+        shadowspill_unregister_object(runtime, object.object_id) ==
+            SHADOWSPILL_STATUS_OK && references == 0,
+        "shard bytes or transfer-descriptor ownership were not preserved"
+    );
+    return 0;
+}
+
 /* Allocation scopes outside any task, ended and aborted. */
 static int scopes(ShadowSpillRuntime *runtime) {
     const uint64_t scope_id = SHADOWSPILL_PYTORCH_PROFILING_SCOPE_BASE | 3U;
@@ -743,7 +809,8 @@ int main(int argc, char **argv) {
     }
     ShadowSpillRuntime *const runtime = (ShadowSpillRuntime *)handle;
     if (ledger() != 0 || profiler(runtime) != 0 || allocator(runtime) != 0 ||
-        objects(runtime) != 0 || scopes(runtime) != 0 || tasks(runtime) != 0 ||
+        objects(runtime) != 0 || shard_locations(runtime) != 0 ||
+        scopes(runtime) != 0 || tasks(runtime) != 0 ||
         placement_and_acquisition(runtime) != 0 || calibration(runtime) != 0 ||
         failure() != 0 ||
         close_adapter(runtime) != 0) {
