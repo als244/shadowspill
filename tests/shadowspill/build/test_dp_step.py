@@ -20,6 +20,7 @@ from shadowspill import (
     plan_program,
 )
 from shadowspill.artifacts.tensors import tensor_geometry
+from shadowspill.parallelism.views import owned_view_offsets
 from shadowspill.pytorch.executable import restore_executable
 
 
@@ -148,6 +149,7 @@ def _check_local_math(program, master_dtype):
     teacher = torch.optim.AdamW(reference.values(), lr=0.001, foreach=False)
     ranks = []
     for rank in range(4):
+        offsets = owned_view_offsets(program, rank)
         full_weights = {
             name: torch.nn.functional.pad(
                 parameter.detach().to(torch.bfloat16).reshape(-1),
@@ -163,7 +165,7 @@ def _check_local_math(program, master_dtype):
             if view is not None:
                 width = view["elements"]
                 values[name] = full_weights[view["parameter_name"]].narrow(
-                    0, (rank % 2) * width, width
+                    0, offsets[binding["object_id"]], width
                 )
             elif role == "parameter":
                 width = binding["shape"][0]

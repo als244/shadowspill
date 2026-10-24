@@ -10,6 +10,7 @@ import torch
 from shadowspill.artifacts.plan import Plan
 from shadowspill.artifacts.tensors import tensor_geometry
 from shadowspill.ir import MemoryLocation
+from shadowspill.parallelism.views import owned_view_offsets
 from shadowspill.runtime.plan import RuntimeBridge
 
 from .views import StorageViews
@@ -29,8 +30,19 @@ class Storage:
         shared: Storage | None = None,
         shared_aliases: Mapping[str, str] | None = None,
         extra_initial: Iterable[str] = (),
+        logical_rank: int | None = None,
     ):
         self.plan, self.bridge, self.device = plan, bridge, device
+        if logical_rank is None:
+            if (
+                plan.program.parallelism is not None
+                and plan.program.parallelism.world_size > 1
+            ):
+                raise ValueError(
+                    "distributed storage requires an explicit logical_rank"
+                )
+            logical_rank = 0
+        self.owned_offsets = owned_view_offsets(plan.program, logical_rank)
         self.aliases = {o.object_id: o.alias_group_id for o in plan.program.objects}
         self.sizes = {a.alias_group_id: a.size_bytes for a in plan.program.alias_groups}
         self.shared_aliases = dict(shared_aliases or {})
@@ -77,7 +89,7 @@ class Storage:
     def argument(self, object_id: str, geometry: Mapping[str, Any]) -> torch.Tensor:
         return torch.empty(0, dtype=dtype_of(geometry), device=self.device).set_(
             self.owner(self.aliases[object_id]).untyped_storage(),
-            geometry.get("storage_offset", 0),
+            geometry.get("storage_offset", 0) + self.owned_offsets.get(object_id, 0),
             geometry["shape"],
             geometry["stride"],
         )
