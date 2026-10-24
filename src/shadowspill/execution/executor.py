@@ -10,6 +10,7 @@ from shadowspill.artifacts.plan import Plan
 from shadowspill.pytorch.invocation import InvocationResult, ReusableCompletionEvent
 
 from .dispatch import dispatch
+from .distributed.ranks import RankAssignment
 from .inputs import stage_inputs
 from .results import collect_outputs
 from .tensors import TensorChunk, visit_tensors
@@ -26,8 +27,12 @@ class Executor:
         rank_map: Mapping[int, int] | None = None,
         external_headroom_bytes: int = 512 << 20,
     ) -> None:
-        if rank_map is not None and dict(rank_map) != {0: 0}:
-            raise NotImplementedError("this milestone supports a single logical rank")
+        world_size = (
+            1
+            if plan.program.parallelism is None
+            else plan.program.parallelism.world_size
+        )
+        self._assignment = RankAssignment.resolve(world_size, rank_map)
         self.plan = plan
         self.plans = MappingProxyType(dict(plans or {}))
         self.device = torch.device("cuda", device)

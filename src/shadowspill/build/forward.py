@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable, Mapping, Sequence
+from dataclasses import replace
 from typing import Any
 
 import torch
@@ -53,6 +54,9 @@ def build_forward(
         captured,
         tuple(compiled[item.compatibility_digest] for item in captured.artifacts),
         setup=build_setup(device),
+    )
+    program = replace(
+        program, bindings={**program.bindings, "compiled_device_index": device.index}
     )
     if spec.world_size > 1 and any(task.mutations for task in program.tasks):
         raise NotImplementedError(

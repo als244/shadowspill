@@ -8,6 +8,7 @@ import torch
 from torch.utils._pytree import tree_flatten
 
 from shadowspill.artifacts._values import plain
+from shadowspill.artifacts.device import require_compiled_device
 from shadowspill.artifacts.profiles import Profiles, TaskProfile
 from shadowspill.artifacts.program import Program
 from shadowspill.pytorch.accelerator import resolve_device
@@ -121,6 +122,8 @@ def measure_program(
     if program.bindings.get("provider") != "torch-inductor-aot":
         raise ValueError("Program has no supported finalized task implementation")
     target = resolve_device(device)
+    assert target.index is not None
+    require_compiled_device(program, target.index)
     if plain(program.setup) != build_setup(target):
         raise ValueError(
             "measurement device/toolchain differs from the finalized Program"

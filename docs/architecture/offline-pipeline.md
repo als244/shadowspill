@@ -439,3 +439,20 @@ rate. The simulator currently retains parent transfer timestamps, not individual
 phase intervals. Summary `fetch_bytes`/`evict_bytes` include both legs, alongside
 explicit host and collective byte totals. These totals count each direction's
 per-rank traffic, not a sum of both send and receive bandwidth.
+
+### Saved code and worker devices
+
+The current Inductor artifact format embeds a CUDA ordinal. Build records it;
+measurement and execution require the same process-local ordinal. In particular,
+setting `device=1` does not relocate code compiled for `cuda:0`. Device visibility
+can be arranged before CUDA initialization so separate workers each see their
+assigned physical GPU at ordinal zero. Older artifacts without the recorded
+binding can still be inspected/planned on CPU, but need rebuilding for execution.
+This limitation is separate from logical rank assignment.
+
+Worker-group binding is being qualified independently before distributed
+Executor admission is enabled. It preserves explicit logical membership order
+after applying the complete worker-to-logical-rank map and rejects inconsistent
+maps/Plan identities before backend group creation. CPU multi-process checks
+cover both group ordering and SUM/reduce-scatter geometry. They do not establish
+multi-GPU runtime correctness or communicator memory requirements.

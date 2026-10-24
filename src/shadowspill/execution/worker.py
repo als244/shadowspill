@@ -5,6 +5,7 @@ from dataclasses import dataclass
 
 import torch
 
+from shadowspill.artifacts.device import require_compiled_device
 from shadowspill.artifacts.plan import Plan
 from shadowspill.planning.shared import shared_memory
 from shadowspill.runtime import Runtime
@@ -52,6 +53,7 @@ def _bind(
     shared_slice_bytes: int | None = None,
 ) -> ExecutionPath:
     try:
+        require_compiled_device(plan.program, memory.execution_device)
         storage = Storage(
             plan,
             bridge,

@@ -3,6 +3,7 @@
 import torch
 
 from shadowspill.artifacts._values import plain
+from shadowspill.artifacts.device import require_compiled_device
 from shadowspill.artifacts.plan import Plan
 from shadowspill.memory import DevicePool, PinnedHostPool, TransferRoute
 from shadowspill.pytorch.frontend import PyTorchFrontend
@@ -26,6 +27,7 @@ def open_worker(
         raise NotImplementedError("distributed workers follow single-GPU qualification")
     if plan.program.setup["torch"] != torch.__version__:
         raise ValueError("Plan requires a different PyTorch build")
+    require_compiled_device(plan.program, device)
     runtime = Runtime(
         frontend=PyTorchFrontend(),
         pools={

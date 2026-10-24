@@ -1,6 +1,7 @@
 """Build an objective and persistent gradients without optimizer computation."""
 
 from collections.abc import Callable, Mapping, Sequence
+from dataclasses import replace
 from typing import Any
 
 import torch
@@ -113,5 +114,8 @@ def _build_training(
         setup=build_setup(device),
         gradient_dtype=grad_dtype,
         update=update,
+    )
+    program = replace(
+        program, bindings={**program.bindings, "compiled_device_index": device.index}
     )
     return attach_parallelism(program, spec, parameters)
