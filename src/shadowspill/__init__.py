@@ -30,6 +30,8 @@ _PUBLIC = {
     "Executor": "execution",
     "TrainingResult": "execution",
     "TensorChunk": "execution",
+    "save_checkpoint": "checkpoint",
+    "load_checkpoint": "checkpoint",
 }
 
 

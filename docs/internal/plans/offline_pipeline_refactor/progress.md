@@ -306,3 +306,20 @@
 - Trainer migration is awaiting the user's answer on its public constructor:
   `Trainer(plan, ...)` with optional supplied Executor versus retaining the old
   model/prepare orchestration. Independent checkpoint work continues meanwhile.
+
+### Bounded checkpoint helpers
+
+- Added `save_checkpoint` / `load_checkpoint` above the Executor tensor API.
+  A single atomic ZIP archive streams raw physical storage, retaining strided
+  geometry, dtypes, CPU controls, checksums and caller JSON metadata. No full-model
+  snapshot is assembled. Write/read chunk sizes can differ.
+- Initial compatibility requires the same Program; planning budgets/order can
+  change independently. This is full resume, not a Hugging Face/model-weight
+  conversion layer. Application scheduler/RNG metadata remains caller-owned.
+- Validation: eight cold-worker numerical replay cases now save after the first
+  invocation, overwrite all persistent data, restore, and continue against the
+  eager oracle. Four CPU tests check BF16/FP8/strided storage, bounded chunks,
+  atomic failure, corrupted payloads and Program mismatch. Focused lint/typing pass.
+- Continuing with precision qualification while the Trainer constructor question
+  remains pending. Master-weight capture must migrate without changing compute
+  or gradient dtype, and execution must initialize/export masters explicitly.
