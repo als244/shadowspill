@@ -25,6 +25,9 @@ from shadowspill.pytorch.partition import (
     partition_export,
 )
 
+from .constants import preserve_literals
+from .outputs import own_public_outputs
+
 
 @dataclass(frozen=True)
 class ForwardCapture:
@@ -54,6 +57,8 @@ def capture_forward_model(
     with mode, torch.no_grad():
         output_values, output_tree = tree_flatten(replica(*fake_args, **fake_kwargs))
         exported = capture_forward(replica, fake_args, kwargs=fake_kwargs)
+        preserve_literals(exported)
+        own_public_outputs(exported)
         roots = tuple(flat_runtime_arguments(exported, model, args, kwargs=kwargs))
         partitioned = partition_export(
             exported, replica, partition=partition, representative_root_inputs=roots

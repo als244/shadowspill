@@ -166,8 +166,8 @@ the worker's dependency, provider-resource and available-memory checks. The
 new saved-plan Executor now exercises these checks in a fresh worker. Its initial
 qualification covers small dense forward/backward/AdamW tasks, saved/recomputed
 stages, tied weights, bounded initialization/export and repeated calls. Runtime
-hyperparameters, cross-invocation gradient accumulation and general provider
-qualification are still being completed before normal caller migration.
+tensor hyperparameters and per-call gradient accumulation also work. General
+provider qualification and normal caller migration remain in progress.
 
 Implementation ownership:
 
@@ -184,3 +184,52 @@ Implementation ownership:
 The internal `_legacy.split_costed_program` imports old captured IR for validation
 while callers migrate. It is not a second public build path and does not claim
 that imported workspace totals carry allocator evidence.
+
+
+### Execution in a fresh worker
+
+Load the saved Plan before constructing an Executor. The worker must not have
+initialized CUDA with another allocator. Build/measurement belong in a different
+process; this worker needs neither the original model object nor compiler caches.
+
+```python
+from shadowspill import Executor, Plan
+
+executor = Executor(Plan.load("training.ssp"))
+executor.initialize(fill_tensor)  # fills provided, bounded CPU spill views
+pending = executor.run(args=[(features,)], kwargs=[{"targets": targets}])
+result = pending.result()
+```
+
+`run` returns a result handle; the next `run` waits for an outstanding invocation.
+Forward results preserve the model's output structure. Training returns losses
+and metrics per example. Outputs are caller-owned across invocations; release
+held GPU outputs before closing the Executor. A refused close can be retried
+once those outputs have been released.
+
+A forward/backward Plan contains both fresh and accumulating invocation paths.
+The default starts fresh gradients. `accumulate_gradients=True` uses stored
+gradients. Both paths share a physical arena and persistent tensor identities;
+the archive includes both schedules and memory admission records. There is no
+runtime planning or hidden eager gradient addition.
+
+`hyperparams={"optimizer_group.0.lr": value}` overrides a captured tensor
+hyperparameter for that call. Omitted entries use the captured defaults;
+Python numeric optimizer settings remain specialized constants. CPU controls
+remain on the host, and device control tensors occupy planned memory.
+
+Initialization uses `TensorChunk` metadata and fills an Executor-owned buffer.
+Normal initialization loads model tensors and applies optimizer/gradient defaults.
+`initialize(fill_tensor, restore=True)` instead asks the loader for all persistent
+tensors, including optimizer data and gradients. `export_tensors(write_chunk)`
+streams the same named storage in bounded views. Callbacks must consume/fill each
+view before returning and must not retain it. Checkpoint file formats belong to
+helpers above this interface, not the allocator or task dispatcher.
+
+Returned views of input or parameter storage become owned snapshots during build.
+Those copies are compiled and profiled as part of the task. Views sharing that
+storage still share their returned snapshot; changing it cannot change stored
+parameters. Mixed-dtype views of one returned input storage currently require
+explicit model-side copies. TensorChunk includes stride and storage offset for
+loaders handling noncontiguous registrations; chunk offsets address physical
+storage rather than a flattened logical tensor.

@@ -25,6 +25,8 @@ from shadowspill.pytorch.graph_pairs import (
 from shadowspill.pytorch.guards import InputSignature, capture_input_signature
 from shadowspill.pytorch.partition import PartitionSpec
 
+from .constants import preserve_literals
+from .outputs import own_public_outputs
 from .shared_gradients import include_shared_gradients
 
 
@@ -68,6 +70,8 @@ def capture_training_model(
                 template = capture_training_objective(
                     replica, objective, fake_args, kwargs=fake_kwargs
                 )
+                preserve_literals(template.exported)
+                own_public_outputs(template.exported)
                 roots = tuple(
                     flat_runtime_arguments(
                         template.exported, original, args, kwargs=kwargs

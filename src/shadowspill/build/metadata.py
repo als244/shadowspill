@@ -45,6 +45,15 @@ def root_sources(exported: ExportCapture) -> list[dict[str, Any]]:
         if spec.kind is InputKind.USER_INPUT:
             record["user_leaf"] = user_position
             user_position += 1
+        if spec.kind is InputKind.CONSTANT_TENSOR:
+            value = exported.exported_program.constants.get(spec.target)
+            if (
+                isinstance(value, Tensor)
+                and not isinstance(value, FakeTensor)
+                and value.device.type == "cpu"
+                and value.numel() <= 4096
+            ):
+                record["value"] = value.tolist()
         result.append(record)
     return result
 

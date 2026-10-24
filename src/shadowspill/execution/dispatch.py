@@ -1,5 +1,7 @@
 """Run one saved callable between exact acquisition/publication boundaries."""
 
+from typing import Any
+
 import torch
 from torch.utils._pytree import tree_flatten
 
@@ -14,10 +16,11 @@ from shadowspill.pytorch.runtime_adapter.replacements import ReplacementStorageV
 from shadowspill.runtime.plan import abort_task
 
 from .admission import BoundTask
+from .controls import Controls
 from .storage import Storage
 
 
-def dispatch(bound: BoundTask, state: Storage) -> None:
+def dispatch(bound: BoundTask, state: Storage, controls: Controls) -> None:
     bridge, device = state.bridge, state.device.index
     tensors = [
         state.owner(a) for a in bound.inputs if bridge.objects.requires_storage(a)
@@ -25,15 +28,15 @@ def dispatch(bound: BoundTask, state: Storage) -> None:
     before_task_and_acquire(bridge, bound.handle, device, tensors)
     try:
         wait_task_allocations(bridge, bound.handle, device)
-        _run(bound, state)
+        _run(bound, state, controls)
     except BaseException:
         abort_task(bridge, bound.handle)
         raise
 
 
-def _run(bound: BoundTask, state: Storage) -> None:
+def _run(bound: BoundTask, state: Storage, controls: Controls) -> None:
     description, entry = bound.description, bound.entry
-    arguments = [None] * description.get("count", 0)
+    arguments: list[Any] = [None] * description.get("count", 0)
     for index, value in description.get("static_values", ()):
         arguments[index] = value
     geometries = dict(
@@ -47,6 +50,8 @@ def _run(bound: BoundTask, state: Storage) -> None:
         arguments[slot.leaf_index] = state.argument(
             slot.object_id, geometries[slot.leaf_index]
         )
+    for position, name in bound.host_inputs:
+        arguments[position] = controls.host[name]
     with torch.no_grad():
         leaves, _ = tree_flatten(
             () if bound.function is None else bound.function(*arguments)

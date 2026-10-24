@@ -24,6 +24,7 @@ from ..metadata import root_sources, signature_record
 from ..optimizer import BuiltOptimizer
 from ..training_capture import TrainingCapture
 from .catalog import CompiledTasks
+from .controls import register_device_controls
 from .optimizer import optimizer_templates
 from .training_templates import stage_templates
 
@@ -55,6 +56,7 @@ def lower_training(
                 if name in trained
             },
         )
+        objects = register_device_controls(objects, update)
         boundaries = bind_training_boundaries(
             captures, objects, geometry, (None,) * len(captures)
         )

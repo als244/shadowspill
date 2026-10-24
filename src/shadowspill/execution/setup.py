@@ -43,24 +43,37 @@ def open_worker(
     try:
         if build_setup(torch.device("cuda", device)) != plain(plan.program.setup):
             raise ValueError("Plan build/target identity differs from this worker")
-        memory = begin_plan(
-            runtime,
-            execution="execution",
-            spill="spill",
-            execution_budget=None,
-            spill_budget=None,
-            dynamic_scratch_reserve_bytes=0,
-            execution_device=device,
-            require_calibration=False,
-        )
-        bridge = RuntimeBridge(
-            runtime,
-            plan._costed_program,
-            memory.plan_handle,
-            execution_pool_id=memory.execution.pool_id,
-            spill_pool_id=memory.spill.pool_id,
-        )
+        memory, bridge = open_path(runtime, plan, device)
         return runtime, memory, bridge
     except BaseException:
         runtime.close()
         raise
+
+
+def open_path(
+    runtime: Runtime,
+    plan: Plan,
+    device: int,
+    *,
+    slab_owner: int | None = None,
+) -> tuple[PlanMemory, RuntimeBridge]:
+    memory = begin_plan(
+        runtime,
+        execution="execution",
+        spill="spill",
+        execution_budget=None,
+        spill_budget=None,
+        dynamic_scratch_reserve_bytes=0,
+        execution_device=device,
+        slab_owner=slab_owner,
+        require_calibration=False,
+    )
+    bridge = RuntimeBridge(
+        runtime,
+        plan._costed_program,
+        memory.plan_handle,
+        execution_pool_id=memory.execution.pool_id,
+        spill_pool_id=memory.spill.pool_id,
+        slab_owner=slab_owner,
+    )
+    return memory, bridge

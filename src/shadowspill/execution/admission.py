@@ -33,6 +33,7 @@ class BoundTask:
     outputs: Any
     publications: tuple[TaskPublication, ...]
     actions: Any
+    host_inputs: tuple[tuple[int, str], ...]
 
 
 def prepare(plan: Plan, bridge: RuntimeBridge) -> tuple[tuple[BoundTask, ...], int]:
@@ -48,6 +49,7 @@ def prepare(plan: Plan, bridge: RuntimeBridge) -> tuple[tuple[BoundTask, ...], i
         bridge, project_runtime_fixed_layout(plan.memory_layout, ir, plan.schedule)
     )
     actions = actions_by_task(plan.schedule.actions)
+    descriptions = {e["task_id"]: e for e in plan.program.bindings["entrypoints"]}
     original_keys = {t.task_id: t.profile_id for t in plan.program.tasks}
     functions, result = {}, []
     for task, entry in zip(tasks, entries, strict=True):
@@ -96,6 +98,12 @@ def prepare(plan: Plan, bridge: RuntimeBridge) -> tuple[tuple[BoundTask, ...], i
                 bindings,
                 publications,
                 task_actions,
+                tuple(
+                    (item["leaf_index"], item["name"])
+                    for item in descriptions.get(task.task_id, {}).get(
+                        "host_inputs", ()
+                    )
+                ),
             )
         )
     public = plan.program.bindings["public_outputs"]

@@ -1,4 +1,3 @@
-import copy
 import os
 import subprocess
 import sys
@@ -7,7 +6,6 @@ from pathlib import Path
 
 import pytest
 import torch
-from torch.utils._pytree import tree_map
 
 from shadowspill import (
     CommunicationInfo,
@@ -20,6 +18,7 @@ from shadowspill.artifacts._values import plain
 from shadowspill.build import build_forward, build_forward_backward, build_step
 from tests.shadowspill.build.test_forward import Network as ForwardNetwork
 from tests.shadowspill.build.test_training import Network, objective
+from tests.shadowspill.execution._oracle import oracle
 
 
 @pytest.mark.cuda
@@ -31,6 +30,9 @@ from tests.shadowspill.build.test_training import Network, objective
         ("forward_backward", "recompute", True),
         ("step", "save", True),
         ("step", "recompute", False),
+        ("step_tensor_lr", "save", False),
+        ("step_resume", "recompute", True),
+        ("backward_resume", "save", False),
     ],
 )
 def test_saved_plan_executes_without_build_or_measurement(
@@ -40,7 +42,6 @@ def test_saved_plan_executes_without_build_or_measurement(
         pytest.skip("requires CUDA")
     torch.manual_seed(17)
     model = ForwardNetwork() if kind == "forward" else Network(tied=tied)
-    initial = copy.deepcopy(model.state_dict())
     examples = (
         [((torch.randn(4, 8),), {"options": {"scale": 2}})]
         if kind == "forward"
@@ -53,10 +54,14 @@ def test_saved_plan_executes_without_build_or_measurement(
         program = build_forward(template, **common)
     else:
         common.update(objective=objective, num_examples=2)
-        if kind == "step":
+        if kind.startswith("step"):
             program = build_step(
                 template,
-                optimizer=torch.optim.AdamW(template.parameters(), foreach=False),
+                optimizer=torch.optim.AdamW(
+                    template.parameters(),
+                    foreach=False,
+                    lr=torch.tensor(0.001) if kind == "step_tensor_lr" else 0.001,
+                ),
                 **common,
             )
         else:
@@ -85,45 +90,7 @@ def test_saved_plan_executes_without_build_or_measurement(
         ),
     )
     plan.save(tmp_path / "plan.ssp")
-    optimizer = torch.optim.AdamW(model.parameters(), foreach=False)
-    expected = []
-    for _ in range(3):
-        state = {}
-        if kind == "forward":
-            outputs = model(*examples[0][0], **examples[0][1])
-        else:
-            optimizer.zero_grad(set_to_none=True)
-            outputs = [objective(model, *args, **kwargs) for args, kwargs in examples]
-            for loss, _ in outputs:
-                loss.backward()
-            if kind == "step":
-                optimizer.step()
-                for name, parameter in model.named_parameters():
-                    for entry, value in optimizer.state[parameter].items():
-                        state[f"optimizer.{name}.{entry}"] = value.detach().clone()
-            else:
-                state.update(
-                    {
-                        f"gradient.{name}": p.grad.clone()
-                        for name, p in model.named_parameters()
-                    }
-                )
-        state.update(
-            {name: value.detach().clone() for name, value in model.named_parameters()}
-        )
-        expected.append(
-            (
-                tree_map(
-                    lambda v: v.detach().clone() if isinstance(v, torch.Tensor) else v,
-                    outputs,
-                ),
-                state,
-            )
-        )
-    torch.save(
-        dict(initial=initial, examples=examples, expected=expected),
-        tmp_path / "oracle.pt",
-    )
+    torch.save(oracle(model, examples, kind), tmp_path / "oracle.pt")
     worker = subprocess.run(
         [
             sys.executable,

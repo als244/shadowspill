@@ -43,12 +43,45 @@ def plan_program(
     if search_options is not None and not isinstance(search_options, SearchOptions):
         raise TypeError("search_options must be SearchOptions")
     options = search_options or SearchOptions()
-    program = replace(
-        program,
-        program=bind_training(
-            program.program, ordering, optimizer_ordering=optimizer_ordering
+    fresh = _plan_bound(
+        replace(
+            program,
+            program=bind_training(
+                program.program, ordering, optimizer_ordering=optimizer_ordering
+            ),
         ),
+        memory_budgets=memory_budgets,
+        communication_info=communication_info,
+        options=options,
     )
+    if program.program.bindings.get("kind") != "forward_backward":
+        return fresh
+    accumulated = _plan_bound(
+        replace(
+            program,
+            program=bind_training(
+                program.program,
+                ordering,
+                accumulate=True,
+                optimizer_ordering=optimizer_ordering,
+            ),
+        ),
+        memory_budgets=memory_budgets,
+        communication_info=communication_info,
+        options=options,
+    )
+    from .modes import bundle_gradient_modes
+
+    return bundle_gradient_modes(fresh, accumulated)
+
+
+def _plan_bound(
+    program: ProfiledProgram,
+    *,
+    memory_budgets: MemoryBudgets,
+    communication_info: CommunicationInfo,
+    options: SearchOptions,
+) -> Plan:
     costed, config = simulation_inputs(program, memory_budgets, communication_info)
     facts = program_admission(
         program, costed, memory_budgets.execution_bytes - program.fixed_device_bytes

@@ -1,7 +1,8 @@
 """Metadata-only CUDA views and bounded access to persistent spill storage."""
 
-from collections.abc import Callable, Iterator, Mapping
-from dataclasses import dataclass
+from __future__ import annotations
+
+from collections.abc import Iterable, Mapping
 from typing import Any, cast
 
 import torch
@@ -11,31 +12,28 @@ from shadowspill.ir import MemoryLocation
 from shadowspill.runtime.plan import RuntimeBridge
 
 
-@dataclass(frozen=True)
-class TensorChunk:
-    """A contiguous region of physical tensor storage, in dtype elements.
-
-    ``shape`` describes the original tensor. ``offset`` indexes its storage,
-    not a flattened logical view; tied/strided views share one initialization.
-    """
-
-    name: str
-    shape: tuple[int, ...]
-    dtype: torch.dtype
-    offset: int
-    storage_elements: int
-
-
 def dtype_of(geometry: Mapping[str, Any]) -> torch.dtype:
     return cast(torch.dtype, getattr(torch, geometry["dtype"].removeprefix("torch.")))
 
 
 class Storage:
-    def __init__(self, plan: Plan, bridge: RuntimeBridge, device: torch.device):
+    def __init__(
+        self,
+        plan: Plan,
+        bridge: RuntimeBridge,
+        device: torch.device,
+        *,
+        shared: Storage | None = None,
+        extra_initial: Iterable[str] = (),
+    ):
         self.plan, self.bridge, self.device = plan, bridge, device
         self.aliases = {o.object_id: o.alias_group_id for o in plan.program.objects}
         self.sizes = {a.alias_group_id: a.size_bytes for a in plan.program.alias_groups}
-        self.owners: dict[str, torch.Tensor] = {}
+        self.owners: dict[str, torch.Tensor] = {} if shared is None else shared.owners
+        if shared is not None:
+            bridge.objects.adopt_registered(
+                shared.bridge.objects.registered_runtime_objects(), borrowed=True
+            )
         self.outputs: dict[str, torch.Tensor] = {}
         self.geometry: dict[str, Mapping[str, Any]] = {}
         tasks = {t.task_id: t for t in plan.program.tasks}
@@ -59,7 +57,9 @@ class Storage:
                 self.geometry.setdefault(
                     item["object_id"], {**item, "storage_offset": 0}
                 )
-        self.initial = {r.alias_group_id for r in plan.schedule.initial_residency}
+        self.initial = {
+            r.alias_group_id for r in plan.schedule.initial_residency
+        } | set(extra_initial)
         if any(
             r.location is not MemoryLocation.SPILL
             for r in plan.schedule.initial_residency
@@ -70,7 +70,7 @@ class Storage:
         retain = {
             a.alias_group_id: a.retain_spill_copy for a in plan.program.alias_groups
         }
-        for alias in self.initial:
+        for alias in self.initial - bridge.objects.registered_aliases():
             bridge.objects.reserve_spill(alias, retain_spill_copy=retain[alias])
 
     def owner(self, alias: str) -> torch.Tensor:
@@ -103,60 +103,6 @@ class Storage:
                 size,
             ),
         )
-
-    def state_entries(self) -> Iterator[tuple[str, str, Mapping[str, Any] | None]]:
-        bindings = self.plan.program.bindings
-        for item in bindings["registrations"]:
-            name = item["name"]
-            if item.get("component_path"):
-                name += "." + ".".join(item["component_path"])
-            yield name, item["object_id"], None
-        for item in bindings.get("optimizer_bindings", ()):
-            if (
-                item["role"] not in {"parameter", "gradient"}
-                and item["object_id"] is not None
-            ):
-                yield item["name"], item["object_id"], item.get("initialization")
-        if bindings["kind"] == "forward_backward":
-            for item in bindings["gradients"]:
-                yield (
-                    "gradient." + item["parameter_name"],
-                    item["gradient_object_id"],
-                    None,
-                )
-
-    def visit_state(
-        self,
-        callback: Callable[[TensorChunk, torch.Tensor], None],
-        chunk_bytes: int,
-        *,
-        initialize: bool,
-    ) -> None:
-        if chunk_bytes <= 0:
-            raise ValueError("chunk_bytes must be positive")
-        visited = set()
-        for name, object_id, initializer in self.state_entries():
-            alias = self.aliases[object_id]
-            if initialize and alias not in self.initial:
-                continue
-            if alias in visited:
-                continue
-            visited.add(alias)
-            geometry = self.geometry[object_id]
-            dtype = dtype_of(geometry)
-            owner = self.host(alias).view(dtype)
-            width = max(1, chunk_bytes // dtype.itemsize)
-            for start in range(0, owner.numel(), width):
-                destination = owner[start : start + width]
-                request = TensorChunk(
-                    name, tuple(geometry["shape"]), dtype, start, owner.numel()
-                )
-                if initialize and initializer is not None:
-                    if initializer["kind"] not in {"constant", "value"}:
-                        raise NotImplementedError(f"unsupported initializer for {name}")
-                    destination.fill_(initializer["value"])
-                else:
-                    callback(request, destination)
 
     def clear_views(self) -> None:
         self.outputs.clear()

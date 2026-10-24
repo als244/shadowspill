@@ -34,6 +34,7 @@ class Plan(Artifact):
     _costed_program: ShadowSpillProgram
     memory_layout: FixedPhysicalLayout | None = None
     _admission_facts: AdmissionFacts | None = None
+    _accumulation_plan: Plan | None = None
 
     def __post_init__(self) -> None:
         layout, facts = self.memory_layout, self._admission_facts
@@ -55,6 +56,19 @@ class Plan(Artifact):
             ):
                 raise ValueError("physical layout exceeds the total GPU allowance")
 
+        if self._accumulation_plan is not None:
+            other = self._accumulation_plan
+            if (
+                self.program.bindings.get("kind") != "forward_backward"
+                or other._accumulation_plan is not None
+                or not other.program.bindings.get("accumulate_gradients")
+                or self.program.objects != other.program.objects
+                or self.program.alias_groups != other.program.alias_groups
+                or self.program.setup != other.program.setup
+                or self.memory_budgets != other.memory_budgets
+            ):
+                raise ValueError("incompatible gradient-accumulation execution path")
+
     @property
     def program(self) -> Program:
         return self.profiled_program.program
@@ -69,6 +83,14 @@ class Plan(Artifact):
         missing_code = not self.program.executables
         return (
             *reasons,
+            *(
+                tuple(
+                    f"accumulation: {r}"
+                    for r in self._accumulation_plan.simulation_only_reasons
+                )
+                if self._accumulation_plan is not None
+                else ()
+            ),
             *(("executable task payloads absent",) if missing_code else ()),
             *(
                 ("physical allocation evidence absent",)
@@ -115,13 +137,19 @@ class Plan(Artifact):
             "memory_layout": None
             if self.memory_layout is None
             else self.memory_layout.to_dict(),
+            "accumulation_plan": None
+            if self._accumulation_plan is None
+            else self._accumulation_plan.to_dict(),
             "admission_facts": None
             if self._admission_facts is None
             else self._admission_facts.to_dict(),
         }
 
     def _archive_payloads(self) -> Mapping[str, bytes]:
-        return self.program._archive_payloads()
+        payloads = dict(self.program._archive_payloads())
+        if self._accumulation_plan is not None:
+            payloads.update(self._accumulation_plan._archive_payloads())
+        return payloads
 
     @classmethod
     def from_dict(
@@ -159,5 +187,10 @@ class Plan(Artifact):
                 None
                 if value.get("admission_facts") is None
                 else AdmissionFacts.from_dict(value["admission_facts"])
+            ),
+            (
+                None
+                if value.get("accumulation_plan") is None
+                else cls.from_dict(value["accumulation_plan"], payloads=payloads)
             ),
         )
