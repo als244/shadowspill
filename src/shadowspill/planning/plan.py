@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import replace
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Literal
 
 from shadowspill.artifacts.plan import Plan
 from shadowspill.artifacts.profiled_program import ProfiledProgram
@@ -25,6 +25,7 @@ def plan_program(
     communication_info: CommunicationInfo,
     search_options: SearchOptions | None = None,
     ordering: StepDataOrdering | None = None,
+    optimizer_ordering: Literal["stage_interleaved", "tail"] = "stage_interleaved",
 ) -> Plan:
     """Plan a fully supplied candidate without compilation, measurement or CUDA.
 
@@ -40,7 +41,12 @@ def plan_program(
     if search_options is not None and not isinstance(search_options, SearchOptions):
         raise TypeError("search_options must be SearchOptions")
     options = search_options or SearchOptions()
-    program = replace(program, program=bind_training(program.program, ordering))
+    program = replace(
+        program,
+        program=bind_training(
+            program.program, ordering, optimizer_ordering=optimizer_ordering
+        ),
+    )
     costed, config = simulation_inputs(program, memory_budgets, communication_info)
     result = options.resolved_algorithm(
         costed,

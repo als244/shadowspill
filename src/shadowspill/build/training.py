@@ -13,6 +13,7 @@ from shadowspill.pytorch.partition import PartitionSpec
 
 from .common import build_setup, compile_artifacts
 from .lowering.training import lower_training
+from .optimizer import capture_update
 from .training_capture import capture_training_model
 
 
@@ -33,6 +34,33 @@ def build_forward_backward(
     The objective is called as objective(model, *example_args, **example_kwargs).
     Gradients persist after execution; no optimizer is captured or initialized.
     """
+    return _build_training(
+        model,
+        objective=objective,
+        optimizer=None,
+        example_args=example_args,
+        example_kwargs=example_kwargs,
+        num_examples=num_examples,
+        partition=partition,
+        operator_recompute=operator_recompute,
+        grad_dtype=grad_dtype,
+        target=target,
+    )
+
+
+def _build_training(
+    model: nn.Module,
+    *,
+    objective: Callable[..., Any],
+    optimizer: torch.optim.Optimizer | None,
+    example_args: Sequence[Any],
+    example_kwargs: Mapping[str, Any] | None,
+    num_examples: int,
+    partition: PartitionSpec,
+    operator_recompute: RetentionPolicy | None,
+    grad_dtype: torch.dtype | None,
+    target: str | torch.device,
+) -> Program:
     device = resolve_device(target)
     assert device.index is not None
     captured = capture_training_model(
@@ -46,14 +74,29 @@ def build_forward_backward(
         gradient_dtype=grad_dtype,
         device_index=device.index,
     )
-    artifacts = (
+    artifacts = [
         artifact
         for example in captured.examples
         for stage in example.stages
         for variant in stage.graph_pairs.variants
         for artifact in (variant.pair.forward, variant.pair.backward)
+    ]
+    update = (
+        None
+        if optimizer is None
+        else capture_update(model, optimizer, captured, gradient_dtype=grad_dtype)
     )
+    if update is not None:
+        from shadowspill.pytorch.capture.artifacts import GraphArtifact
+
+        for task in update.captured.update_tasks:
+            assert isinstance(task.artifact, GraphArtifact)
+            artifacts.append(task.artifact)
     compiled = compile_artifacts(artifacts, device)
     return lower_training(
-        captured, compiled, setup=build_setup(device), gradient_dtype=grad_dtype
+        captured,
+        compiled,
+        setup=build_setup(device),
+        gradient_dtype=grad_dtype,
+        update=update,
     )
