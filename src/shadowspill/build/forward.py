@@ -7,14 +7,13 @@ from typing import Any
 
 import torch
 from torch import nn
-from torch._inductor.codecache import torch_key
 
 from shadowspill.artifacts.program import Program
 from shadowspill.pytorch.accelerator import resolve_device
 from shadowspill.pytorch.partition import PartitionSpec
 
 from .capture import capture_forward_model
-from .compilation import compile_task
+from .common import build_setup, compile_artifacts
 from .lowering.forward import lower_forward
 
 
@@ -40,22 +39,9 @@ def build_forward(
         partition=partition,
         device_index=device.index,
     )
-    with torch.cuda.device(device):
-        unique = {}
-        compiled = []
-        for artifact in captured.artifacts:
-            key = artifact.compatibility_digest
-            if key not in unique:
-                unique[key] = compile_task(artifact)
-            compiled.append(unique[key])
+    compiled = compile_artifacts(captured.artifacts, device)
     return lower_forward(
         captured,
-        tuple(compiled),
-        setup={
-            "torch": torch.__version__,
-            "torch_build": torch_key().hex(),
-            "cuda": torch.version.cuda,
-            "gpu": torch.cuda.get_device_name(device),
-            "capability": list(torch.cuda.get_device_capability(device)),
-        },
+        tuple(compiled[item.compatibility_digest] for item in captured.artifacts),
+        setup=build_setup(device),
     )

@@ -1,7 +1,7 @@
 # Independent build, profile and planning phases
 
 The refactor is being implemented in phases. The CPU path described here works;
-training builders, GPU measurement, execution admission and caller migration are
+full-step building, GPU measurement, execution admission and caller migration are
 still in progress on `codex/offline-pipeline-refactor`.
 
 ```python
@@ -57,7 +57,32 @@ positional and keyword arguments, including nested structures and specialized
 non-tensor values. It records semantic module/parameter names, output storage
 geometry, scheduled compiler-buffer lifetimes and explicit unresolved memory
 requirements for provider calls. No state initialization or task timing occurs.
-The training builders and their ordering controls are the next migration step.
+`build_forward_backward` adds an objective and persistent gradients without an
+optimizer. It compiles gradient-creation and accumulation forms for each stage:
+
+```python
+from shadowspill import build_forward_backward
+from shadowspill.step import StepDataOrdering
+
+program = build_forward_backward(
+    model, objective=objective, example_args=(features,),
+    example_kwargs={"targets": targets}, num_examples=8,
+)
+# After measurement or explicit profiles, choose traversal entirely on CPU:
+plan = plan_program(
+    apply_profiles(program, profiles),
+    ordering=StepDataOrdering(depth=2, breadth=4),
+    memory_budgets=memory_budgets, communication_info=communication_info,
+)
+```
+
+The objective receives `objective(model, *args, **kwargs)` and returns a scalar
+loss, optionally with metrics. `num_examples` fixes how many complete calls the
+program includes; ordering is a planning choice. Changing it reuses compiled
+forms and task profiles. Model mutations or RNG effects currently restrict
+reordering. Tied parameter contributions preserve both creation and mutation
+dependencies. `operator_recompute` controls operator retention during build;
+the planner separately chooses among saved stage variants.
 
 ```python
 from shadowspill import TaskProfile
@@ -103,7 +128,7 @@ the compute/transfer timeline; they do not invent a memory curve.
 
 Workspace totals permit logical simulation. They do **not** establish allocation
 order, storage handoffs, charged alignment, persistent provider allocations or
-the task code required for execution. Built forward Programs now contain packaged
+the task code required for execution. Built Programs now contain packaged
 task code that has been tested in a fresh process with empty compiler caches.
 The initial CPU artifacts nevertheless expose
 `simulation_only_reasons` and no physical `memory_layout`. A later milestone

@@ -16,8 +16,19 @@ on separate machines.
 
 from __future__ import annotations
 
-from .archive import StepArchive
+from importlib import import_module
+from typing import Any
+
 from .ordering import StepDataOrdering
-from .program import StepProgram
+
+
+def __getattr__(name: str) -> Any:
+    modules = {"StepArchive": "archive", "StepProgram": "program"}
+    if name not in modules:
+        raise AttributeError(name)
+    value = getattr(import_module(f".{modules[name]}", __name__), name)
+    globals()[name] = value
+    return value
+
 
 __all__ = ["StepArchive", "StepDataOrdering", "StepProgram"]

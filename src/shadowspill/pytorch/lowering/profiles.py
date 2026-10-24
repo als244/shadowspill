@@ -10,6 +10,7 @@ from shadowspill.pytorch.capture.artifacts import GraphArtifact
 from shadowspill.pytorch.capture.storage import TaskStorageContract
 from shadowspill.pytorch.optimizer import OptimizerTaskArtifact
 from shadowspill.pytorch.profiling import TaskMeasurement
+from shadowspill.task.geometry import TaskStorageGeometry
 from shadowspill.task.layout import (
     CompiledTaskLayout,
     reconcile_compiled_task_layout,
@@ -230,6 +231,11 @@ class TaskProfileCatalog:
             )
         )
         return profile_id
+
+    def geometry(
+        self, artifact: GraphArtifact, metadata_digest: str | None = None
+    ) -> TaskStorageGeometry:
+        return self.layout(artifact, metadata_digest).geometry
 
     def layout(
         self,

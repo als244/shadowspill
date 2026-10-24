@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from types import MappingProxyType
 from typing import Any, ClassVar
 
@@ -84,13 +84,36 @@ class ProfiledProgram(Artifact):
                     item.overlap_costs or (),
                 )
             )
+        from shadowspill.planning.workspace import transient_output_workspace
+
+        by_key = {profile.profile_id: profile for profile in profiles}
+        tasks = []
+        transient = self.program.bindings.get("transient_outputs", {})
+        manifests = self.program.bindings.get("manifests", {})
+        derived = {}
+        for task in self.program.tasks:
+            leaves = transient.get(task.task_id, ())
+            extra = transient_output_workspace(
+                leaves,
+                manifests.get(task.profile_id, {}),
+                self.task_profiles[task.profile_id].metadata,
+            )
+            if extra:
+                key = f"{task.profile_id}.workspace_{extra}"
+                derived[key] = replace(
+                    by_key[task.profile_id],
+                    profile_id=key,
+                    workspace_bytes=by_key[task.profile_id].workspace_bytes + extra,
+                )
+                task = replace(task, profile_id=key)
+            tasks.append(task)
         return ShadowSpillProgram(
             devices=self.program.devices,
             alias_groups=self.program.alias_groups,
             objects=self.program.objects,
-            tasks=self.program.tasks,
+            tasks=tuple(tasks),
             task_alternative_groups=self.program.task_alternative_groups,
-            profiles=tuple(profiles),
+            profiles=(*profiles, *derived.values()),
         )
 
     def to_dict(self) -> dict[str, Any]:

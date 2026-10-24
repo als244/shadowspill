@@ -378,7 +378,10 @@ def capture_training_objective(
 
 
 def rebind_training_objective(
-    capture: TrainingObjectiveCapture, microbatch: Sequence[Any]
+    capture: TrainingObjectiveCapture,
+    microbatch: Sequence[Any],
+    *,
+    kwargs: Mapping[str, Any] | None = None,
 ) -> TrainingObjectiveCapture:
     """The same exported objective bound to another position's example inputs.
 
@@ -388,7 +391,9 @@ def rebind_training_objective(
 
     exported = replace(
         capture.exported,
-        flat_inputs=_flatten_inputs(capture.exported.exported_program, microbatch),
+        flat_inputs=_flatten_inputs(
+            capture.exported.exported_program, microbatch, kwargs
+        ),
     )
     return replace(capture, exported=exported)
 

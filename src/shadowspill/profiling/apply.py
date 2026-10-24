@@ -36,16 +36,18 @@ def apply_profiles(program: Program, profiles: Profiles) -> ProfiledProgram:
                 f"{key}: task implementation/layout does not match profile"
             )
         workspace = record.workspace_bytes
+        known_workspace = (
+            program.bindings.get("compiler_memory", {})
+            .get(key, {})
+            .get("known_workspace_bytes", 0)
+        )
         metadata = dict(record.metadata)
         if workspace is None:
             workspace = definition.workspace_bytes
             if workspace is not None:
                 metadata["memory_kind"] = "static"
                 metadata["memory_source"] = "program"
-        elif (
-            definition.workspace_bytes is not None
-            and workspace < definition.workspace_bytes
-        ):
+        elif workspace < max(definition.workspace_bytes or 0, known_workspace):
             raise ValueError(
                 f"{key}: workspace is smaller than compiler-visible memory"
             )

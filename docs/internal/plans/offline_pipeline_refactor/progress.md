@@ -110,3 +110,28 @@
   over 19 files passed. Fresh-cache numerical replay remains covered after adding
   compiler memory metadata. Nested archive tests verify blob deduplication and
   corruption detection; the CPU import-boundary test now carries opaque code.
+
+### Training build and offline ordering
+
+- Added `build_forward_backward` with a meta model, arbitrary args/kwargs,
+  fixed `num_examples`, objective, partition, operator recomputation and gradient
+  dtype controls. Gradients persist; there is no optimizer capture or state setup.
+- Build retains compiled creator/accumulator forms for both save/recompute.
+  CPU planning binds those forms to the requested example ordering using saved
+  metadata. It does not import the capture/compiler stack or run another build.
+- Numerical replay checks tied and untied two-stage models with a residual path,
+  keyword targets and metrics. Save/recompute, three example traversals, and
+  fresh/existing gradients all match PyTorch autograd. These are binding/code
+  tests, not yet validation of the memory-managed Executor.
+- The tied-weight test found a missing original-producer edge after intervening
+  gradient mutations. Fixed by tracking creation and latest mutation separately.
+  This matters when a single parameter contributes in more than one stage.
+- A fresh CPU subprocess blocks framework/runtime/store imports, loads the saved
+  training Program, plans three traversals and round-trips their reports/archives.
+- Returned allocations used transiently by a particular binding contribute to
+  its workspace. Compiler extents give a conservative simulation bound; measured
+  allocation lifetimes can replace that bound without double-counting peaks.
+- Effectful model mutations/RNG currently constrain example reordering. Broader
+  ordering legality and distributed effects remain explicit later work.
+- Next: optimizer capture/build_step and planning-time optimizer placement,
+  followed by standalone measurement and physical allocation qualification.
