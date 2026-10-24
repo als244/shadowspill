@@ -36,6 +36,7 @@ def model_tensor_geometry(
         value = tensors[item.name, item.component_path]
         result[item.object_id] = {
             "dtype": str(value.dtype),
+            "element_size": value.element_size(),
             "shape": tuple(value.shape),
             "stride": tuple(value.stride()),
             "storage_offset": value.storage_offset(),

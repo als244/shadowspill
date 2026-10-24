@@ -7,6 +7,7 @@ import torch
 from torch import nn
 
 from shadowspill.artifacts.program import Program
+from shadowspill.parallelism import Parallelism
 from shadowspill.pytorch.accelerator import resolve_device
 from shadowspill.pytorch.capture.retention import RetentionPolicy
 from shadowspill.pytorch.partition import PartitionSpec
@@ -14,6 +15,7 @@ from shadowspill.pytorch.partition import PartitionSpec
 from .common import build_setup, compile_artifacts
 from .lowering.training import lower_training
 from .optimizer import capture_update
+from .parallelism import attach_parallelism, model_parallelism, require_single_rank
 from .training_capture import capture_training_model
 
 
@@ -27,6 +29,7 @@ def build_forward_backward(
     partition: PartitionSpec = "auto",
     operator_recompute: RetentionPolicy | None = None,
     grad_dtype: torch.dtype | None = None,
+    parallelism: Parallelism | None = None,
     target: str | torch.device = "cuda",
 ) -> Program:
     """Finalize both backward forms; order is selected later by CPU planning.
@@ -44,6 +47,7 @@ def build_forward_backward(
         partition=partition,
         operator_recompute=operator_recompute,
         grad_dtype=grad_dtype,
+        parallelism=parallelism,
         target=target,
     )
 
@@ -60,8 +64,11 @@ def _build_training(
     operator_recompute: RetentionPolicy | None,
     grad_dtype: torch.dtype | None,
     target: str | torch.device,
+    parallelism: Parallelism | None = None,
     master_dtype: torch.dtype | None = None,
 ) -> Program:
+    spec, parameters = model_parallelism(model, parallelism)
+    require_single_rank(spec)
     device = resolve_device(target)
     assert device.index is not None
     captured = capture_training_model(
@@ -100,10 +107,11 @@ def _build_training(
             assert isinstance(task.artifact, GraphArtifact)
             artifacts.append(task.artifact)
     compiled = compile_artifacts(artifacts, device)
-    return lower_training(
+    program = lower_training(
         captured,
         compiled,
         setup=build_setup(device),
         gradient_dtype=grad_dtype,
         update=update,
     )
+    return attach_parallelism(program, spec, parameters)

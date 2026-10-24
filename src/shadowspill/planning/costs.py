@@ -1,14 +1,13 @@
 """Convert explicit capacities and host costs to the existing simulator IR."""
 
-from dataclasses import replace
-
 from shadowspill.artifacts.profiled_program import ProfiledProgram
 from shadowspill.communication import CommunicationInfo
 from shadowspill.errors import PlanInfeasibleError
-from shadowspill.ir import ShadowSpillProgram, TransferPhase, TransferSpec
+from shadowspill.ir import ShadowSpillProgram
 from shadowspill.simulator import SimulationConfig
 
 from .budgets import MemoryBudgets
+from .transfers import communication_transfers
 
 
 def simulation_inputs(
@@ -17,9 +16,18 @@ def simulation_inputs(
     communication: CommunicationInfo,
 ) -> tuple[ShadowSpillProgram, SimulationConfig]:
     program = profiled._costed_ir()
+    spec = profiled.program.parallelism
+    world_size = 1 if spec is None else spec.world_size
     if len(program.devices) != 1:
         raise NotImplementedError(
-            "the offline milestone currently supports one logical rank"
+            "offline planning currently requires one symmetric rank-local program"
+        )
+    if world_size > 1 and (
+        profiled.program.bindings.get("kind") != "forward"
+        or "weight_shards" not in profiled.program.bindings
+    ):
+        raise NotImplementedError(
+            "distributed training transfer lowering is not implemented"
         )
     if any(
         alias.shared_residency is not None or alias.transfer is not None
@@ -30,8 +38,8 @@ def simulation_inputs(
         )
     if communication.topology and sorted(
         rank for group in communication.topology.values() for rank in group
-    ) != [0]:
-        raise ValueError("single-rank topology must contain logical rank 0 only")
+    ) != list(range(world_size)):
+        raise ValueError("topology must contain exactly the declared logical ranks")
     usable = budgets.execution_bytes - profiled.fixed_device_bytes
     if usable <= 0:
         raise PlanInfeasibleError(
@@ -41,38 +49,9 @@ def simulation_inputs(
             capacity_bytes=budgets.execution_bytes,
         )
 
-    # The old simulator config's latency fields are metadata only. Explicit
-    # phases charge latency in both the search heuristic and exact simulation.
-    def phases(direction: str, size: int) -> tuple[TransferPhase, ...]:
-        latency = round(getattr(communication, f"{direction}_latency_seconds") * 1e9)
-        return (
-            ()
-            if not latency
-            else (
-                TransferPhase(
-                    "timed",
-                    duration_ns=latency,
-                    resource=f"host_{direction}",
-                    timing_class="host_latency",
-                ),
-            )
-        ) + (TransferPhase("copy", bytes=size),)
-
-    if communication.fetch_latency_seconds or communication.evict_latency_seconds:
-        program = replace(
-            program,
-            alias_groups=tuple(
-                replace(
-                    alias,
-                    transfer=TransferSpec(
-                        alias.size_bytes,
-                        phases("fetch", alias.size_bytes),
-                        phases("evict", alias.size_bytes),
-                    ),
-                )
-                for alias in program.alias_groups
-            ),
-        )
+    # Explicit phases charge both search and exact simulation. Copy and
+    # collective volumes remain distinct; none of this changes task profiling.
+    program = communication_transfers(profiled.program, program, communication)
     rates = {}
     for direction in ("fetch", "evict"):
         rate = getattr(communication, f"{direction}_bytes_per_second")

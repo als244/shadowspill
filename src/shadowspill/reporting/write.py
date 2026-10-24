@@ -126,9 +126,12 @@ def write_report(
             + "<details open><summary>Tasks</summary>"
             + _table(tasks)
             + "</details>"
-            + "<details><summary>Host transfers — throughput includes latency</summary>"
-            + _table(transfers)
-            + "</details>",
+            + "<details><summary>Transfers — host copies and collective "
+            "traffic</summary>"
+            + "<p>Copy throughput includes latency. Composite transfers have no "
+            "isolated copy-rate value; their individual phase timestamps are "
+            "not retained by the simulator. Collective bytes are per-rank "
+            "ring-equivalent traffic.</p>" + _table(transfers) + "</details>",
         )
     else:
         raise TypeError("write_report requires a Plan or SweepResult")

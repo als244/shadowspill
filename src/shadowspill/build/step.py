@@ -7,6 +7,7 @@ import torch
 from torch import nn
 
 from shadowspill.artifacts.program import Program
+from shadowspill.parallelism import Parallelism
 from shadowspill.pytorch.capture.retention import RetentionPolicy
 from shadowspill.pytorch.partition import PartitionSpec
 
@@ -25,6 +26,7 @@ def build_step(
     operator_recompute: RetentionPolicy | None = None,
     grad_dtype: torch.dtype | None = None,
     master_dtype: torch.dtype | None = None,
+    parallelism: Parallelism | None = None,
     target: str | torch.device = "cuda",
 ) -> Program:
     """Capture gradients and local updates without initializing persistent state.
@@ -48,5 +50,6 @@ def build_step(
         operator_recompute=operator_recompute,
         grad_dtype=grad_dtype,
         master_dtype=master_dtype,
+        parallelism=parallelism,
         target=target,
     )

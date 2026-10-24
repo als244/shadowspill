@@ -22,7 +22,16 @@ def caller_output_aliases(program: ShadowSpillProgram) -> frozenset[str]:
 def program_admission(
     profiled: ProfiledProgram, costed: ShadowSpillProgram, usable_bytes: int
 ) -> AdmissionFacts | None:
-    if profiled.estimated_memory or not profiled.program.executables:
+    if (
+        profiled.estimated_memory
+        or not profiled.program.executables
+        or (
+            profiled.program.parallelism is not None
+            and profiled.program.parallelism.world_size > 1
+        )
+    ):
+        # Local task measurements do not yet certify communicator/provider
+        # resources for multi-rank execution. Keep these plans simulation-only.
         return None
     evidence = {}
     for definition in profiled.program.task_definitions:

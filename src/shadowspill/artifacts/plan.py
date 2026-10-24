@@ -84,6 +84,12 @@ class Plan(Artifact):
         return (
             *reasons,
             *(
+                ("distributed execution resources are not yet certified",)
+                if self.program.parallelism is not None
+                and self.program.parallelism.world_size > 1
+                else ()
+            ),
+            *(
                 tuple(
                     f"accumulation: {r}"
                     for r in self._accumulation_plan.simulation_only_reasons
@@ -102,22 +108,39 @@ class Plan(Artifact):
     @property
     def summary(self) -> dict[str, Any]:
         result = self.timeline
+        aliases = {
+            item.alias_group_id: item for item in self._costed_program.alias_groups
+        }
+        volumes = {}
+        for direction in (TransferDirection.FETCH, TransferDirection.EVICT):
+            intervals = [
+                item
+                for item in result.transfer_intervals
+                if item.direction == direction
+            ]
+            host = sum(item.bytes for item in intervals)
+            collective = 0
+            for item in intervals:
+                transfer = aliases[item.alias_group_id].transfer
+                if transfer is not None:
+                    collective += sum(
+                        phase.bytes
+                        for phase in getattr(transfer, direction.value)
+                        if phase.kind == "timed"
+                    )
+            volumes[f"{direction.value}_bytes"] = host + collective
+            volumes[f"{direction.value}_host_bytes"] = host
+            volumes[f"{direction.value}_collective_bytes"] = collective
         return {
             "duration_seconds": result.makespan_ns / 1e9,
             "execution_peak_bytes": max(p.total_bytes for p in result.device_peaks)
             + self.profiled_program.fixed_device_bytes,
             "spill_peak_bytes": result.spill_peak_bytes,
-            "fetch_bytes": sum(
-                t.bytes
-                for t in result.transfer_intervals
-                if t.direction == TransferDirection.FETCH
-            ),
-            "evict_bytes": sum(
-                t.bytes
-                for t in result.transfer_intervals
-                if t.direction == TransferDirection.EVICT
-            ),
+            **volumes,
             "simulation_only": bool(self.simulation_only_reasons),
+            "logical_ranks": 1
+            if self.program.parallelism is None
+            else self.program.parallelism.world_size,
         }
 
     def to_dict(self) -> dict[str, Any]:

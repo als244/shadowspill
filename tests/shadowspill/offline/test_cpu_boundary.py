@@ -46,11 +46,19 @@ class NoExecutionImports(importlib.abc.MetaPathFinder):
         if any(name == item or name.startswith(item + '.') for item in blocked):
             raise AssertionError('Offline pipeline imported ' + name)
 sys.meta_path.insert(0, NoExecutionImports())
-from shadowspill import (Plan, Profiles, TaskProfile, apply_profiles,
-                         plan_program, write_report)
+from shadowspill import (Plan, Profiles, TaskProfile, Parallelism, ParameterStorage,
+                         Sharded, apply_profiles, plan_program, write_report)
+from shadowspill.parallelism.resolve import ParameterGeometry, resolve_parameters
 from shadowspill.planner import GenericPlanningOptions, SearchOptions
 from shadowspill.planning.shared import shared_memory
 plan = Plan.load('input.ssp')
+parallelism = Parallelism.dp(ranks_per_replica=8, num_replicas=2)
+assert parallelism.group('all_ranks').size == 8
+parameter, = resolve_parameters(parallelism, (
+    ParameterGeometry(('weight',), (32, 32), True),
+))
+assert parameter.copies(0) == tuple(range(16))
+assert parameter.weights.region(0) == (0, 128)
 assert plan.program.executables['update_impl'] == b'opaque'
 updated = plan.profiled_program.profiles.merge(Profiles(
     tasks={'update_impl': TaskProfile(duration_seconds=2e-6)},

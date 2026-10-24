@@ -4,6 +4,8 @@ from pathlib import Path
 
 from shadowspill.artifacts.plan import Plan
 
+from .rows import transfer_rows
+
 
 def plot_plan(plan: Plan, path: Path) -> None:
     from matplotlib.backends.backend_agg import FigureCanvasAgg
@@ -19,15 +21,21 @@ def plot_plan(plan: Plan, path: Path) -> None:
             (1.7, 0.6),
             facecolors="#526ab2",
         )
-    for transfer in plan.timeline.transfer_intervals:
+    for transfer in transfer_rows(plan):
         timeline.broken_barh(
-            [(transfer.start_ns / 1e6, (transfer.end_ns - transfer.start_ns) / 1e6)],
-            (lanes[transfer.direction.value] - 0.3, 0.6),
-            facecolors="#c87822" if transfer.direction.value == "fetch" else "#348573",
+            [(transfer["start_seconds"] * 1e3, transfer["duration_seconds"] * 1e3)],
+            (lanes[transfer["direction"]] - 0.3, 0.6),
+            facecolors="#8c5fa8"
+            if transfer["kind"] == "copy_and_collective"
+            else "#c87822"
+            if transfer["direction"] == "fetch"
+            else "#348573",
         )
-    timeline.set_yticks([0, 1, 2], ["Host eviction", "Host fetch", "Compute"])
+    timeline.set_yticks([0, 1, 2], ["Evict transfer", "Fetch transfer", "Compute"])
     timeline.set_title(f"{plan.program.name or 'Program'} — simulated timeline")
     timeline.set_xlabel("Time (ms)")
+    if any(row["kind"] == "copy_and_collective" for row in transfer_rows(plan)):
+        timeline.set_xlabel("Time (ms) — purple: combined host copy and collective")
     timeline.grid(axis="x", alpha=0.2)
     points = plan.timeline.memory_timeline
     times = [item.time_ns / 1e6 for item in points]

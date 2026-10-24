@@ -19,7 +19,10 @@ def open_worker(
         raise ValueError(
             "Plan is simulation-only: " + "; ".join(plan.simulation_only_reasons)
         )
-    if len(plan.program.devices) != 1:
+    if len(plan.program.devices) != 1 or (
+        plan.program.parallelism is not None
+        and plan.program.parallelism.world_size != 1
+    ):
         raise NotImplementedError("distributed workers follow single-GPU qualification")
     if plan.program.setup["torch"] != torch.__version__:
         raise ValueError("Plan requires a different PyTorch build")

@@ -10,7 +10,7 @@ from torch import nn
 from torch._inductor.standalone_compile import AOTCompiledArtifact
 from torch.utils._pytree import tree_flatten, tree_unflatten, treespec_loads
 
-from shadowspill import Program
+from shadowspill import Parallelism, Program
 from shadowspill.build import build_forward
 
 
@@ -65,8 +65,13 @@ def test_meta_build_roundtrips_and_executes_bound_stages(tmp_path):
         model = Network()
     inputs = torch.empty(4, 8)
     program = build_forward(
-        model, example_args=(inputs,), example_kwargs={"options": {"scale": 2}}
+        model,
+        example_args=(inputs,),
+        example_kwargs={"options": {"scale": 2}},
+        parallelism=Parallelism.dp(),
     )
+    assert program.parallelism == Parallelism.dp()
+    assert program.bindings["parameter_ownership"][0]["name"] == "layers.0.weight"
     assert all(parameter.is_meta for parameter in model.parameters())
     assert len(program.bindings["entrypoints"]) == 2
     assert any("layers.0" in task.module_paths for task in program.task_definitions)

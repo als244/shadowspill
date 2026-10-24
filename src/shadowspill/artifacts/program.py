@@ -24,6 +24,7 @@ from shadowspill.ir.program.checks import (
     index_identities,
     require_shapes,
 )
+from shadowspill.parallelism import Parallelism
 
 from ._values import digest, freeze, nonnegative_int, plain
 from .archive import Artifact
@@ -71,8 +72,13 @@ class Program(Artifact):
     memory_estimated: bool = False
     executables: Mapping[str, bytes] = field(default_factory=dict, repr=False)
     bindings: Mapping[str, Any] = field(default_factory=dict)
+    parallelism: Parallelism | None = None
 
     def __post_init__(self) -> None:
+        if self.parallelism is not None and not isinstance(
+            self.parallelism, Parallelism
+        ):
+            raise TypeError("parallelism must be Parallelism")
         require_shapes(self)
         if not isinstance(self.task_definitions, tuple):
             raise TypeError("task_definitions must be a tuple")
@@ -129,6 +135,9 @@ class Program(Artifact):
                 for key, value in self.executables.items()
             },
             "bindings": plain(self.bindings),
+            "parallelism": None
+            if self.parallelism is None
+            else self.parallelism.to_dict(),
         }
 
     def _archive_payloads(self) -> Mapping[str, bytes]:
@@ -148,6 +157,8 @@ class Program(Artifact):
             "task_alternative_groups": TaskAlternativeGroup.from_value,
         }
         data = dict(value)
+        if data.get("parallelism") is not None:
+            data["parallelism"] = Parallelism.from_dict(data["parallelism"])
         for name, record in records.items():
             data[name] = tuple(
                 record(item, f"program.{name}[{index}]")

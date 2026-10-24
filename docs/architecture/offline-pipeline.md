@@ -370,3 +370,72 @@ This milestone qualifies local `build_step` plans and read-only evaluation shari
 trained parameter storage. Distributed Trainer callers and old recipe migration
 are still pending. Remaining model/prepare callers explicitly use the private
 legacy implementation until migrated; the public Trainer has only the new API.
+
+### Logical parallelism and the first distributed simulation path
+
+All builders accept `parallelism=Parallelism.dp(...)`. Omitting it describes one
+rank. The declaration contains no process groups or devices and survives saving
+the Program. `ranks_per_replica` describes a group collectively owning the whole
+model; `num_replicas` repeats that group. Simple DP defaults to sharded weights,
+gradients and optimizer tensors, with masters following optimizer ownership.
+
+`Parallelism`, `ParameterStorage`, `Replicated`, `Sharded` and `GroupRef` are
+framework-neutral. Advanced declarations use named ordered groups plus separate
+`parameter_placements` and `parameter_storage` maps. Exact names take precedence
+over wildcard patterns. Tied names resolve to one entry; conflicts at the winning
+priority and unmatched selectors are errors. Storage entries inherit omitted
+fields only from `default_parameter_storage`. `parallelism.group(name)` supplies
+a typed reference exposing static membership and size, without creating a live
+communicator.
+
+The initial distributed build path supports **read-only forward computation**
+with replicated local parameters and optional weight storage sharding. It builds
+and measures on one representative GPU without a process group. Planning then
+models local host-shard copies followed by the full weight all-gather:
+
+```python
+program = build_forward(
+    model, example_args=(features,),
+    parallelism=Parallelism.dp(ranks_per_replica=8),
+)
+profiles = measure_program(program)
+profiled = apply_profiles(program, profiles)
+
+# This portion can run in a CPU-only process with no Torch installation.
+plan = plan_program(
+    profiled,
+    memory_budgets=MemoryBudgets(execution_bytes=60 << 30, spill_bytes=96 << 30),
+    communication_info=CommunicationInfo(
+        fetch_bytes_per_second=25e9, evict_bytes_per_second=25e9,
+        topology={"node0": tuple(range(8))},
+        scale_up_bytes_per_second=300e9, scale_up_latency_seconds=2e-6,
+    ),
+)
+```
+
+These rates are illustrative. The shared schedule describes one symmetric rank
+and uses the slowest corresponding group instance's transfer cost. Memory and
+traffic totals are **per rank**, not summed over the job. These distributed Plans
+are currently simulation-only: communicator resources, distributed allocation
+admission and execution binding still need qualification. Distributed training
+builders reject the configuration before CUDA setup rather than silently
+building a local update. Model-sharded execution, distributed inputs, and
+already-reduced-gradient overrides also remain pending.
+
+CommunicationInfo accepts flat scale-up/scale-out rates and latencies plus
+`measurements`, a sequence of plain mappings. An observation contains
+`operation` (`all_gather`, `reduce_scatter`, or `all_reduce`), ordered `ranks`,
+`tensor_bytes`, `dtype`, `duration_seconds`, hardware/runtime `setup`, and `topology`.
+For gather/scatter, tensor bytes are the **padded full output/input**, not the
+local shard. Exact operation, membership/order, size, dtype, setup and topology
+must match. The latest matching observation wins. Uncovered cases use a flat-ring
+estimate, with missing topology/rates/latencies reported as errors. Scale-out
+costs use the slowest link type in that ordered ring; extra shared-NIC contention
+and alternative collective algorithms are not yet modeled.
+
+Reports distinguish host bytes from ring-equivalent collective traffic. Combined
+copy/collective intervals are purple, and do not claim an isolated host-copy
+rate. The simulator currently retains parent transfer timestamps, not individual
+phase intervals. Summary `fetch_bytes`/`evict_bytes` include both legs, alongside
+explicit host and collective byte totals. These totals count each direction's
+per-rank traffic, not a sum of both send and receive bandwidth.

@@ -12,7 +12,7 @@ from shadowspill.artifacts.archive import Artifact
 
 @dataclass(frozen=True)
 class CommunicationInfo(Artifact):
-    """Host transfer rates used by the initial single-rank offline path.
+    """Transfer assumptions and optional observations, independent of profiling.
 
     Concurrent rates describe fetch/evict overlap. If omitted they equal the
     solo rates (independent full-duplex lanes); this assumption is saved.
@@ -28,6 +28,11 @@ class CommunicationInfo(Artifact):
     evict_latency_seconds: float = 0.0
     topology: Mapping[str, tuple[int, ...]] = field(default_factory=dict)
     metadata: Mapping[str, Any] = field(default_factory=dict)
+    scale_up_bytes_per_second: float | None = None
+    scale_out_bytes_per_second: float | None = None
+    scale_up_latency_seconds: float | None = None
+    scale_out_latency_seconds: float | None = None
+    measurements: tuple[Mapping[str, Any], ...] = ()
 
     def __post_init__(self) -> None:
         for direction in ("fetch", "evict"):
@@ -46,6 +51,20 @@ class CommunicationInfo(Artifact):
             raise ValueError("topology must assign each logical rank to one node")
         object.__setattr__(self, "topology", freeze(self.topology))
         object.__setattr__(self, "metadata", freeze(self.metadata))
+        for scope in ("scale_up", "scale_out"):
+            rate = getattr(self, f"{scope}_bytes_per_second")
+            latency = getattr(self, f"{scope}_latency_seconds")
+            if rate is not None:
+                seconds(rate, f"{scope}_bytes_per_second")
+                if rate < 1:
+                    raise ValueError(f"{scope} rate must be at least one byte/second")
+            if latency is not None:
+                seconds(latency, f"{scope}_latency_seconds")
+        from .collectives import validate_measurement
+
+        for measurement in self.measurements:
+            validate_measurement(measurement)
+        object.__setattr__(self, "measurements", freeze(tuple(self.measurements)))
 
     def to_dict(self) -> dict[str, Any]:
         return {
