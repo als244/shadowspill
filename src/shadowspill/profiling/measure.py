@@ -40,7 +40,10 @@ class _Session:
         if key not in self.functions:
             before = torch.cuda.memory_allocated(self.device)
             self.functions[key] = restore_executable(
-                self.program.executables[key]
+                self.program.executables[key],
+                dependencies=self.program.bindings.get("operator_dependencies", {}).get(
+                    key, ()
+                ),
             )
             self.persistent += max(0, torch.cuda.memory_allocated(self.device) - before)
         return self.functions[key]

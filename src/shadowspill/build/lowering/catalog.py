@@ -27,6 +27,7 @@ class CompiledTasks:
         self.manifests: dict[str, Any] = {}
         self.memory: dict[str, Any] = {}
         self.inputs: dict[str, Any] = {}
+        self.dependencies: dict[str, Any] = {}
 
     def key(self, artifact: GraphArtifact, paths: tuple[str, ...] = ()) -> str:
         item = self.compiled[artifact.compatibility_digest]
@@ -35,6 +36,7 @@ class CompiledTasks:
                 "graph": artifact.compatibility_digest,
                 "implementation": item.manifest.compatibility_digest,
                 "setup": self.setup,
+                "dependencies": item.dependencies,
             }
         )
         definition = self.definitions.get(key)
@@ -52,6 +54,7 @@ class CompiledTasks:
             self.manifests[key] = item.manifest.to_dict()
             self.memory[key] = item.memory
             self.inputs[key] = task_inputs(artifact)
+            self.dependencies[key] = item.dependencies
         paths = tuple(dict.fromkeys((*definition.module_paths, *paths)))
         self.definitions[key] = replace(
             definition,
@@ -76,4 +79,5 @@ class CompiledTasks:
             "manifests": self.manifests,
             "compiler_memory": self.memory,
             "task_inputs": self.inputs,
+            "operator_dependencies": self.dependencies,
         }

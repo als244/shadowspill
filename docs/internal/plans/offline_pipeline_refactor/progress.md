@@ -344,3 +344,27 @@
 - Latest logs: `validation/precision-regression.log` and
   `validation/precision-cpu.log`. Design records are being tracked explicitly so
   the branch retains the agreed interfaces along with implementation progress.
+
+### Operator registration portability
+
+- Found that AOT custom-op call sites can depend on registrations performed only
+  while importing the original model. Tasks now carry defining Python modules,
+  source digests and schemas. The profile/execution worker restores and checks
+  these before deserializing code. The dependency identity participates in task
+  profile compatibility.
+- Detection includes operators passed to higher-order/functionalized calls.
+  Native/dynamic registrations and separately installed kernels require a future
+  provider initializer; temporary dispatch overrides are rejected. This does not
+  qualify transitive provider libraries, resource setup or internal autotuning.
+- Consolidated forward task packaging onto the same CompiledTasks catalog used
+  by training, removing duplicate identity/manifest/memory assembly.
+- Cold-worker stateless custom-op execution passes, including checkpoint restore
+  and rejection of a mismatched registration digest. Mixed-precision replay and
+  forward-build regression also pass. The final combined build/profiling/execution
+  regression is **33 passing tests**; the independent CPU suite remains **522
+  passing tests**. Focused typing/lint pass. See `validation/portability-regression.log`
+  and [validation commands](validation/README.md).
+- Public Trainer construction remains the next review point. The pending dropdown
+  recommends `Trainer(plan, ...)` with an optional supplied Executor; the other
+  option retains model/prepare orchestration. No new constructor or distributed
+  implementation was selected while that question remained unanswered.

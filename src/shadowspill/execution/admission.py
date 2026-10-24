@@ -63,7 +63,12 @@ def prepare(plan: Plan, bridge: RuntimeBridge) -> tuple[tuple[BoundTask, ...], i
         if task.requires_entrypoint:
             key = original_keys[task.task_id]
             if key not in functions:
-                functions[key] = restore_executable(plan.program.executables[key])
+                functions[key] = restore_executable(
+                    plan.program.executables[key],
+                    dependencies=plan.program.bindings.get(
+                        "operator_dependencies", {}
+                    ).get(key, ()),
+                )
             function = functions[key]
             description = plan.program.bindings["task_inputs"][key]
             measurement = measured_task(

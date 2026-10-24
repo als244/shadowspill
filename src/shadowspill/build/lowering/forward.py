@@ -8,36 +8,41 @@ from typing import Any
 
 from torch.utils._pytree import treespec_dumps
 
-from shadowspill.artifacts._values import digest
-from shadowspill.artifacts.program import Program, TaskDefinition
+from shadowspill.artifacts.program import Program
 from shadowspill.ir import DeviceSpec
 from shadowspill.pytorch.lowering.forward.artifacts import ForwardTaskGeometry
 from shadowspill.pytorch.lowering.forward.objects import register_forward_objects
 from shadowspill.pytorch.lowering.forward.residency import derive_forward_residency
 from shadowspill.pytorch.lowering.forward.tasks import emit_forward_tasks
-from shadowspill.task.geometry import TaskStorageGeometry
 
 from ..capture import ForwardCapture
 from ..compilation import BuiltTask
-from ..metadata import module_paths, root_sources, signature_record, task_inputs
+from ..metadata import module_paths, root_sources, signature_record
+from .catalog import CompiledTasks
 
 
 def lower_forward(
     captured: ForwardCapture, compiled: tuple[BuiltTask, ...], *, setup: dict[str, Any]
 ) -> Program:
+    catalog = CompiledTasks(
+        {
+            artifact.compatibility_digest: item
+            for artifact, item in zip(captured.artifacts, compiled, strict=True)
+        },
+        setup,
+    )
     keys = tuple(
-        digest(
-            {
-                "graph": artifact.compatibility_digest,
-                "implementation": item.manifest.compatibility_digest,
-                "setup": setup,
-            }
+        catalog.key(
+            artifact,
+            module_paths(stage.stage.graph_module) or (stage.stage.module_target,),
         )
-        for artifact, item in zip(captured.artifacts, compiled, strict=True)
+        for artifact, stage in zip(
+            captured.artifacts, captured.partitioned.stages, strict=True
+        )
     )
     geometry = ForwardTaskGeometry(
-        tuple(item.manifest.storage_contract for item in compiled),
-        tuple(TaskStorageGeometry.from_manifest(item.manifest) for item in compiled),
+        tuple(catalog.contract(artifact) for artifact in captured.artifacts),
+        tuple(catalog.geometry(artifact) for artifact in captured.artifacts),
         keys,
         "invocation_start",
     )
@@ -49,28 +54,6 @@ def lower_forward(
         captured.partitioned, captured.artifacts, objects, geometry, device_id=device_id
     )
     initial, final = derive_forward_residency(objects, graph)
-    definitions = {
-        "invocation_start": TaskDefinition(
-            "invocation_start", "control", 0, "Invocation start"
-        )
-    }
-    for key, stage, item in zip(
-        keys, captured.partitioned.stages, compiled, strict=True
-    ):
-        paths = module_paths(stage.stage.graph_module)
-        if key in definitions:
-            paths = tuple(dict.fromkeys((*definitions[key].module_paths, *paths)))
-        definitions[key] = TaskDefinition(
-            key,
-            key,
-            workspace_bytes=(
-                item.memory["known_workspace_bytes"]
-                if not item.memory["unresolved"]
-                else None
-            ),
-            name=" / ".join(paths) or stage.stage.module_target,
-            module_paths=paths,
-        )
     sources: dict[str, list[str]] = defaultdict(list)
     for registration in objects.registrations:
         sources[objects.catalog.alias_id(registration.object_id)].append(
@@ -87,18 +70,16 @@ def lower_forward(
         alias_groups=objects.catalog.alias_groups(),
         objects=objects.catalog.objects(),
         tasks=graph.tasks,
-        task_definitions=tuple(definitions.values()),
+        task_definitions=tuple(catalog.definitions.values()),
         initial_residency=initial,
         final_residency=final,
         name=type(captured.model).__name__,
         setup=setup,
         sources=sources,
-        executables={
-            key: item.payload for key, item in zip(keys, compiled, strict=True)
-        },
+        executables=catalog.executables,
         bindings={
+            **catalog.bindings(),
             "kind": "forward",
-            "provider": "torch-inductor-aot",
             "entrypoints": [asdict(item) for item in graph.entrypoints],
             "registrations": [asdict(item) for item in objects.registrations],
             "root_inputs": [asdict(item) for item in objects.root_input_slots],
@@ -107,16 +88,5 @@ def lower_forward(
             "public_outputs": graph.public_outputs,
             "output_literals": captured.output_literals,
             "output_tree": treespec_dumps(captured.output_tree),
-            "manifests": {
-                key: item.manifest.to_dict()
-                for key, item in zip(keys, compiled, strict=True)
-            },
-            "compiler_memory": {
-                key: item.memory for key, item in zip(keys, compiled, strict=True)
-            },
-            "task_inputs": {
-                key: task_inputs(artifact)
-                for key, artifact in zip(keys, captured.artifacts, strict=True)
-            },
         },
     )
