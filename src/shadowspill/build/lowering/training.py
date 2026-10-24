@@ -20,7 +20,7 @@ from shadowspill.pytorch.optimizer.staging import training_parameters_with_gradi
 from shadowspill.step.ordering import StepDataOrdering
 
 from ..compilation import BuiltTask
-from ..metadata import root_sources, signature_record
+from ..metadata import model_tensor_geometry, root_sources, signature_record
 from ..optimizer import BuiltOptimizer
 from ..training_capture import TrainingCapture
 from .catalog import CompiledTasks
@@ -131,6 +131,9 @@ def lower_training(
             "transient_outputs": sequence.transient_outputs,
             "gradients": [asdict(item) for item in objects.gradients],
             "registrations": [asdict(item) for item in objects.registrations],
+            "model_tensor_geometry": model_tensor_geometry(
+                captured.model, objects.registrations
+            ),
             "root_inputs": [
                 [asdict(slot) for slot in slots] for slots in objects.root_slots
             ],

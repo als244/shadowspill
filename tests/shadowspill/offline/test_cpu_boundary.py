@@ -49,6 +49,7 @@ sys.meta_path.insert(0, NoExecutionImports())
 from shadowspill import (Plan, Profiles, TaskProfile, apply_profiles,
                          plan_program, write_report)
 from shadowspill.planner import GenericPlanningOptions, SearchOptions
+from shadowspill.planning.shared import shared_memory
 plan = Plan.load('input.ssp')
 assert plan.program.executables['update_impl'] == b'opaque'
 updated = plan.profiled_program.profiles.merge(Profiles(

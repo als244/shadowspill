@@ -8,8 +8,11 @@ from typing import Any, cast
 import torch
 
 from shadowspill.artifacts.plan import Plan
+from shadowspill.artifacts.tensors import tensor_geometry
 from shadowspill.ir import MemoryLocation
 from shadowspill.runtime.plan import RuntimeBridge
+
+from .views import StorageViews
 
 
 def dtype_of(geometry: Mapping[str, Any]) -> torch.dtype:
@@ -24,39 +27,30 @@ class Storage:
         device: torch.device,
         *,
         shared: Storage | None = None,
+        shared_aliases: Mapping[str, str] | None = None,
         extra_initial: Iterable[str] = (),
     ):
         self.plan, self.bridge, self.device = plan, bridge, device
         self.aliases = {o.object_id: o.alias_group_id for o in plan.program.objects}
         self.sizes = {a.alias_group_id: a.size_bytes for a in plan.program.alias_groups}
-        self.owners: dict[str, torch.Tensor] = {} if shared is None else shared.owners
+        self.shared_aliases = dict(shared_aliases or {})
+        if shared is not None and shared_aliases is None:
+            self.shared_aliases = {alias: alias for alias in self.sizes}
+        self.owners: StorageViews = StorageViews(
+            None if shared is None else shared.owners, self.shared_aliases
+        )
         if shared is not None:
+            registered = shared.bridge.objects.registered_runtime_objects()
             bridge.objects.adopt_registered(
-                shared.bridge.objects.registered_runtime_objects(), borrowed=True
+                {
+                    alias: registered[source]
+                    for alias, source in self.shared_aliases.items()
+                    if source in registered
+                },
+                borrowed=True,
             )
         self.outputs: dict[str, torch.Tensor] = {}
-        self.geometry: dict[str, Mapping[str, Any]] = {}
-        tasks = {t.task_id: t for t in plan.program.tasks}
-        for entry in plan.program.bindings["entrypoints"]:
-            description = plan.program.bindings["task_inputs"][
-                tasks[entry["task_id"]].profile_id
-            ]
-            geometry = dict(
-                zip(
-                    description["tensor_positions"],
-                    description["tensor_geometry"],
-                    strict=True,
-                )
-            )
-            for slot in entry["input_slots"]:
-                self.geometry.setdefault(
-                    slot["object_id"], geometry[slot["leaf_index"]]
-                )
-        for item in plan.program.bindings.get("optimizer_bindings", ()):
-            if item["object_id"] is not None:
-                self.geometry.setdefault(
-                    item["object_id"], {**item, "storage_offset": 0}
-                )
+        self.geometry = tensor_geometry(plan.program)
         self.initial = {
             r.alias_group_id for r in plan.schedule.initial_residency
         } | set(extra_initial)
@@ -106,4 +100,4 @@ class Storage:
 
     def clear_views(self) -> None:
         self.outputs.clear()
-        self.owners.clear()
+        self.owners.local.clear()

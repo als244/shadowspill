@@ -2,7 +2,7 @@
 
 The refactor is being implemented in phases. The CPU path, builders and
 ordinary-allocator GPU measurement and initial saved-plan execution work; caller
-migration are still in progress on `codex/offline-pipeline-refactor`.
+migration is still in progress on `codex/offline-pipeline-refactor`.
 
 ```python
 from shadowspill import (
@@ -242,6 +242,31 @@ and metrics per example. Outputs are caller-owned across invocations; release
 held GPU outputs before closing the Executor. A refused close can be retried
 once those outputs have been released.
 
+An Executor can admit named forward Plans alongside its default Plan:
+
+```python
+executor = Executor(training_plan, plans={"evaluation": validation_plan})
+executor.initialize(fill_tensor)
+update = executor.run(args=training_examples).result()
+predictions = executor.run(plan="evaluation", args=validation_examples).result()
+```
+
+All Plans must use the same target/build and memory budgets. Model tensors are
+matched by qualified registration name, exact dtype/shape/stride/storage offset,
+and aliasing. Internal object IDs may differ. Evaluation reads the current compute
+weights and buffers; master weights and optimizer data remain training-owned.
+Additional forward Plans must not mutate shared model tensors. Different input
+shapes are supported by separately built Plans; execution never rebuilds one.
+
+Admission checks capacity for all Plans before opening pools. Sequential calls
+reuse one fixed GPU arena sized for the largest saved layout. Persistent spill
+storage is the union of shared model tensors and each Plan's private inputs and
+constants, plus active invocation requirements. Measured provider overhead is
+conservatively summed across distinct Programs until provider resource sharing is
+explicitly described. Plans that fit separately can therefore fail joint admission.
+Initialization/export visit shared model tensors once; private constants use
+`plans.<name>.<tensor-name>`. Checkpoint restore requires the same named Programs.
+
 A forward/backward Plan contains both fresh and accumulating invocation paths.
 The default starts fresh gradients. `accumulate_gradients=True` uses stored
 gradients. Both paths share a physical arena and persistent tensor identities;
@@ -293,6 +318,7 @@ from shadowspill import Plan, Trainer
 
 with Trainer(
     Plan.load("training.ssp"),
+    evaluation_plan=Plan.load("validation.ssp"),  # optional build_forward Plan
     schedules={"optimizer_group.0.lr": lambda completed: 1e-3 / (completed + 1)},
 ) as trainer:
     trainer.initialize(fill_tensor)  # same bounded-buffer callback as Executor
@@ -300,6 +326,7 @@ with Trainer(
         args=[(features0,), (features1,)],
         kwargs=[{"targets": targets0}, {"targets": targets1}],
     )
+    validation = trainer.evaluate(args=[(validation_features,)])
     trainer.save("checkpoint.ssp")
 ```
 
@@ -309,6 +336,14 @@ host-only losses/metrics. It sums the objective's contributions without adding
 normalization. Schedules receive the zero-based completed-update count and may
 only set declared runtime hyperparameters; a tensor-valued optimizer learning
 rate during build makes it such an input. Per-call values override schedules.
+
+`evaluate` calls the admitted `evaluation` Plan through the same Executor and
+returns its normal output structure on CPU. It does not update the optimizer,
+advance schedules, or increment the training step count. Include any validation
+loss/metrics in that forward computation so they are also built, profiled and
+planned. Evaluation cadence belongs in the caller's loop or `fit` callbacks.
+For a supplied Executor, Trainer uses its named `evaluation` Plan; if an explicit
+`evaluation_plan` is also supplied, it must match the admitted one.
 
 `fit(source, steps=N)` takes an iterable whose items are keyword argument maps
 for `step`; `N` is the total completed-update target, including resumed updates.
@@ -325,7 +360,7 @@ supports small plain Python containers and CPU tensors/arrays, without pickle.
 Checkpoints are single bounded-stream archives; partial weight-only export and
 legacy checkpoint conversion are separate from this full-resume path.
 
-This milestone qualifies local `build_step` plans. Integrated evaluation sharing
-trained parameter storage, distributed Trainer callers and old recipe migration
+This milestone qualifies local `build_step` plans and read-only evaluation sharing
+trained parameter storage. Distributed Trainer callers and old recipe migration
 are still pending. Remaining model/prepare callers explicitly use the private
 legacy implementation until migrated; the public Trainer has only the new API.

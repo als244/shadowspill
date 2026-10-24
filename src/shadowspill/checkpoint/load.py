@@ -28,6 +28,8 @@ def _manifest(archive: zipfile.ZipFile, executor: Executor) -> dict[str, Any]:
         or manifest.get("version") != 1
         or manifest.get("byteorder") != sys.byteorder
         or manifest.get("program") != executor.plan.program.digest
+        or manifest.get("additional_programs", {})
+        != {name: plan.program.digest for name, plan in executor.plans.items()}
         or not isinstance(manifest.get("metadata"), dict)
     ):
         raise ValueError("checkpoint format or Program identity differs")

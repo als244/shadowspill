@@ -1,10 +1,12 @@
 """Admitted invocation paths share persistent tensors and a single fixed arena."""
 
+from collections.abc import Mapping
 from dataclasses import dataclass
 
 import torch
 
 from shadowspill.artifacts.plan import Plan
+from shadowspill.planning.shared import shared_memory
 from shadowspill.runtime import Runtime
 from shadowspill.runtime.plan import RuntimeBridge, clear_tasks
 from shadowspill.runtime.plan.lifecycle import (
@@ -45,7 +47,9 @@ def _bind(
     bridge: RuntimeBridge,
     *,
     shared: Storage | None = None,
+    shared_aliases: Mapping[str, str] | None = None,
     extra_initial: tuple[str, ...] = (),
+    shared_slice_bytes: int | None = None,
 ) -> ExecutionPath:
     try:
         storage = Storage(
@@ -53,11 +57,14 @@ def _bind(
             bridge,
             torch.device("cuda", memory.execution_device),
             shared=shared,
+            shared_aliases=shared_aliases,
             extra_initial=extra_initial,
         )
         verify_initialization(storage)
         controls = Controls(storage)
-        tasks, acquisition = prepare(plan, bridge)
+        tasks, acquisition = prepare(
+            plan, bridge, shared_slice_bytes=shared_slice_bytes
+        )
         adopt_plan(runtime, memory.plan_handle)
         return ExecutionPath(
             plan, memory, bridge, storage, controls, tasks, acquisition
@@ -72,9 +79,13 @@ def create_paths(
     plan: Plan,
     device: int,
     external_headroom_bytes: int,
-) -> tuple[Runtime, tuple[ExecutionPath, ...]]:
+    plans: Mapping[str, Plan] | None = None,
+) -> tuple[Runtime, tuple[ExecutionPath, ...], dict[str, ExecutionPath]]:
+    plans = dict(plans or {})
+    joint = shared_memory(plan, plans) if plans else None
     runtime, memory, bridge = open_worker(plan, device, external_headroom_bytes)
     paths = []
+    named = {}
     try:
         other = plan._accumulation_plan
         extra = (
@@ -82,15 +93,43 @@ def create_paths(
             if other is None
             else tuple(r.alias_group_id for r in other.schedule.initial_residency)
         )
-        paths.append(_bind(runtime, plan, memory, bridge, extra_initial=extra))
-        if other is not None:
-            memory, bridge = open_path(
-                runtime, other, device, slab_owner=memory.plan_handle
+        if joint is not None:
+            extra = tuple(
+                set(extra)
+                | {
+                    alias
+                    for mapping in joint.aliases.values()
+                    for alias in mapping.values()
+                }
             )
+        paths.append(
+            _bind(
+                runtime,
+                plan,
+                memory,
+                bridge,
+                extra_initial=extra,
+                shared_slice_bytes=None if joint is None else joint.fixed_slice_bytes,
+            )
+        )
+        owner = memory.plan_handle
+        if other is not None:
+            memory, bridge = open_path(runtime, other, device, slab_owner=owner)
             paths.append(_bind(runtime, other, memory, bridge, shared=paths[0].storage))
-        return runtime, tuple(paths)
+        for name, additional in plans.items():
+            assert joint is not None
+            memory, bridge = open_path(runtime, additional, device, slab_owner=owner)
+            named[name] = _bind(
+                runtime,
+                additional,
+                memory,
+                bridge,
+                shared=paths[0].storage,
+                shared_aliases=joint.aliases[name],
+            )
+        return runtime, tuple(paths), named
     except BaseException:
-        for path in reversed(paths):
+        for path in reversed([*paths, *named.values()]):
             path.close(runtime)
         runtime.close()
         raise

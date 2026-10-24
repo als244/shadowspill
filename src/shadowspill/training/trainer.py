@@ -31,6 +31,7 @@ class Trainer:
         plan: Plan,
         *,
         executor: Executor | None = None,
+        evaluation_plan: Plan | None = None,
         schedules: Mapping[str, Callable[[int], Any]] | None = None,
         metric_reducer: Callable[
             [StepObservations], MetricSummary | Mapping[str, float]
@@ -42,6 +43,11 @@ class Trainer:
     ) -> None:
         if not isinstance(plan, Plan) or plan.program.bindings.get("kind") != "step":
             raise TypeError("Trainer requires a Plan produced from build_step")
+        if evaluation_plan is not None and (
+            not isinstance(evaluation_plan, Plan)
+            or evaluation_plan.program.bindings.get("kind") != "forward"
+        ):
+            raise TypeError("evaluation_plan must be produced from build_forward")
         self.schedules = dict(schedules or {})
         if any(not callable(fn) for fn in self.schedules.values()):
             raise TypeError("each schedule must be callable(completed_steps)")
@@ -60,13 +66,23 @@ class Trainer:
             or executor.plan.memory_layout != plan.memory_layout
         ):
             raise ValueError("supplied Executor belongs to a different Plan")
+        if executor is not None and evaluation_plan is not None:
+            bound = executor.plans.get("evaluation")
+            if bound is None or (
+                bound.program.digest != evaluation_plan.program.digest
+                or bound.schedule.digest != evaluation_plan.schedule.digest
+                or bound.memory_layout != evaluation_plan.memory_layout
+            ):
+                raise ValueError("supplied Executor has a different evaluation Plan")
         self.plan = plan
         self.executor = executor or Executor(
             plan,
             device=device,
             rank_map=rank_map,
             external_headroom_bytes=external_headroom_bytes,
+            plans=None if evaluation_plan is None else {"evaluation": evaluation_plan},
         )
+        self.evaluation_plan = self.executor.plans.get("evaluation")
         self._owns_executor = executor is None
         self.metric_reducer = metric_reducer
         self.step_count = 0
@@ -144,6 +160,31 @@ class Trainer:
             to_host(values),
             summary,
         )
+
+    def evaluate(
+        self,
+        *,
+        args: Sequence[tuple[Any, ...]] | None = None,
+        kwargs: Sequence[Mapping[str, Any]] | None = None,
+        input_loader: Callable[[int], tuple[tuple[Any, ...], Mapping[str, Any]]]
+        | None = None,
+    ) -> Any:
+        """Run the prebuilt forward Plan and return its native output on CPU.
+
+        Evaluation uses current compute weights and buffers; it neither steps
+        the optimizer nor advances schedules. Losses/metrics belong in the
+        forward computation when needed, so they remain profiled/planned work.
+        """
+        self._require_open()
+        if self.evaluation_plan is None:
+            raise RuntimeError("Trainer has no prebuilt evaluation Plan")
+        pending = self.executor.run(
+            plan="evaluation", args=args, kwargs=kwargs, input_loader=input_loader
+        )
+        try:
+            return to_host(pending.result())
+        finally:
+            self.executor.synchronize()
 
     def fit(
         self,

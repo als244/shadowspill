@@ -8,6 +8,8 @@ from typing import TYPE_CHECKING, Any
 
 import torch
 
+from shadowspill.artifacts.tensors import registration_name
+
 from .storage import dtype_of
 
 if TYPE_CHECKING:
@@ -36,10 +38,7 @@ def tensor_entries(
 ) -> Iterator[tuple[str, str, Mapping[str, Any] | None]]:
     bindings = state.plan.program.bindings
     for item in bindings["registrations"]:
-        name = item["name"]
-        if item.get("component_path"):
-            name += "." + ".".join(item["component_path"])
-        yield name, item["object_id"], None
+        yield registration_name(item), item["object_id"], None
     optimizer_bindings = bindings.get("optimizer_bindings", ())
     mastered = {
         item["name"].removeprefix("compute.")
@@ -114,6 +113,8 @@ def visit_tensors(
     *,
     initialize: bool,
     restore: bool = False,
+    prefix: str = "",
+    skip_shared: bool = False,
 ) -> None:
     if chunk_bytes <= 0:
         raise ValueError("chunk_bytes must be positive")
@@ -122,6 +123,8 @@ def visit_tensors(
     named = {name: object_id for name, object_id, _ in entries}
     for name, object_id, initializer in entries:
         alias = state.aliases[object_id]
+        if skip_shared and alias in state.shared_aliases:
+            continue
         if initialize and alias not in state.initial:
             continue
         if alias in visited or not state.sizes[alias]:
@@ -136,7 +139,7 @@ def visit_tensors(
         for start in range(0, owner.numel(), width):
             destination = owner[start : start + width]
             request = TensorChunk(
-                name,
+                prefix + name,
                 tuple(geometry["shape"]),
                 dtype,
                 start,

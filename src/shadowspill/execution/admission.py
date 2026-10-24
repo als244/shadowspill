@@ -1,6 +1,6 @@
 """Bind portable task contracts and placements to worker-local runtime handles."""
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Any
 
 from shadowspill.artifacts.entrypoints import entrypoint
@@ -36,7 +36,9 @@ class BoundTask:
     host_inputs: tuple[tuple[int, str], ...]
 
 
-def prepare(plan: Plan, bridge: RuntimeBridge) -> tuple[tuple[BoundTask, ...], int]:
+def prepare(
+    plan: Plan, bridge: RuntimeBridge, *, shared_slice_bytes: int | None = None
+) -> tuple[tuple[BoundTask, ...], int]:
     assert plan.memory_layout is not None
     ir = plan._costed_program
     tasks = ir.selected_tasks(plan.selections)
@@ -45,9 +47,12 @@ def prepare(plan: Plan, bridge: RuntimeBridge) -> tuple[tuple[BoundTask, ...], i
     )
     aliases = {o.object_id: o.alias_group_id for o in ir.objects}
     outputs = output_bindings_for_entrypoints(tasks, entries, aliases)
-    admit_fixed_layout(
-        bridge, project_runtime_fixed_layout(plan.memory_layout, ir, plan.schedule)
-    )
+    layout = project_runtime_fixed_layout(plan.memory_layout, ir, plan.schedule)
+    if shared_slice_bytes is not None:
+        if shared_slice_bytes < layout.slice_bytes:
+            raise ValueError("shared arena cannot be smaller than the saved layout")
+        layout = replace(layout, slice_bytes=shared_slice_bytes)
+    admit_fixed_layout(bridge, layout)
     actions = actions_by_task(plan.schedule.actions)
     descriptions = {e["task_id"]: e for e in plan.program.bindings["entrypoints"]}
     original_keys = {t.task_id: t.profile_id for t in plan.program.tasks}

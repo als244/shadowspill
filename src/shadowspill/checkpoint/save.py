@@ -113,6 +113,10 @@ def save_checkpoint(
                         "version": 1,
                         "byteorder": sys.byteorder,
                         "program": executor.plan.program.digest,
+                        "additional_programs": {
+                            name: plan.program.digest
+                            for name, plan in executor.plans.items()
+                        },
                         "tensors": writer.entries,
                         "metadata": dict(metadata or {}),
                     }

@@ -13,6 +13,7 @@ from shadowspill.execution.tensors import TensorChunk
 class MemoryExecutor:
     def __init__(self):
         self.plan = SimpleNamespace(program=SimpleNamespace(digest="example"))
+        self.plans = {}
         self.values = {
             "bf16": torch.arange(45, dtype=torch.bfloat16).reshape(9, 5).t(),
             "step": torch.tensor(3, dtype=torch.int64),

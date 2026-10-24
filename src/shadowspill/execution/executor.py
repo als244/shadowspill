@@ -1,6 +1,7 @@
-"""One saved Plan, one worker, one outstanding asynchronous invocation."""
+"""Admitted saved Plans, one worker, one outstanding asynchronous invocation."""
 
 from collections.abc import Callable, Mapping, Sequence
+from types import MappingProxyType
 from typing import Any, Self
 
 import torch
@@ -20,6 +21,7 @@ class Executor:
         self,
         plan: Plan,
         *,
+        plans: Mapping[str, Plan] | None = None,
         device: int = 0,
         rank_map: Mapping[int, int] | None = None,
         external_headroom_bytes: int = 512 << 20,
@@ -27,13 +29,16 @@ class Executor:
         if rank_map is not None and dict(rank_map) != {0: 0}:
             raise NotImplementedError("this milestone supports a single logical rank")
         self.plan = plan
+        self.plans = MappingProxyType(dict(plans or {}))
         self.device = torch.device("cuda", device)
         self._pending: InvocationResult[Any] | None = None
         self._closed = False
         self._plan_released = False
         self._initialized = False
         self._failure: BaseException | None = None
-        self.runtime, self._paths = create_paths(plan, device, external_headroom_bytes)
+        self.runtime, self._paths, self._named_paths = create_paths(
+            plan, device, external_headroom_bytes, self.plans
+        )
         self._completion = ReusableCompletionEvent(
             self.runtime._runtime_handle, torch.device("cuda", device)
         )
@@ -52,6 +57,16 @@ class Executor:
             path.storage, fill_tensor, chunk_bytes, initialize=True, restore=restore
         )
         path.controls.initialize(fill_tensor, chunk_bytes=chunk_bytes, restore=restore)
+        for name, extra in self._named_paths.items():
+            visit_tensors(
+                extra.storage,
+                fill_tensor,
+                chunk_bytes,
+                initialize=True,
+                restore=restore,
+                skip_shared=True,
+                prefix=f"plans.{name}.",
+            )
         self._initialized = True
 
     def export_tensors(
@@ -67,10 +82,20 @@ class Executor:
             self._paths[0].storage, write_chunk, chunk_bytes, initialize=False
         )
         self._paths[0].controls.export(write_chunk, chunk_bytes=chunk_bytes)
+        for name, path in self._named_paths.items():
+            visit_tensors(
+                path.storage,
+                write_chunk,
+                chunk_bytes,
+                initialize=False,
+                skip_shared=True,
+                prefix=f"plans.{name}.",
+            )
 
     def run(
         self,
         *,
+        plan: str | None = None,
         args: Sequence[tuple[Any, ...]] | None = None,
         kwargs: Sequence[Mapping[str, Any]] | None = None,
         input_loader: Callable[[int], tuple[tuple[Any, ...], Mapping[str, Any]]]
@@ -81,9 +106,15 @@ class Executor:
         self.synchronize()
         if not self._initialized:
             raise RuntimeError("initialize persistent tensors before run")
-        if accumulate_gradients and len(self._paths) != 2:
+        if plan is not None and plan not in self._named_paths:
+            raise ValueError(f"unknown admitted Plan: {plan}")
+        if accumulate_gradients and (plan is not None or len(self._paths) != 2):
             raise ValueError("this Plan has no gradient-accumulation invocation path")
-        path = self._paths[int(accumulate_gradients)]
+        path = (
+            self._paths[int(accumulate_gradients)]
+            if plan is None
+            else self._named_paths[plan]
+        )
         path.bridge.require_initial_residency(path.plan.schedule.initial_residency)
         path.controls.apply(hyperparams or {})
         stage_inputs(path.storage, args, kwargs, input_loader)
@@ -130,7 +161,7 @@ class Executor:
                 self.synchronize()
             finally:
                 self._completion.release()
-                for path in reversed(self._paths):
+                for path in reversed((*self._paths, *self._named_paths.values())):
                     path.close(self.runtime)
                 self._plan_released = True
         # A caller-held output may prevent runtime shutdown. Allow close() to
