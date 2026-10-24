@@ -1,0 +1,82 @@
+"""Bounded collective buffers and completion-aware timings; no runtime pools."""
+
+from time import perf_counter_ns
+
+import torch
+import torch.distributed as dist
+
+from .requests import CollectiveRequest
+
+
+class CollectiveProbe:
+    def __init__(
+        self,
+        request: CollectiveRequest,
+        group: dist.ProcessGroup,
+        device: torch.device,
+    ) -> None:
+        self.request, self.group, self.device = request, group, device
+        self.value = request.ranks[dist.get_rank(group)] % 16 + 1
+        count = len(request.ranks)
+        elements = request.elements
+        input_elements = (
+            elements // count if request.operation == "all_gather" else elements
+        )
+        output_elements = (
+            elements // count if request.operation == "reduce_scatter" else elements
+        )
+        self.input = torch.full(
+            (input_elements,),
+            self.value,
+            dtype=getattr(torch, request.dtype.removeprefix("torch.")),
+            device=device,
+        )
+        self.output = (
+            self.input
+            if request.operation == "all_reduce"
+            else torch.empty(output_elements, dtype=self.input.dtype, device=device)
+        )
+        self.stream = None
+        if device.type == "cuda":
+            self.stream = torch.cuda.Stream(device=device)  # type: ignore[no-untyped-call]
+            self.stream.wait_stream(torch.cuda.current_stream(device))
+            self.start = torch.cuda.Event(enable_timing=True)  # type: ignore[no-untyped-call]
+            self.end = torch.cuda.Event(enable_timing=True)  # type: ignore[no-untyped-call]
+
+    def _reset(self) -> None:
+        if self.request.operation == "all_reduce":
+            # Repetition must not repeatedly multiply the preceding output.
+            # This reset precedes the start event and needs no second buffer.
+            self.input.fill_(self.value)
+
+    def _launch(self) -> None:
+        if self.request.operation == "all_gather":
+            work = dist.all_gather_single(
+                self.output, self.input, group=self.group, async_op=True
+            )
+        elif self.request.operation == "reduce_scatter":
+            work = dist.reduce_scatter_single(
+                self.output, self.input, group=self.group, async_op=True
+            )
+        else:
+            work = dist.all_reduce(self.output, group=self.group, async_op=True)
+        assert work is not None
+        # NCCL joins its communication stream to the current stream here. The
+        # end event therefore includes completion, not just host submission.
+        work.wait()
+
+    def sample(self) -> int:
+        if self.stream is None:
+            # CPU/Gloo exercises the same launch/order path in tests. Public
+            # hardware calibration resolves only CUDA devices.
+            self._reset()
+            start = perf_counter_ns()
+            self._launch()
+            return perf_counter_ns() - start
+        with torch.cuda.stream(self.stream):
+            self._reset()
+            self.start.record()
+            self._launch()
+            self.end.record()
+        self.end.synchronize()
+        return round(float(self.start.elapsed_time(self.end)) * 1e6)

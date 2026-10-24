@@ -7,10 +7,10 @@ from typing import Any, Self
 import torch
 
 from shadowspill.artifacts.plan import Plan
+from shadowspill.communication.binding.ranks import RankAssignment
 from shadowspill.pytorch.invocation import InvocationResult, ReusableCompletionEvent
 
 from .dispatch import dispatch
-from .distributed.ranks import RankAssignment
 from .inputs import stage_inputs
 from .results import collect_outputs
 from .tensors import TensorChunk, visit_tensors

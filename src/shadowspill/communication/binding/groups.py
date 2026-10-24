@@ -24,6 +24,7 @@ class GroupBindings:
         topology: Mapping[str, Sequence[int]],
         backend: str,
         timeout: timedelta = timedelta(seconds=60),
+        startup_error: str | None = None,
     ) -> None:
         if not dist.is_initialized():
             raise RuntimeError("initialize worker rendezvous before binding groups")
@@ -33,9 +34,10 @@ class GroupBindings:
             # CPU validation precedes backend group creation. An invalid local
             # assignment must be reported to peers rather than strand them.
             control = dist.new_group(backend="gloo", timeout=timeout)
+            self._control = control
             self._owned.append(control)
             world, worker = dist.get_world_size(), dist.get_rank()
-            assignment, error = None, None
+            assignment, error = None, startup_error
             members: tuple[tuple[int, ...], ...] = ()
             try:
                 assignment = RankAssignment.resolve(world, rank_map)
@@ -70,6 +72,17 @@ class GroupBindings:
             validate_topology(topology, assignment, [item[2] for item in observed])
             self.assignment = assignment
             self.logical_rank = assignment.logical_by_worker[worker]
+            hosts = [item[2] for item in observed]
+            self.topology = dict(topology) or {
+                f"node{index}": tuple(
+                    sorted(
+                        assignment.logical_by_worker[rank]
+                        for rank, hostname in enumerate(hosts)
+                        if hostname == host
+                    )
+                )
+                for index, host in enumerate(dict.fromkeys(hosts))
+            }
             for group in members:
                 # PyTorch sorts ranks by default. Shard order must instead match
                 # the logical order saved in the Plan, even after reassignment.
@@ -100,6 +113,25 @@ class GroupBindings:
             raise ValueError(
                 "this logical group was not bound for the worker"
             ) from error
+
+    def gather(self, value: Any) -> list[Any]:
+        """Exchange small control records without involving backend GPU streams."""
+        observed: list[Any] = [None] * len(self.assignment.logical_by_worker)
+        dist.all_gather_object(observed, value, group=self._control)
+        return observed
+
+    def check(self, error: str | None) -> None:
+        failures = [
+            f"worker {worker}: {item}"
+            for worker, item in enumerate(self.gather(error))
+            if item is not None
+        ]
+        if failures:
+            raise RuntimeError("distributed operation failed: " + "; ".join(failures))
+
+    def continue_sampling(self, needed: bool, allowed: bool) -> bool:
+        votes = self.gather((needed, allowed))
+        return any(vote[0] for vote in votes) and all(vote[1] for vote in votes)
 
     def close(self) -> None:
         for group in reversed(self._owned):

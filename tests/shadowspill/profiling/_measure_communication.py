@@ -22,9 +22,13 @@ class Block(importlib.abc.MetaPathFinder):
 
 sys.meta_path.insert(0, Block())
 
+from dataclasses import replace  # noqa: E402
+
 import torch  # noqa: E402
 
 from shadowspill import CommunicationInfo, measure_communication  # noqa: E402
+from shadowspill.pytorch.toolchain import build_setup  # noqa: E402
+from tests.shadowspill.offline._example import program  # noqa: E402
 
 baseline = torch.cuda.memory_allocated()
 info = measure_communication(
@@ -41,4 +45,24 @@ for direction in ("fetch", "evict"):
 assert len(info.metadata["observations"]) == 8
 info.save(sys.argv[1])
 assert CommunicationInfo.load(sys.argv[1]).to_dict() == info.to_dict()
+# The Program form never restores compiled tasks or creates runtime pools.
+# Its frozen setup metadata must compare correctly with live lists/dicts.
+source = replace(program(), setup=build_setup(torch.device("cuda", 0)))
+derived = measure_communication(
+    program=source,
+    collectives=[
+        {
+            "operation": "all_reduce",
+            "ranks": [0],
+            "tensor_bytes": 64,
+            "dtype": "torch.float32",
+        }
+    ],
+    sizes_bytes=(1024, 1 << 20, 16 << 20),
+    warmup_seconds=0.001,
+    measure_seconds=0.005,
+)
+assert derived.measurements[0]["duration_seconds"] == 0
+assert not torch.distributed.is_initialized()
+assert torch.cuda.memory_allocated() == baseline
 print(json.dumps(info.to_dict()))

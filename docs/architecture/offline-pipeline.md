@@ -125,21 +125,54 @@ without classification metadata are estimates. Task compatibility and setup
 mismatches are errors. Changes to editable Profiles never alter an already
 created ProfiledProgram or Plan.
 
-The current offline milestone supports one logical rank and host transfers.
 Explicit latency is charged as a transfer phase. Concurrent fetch/evict rates
 default to independent full-duplex lanes; callers can provide different rates.
 The communication description is saved alongside the plan, independently of
-compute measurements. Collective calibration, topology-aware collective estimates,
-and distributed transfer layouts are deferred to the distributed milestone.
+compute measurements. Symmetric distributed forward simulations also account for
+local host shards and weight gathers; distributed training lowering remains pending.
 
 `measure_communication()` optionally measures pinned-host copies on one GPU,
 using ordinary PyTorch allocation and CUDA events. It returns CommunicationInfo;
-save it independently and pass it to any later planning run. A size sweep fits
+save it independently and pass it to later planning runs. A size sweep fits
 startup latency and bandwidth, and simultaneous copies measure overlapping lane
-rates. Raw medians, sample counts, variability and fit errors are retained in
-metadata. These are local measurements under the caller's host placement, not
-aggregate multi-GPU bandwidth. Neither planning nor execution triggers this probe.
-Buffer use is bounded by twice the largest requested size on each of host and GPU.
+rates. Raw medians, sample counts, variability and fit errors are retained.
+Neither planning nor execution triggers this probe. Copy buffer use is bounded
+by twice the largest requested size on each of host and GPU.
+
+`measure_communication(program=program, rank_map=..., device=...)` derives
+collective probes from saved transfer geometry. With multiple workers, initialize
+distributed rendezvous first and call on every worker with the same complete
+worker-to-logical-rank map. No compiled task is executed. Host copies are sampled
+concurrently across workers; the shared result uses the minimum observed rates
+and maximum fitted latency, preserving every worker's observations. Each collective
+group is then probed separately, using coordinated repetition counts and completion
+timing. Logical member order is retained after worker remapping. Topology is
+derived from physical hostname membership. Every worker receives the same result.
+
+```python
+# All workers have initialized rendezvous and loaded the same Program.
+communication = measure_communication(
+    program=program,
+    rank_map={worker: worker for worker in range(8)},
+    device=device,
+)
+```
+
+An explicit `collectives=[...]` replaces derived probes; `collectives=[]` selects
+host copies only. A probe is a plain dictionary, for example
+`dict(operation="reduce_scatter", ranks=[0, 1], tensor_bytes=64 << 20,
+dtype="torch.bfloat16")`. Supported operations are all-gather, reduce-scatter and
+all-reduce. Bytes describe the full padded gather output/scatter input, or the
+full tensor on each all-reduce participant. Sizes must contain whole elements in
+each shard. Duplicate probes are removed. Calls without Program, overrides or
+rank_map retain the original local host-only behavior.
+
+Derived requests currently cover lowered weight gathers. Distributed training
+and model-owned communication require their own lowering before automatic
+derivation is supported. Exact observed collective timings do not infer a general
+scale-up/out rate, overlapping-group contention, or communicator memory admission.
+The CPU/Gloo coordination and single-GPU copy paths are tested; multi-GPU NCCL
+calibration has an acceptance test but is not yet hardware-qualified.
 
 The GPU allowance includes fixed runtime/provider overhead. Planning subtracts
 that overhead before scheduling objects/workspace, and reporting adds it back to

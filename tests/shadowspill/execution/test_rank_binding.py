@@ -4,7 +4,7 @@ from datetime import timedelta
 
 import pytest
 
-from shadowspill.execution.distributed.ranks import RankAssignment, validate_topology
+from shadowspill.communication.binding.ranks import RankAssignment, validate_topology
 
 
 def test_complete_mapping_and_topology_are_validated():
@@ -30,7 +30,7 @@ def _group_worker(worker, rendezvous):
     import torch.distributed as dist
 
     from shadowspill import GroupRef
-    from shadowspill.execution.distributed.groups import GroupBindings
+    from shadowspill.communication.binding.groups import GroupBindings
     from shadowspill.parallelism.reductions import gradient_reduction
     from tests.shadowspill.parallelism.test_reductions import reduction_cases
 
