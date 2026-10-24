@@ -38,7 +38,9 @@ def objective(model, x, *, labels):
     return (prediction - labels).square().mean(), {"mean": prediction.mean()}
 
 
-def replay_training(program, model, examples, variant, initial_gradients=None):
+def replay_training(
+    program, model, examples, variant, initial_gradients=None, optimizer_values=None
+):
     objects = {
         registration["object_id"]: model.get_parameter(registration["name"])
         for registration in program.bindings["registrations"]
@@ -48,6 +50,10 @@ def replay_training(program, model, examples, variant, initial_gradients=None):
             objects[item["gradient_object_id"]] = initial_gradients[
                 item["parameter_name"]
             ].clone()
+    if optimizer_values is not None:
+        for item in program.bindings["optimizer_bindings"]:
+            if item["name"] in optimizer_values and item["object_id"] is not None:
+                objects[item["object_id"]] = optimizer_values[item["name"]]
     for slots, (args, kwargs) in zip(
         program.bindings["root_inputs"], examples, strict=True
     ):
@@ -60,17 +66,22 @@ def replay_training(program, model, examples, variant, initial_gradients=None):
     profiles = {item.task_id: item.profile_id for item in program.tasks}
     functions = {}
     for entry in program.bindings["entrypoints"]:
-        if entry["options"]["variant"] != variant:
+        if entry["options"].get("variant", variant) != variant:
             continue
         key = profiles[entry["task_id"]]
         if key not in functions:
             functions[key] = AOTCompiledArtifact.deserialize(program.executables[key])
-        arguments = [objects[slot["object_id"]] for slot in entry["input_slots"]]
+        count = program.bindings["task_inputs"][key]["count"]
+        arguments = [None] * count
+        for slot in entry["input_slots"]:
+            arguments[slot["leaf_index"]] = objects[slot["object_id"]]
+        for slot in entry.get("host_inputs", ()):
+            arguments[slot["leaf_index"]] = optimizer_values[slot["name"]]
         outputs, _ = tree_flatten(functions[key](*arguments))
         for slot in entry["output_slots"]:
             objects[slot["object_id"]] = outputs[slot["leaf_index"]]
         contributions = defaultdict(list)
-        for slot in entry["options"]["contribution_slots"]:
+        for slot in entry["options"].get("contribution_slots", ()):
             contributions[slot["object_id"]].append(outputs[slot["leaf_index"]])
         for object_id, values in contributions.items():
             contribution = values[0]
@@ -153,7 +164,7 @@ def test_training_forms_and_orderings_match_autograd(tmp_path, tied):
         _check_cpu_planning(tmp_path)
 
 
-def _check_cpu_planning(directory):
+def _check_cpu_planning(directory, filename="training.ssp"):
     code = textwrap.dedent("""
         import importlib.abc, sys
         class NoExecutionImports(importlib.abc.MetaPathFinder):
@@ -168,7 +179,7 @@ def _check_cpu_planning(directory):
             CommunicationInfo, apply_profiles, plan_program, write_report, Plan)
         from shadowspill.step.ordering import StepDataOrdering
         from shadowspill.planner import GenericPlanningOptions, SearchOptions
-        p = Program.load('training.ssp')
+        p = Program.load(sys.argv[1])
         profiles = Profiles(setup=dict(p.setup), fixed_device_bytes=0, tasks={
             d.profile_key: TaskProfile(duration_seconds=0.001, workspace_bytes=max(
                 d.workspace_bytes or 0, p.bindings['compiler_memory'].get(
@@ -194,7 +205,7 @@ def _check_cpu_planning(directory):
         print('All three traversals planned and reported without framework imports')
     """)
     result = subprocess.run(
-        [sys.executable, "-S", "-c", code],
+        [sys.executable, "-S", "-c", code, filename],
         cwd=directory,
         env={**os.environ, "CUDA_VISIBLE_DEVICES": ""},
         text=True,

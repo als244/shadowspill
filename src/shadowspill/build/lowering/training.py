@@ -10,6 +10,7 @@ from torch.utils._pytree import treespec_dumps
 
 from shadowspill.artifacts.program import Program
 from shadowspill.ir import DeviceSpec, MemoryLocation, Persistence, ResidencySpec
+from shadowspill.planning.training.optimizer import place_optimizer
 from shadowspill.planning.training.tasks import assemble_training
 from shadowspill.pytorch.lowering.training.bindings import bind_training_boundaries
 from shadowspill.pytorch.lowering.training.objects import register_training_objects
@@ -19,8 +20,10 @@ from shadowspill.step.ordering import StepDataOrdering
 
 from ..compilation import BuiltTask
 from ..metadata import root_sources, signature_record
+from ..optimizer import BuiltOptimizer
 from ..training_capture import TrainingCapture
 from .catalog import CompiledTasks
+from .optimizer import optimizer_templates
 from .training_templates import stage_templates
 
 
@@ -30,6 +33,7 @@ def lower_training(
     *,
     setup: dict[str, Any],
     gradient_dtype: torch.dtype | None,
+    update: BuiltOptimizer | None = None,
 ) -> Program:
     captures = captured.examples
     trained = training_parameters_with_gradients(
@@ -42,7 +46,7 @@ def lower_training(
         objects = register_training_objects(
             captured.model,
             captures,
-            None,
+            None if update is None else update.captured,
             device_id="cuda_0",
             gradient_dtypes={
                 name: gradient_dtype or parameter.dtype
@@ -54,6 +58,7 @@ def lower_training(
             captures, objects, geometry, (None,) * len(captures)
         )
         templates = stage_templates(captures, objects, boundaries, geometry)
+        updates, optimizer_bindings = optimizer_templates(update, objects, geometry)
     alias_by_object = {
         item.object_id: item.alias_group_id for item in objects.catalog.objects()
     }
@@ -62,20 +67,28 @@ def lower_training(
     sequence = assemble_training(
         templates, alias_by_object, StepDataOrdering.depth_first(len(captures))
     )
+    sequence = place_optimizer(
+        sequence, updates, ordering="tail", aliases=alias_by_object, device_id="cuda_0"
+    )
     initial, final = derive_training_residency(
         objects, boundaries, tuple(sequence.tasks)
     )
     gradients = {item.gradient_object_id for item in objects.gradients}
     final_by_alias = {entry.alias_group_id: entry for entry in final}
-    for object_id in gradients:
-        alias = alias_by_object[object_id]
-        final_by_alias[alias] = ResidencySpec(alias, MemoryLocation.SPILL)
+    if update is None:
+        for object_id in gradients:
+            alias = alias_by_object[object_id]
+            final_by_alias[alias] = ResidencySpec(alias, MemoryLocation.SPILL)
     sources: dict[str, list[str]] = defaultdict(list)
     for item in objects.registrations:
         sources[alias_by_object[item.object_id]].append(item.name)
     for gradient in objects.gradients:
         sources[alias_by_object[gradient.gradient_object_id]].append(
             f"{gradient.parameter_name}.grad"
+        )
+    for optimizer_object in objects.optimizer_objects:
+        sources[alias_by_object[optimizer_object.object_id]].append(
+            optimizer_object.name
         )
     roots = root_sources(captures[0].training.exported)
     for example, slots in enumerate(objects.root_slots):
@@ -89,7 +102,7 @@ def lower_training(
         alias_groups=objects.catalog.alias_groups(),
         objects=tuple(
             replace(item, persistence=Persistence.RUN)
-            if item.object_id in gradients
+            if item.object_id in gradients and update is None
             else item
             for item in objects.catalog.objects()
         ),
@@ -104,7 +117,9 @@ def lower_training(
         executables=geometry.executables,
         bindings={
             **geometry.bindings(),
-            "kind": "forward_backward",
+            **optimizer_bindings,
+            "kind": "forward_backward" if update is None else "step",
+            "optimizer_templates": updates,
             "num_examples": len(captures),
             "training_templates": templates,
             "entrypoints": sequence.entrypoints,

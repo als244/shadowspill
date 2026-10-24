@@ -135,3 +135,23 @@
   ordering legality and distributed effects remain explicit later work.
 - Next: optimizer capture/build_step and planning-time optimizer placement,
   followed by standalone measurement and physical allocation qualification.
+
+### Full-step build checkpoint
+
+- Forward/backward checkpoint committed and pushed as `0e17affc`; the earlier
+  forward and CPU-only milestones are also on the remote refactor branch.
+- Added `build_step` using the same capture/compile/lower pipeline, with explicit
+  optimizer templates. State discovery and capture use storage-free copies;
+  build does not populate the caller's optimizer state or allocate moments.
+- Parameter, moment, counter and hyperparameter names/defaults travel with the
+  Program. Nontraceable optimizers and state needing an unsupported first-use
+  initializer fail explicitly instead of becoming process-local Python closures.
+- Planning chooses tail or stage-interleaved updates from saved components.
+  Read/write dependencies include aliased storage, all contributing examples,
+  and tied parameters. An update cannot run before the last read of old weights.
+- Compiled AdamW updates match eager PyTorch parameters, moments and counters
+  over two invocations for both save/recompute and both update orderings, with
+  and without tied weights. Original meta parameters/optimizer remain untouched.
+- Full-step archives also pass CPU-only planning, restoration and report checks.
+  General measurement, physical admission and Executor remain the next milestone;
+  these numerical tests deliberately use an independent binding replay oracle.

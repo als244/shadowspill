@@ -1,7 +1,7 @@
 # Independent build, profile and planning phases
 
 The refactor is being implemented in phases. The CPU path described here works;
-full-step building, GPU measurement, execution admission and caller migration are
+GPU measurement, execution admission and caller migration are
 still in progress on `codex/offline-pipeline-refactor`.
 
 ```python
@@ -83,6 +83,16 @@ forms and task profiles. Model mutations or RNG effects currently restrict
 reordering. Tied parameter contributions preserve both creation and mutation
 dependencies. `operator_recompute` controls operator retention during build;
 the planner separately chooses among saved stage variants.
+
+`build_step` takes the same training arguments plus `optimizer=optimizer`, whose
+parameters must belong to the supplied model. It discovers optimizer tensor
+shapes and initialization defaults without allocating persistent state or
+changing that optimizer. Traceable local updates are packaged with the stages.
+`plan_program(..., optimizer_ordering="stage_interleaved")` places updates after
+their required gradient writes and all remaining reads of old weights;
+`optimizer_ordering="tail"` puts updates after backward. Both use the same
+Program and profiles. Opaque updates and unsupported first-use state creation
+are currently rejected explicitly.
 
 ```python
 from shadowspill import TaskProfile
