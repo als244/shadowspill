@@ -6,7 +6,7 @@ from datetime import timedelta
 import pytest
 
 
-def _worker(worker, rendezvous, cuda):
+def _worker(worker, rendezvous, cuda, world_size):
     import torch
     import torch.distributed as dist
 
@@ -20,13 +20,13 @@ def _worker(worker, rendezvous, cuda):
         "gloo",
         init_method=rendezvous,
         rank=worker,
-        world_size=4,
+        world_size=world_size,
         timeout=timedelta(seconds=30),
     )
     bindings = None
     try:
-        mapping = {0: 2, 1: 0, 2: 3, 3: 1}
-        groups = ((3, 0), (2, 1))
+        mapping = {0: 1, 1: 0} if world_size == 2 else {0: 2, 1: 0, 2: 3, 3: 1}
+        groups = ((0, 1),) if world_size == 2 else ((3, 0), (2, 1))
         bindings = GroupBindings(
             identity="collective-tasks",
             groups=groups,
@@ -110,16 +110,17 @@ def _cpu_context():
 
 
 @pytest.mark.parametrize("cuda", [False, True], ids=["gloo", "nccl"])
-def test_packed_collective_tasks(tmp_path, cuda):
+@pytest.mark.parametrize("world_size", [2, 4], ids=["pair", "two-pairs"])
+def test_packed_collective_tasks(tmp_path, cuda, world_size):
     import torch
     import torch.multiprocessing as mp
 
-    if cuda and torch.cuda.device_count() < 4:
-        pytest.skip("needs four GPUs to qualify NCCL task completion")
+    if cuda and torch.cuda.device_count() < world_size:
+        pytest.skip(f"needs {world_size} GPUs to qualify NCCL task completion")
     workers = mp.spawn(
         _worker,
-        args=((tmp_path / "rendezvous").as_uri(), cuda),
-        nprocs=4,
+        args=((tmp_path / "rendezvous").as_uri(), cuda, world_size),
+        nprocs=world_size,
         join=False,
     )
     try:

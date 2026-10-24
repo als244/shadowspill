@@ -147,13 +147,14 @@ def test_collective_sampling_and_logical_groups_across_real_workers(tmp_path):
     mp.spawn(_worker, args=((tmp_path / "rendezvous").as_uri(),), nprocs=4, join=True)
 
 
-def _gpu_worker(worker, rendezvous):
+def _gpu_worker(worker, rendezvous, output):
     from dataclasses import replace
 
     import torch
     import torch.distributed as dist
 
-    from shadowspill import Parallelism, measure_communication
+    from shadowspill import CommunicationInfo, Parallelism, measure_communication
+    from shadowspill.communication.requests import collective_requests
     from shadowspill.pytorch.toolchain import build_setup
     from tests.shadowspill.offline.test_sharded_forward import forward
 
@@ -180,23 +181,59 @@ def _gpu_worker(worker, rendezvous):
                 },
             },
         )
+        requests = [request.to_dict() for request in collective_requests(source, None)]
+        requests.extend(
+            dict(
+                operation=operation,
+                ranks=(1, 0),
+                tensor_bytes=size,
+                dtype="torch.float32",
+                inplace=inplace,
+            )
+            for size in (4096, 1 << 20, 16 << 20)
+            for operation, inplace in (
+                ("all_gather", False),
+                ("all_gather", True),
+                ("reduce_scatter", False),
+                ("all_reduce", True),
+            )
+        )
         info = measure_communication(
             program=source,
+            collectives=requests,
             rank_map={0: 1, 1: 0},
             device=device,
             sizes_bytes=(1024, 1 << 20, 16 << 20),
             warmup_seconds=0.005,
             measure_seconds=0.01,
         )
-        assert info.measurements[0]["ranks"] == (1, 0)
-        assert info.measurements[0]["inplace"]
-        assert info.measurements[0]["duration_seconds"] > 0
+        assert len(info.measurements) == len(requests)
+        for observation in info.measurements:
+            assert observation["ranks"] == (1, 0)
+            assert observation["duration_seconds"] > 0
+            memory = observation["memory"]
+            assert memory["memory_kind"] == "measured", memory
+            assert memory["workspace_bytes"] >= 0
+            assert {row["logical_rank"] for row in memory["per_rank"]} == {0, 1}
+            assert all("allocation_contract" in row for row in memory["per_rank"])
         assert info.topology == {"node0": (0, 1)}
         assert info.metadata["backend_setup"]["nccl_version"]
         assert info.measurements[0]["backend_setup"] == info.metadata["backend_setup"]
         rows = [None, None]
         dist.all_gather_object(rows, info.to_dict())
         assert rows[0] == rows[1]
+        if worker == 0:
+            info.save(output)
+            assert CommunicationInfo.load(output).to_dict() == info.to_dict()
+            print(
+                "NCCL calibration:",
+                len(info.measurements),
+                "requests; retained bytes:",
+                info.fixed_device_bytes,
+                "; per rank:",
+                info.metadata["memory_per_rank"],
+                flush=True,
+            )
     finally:
         dist.destroy_process_group()
 
@@ -208,6 +245,22 @@ def test_nccl_calibration_on_two_gpus(tmp_path):
 
     if torch.cuda.device_count() < 2:
         pytest.skip("needs two GPUs to qualify NCCL calibration")
-    mp.spawn(
-        _gpu_worker, args=((tmp_path / "rendezvous").as_uri(),), nprocs=2, join=True
+    from time import monotonic
+
+    workers = mp.spawn(
+        _gpu_worker,
+        args=((tmp_path / "rendezvous").as_uri(), str(tmp_path / "communication.ssp")),
+        nprocs=2,
+        join=False,
     )
+    try:
+        deadline = monotonic() + 180
+        while not workers.join(timeout=1):
+            if monotonic() >= deadline:
+                pytest.fail("NCCL calibration workers exceeded their deadline")
+    finally:
+        for process in workers.processes:
+            if process.is_alive():
+                process.terminate()
+        for process in workers.processes:
+            process.join(timeout=5)

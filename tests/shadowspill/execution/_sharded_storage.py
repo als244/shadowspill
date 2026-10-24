@@ -5,13 +5,13 @@ from datetime import timedelta
 from types import SimpleNamespace
 
 
-def program(shard_ranks=2):
+def program(shard_ranks=2, world_size=4):
     from shadowspill import Parallelism, Program
     from shadowspill.ir import AliasGroupSpec, DeviceSpec, ObjectSpec
 
     spec = Parallelism(
         ranks_per_replica=shard_ranks,
-        num_replicas=4 // shard_ranks,
+        num_replicas=world_size // shard_ranks,
         groups={"all_ranks": (tuple(reversed(range(shard_ranks))),)},
     )
     return Program(
@@ -71,11 +71,12 @@ def worker(index, rendezvous, archive, mode):
     from shadowspill.runtime.plan.lifecycle import abort_plan, begin_plan
 
     source = Program.load(archive)
+    world_size = source.parallelism.world_size
     dist.init_process_group(
         "gloo",
         init_method=rendezvous,
         rank=index,
-        world_size=4,
+        world_size=world_size,
         timeout=timedelta(seconds=30),
     )
     device = index if mode == "nccl" else 0
@@ -100,7 +101,9 @@ def worker(index, rendezvous, archive, mode):
             bound = GroupBindings(
                 identity=source.digest,
                 groups=groups,
-                rank_map={0: 2, 1: 0, 2: 3, 3: 1},
+                rank_map=(
+                    {0: 1, 1: 0} if world_size == 2 else {0: 2, 1: 0, 2: 3, 3: 1}
+                ),
                 topology={},
                 backend="nccl" if mode == "nccl" else "gloo",
             )
@@ -186,7 +189,9 @@ def worker(index, rendezvous, archive, mode):
                     (bound.logical_rank, host.view(torch.bfloat16).tolist())
                 )
                 by_rank = dict(rows)
-                assert by_rank[0] == by_rank[2] and by_rank[1] == by_rank[3]
+                width = source.parallelism.ranks_per_replica
+                for rank in range(width, world_size):
+                    assert by_rank[rank] == by_rank[rank % width]
                 del host
                 if mode != "host":
                     from tests.shadowspill.execution._shard_roundtrips import roundtrips
