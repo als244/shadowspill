@@ -142,8 +142,12 @@ def lower_training(
         sources[alias_by_object[gradient["gradient_object_id"]]].append(
             f"{gradient['parameter_name']}.grad (reduced shard)"
         )
-    roots = root_sources(captures[0].training.exported, captured.constant_values)
+    roots_by_example = [
+        root_sources(c.training.exported, values)
+        for c, values in zip(captures, captured.constant_values, strict=True)
+    ]
     for example, slots in enumerate(objects.root_slots):
+        roots = roots_by_example[example]
         for slot in slots:
             sources[alias_by_object[slot.object_id]].append(
                 f"example[{example}].{roots[slot.leaf_index]['name']}"
@@ -204,8 +208,12 @@ def lower_training(
             "root_inputs": [
                 [asdict(slot) for slot in slots] for slots in objects.root_slots
             ],
-            "root_sources": roots,
-            "input_signature": signature_record(captured.input_signature),
+            "root_sources": roots_by_example[0],
+            "example_root_sources": roots_by_example,
+            "input_signature": signature_record(captured.input_signatures[0]),
+            "input_signatures": [
+                signature_record(s) for s in captured.input_signatures
+            ],
             "public_outputs": [
                 boundaries.public_outputs[i] for i in range(len(captures))
             ],

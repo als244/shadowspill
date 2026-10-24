@@ -43,12 +43,22 @@ def stage_inputs(
             "tree": treespec_dumps(signature.tree_spec),
             "leaves": [leaf.identity() for leaf in signature.leaves],
         }
-        if freeze(identity) != bindings["input_signature"]:
+        expected = (
+            bindings["input_signatures"][index]
+            if "input_signatures" in bindings
+            else bindings["input_signature"]
+        )
+        if freeze(identity) != expected:
             raise ValueError(f"example {index} differs from the built input signature")
         leaves, _ = tree_flatten(values)
         copied = set()
+        sources = (
+            bindings["example_root_sources"][index]
+            if "example_root_sources" in bindings
+            else bindings["root_sources"]
+        )
         for slot in slots:
-            source = bindings["root_sources"][slot["leaf_index"]]
+            source = sources[slot["leaf_index"]]
             if source["kind"] != "USER_INPUT":
                 continue
             value = leaves[source["user_leaf"]]

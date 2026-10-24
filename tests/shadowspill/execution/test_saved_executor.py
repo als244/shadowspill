@@ -37,6 +37,8 @@ from tests.shadowspill.execution._oracle import oracle
         ("backward_resume", "save", False),
         ("step_residual", "save", True),
         ("backward_residual", "recompute", True),
+        ("step_mixed", "save", True),
+        ("backward_mixed", "recompute", False),
     ],
 )
 def test_saved_plan_executes_without_build_or_measurement(
@@ -52,6 +54,8 @@ def test_saved_plan_executes_without_build_or_measurement(
         if kind == "forward"
         else [((torch.randn(4, 8),), {"labels": torch.randn(4, 8)}) for _ in range(2)]
     )
+    if kind.endswith("mixed"):
+        examples[1] = ((torch.randn(7, 8),), {"labels": torch.randn(7, 8)})
     with torch.device("meta"):
         template = ForwardNetwork() if kind == "forward" else network(tied=tied)
     common = dict(example_args=examples[0][0], example_kwargs=examples[0][1])
@@ -59,6 +63,8 @@ def test_saved_plan_executes_without_build_or_measurement(
         program = build_forward(template, **common)
     else:
         common.update(objective=objective, num_examples=2)
+        if kind.endswith("mixed"):
+            common = dict(objective=objective, example_calls=examples)
         if kind.startswith("step"):
             program = build_step(
                 template,
@@ -117,7 +123,7 @@ def test_saved_plan_executes_without_build_or_measurement(
         ),
     )
     plan.save(tmp_path / "plan.ssp")
-    oracle_kind = "forward_backward" if kind == "backward_residual" else kind
+    oracle_kind = "forward_backward" if kind.startswith("backward_") else kind
     expected = oracle(model, examples, oracle_kind)
     expected["check_task_streams"] = variant == "streams"
     torch.save(expected, tmp_path / "oracle.pt")

@@ -36,7 +36,7 @@ def weight_shards(
             "shard_bytes": chunk,
             "logical_bytes": registered_sizes[alias],
             "padded_bytes": chunk * count,
-            # The native weight gather operates on bytes, independently of
+            # The runtime weight gather operates on bytes, independently of
             # parameter representation. Padding still respects tensor elements.
             "dtype": "torch.uint8",
         }

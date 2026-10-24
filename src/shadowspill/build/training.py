@@ -33,6 +33,8 @@ def build_forward_backward(
     example_args: Sequence[Any] = (),
     example_kwargs: Mapping[str, Any] | None = None,
     num_examples: int = 1,
+    example_calls: Sequence[tuple[Sequence[Any], Mapping[str, Any]]] | None = None,
+    fuse_narrow_gradient_accumulation: bool = True,
     partition: PartitionSpec = "auto",
     operator_recompute: RetentionPolicy | None = None,
     grad_dtype: torch.dtype | None = None,
@@ -43,6 +45,8 @@ def build_forward_backward(
 
     The objective is called as objective(model, *example_args, **example_kwargs).
     Gradients persist after execution; no optimizer is captured or initialized.
+    For heterogeneous examples, supply ``example_calls=[(args, kwargs), ...]``
+    instead of ``example_args``, ``example_kwargs`` and ``num_examples``.
     """
     return _build_training(
         model,
@@ -51,6 +55,8 @@ def build_forward_backward(
         example_args=example_args,
         example_kwargs=example_kwargs,
         num_examples=num_examples,
+        example_calls=example_calls,
+        fuse_narrow_gradient_accumulation=fuse_narrow_gradient_accumulation,
         partition=partition,
         operator_recompute=operator_recompute,
         grad_dtype=grad_dtype,
@@ -67,6 +73,8 @@ def _build_training(
     example_args: Sequence[Any],
     example_kwargs: Mapping[str, Any] | None,
     num_examples: int,
+    example_calls: Sequence[tuple[Sequence[Any], Mapping[str, Any]]] | None,
+    fuse_narrow_gradient_accumulation: bool,
     partition: PartitionSpec,
     operator_recompute: RetentionPolicy | None,
     grad_dtype: torch.dtype | None,
@@ -87,6 +95,8 @@ def _build_training(
         example_args,
         dict(example_kwargs or {}),
         num_examples=num_examples,
+        example_calls=example_calls,
+        fuse_narrow_gradient_accumulation=fuse_narrow_gradient_accumulation,
         partition=partition,
         operator_recompute=operator_recompute,
         gradient_dtype=grad_dtype,

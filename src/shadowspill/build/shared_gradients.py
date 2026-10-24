@@ -9,6 +9,8 @@ from shadowspill.task.inputs import TaskInputRole
 
 def include_shared_gradients(
     capture: PartitionedTrainingCapture,
+    *,
+    fuse_narrow_gradient_accumulation: bool = True,
 ) -> PartitionedTrainingCapture:
     """Repeated parameter uses and residual branches add to prior gradients.
 
@@ -52,7 +54,12 @@ def include_shared_gradients(
                 variant = replace(
                     variant,
                     pair=replace(
-                        pair, backward=accumulate_gradient_outputs(pair.backward, prior)
+                        pair,
+                        backward=accumulate_gradient_outputs(
+                            pair.backward,
+                            prior,
+                            fuse_narrow_gradient_accumulation=fuse_narrow_gradient_accumulation,
+                        ),
                     ),
                 )
             variants.append(variant)

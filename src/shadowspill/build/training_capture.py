@@ -1,4 +1,4 @@
-"""One objective export, rebound examples, and both backward forms per stage."""
+"""Export each input signature once and build both backward forms per stage."""
 
 from __future__ import annotations
 
@@ -34,8 +34,8 @@ from .shared_gradients import include_shared_gradients
 class TrainingCapture:
     model: nn.Module
     examples: tuple[PartitionedTrainingCapture, ...]
-    input_signature: InputSignature
-    constant_values: Mapping[str, torch.Tensor]
+    input_signatures: tuple[InputSignature, ...]
+    constant_values: tuple[Mapping[str, torch.Tensor], ...]
 
 
 def capture_training_model(
@@ -45,6 +45,8 @@ def capture_training_model(
     kwargs: Mapping[str, Any],
     *,
     num_examples: int,
+    example_calls: Sequence[tuple[Sequence[Any], Mapping[str, Any]]] | None,
+    fuse_narrow_gradient_accumulation: bool,
     partition: PartitionSpec,
     operator_recompute: RetentionPolicy | None,
     gradient_dtype: torch.dtype | None,
@@ -54,21 +56,35 @@ def capture_training_model(
         raise TypeError("num_examples must be an integer")
     if num_examples < 1:
         raise ValueError("num_examples must be positive")
-    signature = capture_input_signature((tuple(args), dict(kwargs)))
+    if example_calls is not None:
+        if args or kwargs or num_examples != 1:
+            raise ValueError(
+                "example_calls cannot be combined with "
+                "example_args/kwargs or num_examples"
+            )
+        if not example_calls:
+            raise ValueError("example_calls must not be empty")
+        calls = [(tuple(a), dict(k)) for a, k in example_calls]
+    else:
+        calls = [(tuple(args), dict(kwargs))] * num_examples
+    signatures = tuple(capture_input_signature(call) for call in calls)
     mode = FakeTensorMode(allow_non_fake_inputs=True)
     replica = fake_device_model(model, mode, device_index=device_index)
     original = nn.Module()
     original.add_module("model", model)
-    pairs = GraphPairStore()  # In-memory structural reuse; no artifact store.
-    captures: list[PartitionedTrainingCapture] = []
-    template = None
-    constants = {}
+    pairs = GraphPairStore()
+    captures = []
+    constants_by_example = []
+    templates: dict[
+        str, tuple[Any, dict[str, torch.Tensor], tuple[Any, ...], Any]
+    ] = {}
     with mode:
-        for _ in range(num_examples):
+        for (args, kwargs), signature in zip(calls, signatures, strict=True):
             fake_args, fake_kwargs = fake_device_inputs(
-                (tuple(args), dict(kwargs)), mode, device_index=device_index
+                (args, kwargs), mode, device_index=device_index
             )
-            if template is None:
+            saved = templates.get(signature.digest)
+            if saved is None:
                 template = capture_training_objective(
                     replica, objective, fake_args, kwargs=fake_kwargs
                 )
@@ -83,29 +99,39 @@ def capture_training_model(
                         constant_values=constants,
                     )
                 )
+                previous = None
+            else:
+                template, constants, roots, previous = saved
             captured = rebind_training_objective(
                 template, fake_args, kwargs=fake_kwargs
             )
-            previous = captures[0].partitioned if captures else None
+            partitioned = partition_training_capture(
+                captured,
+                partition=partition,
+                graph_pair_store=pairs,
+                representative_root_inputs=roots,
+                representative_stage_outputs=(
+                    previous.control_values if previous is not None else None
+                ),
+                retention=operator_recompute,
+                accumulating=True,
+                gradient_dtype=gradient_dtype,
+                fuse_narrow_gradient_accumulation=fuse_narrow_gradient_accumulation,
+                template=previous,
+            )
+            templates[signature.digest] = (
+                template,
+                constants,
+                roots,
+                partitioned.partitioned,
+            )
             captures.append(
-                partition_training_capture(
-                    captured,
-                    partition=partition,
-                    graph_pair_store=pairs,
-                    representative_root_inputs=roots,
-                    representative_stage_outputs=(
-                        previous.control_values if previous is not None else None
-                    ),
-                    retention=operator_recompute,
-                    # Even one example supports accumulating into existing gradients.
-                    accumulating=True,
-                    gradient_dtype=gradient_dtype,
-                    template=previous,
+                include_shared_gradients(
+                    partitioned,
+                    fuse_narrow_gradient_accumulation=fuse_narrow_gradient_accumulation,
                 )
             )
+            constants_by_example.append(constants)
     return TrainingCapture(
-        replica,
-        tuple(include_shared_gradients(c) for c in captures),
-        signature,
-        constants,
+        replica, tuple(captures), signatures, tuple(constants_by_example)
     )

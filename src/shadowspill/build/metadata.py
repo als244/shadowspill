@@ -120,7 +120,11 @@ def _input_source(item: Any) -> dict[str, Any]:
         and isinstance(value, Tensor)
         and not isinstance(value, FakeTensor)
         and value.device.type == "cpu"
-        and value.numel() <= 4096
+        # Control arrays include token indices and packed-attention positions.
+        # Preserve bounded authentic values instead of silently dropping every
+        # sequence longer than 4096 elements. Larger inputs still need an
+        # explicit profiling override; model weights are never embedded here.
+        and value.numel() * value.element_size() <= 1 << 20
     ):
         record["value"] = value.tolist()
     return record

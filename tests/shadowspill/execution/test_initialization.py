@@ -98,3 +98,43 @@ def test_cpu_controls_preserve_counters_and_reset_omitted_hyperparameters():
     with pytest.raises(ValueError, match="wrong shape"):
         controls.apply({"lr": [0.1, 0.2]})
     assert controls.host["lr"].item() == pytest.approx(0.01)
+
+
+def test_lifted_constants_from_distinct_examples_have_distinct_export_names():
+    data = {"first": torch.empty(3), "second": torch.empty(5)}
+    sources = [
+        [{"kind": "CONSTANT_TENSOR", "name": "lifted_tensor_0", "value": values}]
+        for values in ([1, 2, 3], [4, 5, 6, 7, 8])
+    ]
+    state = storage(
+        {
+            "kind": "step",
+            "registrations": [],
+            "root_inputs": [
+                [{"leaf_index": 0, "object_id": name}] for name in data
+            ],
+            "example_root_sources": sources,
+        },
+        {
+            name: {"dtype": str(value.dtype), "shape": value.shape, "stride": (1,)}
+            for name, value in data.items()
+        },
+        data,
+    )
+    verify_initialization(state)
+    visit_tensors(
+        state, lambda *_: pytest.fail("constants need no loader"), 8, initialize=True
+    )
+    exported = {}
+
+    def collect(request, chunk):
+        if request.offset == 0:
+            assert request.name not in exported
+            exported[request.name] = []
+        exported[request.name].extend(chunk.tolist())
+
+    visit_tensors(state, collect, 8, initialize=False)
+    assert exported == {
+        "constant.example_0.lifted_tensor_0": [1, 2, 3],
+        "constant.example_1.lifted_tensor_0": [4, 5, 6, 7, 8],
+    }

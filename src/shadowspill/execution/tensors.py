@@ -75,12 +75,20 @@ def tensor_entries(
     groups = bindings["root_inputs"]
     if bindings["kind"] == "forward":
         groups = [groups]
-    for slots in groups:
+    for index, slots in enumerate(groups):
+        sources = (
+            bindings["example_root_sources"][index]
+            if "example_root_sources" in bindings
+            else bindings["root_sources"]
+        )
         for slot in slots:
-            source = bindings["root_sources"][slot["leaf_index"]]
+            source = sources[slot["leaf_index"]]
             if source["kind"] == "CONSTANT_TENSOR":
+                # Lifted names are local to each export. Different examples can
+                # use the same name for different values or tensor geometries.
+                scope = "" if bindings["kind"] == "forward" else f"example_{index}."
                 yield (
-                    "constant." + source["name"],
+                    "constant." + scope + source["name"],
                     slot["object_id"],
                     (
                         {"kind": "value", "value": source["value"]}
@@ -96,11 +104,16 @@ def verify_initialization(state: Storage) -> None:
     groups = bindings["root_inputs"]
     if bindings["kind"] == "forward":
         groups = [groups]
-    for slots in groups:
+    for index, slots in enumerate(groups):
+        sources = (
+            bindings["example_root_sources"][index]
+            if "example_root_sources" in bindings
+            else bindings["root_sources"]
+        )
         covered.update(
             state.aliases[s["object_id"]]
             for s in slots
-            if bindings["root_sources"][s["leaf_index"]]["kind"] == "USER_INPUT"
+            if sources[s["leaf_index"]]["kind"] == "USER_INPUT"
         )
     missing = state.initial - covered
     if missing:

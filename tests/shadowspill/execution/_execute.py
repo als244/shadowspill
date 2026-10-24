@@ -35,6 +35,7 @@ class BlockPhases(importlib.abc.MetaPathFinder):
 
 compiler.compile_fx = compiler.compile_fx_inner = Runtime._calibrate = forbidden
 sys.meta_path.insert(0, BlockPhases())
+from qualification.runtime_evidence import adapter_statistics  # noqa: E402
 from shadowspill import Executor, load_checkpoint, save_checkpoint  # noqa: E402
 from tests.shadowspill.execution._stream_checks import StreamChecks  # noqa: E402
 
@@ -68,6 +69,9 @@ def cpu(value):
 
 
 executor = Executor(plan)
+statistics = adapter_statistics()
+assert statistics.physical_budget_sealed
+assert statistics.runtime.event_lease_sealed
 streams = StreamChecks(executor) if oracle.get("check_task_streams") else None
 executor.initialize(fill, chunk_bytes=40, restore=oracle["restore"])
 assert (
@@ -80,6 +84,7 @@ with pytest.raises(ValueError, match="unknown runtime hyperparameters"):
     )
 previous, previous_value = None, None
 first_invocation_compiles = None
+steady_statistics = None
 for index, (outputs, state) in enumerate(oracle["expected"]):
     with torch.cuda.stream(None if streams is None else streams.begin(index)):
         pending = executor.run(
@@ -121,6 +126,16 @@ for index, (outputs, state) in enumerate(oracle["expected"]):
         )
 
     executor.export_tensors(collect, chunk_bytes=40)
+    statistics = adapter_statistics()
+    if steady_statistics is not None:
+        assert (
+            statistics.runtime.event_lease_driver_creates
+            == steady_statistics.runtime.event_lease_driver_creates
+        )
+        assert (
+            statistics.backend.device_allocations
+            == steady_statistics.backend.device_allocations
+        )
     assert actual.keys() == state.keys(), {
         "unexpected": actual.keys() - state.keys(),
         "missing": state.keys() - actual.keys(),
@@ -132,6 +147,7 @@ for index, (outputs, state) in enumerate(oracle["expected"]):
         save_checkpoint(executor, checkpoint, metadata={"completed": 1}, chunk_bytes=40)
         executor.initialize(lambda request, chunk: chunk.zero_(), restore=True)
         assert load_checkpoint(executor, checkpoint, chunk_bytes=28) == {"completed": 1}
+        steady_statistics = adapter_statistics()
 if plan.program.bindings["kind"] == "forward":
     first = executor.run(
         args=[oracle["examples"][0][0]], kwargs=[oracle["examples"][0][1]]

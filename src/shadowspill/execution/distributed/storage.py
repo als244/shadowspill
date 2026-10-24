@@ -1,4 +1,4 @@
-"""Bind saved weight shards to native transfer descriptors without calibration."""
+"""Bind saved weight shards to runtime transfer descriptors without calibration."""
 
 from typing import TYPE_CHECKING
 

@@ -22,6 +22,8 @@ def build_step(
     example_args: Sequence[Any] = (),
     example_kwargs: Mapping[str, Any] | None = None,
     num_examples: int = 1,
+    example_calls: Sequence[tuple[Sequence[Any], Mapping[str, Any]]] | None = None,
+    fuse_narrow_gradient_accumulation: bool = True,
     partition: PartitionSpec = "auto",
     operator_recompute: RetentionPolicy | None = None,
     grad_dtype: torch.dtype | None = None,
@@ -38,6 +40,9 @@ def build_step(
     ``master_dtype`` optionally captures separate optimizer parameters; model
     compute precision is unchanged. ``grad_dtype`` controls stored gradients
     independently. Optimizer state dtypes come from that optimizer's own rules.
+    ``example_args``/``example_kwargs`` plus ``num_examples`` describe repeated
+    geometry. Optional ``example_calls=[(args, kwargs), ...]`` describes distinct
+    geometries instead; planning still chooses their execution order.
     """
     return _build_training(
         model,
@@ -46,6 +51,8 @@ def build_step(
         example_args=example_args,
         example_kwargs=example_kwargs,
         num_examples=num_examples,
+        example_calls=example_calls,
+        fuse_narrow_gradient_accumulation=fuse_narrow_gradient_accumulation,
         partition=partition,
         operator_recompute=operator_recompute,
         grad_dtype=grad_dtype,

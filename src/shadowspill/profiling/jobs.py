@@ -11,16 +11,16 @@ def stage_jobs(
 ) -> Iterator[dict[str, Any]]:
     templates = program.bindings.get("training_templates")
     if templates is not None:
-        inventory = templates[0]
-        selected = _selection(stages, len(inventory))
-        for index, forms in enumerate(inventory):
-            if index in selected:
-                for form in forms:
-                    yield {
-                        "stage": index,
-                        "forward": form["forward"],
-                        "backward": form["backward"],
-                    }
+        selected = _selection(stages, max(map(len, templates)))
+        for inventory in templates:
+            for index, forms in enumerate(inventory):
+                if index in selected:
+                    for form in forms:
+                        yield {
+                            "stage": index,
+                            "forward": form["forward"],
+                            "backward": form["backward"],
+                        }
         if stages is None:
             for component in program.bindings.get("optimizer_templates", ()):
                 yield {"optimizer": component}
