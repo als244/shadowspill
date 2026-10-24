@@ -5,6 +5,7 @@ from time import perf_counter_ns
 import torch
 import torch.distributed as dist
 
+from .operations import launch_collective
 from .requests import CollectiveRequest
 
 
@@ -55,17 +56,9 @@ class CollectiveProbe:
             self.input.fill_(self.value)
 
     def _launch(self) -> None:
-        if self.request.operation == "all_gather":
-            work = dist.all_gather_single(
-                self.output, self.input, group=self.group, async_op=True
-            )
-        elif self.request.operation == "reduce_scatter":
-            work = dist.reduce_scatter_single(
-                self.output, self.input, group=self.group, async_op=True
-            )
-        else:
-            work = dist.all_reduce(self.output, group=self.group, async_op=True)
-        assert work is not None
+        work = launch_collective(
+            self.request.operation, self.output, self.input, self.group
+        )
         # NCCL joins its communication stream to the current stream here. The
         # end event therefore includes completion, not just host submission.
         work.wait()

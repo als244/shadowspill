@@ -102,6 +102,19 @@ def _check_completion(plan):
     objects = {item.object_id: item for item in plan.program.objects}
     gradients = {item["stored"] for item in plan.program.bindings["gradient_templates"]}
     tasks = plan.program.tasks
+    entries = {
+        entry["task_id"]: entry for entry in plan.program.bindings["entrypoints"]
+    }
+    for task in tasks:
+        if task.profile_id in plan.program.bindings["collective_tasks"]:
+            entry = entries[task.task_id]
+            assert (
+                tuple(slot["object_id"] for slot in entry["input_slots"]) == task.inputs
+            )
+            assert (
+                tuple(slot["object_id"] for slot in entry["output_slots"])
+                == task.outputs
+            )
     intervals = {item.task_id: item for item in plan.timeline.task_intervals}
     for update in (task for task in tasks if task.phase == "optimizer"):
         assert gradients.intersection(update.inputs)
