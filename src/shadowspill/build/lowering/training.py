@@ -10,6 +10,8 @@ from torch.utils._pytree import treespec_dumps
 
 from shadowspill.artifacts.program import Program
 from shadowspill.ir import DeviceSpec, MemoryLocation, Persistence, ResidencySpec
+from shadowspill.parallelism import Parallelism
+from shadowspill.planning.training.gradients import complete_gradients
 from shadowspill.planning.training.identity import canonicalize_tasks
 from shadowspill.planning.training.optimizer import place_optimizer
 from shadowspill.planning.training.tasks import assemble_training
@@ -20,11 +22,13 @@ from shadowspill.pytorch.optimizer.staging import training_parameters_with_gradi
 from shadowspill.step.ordering import StepDataOrdering
 
 from ..compilation import BuiltTask
+from ..gradient_ops import GradientOperations
 from ..metadata import model_tensor_geometry, root_sources, signature_record
 from ..optimizer import BuiltOptimizer
 from ..training_capture import TrainingCapture
 from .catalog import CompiledTasks
 from .controls import register_device_controls
+from .gradients import gradient_templates
 from .optimizer import optimizer_templates
 from .training_templates import stage_templates
 
@@ -36,6 +40,8 @@ def lower_training(
     setup: dict[str, Any],
     gradient_dtype: torch.dtype | None,
     update: BuiltOptimizer | None = None,
+    gradient_operations: dict[str, GradientOperations] | None = None,
+    parallelism: Parallelism | None = None,
 ) -> Program:
     captures = captured.examples
     trained = training_parameters_with_gradients(
@@ -62,6 +68,11 @@ def lower_training(
         )
         templates = stage_templates(captures, objects, boundaries, geometry)
         updates, optimizer_bindings = optimizer_templates(update, objects, geometry)
+        completions, gradient_bindings = (
+            ([], {})
+            if gradient_operations is None
+            else gradient_templates(gradient_operations, objects, geometry)
+        )
     alias_by_object = {
         item.object_id: item.alias_group_id for item in objects.catalog.objects()
     }
@@ -69,6 +80,9 @@ def lower_training(
     # Planning rebinds these saved templates without a framework/compiler import.
     sequence = assemble_training(
         templates, alias_by_object, StepDataOrdering.depth_first(len(captures))
+    )
+    sequence = complete_gradients(
+        sequence, completions, accumulate=False, device_id="cuda_0"
     )
     sequence = place_optimizer(
         sequence, updates, ordering="tail", aliases=alias_by_object, device_id="cuda_0"
@@ -80,7 +94,15 @@ def lower_training(
     gradients = {item.gradient_object_id for item in objects.gradients}
     final_by_alias = {entry.alias_group_id: entry for entry in final}
     if update is None:
-        for object_id in gradients:
+        stored_gradients = (
+            gradients
+            if gradient_operations is None
+            else {
+                item["gradient_object_id"]
+                for item in gradient_bindings["persistent_gradients"]
+            }
+        )
+        for object_id in stored_gradients:
             alias = alias_by_object[object_id]
             final_by_alias[alias] = ResidencySpec(alias, MemoryLocation.SPILL)
     sources: dict[str, list[str]] = defaultdict(list)
@@ -94,6 +116,10 @@ def lower_training(
         sources[alias_by_object[optimizer_object.object_id]].append(
             optimizer_object.name
         )
+    for gradient in gradient_bindings.get("persistent_gradients", ()):
+        sources[alias_by_object[gradient["gradient_object_id"]]].append(
+            f"{gradient['parameter_name']}.grad (reduced shard)"
+        )
     roots = root_sources(captures[0].training.exported, captured.constant_values)
     for example, slots in enumerate(objects.root_slots):
         for slot in slots:
@@ -106,7 +132,9 @@ def lower_training(
         alias_groups=objects.catalog.alias_groups(),
         objects=tuple(
             replace(item, persistence=Persistence.RUN)
-            if item.object_id in gradients and update is None
+            if item.object_id in gradients
+            and update is None
+            and gradient_operations is None
             else item
             for item in objects.catalog.objects()
         ),
@@ -117,11 +145,21 @@ def lower_training(
         final_residency=tuple(final_by_alias.values()),
         name=type(captured.model).__name__,
         setup=setup,
+        parallelism=parallelism,
         sources=sources,
         executables=geometry.executables,
         bindings={
             **geometry.bindings(),
             **optimizer_bindings,
+            **gradient_bindings,
+            **(
+                {
+                    "gradient_templates": completions,
+                    "distributed_training_lowered": "gradients",
+                }
+                if gradient_operations is not None
+                else {}
+            ),
             "kind": "forward_backward" if update is None else "step",
             "optimizer_templates": updates,
             "task_names": task_names,

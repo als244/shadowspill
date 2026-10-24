@@ -23,7 +23,14 @@ def simulation_inputs(
             "offline planning currently requires one symmetric rank-local program"
         )
     if world_size > 1 and (
-        profiled.program.bindings.get("kind") != "forward"
+        not (
+            profiled.program.bindings.get("kind") == "forward"
+            or (
+                profiled.program.bindings.get("kind") == "forward_backward"
+                and profiled.program.bindings.get("distributed_training_lowered")
+                == "gradients"
+            )
+        )
         or "weight_shards" not in profiled.program.bindings
     ):
         raise NotImplementedError(

@@ -24,6 +24,10 @@ def stage_jobs(
         if stages is None:
             for component in program.bindings.get("optimizer_templates", ()):
                 yield {"optimizer": component}
+            for completion in program.bindings.get("gradient_templates", ()):
+                if completion["padding"] is not None:
+                    yield {"gradient": completion["padding"]}
+                yield {"gradient": {"profile_key": completion["accumulation_key"]}}
     else:
         tasks = {task.task_id: task for task in program.tasks}
         entries = program.bindings["entrypoints"]

@@ -14,9 +14,15 @@ from shadowspill.pytorch.capture.retention import RetentionPolicy
 from shadowspill.pytorch.partition import PartitionSpec
 
 from .common import build_setup, compile_artifacts
+from .gradient_ops import capture_gradient_operations
 from .lowering.training import lower_training
 from .optimizer import capture_update
-from .parallelism import attach_parallelism, model_parallelism, require_single_rank
+from .parallelism import (
+    attach_parallelism,
+    model_parallelism,
+    require_single_rank,
+    validate_forward,
+)
 from .training_capture import capture_training_model
 
 
@@ -69,7 +75,10 @@ def _build_training(
     master_dtype: torch.dtype | None = None,
 ) -> Program:
     spec, parameters = model_parallelism(model, parallelism)
-    require_single_rank(spec)
+    if optimizer is not None:
+        require_single_rank(spec)
+    else:
+        validate_forward(spec, parameters)
     device = resolve_device(target)
     assert device.index is not None
     captured = capture_training_model(
@@ -90,6 +99,15 @@ def _build_training(
         for variant in stage.graph_pairs.variants
         for artifact in (variant.pair.forward, variant.pair.backward)
     ]
+    gradient_operations = None
+    if spec.world_size > 1:
+        gradient_operations = capture_gradient_operations(
+            model, captured, parameters, grad_dtype
+        )
+        for operation in gradient_operations.values():
+            if operation.padding is not None:
+                artifacts.append(operation.padding)
+            artifacts.append(operation.accumulation)
     update = (
         None
         if optimizer is None
@@ -114,6 +132,8 @@ def _build_training(
         setup=build_setup(device),
         gradient_dtype=grad_dtype,
         update=update,
+        gradient_operations=gradient_operations,
+        parallelism=spec,
     )
     program = replace(
         program, bindings={**program.bindings, "compiled_device_index": device.index}

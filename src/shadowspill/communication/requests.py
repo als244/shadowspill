@@ -73,6 +73,7 @@ def collective_requests(
             program.parallelism is not None
             and program.parallelism.world_size > 1
             and program.bindings.get("kind") != "forward"
+            and program.bindings.get("distributed_training_lowered") != "gradients"
         ):
             raise ValueError(
                 "this Program has no supported distributed training communication "

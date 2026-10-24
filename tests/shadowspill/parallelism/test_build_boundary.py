@@ -8,7 +8,6 @@ from shadowspill import (
     Parallelism,
     ParameterStorage,
     build_forward,
-    build_forward_backward,
     build_step,
 )
 from shadowspill.build.parallelism import model_parallelism
@@ -37,18 +36,19 @@ def test_model_inventory_deduplicates_ties_and_includes_buffers():
     assert all(value.is_meta for value in model.parameters())
 
 
-@pytest.mark.parametrize("builder", [build_forward_backward, build_step])
-def test_pending_distributed_lowering_fails_before_cuda(builder, monkeypatch):
+def test_pending_full_step_lowering_fails_before_cuda(monkeypatch):
     def forbidden(*args, **kwargs):
         raise AssertionError("validation reached GPU initialization")
 
     monkeypatch.setattr(torch.cuda, "init", forbidden)
     model = Tied()
-    kwargs = {} if builder is build_forward else {"objective": lambda model, x: x.sum()}
-    if builder is build_step:
-        kwargs["optimizer"] = torch.optim.SGD(model.parameters(), lr=0.1)
     with pytest.raises(NotImplementedError, match="distributed task/transfer lowering"):
-        builder(model, parallelism=Parallelism.dp(ranks_per_replica=8), **kwargs)
+        build_step(
+            model,
+            parallelism=Parallelism.dp(ranks_per_replica=8),
+            objective=lambda model, x: x.sum(),
+            optimizer=torch.optim.SGD(model.parameters(), lr=0.1),
+        )
 
 
 def test_parameter_typo_fails_before_capture():

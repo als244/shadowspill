@@ -128,8 +128,8 @@ created ProfiledProgram or Plan.
 Explicit latency is charged as a transfer phase. Concurrent fetch/evict rates
 default to independent full-duplex lanes; callers can provide different rates.
 The communication description is saved alongside the plan, independently of
-compute measurements. Symmetric distributed forward simulations also account for
-local host shards and weight gathers; distributed training lowering remains pending.
+compute measurements. Symmetric distributed simulations account for local host
+shards, weight gathers and explicitly lowered gradient reductions.
 
 `measure_communication()` optionally measures pinned-host copies on one GPU,
 using ordinary PyTorch allocation and CUDA events. It returns CommunicationInfo;
@@ -167,10 +167,11 @@ full tensor on each all-reduce participant. Sizes must contain whole elements in
 each shard. Duplicate probes are removed. Calls without Program, overrides or
 rank_map retain the original local host-only behavior.
 
-Derived requests currently cover lowered weight gathers. Distributed training
-and model-owned communication require their own lowering before automatic
-derivation is supported. Exact observed collective timings do not infer a general
-scale-up/out rate, overlapping-group contention, or communicator memory admission.
+Derived requests cover lowered weight gathers and explicit gradient-completion
+tasks. Full training updates and model-owned communication require their own
+lowering before automatic derivation is supported. Exact observed collective
+timings do not infer a general scale-up/out rate, overlapping-group contention,
+or communicator memory admission.
 The CPU/Gloo coordination and single-GPU copy paths are tested; multi-GPU NCCL
 calibration has an acceptance test but is not yet hardware-qualified.
 
@@ -188,8 +189,7 @@ weight fetch gathers. Their buffers and scratch remain live while the task is in
 flight, and consumers depend on completion. Reports show a separate collective
 lane and label ring-equivalent traffic. The analytic CPU test exercises overlap
 with independent compute and replans with different collective timings from the
-same saved ProfiledProgram. This IR support does not yet enable distributed
-training builders or certify distributed Executor resources.
+same saved ProfiledProgram. Distributed Executor resources still need qualification.
 
 The GPU allowance includes fixed runtime/provider overhead. Planning subtracts
 that overhead before scheduling objects/workspace, and reporting adds it back to
@@ -438,9 +438,9 @@ fields only from `default_parameter_storage`. `parallelism.group(name)` supplies
 a typed reference exposing static membership and size, without creating a live
 communicator.
 
-The initial distributed build path supports **read-only forward computation**
-with replicated local parameters and optional weight storage sharding. It builds
-and measures on one representative GPU without a process group. Planning then
+The initial distributed build paths support forward and forward/backward
+computation with replicated local parameters and optional weight storage sharding.
+They build and measure on one representative GPU without a process group. Planning then
 models local host-shard copies followed by the full weight all-gather:
 
 ```python
@@ -467,10 +467,25 @@ These rates are illustrative. The shared schedule describes one symmetric rank
 and uses the slowest corresponding group instance's transfer cost. Memory and
 traffic totals are **per rank**, not summed over the job. These distributed Plans
 are currently simulation-only: communicator resources, distributed allocation
-admission and execution binding still need qualification. Distributed training
-builders reject the configuration before CUDA setup rather than silently
+admission and execution binding still need qualification. Distributed full-step
+builds still reject the configuration before CUDA setup rather than silently
 building a local update. Model-sharded execution, distributed inputs, and
 already-reduced-gradient overrides also remain pending.
+
+`build_forward_backward` additionally supports sharded gradient storage. Local
+backward tasks accumulate full contributions across the call's examples. Optional
+padding and explicit reduce-scatter produce the owned gradient shard; repeated
+model replicas then all-reduce matching shards. Planning inserts each completion
+after its last local contributor, independently of parameter declaration order.
+All in-flight inputs, outputs and scratch remain part of memory accounting.
+
+One saved Plan supports both fresh gradients and cross-call accumulation. The
+latter reduces only the new contribution, then adds it locally to the stored
+already-reduced shard. Measurement on one GPU covers the local padding/addition
+tasks, without executing collectives. Collective scratch must be supplied if
+unresolved; a manual estimate permits simulation only. The archive/planning path
+is tested in a process that forbids Torch, build and runtime imports. Replicated
+gradient storage, full-step lowering and distributed execution remain later work.
 
 CommunicationInfo accepts flat scale-up/scale-out rates and latencies plus
 `measurements`, a sequence of plain mappings. An observation contains

@@ -138,8 +138,9 @@ def measure_program(
             program, target, inputs or {}, warmup_seconds, measure_seconds
         )
         for job in jobs:
-            if "optimizer" in job:
-                key = job["optimizer"]["profile_key"]
+            if "optimizer" in job or "gradient" in job:
+                component = job["optimizer"] if "optimizer" in job else job["gradient"]
+                key = component["profile_key"]
                 if key not in session.profiles.tasks:
                     arguments = prepare_inputs(
                         program, key, target, supplied=session.inputs.get(key)
