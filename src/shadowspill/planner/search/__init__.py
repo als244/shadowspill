@@ -89,6 +89,10 @@ class SearchAlgorithm(ABC):
         outside this package is reachable here once its module is imported.
         """
 
+        if name == "pressurefit" and name not in SearchAlgorithm._NAMED:
+            from .algorithms.pressurefit import PressureFit
+
+            return PressureFit
         if name not in SearchAlgorithm._NAMED:
             known = ", ".join(sorted(SearchAlgorithm._NAMED)) or "none"
             raise KeyError(
@@ -293,10 +297,11 @@ class SearchOptions:
         name = algorithm.get("name")
         if not isinstance(name, str):
             raise ValueError(f"{path}.algorithm.name is not a string")
+        algorithm_type = SearchAlgorithm.named(name)
         options = OptionRecord.record_from_value(algorithm.get("options"))
         return cls(
             generic=generic,
-            algorithm=SearchAlgorithm.named(name)(options),
+            algorithm=algorithm_type(options),
         )
 
     @property

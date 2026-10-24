@@ -98,7 +98,12 @@ def _plan_bound(
         config=config,
         generic=options.generic,
         workers=options.workers,
-        admission=facts,
+        # Executor uses the certified fixed layout, not the dynamic allocator's
+        # first-fit placement. Requiring both can reject a layout that fits:
+        # the dynamic replay fragments ranges before fixed placement is tried.
+        # Search still places every candidate; certification below proves the
+        # selected offsets and their completion/reuse dependencies.
+        admission=None,
         placement=facts,
     )
     layout = None

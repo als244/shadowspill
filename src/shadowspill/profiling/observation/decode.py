@@ -1,5 +1,6 @@
 """Convert native requests to pointer-free lifetimes with target charging."""
 
+from collections import defaultdict
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, replace
 from typing import Any
@@ -43,6 +44,8 @@ def decode_allocations(
     latest: dict[int, int] = {}
     live: dict[int, TaskAllocationEvent] = {}
     allocation_positions: dict[int, int] = {}
+    streams: dict[int, int] = {}
+    available: dict[tuple[int, int], list[int]] = defaultdict(list)
     for event in events:
         if event["pool_first"] or event["pool_second"]:
             raise CaptureError(
@@ -61,20 +64,35 @@ def decode_allocations(
             # Runtime extents retain the exact request. Address alignment is a
             # separate placement constraint, not per-allocation size rounding.
             charged = size
+            # Once native retirement completes, a same-stream request can use
+            # an equal-sized slot. The fixed allocator chooses its own addresses;
+            # copying native pointer choices would preserve cache fragmentation.
+            # Do not infer reuse across sizes or allocation streams.
+            retired = available[event["stream"], charged]
+            reuse = retired.pop() if retired else None
             value = TaskAllocationEvent(
                 ordinal,
                 TaskAllocationOperation.ALLOCATE,
                 size,
                 charged,
+                reuses_ordinal=reuse,
                 alignment_bytes=alignment,
             )
+            streams[ordinal] = event["stream"]
             latest[address] = ordinal
             live[address] = value
             allocation_positions[ordinal] = len(trace)
             trace.append(value)
         elif action == "free_completed" and address in live:
             value = live.pop(address)
-            trace.append(replace(value, operation=TaskAllocationOperation.FREE))
+            available[streams[value.allocation_ordinal], value.charged_bytes].append(
+                value.allocation_ordinal
+            )
+            trace.append(
+                replace(
+                    value, operation=TaskAllocationOperation.FREE, reuses_ordinal=None
+                )
+            )
     for address, views in output_views.items():
         if address not in latest:
             raise CaptureError(

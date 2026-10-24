@@ -74,9 +74,13 @@ def _simulation_admission_from_value(
         ),
         reuse_dependencies=tuple(
             MemoryReuseDependency(
-                predecessor_action_index=_integer(
+                predecessor_action_index=_optional_integer(
                     item.get("predecessor_action_index"),
                     f"{path}.reuse_dependencies[{index}].predecessor_action_index",
+                ),
+                predecessor_task_id=_optional_string(
+                    item.get("predecessor_task_id"),
+                    f"{path}.reuse_dependencies[{index}].predecessor_task_id",
                 ),
                 successor_task_id=_optional_string(
                     item.get("successor_task_id"),

@@ -46,6 +46,12 @@ def test_saved_training_program_measurement_without_runtime_pools(
     profiles.save(tmp_path / "profiles.ssp")
     profiles = Profiles.load(tmp_path / "profiles.ssp")
     assert profiles.fixed_device_bytes is not None
+    assert profiles.metadata["external_headroom_bytes"] == 512 << 20
+    assert profiles.fixed_device_bytes == (
+        profiles.metadata["external_device_bytes"]
+        + profiles.metadata["retained_device_bytes"]
+        + profiles.metadata["external_headroom_bytes"]
+    )
     profiled = apply_profiles(program, profiles)
     assert not profiled.estimated_memory
     for key, profile in profiles.tasks.items():

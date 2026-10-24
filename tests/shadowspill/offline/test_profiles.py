@@ -99,3 +99,11 @@ def test_invalid_numeric_profiles_rejected(value):
         TaskProfile(duration_seconds=value)
     with pytest.raises(ValueError):
         TaskProfile(workspace_bytes=value)
+
+
+@pytest.mark.parametrize("value", [-1, True, 21])
+def test_worker_headroom_is_a_valid_part_of_fixed_overhead(value):
+    data = profiles()  # Twenty bytes of total fixed overhead.
+    data.metadata["external_headroom_bytes"] = value
+    with pytest.raises(ValueError):
+        apply_profiles(program(), data)

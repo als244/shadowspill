@@ -7,9 +7,12 @@ import torch
 
 from shadowspill.artifacts.device import require_compiled_device
 from shadowspill.artifacts.plan import Plan
+from shadowspill.ir import MemoryActionKind
+from shadowspill.pipeline.admission.physical import seal_worker_budget
 from shadowspill.planning.shared import shared_memory
 from shadowspill.pytorch.resource_streams import ResourceStreams
 from shadowspill.runtime import Runtime
+from shadowspill.runtime.bootstrap import installed_runtime
 from shadowspill.runtime.plan import RuntimeBridge, clear_tasks
 from shadowspill.runtime.plan.lifecycle import (
     PlanMemory,
@@ -81,13 +84,28 @@ def _bind(
 def create_paths(
     plan: Plan,
     device: int,
-    external_headroom_bytes: int,
+    external_headroom_bytes: int | None,
     plans: Mapping[str, Plan] | None = None,
 ) -> tuple[
     Runtime, tuple[ExecutionPath, ...], dict[str, ExecutionPath], ResourceStreams
 ]:
     plans = dict(plans or {})
     joint = shared_memory(plan, plans) if plans else None
+    reservations = [
+        p.profiled_program.metadata.get("external_headroom_bytes")
+        for p in (plan, *plans.values())
+    ]
+    reserved = max(value if value is not None else 512 << 20 for value in reservations)
+    if external_headroom_bytes is None:
+        external_headroom_bytes = reserved
+    elif (
+        all(value is not None for value in reservations)
+        and external_headroom_bytes > reserved
+    ):
+        raise ValueError(
+            "Executor external_headroom_bytes exceeds the Plan reservation; "
+            "replan with profiles that include the requested headroom"
+        )
     runtime = open_worker(plan, device, external_headroom_bytes)
     paths = []
     named = {}
@@ -149,6 +167,35 @@ def create_paths(
                 shared=paths[0].storage,
                 shared_aliases=joint.aliases[name],
             )
+        installed = installed_runtime()
+        assert installed is not None
+        candidates = [path.plan for path in (*paths, *named.values())]
+        layouts = []
+        for candidate in candidates:
+            assert candidate.memory_layout is not None
+            layouts.append(candidate.memory_layout)
+        seal_worker_budget(
+            installed,
+            selected_task_count=sum(
+                len(p._costed_program.selected_tasks(p.selections)) for p in candidates
+            ),
+            initial_transfer_count=sum(
+                r.location.value == "device"
+                for p in candidates
+                for r in p.schedule.initial_residency
+            ),
+            scheduled_transfer_count=sum(
+                a.kind in {MemoryActionKind.FETCH, MemoryActionKind.EVICT}
+                for p in candidates
+                for a in p.schedule.actions
+            ),
+            fixed_lifetime_count=sum(
+                len(layout.placements) for layout in layouts
+            ),
+            dynamic_lifetime_count=sum(
+                len(layout.dynamic_lifetimes) for layout in layouts
+            ),
+        )
         return runtime, tuple(paths), named, streams
     except BaseException:
         for path in reversed([*paths, *named.values()]):

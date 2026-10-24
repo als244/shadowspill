@@ -25,7 +25,7 @@ class Executor:
         plans: Mapping[str, Plan] | None = None,
         device: int = 0,
         rank_map: Mapping[int, int] | None = None,
-        external_headroom_bytes: int = 512 << 20,
+        external_headroom_bytes: int | None = None,
     ) -> None:
         world_size = (
             1

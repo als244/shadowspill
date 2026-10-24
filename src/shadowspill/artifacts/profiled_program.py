@@ -32,6 +32,10 @@ class ProfiledProgram(Artifact):
 
     def __post_init__(self) -> None:
         nonnegative_int(self.fixed_device_bytes, "fixed_device_bytes")
+        headroom = self.metadata.get("external_headroom_bytes", 0)
+        nonnegative_int(headroom, "external_headroom_bytes")
+        if headroom > self.fixed_device_bytes:
+            raise ValueError("worker headroom exceeds fixed device overhead")
         if set(self.task_profiles) != {
             d.profile_key for d in self.program.task_definitions
         }:

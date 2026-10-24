@@ -67,6 +67,14 @@ def shared_memory(primary: Plan, plans: Mapping[str, Plan]) -> SharedMemory:
     )
     unique = {plan.program.digest: plan for plan in named.values()}
     overhead = sum(plan.fixed_device_bytes for plan in unique.values())
+    # These plans run in one worker. Its explicitly reserved headroom is shared;
+    # provider allocations remain conservatively summed because their sharing
+    # is not part of the execution contract.
+    headrooms = [
+        p.profiled_program.metadata.get("external_headroom_bytes", 0)
+        for p in unique.values()
+    ]
+    overhead -= sum(headrooms) - max(headrooms)
     execution = fixed + dynamic + overhead
     spill = _spill_bytes(paths, mappings)
     if execution > primary.memory_budgets.execution_bytes:

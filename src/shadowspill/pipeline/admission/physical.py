@@ -108,6 +108,34 @@ def seal_physical_budget(
     if fixed_layout.schedule_digest != execution_plan.schedule.digest:
         raise AdmissionError("fixed layout belongs to a different memory schedule")
 
+    seal_worker_budget(
+        installed,
+        selected_task_count=len(
+            execution_plan.program.selected_tasks(execution_plan.selections)
+        ),
+        initial_transfer_count=sum(
+            item.location.value == "device"
+            for item in execution_plan.schedule.initial_residency
+        ),
+        scheduled_transfer_count=sum(
+            item.kind in {MemoryActionKind.EVICT, MemoryActionKind.FETCH}
+            for item in execution_plan.schedule.actions
+        ),
+        fixed_lifetime_count=len(fixed_layout.placements),
+        dynamic_lifetime_count=len(fixed_layout.dynamic_lifetimes),
+    )
+
+
+def seal_worker_budget(
+    installed: InstalledRuntime,
+    *,
+    selected_task_count: int,
+    initial_transfer_count: int,
+    scheduled_transfer_count: int,
+    fixed_lifetime_count: int,
+    dynamic_lifetime_count: int,
+) -> None:
+    """Seal the admitted worker's physical budget and reusable record inventory."""
     library = installed.library
     status = int(library.shadowspill_pytorch_check_physical_budget())
     if status != 0:
@@ -143,30 +171,13 @@ def seal_physical_budget(
             64 * _MIB,
         ),
     )
-    initial_transfers = sum(
-        item.location.value == "device"
-        for item in execution_plan.schedule.initial_residency
-    )
-    scheduled_transfers = sum(
-        item.kind in {MemoryActionKind.EVICT, MemoryActionKind.FETCH}
-        for item in execution_plan.schedule.actions
-    )
-    # The host dispatcher may publish a complete step before device retires its
-    # earliest task allocations and transfer reservations.  Reserve metadata
-    # for every lifetime certified by the physical layout; task/transfer
-    # counts alone undercount allocation-heavy compiled graphs.  The C seal
-    # uses one common lower bound for event, retirement, and per-pool lease
-    # records, so the larger of the event and lifetime inventories is safe for
-    # every component without adding a second sizing contract.
     runtime_record_reserve = _runtime_record_reserve(
-        selected_task_count=len(
-            execution_plan.program.selected_tasks(execution_plan.selections)
-        ),
-        initial_transfer_count=initial_transfers,
-        scheduled_transfer_count=scheduled_transfers,
+        selected_task_count=selected_task_count,
+        initial_transfer_count=initial_transfer_count,
+        scheduled_transfer_count=scheduled_transfer_count,
         event_pool_peak_in_use=int(statistics.runtime.event_lease_peak_in_use),
-        fixed_lifetime_count=len(fixed_layout.placements),
-        dynamic_lifetime_count=len(fixed_layout.dynamic_lifetimes),
+        fixed_lifetime_count=fixed_lifetime_count,
+        dynamic_lifetime_count=dynamic_lifetime_count,
     )
     status = int(
         library.shadowspill_pytorch_seal_physical_budget(

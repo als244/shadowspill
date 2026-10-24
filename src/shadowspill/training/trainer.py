@@ -39,7 +39,7 @@ class Trainer:
         | None = None,
         device: int = 0,
         rank_map: Mapping[int, int] | None = None,
-        external_headroom_bytes: int = 512 << 20,
+        external_headroom_bytes: int | None = None,
     ) -> None:
         if not isinstance(plan, Plan) or plan.program.bindings.get("kind") != "step":
             raise TypeError("Trainer requires a Plan produced from build_step")
@@ -169,7 +169,7 @@ class Trainer:
         input_loader: Callable[[int], tuple[tuple[Any, ...], Mapping[str, Any]]]
         | None = None,
     ) -> Any:
-        """Run the prebuilt forward Plan and return its native output on CPU.
+        """Run the prebuilt forward Plan and return its ordinary output on CPU.
 
         Evaluation uses current compute weights and buffers; it neither steps
         the optimizer nor advances schedules. Losses/metrics belong in the

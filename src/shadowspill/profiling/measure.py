@@ -7,7 +7,7 @@ from typing import Any
 import torch
 from torch.utils._pytree import tree_flatten
 
-from shadowspill.artifacts._values import plain
+from shadowspill.artifacts._values import nonnegative_int, plain
 from shadowspill.artifacts.device import require_compiled_device
 from shadowspill.artifacts.profiles import Profiles, TaskProfile
 from shadowspill.artifacts.program import Program
@@ -116,6 +116,7 @@ def measure_program(
     inputs: Mapping[str, Sequence[Any]] | None = None,
     warmup_seconds: float = 0.05,
     measure_seconds: float = 0.18,
+    external_headroom_bytes: int = 512 << 20,
 ) -> Profiles:
     """Profile all unique forms, or the explicitly selected stage indices.
 
@@ -123,7 +124,10 @@ def measure_program(
     task arguments by profile key. Automatic inputs preserve geometry/aliases;
     unknown control semantics require explicit values. Only one pair's tensors
     are retained at a time. No model weights, pools or ArtifactStore are needed.
+    Fixed device overhead includes the requested worker headroom in addition to
+    observed library/context memory. Executor inherits this saved reservation.
     """
+    nonnegative_int(external_headroom_bytes, "external_headroom_bytes")
     if program.bindings.get("provider") != "torch-inductor-aot":
         raise ValueError("Program has no supported finalized task implementation")
     target = resolve_device(device)
@@ -163,13 +167,18 @@ def measure_program(
                     metadata={"duration_kind": "static", "memory_kind": "static"},
                 )
         if session.external is not None:
-            session.profiles.fixed_device_bytes = session.external + session.persistent
+            session.profiles.fixed_device_bytes = (
+                session.external + session.persistent + external_headroom_bytes
+            )
         session.profiles.metadata = {
             "memory_kind": "measured",
             "allocator": "native",
-            "fixed_device_source": "NVML minus native cache, plus retained data",
+            "fixed_device_source": (
+                "NVML minus native cache, plus retained data and worker headroom"
+            ),
             "external_device_bytes": session.external,
             "retained_device_bytes": session.persistent,
+            "external_headroom_bytes": external_headroom_bytes,
             "resource_streams": session.streams.description,
             "stream_workspace_bytes": session.streams.retained_bytes,
             "input_policy": "automatic values; geometry preserved; caller overrides",
