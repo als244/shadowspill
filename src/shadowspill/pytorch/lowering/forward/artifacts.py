@@ -12,11 +12,10 @@ from shadowspill.pytorch.capture.artifacts import GraphArtifact
 from shadowspill.pytorch.capture.storage import TaskStorageContract
 from shadowspill.pytorch.representations import RootInputKey
 from shadowspill.task.entrypoints import TaskEntrypoint
-from shadowspill.task.layout import CompiledTaskLayout
+from shadowspill.task.geometry import TaskStorageGeometry
 from shadowspill.task.slots import ObjectSlot
 
 from ..catalog import ObjectCatalog, RegistrationBinding
-from ..profiles import TaskProfileCatalog
 
 
 @dataclass(frozen=True, slots=True)
@@ -46,11 +45,11 @@ class ForwardObjects:
 
 
 @dataclass(frozen=True, slots=True)
-class ForwardPhysicalLayout:
+class ForwardTaskGeometry:
     contracts: tuple[TaskStorageContract, ...]
-    layouts: tuple[CompiledTaskLayout, ...]
-    profiles: TaskProfileCatalog
+    layouts: tuple[TaskStorageGeometry, ...]
     profile_ids: tuple[str, ...]
+    control_profile_id: str
 
 
 @dataclass(frozen=True, slots=True)

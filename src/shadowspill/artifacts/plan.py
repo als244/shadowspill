@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, ClassVar
 
@@ -42,9 +43,11 @@ class Plan(Artifact):
         )
         # Workspace totals support logical simulation. Do not fabricate allocator
         # lifetimes, physical placement or executable task payloads from totals.
+        missing_code = not self.program.executables
         return (
             *reasons,
-            "executable task payloads and physical allocation evidence absent",
+            *(("executable task payloads absent",) if missing_code else ()),
+            "physical allocation evidence absent",
         )
 
     @property
@@ -84,15 +87,20 @@ class Plan(Artifact):
             "costed_program": self._costed_program.to_dict(),
         }
 
+    def _archive_payloads(self) -> Mapping[str, bytes]:
+        return self.program._archive_payloads()
+
     @classmethod
-    def from_dict(cls, value: dict[str, Any]) -> Plan:
+    def from_dict(
+        cls, value: dict[str, Any], *, payloads: Mapping[str, bytes] | None = None
+    ) -> Plan:
         from shadowspill.communication import CommunicationInfo
         from shadowspill.planner.diagnostics import PlanningDiagnostics
         from shadowspill.planner.serialization import _simulation_result_from_value
         from shadowspill.planning.budgets import MemoryBudgets
 
         return cls(
-            ProfiledProgram.from_dict(value["profiled_program"]),
+            ProfiledProgram.from_dict(value["profiled_program"], payloads=payloads),
             MemoryBudgets(**value["memory_budgets"]),
             CommunicationInfo.from_dict(value["communication_info"]),
             MemorySchedule.from_dict(value["schedule"]),

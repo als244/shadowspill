@@ -1,7 +1,7 @@
 # Independent build, profile and planning phases
 
 The refactor is being implemented in phases. The CPU path described here works;
-new model builders, GPU measurement, executable bundles and caller migration are
+training builders, GPU measurement, execution admission and caller migration are
 still in progress on `codex/offline-pipeline-refactor`.
 
 ```python
@@ -38,6 +38,27 @@ plain numeric task durations and unresolved workspace sizes for one setup.
 An explicit zero is valid; a missing workspace or runtime/provider overhead is
 an error, not zero. Known compiler memory is retained as a lower bound.
 
+The forward builder already separates export, partition, compilation and lowering
+from timing and runtime pools:
+
+```python
+from shadowspill import build_forward
+
+program = build_forward(
+    model, example_args=(features,), example_kwargs={"mask": mask},
+    partition="auto", target="cuda:0",
+)
+program.save("program.ssp")
+```
+
+The model may have CPU or meta parameters. This initial backend uses one
+representative GPU to finalize CUDA task implementations. It accepts normal
+positional and keyword arguments, including nested structures and specialized
+non-tensor values. It records semantic module/parameter names, output storage
+geometry, scheduled compiler-buffer lifetimes and explicit unresolved memory
+requirements for provider calls. No state initialization or task timing occurs.
+The training builders and their ordering controls are the next migration step.
+
 ```python
 from shadowspill import TaskProfile
 
@@ -72,7 +93,8 @@ diagnostic failures, and a `best_per_budget` lookup. It does not construct or
 profile candidates. Invalid arguments and implementation errors propagate.
 
 Each phase result saves as one atomic archive with a versioned JSON description
-and checksum. ProfiledProgram contains its Program and profiles; Plan contains
+and checksums. Compiled payloads are deduplicated inside the archive and remain
+opaque bytes during CPU inspection. ProfiledProgram contains its Program and profiles; Plan contains
 the selected schedule, simulation, assumptions and diagnostics. No compiler cache
 directories are included. Reporting is explicit and separate from persistence.
 The native simulator currently records memory peaks rather than a complete
@@ -81,14 +103,17 @@ the compute/transfer timeline; they do not invent a memory curve.
 
 Workspace totals permit logical simulation. They do **not** establish allocation
 order, storage handoffs, charged alignment, persistent provider allocations or
-the task code required for execution. The initial CPU artifacts therefore expose
+the task code required for execution. Built forward Programs now contain packaged
+task code that has been tested in a fresh process with empty compiler caches.
+The initial CPU artifacts nevertheless expose
 `simulation_only_reasons` and no physical `memory_layout`. A later milestone
-adds compiler/measurement allocation evidence and executable payloads without
+adds complete allocation evidence and execution admission without
 promoting estimates into execution facts.
 
 Implementation ownership:
 
 - `artifacts/`: immutable phase results, editable profile collections, archive codec.
+- `build/`: model capture, finalized task packaging, static memory and lowering.
 - `profiling/apply.py`: CPU validation/application of supplied profiles.
 - `planning/`: public CPU planning/sweep and capacity/cost conversion.
 - `communication/`: saved communication assumptions; calibration will be separate.

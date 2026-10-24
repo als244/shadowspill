@@ -1,0 +1,61 @@
+"""Portable call descriptions and source names for built task artifacts."""
+
+from __future__ import annotations
+
+from typing import Any
+
+from torch import Tensor
+from torch.export.graph_signature import InputKind
+from torch.fx import GraphModule
+from torch.utils._pytree import treespec_dumps
+
+from shadowspill.pytorch.capture.aot import ExportCapture
+from shadowspill.pytorch.capture.artifacts import GraphArtifact
+from shadowspill.pytorch.guards import InputSignature
+
+
+def module_paths(graph: GraphModule) -> tuple[str, ...]:
+    paths: dict[str, None] = {}
+    for node in graph.graph.nodes:
+        stack = node.meta.get("nn_module_stack", {})
+        for path, _type in stack.values():
+            if path:
+                paths.setdefault(path, None)
+    return tuple(paths)
+
+
+def signature_record(signature: InputSignature) -> dict[str, Any]:
+    return {
+        "tree": treespec_dumps(signature.tree_spec),
+        "leaves": [leaf.identity() for leaf in signature.leaves],
+    }
+
+
+def root_sources(exported: ExportCapture) -> list[dict[str, Any]]:
+    result = []
+    user_position = 0
+    for index, spec in enumerate(exported.exported_program.graph_signature.input_specs):
+        record = {
+            "root_index": index,
+            "kind": spec.kind.name,
+            "name": spec.target or getattr(spec.arg, "name", ""),
+        }
+        if spec.kind is InputKind.USER_INPUT:
+            record["user_leaf"] = user_position
+            user_position += 1
+        result.append(record)
+    return result
+
+
+def task_inputs(artifact: GraphArtifact) -> dict[str, Any]:
+    return {
+        "count": artifact.argument_count,
+        "tensor_positions": artifact.tensor_argument_positions,
+        "tensor_aliases": artifact.tensor_argument_alias_groups,
+        "tensor_geometry": [item.identity() for item in artifact.tensor_inputs],
+        "static_values": [
+            [index, value]
+            for index, value in enumerate(artifact.example_arguments)
+            if not isinstance(value, Tensor)
+        ],
+    }

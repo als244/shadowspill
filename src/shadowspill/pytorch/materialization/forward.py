@@ -9,8 +9,6 @@ from typing import Any
 
 import torch
 import torch.nn as nn
-from torch._subclasses.fake_tensor import FakeTensor
-from torch.export.graph_signature import InputKind
 from torch.utils._pytree import tree_flatten, tree_map, tree_unflatten
 
 from shadowspill.errors import InputGuardError, PlanningError
@@ -18,6 +16,9 @@ from shadowspill.ir import MemoryAction, MemoryActionKind
 from shadowspill.pytorch.accelerator import accelerator_device, is_accelerator
 from shadowspill.pytorch.bindings import dematerialize
 from shadowspill.pytorch.capture.aot import ExportCapture
+from shadowspill.pytorch.capture.inputs import (
+    flat_runtime_arguments as flat_runtime_arguments,
+)
 from shadowspill.pytorch.capture.live_storage import unique_live_tensors
 from shadowspill.pytorch.contracts import TensorSpec
 from shadowspill.pytorch.lowering.catalog import RegistrationBinding
@@ -102,56 +103,6 @@ def representative_cpu_inputs(values: Any) -> Any:
         return result
 
     return tree_map(convert, values)
-
-
-def flat_runtime_arguments(
-    capture: ExportCapture,
-    model: nn.Module,
-    inputs: Sequence[Any],
-) -> list[object]:
-    """Combine original registered state with one guarded user invocation."""
-
-    flatten = getattr(capture.exported_program, "_graph_module_flat_inputs", None)
-    if not callable(flatten):
-        raise PlanningError("PyTorch Export flat-input adapter is unavailable")
-    flat = list(flatten(tuple(inputs), {}))
-    specs = capture.exported_program.graph_signature.input_specs
-    if len(flat) != len(specs):
-        raise PlanningError("Export flat input count changed after capture")
-    for index, spec in enumerate(specs):
-        if spec.kind is InputKind.PARAMETER:
-            if spec.target is None:
-                raise PlanningError("Export parameter input has no target")
-            flat[index] = model.get_parameter(spec.target)
-        elif spec.kind is InputKind.BUFFER:
-            if spec.target is None:
-                raise PlanningError("Export buffer input has no target")
-            flat[index] = model.get_buffer(spec.target)
-        elif spec.kind is InputKind.CONSTANT_TENSOR:
-            if spec.target is None:
-                raise PlanningError("Export constant tensor has no target")
-            # Tensor literals created inside forward live in Export's constant
-            # table, not on the original module. Existing attribute constants
-            # may instead be fake after device capture; recover those from the
-            # source module as before.
-            value = flat[index]
-            if isinstance(value, FakeTensor) or not isinstance(value, torch.Tensor):
-                value = _resolve_attribute(model, spec.target)
-            if not isinstance(value, torch.Tensor) or value.device.type != "cpu":
-                raise PlanningError(
-                    f"constant tensor {spec.target!r} is not CPU resident"
-                )
-            flat[index] = value
-    return flat
-
-
-def _resolve_attribute(module: nn.Module, target: str) -> object:
-    value: object = module
-    for component in target.split("."):
-        if not hasattr(value, component):
-            raise PlanningError(f"model has no exported attribute {target!r}")
-        value = getattr(value, component)
-    return value
 
 
 @dataclass(frozen=True, slots=True)

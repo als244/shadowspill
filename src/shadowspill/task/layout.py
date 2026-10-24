@@ -16,6 +16,7 @@ from shadowspill.errors import CaptureError
 from shadowspill.schema import artifact_schema
 from shadowspill.task.manifest import ExecutableRootAllocation
 
+from .geometry import TaskStorageGeometry
 from .profiles import (
     TaskAllocationEvent,
     TaskAllocationOperation,
@@ -126,6 +127,16 @@ class CompiledTaskLayout:
             return self.roots[root_id]
         except IndexError as exc:
             raise CaptureError("compiled layout references an unknown root") from exc
+
+    @property
+    def geometry(self) -> TaskStorageGeometry:
+        """Project binding facts without exposing measurement to graph lowering."""
+        return TaskStorageGeometry(
+            self.contract_digest,
+            tuple(root.requested_bytes for root in self.roots),
+            tuple(root.charged_bytes for root in self.roots),
+            tuple((view.leaf_index, view.offset_bytes) for view in self.output_views),
+        )
 
     def additional_workspace_for_outputs(
         self,

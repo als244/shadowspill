@@ -144,9 +144,9 @@ class _ObjectiveModule(nn.Module):
         self.objective = objective
         self.schema = schema
 
-    def forward(self, *args: Any) -> tuple[torch.Tensor, ...]:
+    def forward(self, *args: Any, **kwargs: Any) -> tuple[torch.Tensor, ...]:
         loss, metrics = normalize_objective_result(
-            self.objective(self.model, *args), require_grad=False
+            self.objective(self.model, *args, **kwargs), require_grad=False
         )
         leaves, tree_spec = tree_flatten(metrics)
         if tree_spec != self.schema.metric_tree_spec:
@@ -159,14 +159,16 @@ class _ObjectiveModule(nn.Module):
 
 
 def _flatten_inputs(
-    exported: torch.export.ExportedProgram, inputs: Sequence[Any]
+    exported: torch.export.ExportedProgram,
+    inputs: Sequence[Any],
+    kwargs: Mapping[str, Any] | None = None,
 ) -> tuple[object, ...]:
     flatten = getattr(exported, "_graph_module_flat_inputs", None)
     if not callable(flatten):
         raise CaptureError(
             "PyTorch 2.13 ExportedProgram flat-input adapter is unavailable"
         )
-    return tuple(flatten(tuple(inputs), {}))
+    return tuple(flatten(tuple(inputs), dict(kwargs or {})))
 
 
 def _functional_copy(
@@ -229,15 +231,21 @@ def _repair_constant_targets(exported: torch.export.ExportedProgram) -> None:
         spec.target = renamed[target]
 
 
-def _export(module: nn.Module, inputs: Sequence[Any]) -> ExportCapture:
+def _export(
+    module: nn.Module,
+    inputs: Sequence[Any],
+    kwargs: Mapping[str, Any] | None = None,
+) -> ExportCapture:
     try:
         with quiet_leaf_spec_deprecation():
-            exported = torch.export.export(module, tuple(inputs), strict=True)
+            exported = torch.export.export(
+                module, tuple(inputs), kwargs=dict(kwargs or {}), strict=True
+            )
             _repair_constant_targets(exported)
             # Decomposition unwraps tensor subclasses before differentiation,
             # losing their logical gradient contract (and can mark integer
             # payloads requires_grad). Preserve logical operators until AOT.
-            flat_inputs = _flatten_inputs(exported, inputs)
+            flat_inputs = _flatten_inputs(exported, inputs, kwargs)
             if any(is_wrapper(value) for value in flat_inputs):
                 exported = functionalize_logical_export(
                     exported, flat_inputs, _functional_copy
@@ -249,7 +257,7 @@ def _export(module: nn.Module, inputs: Sequence[Any]) -> ExportCapture:
             normalize_export_effects(exported)
     except BaseException as exc:
         raise CaptureError(f"strict PyTorch export failed: {exc}") from exc
-    flat_inputs = _flatten_inputs(exported, inputs)
+    flat_inputs = _flatten_inputs(exported, inputs, kwargs)
     user_outputs = tuple(
         index
         for index, spec in enumerate(exported.graph_signature.output_specs)
@@ -311,10 +319,15 @@ def _export_mutations(
     return tuple(result)
 
 
-def capture_forward(module: nn.Module, inputs: Sequence[Any]) -> ExportCapture:
+def capture_forward(
+    module: nn.Module,
+    inputs: Sequence[Any],
+    *,
+    kwargs: Mapping[str, Any] | None = None,
+) -> ExportCapture:
     """Strictly export an inference graph while keeping all state explicit."""
 
-    return _export(module, inputs)
+    return _export(module, inputs, kwargs)
 
 
 def capture_training(
@@ -340,17 +353,19 @@ def capture_training_objective(
     model: nn.Module,
     objective: Callable[..., torch.Tensor | ObjectiveResult],
     microbatch: Sequence[Any],
+    *,
+    kwargs: Mapping[str, Any] | None = None,
 ) -> TrainingObjectiveCapture:
     """Export an objective without constructing an unused whole-model VJP."""
 
     try:
         probe_loss, probe_metrics = normalize_objective_result(
-            objective(model, *microbatch), require_grad=True
+            objective(model, *microbatch, **dict(kwargs or {})), require_grad=True
         )
         del probe_loss
         schema = capture_objective_schema(probe_metrics)
         capture_module = _ObjectiveModule(model, objective, schema)
-        exported = _export(capture_module, microbatch)
+        exported = _export(capture_module, microbatch, kwargs)
     except (CaptureError, ObjectiveError):
         raise
     except BaseException as error:

@@ -17,7 +17,7 @@ from shadowspill.pytorch.capture.storage import (
     TaskStorageContract,
 )
 from shadowspill.pytorch.representations import RootInputKey
-from shadowspill.task.layout import CompiledTaskLayout
+from shadowspill.task.geometry import TaskStorageGeometry
 from shadowspill.task.slots import ObjectSlot, TaskStorageHandoff
 
 from ..partition import StageExample
@@ -32,7 +32,7 @@ class TaskBindingResolver:
         inventory: ObjectCatalog,
         artifact: GraphArtifact,
         input_slots: tuple[ObjectSlot, ...],
-        layout: CompiledTaskLayout,
+        layout: TaskStorageGeometry,
         *,
         storage_contract: TaskStorageContract | None = None,
     ) -> None:
@@ -122,13 +122,10 @@ class TaskBindingResolver:
             root,
             canonical_object_id,
         )
-        compiled_view = next(
-            item for item in self._layout.output_views if item.leaf_index == leaf_index
-        )
         offset_bytes = (
             view.offset_bytes
             if root.kind is StorageRootKind.INPUT
-            else compiled_view.offset_bytes
+            else self._layout.output_offset(leaf_index)
         )
         object_id = self._bind_output_object(
             view,
@@ -164,8 +161,8 @@ class TaskBindingResolver:
             return self._resolve_alias(root), None
         alias_id = self._inventory.alias_id(canonical_object_id)
         if replacement_object is not None:
-            compiled_root = self._layout.root(root.root_id)
-            if compiled_root.requested_bytes < self._inventory.alias_size(alias_id):
+            requested_bytes = self._layout.requested_bytes[root.root_id]
+            if requested_bytes < self._inventory.alias_size(alias_id):
                 raise CaptureError(
                     "functional mutation allocation is smaller than its target storage"
                 )
@@ -200,13 +197,13 @@ class TaskBindingResolver:
             )
             return
         if root.kind is StorageRootKind.FRESH:
-            compiled_root = self._layout.root(root.root_id)
-            if compiled_root.charged_bytes != self._inventory.alias_size(alias_id):
+            capacity_bytes = self._layout.capacity_bytes[root.root_id]
+            if capacity_bytes != self._inventory.alias_size(alias_id):
                 raise CaptureError(
                     "compiled output allocation differs from its canonical "
                     "physical extent: "
                     f"object={canonical_object_id}, leaf={leaf_index}, "
-                    f"compiled={compiled_root.charged_bytes}, "
+                    f"compiled={capacity_bytes}, "
                     f"canonical={self._inventory.alias_size(alias_id)}"
                 )
             self._alias_by_fresh_root[root.root_id] = alias_id
@@ -329,8 +326,9 @@ class TaskBindingResolver:
             existing = self._alias_by_fresh_root.get(root.root_id)
             if existing is not None:
                 return existing
-            compiled_root = self._layout.root(root.root_id)
-            alias_id = self._inventory.new_output_alias(compiled_root.charged_bytes)
+            alias_id = self._inventory.new_output_alias(
+                self._layout.capacity_bytes[root.root_id]
+            )
             self._alias_by_fresh_root[root.root_id] = alias_id
             return alias_id
         if root.source_input is None:

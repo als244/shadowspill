@@ -138,7 +138,11 @@ class Profiles(Artifact):
         }
 
     @classmethod
-    def from_dict(cls, value: dict[str, Any]) -> Profiles:
+    def from_dict(
+        cls, value: dict[str, Any], *, payloads: Mapping[str, bytes] | None = None
+    ) -> Profiles:
+        if payloads:
+            raise ValueError("Profiles cannot contain executable payloads")
         return cls(
             setup=plain(freeze(value["setup"])),
             tasks={
