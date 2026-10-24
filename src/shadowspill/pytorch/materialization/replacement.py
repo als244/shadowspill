@@ -4,12 +4,12 @@ from __future__ import annotations
 
 from collections import OrderedDict
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
 import torch
 
 from shadowspill.pytorch.representations import map_tensor, storage_view
+from shadowspill.pytorch.runtime_adapter.replacements import ReplacementStorageViews
 from shadowspill.pytorch.spill import read_spill_tensor, spill_view, write_spill_tensor
 from shadowspill.runtime.plan import RuntimeBridge
 
@@ -25,20 +25,6 @@ def object_ids_by_alias(program: ShadowSpillProgram) -> dict[str, tuple[str, ...
     for item in program.objects:
         grouped[item.alias_group_id].append(item.object_id)
     return {alias: tuple(objects) for alias, objects in grouped.items()}
-
-
-@dataclass(frozen=True, slots=True)
-class ReplacementStorageViews:
-    """Persistent frontend views rebound when one logical object is overwritten."""
-
-    alias_id: str
-    tensors: tuple[torch.Tensor, ...]
-
-    def __post_init__(self) -> None:
-        if not self.alias_id:
-            raise ValueError("replacement alias must be non-empty")
-        if not self.tensors:
-            raise ValueError("replacement must name at least one frontend view")
 
 
 class MaterializedState:

@@ -67,6 +67,7 @@ def begin_plan(
     dynamic_scratch_reserve_bytes: int | None,
     execution_device: object | None,
     slab_owner: int | None = None,
+    require_calibration: bool = True,
 ) -> PlanMemory:
     with runtime._lock:
         runtime._require_open()
@@ -115,11 +116,15 @@ def begin_plan(
             ) from exc
         fetch_profile = transfers.route(spill, execution)
         evict_profile = transfers.route(execution, spill)
-        if not fetch_profile.available or not fetch_profile.calibrated:
+        if not fetch_profile.available or (
+            require_calibration and not fetch_profile.calibrated
+        ):
             raise RuntimeConfigurationError(
                 f"route {spill!r} -> {execution!r} is not calibrated"
             )
-        if not evict_profile.available or not evict_profile.calibrated:
+        if not evict_profile.available or (
+            require_calibration and not evict_profile.calibrated
+        ):
             raise RuntimeConfigurationError(
                 f"route {execution!r} -> {spill!r} is not calibrated"
             )

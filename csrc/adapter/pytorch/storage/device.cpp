@@ -11,6 +11,17 @@
 
 namespace {
 
+at::Tensor make_unbacked_cuda_storage(const at::Tensor& dispatch, int64_t bytes) {
+  TORCH_CHECK(dispatch.is_cuda(), "storage dispatch must be CUDA");
+  TORCH_CHECK(bytes >= 0, "storage size must be nonnegative");
+  c10::Storage storage(
+      c10::Storage::use_byte_size_t(), static_cast<size_t>(bytes),
+      c10::DataPtr(nullptr, dispatch.device()), nullptr, false);
+  at::Tensor result = at::empty({0}, dispatch.options().dtype(at::kByte));
+  result.set_(storage, 0, {bytes}, {1});
+  return result;
+}
+
 struct CallerLease {
   uint64_t allocation_id;
   int32_t device_ordinal;
@@ -461,6 +472,7 @@ at::Tensor transfer_acquired_storage_to_caller(
 }  // namespace
 
 TORCH_LIBRARY_FRAGMENT(shadowspill, library) {
+  library.def("_make_unbacked_cuda_storage(Tensor dispatch, int bytes) -> Tensor");
   library.def(
       "_acquire_storages(Tensor(a!)[] tensors, int[] addresses) -> ()");
   library.def(
@@ -492,6 +504,7 @@ TORCH_LIBRARY_FRAGMENT(shadowspill, library) {
 }
 
 TORCH_LIBRARY_IMPL(shadowspill, CUDA, library) {
+  library.impl("_make_unbacked_cuda_storage", TORCH_FN(make_unbacked_cuda_storage));
   library.impl("_acquire_storages", TORCH_FN(acquire_storages));
   library.impl(
       "_before_task_storages", TORCH_FN(before_task_storages));

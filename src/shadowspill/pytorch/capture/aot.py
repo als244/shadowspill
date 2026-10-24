@@ -36,10 +36,10 @@ from shadowspill.pytorch.capture.retention import (
 )
 from shadowspill.pytorch.capture.storage import ExplicitMutation, StorageRootKind
 from shadowspill.pytorch.contracts import ObjectiveResult
+from shadowspill.pytorch.operations import ACCUMULATE_MATMUL, ADDING_INTO
 from shadowspill.pytorch.representations import is_wrapper, tensor_components
 from shadowspill.task.inputs import TaskInputRole
 
-from .accumulate import ACCUMULATE_MATMUL, ADDING_INTO
 from .effects import normalize_export_effects
 from .functional import functionalize_logical_export
 from .materialize import MATERIALIZE_GRADIENT, PAD_GRADIENT_STORAGE

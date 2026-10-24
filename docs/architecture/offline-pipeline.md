@@ -1,7 +1,7 @@
 # Independent build, profile and planning phases
 
 The refactor is being implemented in phases. The CPU path, builders and
-ordinary-allocator GPU measurement work; saved-plan execution and caller
+ordinary-allocator GPU measurement and initial saved-plan execution work; caller
 migration are still in progress on `codex/offline-pipeline-refactor`.
 
 ```python
@@ -163,7 +163,11 @@ Estimated memory, missing code, or incomplete allocation evidence keep a Plan
 simulation-only, as reported by `simulation_only_reasons`. Inconsistent evidence
 is an error. Physical placement is necessary for execution but does not replace
 the worker's dependency, provider-resource and available-memory checks. The
-new saved-plan Executor is the next implementation milestone.
+new saved-plan Executor now exercises these checks in a fresh worker. Its initial
+qualification covers small dense forward/backward/AdamW tasks, saved/recomputed
+stages, tied weights, bounded initialization/export and repeated calls. Runtime
+hyperparameters, cross-invocation gradient accumulation and general provider
+qualification are still being completed before normal caller migration.
 
 Implementation ownership:
 
