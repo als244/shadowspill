@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from typing import Any
 
 from torch import Tensor, nn
@@ -59,7 +60,9 @@ def signature_record(signature: InputSignature) -> dict[str, Any]:
     }
 
 
-def root_sources(exported: ExportCapture) -> list[dict[str, Any]]:
+def root_sources(
+    exported: ExportCapture, constant_values: Mapping[str, Tensor]
+) -> list[dict[str, Any]]:
     result = []
     user_position = 0
     for index, spec in enumerate(exported.exported_program.graph_signature.input_specs):
@@ -72,7 +75,7 @@ def root_sources(exported: ExportCapture) -> list[dict[str, Any]]:
             record["user_leaf"] = user_position
             user_position += 1
         if spec.kind is InputKind.CONSTANT_TENSOR:
-            value = exported.exported_program.constants.get(spec.target)
+            value = constant_values.get(str(spec.target))
             if (
                 isinstance(value, Tensor)
                 and not isinstance(value, FakeTensor)

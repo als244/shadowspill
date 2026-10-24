@@ -57,6 +57,12 @@ positional and keyword arguments, including nested structures and specialized
 non-tensor values. It records semantic module/parameter names, output storage
 geometry, scheduled compiler-buffer lifetimes and explicit unresolved memory
 requirements for provider calls. No state initialization or task timing occurs.
+An optional `forward_fn(model, *args, **kwargs)` selects another model method or
+computation without changing registered parameter names. For example, an
+evaluation loss can use `forward_fn=lambda m, *a, **kw: m.loss(*a, **kw)` with
+targets in `example_kwargs`. The default calls `model.forward`. The callback is
+only needed during build; the saved Program contains the captured computation.
+
 `build_forward_backward` adds an objective and persistent gradients without an
 optimizer. It compiles gradient-creation and accumulation forms for each stage:
 

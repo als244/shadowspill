@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any
 
@@ -17,6 +17,7 @@ from shadowspill.pytorch.capture.artifacts import (
     capture_forward_stage_artifacts,
 )
 from shadowspill.pytorch.capture.fake import fake_device_inputs, fake_device_model
+from shadowspill.pytorch.capture.forward import restore_module_paths, select_forward
 from shadowspill.pytorch.capture.inputs import flat_runtime_arguments
 from shadowspill.pytorch.guards import InputSignature, capture_input_signature
 from shadowspill.pytorch.partition import (
@@ -25,7 +26,7 @@ from shadowspill.pytorch.partition import (
     partition_export,
 )
 
-from .constants import preserve_literals
+from .constants import literal_values
 from .outputs import own_public_outputs
 
 
@@ -38,6 +39,7 @@ class ForwardCapture:
     output_tree: TreeSpec
     input_signature: InputSignature
     output_literals: tuple[tuple[int, Any], ...]
+    constant_values: Mapping[str, torch.Tensor]
 
 
 def capture_forward_model(
@@ -45,21 +47,29 @@ def capture_forward_model(
     args: Sequence[Any],
     kwargs: Mapping[str, Any],
     *,
+    forward_fn: Callable[..., Any] | None,
     partition: PartitionSpec,
     device_index: int,
 ) -> ForwardCapture:
     signature = capture_input_signature((tuple(args), dict(kwargs)))
     mode = FakeTensorMode(allow_non_fake_inputs=True)
     replica = fake_device_model(model, mode, device_index=device_index)
+    view = select_forward(replica, forward_fn) if forward_fn is not None else None
     fake_args, fake_kwargs = fake_device_inputs(
         (tuple(args), dict(kwargs)), mode, device_index=device_index
     )
     with mode, torch.no_grad():
         output_values, output_tree = tree_flatten(replica(*fake_args, **fake_kwargs))
         exported = capture_forward(replica, fake_args, kwargs=fake_kwargs)
-        preserve_literals(exported)
+        if view is not None:
+            restore_module_paths(exported, replica, view)
+        constants = literal_values(exported)
         own_public_outputs(exported)
-        roots = tuple(flat_runtime_arguments(exported, model, args, kwargs=kwargs))
+        roots = tuple(
+            flat_runtime_arguments(
+                exported, model, args, kwargs=kwargs, constant_values=constants
+            )
+        )
         partitioned = partition_export(
             exported, replica, partition=partition, representative_root_inputs=roots
         )
@@ -76,4 +86,5 @@ def capture_forward_model(
             for index, value in enumerate(output_values)
             if not isinstance(value, torch.Tensor)
         ),
+        constants,
     )

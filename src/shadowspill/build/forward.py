@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from typing import Any
 
 import torch
@@ -22,6 +22,7 @@ def build_forward(
     *,
     example_args: Sequence[Any] = (),
     example_kwargs: Mapping[str, Any] | None = None,
+    forward_fn: Callable[..., Any] | None = None,
     partition: PartitionSpec = "auto",
     target: str | torch.device = "cuda",
 ) -> Program:
@@ -29,6 +30,8 @@ def build_forward(
 
     CPU and meta models are accepted. This initial CUDA backend finalizes
     kernels on one representative GPU. Planning the returned artifact is CPU-only.
+    By default capture calls ``model(*args, **kwargs)``. ``forward_fn`` instead
+    receives ``(model, *args, **kwargs)``, preserving registered parameter names.
     """
     device = resolve_device(target)
     assert device.index is not None
@@ -36,6 +39,7 @@ def build_forward(
         model,
         example_args,
         dict(example_kwargs or {}),
+        forward_fn=forward_fn,
         partition=partition,
         device_index=device.index,
     )

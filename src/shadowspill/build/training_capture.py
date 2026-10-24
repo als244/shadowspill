@@ -25,7 +25,7 @@ from shadowspill.pytorch.graph_pairs import (
 from shadowspill.pytorch.guards import InputSignature, capture_input_signature
 from shadowspill.pytorch.partition import PartitionSpec
 
-from .constants import preserve_literals
+from .constants import literal_values
 from .outputs import own_public_outputs
 from .shared_gradients import include_shared_gradients
 
@@ -35,6 +35,7 @@ class TrainingCapture:
     model: nn.Module
     examples: tuple[PartitionedTrainingCapture, ...]
     input_signature: InputSignature
+    constant_values: Mapping[str, torch.Tensor]
 
 
 def capture_training_model(
@@ -61,6 +62,7 @@ def capture_training_model(
     pairs = GraphPairStore()  # In-memory structural reuse; no artifact store.
     captures: list[PartitionedTrainingCapture] = []
     template = None
+    constants = {}
     with mode:
         for _ in range(num_examples):
             fake_args, fake_kwargs = fake_device_inputs(
@@ -70,11 +72,15 @@ def capture_training_model(
                 template = capture_training_objective(
                     replica, objective, fake_args, kwargs=fake_kwargs
                 )
-                preserve_literals(template.exported)
+                constants = literal_values(template.exported)
                 own_public_outputs(template.exported)
                 roots = tuple(
                     flat_runtime_arguments(
-                        template.exported, original, args, kwargs=kwargs
+                        template.exported,
+                        original,
+                        args,
+                        kwargs=kwargs,
+                        constant_values=constants,
                     )
                 )
             captured = rebind_training_objective(
@@ -98,5 +104,8 @@ def capture_training_model(
                 )
             )
     return TrainingCapture(
-        replica, tuple(include_shared_gradients(c) for c in captures), signature
+        replica,
+        tuple(include_shared_gradients(c) for c in captures),
+        signature,
+        constants,
     )

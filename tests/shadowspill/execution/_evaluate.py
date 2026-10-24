@@ -76,6 +76,14 @@ def cpu(value):
     return tree_map(lambda t: t.cpu() if isinstance(t, torch.Tensor) else t, value)
 
 
+def check_output(actual, expected):
+    # Inductor fuses the BF16 prediction epilogue; the FP32 scalar loss inherits
+    # that rounding difference. Keep the original tolerances for other outputs.
+    for name, value in cpu(actual).items():
+        tolerance = dict(rtol=4e-3, atol=0.03) if name == "loss" else {}
+        torch.testing.assert_close(value, expected[name], **tolerance)
+
+
 trainer = Trainer(plan, evaluation_plan=evaluation) if mode == "trainer" else None
 executor = (
     trainer.executor if trainer else Executor(plan, plans={"evaluation": evaluation})
@@ -102,17 +110,20 @@ with pytest.raises(ValueError, match="gradient-accumulation"):
 previous = None
 for index in range(4):
     before = snapshot(executor)
+    inputs = dict(
+        args=[(oracle["evaluation"],)], kwargs=[oracle["evaluation_kwargs"]]
+    )
     if trainer:
-        actual = trainer.evaluate(args=[(oracle["evaluation"],)])
+        actual = trainer.evaluate(**inputs)
         assert trainer.step_count == index
         assert all(t.device.type == "cpu" for t in actual.values())
     else:
-        pending = executor.run(plan="evaluation", args=[(oracle["evaluation"],)])
+        pending = executor.run(plan="evaluation", **inputs)
         actual = pending.result()
-    torch.testing.assert_close(cpu(actual), oracle["expected"][index])
+    check_output(actual, oracle["expected"][index])
     torch.testing.assert_close(snapshot(executor), before, rtol=0, atol=0)
     if previous is not None:
-        torch.testing.assert_close(cpu(previous), oracle["expected"][index - 1])
+        check_output(previous, oracle["expected"][index - 1])
     previous = actual
     if index == 3:
         break

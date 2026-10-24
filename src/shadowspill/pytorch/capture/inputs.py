@@ -21,6 +21,7 @@ def flat_runtime_arguments(
     inputs: Sequence[Any],
     *,
     kwargs: Mapping[str, Any] | None = None,
+    constant_values: Mapping[str, torch.Tensor] | None = None,
 ) -> list[object]:
     """Combine original registered state with one guarded user invocation."""
 
@@ -47,7 +48,7 @@ def flat_runtime_arguments(
             # table, not on the original module. Existing attribute constants
             # may instead be fake after device capture; recover those from the
             # source module as before.
-            value = flat[index]
+            value = (constant_values or {}).get(spec.target, flat[index])
             if isinstance(value, FakeTensor) or not isinstance(value, torch.Tensor):
                 value = _resolve_attribute(model, spec.target)
             if not isinstance(value, torch.Tensor) or value.device.type != "cpu":

@@ -296,17 +296,24 @@ def _prior_gradient_inputs(
     backward_inputs: tuple[ObjectSlot, ...],
     forward_inputs: tuple[ObjectSlot, ...],
     gradient_by_parameter: dict[str, str],
+    cotangent_by_activation: dict[tuple[int, str], str],
+    example_position: int,
 ) -> tuple[ObjectSlot, ...]:
     """Bind the gradients an accumulating backward adds onto.
 
     The arguments were appended in the order of the outputs they accumulate
     into, so pairing the two in that order says which gradient each one is.
     Each of those outputs is the gradient of the forward argument at the same
-    position, so the parameter there names the gradient the sum belongs in —
-    the same rule the contributions follow, which keeps the two agreeing.
+    position, so that argument names the parameter gradient or activation
+    cotangent the sum belongs in, just as for the contribution destinations.
     """
 
     sources = {slot.leaf_index: slot.object_id for slot in forward_inputs}
+    logical_positions = {
+        logical: physical
+        for physical, (logical, path) in enumerate(pair.forward.input_components)
+        if not path
+    }
     priors: list[ObjectSlot] = []
     leaf_by_input = {
         mutation.input_position: mutation.replacement_output_leaf
@@ -318,15 +325,19 @@ def _prior_gradient_inputs(
         parameter = (
             pair.gradient_provenance[leaf].source
             if pair.gradient_provenance
+            and pair.gradient_provenance[leaf].role is TaskInputRole.PARAMETER
             else sources.get(leaf)
         )
         destination = (
             gradient_by_parameter.get(parameter) if parameter is not None else None
         )
         if destination is None:
+            source = sources.get(logical_positions.get(leaf, leaf))
+            if source is not None:
+                destination = cotangent_by_activation.get((example_position, source))
+        if destination is None:
             raise CaptureError(
-                "accumulating backward expects a parameter gradient at leaf "
-                f"{leaf}, which is not one"
+                f"accumulating backward has no gradient destination at leaf {leaf}"
             )
         priors.append(ObjectSlot(position, destination))
     return (*backward_inputs, *priors)
@@ -385,6 +396,8 @@ def _prepare_stage_variant(
             backward_inputs,
             forward_inputs,
             objects.gradient_by_parameter,
+            boundaries.cotangents,
+            position,
         )
     contributions, backward_handoffs = _variant_backward_contributions(
         position,

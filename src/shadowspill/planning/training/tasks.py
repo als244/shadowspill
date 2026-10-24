@@ -101,6 +101,17 @@ class _Assembler:
                 mutations = tuple(
                     value for value in destinations if value in self.writers
                 )
+                input_aliases = {self.aliases[value] for value in inputs}
+                missing = [
+                    value
+                    for value in mutations
+                    if self.aliases[value] not in input_aliases
+                ]
+                if missing:
+                    raise ValueError(
+                        f"{identifier}: gradient additions are missing from the "
+                        f"compiled task: {missing}"
+                    )
                 outputs = tuple(
                     value for value in destinations if value not in mutations
                 )

@@ -94,7 +94,7 @@ def lower_training(
         sources[alias_by_object[optimizer_object.object_id]].append(
             optimizer_object.name
         )
-    roots = root_sources(captures[0].training.exported)
+    roots = root_sources(captures[0].training.exported, captured.constant_values)
     for example, slots in enumerate(objects.root_slots):
         for slot in slots:
             sources[alias_by_object[slot.object_id]].append(

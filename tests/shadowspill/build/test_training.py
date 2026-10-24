@@ -38,6 +38,16 @@ def objective(model, x, *, labels):
     return (prediction - labels).square().mean(), {"mean": prediction.mean()}
 
 
+class ResidualNetwork(Network):
+    def __init__(self, *, tied=False):
+        super().__init__(tied=tied)
+        self.branch = nn.Linear(8, 8)
+
+    def forward(self, x):
+        hidden = self.layers[0](x).relu()
+        return self.layers[1](hidden) + self.branch(hidden)
+
+
 def replay_training(
     program, model, examples, variant, initial_gradients=None, optimizer_values=None
 ):
@@ -106,11 +116,12 @@ def replay_training(
 
 @pytest.mark.cuda
 @pytest.mark.parametrize("tied", [False, True])
-def test_training_forms_and_orderings_match_autograd(tmp_path, tied):
+@pytest.mark.parametrize("network", [Network, ResidualNetwork])
+def test_training_forms_and_orderings_match_autograd(tmp_path, tied, network):
     if not torch.cuda.is_available():
         pytest.skip("finalizing CUDA task kernels needs a representative GPU")
     with torch.device("meta"):
-        model = Network(tied=tied)
+        model = network(tied=tied)
     program = build_forward_backward(
         model,
         objective=objective,
@@ -120,7 +131,7 @@ def test_training_forms_and_orderings_match_autograd(tmp_path, tied):
     )
     program.save(tmp_path / "training.ssp")
     program = Program.load(tmp_path / "training.ssp")
-    actual_model = Network(tied=tied).cuda()
+    actual_model = network(tied=tied).cuda()
     examples = [
         (
             (torch.randn(4, 8, device="cuda"),),

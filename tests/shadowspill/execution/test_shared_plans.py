@@ -45,6 +45,12 @@ class Network(nn.Module):
             "constant": torch.tensor([1.0, 2.0], device=x.device),
         }
 
+    def loss(self, x, *, targets, reduction):
+        output = self(x)
+        loss = (output["prediction"].float() - targets).square()
+        output["loss"] = loss.mean() if reduction == "mean" else loss.sum()
+        return output
+
 
 def objective(model, x):
     output = model(x)["prediction"].float()
@@ -59,6 +65,7 @@ def test_shared_evaluation_and_checkpoint_in_cold_workers(tmp_path):
         training, evaluation = Network(), Network(reverse=True).eval()
     examples = [(torch.full((4, 8), v, dtype=torch.bfloat16),) for v in (0.125, 0.25)]
     x = torch.arange(512).reshape(64, 8).to(torch.bfloat16) / 512
+    evaluation_kwargs = {"targets": torch.zeros(64, 8), "reduction": "mean"}
     programs = {
         "training": build_step(
             training,
@@ -70,8 +77,19 @@ def test_shared_evaluation_and_checkpoint_in_cold_workers(tmp_path):
             master_dtype=torch.float32,
             grad_dtype=torch.float32,
         ),
-        "evaluation": build_forward(evaluation, example_args=(x,), partition="whole"),
+        "evaluation": build_forward(
+            evaluation,
+            example_args=(x,),
+            example_kwargs=evaluation_kwargs,
+            forward_fn=lambda m, *args, **kwargs: m.loss(*args, **kwargs),
+            partition="whole",
+        ),
     }
+    assert evaluation.forward.__func__ is Network.forward
+    for program in programs.values():
+        assert {r["name"] for r in program.bindings["registrations"]} == {
+            "weight", "tied_weight", "bias", "scale", "evaluation_only"
+        }
     plans = {}
     for name, program in programs.items():
         profiles = measure_program(program, warmup_seconds=0.001, measure_seconds=0.002)
@@ -120,7 +138,11 @@ def test_shared_evaluation_and_checkpoint_in_cold_workers(tmp_path):
     optimizer = torch.optim.AdamW(masters.values(), lr=0.001, foreach=False)
     expected, losses, final = [], [], {}
     for _ in range(3):
-        expected.append(tree_map(lambda t: t.detach().clone(), reference(x)))
+        expected.append(
+            tree_map(
+                lambda t: t.detach().clone(), reference.loss(x, **evaluation_kwargs)
+            )
+        )
         reference.zero_grad(set_to_none=True)
         outputs = [objective(reference, *args)[0] for args in examples]
         losses.append([v.item() for v in outputs])
@@ -132,7 +154,9 @@ def test_shared_evaluation_and_checkpoint_in_cold_workers(tmp_path):
         with torch.no_grad():
             for name, p in reference.named_parameters():
                 p.copy_(masters[name])
-    expected.append(tree_map(lambda t: t.detach().clone(), reference(x)))
+    expected.append(
+        tree_map(lambda t: t.detach().clone(), reference.loss(x, **evaluation_kwargs))
+    )
     for name, parameter in reference.named_parameters():
         final[name] = parameter.detach().clone()
         final[f"master.{name}"] = masters[name].detach().clone()
@@ -147,6 +171,7 @@ def test_shared_evaluation_and_checkpoint_in_cold_workers(tmp_path):
             initial=initial,
             examples=examples,
             evaluation=x,
+            evaluation_kwargs=evaluation_kwargs,
             expected=expected,
             losses=losses,
             final=final,

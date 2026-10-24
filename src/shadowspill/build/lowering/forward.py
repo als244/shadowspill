@@ -64,7 +64,7 @@ def lower_forward(
         sources[objects.catalog.alias_id(registration.object_id)].append(
             registration.name
         )
-    roots = root_sources(captured.exported)
+    roots = root_sources(captured.exported, captured.constant_values)
     for slot in objects.root_input_slots:
         name = roots[slot.leaf_index]["name"]
         names = sources[objects.catalog.alias_id(slot.object_id)]

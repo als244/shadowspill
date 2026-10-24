@@ -1,39 +1,54 @@
-"""Put cross-stage parameter-gradient additions inside the captured backward."""
+"""Put cross-stage gradient additions inside the captured backward."""
 
 from dataclasses import replace
 
 from shadowspill.pytorch.capture.aot import accumulate_gradient_outputs
-from shadowspill.pytorch.graph_pairs import (
-    PartitionedTrainingCapture,
-    parameter_gradient_leaves,
-)
+from shadowspill.pytorch.graph_pairs import PartitionedTrainingCapture
+from shadowspill.task.inputs import TaskInputRole
 
 
 def include_shared_gradients(
     capture: PartitionedTrainingCapture,
 ) -> PartitionedTrainingCapture:
-    """The first example still accumulates parameters used by a later stage.
+    """Repeated parameter uses and residual branches add to prior gradients.
 
     Backward visits later stages first in every supported example ordering.
-    Later-example forms already accumulate every parameter; only the creator
-    form needs this selective addition. No ordering is baked into the Program.
+    Activation gradients are local to one example; parameter gradients can also
+    accumulate across examples. Derive each complete form from its creator once,
+    preserving both kinds of additions in one explicit mutation contract.
     """
-    seen: set[str] = set()
+    seen: set[tuple[TaskInputRole, str]] = set()
     stages = list(capture.stages)
     for index in reversed(range(len(stages))):
         stage = stages[index]
         variants = []
-        names: set[str] = set()
+        names: set[tuple[TaskInputRole, str]] = set()
+        creators = {
+            variant.option_id: variant.pair
+            for variant in stage.graph_pairs.variants
+            if not variant.accumulates
+        }
         for variant in stage.graph_pairs.variants:
-            pair = variant.pair
+            pair = creators[variant.option_id]
             provenance = pair.gradient_provenance or pair.forward.input_provenance
-            parameters = {
-                leaf: provenance[leaf].source
-                for leaf in parameter_gradient_leaves(pair)
+            produced = {
+                v.leaf_index for v in pair.backward.storage_contract.output_views
             }
-            names.update(source for source in parameters.values() if source is not None)
-            prior = tuple(leaf for leaf, source in parameters.items() if source in seen)
-            if prior and not variant.accumulates:
+            destinations = {
+                leaf: (item.role, item.source)
+                for leaf, item in enumerate(provenance)
+                if leaf in produced
+                and item.source is not None
+                and item.role in {TaskInputRole.PARAMETER, TaskInputRole.ACTIVATION}
+            }
+            names.update(destinations.values())
+            prior = tuple(
+                leaf
+                for leaf, key in destinations.items()
+                if key in seen
+                or (variant.accumulates and key[0] is TaskInputRole.PARAMETER)
+            )
+            if prior:
                 variant = replace(
                     variant,
                     pair=replace(

@@ -7,14 +7,17 @@ from shadowspill.errors import CaptureError
 from shadowspill.pytorch.capture.aot import ExportCapture
 
 
-def preserve_literals(exported: ExportCapture) -> None:
+def literal_values(exported: ExportCapture) -> dict[str, torch.Tensor]:
     # Dynamo can materialize an explicitly CUDA tensor literal while exporting.
     # Its values are static data, not weights or runtime device state. Keep a
-    # bounded host copy before input provenance and the portable manifest are made.
+    # bounded host copy for provenance and the portable manifest, without changing
+    # the Export constant table: rebinding examples must keep execution devices.
+    result = {}
     for name, value in exported.exported_program.constants.items():
         if not isinstance(value, torch.Tensor) or isinstance(value, FakeTensor):
             continue
         if value.device.type == "cpu":
+            result[name] = value
             continue
         if value.numel() > 4096:
             raise CaptureError(
@@ -22,4 +25,5 @@ def preserve_literals(exported: ExportCapture) -> None:
                 "register it as a model buffer"
             )
         with unset_fake_temporarily():
-            exported.exported_program.constants[name] = value.cpu()
+            result[name] = value.cpu()
+    return result

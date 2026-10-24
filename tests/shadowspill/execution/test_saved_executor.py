@@ -17,7 +17,7 @@ from shadowspill import (
 from shadowspill.artifacts._values import plain
 from shadowspill.build import build_forward, build_forward_backward, build_step
 from tests.shadowspill.build.test_forward import Network as ForwardNetwork
-from tests.shadowspill.build.test_training import Network, objective
+from tests.shadowspill.build.test_training import Network, ResidualNetwork, objective
 from tests.shadowspill.execution._oracle import oracle
 
 
@@ -33,6 +33,8 @@ from tests.shadowspill.execution._oracle import oracle
         ("step_tensor_lr", "save", False),
         ("step_resume", "recompute", True),
         ("backward_resume", "save", False),
+        ("step_residual", "save", True),
+        ("backward_residual", "recompute", True),
     ],
 )
 def test_saved_plan_executes_without_build_or_measurement(
@@ -41,14 +43,15 @@ def test_saved_plan_executes_without_build_or_measurement(
     if not torch.cuda.is_available():
         pytest.skip("requires CUDA")
     torch.manual_seed(17)
-    model = ForwardNetwork() if kind == "forward" else Network(tied=tied)
+    network = ResidualNetwork if kind.endswith("residual") else Network
+    model = ForwardNetwork() if kind == "forward" else network(tied=tied)
     examples = (
         [((torch.randn(4, 8),), {"options": {"scale": 2}})]
         if kind == "forward"
         else [((torch.randn(4, 8),), {"labels": torch.randn(4, 8)}) for _ in range(2)]
     )
     with torch.device("meta"):
-        template = ForwardNetwork() if kind == "forward" else Network(tied=tied)
+        template = ForwardNetwork() if kind == "forward" else network(tied=tied)
     common = dict(example_args=examples[0][0], example_kwargs=examples[0][1])
     if kind == "forward":
         program = build_forward(template, **common)
@@ -90,7 +93,8 @@ def test_saved_plan_executes_without_build_or_measurement(
         ),
     )
     plan.save(tmp_path / "plan.ssp")
-    torch.save(oracle(model, examples, kind), tmp_path / "oracle.pt")
+    oracle_kind = "forward_backward" if kind == "backward_residual" else kind
+    torch.save(oracle(model, examples, oracle_kind), tmp_path / "oracle.pt")
     worker = subprocess.run(
         [
             sys.executable,
