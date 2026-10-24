@@ -1,53 +1,94 @@
-"""Llama 3 8B full training: 4K tokens x 16 sequences per optimizer update."""
+"""Llama 3 full training with independently runnable build/profile/plan/execute."""
 
 import argparse
-
-import torch
-from mlops.optim import AdamW
-
-from shadowspill.planner import StepDataOrdering
-from shadowspill.training import reset_parameters
-from shadowspill.training._legacy_trainer import Trainer
-from shadowspill.training.backends import ShadowSpill
-from shadowspill.training.schedules import WarmupCosine
-from workloads.models.catalog import build_on_meta
-from workloads.recipes.text.fixed import TokenUpdates
-from workloads.recipes.text.objectives import next_token_prediction
+import json
+import os
+import subprocess
+import sys
+from pathlib import Path
 
 
-def main(data_directory):
-    steps = 5
-    # One optimizer update contains 16 sequences, split into four microbatches.
-    data = TokenUpdates(data_directory, sequence_length=4096, sequences_per_step=16)
-    model = build_on_meta("llama3-8b", dtype="bfloat16")
-    trainer = Trainer(
-        model,
-        objective=next_token_prediction,
-        optimizer=AdamW,
-        optimizer_args={"opt_state_dtype": torch.float32},
-        schedules={
-            "lr": WarmupCosine(lr=3e-4, min_lr=3e-5, warmup_steps=1, total_steps=steps)
-        },
-        master_dtype=torch.float32,
-        grad_dtype=torch.float32,
-        microbatches=data.splitter(sequences_per_microbatch=4),
-        backend=ShadowSpill(
-            execution_gib=28,
-            spill_gib=144,
-            # One pass visits all four microbatches at each layer (breadth-first).
-            orderings=[StepDataOrdering(depth=1, breadth=4)],
-        ),
+def main(argv=None):
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument(
+        "--data", help="Llama-tokenized corpus: train/val.bin, meta.json"
     )
-    # Open pools and plan storage/recomputation with the fixed size and ordering.
-    trainer.prepare(data.example(), initialize=reset_parameters)
-    # Perform forward/backward/AdamW updates, advancing the LR schedule each step.
-    trainer.fit(data, steps=steps, run_dir="runs/llama3-8b")
-    trainer.close()  # Release the callable and the pools this trainer opened.
+    parser.add_argument("--run-dir", default="runs/llama3-8b")
+    parser.add_argument(
+        "--phase", choices=["all", "build", "profile", "plan", "execute"], default="all"
+    )
+    parser.add_argument(
+        "--model",
+        choices=["llama3-tiny", "llama3-1b", "llama3-8b"],
+        default="llama3-8b",
+    )
+    parser.add_argument("--sequence-length", type=int, default=4096)
+    parser.add_argument("--sequences-per-step", type=int, default=16)
+    parser.add_argument("--sequences-per-example", type=int, default=4)
+    parser.add_argument("--steps", type=int, default=5)
+    parser.add_argument("--checkpoint-every", type=int, default=5)
+    parser.add_argument("--learning-rate", type=float, default=3e-4)
+    parser.add_argument("--seed", type=int, default=0)
+    parser.add_argument("--execution-gib", type=float)
+    parser.add_argument("--spill-gib", type=float)
+    parser.add_argument("--warmup-seconds", type=float, default=0.05)
+    parser.add_argument("--measure-seconds", type=float, default=0.18)
+    parser.add_argument("--no-plots", dest="plots", action="store_false")
+    parser.add_argument("--resume", help="checkpoint for the execute phase")
+    args = parser.parse_args(argv)
+    if args.steps < 1 or args.checkpoint_every < 0:
+        parser.error("steps must be positive and checkpoint cadence nonnegative")
+    root = Path(args.run_dir).resolve()
+    config_path = root / "config.json"
+    if config_path.exists():
+        if args.phase in {"all", "build"}:
+            parser.error("use a fresh run directory for a new build")
+        options = json.loads(config_path.read_text())
+        for key in ("execution_gib", "spill_gib", "resume"):
+            if getattr(args, key) is not None:
+                if key != "resume" and args.phase != "plan":
+                    parser.error("changed budgets require --phase plan")
+                options[key] = getattr(args, key)
+    else:
+        if args.phase not in {"all", "build"} or not args.data:
+            parser.error("start with --data and --phase all or build")
+        options = vars(args).copy()
+        options["data"] = str(Path(args.data).resolve())
+        options["execution_gib"] = (
+            28 if args.execution_gib is None else args.execution_gib
+        )
+        options["spill_gib"] = 144 if args.spill_gib is None else args.spill_gib
+    if min(options["execution_gib"], options["spill_gib"]) <= 0:
+        parser.error("memory budgets must be positive")
+    for name in ("logs", "training"):
+        (root / name).mkdir(parents=True, exist_ok=True)
+    config_path.write_text(json.dumps(options, indent=2) + "\n")
+    for phase in ("build", "profile", "plan", "execute"):
+        if args.phase not in {"all", phase}:
+            continue
+        log_path = root / f"logs/{phase}.log"
+        print(f"{phase}: starting; log {log_path}", flush=True)
+        environment = dict(os.environ)
+        if phase == "plan":
+            environment["CUDA_VISIBLE_DEVICES"] = ""
+        with log_path.open("w") as log:
+            subprocess.run(
+                [
+                    sys.executable,
+                    *(["-S"] if sys.flags.no_site else []),
+                    "-u",
+                    "-m",
+                    f"workloads.recipes.text.llama3.{phase}",
+                    str(root),
+                ],
+                env=environment,
+                stdout=log,
+                stderr=subprocess.STDOUT,
+                check=True,
+            )
+        print(f"{phase}: complete", flush=True)
+    return 0
 
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument(
-        "--data", required=True, help="Llama-tokenized corpus directory"
-    )
-    main(parser.parse_args().data)
+    raise SystemExit(main())

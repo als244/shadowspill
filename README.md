@@ -3,8 +3,8 @@
 **Refactor branch:** the public API now separates build, measurement, CPU planning
 and saved-plan execution. Start with the [phase API guide](docs/architecture/offline-pipeline.md)
 or [quickstart](benchmarking/quickstart.md). `Trainer(plan, ...)` consumes an already
-prepared Plan. The older model/prepare recipes below are explicitly routed through
-a private migration implementation until their evaluation/distributed paths are migrated.
+prepared Plan. The Llama recipe below uses this API. Remaining model/prepare
+recipes are explicitly routed through a private implementation during migration.
 
 ShadowSpill turns a fixed-shape PyTorch forward or training step into a
 memory-budgeted callable: it decides what to keep on the device, what to spill
@@ -25,15 +25,13 @@ verifies the install. Add `--expert-parallel quack`, `te` or `both` for
 mlops's optional expert-parallel backends, which the expert-parallel workloads
 use; that needs the mlops checkout beside this one.
 
-## Model recipes awaiting migration
+## Model recipes
 
-These recipes currently use the private model/prepare Trainer. The new public
-`Trainer(plan, ...)` is documented in the phase guide above. The migration
-implementation takes a model, loss function and iterable of complete updates.
-`prepare()` opens the backend and admits a plan that fits. Supply named
-`microbatch_candidates` to search sizes and orderings, or fix both explicitly. `fit()` runs forward, backward
-and AdamW updates with the learning-rate schedule; `close()` releases owned
-resources. Use `step()` for a custom loop.
+The Llama example separates build, profiling, CPU planning, and saved-plan
+training into independent processes. `Trainer(plan, ...)` runs the resulting
+plan and shares its current weights with a separately built evaluation plan.
+The Qwen/GLM examples still use the private model/prepare implementation while
+their caller and distributed migration is in progress.
 
 | Example | Sequence length | Sequences per update | Execution | Microbatch selection |
 |---|---:|---:|---|---|
@@ -43,7 +41,8 @@ resources. Use `step()` for a custom loop.
 | Qwen3-30B-A3B full training | 4,096 | 512 globally; 64 per GPU | Eight GPUs | Search sizes and orderings |
 
 Run these scripts from the checkout after installation. Replace each example
-path with a corpus tokenized using the matching model's tokenizer. `train.bin` contains
+path with a corpus tokenized using the matching model's tokenizer. `train.bin` and
+`val.bin` contain
 uint32 token IDs and `meta.json` records `vocab_size`. The
 [text data preparation recipe](workloads/recipes/text/prepare_data.py) writes
 this format. Supply at least five complete updates of data.
@@ -78,47 +77,32 @@ storage, transfers and recomputation within the budget. The
 python -m workloads.recipes.text.train_llama3 --data /path/to/llama3-tokens
 ```
 
-```python
-import torch
-from mlops.optim import AdamW
-from shadowspill.planner import StepDataOrdering
-from shadowspill.training import reset_parameters
-from shadowspill.training._legacy_trainer import Trainer
-from shadowspill.training.backends import ShadowSpill
-from shadowspill.training.schedules import WarmupCosine
-from workloads.models.catalog import build_on_meta
-from workloads.recipes.text.fixed import TokenUpdates
-from workloads.recipes.text.objectives import next_token_prediction
+Its [build](workloads/recipes/text/llama3/build.py),
+[profile](workloads/recipes/text/llama3/profile.py),
+[plan](workloads/recipes/text/llama3/plan.py), and
+[execute](workloads/recipes/text/llama3/execute.py) files call the public APIs
+directly. No model is constructed during execution. The bounded initializer
+writes weights and rotary tables into Executor-provided storage; evaluation
+uses `build_forward(..., forward_fn=loss)` with the same model tensor names.
+Programs, profiles, plans, reports, logs and checkpoints have separate folders
+under `--run-dir`.
 
-data_directory = "/path/to/llama3-tokens"
-steps = 5
-# One optimizer update contains 16 sequences, split into four microbatches.
-data = TokenUpdates(data_directory, sequence_length=4096, sequences_per_step=16)
-model = build_on_meta("llama3-8b", dtype="bfloat16")
-trainer = Trainer(
-    model,
-    objective=next_token_prediction,
-    optimizer=AdamW,
-    optimizer_args={"opt_state_dtype": torch.float32},
-    schedules={
-        "lr": WarmupCosine(lr=3e-4, min_lr=3e-5, warmup_steps=1, total_steps=steps)
-    },
-    master_dtype=torch.float32,
-    grad_dtype=torch.float32,
-    microbatches=data.splitter(sequences_per_microbatch=4),
-    backend=ShadowSpill(
-        execution_gib=28,
-        spill_gib=144,
-        # One pass visits all four microbatches at each layer (breadth-first).
-        orderings=[StepDataOrdering(depth=1, breadth=4)],
-    ),
-)
-# Open pools and plan storage/recomputation with the fixed size and ordering.
-trainer.prepare(data.example(), initialize=reset_parameters)
-# Perform forward/backward/AdamW updates, advancing the LR schedule each step.
-trainer.fit(data, steps=steps, run_dir="runs/llama3-8b")
-trainer.close()  # Release the callable and the pools this trainer opened.
+Each phase can also run separately. Later phases read the saved configuration:
+
+```bash
+python -m workloads.recipes.text.train_llama3 --data /path/to/llama3-tokens \
+  --run-dir runs/llama3-8b --phase build
+python -m workloads.recipes.text.train_llama3 --run-dir runs/llama3-8b --phase profile
+# Replan on CPU with different memory budgets, without rebuilding or profiling:
+python -m workloads.recipes.text.train_llama3 --run-dir runs/llama3-8b \
+  --phase plan --execution-gib 28 --spill-gib 144
+python -m workloads.recipes.text.train_llama3 --run-dir runs/llama3-8b --phase execute
 ```
+
+Use `--resume /path/to/checkpoint.ssp` with the execute phase to restore model,
+optimizer, schedule and data progress. `--model llama3-tiny` and smaller sequence
+counts are available for pipeline checks; the 8B configuration is not a claimed
+performance or memory-fit result on this refactor branch.
 
 </details>
 

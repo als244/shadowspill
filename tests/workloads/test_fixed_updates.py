@@ -7,7 +7,7 @@ import pytest
 import torch
 
 from shadowspill.pytorch.guards import capture_training_signatures
-from shadowspill.training import Trainer
+from shadowspill.training._legacy_trainer import Trainer
 from shadowspill.training.backends import PyTorch
 from shadowspill.training.schedules import WarmupCosine
 from workloads.models.llama3.config import Config
