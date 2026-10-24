@@ -60,6 +60,7 @@ def _build_training(
     operator_recompute: RetentionPolicy | None,
     grad_dtype: torch.dtype | None,
     target: str | torch.device,
+    master_dtype: torch.dtype | None = None,
 ) -> Program:
     device = resolve_device(target)
     assert device.index is not None
@@ -84,7 +85,13 @@ def _build_training(
     update = (
         None
         if optimizer is None
-        else capture_update(model, optimizer, captured, gradient_dtype=grad_dtype)
+        else capture_update(
+            model,
+            optimizer,
+            captured,
+            gradient_dtype=grad_dtype,
+            master_dtype=master_dtype,
+        )
     )
     if update is not None:
         from shadowspill.pytorch.capture.artifacts import GraphArtifact

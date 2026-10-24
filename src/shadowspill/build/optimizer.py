@@ -12,6 +12,7 @@ from shadowspill.pytorch.optimizer import OptimizerCapture, capture_optimizer
 from shadowspill.pytorch.optimizer.artifacts import OptimizerTensorRole
 from shadowspill.pytorch.optimizer.bindings import tensor_bindings
 from shadowspill.pytorch.optimizer.capture import declare_optimizer_state
+from shadowspill.pytorch.optimizer.discovery import validate_optimizer_inputs
 from shadowspill.pytorch.optimizer.sandbox import (
     copy_optimizer_to_meta,
     optimizer_parameters,
@@ -29,6 +30,7 @@ from shadowspill.pytorch.optimizer.starts import (
     ValueStart,
 )
 
+from .precision import with_master_parameters
 from .training_capture import TrainingCapture
 
 
@@ -44,15 +46,22 @@ def capture_update(
     training: TrainingCapture,
     *,
     gradient_dtype: torch.dtype | None,
+    master_dtype: torch.dtype | None = None,
 ) -> BuiltOptimizer:
     named = dict(model.named_parameters())
     trained = training_parameters_with_gradients(training.examples, named)
-    declared = declare_optimizer_state(named, optimizer, receives_gradient=trained)
+    validate_optimizer_inputs(named, optimizer)
     copied, names = copy_optimizer_to_meta(
         optimizer, {id(value): name for name, value in named.items()}
     )
+    copied, names, compute_copies = with_master_parameters(
+        copied, names, named, trained, master_dtype
+    )
     parameters = {names[id(value)]: value for value in optimizer_parameters(copied)}
-    initialization = {}
+    declared = declare_optimizer_state(parameters, copied, receives_gradient=trained)
+    initialization = {
+        name: {"kind": "parameter", "name": name} for name in compute_copies
+    }
     for entry in declared:
         parameter = parameters[entry.parameter_name]
         initialization[f"optimizer.{entry.parameter_name}.{entry.entry_name}"] = (
@@ -87,6 +96,7 @@ def capture_update(
             training.examples, named
         ),
         gradient_dtype=gradient_dtype,
+        compute_copies=compute_copies,
     )
     if result.update_is_opaque or any(
         not isinstance(task.artifact, GraphArtifact) for task in result.update_tasks

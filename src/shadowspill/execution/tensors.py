@@ -40,7 +40,19 @@ def tensor_entries(
         if item.get("component_path"):
             name += "." + ".".join(item["component_path"])
         yield name, item["object_id"], None
-    for item in bindings.get("optimizer_bindings", ()):
+    optimizer_bindings = bindings.get("optimizer_bindings", ())
+    mastered = {
+        item["name"].removeprefix("compute.")
+        for item in optimizer_bindings
+        if item["role"] == "compute_copy"
+    }
+    for item in optimizer_bindings:
+        if item["role"] == "parameter" and item["name"] in mastered:
+            yield (
+                "master." + item["name"],
+                item["object_id"],
+                item.get("initialization"),
+            )
         if (
             item["role"] not in {"parameter", "gradient"}
             and item["object_id"] is not None
