@@ -1,6 +1,7 @@
 from dataclasses import replace
 from types import SimpleNamespace
 
+from shadowspill.communication import backend
 from shadowspill.pytorch.distributed import _timing_identity as timing
 from shadowspill.task.profiles import ProfileEnvironment, ProfileKey
 
@@ -14,8 +15,8 @@ def _binding(monkeypatch):
         _get_backend=lambda device: SimpleNamespace(options=options)
     )
     bound = SimpleNamespace(groups=SimpleNamespace(groups={"participants": group}))
-    monkeypatch.setattr(timing.dist, "get_backend", lambda group: "nccl")
-    monkeypatch.setattr(timing.torch.cuda.nccl, "version", lambda: (2, 29, 7))
+    monkeypatch.setattr(backend.dist, "get_backend", lambda group: "nccl")
+    monkeypatch.setattr(backend.torch.cuda.nccl, "version", lambda: (2, 29, 7))
     return bound, options
 
 
@@ -55,9 +56,9 @@ def test_output_paths_do_not_change_timing_identity(monkeypatch):
 
 def test_host_only_groups_do_not_initialize_cuda(monkeypatch):
     bound = SimpleNamespace(groups=SimpleNamespace(groups={"control": object()}))
-    monkeypatch.setattr(timing.dist, "get_backend", lambda group: "gloo")
+    monkeypatch.setattr(backend.dist, "get_backend", lambda group: "gloo")
     monkeypatch.setattr(
-        timing.torch.cuda,
+        backend.torch.cuda,
         "current_device",
         lambda: (_ for _ in ()).throw(AssertionError("CUDA touched")),
     )
@@ -66,6 +67,16 @@ def test_host_only_groups_do_not_initialize_cuda(monkeypatch):
         "nccl_version": None,
         "environment": {},
     }
+
+
+def test_config_content_changes_identity_without_changing_path(monkeypatch, tmp_path):
+    bound, _ = _binding(monkeypatch)
+    config = tmp_path / "nccl.conf"
+    monkeypatch.setenv("NCCL_CONF_FILE", str(config))
+    config.write_text("NCCL_ALGO=Ring\n")
+    original = timing.communication_timing_digest(bound, device_ordinal=0)
+    config.write_text("NCCL_ALGO=Tree\n")
+    assert timing.communication_timing_digest(bound, device_ordinal=0) != original
 
 
 def test_non_distributed_profile_identity_remains_unchanged():

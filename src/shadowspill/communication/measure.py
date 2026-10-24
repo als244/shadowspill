@@ -14,6 +14,7 @@ from shadowspill.pytorch.toolchain import build_setup
 from shadowspill.task.profiling import ProfilingOptions
 
 from .aggregation import combine_host
+from .binding.backend import shared_backend_setup
 from .binding.groups import GroupBindings
 from .binding.ranks import RankAssignment
 from .host import measure_host_copies
@@ -113,6 +114,7 @@ def measure_communication(
                 backend="nccl",
                 startup_error=failure,
             )
+        backend = shared_backend_setup(bindings, requests, device_ordinal=target.index)
         with torch.cuda.device(target), torch.no_grad():
             host, failure = None, None
             try:
@@ -136,9 +138,10 @@ def measure_communication(
                 setup=setup,
                 options=options,
                 bindings=bindings,
+                backend_setup=backend,
             )
             fixed, memory_metadata = (
-                memory.finish(bindings, requests, setup)
+                memory.finish(bindings, requests, setup, backend_setup=backend)
                 if memory is not None
                 else (0, {"memory_kind": "static"})
             )
@@ -146,7 +149,7 @@ def measure_communication(
             result,
             measurements=measurements,
             fixed_device_bytes=fixed,
-            metadata={**result.metadata, **memory_metadata},
+            metadata={**result.metadata, **memory_metadata, "backend_setup": backend},
         )
     finally:
         if bindings is not None:

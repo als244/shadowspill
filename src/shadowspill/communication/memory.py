@@ -77,6 +77,10 @@ def communication_overhead(
         }
         if any(plain(scope[key]) != value for key, value in expected.items()):
             raise ValueError("communicator memory belongs to different groups/setup")
+        if plain(scope.get("backend_setup", {})) != plain(
+            info.metadata.get("backend_setup", {})
+        ):
+            raise ValueError("communicator memory belongs to a different backend setup")
         if info.metadata.get("external_transient_kind") != "verified":
             reasons.append("external communication scratch is not certified")
     # Transfer callbacks allocate outside task scopes. Reserve their observed

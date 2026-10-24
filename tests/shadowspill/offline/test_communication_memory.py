@@ -169,3 +169,27 @@ def test_memory_observation_does_not_override_bandwidth_estimated_timing():
     reduction = next(p for p in result.profiles if p.profile_id == "reduce")
     assert reduction.runtime_ns == 16
     assert reduction.workspace_bytes == 16
+
+
+def test_communication_memory_is_scoped_to_backend_settings():
+    from shadowspill.communication.memory import communication_overhead
+
+    value = measured_info().to_dict()
+    original = {"nccl_version": [2, 29, 7]}
+    changed = {"nccl_version": [2, 30, 0]}
+    value["metadata"]["backend_setup"] = original
+    value["metadata"]["memory_scope"]["backend_setup"] = original
+    value["measurements"][0]["backend_setup"] = original
+    program = collective_program()
+    assert communication_overhead(program, CommunicationInfo.from_dict(value))[0] == 96
+    value["metadata"]["backend_setup"] = changed
+    with pytest.raises(ValueError, match="different backend setup"):
+        communication_overhead(program, CommunicationInfo.from_dict(value))
+    value["metadata"]["memory_scope"]["backend_setup"] = changed
+    # Updating only fixed overhead does not qualify old task allocation evidence.
+    value["scale_up_bytes_per_second"] = 1e9
+    value["scale_up_latency_seconds"] = 0
+    with pytest.raises(ValueError, match="workspace_bytes"):
+        apply_profiles(program, compute_profiles())._costed_ir(
+            CommunicationInfo.from_dict(value)
+        )

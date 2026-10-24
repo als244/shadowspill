@@ -148,6 +148,10 @@ and maximum fitted latency, preserving every worker's observations. Each collect
 group is then probed separately, using coordinated repetition counts and completion
 timing. Logical member order is retained after worker remapping. Topology is
 derived from physical hostname membership. Every worker receives the same result.
+Calibration records NCCL version, group options, relevant environment settings
+and configuration-file digests separately from compute setup. Workers must agree
+on this backend setup. Changing it invalidates matching communication timings
+and memory records without invalidating single-GPU compute profiles.
 
 ```python
 # All workers have initialized rendezvous and loaded the same Program.

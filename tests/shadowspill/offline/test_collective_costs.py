@@ -97,3 +97,28 @@ def test_missing_costs_fail_and_identity_needs_no_links():
         cost(replace(info(), scale_up_latency_seconds=None))
     with pytest.raises(ValueError, match="scale_out rate and latency"):
         cost(replace(info(), topology={"node0": (0, 1, 2, 3), "node1": (4, 5, 6, 7)}))
+
+
+def test_changed_backend_settings_do_not_reuse_measured_timing():
+    backend = {"nccl_version": [2, 29, 7], "environment": {"NCCL_ALGO": "Ring"}}
+    calibrated = replace(
+        info(),
+        metadata={"backend_setup": backend},
+        measurements=(
+            {
+                "operation": "all_gather",
+                "ranks": tuple(range(8)),
+                "tensor_bytes": 1 << 30,
+                "dtype": "torch.bfloat16",
+                "setup": {"gpu": "fixture"},
+                "topology": info().topology,
+                "duration_seconds": 0.001,
+                "backend_setup": backend,
+            },
+        ),
+    )
+    assert cost(calibrated).source == "measurement"
+    changed = {**backend, "environment": {"NCCL_ALGO": "Tree"}}
+    assert (
+        cost(replace(calibrated, metadata={"backend_setup": changed})).source == "ring"
+    )

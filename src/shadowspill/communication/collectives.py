@@ -79,6 +79,10 @@ def matching_measurements(
 ) -> Iterator[Mapping[str, Any]]:
     fields = ("operation", "ranks", "tensor_bytes", "dtype", "setup", "topology")
     for row in reversed(info.measurements):
+        if plain(row.get("backend_setup", {})) != plain(
+            info.metadata.get("backend_setup", {})
+        ):
+            continue
         if _inplace(row) == _inplace(request) and all(
             plain(row[field]) == plain(request[field]) for field in fields
         ):

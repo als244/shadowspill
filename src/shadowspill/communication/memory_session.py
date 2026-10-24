@@ -23,6 +23,8 @@ class CommunicationMemory:
         bindings: GroupBindings | None,
         requests: tuple[CollectiveRequest, ...],
         setup: Mapping[str, Any],
+        *,
+        backend_setup: Mapping[str, Any] | None = None,
     ) -> tuple[int | None, dict[str, Any]]:
         torch.cuda.synchronize(self.device)
         external_after = external_device_bytes(self.device)
@@ -54,6 +56,7 @@ class CommunicationMemory:
                 "groups": sorted({request.ranks for request in requests}),
                 "topology": {"node0": (0,)} if bindings is None else bindings.topology,
                 "backend": "nccl",
+                "backend_setup": dict(backend_setup or {}),
             },
             "memory_per_rank": sorted(rows, key=lambda row: row["logical_rank"]),
             "memory_source": "native live bytes + NVML external retained delta",

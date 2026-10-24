@@ -22,6 +22,7 @@ def measure_collectives(
     setup: Mapping[str, Any],
     options: ProfilingOptions,
     bindings: GroupBindings | None,
+    backend_setup: Mapping[str, Any] | None = None,
 ) -> tuple[dict[str, Any], ...]:
     """Groups are probed separately; disjoint-group contention is not inferred."""
     rows = []
@@ -45,6 +46,7 @@ def measure_collectives(
                 **observation,
                 "setup": dict(setup),
                 "topology": topology,
+                "backend_setup": dict(backend_setup or {}),
             }
         )
     return tuple(rows)

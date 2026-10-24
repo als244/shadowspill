@@ -5,6 +5,7 @@ import sys
 import torch
 import torch.distributed as dist
 
+from shadowspill.communication.backend import backend_setup
 from shadowspill.communication.binding.groups import GroupBindings
 from shadowspill.communication.info import CommunicationInfo
 from shadowspill.communication.memory_measurement import measure_memory
@@ -38,6 +39,8 @@ bindings = GroupBindings(
     backend="nccl",
 )
 try:
+    backend = backend_setup({"0": bindings.for_members((0,))}, device_ordinal=0)
+    assert backend["nccl_version"]
     rows = []
     for request in requests:
         probe = CollectiveProbe(request, bindings.for_members((0,)), device)
@@ -56,6 +59,7 @@ try:
                 **request.to_dict(),
                 "setup": build_setup(device),
                 "topology": bindings.topology,
+                "backend_setup": backend,
                 "memory": {
                     "workspace_bytes": record["workspace_bytes"],
                     "memory_kind": "measured",
@@ -64,7 +68,9 @@ try:
             }
         )
         del probe
-    fixed, metadata = memory.finish(bindings, requests, build_setup(device))
+    fixed, metadata = memory.finish(
+        bindings, requests, build_setup(device), backend_setup=backend
+    )
     assert fixed is None or fixed >= 0
     assert metadata["memory_scope"]["groups"] == [(0,)]
     assert len(metadata["memory_per_rank"]) == 1
@@ -73,7 +79,7 @@ try:
         1e9,
         topology=bindings.topology,
         fixed_device_bytes=fixed,
-        metadata=metadata,
+        metadata={**metadata, "backend_setup": backend},
         measurements=tuple(rows),
     )
     assert CommunicationInfo.from_dict(info.to_dict()) == info

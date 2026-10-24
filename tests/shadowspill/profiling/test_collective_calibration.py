@@ -9,6 +9,7 @@ def _worker(worker, rendezvous):
 
     from shadowspill import CommunicationInfo
     from shadowspill.communication.aggregation import combine_host
+    from shadowspill.communication.binding.backend import shared_backend_setup
     from shadowspill.communication.binding.groups import GroupBindings
     from shadowspill.communication.collectives import collective_cost
     from shadowspill.communication.measure_collectives import measure_collectives
@@ -40,6 +41,9 @@ def _worker(worker, rendezvous):
             timeout=timedelta(seconds=30),
         )
         assert bound.topology == {"node0": (0, 1, 2, 3)}
+        backend = shared_backend_setup(bound, requests, device_ordinal=None)
+        assert set(backend["groups"]) == {"3,0", "2,1", "3,1,0,2"}
+        assert backend["nccl_version"] is None
         combined = combine_host(
             CommunicationInfo(
                 (worker + 1) * 1e9,
@@ -95,6 +99,7 @@ def _worker(worker, rendezvous):
                 measurement_wall_seconds=0.2,
             ),
             bindings=bound,
+            backend_setup=backend,
         )
         assert all(peer == rows for peer in bound.gather(rows))
         for row in rows:
@@ -103,7 +108,11 @@ def _worker(worker, rendezvous):
             assert len(peers) == len(row["ranks"])
             assert row["duration_seconds"] > 0
             info = CommunicationInfo(
-                1e9, 1e9, topology=bound.topology, measurements=(row,)
+                1e9,
+                1e9,
+                topology=bound.topology,
+                measurements=(row,),
+                metadata={"backend_setup": backend},
             )
             cost = collective_cost(
                 info,
@@ -183,6 +192,8 @@ def _gpu_worker(worker, rendezvous):
         assert info.measurements[0]["inplace"]
         assert info.measurements[0]["duration_seconds"] > 0
         assert info.topology == {"node0": (0, 1)}
+        assert info.metadata["backend_setup"]["nccl_version"]
+        assert info.measurements[0]["backend_setup"] == info.metadata["backend_setup"]
         rows = [None, None]
         dist.all_gather_object(rows, info.to_dict())
         assert rows[0] == rows[1]
