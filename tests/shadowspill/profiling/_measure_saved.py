@@ -7,7 +7,7 @@ import torch
 import torch._inductor.compile_fx as compiler
 import triton
 
-from shadowspill import Profiles, Program, measure_program
+from shadowspill import Profiles, Program
 
 
 def no_compilation(*args, **kwargs):
@@ -23,6 +23,7 @@ class BlockRuntime(importlib.abc.MetaPathFinder):
                 "shadowspill.pipeline",
                 "shadowspill.store",
                 "shadowspill.pytorch.compilation",
+                "shadowspill.pytorch.capture",
                 "shadowspill.build",
             )
         ):
@@ -33,6 +34,8 @@ class BlockRuntime(importlib.abc.MetaPathFinder):
 
 compiler.compile_fx = compiler.compile_fx_inner = triton.compile = no_compilation
 sys.meta_path.insert(0, BlockRuntime())
+from shadowspill import measure_program  # noqa: E402
+
 program = Program.load(sys.argv[1])
 profiles = measure_program(program, warmup_seconds=0, measure_seconds=0.001)
 profiles.save(sys.argv[2])

@@ -217,3 +217,33 @@
   transfer/task boundaries, without build, profiling, calibration, or a model
   object. Then qualify repeated invocations, gradient persistence and bounded
   initialization before integrating Trainer and quickstart.
+
+### Saved-plan Executor (in progress)
+
+- Physical admission checkpoint is committed/pushed as `d1afcfb1`.
+- Added a worker that restores finalized code, admits saved physical layouts,
+  reserves spill storage directly and initializes/exports tensors in bounded
+  chunks. Execution does no compilation, measurement or communication calibration.
+- New native metadata-only CUDA storage lets tasks acquire existing runtime
+  leases without allocating duplicate model storage. Runtime reservation now has
+  an explicit uninitialized spill lease for the bounded loader to fill.
+- Three-invocation comparisons cover forward, backward and AdamW state, retained
+  caller outputs, and saved/recomputed stages. Fresh workers receive only Plan
+  archives and input/state data. Compiler, capture, profiling and calibration
+  entrypoints/imports are deliberately blocked.
+- This stronger test found two old implicit dependencies: PyTorch package imports
+  pulled capture/materialization into execution; the intrinsic gradient GEMM op
+  was registered only through capture. Imports are now lazy, and the intrinsic
+  registration lives independently of build. The profiling worker's import-block
+  hook was also strengthened to run before importing measure_program.
+- Tied parameters exposed an eager cross-stage gradient addition outside captured
+  tasks. Build now captures the selective addition in the first-example backward,
+  so its math/allocation/timing is part of the same compiled task everywhere.
+  Updated tangent/prior-gradient binding handles those selective accumulators.
+- Still in progress: runtime tensor hyperparameters, saved constants and initializer
+  coverage, one-Plan fresh/existing gradients, retryable teardown and qualification
+  beyond the small dense fixtures. These are not reported as complete.
+- Validation checkpoint: 18 build/profiling/execution tests pass, including the
+  strengthened cold-import worker tests and tied-parameter replay regressions.
+  Focused typing and lint pass. Saved-plan execution remains a milestone under
+  active development; the outstanding contracts above still block caller migration.

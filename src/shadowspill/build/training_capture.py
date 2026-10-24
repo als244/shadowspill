@@ -25,6 +25,8 @@ from shadowspill.pytorch.graph_pairs import (
 from shadowspill.pytorch.guards import InputSignature, capture_input_signature
 from shadowspill.pytorch.partition import PartitionSpec
 
+from .shared_gradients import include_shared_gradients
+
 
 @dataclass(frozen=True)
 class TrainingCapture:
@@ -91,4 +93,6 @@ def capture_training_model(
                     template=previous,
                 )
             )
-    return TrainingCapture(replica, tuple(captures), signature)
+    return TrainingCapture(
+        replica, tuple(include_shared_gradients(c) for c in captures), signature
+    )

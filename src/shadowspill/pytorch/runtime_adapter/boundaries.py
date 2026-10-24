@@ -27,7 +27,7 @@ from shadowspill.runtime.plan.common import plan_local_id
 from shadowspill.runtime.plan.report import describe_refused_action
 
 if TYPE_CHECKING:
-    from shadowspill.pytorch.materialization.replacement import (
+    from shadowspill.pytorch.runtime_adapter.replacements import (
         ReplacementStorageViews,
     )
     from shadowspill.runtime.plan import RuntimeBridge

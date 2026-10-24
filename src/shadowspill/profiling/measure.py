@@ -5,13 +5,13 @@ from dataclasses import replace
 from typing import Any
 
 import torch
-from torch._inductor.standalone_compile import AOTCompiledArtifact
 from torch.utils._pytree import tree_flatten
 
 from shadowspill.artifacts._values import plain
 from shadowspill.artifacts.profiles import Profiles, TaskProfile
 from shadowspill.artifacts.program import Program
 from shadowspill.pytorch.accelerator import resolve_device
+from shadowspill.pytorch.executable import restore_executable
 from shadowspill.pytorch.toolchain import build_setup
 
 from .device_memory import external_device_bytes
@@ -39,7 +39,7 @@ class _Session:
     def function(self, key: str) -> Any:
         if key not in self.functions:
             before = torch.cuda.memory_allocated(self.device)
-            self.functions[key] = AOTCompiledArtifact.deserialize(
+            self.functions[key] = restore_executable(
                 self.program.executables[key]
             )
             self.persistent += max(0, torch.cuda.memory_allocated(self.device) - before)

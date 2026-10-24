@@ -22,7 +22,6 @@ from ...graph_pairs import (
     DifferentiatedStage,
     GraphPairVariant,
     PartitionedTrainingCapture,
-    parameter_gradient_leaves,
     saved_value_footprint,
 )
 from ..catalog import (
@@ -170,7 +169,12 @@ def _register_stage_cotangents(
     terminal: bool,
 ) -> None:
     pair = stage.graph_pairs.reference
-    tangent_values = pair.backward.example_arguments[pair.saved_value_count :]
+    tangent_values = tuple(
+        value
+        for index, value in enumerate(pair.backward.example_arguments)
+        if index >= pair.saved_value_count
+        and index not in _prior_gradient_positions(pair.backward)
+    )
     explicit_indices = stage.differentiable_output_indices[
         : len(stage.differentiable_output_indices) - pair.specialized_unit_tangent_count
     ]
@@ -304,11 +308,13 @@ def _prior_gradient_inputs(
 
     sources = {slot.leaf_index: slot.object_id for slot in forward_inputs}
     priors: list[ObjectSlot] = []
-    for position, leaf in zip(
-        _prior_gradient_positions(pair.backward),
-        parameter_gradient_leaves(pair),
-        strict=True,
-    ):
+    leaf_by_input = {
+        mutation.input_position: mutation.replacement_output_leaf
+        for mutation in pair.backward.storage_contract.mutations
+        if mutation.replacement_output_leaf is not None
+    }
+    for position in _prior_gradient_positions(pair.backward):
+        leaf = leaf_by_input[position]
         parameter = (
             pair.gradient_provenance[leaf].source
             if pair.gradient_provenance
@@ -373,7 +379,7 @@ def _prepare_stage_variant(
         objects.catalog,
         terminal=terminal,
     )
-    if option.accumulates:
+    if _prior_gradient_positions(pair.backward):
         backward_inputs = _prior_gradient_inputs(
             pair,
             backward_inputs,

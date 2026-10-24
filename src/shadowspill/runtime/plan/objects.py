@@ -258,6 +258,19 @@ class PlanObjects:
         self._registered.add(alias_id)
         self._bind_plan_object(alias_id)
 
+    def reserve_spill(self, alias_id: str, *, retain_spill_copy: bool) -> None:
+        """Allocate an initial spill lease for direct bounded initialization.
+
+        The caller must fill the lease before dispatch; no source allocation or
+        full-size copy is made. This is also useful for staging runtime inputs.
+        """
+        self.register_spill_bytes(
+            alias_id,
+            address=0,
+            size=self._size(alias_id),
+            retain_spill_copy=retain_spill_copy,
+        )
+
     def adopt_persistent_object(
         self,
         alias_id: str,
