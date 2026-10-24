@@ -18,7 +18,7 @@ from shadowspill.pytorch.runtime_adapter.boundaries import (
 from shadowspill.runtime.plan import admit_initial_actions, admit_task, clear_tasks
 
 
-def roundtrips(state):
+def roundtrips(state, groups=None):
     bridge = state.bridge
     alias, value = "alias_000001", "object_000001"
     fetch = (MemoryAction("task_000000", alias, MemoryActionKind.FETCH),)
@@ -41,6 +41,27 @@ def roundtrips(state):
             owner = state.owner(alias)
             before_task_and_acquire(bridge, handle, state.device.index, (owner,))
             weights = state.argument(value, state.geometry[value])
+            if groups is not None:
+                # The native fetch and this explicit task use the same ordered
+                # NCCL group. Boundary submission must precede this call on every
+                # worker, even though completion remains asynchronous.
+                from shadowspill.communication.requests import CollectiveRequest
+                from shadowspill.communication.task import PackedCollective
+
+                members = next(
+                    group
+                    for group in state.plan.program.bindings["weight_shards"][alias][
+                        "groups"
+                    ]
+                    if groups.logical_rank in group
+                )
+                PackedCollective(
+                    CollectiveRequest(
+                        "all_reduce", members, weights.numel() * 2, "torch.bfloat16"
+                    ),
+                    groups.for_members(members),
+                )(weights)
+                weights.div_(len(members))
             expected = torch.arange(1, 16, dtype=torch.bfloat16) + 2 * step
             observed.copy_(weights, non_blocking=True)
             weights.add_(2)

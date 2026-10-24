@@ -191,7 +191,7 @@ def worker(index, rendezvous, archive, mode):
                 if mode != "host":
                     from tests.shadowspill.execution._shard_roundtrips import roundtrips
 
-                    roundtrips(state)
+                    roundtrips(state, bound if mode == "nccl" else None)
                 state.clear_views()
             finally:
                 transfers.close()

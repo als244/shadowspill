@@ -170,6 +170,12 @@ target_link_libraries(shadowspill_task_completion_canary PRIVATE
 add_test(NAME shadowspill_task_completion_canary COMMAND shadowspill_task_completion_canary)
 set_tests_properties(shadowspill_task_completion_canary PROPERTIES TIMEOUT 10)
 
+add_executable(shadowspill_collective_order_canary runtime/collective_order_canary.c)
+target_link_libraries(shadowspill_collective_order_canary PRIVATE
+  shadowspill shadowspill_backend_mock shadowspill_build_options Threads::Threads)
+add_test(NAME shadowspill_collective_order_canary COMMAND shadowspill_collective_order_canary)
+set_tests_properties(shadowspill_collective_order_canary PROPERTIES TIMEOUT 10)
+
 add_executable(
   shadowspill_admission_replay_canary
   runtime/admission_replay_canary.c

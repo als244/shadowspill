@@ -216,6 +216,13 @@ lane and label ring-equivalent traffic. The analytic CPU test exercises overlap
 with independent compute and replans with different collective timings from the
 same saved ProfiledProgram. Distributed Executor resources still need qualification.
 
+The runtime's existing task-boundary handshake acknowledges submission of queued
+collective transfers before the next explicit task is dispatched. Within a batch,
+collective evictions precede collective fetches, independent of event polling.
+This is a host submission-order guarantee, not a GPU completion wait. A native
+mock-backend test verifies interleaving under delayed callbacks while GPU work
+remains gated. Real multi-GPU NCCL qualification is still required.
+
 The GPU allowance includes fixed compute/provider and communication overhead.
 Planning subtracts both before scheduling objects/workspace, and reporting adds
 them back to the total peak. Background weight-fetch callbacks have no task
