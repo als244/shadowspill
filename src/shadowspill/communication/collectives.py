@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Iterator, Mapping
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
@@ -45,8 +45,10 @@ def validate_measurement(row: Mapping[str, Any]) -> None:
         raise ValueError("collective measurement requires ordered logical ranks")
     if len(set(ranks)) != len(ranks):
         raise ValueError("collective measurement has duplicate logical ranks")
-    if "tensor_bytes" not in row or "duration_seconds" not in row:
-        raise ValueError("collective measurement requires size and duration")
+    if "tensor_bytes" not in row or (
+        row.get("duration_seconds") is None and "memory" not in row
+    ):
+        raise ValueError("collective measurement requires size and duration or memory")
     nonnegative_int(row["tensor_bytes"], "tensor_bytes")
     if row["operation"] != "all_reduce" and row["tensor_bytes"] % len(ranks):
         raise ValueError(
@@ -54,7 +56,8 @@ def validate_measurement(row: Mapping[str, Any]) -> None:
         )
     if not isinstance(row.get("dtype"), str) or not row["dtype"]:
         raise ValueError("collective measurement requires dtype")
-    seconds(row["duration_seconds"], "duration_seconds")
+    if row.get("duration_seconds") is not None:
+        seconds(row["duration_seconds"], "duration_seconds")
     if not isinstance(row.get("setup"), Mapping) or not row["setup"]:
         raise ValueError("collective measurement requires hardware/runtime setup")
     topology = row.get("topology")
@@ -65,6 +68,21 @@ def validate_measurement(row: Mapping[str, Any]) -> None:
         raise ValueError("collective topology assigns one rank to multiple nodes")
     if len(ranks) > 1 and not set(ranks) <= set(participants):
         raise ValueError("collective cost requires topology for every participant")
+    if "memory" in row:
+        from .memory_records import validate_task_memory
+
+        validate_task_memory(row["memory"], ranks)
+
+
+def matching_measurements(
+    info: CommunicationInfo, request: Mapping[str, Any]
+) -> Iterator[Mapping[str, Any]]:
+    fields = ("operation", "ranks", "tensor_bytes", "dtype", "setup", "topology")
+    for row in reversed(info.measurements):
+        if _inplace(row) == _inplace(request) and all(
+            plain(row[field]) == plain(request[field]) for field in fields
+        ):
+            yield row
 
 
 def collective_cost(
@@ -101,11 +119,8 @@ def collective_cost(
     # Integer upper bound also permits an unpadded all-reduce tensor.
     chunk = (tensor_bytes + count - 1) // count
     traffic = factor * (count - 1) * chunk
-    fields = ("operation", "ranks", "tensor_bytes", "dtype", "setup", "topology")
-    for row in reversed(info.measurements):
-        if _inplace(row) == _inplace(request) and all(
-            plain(row[field]) == plain(request[field]) for field in fields
-        ):
+    for row in matching_measurements(info, request):
+        if row.get("duration_seconds") is not None:
             return CollectiveCost(
                 row["duration_seconds"],
                 traffic,

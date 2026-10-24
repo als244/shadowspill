@@ -20,10 +20,7 @@ def bundle_gradient_modes(fresh: Plan, accumulated: Plan) -> Plan:
             layout = plan.memory_layout
             assert layout is not None
             required = span + layout.required_bytes - layout.fixed_slice_bytes
-            capacity = (
-                plan.memory_budgets.execution_bytes
-                - plan.profiled_program.fixed_device_bytes
-            )
+            capacity = plan.memory_budgets.execution_bytes - plan.fixed_device_bytes
             if required > capacity:
                 raise PlanInfeasibleError(
                     "shared gradient-mode arena exceeds the GPU allowance",

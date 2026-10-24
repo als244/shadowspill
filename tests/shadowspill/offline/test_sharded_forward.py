@@ -55,6 +55,19 @@ def test_planner_keeps_local_copies_and_full_gather_as_distinct_phases(tmp_path)
         topology={"node": (0, 1, 2, 3)},
         scale_up_bytes_per_second=48e6,
         scale_up_latency_seconds=1e-6,
+        fixed_device_bytes=0,
+        measurements=(
+            {
+                "operation": "all_gather",
+                "ranks": (0, 1, 2, 3),
+                "tensor_bytes": 64,
+                "dtype": "torch.uint8",
+                "inplace": True,
+                "setup": {"gpu": "fixture"},
+                "topology": {"node": (0, 1, 2, 3)},
+                "memory": {"workspace_bytes": 0},
+            },
+        ),
     )
     result = plan_program(
         profiled,
@@ -106,6 +119,7 @@ def test_planner_keeps_local_copies_and_full_gather_as_distinct_phases(tmp_path)
                 "inplace": True,
                 "setup": {"gpu": "fixture"},
                 "topology": info.topology,
+                "memory": {"workspace_bytes": 0},
             },
         ),
     )

@@ -10,6 +10,7 @@ from shadowspill.profiling.timing import collect_timing_samples, condition_task
 from shadowspill.task.profiling import ProfilingOptions
 
 from .binding.groups import GroupBindings
+from .memory_measurement import measure_memory
 from .probe import CollectiveProbe
 from .requests import CollectiveRequest
 
@@ -27,7 +28,11 @@ def measure_collectives(
     topology = {"node0": (0,)} if bindings is None else bindings.topology
     for request in requests:
         if len(request.ranks) == 1:
-            observation: dict[str, Any] = dict(duration_seconds=0.0, source="identity")
+            observation: dict[str, Any] = dict(
+                duration_seconds=0.0,
+                source="identity",
+                memory={"workspace_bytes": 0, "memory_kind": "static"},
+            )
         else:
             if bindings is None:
                 raise ValueError(
@@ -70,6 +75,7 @@ def _measure(
 
     condition_task(sample, options=options, continue_while=decide)
     timing = collect_timing_samples(sample, options=options, continue_while=decide)
+    memory = measure_memory(probe, device, bindings)
     local = (
         None
         if not active
@@ -80,16 +86,28 @@ def _measure(
             "target_met": timing.window.target_met,
             "relative_mad": timing.relative_mad,
             "half_drift": timing.half_drift,
+            "memory": memory,
         }
     )
     peers = sorted(
         (row for row in bindings.gather(local) if row is not None),
         key=lambda row: row["logical_rank"],
     )
+    memory_rows = [
+        {"logical_rank": row["logical_rank"], **row["memory"]} for row in peers
+    ]
+    complete = all(row["memory_kind"] == "measured" for row in memory_rows)
     return {
         "duration_seconds": max(row["duration_seconds"] for row in peers),
         "source": "maximum of participant median completion times",
         "backend": "nccl" if device.type == "cuda" else "gloo",
         "per_rank": peers,
         "scope": "one ordered group at a time; no disjoint-group overlap",
+        "memory": {
+            "memory_kind": "measured" if complete else "unresolved",
+            "workspace_bytes": (
+                max(row["workspace_bytes"] for row in memory_rows) if complete else None
+            ),
+            "per_rank": memory_rows,
+        },
     }

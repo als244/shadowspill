@@ -137,6 +137,7 @@ def communication(duration):
     return CommunicationInfo(
         1e9,
         1e9,
+        fixed_device_bytes=0,
         topology=topology,
         measurements=(
             {
@@ -152,11 +153,13 @@ def communication(duration):
     )
 
 
-def test_collective_workspace_is_required_but_timing_stays_in_communication_info():
+def test_collective_memory_can_be_deferred_to_communication_info():
     source = collective_program()
     profiles = compute_profiles()
-    with pytest.raises(ValueError, match="reduce: workspace_bytes"):
-        apply_profiles(source, profiles)
+    deferred = apply_profiles(source, profiles)
+    assert deferred.task_profiles["reduce"].workspace_bytes is None
+    with pytest.raises(ValueError, match="incomplete communication memory"):
+        deferred._costed_ir(communication(1e-6))
     profiles.tasks["reduce"] = TaskProfile(workspace_bytes=8)
     result = apply_profiles(source, profiles)
     assert result.task_profiles["reduce"].duration_seconds is None

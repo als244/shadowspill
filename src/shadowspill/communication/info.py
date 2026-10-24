@@ -33,8 +33,12 @@ class CommunicationInfo(Artifact):
     scale_up_latency_seconds: float | None = None
     scale_out_latency_seconds: float | None = None
     measurements: tuple[Mapping[str, Any], ...] = ()
+    fixed_device_bytes: int | None = None
 
     def __post_init__(self) -> None:
+        from .memory_records import validate_fixed_memory
+
+        validate_fixed_memory(self.fixed_device_bytes, self.metadata)
         for direction in ("fetch", "evict"):
             for suffix in ("bytes_per_second", "concurrent_bytes_per_second"):
                 key = f"{direction}_{suffix}"

@@ -9,10 +9,8 @@ import torch
 from torch import nn
 
 from shadowspill import (
-    CommunicationInfo,
     MemoryBudgets,
     Parallelism,
-    TaskProfile,
     apply_profiles,
     build_forward_backward,
     measure_program,
@@ -77,19 +75,13 @@ def test_one_gpu_build_profiles_padding_and_owned_gradient_accumulation(
     profiles = measure_program(source, warmup_seconds=0.001, measure_seconds=0.002)
     assert completion["padding"]["profile_key"] in profiles.tasks
     assert completion["accumulation_key"] in profiles.tasks
-    # Collective scratch remains explicitly unresolved until supplied. These
-    # assumptions are for CPU simulation, not distributed execution admission.
-    with pytest.raises(ValueError, match="workspace_bytes"):
-        apply_profiles(source, profiles)
-    for key in source.bindings["collective_tasks"]:
-        profiles.tasks[key] = TaskProfile(workspace_bytes=0)
+    # Compute profiles do not need distributed memory or timing measurements.
     profiled = apply_profiles(source, profiles)
-    info = CommunicationInfo(
-        20e9,
-        20e9,
+    from tests.shadowspill.offline._communication import estimated_communication
+
+    info = estimated_communication(
+        source,
         topology={"node0": (0, 1, 2, 3)},
-        scale_up_bytes_per_second=100e9,
-        scale_up_latency_seconds=2e-6,
     )
     budgets = MemoryBudgets(profiled.fixed_device_bytes + (8 << 20), 8 << 20)
     for ordering in (
@@ -143,12 +135,12 @@ class CPUOnly(importlib.abc.MetaPathFinder):
 sys.meta_path.insert(0, CPUOnly())
 from shadowspill import (ProfiledProgram, Plan, CommunicationInfo, MemoryBudgets,
                         plan_program, write_report)
+from tests.shadowspill.offline._communication import estimated_communication
 profiled = ProfiledProgram.load(sys.argv[1])
 plan = plan_program(profiled,
     memory_budgets=MemoryBudgets(profiled.fixed_device_bytes + (8 << 20), 8 << 20),
-    communication_info=CommunicationInfo(20e9, 20e9,
-        topology={'node0': (0, 1, 2, 3)}, scale_up_bytes_per_second=100e9,
-        scale_up_latency_seconds=2e-6))
+    communication_info=estimated_communication(profiled.program,
+        topology={'node0': (0, 1, 2, 3)}))
 plan.save(sys.argv[2])
 loaded = Plan.load(sys.argv[2])
 assert loaded.summary['logical_ranks'] == 4

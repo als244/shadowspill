@@ -2,6 +2,7 @@
 
 from shadowspill.artifacts.profiled_program import ProfiledProgram
 from shadowspill.communication import CommunicationInfo
+from shadowspill.communication.memory import communication_overhead
 from shadowspill.errors import PlanInfeasibleError
 from shadowspill.ir import ShadowSpillProgram
 from shadowspill.simulator import SimulationConfig
@@ -47,12 +48,14 @@ def simulation_inputs(
         rank for group in communication.topology.values() for rank in group
     ) != list(range(world_size)):
         raise ValueError("topology must contain exactly the declared logical ranks")
-    usable = budgets.execution_bytes - profiled.fixed_device_bytes
+    communication_bytes, _ = communication_overhead(profiled.program, communication)
+    fixed_bytes = profiled.fixed_device_bytes + communication_bytes
+    usable = budgets.execution_bytes - fixed_bytes
     if usable <= 0:
         raise PlanInfeasibleError(
             "fixed device overhead exhausts the total GPU allowance",
             kind="fixed_overhead",
-            required_bytes=profiled.fixed_device_bytes,
+            required_bytes=fixed_bytes,
             capacity_bytes=budgets.execution_bytes,
         )
 

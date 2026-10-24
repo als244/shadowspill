@@ -156,6 +156,8 @@ communication = measure_communication(
     rank_map={worker: worker for worker in range(8)},
     device=device,
 )
+if worker_rank == 0:
+    communication.save("communication.ssp")
 ```
 
 An explicit `collectives=[...]` replaces derived probes; `collectives=[]` selects
@@ -175,20 +177,37 @@ uses separate buffers.
 
 Derived requests cover lowered weight fetches, gradient completion and update
 publication tasks. Model-owned communication requires its own lowering before
-automatic derivation is supported. Exact observed collective
-timings do not infer a general scale-up/out rate, overlapping-group contention,
-or communicator memory admission.
+automatic derivation is supported. Exact observed collective timings do not infer
+a general scale-up/out rate or overlapping-group contention.
 The CPU/Gloo coordination and single-GPU copy paths are tested; multi-GPU NCCL
 calibration has an acceptance test but is not yet hardware-qualified.
 
+CommunicationInfo also owns communication memory evidence. Each collective row
+can contain a `memory` mapping with `workspace_bytes`, `memory_kind` and per-rank
+allocation traces/contracts. Calibration observes the same allocating-output
+callable used for execution, separately from event timing. Returned collective
+outputs are accounted as Program objects, not counted again as workspace.
+`fixed_device_bytes` covers retained communicator resources; its metadata records
+the setup, groups, topology and per-rank native/NVML observations. This remains
+separate from compute/provider overhead in Profiles.
+
+Native allocator observations and retained NVML deltas do not establish a bound
+on transient allocations made directly by the communication backend. Calibration
+records that coverage gap explicitly. Such records support simulation but do not
+by themselves qualify distributed execution. A one-GPU NCCL allocation-path test
+validates the observation/serialization path; it is not multi-GPU qualification.
+
 The IR also supports explicit framework collective tasks with declared input,
-output and completion dependencies. Their durations are resolved from
+output and completion dependencies. Their durations and workspace are resolved from
 CommunicationInfo during planning, so applying compute profiles does not require
-a process group or a dummy zero-time collective measurement. Workspace information
-is still required; unknown workspace does not become zero. The saved
-ProfiledProgram retains an unspecified duration for these collective forms until
-planning. Model/provider operations that communicate internally retain their
-ordinary measured task duration.
+a process group or dummy collective profiles. The saved ProfiledProgram can leave
+both fields unspecified for those tasks. Planning requires their missing memory
+information, including an explicit zero when appropriate; unknown is never zero.
+Manually supplied numeric memory values default to estimates and permit simulated
+timelines only. A memory-only observation can omit `duration_seconds`, allowing
+timing to come from another compatible observation or the supplied rates.
+Model/provider operations that communicate internally retain their ordinary
+measured task duration and memory in Profiles.
 
 Explicit framework collectives share the ordered communication resource used by
 weight fetch gathers. Their buffers and scratch remain live while the task is in
@@ -197,10 +216,13 @@ lane and label ring-equivalent traffic. The analytic CPU test exercises overlap
 with independent compute and replans with different collective timings from the
 same saved ProfiledProgram. Distributed Executor resources still need qualification.
 
-The GPU allowance includes fixed runtime/provider overhead. Planning subtracts
-that overhead before scheduling objects/workspace, and reporting adds it back to
-the total peak. Spill capacity is separate. No physical memory is allocated to
-perform this calculation.
+The GPU allowance includes fixed compute/provider and communication overhead.
+Planning subtracts both before scheduling objects/workspace, and reporting adds
+them back to the total peak. Background weight-fetch callbacks have no task
+allocation scope, so their observed scratch is conservatively reserved once per
+sharded object rather than assumed to retire at the next asynchronous submission.
+Explicit communication tasks account for scratch over their task lifetimes.
+Spill capacity is separate. No physical memory is allocated for these calculations.
 
 Task resource lanes bind to stable CUDA streams in the worker. Native task and
 physical-reuse dependencies insert stream waits; independent lanes can overlap.
@@ -478,15 +500,12 @@ profiled = apply_profiles(program, profiles)
 plan = plan_program(
     profiled,
     memory_budgets=MemoryBudgets(execution_bytes=60 << 30, spill_bytes=96 << 30),
-    communication_info=CommunicationInfo(
-        fetch_bytes_per_second=25e9, evict_bytes_per_second=25e9,
-        topology={"node0": tuple(range(8))},
-        scale_up_bytes_per_second=300e9, scale_up_latency_seconds=2e-6,
-    ),
+    communication_info=CommunicationInfo.load("communication.ssp"),
 )
 ```
 
-These rates are illustrative. The shared schedule describes one symmetric rank
+The communication archive may contain calibration or explicit simulation estimates.
+The shared schedule describes one symmetric rank
 and uses the slowest corresponding group instance's transfer cost. Memory and
 traffic totals are **per rank**, not summed over the job. These distributed Plans
 are currently simulation-only: communicator resources, distributed allocation
@@ -528,7 +547,8 @@ execution. Collectives and communicator memory still require separate qualificat
 CommunicationInfo accepts flat scale-up/scale-out rates and latencies plus
 `measurements`, a sequence of plain mappings. An observation contains
 `operation` (`all_gather`, `reduce_scatter`, or `all_reduce`), ordered `ranks`,
-`tensor_bytes`, `dtype`, `duration_seconds`, hardware/runtime `setup`, and `topology`.
+`tensor_bytes`, `dtype`, optional `duration_seconds`/`memory`, hardware/runtime
+`setup`, and `topology`.
 For gather/scatter, tensor bytes are the **padded full output/input**, not the
 local shard. Exact operation, membership/order, size, dtype, setup and topology
 must match. The latest matching observation wins. Uncovered cases use a flat-ring

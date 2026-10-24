@@ -10,10 +10,8 @@ import torch
 from torch import nn
 
 from shadowspill import (
-    CommunicationInfo,
     MemoryBudgets,
     Parallelism,
-    TaskProfile,
     apply_profiles,
     build_step,
     measure_program,
@@ -56,15 +54,12 @@ def test_step_build_measure_plan_and_local_owned_updates(
     assert program.bindings["distributed_training_lowered"] == "step"
     check_shard_loading(program)
     profiles = measure_program(program, warmup_seconds=0.001, measure_seconds=0.002)
-    for key in program.bindings["collective_tasks"]:
-        profiles.tasks[key] = TaskProfile(workspace_bytes=0)
     profiled = apply_profiles(program, profiles)
-    info = CommunicationInfo(
-        20e9,
-        20e9,
+    from tests.shadowspill.offline._communication import estimated_communication
+
+    info = estimated_communication(
+        program,
         topology={"node": (0, 1, 2, 3)},
-        scale_up_bytes_per_second=100e9,
-        scale_up_latency_seconds=2e-6,
     )
     for ordering in ("tail", "stage_interleaved"):
         plan = plan_program(

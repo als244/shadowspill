@@ -49,7 +49,7 @@ def plot_plan(plan: Plan, path: Path) -> None:
     points = plan.timeline.memory_timeline
     times = [item.time_ns / 1e6 for item in points]
     device = plan.program.devices[0].device_id
-    overhead = plan.profiled_program.fixed_device_bytes
+    overhead = plan.fixed_device_bytes
     if points:
         gpu = [
             dict(item.device_object_bytes)[device]

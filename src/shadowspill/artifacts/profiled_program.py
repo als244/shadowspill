@@ -7,6 +7,7 @@ from dataclasses import dataclass, replace
 from types import MappingProxyType
 from typing import TYPE_CHECKING, Any, ClassVar
 
+from shadowspill.communication.memory import collective_memory
 from shadowspill.communication.task_costs import task_collective_cost, task_collectives
 from shadowspill.ir import ShadowSpillProgram, TaskResourcePhase
 from shadowspill.ir import TaskProfile as CostedTaskProfile
@@ -47,8 +48,8 @@ class ProfiledProgram(Artifact):
                 raise ValueError(
                     f"{key}: collective timing belongs to CommunicationInfo"
                 )
-            if profile.workspace_bytes is None or (
-                profile.duration_seconds is None and key not in communication
+            if key not in communication and (
+                profile.workspace_bytes is None or profile.duration_seconds is None
             ):
                 raise ValueError(f"incomplete applied profile: {key}")
         object.__setattr__(
@@ -77,6 +78,8 @@ class ProfiledProgram(Artifact):
         if self.metadata.get("memory_kind", "estimated") == "estimated":
             result.append("fixed device overhead")
         for key, item in self.task_profiles.items():
+            if item.workspace_bytes is None:
+                continue  # Explicit communication memory is bound during planning.
             if item.metadata.get("memory_kind", "estimated") == "estimated":
                 result.append(key)
         return tuple(result)
@@ -113,8 +116,14 @@ class ProfiledProgram(Artifact):
             cost = task_collective_cost(
                 requests, communication_info, self.program.setup
             )
-            workspace = self.task_profiles[key].workspace_bytes
-            assert workspace is not None
+            profile = self.task_profiles[key]
+            workspace, _ = collective_memory(
+                requests,
+                communication_info,
+                self.program.setup,
+                fallback_bytes=profile.workspace_bytes,
+                fallback_kind=profile.metadata.get("memory_kind", "estimated"),
+            )
             profiles.append(
                 CostedTaskProfile(
                     key,

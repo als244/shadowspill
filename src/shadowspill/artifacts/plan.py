@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from dataclasses import dataclass
+from functools import cached_property
 from typing import TYPE_CHECKING, Any, ClassVar
 
 from shadowspill.ir import MemorySchedule, ShadowSpillProgram, TaskAlternativeChoice
@@ -51,7 +52,7 @@ class Plan(Artifact):
             if self.profiled_program.estimated_memory:
                 raise ValueError("estimated memory cannot carry a physical layout")
             if (
-                layout.required_bytes + self.profiled_program.fixed_device_bytes
+                layout.required_bytes + self.fixed_device_bytes
                 > self.memory_budgets.execution_bytes
             ):
                 raise ValueError("physical layout exceeds the total GPU allowance")
@@ -73,6 +74,35 @@ class Plan(Artifact):
     def program(self) -> Program:
         return self.profiled_program.program
 
+    @cached_property
+    def _communication_memory(self) -> tuple[int, tuple[str, ...]]:
+        from shadowspill.communication.memory import (
+            collective_memory,
+            communication_overhead,
+        )
+        from shadowspill.communication.task_costs import task_collectives
+
+        fixed, overhead_reasons = communication_overhead(
+            self.program, self.communication_info
+        )
+        reasons = list(overhead_reasons)
+        for key, requests in task_collectives(self.program).items():
+            profile = self.profiled_program.task_profiles[key]
+            _, task_reasons = collective_memory(
+                requests,
+                self.communication_info,
+                self.program.setup,
+                fallback_bytes=profile.workspace_bytes,
+                fallback_kind=profile.metadata.get("memory_kind", "estimated"),
+            )
+            reasons.extend(task_reasons)
+        return fixed, tuple(dict.fromkeys(reasons))
+
+    @property
+    def fixed_device_bytes(self) -> int:
+        """Compute/provider overhead plus communication resources and reserves."""
+        return self.profiled_program.fixed_device_bytes + self._communication_memory[0]
+
     @property
     def simulation_only_reasons(self) -> tuple[str, ...]:
         reasons = tuple(
@@ -83,6 +113,7 @@ class Plan(Artifact):
         missing_code = not self.program.executables
         return (
             *reasons,
+            *self._communication_memory[1],
             *(
                 ("distributed execution resources are not yet certified",)
                 if self.program.parallelism is not None
@@ -134,7 +165,9 @@ class Plan(Artifact):
         return {
             "duration_seconds": result.makespan_ns / 1e9,
             "execution_peak_bytes": max(p.total_bytes for p in result.device_peaks)
-            + self.profiled_program.fixed_device_bytes,
+            + self.fixed_device_bytes,
+            "fixed_device_bytes": self.fixed_device_bytes,
+            "communication_fixed_bytes": self._communication_memory[0],
             "spill_peak_bytes": result.spill_peak_bytes,
             **volumes,
             "simulation_only": bool(self.simulation_only_reasons),

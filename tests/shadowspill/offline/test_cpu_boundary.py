@@ -46,8 +46,9 @@ class NoExecutionImports(importlib.abc.MetaPathFinder):
         if any(name == item or name.startswith(item + '.') for item in blocked):
             raise AssertionError('Offline pipeline imported ' + name)
 sys.meta_path.insert(0, NoExecutionImports())
-from shadowspill import (Plan, Profiles, TaskProfile, Parallelism, ParameterStorage,
-                         Sharded, apply_profiles, plan_program, write_report)
+from shadowspill import (CommunicationInfo, Plan, Profiles, TaskProfile,
+                         Parallelism, ParameterStorage, Sharded,
+                         apply_profiles, plan_program, write_report)
 from shadowspill.parallelism.resolve import ParameterGeometry, resolve_parameters
 from shadowspill.planner import GenericPlanningOptions, SearchOptions
 from shadowspill.planning.shared import shared_memory

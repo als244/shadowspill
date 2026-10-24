@@ -66,7 +66,7 @@ def shared_memory(primary: Plan, plans: Mapping[str, Plan]) -> SharedMemory:
         if layout is not None
     )
     unique = {plan.program.digest: plan for plan in named.values()}
-    overhead = sum(plan.profiled_program.fixed_device_bytes for plan in unique.values())
+    overhead = sum(plan.fixed_device_bytes for plan in unique.values())
     execution = fixed + dynamic + overhead
     spill = _spill_bytes(paths, mappings)
     if execution > primary.memory_budgets.execution_bytes:

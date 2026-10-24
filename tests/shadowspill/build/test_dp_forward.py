@@ -54,11 +54,11 @@ class CPUOnly(importlib.abc.MetaPathFinder):
 sys.meta_path.insert(0, CPUOnly())
 from shadowspill import (ProfiledProgram, CommunicationInfo, MemoryBudgets,
                         plan_program, write_report)
+from tests.shadowspill.offline._communication import estimated_communication
 profiled = ProfiledProgram.load(sys.argv[1])
 plan = plan_program(profiled, memory_budgets=MemoryBudgets(1 << 30, 1 << 20),
-    communication_info=CommunicationInfo(25e9, 25e9,
-        topology={'node0': tuple(range(8))}, scale_up_bytes_per_second=300e9,
-        scale_up_latency_seconds=2e-6))
+    communication_info=estimated_communication(profiled.program, bandwidth=25e9,
+        topology={'node0': tuple(range(8))}, scale_up_bytes_per_second=300e9))
 assert plan.summary['logical_ranks'] == 8
 assert plan.summary['simulation_only']
 assert plan.memory_layout is None

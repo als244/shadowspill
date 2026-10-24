@@ -16,25 +16,22 @@ class CPUOnly(importlib.abc.MetaPathFinder):
 sys.meta_path.insert(0, CPUOnly())
 
 from shadowspill import (  # noqa: E402
-    CommunicationInfo,
     MemoryBudgets,
     Plan,
     ProfiledProgram,
     plan_program,
     write_report,
 )
+from tests.shadowspill.offline._communication import estimated_communication  # noqa: E402
 
 profiled = ProfiledProgram.load(sys.argv[1])
 world = profiled.program.parallelism.world_size
 plan = plan_program(
     profiled,
     memory_budgets=MemoryBudgets(profiled.fixed_device_bytes + (8 << 20), 8 << 20),
-    communication_info=CommunicationInfo(
-        20e9,
-        20e9,
+    communication_info=estimated_communication(
+        profiled.program,
         topology={"node": tuple(range(world))},
-        scale_up_bytes_per_second=100e9,
-        scale_up_latency_seconds=2e-6,
     ),
 )
 destination = Path(sys.argv[2])

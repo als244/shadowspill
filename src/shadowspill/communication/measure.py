@@ -19,6 +19,7 @@ from .binding.ranks import RankAssignment
 from .host import measure_host_copies
 from .info import CommunicationInfo
 from .measure_collectives import measure_collectives
+from .memory_session import CommunicationMemory
 from .requests import CollectiveRequest, collective_requests
 
 
@@ -38,8 +39,9 @@ def measure_communication(
     Distributed calls run on every worker after caller-owned rendezvous, with
     the same full worker-to-logical rank_map. Workers concurrently measure host
     copies, then each requested group separately. Every worker receives the same
-    result. Exact collective observations do not imply a general interconnect
-    bandwidth or qualify communicator memory for execution.
+    result. Collective allocation evidence and retained communicator bytes are
+    recorded separately from timing. External transient scratch is not observed;
+    recording measurements alone does not qualify distributed execution.
 
     collectives replaces derived requests; [] selects host copies only. Each
     entry has operation, ordered logical ranks, tensor_bytes and dtype. Bytes
@@ -51,6 +53,7 @@ def measure_communication(
     requests: tuple[CollectiveRequest, ...] = ()
     identity, failure = "", None
     bindings = None
+    memory = None
     try:
         sizes = tuple(sorted(set(sizes_bytes)))
         if len(sizes) < 2 or any(type(size) is not int or size <= 0 for size in sizes):
@@ -84,6 +87,8 @@ def measure_communication(
             raise ValueError(
                 "Program build setup does not match this calibration GPU/runtime"
             )
+        if requests:
+            memory = CommunicationMemory(target)
         identity = digest(
             {
                 "program": None if program is None else program.digest,
@@ -132,7 +137,17 @@ def measure_communication(
                 options=options,
                 bindings=bindings,
             )
-        return replace(result, measurements=measurements)
+            fixed, memory_metadata = (
+                memory.finish(bindings, requests, setup)
+                if memory is not None
+                else (0, {"memory_kind": "static"})
+            )
+        return replace(
+            result,
+            measurements=measurements,
+            fixed_device_bytes=fixed,
+            metadata={**result.metadata, **memory_metadata},
+        )
     finally:
         if bindings is not None:
             bindings.close()

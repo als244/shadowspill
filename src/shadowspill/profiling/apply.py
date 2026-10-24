@@ -17,8 +17,8 @@ def apply_profiles(program: Program, profiles: Profiles) -> ProfiledProgram:
     Static workspace/overhead may come from build. A supplied workspace can
     exceed a static bound but cannot erase compiler-visible memory. Estimates
     remain explicit and do not qualify an artifact for execution.
-    Explicit framework collectives get their durations from CommunicationInfo
-    during planning; they still require complete workspace information here.
+    Explicit framework collectives can defer both timing and workspace to
+    CommunicationInfo during planning. No process group is needed here.
     """
     profiles = Profiles.from_dict(profiles.to_dict())
     if program.setup and freeze(program.setup) != freeze(profiles.setup):
@@ -66,7 +66,10 @@ def apply_profiles(program: Program, profiles: Profiles) -> ProfiledProgram:
                 f"{key}: workspace is smaller than compiler-visible memory"
             )
         if workspace is None:
-            missing.append(f"{key}: workspace_bytes")
+            if key in communication:
+                metadata["memory_source"] = "communication_info"
+            else:
+                missing.append(f"{key}: workspace_bytes")
         applied[key] = replace(
             record,
             workspace_bytes=workspace,

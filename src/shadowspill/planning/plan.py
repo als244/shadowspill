@@ -8,6 +8,7 @@ from typing import TYPE_CHECKING, Literal
 from shadowspill.artifacts.plan import Plan
 from shadowspill.artifacts.profiled_program import ProfiledProgram
 from shadowspill.communication import CommunicationInfo
+from shadowspill.communication.memory import communication_overhead
 from shadowspill.errors import PlanInfeasibleError
 
 from .admission.program import caller_output_aliases, program_admission
@@ -84,7 +85,11 @@ def _plan_bound(
 ) -> Plan:
     costed, config = simulation_inputs(program, memory_budgets, communication_info)
     facts = program_admission(
-        program, costed, memory_budgets.execution_bytes - program.fixed_device_bytes
+        program,
+        costed,
+        memory_budgets.execution_bytes
+        - program.fixed_device_bytes
+        - communication_overhead(program.program, communication_info)[0],
     )
     result = options.resolved_algorithm(
         costed,
