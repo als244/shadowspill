@@ -17,7 +17,7 @@ from shadowspill.task.manifest import ExecutableRootAllocation
 from ...partition import PartitionedExport
 from ..profiles import TaskProfileCatalog
 from ..program import execution_device_id, publish_program
-from .artifacts import ForwardPhysicalLayout, LoweredForwardProgram
+from .artifacts import ForwardTaskGeometry, LoweredForwardProgram
 from .objects import register_forward_objects
 from .residency import derive_forward_residency, finalize_forward_shared_residency
 from .tasks import emit_forward_tasks
@@ -40,7 +40,7 @@ def lower_partitioned_forward_program(
 ) -> LoweredForwardProgram:
     """Create one deterministic canonical program from forward task positions."""
 
-    physical = resolve_forward_profiles(
+    physical, profiles = resolve_forward_profiles(
         partitioned,
         artifacts,
         measurements,
@@ -72,7 +72,7 @@ def lower_partitioned_forward_program(
     return LoweredForwardProgram(
         publish_program(
             objects.catalog,
-            physical.profiles,
+            profiles,
             graph.tasks,
             device_ordinal=device_ordinal,
         ),
@@ -97,7 +97,7 @@ def resolve_forward_profiles(
     compiled_root_allocations: Mapping[str, tuple[ExecutableRootAllocation, ...]]
     | None,
     profile_compatibility_digests: tuple[str, ...] | None,
-) -> ForwardPhysicalLayout:
+) -> tuple[ForwardTaskGeometry, TaskProfileCatalog]:
     occurrence_keys, profile_digests = _forward_profile_identities(
         partitioned,
         artifacts,
@@ -112,19 +112,20 @@ def resolve_forward_profiles(
         storage_contracts=storage_contracts,
         compiled_root_allocations=compiled_root_allocations,
     )
-    return ForwardPhysicalLayout(
+    geometry = ForwardTaskGeometry(
         tuple(profiles.contract(artifact) for artifact in artifacts),
         tuple(
-            profiles.layout(artifact, occurrence_key)
+            profiles.layout(artifact, occurrence_key).geometry
             for artifact, occurrence_key in zip(
                 artifacts,
                 occurrence_keys,
                 strict=True,
             )
         ),
-        profiles,
         _forward_profile_ids(profiles, artifacts, occurrence_keys),
+        profiles.control_profile_id(),
     )
+    return geometry, profiles
 
 
 def _forward_profile_identities(

@@ -10,6 +10,7 @@ except PackageNotFoundError:  # pragma: no cover - source tree without install
     __version__ = "0.1.0.dev0"
 
 _PUBLIC = {
+    "build_forward": "build.forward",
     "Program": "artifacts",
     "Profiles": "artifacts",
     "ProfiledProgram": "artifacts",

@@ -96,10 +96,16 @@ class ProfiledProgram(Artifact):
     def to_dict(self) -> dict[str, Any]:
         return {"program": self.program.to_dict(), "profiles": self.profiles.to_dict()}
 
+    def _archive_payloads(self) -> Mapping[str, bytes]:
+        return self.program._archive_payloads()
+
     @classmethod
-    def from_dict(cls, value: dict[str, Any]) -> ProfiledProgram:
+    def from_dict(
+        cls, value: dict[str, Any], *, payloads: Mapping[str, bytes] | None = None
+    ) -> ProfiledProgram:
         from shadowspill.profiling.apply import apply_profiles
 
         return apply_profiles(
-            Program.from_dict(value["program"]), Profiles.from_dict(value["profiles"])
+            Program.from_dict(value["program"], payloads=payloads),
+            Profiles.from_dict(value["profiles"]),
         )

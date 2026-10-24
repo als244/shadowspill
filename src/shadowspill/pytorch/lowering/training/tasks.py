@@ -78,7 +78,9 @@ class _TrainingTaskEmitter:
         self.profiles = profiles
         self.device_id = device_id
 
-        self.tasks: list[TaskSpec] = [invocation_start(profiles, device_id)]
+        self.tasks: list[TaskSpec] = [
+            invocation_start(profiles.control_profile_id(), device_id)
+        ]
         self.entrypoints: list[TaskEntrypoint] = []
         self.executables: dict[str, GraphArtifact | OptimizerTaskArtifact | None] = {}
         self.forward_ids: dict[tuple[int, int, str], str] = {}
@@ -682,7 +684,7 @@ class _OptimizerTaskAppender:
                 inventory.catalog,
                 component.artifact,
                 inputs,
-                profiles.layout(component.artifact, None),
+                profiles.layout(component.artifact, None).geometry,
                 storage_contract=profiles.contract(component.artifact),
             )
             slots = tuple(

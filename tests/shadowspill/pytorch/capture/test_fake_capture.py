@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import pytest
 import torch
 import torch.nn as nn
 from torch._subclasses.fake_tensor import FakeTensor, FakeTensorMode
@@ -18,8 +19,10 @@ class _AliasedModule(nn.Module):
         self.register_buffer("window", base[1:5])
 
 
-def test_fake_model_preserves_registration_and_storage_aliases() -> None:
-    model = _AliasedModule()
+@pytest.mark.parametrize("device", ["cpu", "meta"])
+def test_fake_model_preserves_registration_and_storage_aliases(device) -> None:
+    with torch.device(device):
+        model = _AliasedModule()
     mode = FakeTensorMode(allow_non_fake_inputs=True)
     replica = fake_device_model(model, mode)
     assert isinstance(replica.left, FakeTensor)

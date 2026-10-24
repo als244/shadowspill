@@ -36,11 +36,11 @@ def fake_device_model(
         for path, component in tensor_components(value)
     ):
         if tensor.layout is not torch.strided or (
-            tensor.device.type != "cpu"
-            and (tensor.is_meta or tensor.untyped_storage().nbytes())
+            tensor.device.type not in {"cpu", "meta"}
+            and tensor.untyped_storage().nbytes()
         ):
             raise CaptureError(
-                f"registered tensor {name!r} must be a strided CPU tensor"
+                f"registered tensor {name!r} must be a strided CPU or meta tensor"
             )
         storage = tensor.untyped_storage()
         groups.setdefault((int(storage._cdata), int(storage.nbytes())), []).append(

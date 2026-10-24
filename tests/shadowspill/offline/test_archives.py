@@ -1,5 +1,6 @@
 import json
 import zipfile
+from dataclasses import replace
 
 import pytest
 
@@ -52,6 +53,35 @@ def test_archive_rejects_wrong_kind_and_corrupt_payload(tmp_path):
         archive.writestr("artifact.json", "{}")
     with pytest.raises(ValueError, match="checksum"):
         type(program()).load(path)
+
+
+def test_nested_payloads_are_packed_once_and_checked(tmp_path):
+    source = profiled()
+    source = replace(
+        source,
+        program=replace(source.program, executables={"one": b"code", "two": b"code"}),
+    )
+    sweep = sweep_programs(
+        {"a": source, "b": source},
+        memory_budgets=[MemoryBudgets(100, 64)],
+        communication_info=communication(),
+        search_options=options(),
+    )
+    path = tmp_path / "sweep.ssp"
+    sweep.save(path)
+    restored = type(sweep).load(path)
+    assert restored.to_dict() == sweep.to_dict()
+    assert restored._archive_payloads() == sweep._archive_payloads()
+    with zipfile.ZipFile(path) as archive:
+        contents = {name: archive.read(name) for name in archive.namelist()}
+    blobs = [name for name in contents if name.startswith("blobs/")]
+    assert len(blobs) == 1
+    contents[blobs[0]] = b"wrong"
+    with zipfile.ZipFile(path, "w") as archive:
+        for name, value in contents.items():
+            archive.writestr(name, value)
+    with pytest.raises(ValueError, match="binary payload checksum"):
+        type(sweep).load(path)
 
 
 def test_report_from_restored_plan_has_numeric_rows_and_figures(tmp_path):

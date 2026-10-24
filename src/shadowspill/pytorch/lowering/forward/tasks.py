@@ -16,7 +16,7 @@ from shadowspill.ir import (
 from shadowspill.pytorch.capture.artifacts import GraphArtifact
 from shadowspill.pytorch.capture.storage import TaskStorageContract
 from shadowspill.task.entrypoints import TaskEntrypoint, TaskOptions
-from shadowspill.task.layout import CompiledTaskLayout
+from shadowspill.task.geometry import TaskStorageGeometry
 from shadowspill.task.slots import ObjectSlot
 
 from ...partition import PartitionedExport, StageExample
@@ -25,7 +25,7 @@ from ..program import invocation_start
 from ..task_binding import TaskBindingResolver, resolve_stage_input_slots
 from .artifacts import (
     ForwardObjects,
-    ForwardPhysicalLayout,
+    ForwardTaskGeometry,
     ForwardTaskGraph,
 )
 
@@ -34,7 +34,7 @@ def emit_forward_tasks(
     partitioned: PartitionedExport,
     artifacts: tuple[GraphArtifact, ...],
     objects: ForwardObjects,
-    physical: ForwardPhysicalLayout,
+    physical: ForwardTaskGeometry,
     *,
     device_id: str,
 ) -> ForwardTaskGraph:
@@ -53,7 +53,7 @@ class _ForwardTaskEmitter:
         partitioned: PartitionedExport,
         artifacts: tuple[GraphArtifact, ...],
         objects: ForwardObjects,
-        physical: ForwardPhysicalLayout,
+        physical: ForwardTaskGeometry,
         *,
         device_id: str,
     ) -> None:
@@ -62,7 +62,9 @@ class _ForwardTaskEmitter:
         self.objects = objects
         self.physical = physical
         self.device_id = device_id
-        self.tasks: list[TaskSpec] = [invocation_start(physical.profiles, device_id)]
+        self.tasks: list[TaskSpec] = [
+            invocation_start(physical.control_profile_id, device_id)
+        ]
         self.entrypoints: list[TaskEntrypoint] = []
         self.executables: dict[str, GraphArtifact] = {}
         self.produced_aliases: set[str] = set()
@@ -96,7 +98,7 @@ class _ForwardTaskEmitter:
             StageExample,
             GraphArtifact,
             TaskStorageContract,
-            CompiledTaskLayout,
+            TaskStorageGeometry,
             str,
         ]
     ]:
@@ -115,7 +117,7 @@ class _ForwardTaskEmitter:
         stage: StageExample,
         artifact: GraphArtifact,
         contract: TaskStorageContract,
-        layout: CompiledTaskLayout,
+        layout: TaskStorageGeometry,
         profile_id: str,
     ) -> None:
         input_slots = self._stage_inputs(stage, artifact)

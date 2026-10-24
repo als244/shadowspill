@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from collections.abc import Callable, Mapping
 from dataclasses import asdict, dataclass, field
+from hashlib import sha256
+from types import MappingProxyType
 from typing import Any, ClassVar
 
 from shadowspill.ir import (
@@ -67,6 +69,8 @@ class Program(Artifact):
     sources: Mapping[str, Any] = field(default_factory=dict)
     fixed_device_bytes: int | None = None
     memory_estimated: bool = False
+    executables: Mapping[str, bytes] = field(default_factory=dict, repr=False)
+    bindings: Mapping[str, Any] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
         require_shapes(self)
@@ -89,6 +93,12 @@ class Program(Artifact):
             nonnegative_int(self.fixed_device_bytes, "fixed_device_bytes")
         object.__setattr__(self, "setup", freeze(self.setup))
         object.__setattr__(self, "sources", freeze(self.sources))
+        if any(not isinstance(value, bytes) for value in self.executables.values()):
+            raise TypeError("executable payloads must be immutable bytes")
+        object.__setattr__(
+            self, "executables", MappingProxyType(dict(self.executables))
+        )
+        object.__setattr__(self, "bindings", freeze(self.bindings))
 
     @property
     def digest(self) -> str:
@@ -114,10 +124,20 @@ class Program(Artifact):
             "sources": plain(self.sources),
             "fixed_device_bytes": self.fixed_device_bytes,
             "memory_estimated": self.memory_estimated,
+            "executables": {
+                key: sha256(value).hexdigest()
+                for key, value in self.executables.items()
+            },
+            "bindings": plain(self.bindings),
         }
 
+    def _archive_payloads(self) -> Mapping[str, bytes]:
+        return {sha256(value).hexdigest(): value for value in self.executables.values()}
+
     @classmethod
-    def from_dict(cls, value: dict[str, Any]) -> Program:
+    def from_dict(
+        cls, value: dict[str, Any], *, payloads: Mapping[str, bytes] | None = None
+    ) -> Program:
         records: dict[str, Callable[[object, str], Any]] = {
             "devices": DeviceSpec.from_value,
             "alias_groups": AliasGroupSpec.from_value,
@@ -136,4 +156,11 @@ class Program(Artifact):
         data["task_definitions"] = tuple(
             TaskDefinition(**item) for item in data["task_definitions"]
         )
+        try:
+            data["executables"] = {
+                key: (payloads or {})[checksum]
+                for key, checksum in data.get("executables", {}).items()
+            }
+        except KeyError as error:
+            raise ValueError("program executable payload is missing") from error
         return cls(**data)

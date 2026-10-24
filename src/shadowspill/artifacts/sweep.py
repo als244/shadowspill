@@ -56,8 +56,18 @@ class SweepResult(Artifact):
             ]
         }
 
+    def _archive_payloads(self) -> Mapping[str, bytes]:
+        return {
+            key: value
+            for case in self.cases
+            if case.plan is not None
+            for key, value in case.plan._archive_payloads().items()
+        }
+
     @classmethod
-    def from_dict(cls, value: dict[str, Any]) -> SweepResult:
+    def from_dict(
+        cls, value: dict[str, Any], *, payloads: Mapping[str, bytes] | None = None
+    ) -> SweepResult:
         from shadowspill.planning.budgets import MemoryBudgets
 
         return cls(
@@ -65,7 +75,9 @@ class SweepResult(Artifact):
                 SweepCase(
                     item["candidate"],
                     MemoryBudgets(**item["memory_budgets"]),
-                    None if item["plan"] is None else Plan.from_dict(item["plan"]),
+                    None
+                    if item["plan"] is None
+                    else Plan.from_dict(item["plan"], payloads=payloads),
                     item["failure"],
                 )
                 for item in value["cases"]

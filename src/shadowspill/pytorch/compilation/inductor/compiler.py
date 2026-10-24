@@ -62,6 +62,7 @@ def task_compiler_patches() -> dict[str, Any]:
         patches["deterministic"] = True
     return patches
 
+
 _GRAPH_LOWERING_CAPTURE_LOCK = threading.Lock()
 _COMPILATION_PHASE_ORDER = (
     "shadowspill_compiler_input_setup",
@@ -85,6 +86,7 @@ class _ManifestCompiler:
     manifests: list[ExecutableTaskManifest]
     canonicalize_input_aliases: bool
     phase_timings: dict[str, int] | None
+    on_lowering: Callable[[GraphLowering], None] | None = None
 
     def __call__(
         self,
@@ -99,6 +101,9 @@ class _ManifestCompiler:
         compiled, graph_lowerings = self._compile_graph(
             optimized_graph, optimized_inputs, options
         )
+        if self.on_lowering is not None:
+            for lowering in graph_lowerings:
+                self.on_lowering(lowering)
         cache_key = self._capture_cache_key(compiled)
         self._publish_manifest(
             cache_key,
@@ -277,6 +282,7 @@ def _manifest_inner_compile(
     *,
     canonicalize_input_aliases: bool = False,
     phase_timings: dict[str, int] | None = None,
+    on_lowering: Callable[[GraphLowering], None] | None = None,
 ) -> Callable[..., object]:
     """Return the compiler callback that publishes one physical contract."""
 
@@ -285,4 +291,5 @@ def _manifest_inner_compile(
         manifests,
         canonicalize_input_aliases,
         phase_timings,
+        on_lowering,
     )

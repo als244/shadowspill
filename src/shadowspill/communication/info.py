@@ -55,5 +55,9 @@ class CommunicationInfo(Artifact):
         }
 
     @classmethod
-    def from_dict(cls, value: dict[str, Any]) -> CommunicationInfo:
+    def from_dict(
+        cls, value: dict[str, Any], *, payloads: Mapping[str, bytes] | None = None
+    ) -> CommunicationInfo:
+        if payloads:
+            raise ValueError("CommunicationInfo cannot contain executable payloads")
         return cls(**value)

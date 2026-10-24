@@ -135,7 +135,7 @@ def _bind_canonical_stage_boundary(
         catalog,
         pair.forward,
         inputs,
-        profiles.layout(pair.forward, metadata_digest),
+        profiles.layout(pair.forward, metadata_digest).geometry,
         storage_contract=profiles.contract(pair.forward),
     )
     ids: list[str] = []
@@ -486,7 +486,7 @@ def _stage_forward_outputs(
         inventory,
         pair.forward,
         forward_inputs,
-        compiled_layout,
+        compiled_layout.geometry,
         storage_contract=storage_contract,
     )
     internal_root_ids = frozenset(
@@ -606,7 +606,7 @@ def _stage_backward_contributions(
         inventory,
         pair.backward,
         backward_inputs,
-        compiled_layout,
+        compiled_layout.geometry,
         storage_contract=storage_contract,
     )
     output_leaves = {item.leaf_index for item in storage_contract.output_views}

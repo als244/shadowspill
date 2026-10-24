@@ -16,13 +16,13 @@ from .catalog import ObjectCatalog
 from .profiles import TaskProfileCatalog
 
 
-def invocation_start(profiles: TaskProfileCatalog, device_id: str) -> TaskSpec:
+def invocation_start(profile_id: str, device_id: str) -> TaskSpec:
     """An ordinary control task that can trigger fetches before computation."""
 
     return TaskSpec(
         "task_000000",
         ResourceSpec(device_id, ResourceKind.CONTROL),
-        profiles.control_profile_id(),
+        profile_id,
         requires_entrypoint=False,
         phase="control",
     )
