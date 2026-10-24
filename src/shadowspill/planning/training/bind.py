@@ -8,6 +8,7 @@ from shadowspill.artifacts.program import Program
 from shadowspill.ir import MemoryLocation, ResidencySpec
 from shadowspill.step.ordering import StepDataOrdering
 
+from .identity import canonicalize_tasks
 from .optimizer import place_optimizer
 from .tasks import assemble_training
 
@@ -52,6 +53,7 @@ def bind_training(
         aliases=aliases,
         device_id=program.devices[0].device_id,
     )
+    task_names = canonicalize_tasks(sequence)
     initial = {item.alias_group_id: item for item in program.initial_residency}
     for value in gradients:
         alias = aliases[value]
@@ -67,6 +69,7 @@ def bind_training(
         bindings={
             **plain(program.bindings),
             "entrypoints": sequence.entrypoints,
+            "task_names": task_names,
             "transient_outputs": sequence.transient_outputs,
             "ordering": ordering.to_dict(),
             "accumulate_gradients": accumulate,

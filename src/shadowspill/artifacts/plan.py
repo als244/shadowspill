@@ -15,6 +15,8 @@ from .program import Program
 
 if TYPE_CHECKING:
     from shadowspill.communication import CommunicationInfo
+    from shadowspill.planner.admission import AdmissionFacts
+    from shadowspill.planner.admission.layout import FixedPhysicalLayout
     from shadowspill.planner.diagnostics import PlanningDiagnostics
     from shadowspill.planning.budgets import MemoryBudgets
 
@@ -30,7 +32,28 @@ class Plan(Artifact):
     timeline: SimulationResult
     diagnostics: PlanningDiagnostics
     _costed_program: ShadowSpillProgram
-    memory_layout: None = None
+    memory_layout: FixedPhysicalLayout | None = None
+    _admission_facts: AdmissionFacts | None = None
+
+    def __post_init__(self) -> None:
+        layout, facts = self.memory_layout, self._admission_facts
+        if (layout is None) != (facts is None):
+            raise ValueError("physical layout and admission facts must travel together")
+        if layout is not None:
+            assert facts is not None
+            if (
+                layout.program_digest != self._costed_program.digest
+                or layout.schedule_digest != self.schedule.digest
+                or layout.facts_digest != facts.digest
+            ):
+                raise ValueError("physical layout belongs to different plan inputs")
+            if self.profiled_program.estimated_memory:
+                raise ValueError("estimated memory cannot carry a physical layout")
+            if (
+                layout.required_bytes + self.profiled_program.fixed_device_bytes
+                > self.memory_budgets.execution_bytes
+            ):
+                raise ValueError("physical layout exceeds the total GPU allowance")
 
     @property
     def program(self) -> Program:
@@ -47,7 +70,11 @@ class Plan(Artifact):
         return (
             *reasons,
             *(("executable task payloads absent",) if missing_code else ()),
-            "physical allocation evidence absent",
+            *(
+                ("physical allocation evidence absent",)
+                if self.memory_layout is None
+                else ()
+            ),
         )
 
     @property
@@ -85,6 +112,12 @@ class Plan(Artifact):
             "timeline": simulation_result_value(self.timeline),
             "diagnostics": self.diagnostics.to_dict(),
             "costed_program": self._costed_program.to_dict(),
+            "memory_layout": None
+            if self.memory_layout is None
+            else self.memory_layout.to_dict(),
+            "admission_facts": None
+            if self._admission_facts is None
+            else self._admission_facts.to_dict(),
         }
 
     def _archive_payloads(self) -> Mapping[str, bytes]:
@@ -95,8 +128,12 @@ class Plan(Artifact):
         cls, value: dict[str, Any], *, payloads: Mapping[str, bytes] | None = None
     ) -> Plan:
         from shadowspill.communication import CommunicationInfo
+        from shadowspill.planner.admission import AdmissionFacts
         from shadowspill.planner.diagnostics import PlanningDiagnostics
         from shadowspill.planner.serialization import _simulation_result_from_value
+        from shadowspill.planner.serialization.physical_layout import (
+            _fixed_layout_from_value,
+        )
         from shadowspill.planning.budgets import MemoryBudgets
 
         return cls(
@@ -111,4 +148,16 @@ class Plan(Artifact):
             _simulation_result_from_value(value["timeline"], "plan.timeline"),
             PlanningDiagnostics.from_value(value["diagnostics"], "plan.diagnostics"),
             ShadowSpillProgram.from_dict(value["costed_program"]),
+            (
+                None
+                if value.get("memory_layout") is None
+                else _fixed_layout_from_value(
+                    value["memory_layout"], "plan.memory_layout"
+                )
+            ),
+            (
+                None
+                if value.get("admission_facts") is None
+                else AdmissionFacts.from_dict(value["admission_facts"])
+            ),
         )

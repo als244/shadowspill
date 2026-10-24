@@ -10,6 +10,7 @@ from shadowspill.pytorch.lowering.training.artifacts import (
     TrainingObjects,
 )
 from shadowspill.pytorch.lowering.training.bindings import _prepare_stage_variant
+from shadowspill.task.storage import StorageRootKind
 
 from ..metadata import module_paths
 from .catalog import CompiledTasks
@@ -96,6 +97,8 @@ def _form(
                 mutation.replacement_output_leaf
                 for mutation in contract.mutations
                 if mutation.replacement_output_leaf is not None
+                and contract.roots[roots[mutation.replacement_output_leaf]].kind
+                is not StorageRootKind.INPUT
             ),
             "discarded": tuple(
                 view.leaf_index

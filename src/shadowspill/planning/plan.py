@@ -8,7 +8,9 @@ from typing import TYPE_CHECKING, Literal
 from shadowspill.artifacts.plan import Plan
 from shadowspill.artifacts.profiled_program import ProfiledProgram
 from shadowspill.communication import CommunicationInfo
+from shadowspill.errors import PlanInfeasibleError
 
+from .admission.program import caller_output_aliases, program_admission
 from .budgets import MemoryBudgets
 from .costs import simulation_inputs
 from .training.bind import bind_training
@@ -48,6 +50,9 @@ def plan_program(
         ),
     )
     costed, config = simulation_inputs(program, memory_budgets, communication_info)
+    facts = program_admission(
+        program, costed, memory_budgets.execution_bytes - program.fixed_device_bytes
+    )
     result = options.resolved_algorithm(
         costed,
         initial_residency=program.program.initial_residency,
@@ -55,14 +60,38 @@ def plan_program(
         config=config,
         generic=options.generic,
         workers=options.workers,
+        admission=facts,
+        placement=facts,
     )
+    layout = None
+    timeline = result.simulation
+    if facts is not None:
+        from shadowspill.planner.admission.layout import (
+            FixedLayoutInfeasibleError,
+            build_fixed_layout_admission,
+        )
+
+        try:
+            certified = build_fixed_layout_admission(
+                result, facts, dynamic_alias_group_ids=caller_output_aliases(costed)
+            )
+        except FixedLayoutInfeasibleError as error:
+            raise PlanInfeasibleError(
+                str(error),
+                kind="physical_layout",
+                required_bytes=error.required_bytes,
+                capacity_bytes=error.capacity_bytes,
+            ) from error
+        layout, timeline = certified.layout, certified.simulation
     return Plan(
         program,
         memory_budgets,
         communication_info,
         result.schedule,
         result.selections,
-        result.simulation,
+        timeline,
         result.diagnostics,
         costed,
+        layout,
+        facts,
     )

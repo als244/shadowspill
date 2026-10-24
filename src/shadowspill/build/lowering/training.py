@@ -10,6 +10,7 @@ from torch.utils._pytree import treespec_dumps
 
 from shadowspill.artifacts.program import Program
 from shadowspill.ir import DeviceSpec, MemoryLocation, Persistence, ResidencySpec
+from shadowspill.planning.training.identity import canonicalize_tasks
 from shadowspill.planning.training.optimizer import place_optimizer
 from shadowspill.planning.training.tasks import assemble_training
 from shadowspill.pytorch.lowering.training.bindings import bind_training_boundaries
@@ -70,6 +71,7 @@ def lower_training(
     sequence = place_optimizer(
         sequence, updates, ordering="tail", aliases=alias_by_object, device_id="cuda_0"
     )
+    task_names = canonicalize_tasks(sequence)
     initial, final = derive_training_residency(
         objects, boundaries, tuple(sequence.tasks)
     )
@@ -120,6 +122,7 @@ def lower_training(
             **optimizer_bindings,
             "kind": "forward_backward" if update is None else "step",
             "optimizer_templates": updates,
+            "task_names": task_names,
             "num_examples": len(captures),
             "training_templates": templates,
             "entrypoints": sequence.entrypoints,
