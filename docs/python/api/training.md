@@ -85,6 +85,27 @@ full-device snapshot. A checkpoint is separate from a Plan: the Plan describes
 computation/layout; the checkpoint supplies mutable values. Numerical qualification
 checks bitwise replay after restoring a checkpoint.
 
+For an immutable frozen base, construct `Trainer(plan, frozen_state_id="...")`.
+Checkpoints then omit unchanged frozen parameters. Trainable tensors, their
+compute weights and masters, optimizer state, persistent buffers and any mutated
+frozen parameters remain in the archive. The identity is supplied by the caller;
+use a checkpoint revision or content identity that also fixes model configuration.
+
+```python
+trainer = Trainer(plan, frozen_state_id="my-base-checkpoint-revision")
+trainer.initialize(fill_tensor)
+# ... train and save ...
+trainer.load("update.ssp", fill_tensor=fill_tensor)
+```
+
+The loader fills Executor-provided CPU chunks for omitted base parameters only.
+Restore requires the same identity and explicit loader, even in an initialized
+worker. Every retained tensor must come from the checkpoint; a missing adapter,
+buffer or optimizer tensor is an error. Older Programs without trainability
+metadata can still save full checkpoints, but must be rebuilt to omit frozen
+parameters. Named evaluation Plans remain read-only with respect to shared model
+tensors.
+
 ## Reuse preparation across budgets and processes
 
 Save Program and Profiles independently, or save a self-contained ProfiledProgram.

@@ -18,6 +18,7 @@ from shadowspill.pytorch.lowering.forward.tasks import emit_forward_tasks
 from ..capture import ForwardCapture
 from ..compilation import BuiltTask
 from ..metadata import (
+    model_registrations,
     model_tensor_geometry,
     module_paths,
     root_sources,
@@ -86,7 +87,7 @@ def lower_forward(
             **catalog.bindings(),
             "kind": "forward",
             "entrypoints": [asdict(item) for item in graph.entrypoints],
-            "registrations": [asdict(item) for item in objects.registrations],
+            "registrations": model_registrations(captured.model, objects.registrations),
             "model_tensor_geometry": model_tensor_geometry(
                 captured.model, objects.registrations
             ),

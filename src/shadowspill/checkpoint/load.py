@@ -7,12 +7,14 @@ import json
 import os
 import sys
 import zipfile
+from collections.abc import Callable
 from typing import TYPE_CHECKING, Any, cast
 
 import torch
 
 from shadowspill.execution.tensors import TensorChunk
 
+from .frozen import validate_restore
 from .tensors import byte_view, geometry, region_bytes
 
 if TYPE_CHECKING:
@@ -122,18 +124,35 @@ def load_checkpoint(
     path: str | os.PathLike[str],
     *,
     chunk_bytes: int = 64 << 20,
+    frozen_state_id: str | None = None,
+    fill_tensor: Callable[[TensorChunk, torch.Tensor], None] | None = None,
 ) -> dict[str, Any]:
     """Restore a checkpoint for the same Program and return caller metadata.
 
     Budgets and planning order may differ. Program identity and every requested
     tensor's geometry/bytes must match. A failure while filling tensors leaves
     Executor uninitialized. All persistent tensors, including CPU controls, load.
+    Partial checkpoints require the same frozen_state_id and a bounded loader
+    for the omitted base parameters, even when the Executor was initialized.
     """
     with zipfile.ZipFile(path) as archive:
         manifest = _manifest(archive, executor)
+        omitted = validate_restore(executor, manifest, frozen_state_id)
+        if omitted and fill_tensor is None:
+            raise ValueError(
+                "partial checkpoint requires fill_tensor for the frozen base"
+            )
         reader = _Reader(archive, manifest)
+
+        def fill(chunk: TensorChunk, tensor: torch.Tensor) -> None:
+            if chunk.name in omitted:
+                assert fill_tensor is not None
+                fill_tensor(chunk, tensor)
+            else:
+                reader.fill(chunk, tensor)
+
         try:
-            executor.initialize(reader.fill, chunk_bytes=chunk_bytes, restore=True)
+            executor.initialize(fill, chunk_bytes=chunk_bytes, restore=True)
         finally:
             reader.close()
         return dict(manifest["metadata"])

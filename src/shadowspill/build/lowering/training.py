@@ -24,7 +24,12 @@ from shadowspill.step.ordering import StepDataOrdering
 
 from ..compilation import BuiltTask
 from ..gradient_ops import GradientOperations
-from ..metadata import model_tensor_geometry, root_sources, signature_record
+from ..metadata import (
+    model_registrations,
+    model_tensor_geometry,
+    root_sources,
+    signature_record,
+)
 from ..optimizer import BuiltOptimizer
 from ..training_capture import TrainingCapture
 from .catalog import CompiledTasks
@@ -194,7 +199,7 @@ def lower_training(
             "entrypoints": sequence.entrypoints,
             "transient_outputs": sequence.transient_outputs,
             "gradients": [asdict(item) for item in objects.gradients],
-            "registrations": [asdict(item) for item in objects.registrations],
+            "registrations": model_registrations(captured.model, objects.registrations),
             "model_tensor_geometry": model_tensor_geometry(
                 captured.model, objects.registrations
             ),

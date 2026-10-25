@@ -10,6 +10,7 @@ from typing import Any, Self
 import torch
 
 from shadowspill.artifacts.plan import Plan
+from shadowspill.checkpoint.frozen import validate_identity
 from shadowspill.execution import Executor, TensorChunk, TrainingResult
 
 from . import _loop, _resume
@@ -40,6 +41,7 @@ class Trainer:
         device: int = 0,
         rank_map: Mapping[int, int] | None = None,
         external_headroom_bytes: int | None = None,
+        frozen_state_id: str | None = None,
     ) -> None:
         if not isinstance(plan, Plan) or plan.program.bindings.get("kind") != "step":
             raise TypeError("Trainer requires a Plan produced from build_step")
@@ -74,6 +76,8 @@ class Trainer:
                 or bound.memory_layout != evaluation_plan.memory_layout
             ):
                 raise ValueError("supplied Executor has a different evaluation Plan")
+        validate_identity(frozen_state_id)
+        self.frozen_state_id = frozen_state_id
         self.plan = plan
         self.executor = executor or Executor(
             plan,
@@ -223,10 +227,16 @@ class Trainer:
         self._require_open()
         return _resume.save(self, path, source=source, chunk_bytes=chunk_bytes)
 
-    def load(self, path: str | Path, *, chunk_bytes: int = 64 << 20) -> Self:
-        """Restore tensors now; the next fit restores source progress before reading."""
+    def load(
+        self,
+        path: str | Path,
+        *,
+        chunk_bytes: int = 64 << 20,
+        fill_tensor: Callable[[TensorChunk, torch.Tensor], None] | None = None,
+    ) -> Self:
+        """Restore tensors and progress; partial checkpoints also load their base."""
         self._require_open()
-        _resume.load(self, path, chunk_bytes=chunk_bytes)
+        _resume.load(self, path, chunk_bytes=chunk_bytes, fill_tensor=fill_tensor)
         return self
 
     def close(self) -> None:

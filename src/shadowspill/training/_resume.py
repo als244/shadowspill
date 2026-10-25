@@ -3,11 +3,15 @@
 from __future__ import annotations
 
 import time
+from collections.abc import Callable
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+import torch
+
 from shadowspill.checkpoint import load_checkpoint, save_checkpoint
 from shadowspill.checkpoint.load import checkpoint_metadata
+from shadowspill.execution.tensors import TensorChunk
 from shadowspill.pytorch._rng import restore_rng, rng_state
 
 from . import _state
@@ -37,11 +41,23 @@ def save(trainer: Trainer, path: str | Path, *, source: Any, chunk_bytes: int) -
         ),
         "rng": _state.encode(rng_state(trainer.executor.device)),
     }
-    save_checkpoint(trainer.executor, path, metadata=metadata, chunk_bytes=chunk_bytes)
+    save_checkpoint(
+        trainer.executor,
+        path,
+        metadata=metadata,
+        chunk_bytes=chunk_bytes,
+        frozen_state_id=trainer.frozen_state_id,
+    )
     return Path(path)
 
 
-def load(trainer: Trainer, path: str | Path, *, chunk_bytes: int) -> None:
+def load(
+    trainer: Trainer,
+    path: str | Path,
+    *,
+    chunk_bytes: int,
+    fill_tensor: Callable[[TensorChunk, torch.Tensor], None] | None,
+) -> None:
     # Validate loop compatibility before changing persistent tensors. File-level
     # validation is shared with the low-level checkpoint loader.
     metadata = checkpoint_metadata(trainer.executor, path)
@@ -63,7 +79,13 @@ def load(trainer: Trainer, path: str | Path, *, chunk_bytes: int) -> None:
     for name in schedules:
         if not callable(getattr(trainer.schedules.get(name), "load_state_dict", None)):
             raise ValueError(f"schedule {name!r} cannot restore saved state")
-    restored = load_checkpoint(trainer.executor, path, chunk_bytes=chunk_bytes)
+    restored = load_checkpoint(
+        trainer.executor,
+        path,
+        chunk_bytes=chunk_bytes,
+        frozen_state_id=trainer.frozen_state_id,
+        fill_tensor=fill_tensor,
+    )
     if restored != metadata:
         raise ValueError("checkpoint metadata changed during restore")
     for name, state in schedules.items():

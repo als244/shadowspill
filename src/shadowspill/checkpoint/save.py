@@ -16,6 +16,7 @@ import torch
 from shadowspill.artifacts._values import encoded
 from shadowspill.execution.tensors import TensorChunk
 
+from .frozen import omitted_parameters, validate_identity
 from .tensors import byte_view, geometry, region_bytes
 
 if TYPE_CHECKING:
@@ -81,6 +82,7 @@ def save_checkpoint(
     *,
     metadata: Mapping[str, Any] | None = None,
     chunk_bytes: int = 64 << 20,
+    frozen_state_id: str | None = None,
 ) -> None:
     """Save all persistent tensors without a full-model host snapshot.
 
@@ -88,10 +90,14 @@ def save_checkpoint(
     encoded as JSON data. This helper does not discover application state.
     Distributed callers supply a distinct path per logical rank; each archive
     contains only that rank's owned tensor regions and records its identity.
+    With frozen_state_id, omit unchanged frozen parameters; retain trainable
+    tensors, optimizer state, buffers and anything mutated by an admitted Plan.
     """
     # Reject non-JSON metadata before streaming model-sized payloads.
     if len(encoded(dict(metadata or {}))) > 16 << 20:
         raise ValueError("checkpoint metadata exceeds 16 MiB")
+    validate_identity(frozen_state_id)
+    omitted = set() if frozen_state_id is None else omitted_parameters(executor)
     destination = Path(path)
     destination.parent.mkdir(parents=True, exist_ok=True)
     temporary: str | None = None
@@ -104,8 +110,13 @@ def save_checkpoint(
                 stream, "w", compression=zipfile.ZIP_STORED
             ) as archive:
                 writer = _Writer(archive)
+
+                def write(chunk: TensorChunk, tensor: torch.Tensor) -> None:
+                    if chunk.name not in omitted:
+                        writer.write(chunk, tensor)
+
                 try:
-                    executor.export_tensors(writer.write, chunk_bytes=chunk_bytes)
+                    executor.export_tensors(write, chunk_bytes=chunk_bytes)
                     writer.close_tensor()
                 except BaseException:
                     writer.abort()
@@ -123,6 +134,8 @@ def save_checkpoint(
                         },
                         "tensors": writer.entries,
                         "metadata": dict(metadata or {}),
+                        "frozen_state_id": frozen_state_id,
+                        "omitted_parameters": sorted(omitted),
                     }
                 )
                 if len(manifest) > 16 << 20:

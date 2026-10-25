@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
+from dataclasses import asdict
 from typing import Any
 
 from torch import Tensor, nn
@@ -17,6 +18,20 @@ from shadowspill.pytorch.guards import InputSignature
 from shadowspill.pytorch.lowering.catalog import RegistrationBinding
 from shadowspill.pytorch.representations import tensor_components
 from shadowspill.task.inputs import TaskInputRole
+
+
+def model_registrations(
+    model: nn.Module, registrations: tuple[RegistrationBinding, ...]
+) -> list[dict[str, Any]]:
+    """Keep logical trainability alongside names, including ties and components."""
+    parameters = dict(model.named_parameters(remove_duplicate=False))
+    return [
+        {
+            **asdict(item),
+            "trainable": item.parameter and parameters[item.name].requires_grad,
+        }
+        for item in registrations
+    ]
 
 
 def model_tensor_geometry(
