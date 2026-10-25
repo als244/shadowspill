@@ -40,7 +40,11 @@ def finalize_providers(program: Program, device: torch.device) -> Program:
         pending.remove(key)
         return result
 
-    with torch.cuda.device(device), torch.no_grad():
+    with (
+        torch.cuda.device(device),
+        torch.random.fork_rng(devices=[device]),
+        torch.no_grad(),
+    ):
         for job in stage_jobs(program, None):
             if "forward" not in job:
                 component = job["optimizer"] if "optimizer" in job else job["gradient"]
