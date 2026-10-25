@@ -114,12 +114,51 @@ def test_initial_build_does_not_require_planning_budgets(tmp_path, monkeypatch):
         main(["--phase", "plan", "--output-dir", str(tmp_path)])
 
 
+@pytest.mark.parametrize("form", ["both", "args", "kwargs"])
+def test_build_keeps_every_examples_arguments(tmp_path, monkeypatch, form):
+    from types import SimpleNamespace
+
+    from benchmarking.quickstart.phases import build
+
+    inputs = {}
+    if form != "kwargs":
+        inputs["args"] = [("first",), ("second",)]
+    if form != "args":
+        inputs["kwargs"] = [{"length": 3}, {"length": 5}]
+    model = SimpleNamespace(parameters=lambda: ())
+    setup = {
+        "model_factory": lambda: model,
+        "optimizer": lambda parameters: None,
+        "objective": None,
+        "candidates": {"different_inputs": inputs},
+    }
+    calls = []
+
+    def capture(model, **options):
+        calls.append(options)
+        return SimpleNamespace(save=lambda path: None)
+
+    monkeypatch.setattr(build, "experiment", lambda request: setup)
+    monkeypatch.setattr(build, "build_step", capture)
+    build.run({"output_dir": str(tmp_path), "device": "cuda:0"})
+    assert calls[0]["example_calls"] == list(
+        zip(inputs.get("args", [(), ()]), inputs.get("kwargs", [{}, {}]), strict=True)
+    )
+    assert "num_examples" not in calls[0]
+
+
 @pytest.mark.cuda
-def test_quickstart_process_pipeline_and_offline_replanning(tmp_path):
+@pytest.mark.parametrize(
+    "factory",
+    [
+        "workloads.recipes.regression:experiment",
+        "tests.benchmarking._phase_quickstart:mixed_examples",
+    ],
+)
+def test_quickstart_process_pipeline_and_offline_replanning(tmp_path, factory):
     import torch
 
     from benchmarking.quickstart import main, run
-    from workloads.recipes.regression import experiment
 
     if not torch.cuda.is_available():
         pytest.skip("requires CUDA")
@@ -129,7 +168,7 @@ def test_quickstart_process_pipeline_and_offline_replanning(tmp_path):
     root = tmp_path / "quickstart"
     assert (
         run(
-            experiment,
+            factory,
             factory_args={"rows": 8, "width": 8, "outputs": 8},
             search_budget_gib=[2, 2.25],
             spill_gib=0.125,

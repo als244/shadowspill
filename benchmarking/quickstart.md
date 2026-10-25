@@ -14,7 +14,8 @@ Each execution budget gets a fresh worker with Executor's allocator installed.
 Compiler caches stay outside the result directory. No stage implicitly invokes
 the previous one to fill missing artifacts.
 
-The initial migrated path supports single-GPU, fixed-shape training. The old
+The migrated path supports single-GPU training, including examples with different
+shapes and static arguments within one update. The old
 model/distributed presets remain on `python -m benchmarking.quickstart.cli`
 until migrated; their [migration reference](quickstart_legacy.md) is separate.
 The core APIs can be used directly without quickstart; see the
@@ -88,9 +89,11 @@ It returns a plain mapping:
 | `units_per_step`, `unit_label` | Optional throughput numerator and label; quickstart does not assume tokens. |
 | `metadata` | Optional JSON description retained with the candidate inventory. |
 
-Each candidate uses one fixed example shape repeated for its number of examples;
-all candidates should describe the same normalized update. Example ordering and
-optimizer ordering are selected during planning. Both save/recompute variants
+Each candidate supplies every example call, including its shapes and static
+arguments, through the builder's `example_calls` interface. Identical task forms
+still share compiled code and profiles; differing examples retain their own
+contracts. All candidates should describe the same normalized update. Example
+ordering and optimizer ordering are selected during planning. Both save/recompute variants
 remain available. Runtime hyperparameters must be declared during build—for
 example, construct the optimizer with a tensor-valued learning rate to change it
 at execution time. There is no automatic alias from `lr` to an optimizer group.

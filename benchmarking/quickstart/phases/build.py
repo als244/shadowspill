@@ -27,9 +27,9 @@ def run(request):
             model,
             optimizer=optimizer,
             objective=setup["objective"],
-            example_args=args[0] if args else (),
-            example_kwargs=kwargs[0] if kwargs else {},
-            num_examples=count,
+            example_calls=list(
+                zip(args or [()] * count, kwargs or [{}] * count, strict=True)
+            ),
             target=request["device"],
             **setup.get("build_options", {}),
         )
