@@ -2,10 +2,9 @@
 
 import argparse
 import json
-import os
-import subprocess
-import sys
 from pathlib import Path
+
+from workloads.recipes.text.phases import run_phases
 
 
 def main(argv=None):
@@ -63,30 +62,7 @@ def main(argv=None):
     for name in ("logs", "training"):
         (root / name).mkdir(parents=True, exist_ok=True)
     config_path.write_text(json.dumps(options, indent=2) + "\n")
-    for phase in ("build", "profile", "plan", "execute"):
-        if args.phase not in {"all", phase}:
-            continue
-        log_path = root / f"logs/{phase}.log"
-        print(f"{phase}: starting; log {log_path}", flush=True)
-        environment = dict(os.environ)
-        if phase == "plan":
-            environment["CUDA_VISIBLE_DEVICES"] = ""
-        with log_path.open("w") as log:
-            subprocess.run(
-                [
-                    sys.executable,
-                    *(["-S"] if sys.flags.no_site else []),
-                    "-u",
-                    "-m",
-                    f"workloads.recipes.text.llama3.{phase}",
-                    str(root),
-                ],
-                env=environment,
-                stdout=log,
-                stderr=subprocess.STDOUT,
-                check=True,
-            )
-        print(f"{phase}: complete", flush=True)
+    run_phases("workloads.recipes.text.llama3", root, args.phase)
     return 0
 
 

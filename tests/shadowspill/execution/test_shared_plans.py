@@ -20,6 +20,7 @@ from shadowspill import (
     measure_program,
     plan_program,
 )
+from shadowspill.errors import PlanInfeasibleError
 from shadowspill.planning.shared import shared_memory
 
 
@@ -88,7 +89,11 @@ def test_shared_evaluation_and_checkpoint_in_cold_workers(tmp_path):
     assert evaluation.forward.__func__ is Network.forward
     for program in programs.values():
         assert {r["name"] for r in program.bindings["registrations"]} == {
-            "weight", "tied_weight", "bias", "scale", "evaluation_only"
+            "weight",
+            "tied_weight",
+            "bias",
+            "scale",
+            "evaluation_only",
         }
     plans = {}
     for name, program in programs.items():
@@ -121,7 +126,7 @@ def test_shared_evaluation_and_checkpoint_in_cold_workers(tmp_path):
         assert minimum < getattr(shared, field)
         budget = replace(plans["training"].memory_budgets, **{field: minimum})
         reduced = {name: replace(p, memory_budgets=budget) for name, p in plans.items()}
-        with pytest.raises(ValueError, match="shared Plans require"):
+        with pytest.raises(PlanInfeasibleError, match="shared Plans require"):
             shared_memory(reduced["training"], {"evaluation": reduced["evaluation"]})
 
     reference = Network()

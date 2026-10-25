@@ -5,6 +5,7 @@ from dataclasses import dataclass
 
 from shadowspill.artifacts.plan import Plan
 from shadowspill.artifacts.tensors import shared_model_aliases
+from shadowspill.errors import PlanInfeasibleError
 from shadowspill.ir import MemoryLocation
 
 
@@ -78,14 +79,20 @@ def shared_memory(primary: Plan, plans: Mapping[str, Plan]) -> SharedMemory:
     execution = fixed + dynamic + overhead
     spill = _spill_bytes(paths, mappings)
     if execution > primary.memory_budgets.execution_bytes:
-        raise ValueError(
+        raise PlanInfeasibleError(
             f"shared Plans require {execution} GPU bytes including overhead; "
-            f"budget is {primary.memory_budgets.execution_bytes}"
+            f"budget is {primary.memory_budgets.execution_bytes}",
+            kind="shared_execution_memory",
+            required_bytes=execution,
+            capacity_bytes=primary.memory_budgets.execution_bytes,
         )
     if spill > primary.memory_budgets.spill_bytes:
-        raise ValueError(
+        raise PlanInfeasibleError(
             f"shared Plans require {spill} spill bytes; "
-            f"budget is {primary.memory_budgets.spill_bytes}"
+            f"budget is {primary.memory_budgets.spill_bytes}",
+            kind="shared_spill_memory",
+            required_bytes=spill,
+            capacity_bytes=primary.memory_budgets.spill_bytes,
         )
     return SharedMemory(mappings, fixed, execution, spill)
 

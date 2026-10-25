@@ -5,9 +5,10 @@ import sys
 
 from shadowspill import Plan, Trainer
 from shadowspill.training.schedules import WarmupCosine
+from workloads.recipes.text.data.calls import Inputs
+from workloads.recipes.text.phases import settings
 
-from .common import model_config, settings
-from .data import Inputs
+from .common import model_config
 from .initialize import Initialize
 
 

@@ -3,6 +3,11 @@
 from __future__ import annotations
 
 
+def normalized_next_token_prediction(model, tokens, targets, *, seq_lens, normalizer):
+    """Ordinary model call with this example's share of the update loss."""
+    return model.loss(tokens, targets, seq_lens=seq_lens, reduction="sum") * normalizer
+
+
 def next_token_prediction(model, batch, **options):
     """Sum next-token loss; the batch already supplies shifted target tokens."""
     tokens, targets, lengths = batch

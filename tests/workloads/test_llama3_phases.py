@@ -16,7 +16,7 @@ import torch
 from shadowspill.execution.tensors import TensorChunk
 from workloads.models.llama3.config import LLAMA_3_1_ROPE_SCALING, Config
 from workloads.models.shared.decoder import RotaryEmbedding
-from workloads.recipes.text.llama3.data import Inputs
+from workloads.recipes.text.data.calls import Inputs
 from workloads.recipes.text.llama3.initialize import Initialize
 
 

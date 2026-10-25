@@ -10,8 +10,7 @@ from shadowspill import (
     write_report,
 )
 from shadowspill.step import StepDataOrdering
-
-from .common import settings
+from workloads.recipes.text.phases import settings
 
 
 def run(directory):

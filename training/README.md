@@ -1,8 +1,10 @@
 # Training recipes
 
-The installed trainer lives in `shadowspill.training`. It accepts ordinary
-PyTorch models, objectives and data iterables. It does not import `workloads`,
-text data utilities, model catalogs, or qualification policies.
+The installed trainer lives in `shadowspill.training`. Its public interface
+takes a saved Plan and runs through Executor. Build accepts ordinary PyTorch
+models and objectives; profiling and planning are separate. The library does
+not import `workloads`, text data utilities, model catalogs or qualification
+policies.
 
 - [Example model catalog](../workloads/MODELS.md): architectures, dimensions,
   precision, trainable parameters, and expert parallelism.
@@ -12,12 +14,18 @@ text data utilities, model catalogs, or qualification policies.
   nested data and explicit microbatch weighting.
 - [Benchmark quickstart](../benchmarking/quickstart.md): search, execution,
   tracing and plots for a supplied experiment.
+- [Qwen3.5 MoE LoRA](qwen35_lora.md): bounded HF initialization, independent
+  phases, batch/ordering selection, held-out evaluation and frozen-base resume.
 
 This directory holds example configs and launchers for the optional
 `workloads.recipes.text` recipe. Text packing and its token-normalized objective
 are recipe behavior, and can be replaced without changing the trainer.
 
 ## Run a supplied text recipe
+
+The JSON-configured launchers below still use the older preparation path while
+they migrate. The standalone Llama and Qwen3.5 LoRA recipes use the public saved
+phases; new callers should follow those examples.
 
 ```bash
 python -u -m training.train training/configs/olmoe_1b.json \

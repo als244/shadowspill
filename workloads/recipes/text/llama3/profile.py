@@ -3,8 +3,7 @@
 import sys
 
 from shadowspill import Program, apply_profiles, measure_communication, measure_program
-
-from .common import settings
+from workloads.recipes.text.phases import settings
 
 
 def run(directory):

@@ -48,6 +48,11 @@ models; `shadowspill.execution.Executor` executes saved Plans and
 `shadowspill.training.Trainer` manages training through it. Neither requires
 this directory.
 
+The standalone [Llama](recipes/text/llama3/) and
+[Qwen3.5 LoRA](recipes/text/qwen35_lora/) recipes separate build, profile, plan
+and execution into small modules. They share the subprocess driver and resumable
+text-call adapter, while model-specific initialization remains with each recipe.
+
 The catalog separates its entry type, preset rows, and lookup functions.
 The shared [GLM checkpoint reader](models/shared/glm/checkpoint/) separates meta
 model declaration, precision/coverage validation, expert conversion, and loading;
