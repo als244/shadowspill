@@ -10,7 +10,7 @@ from torch._guards import detect_fake_mode
 
 from shadowspill.pytorch.capture.artifacts import GraphArtifact
 
-from ..materialize import MATERIALIZE_GRADIENT, PAD_GRADIENT_STORAGE
+from ..materialize import MATERIALIZE_GRADIENT
 from ..torch_deprecations import copy_graph_module
 from .nodes import (
     _record_value,
@@ -108,46 +108,6 @@ def materialize_gradient_outputs(
         with mode if mode is not None else nullcontext():
             _record_value(node, produced.meta["val"].clone(memory_format=memory_format))
         leaves[index] = node
-    output.args = (tuple(leaves),)
-    graph.lint()
-    graph_module.recompile()
-    return GraphArtifact.capture(
-        kind="backward",
-        graph_module=graph_module,
-        example_inputs=backward.example_arguments,
-        input_provenance=backward.input_provenance,
-    )
-
-
-def pad_gradient_outputs(
-    backward: GraphArtifact, multiples: Mapping[int, int]
-) -> GraphArtifact:
-    """Declare shard padding in the measured backward allocation contract."""
-    if not multiples:
-        return backward
-    graph_module = copy_graph_module(backward.graph_module)
-    graph = graph_module.graph
-    output = next(node for node in graph.nodes if node.op == "output")
-    leaves = list(output.args[0])
-    mode = detect_fake_mode(backward.example_arguments)
-    changed = False
-    for index, multiple in multiples.items():
-        produced = leaves[index]
-        if produced is None:
-            continue
-        value = produced.meta["val"]
-        elements = value.untyped_storage().nbytes() // value.element_size()
-        padded = (elements + multiple - 1) // multiple * multiple
-        if padded == elements:
-            continue
-        with graph.inserting_before(output):
-            node = graph.call_function(PAD_GRADIENT_STORAGE, args=(produced, padded))
-        with mode if mode is not None else nullcontext():
-            _record_value(node, PAD_GRADIENT_STORAGE(value, padded))
-        leaves[index] = node
-        changed = True
-    if not changed:
-        return backward
     output.args = (tuple(leaves),)
     graph.lint()
     graph_module.recompile()

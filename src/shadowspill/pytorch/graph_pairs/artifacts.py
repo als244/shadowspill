@@ -15,9 +15,9 @@ from shadowspill.pytorch.capture.gradients import (
     accumulate_gradient_outputs,
     cast_gradient_outputs,
     materialize_gradient_outputs,
-    pad_gradient_outputs,
 )
 from shadowspill.pytorch.capture.objective import TrainingObjectiveCapture
+from shadowspill.pytorch.capture.padding import pad_output_storage
 from shadowspill.task.inputs import TaskInputRole
 
 from ..partition.artifacts import PartitionedExport, StageExample
@@ -81,7 +81,7 @@ class GraphPairVariant:
             tuple(sorted(_produced_output_leaves(backward))),
             memory_formats=_activation_gradient_formats(self.pair, leaves),
         )
-        backward = pad_gradient_outputs(
+        backward = pad_output_storage(
             backward,
             {
                 index: size

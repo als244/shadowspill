@@ -17,6 +17,7 @@ from .common import build_setup, compile_artifacts
 from .finalize import finalize_providers
 from .gradient_ops import capture_gradient_operations
 from .lowering.training import lower_training
+from .mutations import pad_mutations
 from .optimizer import capture_update
 from .optimizer_alignment import optimizer_input_offsets
 from .parallelism import (
@@ -110,6 +111,7 @@ def _build_training(
             for name in parameter.names
         },
     )
+    captured = pad_mutations(captured, parameters)
     artifacts = [
         artifact
         for example in captured.examples
