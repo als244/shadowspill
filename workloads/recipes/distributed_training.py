@@ -35,7 +35,7 @@ def main(argv=None):
         options = vars(args).copy()
         options["run_dir"] = str(root)
         options["execution_gib"] = (
-            2 if args.execution_gib is None else args.execution_gib
+            4 if args.execution_gib is None else args.execution_gib
         )
         options["spill_gib"] = 1 if args.spill_gib is None else args.spill_gib
         root.mkdir(parents=True, exist_ok=True)
