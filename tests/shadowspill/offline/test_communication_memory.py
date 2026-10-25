@@ -114,7 +114,8 @@ def test_planning_binds_communication_memory_without_compute_remeasurement(tmp_p
         assert result.fixed_device_bytes == fixed
         assert result.summary["communication_fixed_bytes"] == fixed
         assert result.summary["execution_peak_bytes"] == fixed + 128
-        assert any(
+        assert "physical allocation evidence absent" in result.simulation_only_reasons
+        assert not any(
             "external communication scratch" in r
             for r in result.simulation_only_reasons
         )

@@ -115,12 +115,6 @@ class Plan(Artifact):
             *reasons,
             *self._communication_memory[1],
             *(
-                ("distributed execution resources are not yet certified",)
-                if self.program.parallelism is not None
-                and self.program.parallelism.world_size > 1
-                else ()
-            ),
-            *(
                 tuple(
                     f"accumulation: {r}"
                     for r in self._accumulation_plan.simulation_only_reasons

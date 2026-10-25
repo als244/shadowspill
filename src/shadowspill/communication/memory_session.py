@@ -60,9 +60,9 @@ class CommunicationMemory:
             },
             "memory_per_rank": sorted(rows, key=lambda row: row["logical_rank"]),
             "memory_source": "native live bytes + NVML external retained delta",
-            "external_transient_kind": "unresolved",
+            "external_transient_kind": "external_headroom",
             "memory_coverage": (
                 "retained communicator resources and native task allocations; "
-                "external transient scratch is not observed"
+                "external transient scratch uses the worker headroom reservation"
             ),
         }

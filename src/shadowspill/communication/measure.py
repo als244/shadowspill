@@ -41,8 +41,8 @@ def measure_communication(
     the same full worker-to-logical rank_map. Workers concurrently measure host
     copies, then each requested group separately. Every worker receives the same
     result. Collective allocation evidence and retained communicator bytes are
-    recorded separately from timing. External transient scratch is not observed;
-    recording measurements alone does not qualify distributed execution.
+    recorded separately from timing. NCCL-owned temporary allocations use the
+    worker's external headroom; execution warms groups before memory admission.
 
     collectives replaces derived requests; [] selects host copies only. Each
     entry has operation, ordered logical ranks, tensor_bytes and dtype. Bytes

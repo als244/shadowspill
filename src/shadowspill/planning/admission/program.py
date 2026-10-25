@@ -2,6 +2,8 @@
 
 from shadowspill.artifacts.entrypoints import entrypoint
 from shadowspill.artifacts.profiled_program import ProfiledProgram
+from shadowspill.communication.contracts import collective_measurement
+from shadowspill.communication.info import CommunicationInfo
 from shadowspill.ir import ObjectRole, ShadowSpillProgram
 from shadowspill.planner.admission import AdmissionFacts
 from shadowspill.profiling.records import measured_task
@@ -20,22 +22,31 @@ def caller_output_aliases(program: ShadowSpillProgram) -> frozenset[str]:
 
 
 def program_admission(
-    profiled: ProfiledProgram, costed: ShadowSpillProgram, usable_bytes: int
+    profiled: ProfiledProgram,
+    costed: ShadowSpillProgram,
+    usable_bytes: int,
+    communication_info: CommunicationInfo | None = None,
 ) -> AdmissionFacts | None:
-    if (
-        profiled.estimated_memory
-        or not profiled.program.executables
-        or (
-            profiled.program.parallelism is not None
-            and profiled.program.parallelism.world_size > 1
-        )
-    ):
-        # Local task measurements do not yet certify communicator/provider
-        # resources for multi-rank execution. Keep these plans simulation-only.
+    if profiled.estimated_memory or not profiled.program.executables:
         return None
     evidence = {}
     for definition in profiled.program.task_definitions:
         if definition.profile_key == "invocation_start":
+            continue
+        if definition.profile_key in profiled.program.bindings.get(
+            "collective_tasks", {}
+        ):
+            if communication_info is None:
+                return None
+            try:
+                measurement = collective_measurement(
+                    profiled.program, definition.profile_key, communication_info
+                )
+            except ValueError:
+                # Estimates/totals can simulate, but cannot provide a physical
+                # execution layout. The Plan remains inspectably simulation-only.
+                return None
+            evidence[definition.compatibility_digest] = measurement.allocation_trace
             continue
         record = profiled.task_profiles[definition.profile_key].metadata
         if "allocation_contract" not in record or "compiled_layout" not in record:

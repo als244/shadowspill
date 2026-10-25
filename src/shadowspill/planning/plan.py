@@ -90,6 +90,7 @@ def _plan_bound(
         memory_budgets.execution_bytes
         - program.fixed_device_bytes
         - communication_overhead(program.program, communication_info)[0],
+        communication_info,
     )
     result = options.resolved_algorithm(
         costed,

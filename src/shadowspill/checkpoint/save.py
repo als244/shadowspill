@@ -16,7 +16,7 @@ import torch
 from shadowspill.artifacts._values import encoded
 from shadowspill.execution.tensors import TensorChunk
 
-from .tensors import byte_view, geometry
+from .tensors import byte_view, geometry, region_bytes
 
 if TYPE_CHECKING:
     from shadowspill.execution import Executor
@@ -44,7 +44,7 @@ class _Writer:
             self.entries[-1]["sha256"] = self.digest.hexdigest()
 
     def write(self, chunk: TensorChunk, tensor: torch.Tensor) -> None:
-        if chunk.offset == 0:
+        if chunk.offset == chunk.region_offset:
             self.close_tensor()
             if any(entry["name"] == chunk.name for entry in self.entries):
                 raise ValueError(f"duplicate tensor export: {chunk.name}")
@@ -53,7 +53,7 @@ class _Writer:
                 {
                     **geometry(chunk),
                     "member": member,
-                    "bytes": chunk.storage_elements * tensor.element_size(),
+                    "bytes": region_bytes(chunk),
                 }
             )
             self.stream = cast(
@@ -65,7 +65,8 @@ class _Writer:
             or any(
                 self.entries[-1][key] != value for key, value in geometry(chunk).items()
             )
-            or chunk.offset * tensor.element_size() != self.written
+            or (chunk.offset - chunk.region_offset) * tensor.element_size()
+            != self.written
         ):
             raise ValueError("tensor export chunks are not contiguous and consistent")
         view = byte_view(tensor)
@@ -85,6 +86,8 @@ def save_checkpoint(
 
     Metadata can include completed updates and caller-owned scheduler/RNG state
     encoded as JSON data. This helper does not discover application state.
+    Distributed callers supply a distinct path per logical rank; each archive
+    contains only that rank's owned tensor regions and records its identity.
     """
     # Reject non-JSON metadata before streaming model-sized payloads.
     if len(encoded(dict(metadata or {}))) > 16 << 20:
@@ -113,6 +116,7 @@ def save_checkpoint(
                         "version": 1,
                         "byteorder": sys.byteorder,
                         "program": executor.plan.program.digest,
+                        "logical_rank": executor.logical_rank,
                         "additional_programs": {
                             name: plan.program.digest
                             for name, plan in executor.plans.items()

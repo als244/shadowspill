@@ -5,6 +5,8 @@ from typing import Any
 
 from shadowspill.artifacts.entrypoints import entrypoint
 from shadowspill.artifacts.plan import Plan
+from shadowspill.communication.binding.groups import GroupBindings
+from shadowspill.communication.contracts import collective_measurement
 from shadowspill.pipeline.admission.layout_runtime import project_runtime_fixed_layout
 from shadowspill.pipeline.admission.selected import task_memory_envelope
 from shadowspill.planning.admission.outputs import output_bindings_for_entrypoints
@@ -20,6 +22,8 @@ from shadowspill.runtime.plan import (
     seal_fixed_layout,
 )
 from shadowspill.task.entrypoints import execution_entrypoints
+
+from .distributed.collectives import CollectiveTask
 
 
 @dataclass
@@ -37,7 +41,11 @@ class BoundTask:
 
 
 def prepare(
-    plan: Plan, bridge: RuntimeBridge, *, shared_slice_bytes: int | None = None
+    plan: Plan,
+    bridge: RuntimeBridge,
+    *,
+    shared_slice_bytes: int | None = None,
+    groups: GroupBindings | None = None,
 ) -> tuple[tuple[BoundTask, ...], int]:
     assert plan.memory_layout is not None
     ir = plan._costed_program
@@ -67,19 +75,29 @@ def prepare(
         )
         if task.requires_entrypoint:
             key = original_keys[task.task_id]
-            if key not in functions:
-                functions[key] = restore_executable(
-                    plan.program.executables[key],
-                    dependencies=plan.program.bindings.get(
-                        "operator_dependencies", {}
-                    ).get(key, ()),
+            collective = plan.program.bindings.get("collective_tasks", {}).get(key)
+            if collective is not None:
+                if groups is None:
+                    raise ValueError("collective task requires bound logical groups")
+                if key not in functions:
+                    functions[key] = CollectiveTask(collective, groups)
+                measurement = collective_measurement(
+                    plan.program, key, plan.communication_info
+                )
+            else:
+                if key not in functions:
+                    functions[key] = restore_executable(
+                        plan.program.executables[key],
+                        dependencies=plan.program.bindings.get(
+                            "operator_dependencies", {}
+                        ).get(key, ()),
+                    )
+                measurement = measured_task(
+                    plan.profiled_program.task_profiles[key],
+                    plan.program.bindings["manifests"][key],
                 )
             function = functions[key]
             description = plan.program.bindings["task_inputs"][key]
-            measurement = measured_task(
-                plan.profiled_program.task_profiles[key],
-                plan.program.bindings["manifests"][key],
-            )
             envelope = task_memory_envelope(
                 measurement,
                 retained_output_leaves=tuple(b.leaf_index for b in bindings),

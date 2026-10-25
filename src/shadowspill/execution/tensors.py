@@ -34,6 +34,8 @@ class TensorChunk:
     storage_elements: int
     stride: tuple[int, ...] = ()
     storage_offset: int = 0
+    region_offset: int = 0
+    region_elements: int | None = None
 
 
 def tensor_entries(
@@ -171,6 +173,8 @@ def visit_tensors(
                 owner.numel() if region is None else region.storage_elements,
                 tuple(geometry["stride"]),
                 geometry.get("storage_offset", 0),
+                offset,
+                length,
             )
             if initialize and not restore and name.startswith("gradient."):
                 destination.zero_()

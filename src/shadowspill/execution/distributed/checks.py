@@ -1,0 +1,38 @@
+"""Small CPU coordination records before workers enter ordered NCCL calls."""
+
+from collections.abc import Callable
+
+from shadowspill.errors import AdmissionError
+from shadowspill.runtime import Runtime
+
+from .worker import DistributedWorker
+
+
+def coordinated[T](worker: DistributedWorker | None, function: Callable[[], T]) -> T:
+    if worker is None:
+        return function()
+    result, failure = None, None
+    try:
+        result = function()
+    except Exception as error:
+        failure = str(error)
+    worker.groups.check(failure)
+    return result  # type: ignore[return-value]
+
+
+def check_invocation(
+    worker: DistributedWorker, plan: str | None, accumulate: bool
+) -> None:
+    choice = (plan, accumulate)
+    if any(value != choice for value in worker.groups.gather(choice)):
+        raise ValueError(
+            "workers selected different Plans or gradient accumulation modes"
+        )
+
+
+def check_external_budget(runtime: Runtime) -> None:
+    status = int(runtime._installed.library.shadowspill_pytorch_check_physical_budget())
+    if status:
+        raise AdmissionError(
+            f"worker exceeded its physical memory reservation (status {status})"
+        )

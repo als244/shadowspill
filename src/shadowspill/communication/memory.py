@@ -81,8 +81,9 @@ def communication_overhead(
             info.metadata.get("backend_setup", {})
         ):
             raise ValueError("communicator memory belongs to a different backend setup")
-        if info.metadata.get("external_transient_kind") != "verified":
-            reasons.append("external communication scratch is not certified")
+        # NCCL-owned allocations use the same external-headroom policy as
+        # other GPU libraries. They are not task-local allocator leases.
+        # Executor warms these groups before sealing/checking that reservation.
     # Transfer callbacks allocate outside task scopes. Reserve their observed
     # scratch conservatively for every sharded object; never hide it as zero or
     # assume asynchronous backend frees have retired at the next submission.

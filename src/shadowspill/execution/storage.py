@@ -85,6 +85,10 @@ class Storage:
                 retain_spill_copy=retain[alias],
                 transfer_address=(transfer_descriptors or {}).get(alias, 0),
             )
+        for alias, descriptor in (transfer_descriptors or {}).items():
+            # Gradients can be first produced by backward. Register their
+            # transfer behavior without inventing an initial spill value.
+            bridge.objects.register_placeholder(alias, transfer_address=descriptor)
 
     def owner(self, alias: str) -> torch.Tensor:
         if alias not in self.owners:

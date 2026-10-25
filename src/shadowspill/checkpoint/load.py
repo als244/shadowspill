@@ -13,7 +13,7 @@ import torch
 
 from shadowspill.execution.tensors import TensorChunk
 
-from .tensors import byte_view, geometry
+from .tensors import byte_view, geometry, region_bytes
 
 if TYPE_CHECKING:
     from shadowspill.execution import Executor
@@ -28,6 +28,7 @@ def _manifest(archive: zipfile.ZipFile, executor: Executor) -> dict[str, Any]:
         or manifest.get("version") != 1
         or manifest.get("byteorder") != sys.byteorder
         or manifest.get("program") != executor.plan.program.digest
+        or manifest.get("logical_rank", 0) != executor.logical_rank
         or manifest.get("additional_programs", {})
         != {name: plan.program.digest for name, plan in executor.plans.items()}
         or not isinstance(manifest.get("metadata"), dict)
@@ -79,10 +80,10 @@ class _Reader:
         if (
             entry is None
             or any(entry[key] != value for key, value in geometry(chunk).items())
-            or entry["bytes"] != chunk.storage_elements * tensor.element_size()
+            or entry["bytes"] != region_bytes(chunk)
         ):
             raise ValueError(f"checkpoint tensor geometry differs: {chunk.name}")
-        if chunk.offset == 0:
+        if chunk.offset == chunk.region_offset:
             if self.stream is not None:
                 raise ValueError("previous checkpoint tensor was not consumed")
             self.stream = cast(zipfile.ZipExtFile, self.archive.open(entry["member"]))
@@ -91,7 +92,10 @@ class _Reader:
         if (
             self.stream is None
             or self.name != chunk.name
-            or (chunk.offset * tensor.element_size() != self.consumed)
+            or (
+                (chunk.offset - chunk.region_offset) * tensor.element_size()
+                != self.consumed
+            )
         ):
             raise ValueError(
                 "checkpoint requests must consume each tensor sequentially"
