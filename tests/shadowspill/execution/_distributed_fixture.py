@@ -9,11 +9,15 @@ from torch import nn
 class Network(nn.Module):
     def __init__(self, dtype=torch.float32, device="cpu"):
         super().__init__()
-        self.first = nn.Linear(7, 5, dtype=dtype, device=device)
-        self.last = nn.Linear(5, 7, dtype=dtype, device=device)
+        self.layers = nn.ModuleList(
+            [
+                nn.Linear(7, 5, dtype=dtype, device=device),
+                nn.Linear(5, 7, dtype=dtype, device=device),
+            ]
+        )
 
     def forward(self, x):
-        return self.last(self.first(x).tanh())
+        return self.layers[1](self.layers[0](x).tanh())
 
 
 def objective(model, x, *, labels):

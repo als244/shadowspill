@@ -27,7 +27,7 @@ def build(path, kind):
     common = dict(
         example_args=args,
         parallelism=Parallelism.dp(ranks_per_replica=2),
-        partition="whole",
+        partition="auto",
     )
     if kind == "forward":
         program = build_forward(template, **common)
@@ -55,7 +55,7 @@ def build(path, kind):
             template,
             example_args=args,
             parallelism=common["parallelism"],
-            partition="whole",
+            partition="auto",
         ).save(path / "evaluation-program.ssp")
     assert not torch.distributed.is_initialized()
 
@@ -103,9 +103,30 @@ def communicate(path):
         dist.destroy_process_group()
 
 
-def plan(path, variant="auto"):
+def select_variants(profiled, variant):
     from dataclasses import replace
 
+    bindings = dict(profiled.program.bindings)
+    inventories = bindings["training_templates"]
+    assert all(len(inventory) > 1 for inventory in inventories)
+    # The terminal forward must save its outputs. Earlier stages exercise the
+    # requested variant, including real recomputation in the recompute cases.
+    bindings["training_templates"] = [
+        [
+            [
+                form
+                for form in stage
+                if form["variant"]
+                == ("save" if index == len(inventory) - 1 else variant)
+            ]
+            for index, stage in enumerate(inventory)
+        ]
+        for inventory in inventories
+    ]
+    return replace(profiled, program=replace(profiled.program, bindings=bindings))
+
+
+def plan(path, variant="auto"):
     from shadowspill import (
         CommunicationInfo,
         MemoryBudgets,
@@ -119,17 +140,7 @@ def plan(path, variant="auto"):
         if archive.exists():
             profiled = ProfiledProgram.load(archive)
             if prefix == "" and variant != "auto":
-                bindings = dict(profiled.program.bindings)
-                bindings["training_templates"] = [
-                    [
-                        [form for form in stage if form["variant"] == variant]
-                        for stage in example
-                    ]
-                    for example in bindings["training_templates"]
-                ]
-                profiled = replace(
-                    profiled, program=replace(profiled.program, bindings=bindings)
-                )
+                profiled = select_variants(profiled, variant)
             result = plan_program(
                 profiled,
                 memory_budgets=MemoryBudgets(4 << 30, 64 << 20),
@@ -139,6 +150,8 @@ def plan(path, variant="auto"):
                 else "stage_interleaved",
             )
             assert not result.simulation_only_reasons, result.simulation_only_reasons
+            if prefix == "" and variant == "recompute":
+                assert "recompute" in {choice.option_id for choice in result.selections}
             result.save(path / f"{prefix}plan.ssp")
     assert "torch" not in sys.modules, "planning imported PyTorch"
 
