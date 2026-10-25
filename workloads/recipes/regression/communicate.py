@@ -15,6 +15,7 @@ def run(directory):
     try:
         communication = measure_communication(
             program=Program.load(root / "program.ssp"),
+            rank_map={rank: rank for rank in range(options["ranks"])},
             device="cuda:0",
             warmup_seconds=options["warmup_seconds"],
             measure_seconds=options["measure_seconds"],

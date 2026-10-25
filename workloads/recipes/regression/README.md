@@ -41,6 +41,9 @@ CUDA_VISIBLE_DEVICES= python -m workloads.recipes.distributed_training \
 python -m workloads.recipes.distributed_training --run-dir runs/regression --phase execute
 ```
 
+Use `--phase plan --execution-gib ... --spill-gib ...` to replan the measured
+Program under different memory budgets without repeating build or measurement.
+
 The run directory contains one archive for each phase, `logs/`, `report/`, and
 `training/rank-00000/` etc. Each rank writes its owned checkpoint shards and
 metrics; DistributedLogger also combines records. Optional `--wandb-project`

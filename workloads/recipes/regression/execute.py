@@ -27,6 +27,7 @@ def run(directory):
         with (
             Trainer(
                 Plan.load(root / "plan.ssp"),
+                rank_map={rank: rank for rank in range(options["ranks"])},
                 schedules={"optimizer_group.0.lr": Constant(0.001)},
                 metric_reducer=lambda result: {"work_units": 8},
             ) as trainer,
