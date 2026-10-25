@@ -16,7 +16,11 @@ class ReductionPhase:
 
 @dataclass(frozen=True)
 class GradientReduction:
-    """Only new local contributions participate; incoming reduced values do not."""
+    """SUM contributions once across logical copies into the declared ownership.
+
+    Restored accumulators inject each previously reduced element on one rank;
+    reducing again then preserves that total while adding new contributions.
+    """
 
     parameter_name: str
     source_elements: int

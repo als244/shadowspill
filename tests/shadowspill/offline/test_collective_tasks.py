@@ -281,11 +281,11 @@ def test_inplace_weight_publication_waits_for_update_without_duplicate_full_stor
 
 def test_collective_descriptions_must_match_local_task_and_group_geometry():
     source = collective_program(workspace=0)
-    with pytest.raises(ValueError, match="communication resource"):
+    with pytest.raises(ValueError, match="compute or communication resource"):
         replace(
             source,
             tasks=tuple(
-                replace(task, resource=ResourceSpec("rank0", ResourceKind.COMPUTE))
+                replace(task, resource=ResourceSpec("rank0", ResourceKind.CONTROL))
                 if task.task_id == "reduce"
                 else task
                 for task in source.tasks

@@ -27,9 +27,10 @@ def _worker(worker, rendezvous, cuda, world_size):
     try:
         mapping = {0: 1, 1: 0} if world_size == 2 else {0: 2, 1: 0, 2: 3, 3: 1}
         groups = ((0, 1),) if world_size == 2 else ((3, 0), (2, 1))
+        replicas = () if world_size == 2 else tuple(zip(*groups, strict=True))
         bindings = GroupBindings(
             identity="collective-tasks",
-            groups=groups,
+            groups=(*groups, *replicas),
             rank_map=mapping,
             topology={},
             backend="nccl" if cuda else "gloo",
@@ -40,6 +41,7 @@ def _worker(worker, rendezvous, cuda, world_size):
             ("all_gather", False),
             ("all_gather", True),
             ("reduce_scatter", False),
+            ("reduce_scatter", True),
             ("all_reduce", True),
         ):
             task = CollectiveTask(
@@ -74,7 +76,15 @@ def _worker(worker, rendezvous, cuda, world_size):
                         source, full if operation == "all_gather" and inplace else None
                     )
                     assert len(result) == (not inplace)
-                    output = result[0] if result else full
+                    output = (
+                        result[0]
+                        if result
+                        else (
+                            full.narrow(0, members.index(logical) * 8, 8)
+                            if operation == "reduce_scatter"
+                            else full
+                        )
+                    )
                     observed = output.clone()
                 if cuda:
                     stream.synchronize()
@@ -97,6 +107,7 @@ def _worker(worker, rendezvous, cuda, world_size):
             elif operation == "all_reduce":
                 with pytest.raises(ValueError, match="second tensor"):
                     task(full, full)
+        _partial_gradient_roundtrips(bindings, groups, replicas, device)
     finally:
         if bindings is not None:
             bindings.close()
@@ -107,6 +118,66 @@ def _cpu_context():
     from contextlib import nullcontext
 
     return nullcontext()
+
+
+def _partial_gradient_roundtrips(bindings, groups, replicas, device):
+    """Old shard is injected once; subsequent local contributions all survive.
+
+    Exercise the same RS/AR and zero-plus-owned-shard arithmetic as the native
+    transfer, including permuted groups, padding and repeated model replicas.
+    Native CUDA transfer dispatch is qualified separately on distinct GPUs.
+    """
+    import torch
+
+    from shadowspill.execution.distributed.collectives import CollectiveTask
+
+    logical = bindings.logical_rank
+    members = next(group for group in groups if logical in group)
+    replicas_here = next((group for group in replicas if logical in group), (logical,))
+    full = torch.zeros(18, device=device)
+    owned = full.narrow(0, members.index(logical) * 9, 9)
+    saved = torch.zeros(9, device=device)
+    expected = torch.zeros(18, device=device)
+    scatter = CollectiveTask(
+        dict(
+            operation="reduce_scatter",
+            inplace=True,
+            groups=groups,
+            tensor_bytes=72,
+            dtype="torch.float32",
+        ),
+        bindings,
+    )
+    reduce = (
+        CollectiveTask(
+            dict(
+                operation="all_reduce",
+                groups=replicas,
+                tensor_bytes=36,
+                dtype="torch.float32",
+            ),
+            bindings,
+        )
+        if replicas
+        else None
+    )
+    for iteration in range(3):
+        full.zero_()
+        if replicas_here.index(logical) == 0:
+            owned.copy_(saved)
+        for contribution in (1, 2):
+            factor = (iteration + 1) * contribution
+            full[:17].add_(factor * (logical + 1))
+            expected[:17].add_(
+                factor * sum(rank + 1 for group in groups for rank in group)
+            )
+        scatter(full)
+        if reduce is not None:
+            reduce(owned)
+        saved.copy_(owned)
+        torch.testing.assert_close(
+            saved, expected.narrow(0, members.index(logical) * 9, 9)
+        )
 
 
 @pytest.mark.parametrize("cuda", [False, True], ids=["gloo", "nccl"])

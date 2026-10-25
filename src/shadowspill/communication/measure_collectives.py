@@ -78,6 +78,12 @@ def _measure(
     condition_task(sample, options=options, continue_while=decide)
     timing = collect_timing_samples(sample, options=options, continue_while=decide)
     memory = measure_memory(probe, device, bindings)
+    zero, failure = None, None
+    try:
+        zero = None if probe is None else probe.zero_seconds()
+    except Exception as error:
+        failure = str(error)
+    bindings.check(failure)
     local = (
         None
         if not active
@@ -89,6 +95,7 @@ def _measure(
             "relative_mad": timing.relative_mad,
             "half_drift": timing.half_drift,
             "memory": memory,
+            "zero_duration_seconds": zero,
         }
     )
     peers = sorted(
@@ -104,6 +111,14 @@ def _measure(
         "source": "maximum of participant median completion times",
         "backend": "nccl" if device.type == "cuda" else "gloo",
         "per_rank": peers,
+        "zero_duration_seconds": max(
+            (
+                row["zero_duration_seconds"]
+                for row in peers
+                if row["zero_duration_seconds"] is not None
+            ),
+            default=None,
+        ),
         "scope": "one ordered group at a time; no disjoint-group overlap",
         "memory": {
             "memory_kind": "measured" if complete else "unresolved",

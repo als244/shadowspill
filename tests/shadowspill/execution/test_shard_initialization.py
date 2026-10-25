@@ -80,24 +80,24 @@ def fixture(elements=15, kind="step"):
             )
         bindings["optimizer_bindings"] = rows
     else:
-        aliases.append(AliasGroupSpec("reduced", "device", capacity * 4))
-        objects.append(ObjectSpec("reduced", "reduced", 0, capacity * 4))
+        aliases.append(AliasGroupSpec("reduced", "device", capacity * 8))
+        objects.append(ObjectSpec("reduced", "reduced", 0, elements * 4))
         bindings["gradients"] = [
             {
                 "parameter_name": "layer.weight",
-                "gradient_object_id": "local_unused",
+                "gradient_object_id": "reduced",
             }
         ]
         bindings["persistent_gradients"] = [
             {
                 "parameter_name": "layer.weight",
                 "gradient_object_id": "reduced",
-                "shape": (capacity,),
+                "shape": (elements,),
                 "dtype": "torch.float32",
             }
         ]
         bindings["model_tensor_geometry"]["reduced"] = {
-            "shape": (capacity,),
+            "shape": (elements,),
             "stride": (1,),
             "dtype": "torch.float32",
         }

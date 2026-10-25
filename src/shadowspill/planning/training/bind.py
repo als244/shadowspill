@@ -9,7 +9,6 @@ from shadowspill.ir import MemoryLocation, ResidencySpec
 from shadowspill.step.ordering import StepDataOrdering
 
 from .communication import order_collectives
-from .gradients import complete_gradients
 from .identity import canonicalize_tasks
 from .optimizer import place_optimizer
 from .tasks import assemble_training
@@ -35,14 +34,8 @@ def bind_training(
     if constraints and ordering != default:
         raise ValueError("unsupported reordering: " + "; ".join(constraints))
     aliases = {item.object_id: item.alias_group_id for item in program.objects}
-    completions = program.bindings.get("gradient_templates", ())
     gradients = tuple(
-        item["gradient_object_id"]
-        for item in (
-            program.bindings["persistent_gradients"]
-            if completions
-            else program.bindings["gradients"]
-        )
+        item["gradient_object_id"] for item in program.bindings["gradients"]
     )
     if accumulate and program.bindings["kind"] == "step":
         raise ValueError("existing gradients apply only to forward/backward Programs")
@@ -51,14 +44,8 @@ def bind_training(
         aliases,
         ordering,
         device_id=program.devices[0].device_id,
-        accumulate=accumulate and not completions,
-        gradients=gradients,
-    )
-    sequence = complete_gradients(
-        sequence,
-        completions,
         accumulate=accumulate,
-        device_id=program.devices[0].device_id,
+        gradients=gradients,
     )
     sequence = place_optimizer(
         sequence,

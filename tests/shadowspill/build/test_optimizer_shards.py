@@ -99,6 +99,8 @@ def test_one_compiled_local_update_matches_full_adam_over_four_owned_shards(
         (torch.empty(2, 7, dtype=torch.bfloat16),),
         {},
         num_examples=1,
+        example_calls=None,
+        fuse_narrow_gradient_accumulation=False,
         partition="whole",
         operator_recompute=None,
         gradient_dtype=torch.float32,

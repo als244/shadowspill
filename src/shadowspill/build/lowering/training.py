@@ -13,7 +13,6 @@ from shadowspill.ir import DeviceSpec, MemoryLocation, Persistence, ResidencySpe
 from shadowspill.parallelism import Parallelism
 from shadowspill.parallelism.ownership import ParameterOwnership
 from shadowspill.planning.training.communication import order_collectives
-from shadowspill.planning.training.gradients import complete_gradients
 from shadowspill.planning.training.identity import canonicalize_tasks
 from shadowspill.planning.training.optimizer import place_optimizer
 from shadowspill.planning.training.tasks import assemble_training
@@ -73,7 +72,9 @@ def lower_training(
         completions, gradient_bindings = (
             ([], {})
             if gradient_operations is None
-            else gradient_templates(gradient_operations, objects, geometry)
+            else gradient_templates(
+                gradient_operations, objects, geometry, for_optimizer=update is not None
+            )
         )
         owned: dict[str, Any] = {}
         publications: dict[str, Any] = {}
@@ -93,6 +94,7 @@ def lower_training(
             geometry,
             owned_names=owned.get("names"),
             publications=publications,
+            reductions=completions,
         )
     alias_by_object = {
         item.object_id: item.alias_group_id for item in objects.catalog.objects()
@@ -101,9 +103,6 @@ def lower_training(
     # Planning rebinds these saved templates without a framework/compiler import.
     sequence = assemble_training(
         templates, alias_by_object, StepDataOrdering.depth_first(len(captures))
-    )
-    sequence = complete_gradients(
-        sequence, completions, accumulate=False, device_id="cuda_0"
     )
     sequence = place_optimizer(
         sequence, updates, ordering="tail", aliases=alias_by_object, device_id="cuda_0"
@@ -138,10 +137,6 @@ def lower_training(
         sources[alias_by_object[optimizer_object.object_id]].append(
             optimizer_object.name
         )
-    for gradient in gradient_bindings.get("persistent_gradients", ()):
-        sources[alias_by_object[gradient["gradient_object_id"]]].append(
-            f"{gradient['parameter_name']}.grad (reduced shard)"
-        )
     roots_by_example = [
         root_sources(c.training.exported, values)
         for c, values in zip(captures, captured.constant_values, strict=True)
@@ -158,9 +153,7 @@ def lower_training(
         alias_groups=objects.catalog.alias_groups(),
         objects=tuple(
             replace(item, persistence=Persistence.RUN)
-            if item.object_id in gradients
-            and update is None
-            and gradient_operations is None
+            if item.object_id in gradients and update is None
             else item
             for item in objects.catalog.objects()
         ),

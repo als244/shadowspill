@@ -219,12 +219,19 @@ timing to come from another compatible observation or the supplied rates.
 Model/provider operations that communicate internally retain their ordinary
 measured task duration and memory in Profiles.
 
-Explicit framework collectives share the ordered communication resource used by
-weight fetch gathers. Their buffers and scratch remain live while the task is in
-flight, and consumers depend on completion. Reports show a separate collective
-lane and label ring-equivalent traffic. The analytic CPU test exercises overlap
-with independent compute and replans with different collective timings from the
-same saved ProfiledProgram. Distributed Executor resources still need qualification.
+Generated training plans place optimizer reductions, local updates and weight
+publication on the same ordered compute resource as forward/backward. Separate
+collective cost records preserve single-GPU compute profiling; they do not put
+communication on an independent task stream. Each reduction/update/publication
+sequence is placed together, either interleaved after the corresponding backward
+work or at the tail. Reports retain phase labels and ring-equivalent traffic.
+
+Parameter gathers remain inside compound fetches. Gradient reduce-scatter and
+optional cross-replica all-reduce remain inside compound evictions. These transfers
+can overlap unrelated compute using the existing readiness/completion boundaries.
+The generic IR can describe independent task lanes, but concurrent shared-reader
+retirement is not qualified; generated DP plans deliberately retain ordered task
+execution. Distributed Executor integration still needs end-to-end qualification.
 
 The runtime's existing task-boundary handshake acknowledges submission of queued
 collective transfers before the next explicit task is dispatched. Within a batch,
@@ -235,9 +242,9 @@ remains gated. Real multi-GPU NCCL qualification is still required.
 
 The GPU allowance includes fixed compute/provider and communication overhead.
 Planning subtracts both before scheduling objects/workspace, and reporting adds
-them back to the total peak. Background weight-fetch callbacks have no task
-allocation scope, so their observed scratch is conservatively reserved once per
-sharded object rather than assumed to retire at the next asynchronous submission.
+them back to the total peak. Background weight-fetch and gradient-eviction callbacks have no task
+allocation scope, so their observed scratch is conservatively reserved per
+sharded object and collective operation rather than assumed to retire at the next asynchronous submission.
 Explicit communication tasks account for scratch over their task lifetimes.
 Spill capacity is separate. No physical memory is allocated for these calculations.
 
@@ -538,26 +545,29 @@ distributed inputs, and
 already-reduced-gradient overrides also remain pending.
 
 `build_forward_backward` additionally supports sharded gradient storage. Local
-backward tasks accumulate full contributions across the call's examples. Optional
-padding and explicit reduce-scatter produce the owned gradient shard; repeated
-model replicas then all-reduce matching shards. Planning inserts each completion
-after its last local contributor, independently of parameter declaration order.
-All in-flight inputs, outputs and scratch remain part of memory accounting.
+backward uses full logical accumulators, but an eviction can reduce and spill the
+owned shard between examples. A fetch zeros the full accumulator and restores
+only that shard. With repeated model replicas, only the first corresponding
+replica injects the old value; new local contributions then sum without repeating
+the previous total. Final gradients use the same reduce-and-spill path.
 
-One saved Plan supports both fresh gradients and cross-call accumulation. The
-latter reduces only the new contribution, then adds it locally to the stored
-already-reduced shard. Measurement on one GPU covers the local padding/addition
-tasks, without executing collectives. Collective scratch must be supplied if
-unresolved; a manual estimate permits simulation only. The archive/planning path
-is tested in a process that forbids Torch, build and runtime imports. Replicated
-gradient storage and distributed execution remain later work.
+One saved Plan supports fresh gradients and cross-call accumulation. The latter
+starts from existing spilled shards and uses the same compiled accumulation
+forms. No separate old-plus-new shard addition is needed. Measurement on one GPU
+covers local compiled work without executing collectives. Calibration distinguishes
+in-place transfer reductions from allocating optimizer reductions and records the
+buffer-zero time used on gradient fetch. Missing zero timing is explicitly
+estimated using the host-fetch rate. Collective scratch must still be supplied;
+manual memory estimates permit simulation only. CPU archive/planning tests forbid
+Torch, build and runtime imports. Replicated gradient storage and distributed
+Executor integration remain later work.
 
 `build_step` supports the common case with weights, gradients and optimizer data
 sharded over the same groups. Gradient completion feeds shard-shaped local
 optimizer inputs. Masters and moments have independent owned allocations.
 The compute-weight shard is a view of the full compute buffer, with its logical
-group-relative offset recorded for worker binding. An explicit in-place all-gather
-publishes the updated weights after the local update. Update placement waits for
+group-relative offset recorded for worker binding. An in-place all-gather on the same ordered compute resource
+publishes the updated weights immediately after the local update. Update placement waits for
 all contributions and reads of old weights, including aliased views.
 
 This initial path keeps the full compute-weight buffer available during the

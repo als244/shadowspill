@@ -1,4 +1,4 @@
-"""Build/measure DP gradients on one GPU, then plan both gradient modes offline."""
+"""Build/measure local DP compute; reduce partial gradients inside sharded spills."""
 
 import os
 import subprocess
@@ -18,13 +18,12 @@ from shadowspill import (
 )
 from shadowspill.communication.requests import collective_requests
 from shadowspill.ir import MemoryLocation
-from shadowspill.pytorch.executable import restore_executable
 from shadowspill.step.ordering import StepDataOrdering
 from tests.shadowspill.build._shard_loading import check_shard_loading
 
 
 @pytest.mark.cuda
-def test_one_gpu_build_profiles_padding_and_owned_gradient_accumulation(
+def test_one_gpu_build_profiles_compute_and_plans_sharded_gradient_spills(
     monkeypatch, tmp_path
 ):
     if not torch.cuda.is_available():
@@ -50,31 +49,19 @@ def test_one_gpu_build_profiles_padding_and_owned_gradient_accumulation(
     source.save(tmp_path / "program.ssp")
     check_shard_loading(source)
     assert source.parallelism.world_size == 4
-    assert len(source.bindings["gradient_templates"]) == 1
-    completion = source.bindings["gradient_templates"][0]
-    assert completion["padding"] is not None
-    assert [phase["operation"] for phase in completion["phases"]] == [
-        "reduce_scatter",
-        "all_reduce",
-    ]
-    padding = restore_executable(
-        source.executables[completion["padding"]["profile_key"]]
+    assert not source.bindings["gradient_templates"]
+    assert not source.bindings["collective_tasks"]
+    gradient = source.bindings["persistent_gradients"][0]["gradient_object_id"]
+    aliases = {item.object_id: item.alias_group_id for item in source.objects}
+    shard = source.bindings["gradient_shards"][aliases[gradient]]
+    assert (shard["logical_bytes"], shard["padded_bytes"], shard["shard_bytes"]) == (
+        140,
+        144,
+        72,
     )
-    gradient = torch.arange(35, dtype=torch.float32, device="cuda").reshape(5, 7)
-    (padded,) = padding(gradient)
-    torch.testing.assert_close(padded[:35], gradient.reshape(-1))
-    assert padded.shape == (36,) and padded[-1].item() == 0
-    addition = restore_executable(source.executables[completion["accumulation_key"]])
-    old = torch.full((18,), 7.0, device="cuda")
-    contribution = padded[:18].clone()
-    expected = old + contribution
-    addition(old, contribution)
-    torch.testing.assert_close(old, expected)
-    addition(old, contribution)
-    torch.testing.assert_close(old, expected + contribution)
+    assert tuple(map(tuple, shard["groups"])) == ((0, 1), (2, 3))
+    assert tuple(map(tuple, shard["replica_groups"])) == ((0, 2), (1, 3))
     profiles = measure_program(source, warmup_seconds=0.001, measure_seconds=0.002)
-    assert completion["padding"]["profile_key"] in profiles.tasks
-    assert completion["accumulation_key"] in profiles.tasks
     # Compute profiles do not need distributed memory or timing measurements.
     profiled = apply_profiles(source, profiles)
     from tests.shadowspill.offline._communication import estimated_communication
@@ -91,31 +78,27 @@ def test_one_gpu_build_profiles_padding_and_owned_gradient_accumulation(
         plan = plan_program(
             profiled, memory_budgets=budgets, communication_info=info, ordering=ordering
         )
-        stored, local, new = (
-            completion["stored"],
-            completion["source"],
-            completion["new"],
-        )
-        aliases = {item.object_id: item.alias_group_id for item in source.objects}
         for path, accumulate in ((plan, False), (plan._accumulation_plan, True)):
             assert path is not None
             initial = {row.alias_group_id for row in path.program.initial_residency}
-            assert (aliases[stored] in initial) == accumulate
-            assert aliases[local] not in initial
-            reductions = [
-                task
-                for task in path.program.tasks
-                if task.phase == "gradient_communication"
-            ]
-            if accumulate:
-                assert all(stored not in task.inputs for task in reductions)
-            scatter = next(task for task in reductions if task.outputs)
-            assert scatter.outputs == ((new if accumulate else stored),)
+            assert (aliases[gradient] in initial) == accumulate
+            assert not any(
+                task.phase == "gradient_communication" for task in path.program.tasks
+            )
             assert any(
-                row.alias_group_id == aliases[stored]
+                row.alias_group_id == aliases[gradient]
                 and row.location == MemoryLocation.SPILL
                 for row in path.program.final_residency
             )
+            transfer = next(
+                a.transfer
+                for a in path._costed_program.alias_groups
+                if a.alias_group_id == aliases[gradient]
+            )
+            assert transfer.spill_size_bytes == 72
+            assert [
+                phase.timing_class for phase in transfer.evict if phase.kind == "timed"
+            ] == ["reduce_scatter_ring+all_reduce_ring"]
             assert path.simulation_only_reasons
     requests = collective_requests(source, None)
     assert {row.operation for row in requests} == {
@@ -146,7 +129,8 @@ loaded = Plan.load(sys.argv[2])
 assert loaded.summary['logical_ranks'] == 4
 assert loaded._accumulation_plan is not None
 assert loaded.simulation_only_reasons
-assert any(task.phase == 'gradient_communication' for task in loaded.program.tasks)
+assert not any(task.phase == 'gradient_communication' for task in loaded.program.tasks)
+assert loaded.program.bindings['gradient_shards']
 write_report(loaded, sys.argv[3])
 print('CPU-only reduced-gradient planning and archive roundtrip passed')
 """

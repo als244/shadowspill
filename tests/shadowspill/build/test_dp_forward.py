@@ -56,7 +56,8 @@ from shadowspill import (ProfiledProgram, CommunicationInfo, MemoryBudgets,
                         plan_program, write_report)
 from tests.shadowspill.offline._communication import estimated_communication
 profiled = ProfiledProgram.load(sys.argv[1])
-plan = plan_program(profiled, memory_budgets=MemoryBudgets(1 << 30, 1 << 20),
+plan = plan_program(profiled,
+    memory_budgets=MemoryBudgets(profiled.fixed_device_bytes + (1 << 20), 1 << 20),
     communication_info=estimated_communication(profiled.program, bandwidth=25e9,
         topology={'node0': tuple(range(8))}, scale_up_bytes_per_second=300e9))
 assert plan.summary['logical_ranks'] == 8

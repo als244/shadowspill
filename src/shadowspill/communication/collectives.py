@@ -18,11 +18,7 @@ def _inplace(row: Mapping[str, Any]) -> bool:
     value = row.get("inplace")
     if value is None:
         value = row["operation"] == "all_reduce"
-    if (
-        type(value) is not bool
-        or (row["operation"] == "all_reduce" and not value)
-        or (row["operation"] == "reduce_scatter" and value)
-    ):
+    if type(value) is not bool or (row["operation"] == "all_reduce" and not value):
         raise ValueError("unsupported collective buffer aliasing")
     return value
 
@@ -58,6 +54,8 @@ def validate_measurement(row: Mapping[str, Any]) -> None:
         raise ValueError("collective measurement requires dtype")
     if row.get("duration_seconds") is not None:
         seconds(row["duration_seconds"], "duration_seconds")
+    if row.get("zero_duration_seconds") is not None:
+        seconds(row["zero_duration_seconds"], "zero_duration_seconds")
     if not isinstance(row.get("setup"), Mapping) or not row["setup"]:
         raise ValueError("collective measurement requires hardware/runtime setup")
     topology = row.get("topology")

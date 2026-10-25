@@ -1,4 +1,4 @@
-"""Static owned-gradient buffers and reusable completion templates."""
+"""Sharded accumulator transfers and local optimizer reduction buffers."""
 
 from typing import Any
 
@@ -16,27 +16,41 @@ def gradient_templates(
     operations: dict[str, GradientOperations],
     objects: TrainingObjects,
     compiled: CompiledTasks,
+    *,
+    for_optimizer: bool,
 ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
     templates, persistent = [], []
     collectives: dict[str, Any] = {}
+    shards = {}
     for binding in objects.gradients:
         name = binding.parameter_name
         item = operations[name]
         reduction = item.reduction
         example = item.owned
-        persistent_result = item.accumulation is not None
-
-        stored = _buffer(
-            objects,
-            example,
-            reduction.result_elements,
-            Persistence.RUN if persistent_result else Persistence.STEP,
-        )
-        new = (
-            _buffer(objects, example, reduction.result_elements, Persistence.STEP)
-            if persistent_result
-            else None
-        )
+        alias = objects.catalog.alias_id(binding.gradient_object_id)
+        width = example.dtype.itemsize
+        objects.catalog.pad_alias(alias, reduction.padded_elements * width)
+        shards[alias] = {
+            "groups": reduction.phases[0].groups,
+            "replica_groups": (
+                reduction.phases[1].groups if len(reduction.phases) > 1 else ()
+            ),
+            "shard_bytes": reduction.result_elements * width,
+            "logical_bytes": reduction.source_elements * width,
+            "padded_bytes": reduction.padded_elements * width,
+            "dtype": str(example.dtype),
+        }
+        if not for_optimizer:
+            persistent.append(
+                {
+                    "parameter_name": name,
+                    "gradient_object_id": binding.gradient_object_id,
+                    "shape": (reduction.source_elements,),
+                    "dtype": str(example.dtype),
+                }
+            )
+            continue
+        stored = _buffer(objects, example, reduction.result_elements, Persistence.STEP)
         padding = None
         if item.padding is not None:
             padding = {
@@ -60,27 +74,14 @@ def gradient_templates(
                 "name": name,
                 "source": binding.gradient_object_id,
                 "stored": stored,
-                "new": new,
                 "padding": padding,
                 "phases": phases,
-                "accumulation_key": (
-                    compiled.key(item.accumulation, (f"{name}.grad accumulation",))
-                    if item.accumulation is not None
-                    else None
-                ),
-            }
-        )
-        persistent.append(
-            {
-                "parameter_name": name,
-                "gradient_object_id": stored,
-                "shape": (reduction.result_elements,),
-                "dtype": str(example.dtype),
             }
         )
     return templates, {
         "collective_tasks": collectives,
         "persistent_gradients": persistent,
+        "gradient_shards": shards,
     }
 
 

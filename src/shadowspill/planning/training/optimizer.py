@@ -5,6 +5,7 @@ from typing import Any, Literal
 
 from shadowspill.ir import MutationSpec, ResourceKind, ResourceSpec, TaskSpec
 
+from .gradients import optimizer_reductions
 from .tasks import TrainingSequence
 
 
@@ -35,8 +36,11 @@ def place_optimizer(
     previous_position = 0
     for component in components:
         inputs = tuple(dict.fromkeys(slot["object_id"] for slot in component["inputs"]))
+        reductions = component.get("reductions", ())
         accesses = [
-            touch for value in inputs for touch in touches.get(aliases[value], ())
+            touch
+            for value in (*inputs, *(item["source"] for item in reductions))
+            for touch in touches.get(aliases[value], ())
         ]
         position = (
             len(sequence.tasks) - 1
@@ -45,6 +49,13 @@ def place_optimizer(
         )
         position = max(position, previous_position)
         dependencies = tuple(dict.fromkeys((previous, *(task for _, task in accesses))))
+        block = insertions.setdefault(position, [])
+        prefix = optimizer_reductions(
+            reductions, dependencies, device_id=device_id, sequence=sequence
+        )
+        block.extend(prefix)
+        if prefix:
+            dependencies = (*dependencies, *(task.task_id for task in prefix))
         identifier = component["task_id"]
         task = TaskSpec(
             identifier,
@@ -55,21 +66,23 @@ def place_optimizer(
             mutations=tuple(MutationSpec(value) for value in component["mutations"]),
             phase="optimizer",
         )
-        insertions.setdefault(position, []).append(task)
+        block.append(task)
+        previous = identifier
         for publication in component.get("publications", ()):
             publish_id = f"{identifier}.publish.{publication['name']}"
             destination = publication["destination"]
-            insertions[position].append(
+            block.append(
                 TaskSpec(
                     publish_id,
-                    ResourceSpec(device_id, ResourceKind.COMMUNICATION),
+                    ResourceSpec(device_id, ResourceKind.COMPUTE),
                     publication["profile_key"],
-                    dependencies=(identifier,),
+                    dependencies=(previous,),
                     inputs=(publication["source"], destination),
                     mutations=(MutationSpec(destination),),
                     phase="weight_communication",
                 )
             )
+            previous = publish_id
         entries[identifier] = {
             "task_id": identifier,
             "input_slots": component["inputs"],
@@ -80,7 +93,9 @@ def place_optimizer(
             "options": {"phase": "optimizer"},
         }
         sequence.transient_outputs[identifier] = tuple(component["replacements"])
-        previous, previous_position = identifier, position
+        previous_position = position
+    # Padding entrypoints were added while assembling the optimizer prefixes.
+    entries.update({entry["task_id"]: entry for entry in sequence.entrypoints})
     tasks = [
         task
         for index, original in enumerate(sequence.tasks)

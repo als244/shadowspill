@@ -37,11 +37,14 @@ class CollectiveProbe:
             self.input = torch.full(
                 (input_elements,), self.value, dtype=dtype, device=device
             )
-            self.output = (
-                self.input
-                if request.operation == "all_reduce"
-                else torch.empty(output_elements, dtype=dtype, device=device)
-            )
+            if request.operation == "all_reduce":
+                self.output = self.input
+            elif request.operation == "reduce_scatter" and request.inplace:
+                self.output = self.input.narrow(
+                    0, dist.get_rank(group) * output_elements, output_elements
+                )
+            else:
+                self.output = torch.empty(output_elements, dtype=dtype, device=device)
         self.stream = None
         if device.type == "cuda":
             self.stream = torch.cuda.Stream(device=device)  # type: ignore[no-untyped-call]
@@ -50,7 +53,9 @@ class CollectiveProbe:
             self.end = torch.cuda.Event(enable_timing=True)  # type: ignore[no-untyped-call]
 
     def _reset(self) -> None:
-        if self.request.operation == "all_reduce":
+        if self.request.operation == "all_reduce" or (
+            self.request.operation == "reduce_scatter" and self.request.inplace
+        ):
             # Repetition must not repeatedly multiply the preceding output.
             # This reset precedes the start event and needs no second buffer.
             self.input.fill_(self.value)
@@ -78,3 +83,21 @@ class CollectiveProbe:
             self.end.record()
         self.end.synchronize()
         return round(float(self.start.elapsed_time(self.end)) * 1e6)
+
+    def zero_seconds(self) -> float | None:
+        """Price the zero performed by the native gradient-fetch callback."""
+        if self.stream is None or not (
+            self.request.operation == "reduce_scatter" and self.request.inplace
+        ):
+            return None
+        from statistics import median
+
+        samples = []
+        for _ in range(5):
+            with torch.cuda.stream(self.stream):
+                self.start.record()
+                self.input.zero_()
+                self.end.record()
+            self.end.synchronize()
+            samples.append(float(self.start.elapsed_time(self.end)) / 1000)
+        return median(samples)

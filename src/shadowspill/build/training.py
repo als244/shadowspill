@@ -121,8 +121,6 @@ def _build_training(
         for operation in gradient_operations.values():
             if operation.padding is not None:
                 artifacts.append(operation.padding)
-            if operation.accumulation is not None:
-                artifacts.append(operation.accumulation)
     update = (
         None
         if optimizer is None

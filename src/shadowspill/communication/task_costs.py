@@ -33,10 +33,11 @@ def task_collectives(program: "Program") -> dict[str, tuple[CollectiveRequest, .
             raise ValueError(f"collective task names an unknown form: {key}")
         tasks = tasks_by_form.get(key, ())
         if not tasks or any(
-            task.resource.kind != ResourceKind.COMMUNICATION for task in tasks
+            task.resource.kind not in {ResourceKind.COMPUTE, ResourceKind.COMMUNICATION}
+            for task in tasks
         ):
             raise ValueError(
-                f"{key}: collective form must use the communication resource"
+                f"{key}: collective form must use compute or communication resource"
             )
         requests = tuple(
             CollectiveRequest(

@@ -1,4 +1,4 @@
-"""Bind saved weight shards to runtime transfer descriptors without calibration."""
+"""Bind saved weight/gradient shards to the existing compound transfer path."""
 
 from typing import TYPE_CHECKING
 
@@ -11,19 +11,37 @@ if TYPE_CHECKING:
     from shadowspill.communication.binding.groups import GroupBindings
 
 
-class WeightTransfers:
+class ShardedTransfers:
     """Own descriptor references; registered runtime objects retain their own."""
 
     def __init__(self, program: "Program", groups: "GroupBindings", device: int):
         self.descriptors: dict[str, int] = {}
-        cache: dict[tuple[str, int, int], int] = {}
+        cache: dict[tuple[str, int, int, torch.dtype | None, str | None], int] = {}
         try:
-            for alias, description in program.bindings.get("weight_shards", {}).items():
+            shards = {
+                **program.bindings.get("weight_shards", {}),
+                **program.bindings.get("gradient_shards", {}),
+            }
+            for alias, description in shards.items():
                 group = groups.resolve(GroupRef(alias, description["groups"]))
+                gradient = alias in program.bindings.get("gradient_shards", {})
+                dtype = (
+                    getattr(torch, description["dtype"].removeprefix("torch."))
+                    if gradient
+                    else None
+                )
+                replicas = description.get("replica_groups", ())
+                replica_name = (
+                    groups.resolve(GroupRef(alias + ".replicas", replicas)).group_name
+                    if replicas
+                    else None
+                )
                 key = (
                     group.group_name,
                     description["padded_bytes"],
                     description["logical_bytes"],
+                    dtype,
+                    replica_name,
                 )
                 if key not in cache:
                     cache[key] = int(
@@ -31,8 +49,8 @@ class WeightTransfers:
                             group.group_name,
                             device,
                             description["padded_bytes"],
-                            None,
-                            None,
+                            dtype,
+                            replica_name,
                             description["logical_bytes"],
                         )
                     )

@@ -46,6 +46,13 @@ class PackedCollective:
                 raise ValueError("only an in-place gather accepts a second tensor")
             if request.operation == "all_reduce":
                 output, returned = source, ()
+            elif request.operation == "reduce_scatter" and request.inplace:
+                output = source.narrow(
+                    0,
+                    dist.get_rank(self.group) * (elements // count),
+                    elements // count,
+                )
+                returned = ()
             else:
                 output = torch.empty(
                     elements if gathered else elements // count,

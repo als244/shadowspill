@@ -1,4 +1,4 @@
-"""Local padding and cross-invocation accumulation around distributed reductions."""
+"""Local padding for optimizer reductions; gradient spills use native transfers."""
 
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -23,7 +23,6 @@ class GradientOperations:
     reduction: GradientReduction
     owned: torch.Tensor
     padding: GraphArtifact | None
-    accumulation: GraphArtifact | None
 
 
 def capture_gradient_operations(
@@ -66,14 +65,15 @@ def capture_gradient_operations(
                 )
             dtype = gradient_dtype or value.dtype
             gradient = torch.empty_like(value, dtype=dtype)
-            padding = _padding(gradient, reduction.padded_elements)
+            padding = (
+                _padding(gradient, reduction.padded_elements)
+                if destination == "optimizer"
+                else None
+            )
             owned = torch.empty(
                 (reduction.result_elements,), dtype=dtype, device=value.device
             )
-            addition = _accumulation(owned) if destination == "gradients" else None
-            result[parameter.name] = GradientOperations(
-                reduction, owned, padding, addition
-            )
+            result[parameter.name] = GradientOperations(reduction, owned, padding)
     return result
 
 
@@ -86,14 +86,6 @@ def _padding(gradient: torch.Tensor, capacity: int) -> GraphArtifact | None:
         return (torch.nn.functional.pad(value.reshape(-1), (0, extra)),)
 
     return _capture(pad, (gradient,))
-
-
-def _accumulation(owned: torch.Tensor) -> GraphArtifact:
-    def add(existing: torch.Tensor, new: torch.Tensor) -> tuple[()]:
-        existing.add_(new)
-        return ()
-
-    return _capture(add, (owned, torch.empty_like(owned)))
 
 
 def _capture(

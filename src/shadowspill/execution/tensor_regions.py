@@ -96,9 +96,10 @@ def _parameter_region(
             raise ValueError("optimizer tensor is not parameter-element storage")
         shape = tuple(binding["shape"])
     else:
-        if tuple(binding["shape"]) != (capacity,):
+        expected = (elements,) if component == "gradients" else (capacity,)
+        if tuple(binding["shape"]) != expected:
             raise ValueError(
-                "sharded optimizer tensor needs a parameter-element layout"
+                f"sharded {component} needs its declared parameter-element layout"
             )
         shape = tuple(parameter["local_shape"])
     stride = tuple(prod(shape[index + 1 :]) for index in range(len(shape)))

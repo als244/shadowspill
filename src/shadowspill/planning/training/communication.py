@@ -2,8 +2,6 @@
 
 from dataclasses import replace
 
-from shadowspill.ir import ResourceKind
-
 from .tasks import TrainingSequence
 
 
@@ -11,7 +9,7 @@ def order_collectives(sequence: TrainingSequence) -> None:
     previous = None
     entries = {entry["task_id"] for entry in sequence.entrypoints}
     for index, task in enumerate(sequence.tasks):
-        if task.resource.kind != ResourceKind.COMMUNICATION:
+        if task.phase not in {"gradient_communication", "weight_communication"}:
             continue
         if previous is not None:
             sequence.tasks[index] = replace(

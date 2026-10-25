@@ -19,12 +19,14 @@ def optimizer_templates(
     *,
     owned_names: dict[str, str] | None = None,
     publications: dict[str, Any] | None = None,
+    reductions: list[dict[str, Any]] | None = None,
 ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
     if update is None:
         return [], {}
     names = optimizer_object_ids(objects.gradients, objects.optimizer_objects)
     names.update(owned_names or {})
     components = []
+    pending = {"gradient." + item["name"]: item for item in reductions or ()}
     for index, component in enumerate(update.captured.update_tasks):
         artifact = component.artifact
         assert isinstance(artifact, GraphArtifact)
@@ -56,6 +58,11 @@ def optimizer_templates(
                     {"name": name, **(publications or {})[name]}
                     for name in component.mutation_names
                     if name in (publications or {})
+                ],
+                "reductions": [
+                    pending.pop(name)
+                    for name in component.binding_names
+                    if name in pending
                 ],
             }
         )

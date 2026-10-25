@@ -3,6 +3,7 @@
 import os
 import subprocess
 import sys
+from itertools import pairwise
 from pathlib import Path
 
 import pytest
@@ -18,6 +19,7 @@ from shadowspill import (
     plan_program,
 )
 from shadowspill.artifacts.tensors import tensor_geometry
+from shadowspill.ir import ResourceKind
 from shadowspill.parallelism.views import owned_view_offsets
 from shadowspill.pytorch.executable import restore_executable
 from tests.shadowspill.build._shard_loading import check_shard_loading
@@ -97,6 +99,9 @@ def _check_completion(plan):
     objects = {item.object_id: item for item in plan.program.objects}
     gradients = {item["stored"] for item in plan.program.bindings["gradient_templates"]}
     tasks = plan.program.tasks
+    assert all(
+        t.resource.kind == ResourceKind.COMPUTE for t in tasks if t.requires_entrypoint
+    )
     entries = {
         entry["task_id"]: entry for entry in plan.program.bindings["entrypoints"]
     }
@@ -111,6 +116,8 @@ def _check_completion(plan):
                 == task.outputs
             )
     intervals = {item.task_id: item for item in plan.timeline.task_intervals}
+    serial = sorted(intervals.values(), key=lambda item: item.start_ns)
+    assert all(left.end_ns <= right.start_ns for left, right in pairwise(serial))
     for update in (task for task in tasks if task.phase == "optimizer"):
         assert gradients.intersection(update.inputs)
         aliases = {objects[value].alias_group_id for value in update.inputs}

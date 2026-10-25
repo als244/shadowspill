@@ -54,7 +54,7 @@ def worker(index, rendezvous, archive, mode):
 
     from shadowspill import Program
     from shadowspill.communication.binding.groups import GroupBindings
-    from shadowspill.execution.distributed.storage import WeightTransfers
+    from shadowspill.execution.distributed.storage import ShardedTransfers
     from shadowspill.execution.storage import Storage
     from shadowspill.execution.tensors import visit_tensors
     from shadowspill.ir import (
@@ -107,7 +107,7 @@ def worker(index, rendezvous, archive, mode):
                 topology={},
                 backend="nccl" if mode == "nccl" else "gloo",
             )
-            transfers = WeightTransfers(source, bound, device)
+            transfers = ShardedTransfers(source, bound, device)
             memory = begin_plan(
                 runtime,
                 execution="execution",

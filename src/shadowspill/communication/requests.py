@@ -32,10 +32,8 @@ class CollectiveRequest:
             raise ValueError(f"unsupported collective operation: {self.operation}")
         if self.inplace is None:
             object.__setattr__(self, "inplace", self.operation == "all_reduce")
-        if (
-            type(self.inplace) is not bool
-            or (self.operation == "all_reduce" and not self.inplace)
-            or (self.operation == "reduce_scatter" and self.inplace)
+        if type(self.inplace) is not bool or (
+            self.operation == "all_reduce" and not self.inplace
         ):
             raise ValueError("unsupported collective buffer aliasing")
         if (
@@ -89,17 +87,13 @@ def collective_requests(
                 "this Program has no supported distributed training communication "
                 "lowering; supply explicit collective probes"
             )
-        for shard in program.bindings.get("weight_shards", {}).values():
-            rows.extend(
-                dict(
-                    operation="all_gather",
-                    ranks=group,
-                    tensor_bytes=shard["padded_bytes"],
-                    dtype=shard["dtype"],
-                    inplace=True,
-                )
-                for group in shard["groups"]
-            )
+        from .transfers import transfer_collectives
+
+        rows.extend(
+            request.to_dict()
+            for requests in transfer_collectives(program.bindings).values()
+            for request in requests
+        )
         from .task_costs import task_collectives
 
         rows.extend(

@@ -53,7 +53,6 @@ def test_saved_program_derives_unique_gathers_with_logical_order(tmp_path):
         {"tensor_bytes": 0},
         {"tensor_bytes": 4.0},
         {"dtype": "float32"},
-        {"inplace": True},
         {"inplace": "yes"},
     ],
 )
@@ -75,3 +74,10 @@ def test_training_without_lowered_communication_requires_explicit_probes():
     with pytest.raises(ValueError, match="no supported distributed training"):
         collective_requests(source, None)
     assert collective_requests(source, []) == ()
+
+
+def test_inplace_scatter_describes_gradient_eviction_without_output_allocation():
+    request = CollectiveRequest(
+        "reduce_scatter", (1, 0), 64, "torch.float32", inplace=True
+    )
+    assert request.inplace and request.elements == 16

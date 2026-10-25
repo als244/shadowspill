@@ -87,21 +87,17 @@ def communication_overhead(
     # scratch conservatively for every sharded object; never hide it as zero or
     # assume asynchronous backend frees have retired at the next submission.
     scratch = 0
-    for shard in program.bindings.get("weight_shards", {}).values():
-        size, unresolved = collective_memory(
-            tuple(
-                CollectiveRequest(
-                    "all_gather",
-                    tuple(group),
-                    shard["padded_bytes"],
-                    shard["dtype"],
-                    inplace=True,
-                )
-                for group in shard["groups"]
-            ),
-            info,
-            program.setup,
-        )
-        scratch += size
-        reasons.extend(unresolved)
+    from .transfers import transfer_collectives
+
+    for requests in transfer_collectives(program.bindings).values():
+        for operation in dict.fromkeys(request.operation for request in requests):
+            size, unresolved = collective_memory(
+                tuple(
+                    request for request in requests if request.operation == operation
+                ),
+                info,
+                program.setup,
+            )
+            scratch += size
+            reasons.extend(unresolved)
     return info.fixed_device_bytes + scratch, tuple(dict.fromkeys(reasons))
