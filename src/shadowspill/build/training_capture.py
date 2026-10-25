@@ -10,12 +10,12 @@ import torch
 from torch import nn
 from torch._subclasses.fake_tensor import FakeTensorMode
 
-from shadowspill.pytorch.capture.aot import (
+from shadowspill.pytorch.capture.fake import fake_device_inputs, fake_device_model
+from shadowspill.pytorch.capture.inputs import flat_runtime_arguments
+from shadowspill.pytorch.capture.objective import (
     capture_training_objective,
     rebind_training_objective,
 )
-from shadowspill.pytorch.capture.fake import fake_device_inputs, fake_device_model
-from shadowspill.pytorch.capture.inputs import flat_runtime_arguments
 from shadowspill.pytorch.capture.retention import RetentionPolicy
 from shadowspill.pytorch.graph_pairs import (
     GraphPairStore,
@@ -76,9 +76,7 @@ def capture_training_model(
     pairs = GraphPairStore(gradient_shards=gradient_shards)
     captures = []
     constants_by_example = []
-    templates: dict[
-        str, tuple[Any, dict[str, torch.Tensor], tuple[Any, ...], Any]
-    ] = {}
+    templates: dict[str, tuple[Any, dict[str, torch.Tensor], tuple[Any, ...], Any]] = {}
     with mode:
         for (args, kwargs), signature in zip(calls, signatures, strict=True):
             fake_args, fake_kwargs = fake_device_inputs(

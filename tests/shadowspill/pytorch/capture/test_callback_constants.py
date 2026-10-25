@@ -7,7 +7,7 @@ import torch
 from torch import nn
 from torch.export.graph_signature import InputKind
 
-from shadowspill.pytorch.capture.aot import capture_forward
+from shadowspill.pytorch.capture.export import capture_forward
 from shadowspill.pytorch.capture.forward import select_forward
 
 
@@ -51,7 +51,7 @@ def test_inline_constants_capture_decompose_and_archive(callback):
 
 
 def test_registered_sequence_constant_paths_are_preserved():
-    from shadowspill.pytorch.capture.aot import _repair_constant_targets
+    from shadowspill.pytorch.capture.export import _repair_constant_targets
 
     class Offset(nn.Module):
         def __init__(self):

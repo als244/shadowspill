@@ -8,7 +8,7 @@ import torch
 import torch.nn as nn
 from torch.fx import Node
 
-from shadowspill.pytorch.capture.aot import ExportCapture
+from shadowspill.pytorch.capture.export import ExportCapture
 
 from .artifacts import PartitionedExport, StageRecord
 from .computation import computes_nothing

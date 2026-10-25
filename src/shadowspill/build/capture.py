@@ -11,11 +11,11 @@ from torch import nn
 from torch._subclasses.fake_tensor import FakeTensorMode
 from torch.utils._pytree import TreeSpec, tree_flatten
 
-from shadowspill.pytorch.capture.aot import ExportCapture, capture_forward
 from shadowspill.pytorch.capture.artifacts import (
     GraphArtifact,
     capture_forward_stage_artifacts,
 )
+from shadowspill.pytorch.capture.export import ExportCapture, capture_forward
 from shadowspill.pytorch.capture.fake import fake_device_inputs, fake_device_model
 from shadowspill.pytorch.capture.forward import restore_module_paths, select_forward
 from shadowspill.pytorch.capture.inputs import flat_runtime_arguments

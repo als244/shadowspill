@@ -12,18 +12,17 @@ from shadowspill.errors import (
 from shadowspill.pytorch import (
     ObjectiveResult,
 )
-from shadowspill.pytorch.capture import aot as aot_module
-from shadowspill.pytorch.capture.aot import (
-    capture_forward,
-    capture_training,
-    capture_training_objective,
-    inference_artifact,
-)
 from shadowspill.pytorch.capture.artifacts import (
     GraphArtifact,
     TaskInputProvenance,
 )
+from shadowspill.pytorch.capture.export import capture_forward, inference_artifact
 from shadowspill.pytorch.capture.fake import fake_device_inputs, fake_device_model
+from shadowspill.pytorch.capture.objective import (
+    capture_training,
+    capture_training_objective,
+)
+from shadowspill.pytorch.capture.provenance import _saved_input_view_provenance
 from shadowspill.task.inputs import TaskInputRole
 
 
@@ -76,7 +75,7 @@ def test_objective_export_does_not_construct_a_whole_model_vjp(
     replica = fake_device_model(model, mode)
     inputs = fake_device_inputs([torch.randn(4, 8), torch.randn(4, 8), 2], mode)
     monkeypatch.setattr(
-        "shadowspill.pytorch.capture.aot._capture_pair",
+        "shadowspill.pytorch.capture.objective._capture_pair",
         lambda *arguments, **options: pytest.fail(
             f"unexpected whole-model AOT capture {arguments}, {options}"
         ),
@@ -208,7 +207,7 @@ def test_saved_registered_state_preserves_its_aot_view_values() -> None:
 
     mode = FakeTensorMode(allow_non_fake_inputs=True)
     with mode:
-        saved = aot_module._saved_input_view_provenance(provenance, view)
+        saved = _saved_input_view_provenance(provenance, view)
 
     assert saved.representative_value is not None
     torch.testing.assert_close(saved.representative_value, value.t())

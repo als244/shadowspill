@@ -11,9 +11,9 @@ from torch.fx import GraphModule
 from shadowspill.errors import CaptureError
 from shadowspill.ir import TaskAlternativeChoice
 from shadowspill.planner import GenericPlanningOptions, StepDataOrdering, pressurefit
-from shadowspill.pytorch.capture.aot import capture_training
 from shadowspill.pytorch.capture.artifacts import GraphArtifact
 from shadowspill.pytorch.capture.fake import fake_device_inputs, fake_device_model
+from shadowspill.pytorch.capture.objective import capture_training
 from shadowspill.pytorch.graph_pairs import (
     GraphPairVariant,
     TaskGraphPairs,
@@ -699,8 +699,8 @@ def test_microbatches_of_one_export_share_its_split_and_lower_the_same(
 
     import shadowspill.pytorch.partition.api as partition_api
     import shadowspill.pytorch.partition.split as split_owner
-    from shadowspill.pytorch.capture.aot import rebind_training_objective
     from shadowspill.pytorch.capture.artifacts import TensorGeometry
+    from shadowspill.pytorch.capture.objective import rebind_training_objective
 
     splits = 0
     replays = 0
@@ -854,7 +854,7 @@ def test_orderings_lowered_from_one_shared_lowering_match_lowering_each_alone() 
     gives: the orderings differ in task order and in which microbatch
     creates each gradient, and nothing of one leaks into another."""
 
-    from shadowspill.pytorch.capture.aot import rebind_training_objective
+    from shadowspill.pytorch.capture.objective import rebind_training_objective
     from shadowspill.pytorch.lowering.training import TrainingLowering
     from shadowspill.step import StepDataOrdering
 

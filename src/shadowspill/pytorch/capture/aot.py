@@ -1,28 +1,22 @@
-"""Version-pinned PyTorch 2.13 Export and AOTAutograd boundary."""
+"""Version-pinned AOTAutograd capture of one forward/backward graph pair."""
 
 from __future__ import annotations
 
 from collections.abc import Callable, Mapping, Sequence
-from dataclasses import dataclass, replace
+from dataclasses import replace
 from typing import Any, cast
 
 import torch
-import torch.nn as nn
 from functorch.compile import make_boxed_func  # type: ignore[import-untyped]
 from torch._functorch import config as functorch_config
 from torch._functorch.aot_autograd import aot_function
-from torch.export.graph_signature import ExportGraphSignature, InputKind, OutputKind
 from torch.utils._pytree import tree_flatten, tree_unflatten
 
-from shadowspill.errors import CaptureError, ObjectiveError
+from shadowspill.errors import CaptureError
 from shadowspill.pytorch.capture.artifacts import (
     AotGraphPair,
     GraphArtifact,
-    ObjectiveSchema,
     TaskInputProvenance,
-    capture_inference_artifact,
-    capture_objective_schema,
-    normalize_objective_result,
 )
 from shadowspill.pytorch.capture.retention import (
     RetentionPolicy,
@@ -30,51 +24,17 @@ from shadowspill.pytorch.capture.retention import (
     RetentionSummary,
     partition_function,
 )
-from shadowspill.pytorch.capture.storage import ExplicitMutation, StorageRootKind
-from shadowspill.pytorch.contracts import ObjectiveResult
+from shadowspill.pytorch.capture.storage import ExplicitMutation
 from shadowspill.pytorch.representations import is_wrapper, tensor_components
 from shadowspill.task.inputs import TaskInputRole
 
-from .effects import normalize_export_effects
-from .functional import functionalize_logical_export
-from .torch_deprecations import copy_graph_module, quiet_leaf_spec_deprecation
-
-
-@dataclass(frozen=True, slots=True)
-class ExportCapture:
-    """One functional Export graph plus exact flattened example arguments."""
-
-    exported_program: torch.export.ExportedProgram
-    flat_inputs: tuple[object, ...]
-    user_output_indices: tuple[int, ...]
-    mutations: tuple[ExportMutation, ...]
-
-
-@dataclass(frozen=True, slots=True)
-class ExportMutation:
-    """One Export signature output that replaces explicit input state."""
-
-    output_index: int
-    input_index: int
-    kind: OutputKind
-    target: str
-
-
-@dataclass(frozen=True, slots=True)
-class TrainingObjectiveCapture:
-    """Exported objective semantics before stage-local differentiation."""
-
-    exported: ExportCapture
-    capture_module: nn.Module
-    objective_schema: ObjectiveSchema
-
-
-@dataclass(frozen=True, slots=True)
-class TrainingCapture(TrainingObjectiveCapture):
-    """Objective export plus whole-graph AOT alternatives for oracle use."""
-
-    save_pair: AotGraphPair
-    recompute_pair: AotGraphPair
+from .export import ExportCapture, _explicit_mutations
+from .provenance import (
+    _backward_input_provenance,
+    _tensor_input_provenance,
+    physical_input_provenance,
+)
+from .torch_deprecations import copy_graph_module
 
 
 class _GraphPairCollector:
@@ -124,339 +84,6 @@ class _GraphPairCollector:
         ):
             raise CaptureError("AOTAutograd did not emit a complete graph pair")
         return self.forward, self.backward_graph, self.backward_inputs
-
-
-class _ObjectiveModule(nn.Module):
-    def __init__(
-        self,
-        model: nn.Module,
-        objective: Callable[..., torch.Tensor | ObjectiveResult],
-        schema: ObjectiveSchema,
-    ) -> None:
-        super().__init__()
-        self.model = model
-        self.objective = objective
-        self.schema = schema
-
-    def forward(self, *args: Any, **kwargs: Any) -> tuple[torch.Tensor, ...]:
-        loss, metrics = normalize_objective_result(
-            self.objective(self.model, *args, **kwargs), require_grad=False
-        )
-        leaves, tree_spec = tree_flatten(metrics)
-        if tree_spec != self.schema.metric_tree_spec:
-            raise ObjectiveError("objective metric structure changed during capture")
-        tensor_metrics = tuple(
-            leaves[position].detach()
-            for position in self.schema.tensor_metric_positions
-        )
-        return (loss, *tensor_metrics)
-
-
-def _flatten_inputs(
-    exported: torch.export.ExportedProgram,
-    inputs: Sequence[Any],
-    kwargs: Mapping[str, Any] | None = None,
-) -> tuple[object, ...]:
-    flatten = getattr(exported, "_graph_module_flat_inputs", None)
-    if not callable(flatten):
-        raise CaptureError(
-            "PyTorch 2.13 ExportedProgram flat-input adapter is unavailable"
-        )
-    return tuple(flatten(tuple(inputs), dict(kwargs or {})))
-
-
-def _functional_copy(
-    destination: torch.Tensor,
-    source: torch.Tensor,
-    non_blocking: bool = False,
-) -> torch.Tensor:
-    """What a copy into a value is worth, as a value.
-
-    Writing into a slice of a value is how several models assemble one:
-    an output is allocated and its halves written in place. Capture
-    functionalizes that write into `aten.copy`, whose result is the
-    destination's shape and type holding the source's numbers -- and
-    which has no derivative, because the operator it came from is a
-    mutation and mutations are not differentiated.
-
-    Read as a value it is differentiable, and this says how: the source,
-    shaped and typed like the destination it was written into. Without it
-    a model that assembles a tensor by writing into it captures for a
-    forward pass and refuses for a backward one.
-    """
-
-    return source.to(destination.dtype).expand_as(destination).clone()
-
-
-def _repair_constant_targets(exported: torch.export.ExportedProgram) -> None:
-    """Give lifted constants valid attribute names before Export unlift.
-
-    A selected forward callback can make Dynamo name an inline tensor through
-    a Python closure, including indexing such as __closure__[1]. Export
-    later interprets that string as an attribute path and fails. Constants have
-    no source-model state name to preserve: rename only those invalid targets,
-    keeping the exact tensors, input positions, aliases and parameter names.
-    """
-    used = {
-        str(spec.target).split(".")[0]
-        for spec in exported.graph_signature.input_specs
-        if spec.target is not None
-    }
-    renamed: dict[str, str] = {}
-    for spec in exported.graph_signature.input_specs:
-        target = spec.target
-        if (
-            spec.kind is not InputKind.CONSTANT_TENSOR
-            or not isinstance(target, str)
-            or all(
-                part.isidentifier() or part.isdecimal() for part in target.split(".")
-            )
-        ):
-            continue
-        if target not in renamed:
-            index = len(renamed)
-            candidate = f"_shadowspill_constant_{index}"
-            while candidate in used:
-                index += 1
-                candidate = f"_shadowspill_constant_{index}"
-            used.add(candidate)
-            exported.constants[candidate] = exported.constants.pop(target)
-            renamed[target] = candidate
-        spec.target = renamed[target]
-
-
-def _export(
-    module: nn.Module,
-    inputs: Sequence[Any],
-    kwargs: Mapping[str, Any] | None = None,
-) -> ExportCapture:
-    try:
-        with quiet_leaf_spec_deprecation():
-            exported = torch.export.export(
-                module, tuple(inputs), kwargs=dict(kwargs or {}), strict=True
-            )
-            _repair_constant_targets(exported)
-            # Decomposition unwraps tensor subclasses before differentiation,
-            # losing their logical gradient contract (and can mark integer
-            # payloads requires_grad). Preserve logical operators until AOT.
-            flat_inputs = _flatten_inputs(exported, inputs, kwargs)
-            if any(is_wrapper(value) for value in flat_inputs):
-                exported = functionalize_logical_export(
-                    exported, flat_inputs, _functional_copy
-                )
-            else:
-                exported = exported.run_decompositions(
-                    {torch.ops.aten.copy.default: _functional_copy}
-                )
-            normalize_export_effects(exported)
-    except BaseException as exc:
-        raise CaptureError(f"strict PyTorch export failed: {exc}") from exc
-    flat_inputs = _flatten_inputs(exported, inputs, kwargs)
-    user_outputs = tuple(
-        index
-        for index, spec in enumerate(exported.graph_signature.output_specs)
-        if spec.kind == OutputKind.USER_OUTPUT
-    )
-    if not user_outputs:
-        raise CaptureError("exported graph has no user output")
-    mutations = _export_mutations(exported.graph_signature)
-    return ExportCapture(
-        exported_program=exported,
-        flat_inputs=flat_inputs,
-        user_output_indices=user_outputs,
-        mutations=mutations,
-    )
-
-
-def _export_mutations(
-    signature: ExportGraphSignature,
-) -> tuple[ExportMutation, ...]:
-    """Normalize Export's target/name mutation maps into contiguous positions."""
-
-    input_specs = tuple(signature.input_specs)
-    output_specs = tuple(signature.output_specs)
-    mutable_kinds = {
-        OutputKind.BUFFER_MUTATION,
-        OutputKind.PARAMETER_MUTATION,
-        OutputKind.USER_INPUT_MUTATION,
-    }
-    result: list[ExportMutation] = []
-    for output_index, output in enumerate(output_specs):
-        if output.kind not in mutable_kinds:
-            continue
-        target = output.target
-        if not isinstance(target, str) or not target:
-            raise CaptureError("Export mutation output has no target")
-        candidates: list[int] = []
-        for input_index, input_spec in enumerate(input_specs):
-            argument_name = getattr(input_spec.arg, "name", None)
-            if output.kind is OutputKind.USER_INPUT_MUTATION:
-                matches = (
-                    input_spec.kind is InputKind.USER_INPUT and argument_name == target
-                )
-            else:
-                expected = (
-                    InputKind.BUFFER
-                    if output.kind is OutputKind.BUFFER_MUTATION
-                    else InputKind.PARAMETER
-                )
-                matches = input_spec.kind is expected and input_spec.target == target
-            if matches:
-                candidates.append(input_index)
-        if len(candidates) != 1:
-            raise CaptureError(
-                "Export mutation target does not resolve to exactly one input: "
-                f"output={output_index}, kind={output.kind.name}, "
-                f"target={target!r}, candidates={candidates}"
-            )
-        result.append(ExportMutation(output_index, candidates[0], output.kind, target))
-    return tuple(result)
-
-
-def capture_forward(
-    module: nn.Module,
-    inputs: Sequence[Any],
-    *,
-    kwargs: Mapping[str, Any] | None = None,
-) -> ExportCapture:
-    """Strictly export an inference graph while keeping all state explicit."""
-
-    return _export(module, inputs, kwargs)
-
-
-def capture_training(
-    model: nn.Module,
-    objective: Callable[..., torch.Tensor | ObjectiveResult],
-    microbatch: Sequence[Any],
-) -> TrainingCapture:
-    """Capture the objective plus its whole-graph ``save`` and ``recompute`` pairs."""
-
-    objective_capture = capture_training_objective(model, objective, microbatch)
-    save_pair = _capture_pair(objective_capture.exported, memory_budget=1.0)
-    recompute_pair = _capture_pair(objective_capture.exported, memory_budget=0.0)
-    return TrainingCapture(
-        exported=objective_capture.exported,
-        capture_module=objective_capture.capture_module,
-        objective_schema=objective_capture.objective_schema,
-        save_pair=save_pair,
-        recompute_pair=recompute_pair,
-    )
-
-
-def capture_training_objective(
-    model: nn.Module,
-    objective: Callable[..., torch.Tensor | ObjectiveResult],
-    microbatch: Sequence[Any],
-    *,
-    kwargs: Mapping[str, Any] | None = None,
-) -> TrainingObjectiveCapture:
-    """Export an objective without constructing an unused whole-model VJP."""
-
-    try:
-        probe_loss, probe_metrics = normalize_objective_result(
-            objective(model, *microbatch, **dict(kwargs or {})), require_grad=True
-        )
-        del probe_loss
-        schema = capture_objective_schema(probe_metrics)
-        capture_module = _ObjectiveModule(model, objective, schema)
-        exported = _export(capture_module, microbatch, kwargs)
-    except (CaptureError, ObjectiveError):
-        raise
-    except BaseException as error:
-        raise CaptureError(f"training objective capture failed: {error}") from error
-    return TrainingObjectiveCapture(
-        exported=exported,
-        capture_module=capture_module,
-        objective_schema=schema,
-    )
-
-
-def rebind_training_objective(
-    capture: TrainingObjectiveCapture,
-    microbatch: Sequence[Any],
-    *,
-    kwargs: Mapping[str, Any] | None = None,
-) -> TrainingObjectiveCapture:
-    """The same exported objective bound to another position's example inputs.
-
-    Positions with one input structure share the export; only the flattened
-    example arguments differ, and those are cheap.
-    """
-
-    exported = replace(
-        capture.exported,
-        flat_inputs=_flatten_inputs(
-            capture.exported.exported_program, microbatch, kwargs
-        ),
-    )
-    return replace(capture, exported=exported)
-
-
-def bind_training_objective(
-    program: torch.export.ExportedProgram,
-    model: nn.Module,
-    schema: ObjectiveSchema,
-    microbatch: Sequence[Any],
-) -> TrainingObjectiveCapture:
-    """Bind an explicitly loaded export to fresh fake state without exporting."""
-
-    for spec in program.graph_signature.input_specs:
-        if spec.kind not in {InputKind.PARAMETER, InputKind.BUFFER}:
-            continue
-        if not isinstance(spec.target, str) or not spec.target.startswith("model."):
-            raise CaptureError("prepared training state target is not rooted at model")
-        name = spec.target.removeprefix("model.")
-        # Export stores non-persistent buffers alongside lifted constants, while
-        # persistent buffers and parameters live in state_dict. Both kinds of
-        # buffer must bind to this model, never to the archived meta placeholder.
-        state = (
-            program.constants
-            if spec.kind is InputKind.BUFFER and not spec.persistent
-            else program.state_dict
-        )
-        state[spec.target] = (
-            model.get_parameter(name)
-            if spec.kind is InputKind.PARAMETER
-            else model.get_buffer(name)
-        )
-    # Partition policies inspect the source module hierarchy. The loaded graph
-    # is the objective; no Python objective is called during admission.
-    module = nn.Module()
-    module.add_module("model", model)
-    return TrainingObjectiveCapture(
-        ExportCapture(
-            program,
-            _flatten_inputs(program, microbatch),
-            tuple(
-                i
-                for i, spec in enumerate(program.graph_signature.output_specs)
-                if spec.kind is OutputKind.USER_OUTPUT
-            ),
-            _export_mutations(program.graph_signature),
-        ),
-        module,
-        schema,
-    )
-
-
-def inference_artifact(capture: ExportCapture) -> GraphArtifact:
-    """Create the structural task contract for a functional Export graph."""
-
-    return capture_inference_artifact(
-        graph_module=capture.exported_program.graph_module,
-        example_inputs=capture.flat_inputs,
-        explicit_mutations=_explicit_mutations(capture),
-    )
-
-
-def export_capture_digest(capture: ExportCapture) -> str:
-    """Return the stable semantic/input contract of one exported graph."""
-
-    return GraphArtifact.input_compatibility_digest(
-        graph_module=capture.exported_program.graph_module,
-        example_inputs=capture.flat_inputs,
-        explicit_mutations=_explicit_mutations(capture),
-    )
 
 
 def _capture_pair(capture: ExportCapture, *, memory_budget: float) -> AotGraphPair:
@@ -551,26 +178,6 @@ def capture_graph_pair(
             ),
         )
     return pair
-
-
-def physical_input_provenance(
-    inputs: Sequence[object], provenance: tuple[TaskInputProvenance, ...] | None
-) -> tuple[TaskInputProvenance, ...] | None:
-    """Expand logical input provenance in AOT's physical-component order."""
-    if provenance is None:
-        return None
-    expanded = []
-    for value, item in zip(inputs, provenance, strict=True):
-        if not isinstance(value, torch.Tensor):
-            continue
-        references = (
-            dict(tensor_components(item.representative_value))
-            if item.representative_value is not None
-            else {}
-        )
-        for path, _component in tensor_components(value):
-            expanded.append(replace(item, representative_value=references.get(path)))
-    return tuple(expanded)
 
 
 # A backward graph is captured for one tangent layout and is then called
@@ -733,163 +340,12 @@ def _build_graph_pair(
     )
 
 
-def _tensor_input_provenance(
-    inputs: Sequence[object],
-    provenance: tuple[TaskInputProvenance, ...] | None,
-) -> tuple[TaskInputProvenance, ...] | None:
-    if provenance is None:
-        return None
-    return tuple(
-        item
-        for value, item in zip(inputs, provenance, strict=True)
-        if isinstance(value, torch.Tensor)
-    )
-
-
 def _capture_inputs(inputs: Sequence[object]) -> tuple[object, ...]:
     return tuple(
         value.detach().requires_grad_(value.requires_grad)
         if isinstance(value, torch.Tensor)
         else value
         for value in inputs
-    )
-
-
-def _backward_input_provenance(
-    forward: GraphArtifact,
-    *,
-    original_output_count: int,
-    saved_value_count: int,
-    backward_argument_count: int,
-) -> tuple[TaskInputProvenance, ...]:
-    """Project saved forward values and terminal tangents onto backward inputs."""
-
-    if saved_value_count > backward_argument_count:
-        raise CaptureError("AOT backward has fewer arguments than saved values")
-    views = {item.leaf_index: item for item in forward.storage_contract.output_views}
-    result: list[TaskInputProvenance] = []
-    for offset in range(saved_value_count):
-        leaf_index = original_output_count + offset
-        view = views.get(leaf_index)
-        if view is None:
-            result.append(
-                TaskInputProvenance(
-                    TaskInputRole.RESIDUAL,
-                    f"forward_output_{leaf_index}",
-                )
-            )
-            continue
-        root = forward.storage_contract.roots[view.root_id]
-        if root.kind is StorageRootKind.INPUT:
-            assert root.source_input is not None
-            try:
-                source = forward.input_provenance[root.source_input]
-            except IndexError as exc:
-                raise CaptureError(
-                    "saved forward input root is outside the task contract"
-                ) from exc
-            result.append(_saved_input_view_provenance(source, view))
-        else:
-            result.append(
-                TaskInputProvenance(
-                    (
-                        TaskInputRole.RESIDUAL
-                        if _is_continuous_dtype_name(view.dtype)
-                        else TaskInputRole.CONTROL
-                    ),
-                    f"forward_output_{leaf_index}",
-                )
-            )
-    result.extend(
-        TaskInputProvenance(TaskInputRole.TANGENT, f"tangent_{index}")
-        for index in range(backward_argument_count - saved_value_count)
-    )
-    return tuple(result)
-
-
-def _is_continuous_dtype_name(dtype_name: str) -> bool:
-    dtype = getattr(torch, dtype_name.removeprefix("torch."), None)
-    if not isinstance(dtype, torch.dtype):
-        raise CaptureError(f"AOT saved value has unknown dtype {dtype_name!r}")
-    return bool(dtype.is_floating_point or dtype.is_complex)
-
-
-def rebind_backward_input_provenance(
-    pair: AotGraphPair,
-    forward: GraphArtifact,
-) -> tuple[TaskInputProvenance, ...]:
-    """Rebuild saved-value provenance for one occurrence-local forward contract."""
-
-    original_output_count = forward.output_count - pair.saved_value_count
-    if original_output_count < 0:
-        raise CaptureError("AOT graph pair has an invalid saved-value count")
-    # A backward that accumulates takes the running gradients as further
-    # arguments. They come from the plan rather than from the forward, so
-    # projecting the forward cannot rebuild them; carry them across instead.
-    priors = tuple(
-        item
-        for item in pair.backward.input_provenance
-        if item.role is TaskInputRole.GRADIENT
-    )
-    if priors and pair.backward.input_provenance[-len(priors) :] != priors:
-        raise CaptureError(
-            "accumulated gradient arguments are not the backward's last ones"
-        )
-    return (
-        *_backward_input_provenance(
-            forward,
-            original_output_count=original_output_count,
-            saved_value_count=pair.saved_value_count,
-            backward_argument_count=pair.backward.argument_count - len(priors),
-        ),
-        *priors,
-    )
-
-
-def _saved_input_view_provenance(
-    source: TaskInputProvenance,
-    view: Any,
-) -> TaskInputProvenance:
-    """Preserve authentic values through an AOT-saved input view."""
-
-    reference = source.representative_value
-    if reference is None:
-        return source
-    itemsize = reference.element_size()
-    if view.dtype != str(reference.dtype) or view.offset_bytes % itemsize:
-        raise CaptureError(
-            "saved input view is incompatible with its representative storage: "
-            f"source={source.source}, dtype={view.dtype}, "
-            f"offset_bytes={view.offset_bytes}"
-        )
-    storage_bytes = reference.untyped_storage().nbytes()
-    if view.offset_bytes + view.span_bytes > storage_bytes:
-        raise CaptureError(
-            "saved input view exceeds its representative storage: "
-            f"source={source.source}, required={view.offset_bytes + view.span_bytes}, "
-            f"available={storage_bytes}"
-        )
-    # This helper runs while the enclosing AOT capture owns a FakeTensorMode.
-    # The occurrence-local reference is intentionally a real CPU tensor, so
-    # construct its metadata-only view below Python dispatch.
-    with torch._C._DisableTorchDispatch():
-        result = reference.as_strided(
-            view.shape,
-            view.stride,
-            view.offset_bytes // itemsize,
-        )
-    return TaskInputProvenance(
-        source.role,
-        source.source,
-        source.consumer_targets,
-        result,
-    )
-
-
-def _explicit_mutations(capture: ExportCapture) -> tuple[ExplicitMutation, ...]:
-    return tuple(
-        ExplicitMutation(item.input_index, item.output_index, item.target)
-        for item in capture.mutations
     )
 
 

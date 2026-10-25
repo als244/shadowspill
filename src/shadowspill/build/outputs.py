@@ -8,7 +8,7 @@ import torch
 from torch.fx import Graph, Node
 
 from shadowspill.errors import CaptureError
-from shadowspill.pytorch.capture.aot import ExportCapture
+from shadowspill.pytorch.capture.export import ExportCapture
 
 
 def own_public_outputs(capture: ExportCapture) -> None:

@@ -29,9 +29,9 @@ from shadowspill.schema import artifact_schema
 from shadowspill.step import StepProgram
 from shadowspill.store import atomic_json
 
-from .capture.aot import TrainingObjectiveCapture, bind_training_objective
 from .capture.artifacts import ObjectiveSchema
 from .capture.fake import fake_device_inputs
+from .capture.objective import TrainingObjectiveCapture, bind_training_objective
 from .guards import capture_input_signature
 from .store import _serializable_export
 

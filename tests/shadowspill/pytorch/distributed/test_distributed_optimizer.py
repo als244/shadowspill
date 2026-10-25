@@ -42,11 +42,11 @@ def check_training_lowering(model, captured, rank, bound):
     # publication and subsequent metric/update dependencies.
     from torch._subclasses.fake_tensor import FakeTensorMode
 
-    from shadowspill.pytorch.capture.aot import capture_training
     from shadowspill.pytorch.capture.fake import (
         fake_device_inputs,
         fake_device_model,
     )
+    from shadowspill.pytorch.capture.objective import capture_training
     from shadowspill.pytorch.graph_pairs import (
         partition_training_capture,
     )

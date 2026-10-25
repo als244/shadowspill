@@ -15,7 +15,7 @@ from shadowspill.errors import InputGuardError, PlanningError
 from shadowspill.ir import MemoryAction, MemoryActionKind
 from shadowspill.pytorch.accelerator import accelerator_device, is_accelerator
 from shadowspill.pytorch.bindings import dematerialize
-from shadowspill.pytorch.capture.aot import ExportCapture
+from shadowspill.pytorch.capture.export import ExportCapture
 from shadowspill.pytorch.capture.inputs import (
     flat_runtime_arguments as flat_runtime_arguments,
 )

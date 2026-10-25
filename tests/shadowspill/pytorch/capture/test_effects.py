@@ -9,11 +9,8 @@ import torch
 from torch import nn
 from torch._higher_order_ops.effects import _EffectType, _register_effectful_op
 
-from shadowspill.pytorch.capture.aot import (
-    capture_forward,
-    capture_training,
-    inference_artifact,
-)
+from shadowspill.pytorch.capture.export import capture_forward, inference_artifact
+from shadowspill.pytorch.capture.objective import capture_training
 from shadowspill.pytorch.graph_pairs.serialization import CachedAotGraphPair
 
 _EVENTS: list[tuple[str, int]] = []

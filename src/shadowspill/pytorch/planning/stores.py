@@ -9,7 +9,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from shadowspill.planner.plan_store import PlanStore, open_plan_store
-from shadowspill.pytorch.capture.aot import ExportCapture, export_capture_digest
+from shadowspill.pytorch.capture.export import ExportCapture, export_capture_digest
 from shadowspill.pytorch.profiling import ProfileStore
 from shadowspill.pytorch.store import FrameworkArtifacts
 from shadowspill.step import StepArchive

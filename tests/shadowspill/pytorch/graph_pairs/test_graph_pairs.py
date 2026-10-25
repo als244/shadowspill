@@ -8,8 +8,8 @@ import torch.nn as nn
 from torch._subclasses.fake_tensor import FakeTensorMode
 
 from shadowspill.pytorch.capture import aot as aot_module
-from shadowspill.pytorch.capture.aot import capture_training
 from shadowspill.pytorch.capture.fake import fake_device_inputs, fake_device_model
+from shadowspill.pytorch.capture.objective import capture_training
 from shadowspill.pytorch.graph_pairs import (
     DifferentiatedStage,
     GraphPairStore,

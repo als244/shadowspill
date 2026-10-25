@@ -1,17 +1,6 @@
 """Offline PyTorch graph capture and semantic storage contracts."""
 
-from .aot import (
-    ExportCapture,
-    ExportMutation,
-    TrainingCapture,
-    TrainingObjectiveCapture,
-    capture_forward,
-    capture_graph_pair,
-    capture_training,
-    capture_training_objective,
-    export_capture_digest,
-    inference_artifact,
-)
+from .aot import capture_graph_pair
 from .artifacts import (
     AotGraphPair,
     GraphArtifact,
@@ -22,7 +11,20 @@ from .artifacts import (
     capture_objective_schema,
     normalize_objective_result,
 )
+from .export import (
+    ExportCapture,
+    ExportMutation,
+    capture_forward,
+    export_capture_digest,
+    inference_artifact,
+)
 from .fake import fake_device_inputs, fake_device_model
+from .objective import (
+    TrainingCapture,
+    TrainingObjectiveCapture,
+    capture_training,
+    capture_training_objective,
+)
 from .storage import (
     ExplicitMutation,
     MutationBinding,

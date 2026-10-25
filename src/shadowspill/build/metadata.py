@@ -12,8 +12,8 @@ from torch.export.graph_signature import InputKind
 from torch.fx import GraphModule
 from torch.utils._pytree import treespec_dumps
 
-from shadowspill.pytorch.capture.aot import ExportCapture
 from shadowspill.pytorch.capture.artifacts import GraphArtifact
+from shadowspill.pytorch.capture.export import ExportCapture
 from shadowspill.pytorch.guards import InputSignature
 from shadowspill.pytorch.lowering.catalog import RegistrationBinding
 from shadowspill.pytorch.representations import tensor_components

@@ -11,8 +11,9 @@ from torch.utils._pytree import TreeSpec
 
 from shadowspill.ir import ExecutionPlan
 from shadowspill.planner import AdmissionFacts, ProgramPlanResult
-from shadowspill.pytorch.capture.aot import ExportCapture, TrainingObjectiveCapture
 from shadowspill.pytorch.capture.artifacts import GraphArtifact
+from shadowspill.pytorch.capture.export import ExportCapture
+from shadowspill.pytorch.capture.objective import TrainingObjectiveCapture
 from shadowspill.pytorch.capture.retention import RetentionPolicy
 from shadowspill.pytorch.compilation.compiler import CompiledTaskSet
 from shadowspill.pytorch.materialization.training import TrainingMaterializedState

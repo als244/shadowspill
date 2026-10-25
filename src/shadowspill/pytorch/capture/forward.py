@@ -7,7 +7,7 @@ from typing import Any
 
 from torch import nn
 
-from .aot import ExportCapture
+from .export import ExportCapture
 
 
 def select_forward(model: nn.Module, forward_fn: Callable[..., Any]) -> nn.Module:

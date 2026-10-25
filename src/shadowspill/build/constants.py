@@ -4,7 +4,7 @@ import torch
 from torch._subclasses.fake_tensor import FakeTensor, unset_fake_temporarily
 
 from shadowspill.errors import CaptureError
-from shadowspill.pytorch.capture.aot import ExportCapture
+from shadowspill.pytorch.capture.export import ExportCapture
 
 
 def literal_values(exported: ExportCapture) -> dict[str, torch.Tensor]:

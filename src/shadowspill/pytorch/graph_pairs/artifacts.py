@@ -7,7 +7,6 @@ from dataclasses import dataclass, replace
 
 import torch
 
-from shadowspill.pytorch.capture.aot import TrainingObjectiveCapture
 from shadowspill.pytorch.capture.artifacts import (
     AotGraphPair,
     GraphArtifact,
@@ -18,6 +17,7 @@ from shadowspill.pytorch.capture.gradients import (
     materialize_gradient_outputs,
     pad_gradient_outputs,
 )
+from shadowspill.pytorch.capture.objective import TrainingObjectiveCapture
 from shadowspill.task.inputs import TaskInputRole
 
 from ..partition.artifacts import PartitionedExport, StageExample

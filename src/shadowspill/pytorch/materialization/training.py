@@ -15,8 +15,8 @@ from shadowspill.errors import PlanningError
 from shadowspill.ir import MemoryAction, MemoryActionKind
 from shadowspill.pytorch.accelerator import accelerator_device, is_accelerator
 from shadowspill.pytorch.bindings import dematerialize
-from shadowspill.pytorch.capture.aot import TrainingObjectiveCapture
 from shadowspill.pytorch.capture.live_storage import unique_live_tensors
+from shadowspill.pytorch.capture.objective import TrainingObjectiveCapture
 from shadowspill.pytorch.lowering.catalog import RegistrationBinding
 from shadowspill.pytorch.lowering.training import (
     LoweredTrainingProgram,

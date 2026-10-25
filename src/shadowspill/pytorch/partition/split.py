@@ -18,7 +18,7 @@ from torch.utils._python_dispatch import is_traceable_wrapper_subclass
 from torch.utils._pytree import tree_flatten, tree_map
 
 from shadowspill.errors import CaptureError
-from shadowspill.pytorch.capture.aot import ExportCapture
+from shadowspill.pytorch.capture.export import ExportCapture
 from shadowspill.pytorch.representations import tensor_components
 
 from .artifacts import StageRecord

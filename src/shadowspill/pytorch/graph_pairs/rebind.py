@@ -7,11 +7,11 @@ from dataclasses import replace
 import torch
 
 from shadowspill.errors import CaptureError
-from shadowspill.pytorch.capture.aot import (
+from shadowspill.pytorch.capture.artifacts import AotGraphPair
+from shadowspill.pytorch.capture.provenance import (
     physical_input_provenance,
     rebind_backward_input_provenance,
 )
-from shadowspill.pytorch.capture.artifacts import AotGraphPair
 from shadowspill.pytorch.representations import component_at
 
 from ..partition.artifacts import StageExample

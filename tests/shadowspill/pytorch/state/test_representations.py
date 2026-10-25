@@ -4,8 +4,8 @@ import pytest
 import torch
 from torch._subclasses.fake_tensor import FakeTensorMode
 
-from shadowspill.pytorch.capture.aot import capture_training_objective
 from shadowspill.pytorch.capture.fake import fake_device_model
+from shadowspill.pytorch.capture.objective import capture_training_objective
 from shadowspill.pytorch.graph_pairs import partition_training_capture
 from shadowspill.pytorch.graph_pairs.artifacts import parameter_gradient_leaves
 from shadowspill.pytorch.graph_pairs.rebind import rebind_task_graph_pairs
@@ -139,7 +139,7 @@ def test_detached_components_keep_storage_when_live_handles_are_rebound():
 def test_export_archive_preserves_fake_component_views_and_reloads(tmp_path):
     from torch._export.serde.serialize import _reconstruct_fake_tensor
 
-    from shadowspill.pytorch.capture.aot import capture_forward
+    from shadowspill.pytorch.capture.export import capture_forward
     from shadowspill.pytorch.store import _serializable_export
 
     net = model()
@@ -220,7 +220,7 @@ def test_meta_initialization_preserves_representation_and_ties():
 
 
 def test_inference_exposes_physical_parameters():
-    from shadowspill.pytorch.capture.aot import capture_forward, inference_artifact
+    from shadowspill.pytorch.capture.export import capture_forward, inference_artifact
 
     net = model()
     x = torch.randn(3, 8)
@@ -232,7 +232,7 @@ def test_inference_exposes_physical_parameters():
 
 
 def test_mutable_buffer_is_functional_with_logical_weight_gradients():
-    from shadowspill.pytorch.capture.aot import capture_training
+    from shadowspill.pytorch.capture.objective import capture_training
 
     class Network(torch.nn.Module):
         def __init__(self):
@@ -395,7 +395,7 @@ def test_lowering_counts_components_and_one_logical_gradient():
 @pytest.mark.parametrize("wrapped", [False, True])
 def test_repeated_inference_contracts_rebind_occurrence_values(monkeypatch, wrapped):
     from shadowspill.pytorch.capture import artifacts as capture
-    from shadowspill.pytorch.capture.aot import capture_forward
+    from shadowspill.pytorch.capture.export import capture_forward
     from shadowspill.pytorch.partition import partition_export
 
     class Network(torch.nn.Module):

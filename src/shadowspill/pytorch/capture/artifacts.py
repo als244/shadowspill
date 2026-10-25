@@ -583,7 +583,7 @@ def capture_forward_stage_artifacts(
     compilation and profiling.
     """
 
-    from .aot import physical_input_provenance
+    from .provenance import physical_input_provenance
 
     contracts: dict[str, GraphArtifact] = {}
     artifacts: list[GraphArtifact] = []
@@ -648,7 +648,7 @@ def capture_inference_artifact(
     if any(is_wrapper(value) for value in example_inputs):
         from torch.fx.experimental.proxy_tensor import make_fx
 
-        from .aot import physical_input_provenance
+        from .provenance import physical_input_provenance
 
         logical = example_inputs
         graph = graph_module

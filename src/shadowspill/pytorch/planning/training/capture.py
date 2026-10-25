@@ -20,13 +20,13 @@ from shadowspill.profiling.metadata import (
     ProfilingMetadata,
     repeated_profiling_metadata,
 )
-from shadowspill.pytorch.capture.aot import (
+from shadowspill.pytorch.capture.artifacts import TensorGeometry
+from shadowspill.pytorch.capture.fake import fake_device_inputs, fake_device_model
+from shadowspill.pytorch.capture.objective import (
     TrainingObjectiveCapture,
     capture_training_objective,
     rebind_training_objective,
 )
-from shadowspill.pytorch.capture.artifacts import TensorGeometry
-from shadowspill.pytorch.capture.fake import fake_device_inputs, fake_device_model
 from shadowspill.pytorch.capture.retention import (
     MEMORY_BOUND_FLOPS_PER_BYTE,
     RetentionPolicy,

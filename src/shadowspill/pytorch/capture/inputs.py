@@ -12,7 +12,7 @@ from torch.export.graph_signature import InputKind
 
 from shadowspill.errors import PlanningError
 
-from .aot import ExportCapture
+from .export import ExportCapture
 
 
 def flat_runtime_arguments(

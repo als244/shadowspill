@@ -10,11 +10,11 @@ from torch.fx import GraphModule
 from torch.utils._pytree import tree_flatten
 
 from shadowspill.errors import CaptureError
-from shadowspill.pytorch.capture.aot import ExportCapture
 from shadowspill.pytorch.capture.artifacts import (
     TaskInputProvenance,
     TensorGeometry,
 )
+from shadowspill.pytorch.capture.export import ExportCapture
 from shadowspill.task.inputs import TaskInputRole
 
 from ..capture.storage import ExplicitMutation

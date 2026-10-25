@@ -6,7 +6,7 @@ from collections.abc import Mapping
 
 import torch
 
-from shadowspill.pytorch.capture.aot import TrainingObjectiveCapture
+from shadowspill.pytorch.capture.objective import TrainingObjectiveCapture
 from shadowspill.pytorch.capture.retention import RetentionPolicy
 
 from ..partition import PartitionSpec, partition_export

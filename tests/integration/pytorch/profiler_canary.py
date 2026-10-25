@@ -14,8 +14,8 @@ import torch.nn as nn
 from canary_phases import phase
 from torch._subclasses.fake_tensor import FakeTensorMode
 
-from shadowspill.pytorch.capture.aot import capture_forward
 from shadowspill.pytorch.capture.artifacts import capture_forward_stage_artifacts
+from shadowspill.pytorch.capture.export import capture_forward
 from shadowspill.pytorch.capture.fake import fake_device_inputs, fake_device_model
 from shadowspill.pytorch.frontend import PyTorchFrontend
 from shadowspill.pytorch.materialization import flat_runtime_arguments

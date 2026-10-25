@@ -10,7 +10,7 @@ from torch.export.graph_signature import InputKind
 
 from shadowspill.errors import CaptureError
 from shadowspill.ir import ObjectRole, Persistence
-from shadowspill.pytorch.capture.aot import TrainingObjectiveCapture
+from shadowspill.pytorch.capture.objective import TrainingObjectiveCapture
 from shadowspill.pytorch.optimizer import (
     OptimizerCapture,
     OptimizerTensorRole,

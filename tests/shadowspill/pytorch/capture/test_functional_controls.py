@@ -6,7 +6,7 @@ import pytest
 import torch
 from torch import nn
 
-from shadowspill.pytorch.capture.aot import capture_forward
+from shadowspill.pytorch.capture.export import capture_forward
 from tests.shadowspill.pytorch.state.representations import model
 
 

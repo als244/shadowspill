@@ -10,8 +10,9 @@ from pathlib import Path
 import torch
 from torch._subclasses.fake_tensor import FakeTensorMode
 
-from shadowspill.pytorch.capture.aot import _flatten_inputs, capture_training_objective
+from shadowspill.pytorch.capture.export import _flatten_inputs
 from shadowspill.pytorch.capture.fake import fake_device_model
+from shadowspill.pytorch.capture.objective import capture_training_objective
 from shadowspill.pytorch.graph_pairs.capture import capture_training_stages
 from shadowspill.pytorch.graph_pairs.serialization import CachedAotGraphPair
 from shadowspill.pytorch.partition import partition_export

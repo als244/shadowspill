@@ -10,8 +10,8 @@ from torch import nn
 from torch._subclasses.fake_tensor import FakeTensorMode
 
 from shadowspill.pipeline.common import PlanningTimer
-from shadowspill.pytorch.capture.aot import capture_training_objective
 from shadowspill.pytorch.capture.fake import fake_device_model
+from shadowspill.pytorch.capture.objective import capture_training_objective
 from shadowspill.pytorch.guards import capture_training_signatures
 from shadowspill.pytorch.planning.training import capture as capture_module
 

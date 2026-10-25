@@ -269,7 +269,7 @@ def test_core_forward_callback_keeps_state_names_and_original_model_call():
 
 
 def test_scaled_tuple_objective_is_accepted_by_the_planning_capture():
-    from shadowspill.pytorch.capture.aot import capture_training_objective
+    from shadowspill.pytorch.capture.objective import capture_training_objective
     from shadowspill.training._inputs import ScaledObjective
 
     model = nn.Linear(3, 2)

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import torch
 
-from shadowspill.pytorch.capture.aot import capture_forward, inference_artifact
+from shadowspill.pytorch.capture.export import capture_forward, inference_artifact
 from shadowspill.pytorch.compilation.compiler import compile_artifact
 
 

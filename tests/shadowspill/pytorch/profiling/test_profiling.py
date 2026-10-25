@@ -9,12 +9,12 @@ import torch.nn as nn
 from torch._subclasses.fake_tensor import FakeTensorMode
 
 from shadowspill.errors import CaptureError
-from shadowspill.pytorch.capture.aot import capture_forward
 from shadowspill.pytorch.capture.artifacts import (
     GraphArtifact,
     TaskInputProvenance,
     capture_forward_stage_artifacts,
 )
+from shadowspill.pytorch.capture.export import capture_forward
 from shadowspill.pytorch.capture.fake import fake_device_inputs, fake_device_model
 from shadowspill.pytorch.partition import partition_export
 from shadowspill.pytorch.profiling import (
