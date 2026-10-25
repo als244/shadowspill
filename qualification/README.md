@@ -7,7 +7,6 @@ caches remain separate. See the [numerical runner](numerical/README.md) and
 Pinned-host spill is the migrated execution path. SSD/remote runners are not yet
 qualified against the saved-plan API.
 
-
 `qualification/` contains the gate orchestrator, case runners and acceptance
 checks. Start with `python -m qualification.gates`; the orchestrator calls the
 matrix runners, which launch each case in a fresh process. All planning and
@@ -47,11 +46,11 @@ whatever order the command line names them in; each finishes before the next
 begins, because the measured ones are timed and overlapping them would
 corrupt both.
 
-**Every gate builds from nothing.** The unit suite gives each planning call a
-temporary store, and every matrix gate runs with `--empty-caches`: each cell
-starts from fresh phase artifacts and empty Inductor and Triton caches of
-its own, removed afterwards. A gate judges the code as it is, never reading
-an earlier run's builds, profiles or plans, nor the user's own store.
+**Every matrix gate builds from nothing.** Matrix gates run with
+`--empty-caches`: each cell starts with fresh phase artifacts and empty Inductor
+and Triton caches. The compiler caches are removed afterwards; the phase
+artifacts remain available for inspection and execution-only reruns. The default
+gate run does not reuse an earlier run's builds, profiles or plans.
 
 **`numerical_ssd` is opt-in** and runs the same numerical matrix against a local
 SSD spill pool. See [SSD numerical qualification](#ssd-numerical-qualification).
