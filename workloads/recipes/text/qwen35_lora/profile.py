@@ -3,7 +3,7 @@
 import sys
 
 from shadowspill import Program, apply_profiles, measure_communication, measure_program
-from workloads.recipes.text.phases import settings
+from workloads.recipes.phases import settings
 
 from .candidates import batch_sizes
 

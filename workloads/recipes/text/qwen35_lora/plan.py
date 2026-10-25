@@ -14,7 +14,7 @@ from shadowspill import (
 from shadowspill.errors import PlanInfeasibleError, PlanSearchExhaustedError
 from shadowspill.planning.shared import shared_memory
 from shadowspill.step import StepDataOrdering
-from workloads.recipes.text.phases import settings
+from workloads.recipes.phases import settings
 
 from .candidates import batch_sizes
 

@@ -10,9 +10,9 @@ from shadowspill import build_forward, build_step
 from workloads.models.construction import build_on_meta
 from workloads.models.qwen35moe.checkpoint import Qwen35MoECheckpoint
 from workloads.models.qwen35moe.implementations.mlops import Model
+from workloads.recipes.phases import settings
 from workloads.recipes.text.data.calls import Inputs
 from workloads.recipes.text.objectives import normalized_next_token_prediction as loss
-from workloads.recipes.text.phases import settings
 
 from .candidates import batch_sizes
 

@@ -7,8 +7,8 @@ from contextlib import ExitStack
 from shadowspill import Plan, Trainer
 from shadowspill.training.logging import Wandb
 from shadowspill.training.schedules import WarmupCosine
+from workloads.recipes.phases import settings
 from workloads.recipes.text.data.calls import Inputs
-from workloads.recipes.text.phases import settings
 
 from .evaluate import evaluate
 from .initialize import Initialize

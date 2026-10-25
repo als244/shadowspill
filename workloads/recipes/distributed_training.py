@@ -1,112 +1,50 @@
-"""Runnable two-or-more-device, non-text training example using public APIs."""
-
-from __future__ import annotations
+"""Sharded-DP regression: independent build/profile/communication/plan/execute."""
 
 import argparse
+import json
 from pathlib import Path
 
-import torch
-import torch.distributed as dist
-from torch import nn
-
-from shadowspill.pytorch import ProfilingOptions
-from shadowspill.training import Distributed
-from shadowspill.training._legacy_trainer import Trainer
-from shadowspill.training.backends import ShadowSpill
-from shadowspill.training.logging import DistributedLogger
-from shadowspill.training.schedules import Constant
+from workloads.recipes.phases import run_phases
 
 
-class Regression(nn.Module):
-    def __init__(self):
-        super().__init__()
-        self.network = nn.Sequential(nn.Linear(16, 32), nn.SiLU(), nn.Linear(32, 8))
-        self.register_buffer("updates", torch.tensor(0, dtype=torch.int64))
-
-    def forward(self, value):
-        self.updates.add_(1)
-        return self.network(value)
-
-
-def main():
+def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--run-dir", type=Path, required=True)
+    parser.add_argument(
+        "--phase",
+        choices=["all", "build", "profile", "communicate", "plan", "execute"],
+        default="all",
+    )
+    parser.add_argument("--ranks", type=int, default=2)
     parser.add_argument("--steps", type=int, default=10)
     parser.add_argument("--execution-gib", type=float, default=2)
     parser.add_argument("--spill-gib", type=float, default=1)
-    parser.add_argument("--profiling-seconds", type=float, default=1)
+    parser.add_argument("--warmup-seconds", type=float, default=0.05)
+    parser.add_argument("--measure-seconds", type=float, default=0.18)
+    parser.add_argument("--no-plots", dest="plots", action="store_false")
     parser.add_argument("--wandb-project")
     parser.add_argument("--wandb-mode", choices=("online", "offline"), default="online")
-    args = parser.parse_args()
-    from mlops.optim import AdamW
-
-    dist.init_process_group("gloo")
-    try:
-        rank, world = dist.get_rank(), dist.get_world_size()
-        generator = torch.Generator().manual_seed(711 + rank)
-        source = [
-            (
-                torch.randn(8, 16, generator=generator),
-                torch.randn(8, 8, generator=generator),
-            )
-            for _ in range(args.steps)
-        ]
-
-        def objective(model, data):
-            inputs, targets = data
-            # SUM contributions divided by all target elements in the global step.
-            return (model(inputs) - targets).square().sum() / (world * 8 * 8)
-
-        wandb = (
-            {"project": args.wandb_project, "mode": args.wandb_mode}
-            if args.wandb_project
-            else None
-        )
-        with ShadowSpill(
-            device="auto",
-            execution_gib=args.execution_gib,
-            spill_gib=args.spill_gib,
-            control_group=dist.group.WORLD,
-            artifact_store=args.run_dir / f"rank-{rank:05d}" / "artifacts",
-            partition="whole",
-            profiling_options=ProfilingOptions(
-                conditioning_seconds=args.profiling_seconds,
-                measurement_seconds=args.profiling_seconds,
-            ),
-        ) as backend:
-            group = dist.new_group(backend="nccl", device_id=backend.device)
-            try:
-                torch.manual_seed(12)
-                with (
-                    Trainer(
-                        Regression(),
-                        objective=objective,
-                        optimizer=AdamW,
-                        optimizer_args={"opt_state_dtype": torch.float32},
-                        schedules={"lr": Constant(0.001)},
-                        backend=backend,
-                        distributed=Distributed(group),
-                        # Work is application-defined: eight independent examples.
-                        metric_reducer=lambda result: {"work_units": 8},
-                    ) as trainer,
-                    DistributedLogger(
-                        dist.group.WORLD, run_dir=args.run_dir, wandb=wandb
-                    ) as logger,
-                ):
-                    trainer.prepare(source[0])
-                    trainer.fit(
-                        source,
-                        steps=args.steps,
-                        run_dir=args.run_dir,
-                        logger=logger,
-                        startup_diagnostics=True,
-                        checkpoint_every=args.steps,
-                    )
-            finally:
-                dist.destroy_process_group(group)
-    finally:
-        dist.destroy_process_group()
+    args = parser.parse_args(argv)
+    root = args.run_dir.resolve()
+    config = root / "config.json"
+    if args.phase in {"all", "build"}:
+        if config.exists():
+            parser.error("use a fresh directory for a new build")
+        if args.ranks < 2 or args.steps < 1:
+            parser.error("use at least two ranks and a positive step count")
+        if min(args.execution_gib, args.spill_gib) <= 0:
+            parser.error("memory budgets must be positive")
+        options = vars(args).copy()
+        options["run_dir"] = str(root)
+        root.mkdir(parents=True, exist_ok=True)
+        config.write_text(json.dumps(options, indent=2) + "\n")
+    else:
+        if not config.exists():
+            parser.error("run the build phase first")
+        options = json.loads(config.read_text())
+    run_phases("workloads.recipes.regression", root, args.phase, ranks=options["ranks"])
+    return 0
 
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main())

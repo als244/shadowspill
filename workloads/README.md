@@ -50,8 +50,11 @@ this directory.
 
 The standalone [Llama](recipes/text/llama3/) and
 [Qwen3.5 LoRA](recipes/text/qwen35_lora/) recipes separate build, profile, plan
-and execution into small modules. They share the subprocess driver and resumable
+and execution into small modules. They share the [recipe phase driver](recipes/phases.py) and resumable
 text-call adapter, while model-specific initialization remains with each recipe.
+The [distributed regression example](recipes/regression/) uses the same driver
+and adds a separate communication-calibration phase. Build and task measurement
+use one GPU; only calibration and execution launch all ranks.
 
 The catalog separates its entry type, preset rows, and lookup functions.
 The shared [GLM checkpoint reader](models/shared/glm/checkpoint/) separates meta

@@ -4,7 +4,7 @@ import argparse
 import json
 from pathlib import Path
 
-from workloads.recipes.text.phases import run_phases
+from workloads.recipes.phases import run_phases
 
 
 def main(argv=None):

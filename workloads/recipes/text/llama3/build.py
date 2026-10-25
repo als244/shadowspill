@@ -8,9 +8,9 @@ from mlops.optim import AdamW
 
 from shadowspill import build_forward, build_step
 from workloads.models.llama3.implementations.mlops import Model
+from workloads.recipes.phases import settings
 from workloads.recipes.text.data.calls import Inputs
 from workloads.recipes.text.objectives import normalized_next_token_prediction as loss
-from workloads.recipes.text.phases import settings
 
 from .common import model_config
 
