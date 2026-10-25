@@ -141,6 +141,7 @@ src/shadowspill/
 └── pytorch/
     ├── distributed/       replica ownership, coordinated preparation and local execution
     ├── capture/           Export/AOT capture and semantic storage contracts
+    │   ├── artifacts/     graph records, geometry, identity and output schemas
     │   ├── gradients/     accumulation, precision and padded gradient storage
     │   └── storage/       one task's contract: the records, the roots, the
     │                      capture, the symbolic replay

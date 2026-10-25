@@ -19,7 +19,7 @@ import torch
 import torch.nn as nn
 
 from shadowspill.profiling.metadata import repeated_profiling_metadata
-from shadowspill.pytorch.capture.artifacts import _representation_identity
+from shadowspill.pytorch.capture.artifacts.identity import _representation_identity
 from shadowspill.pytorch.capture.retention import MEMORY_BOUND_FLOPS_PER_BYTE
 from shadowspill.pytorch.graph_pairs import GRAPH_PAIR_VARIANTS
 from shadowspill.pytorch.guards import capture_training_signatures
