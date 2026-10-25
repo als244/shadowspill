@@ -54,6 +54,13 @@ model declaration, precision/coverage validation, expert conversion, and loading
 family readers supply only names and configurations. Keep kernel implementations
 in MLOps and pipeline orchestration in ShadowSpill.
 
+The other Hugging Face readers share [checkpoint/](models/shared/checkpoint/):
+family name mappings, tensor-layout sources and bounded range copying stay
+separate. `copy_chunk(name, shape, offset, destination)` fills an Executor buffer
+without assembling full concatenated projections or expert banks. Direct tensors,
+row concatenation, expert banks and gated-query reordering support this path;
+an unknown transformation fails explicitly instead of allocating a full tensor.
+
 Larger implementations use a package rather than a single long file. For example,
 the [Qwen3.5 PyTorch reference](models/qwen35/implementations/pytorch/) keeps its
 recurrence, operator registration, attention modules and model assembly separate;

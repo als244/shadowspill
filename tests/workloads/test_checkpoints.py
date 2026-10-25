@@ -63,7 +63,7 @@ def huggingface_state(family, model, config):
         kind = config.layer_kind(layer) if hasattr(config, "layer_kind") else "full"
         if kind == "full":
             query = ours[f"{mixer}.wq.weight"]
-            if getattr(config, "attention_gate", family == "qwen35"):
+            if family == "qwen35":
                 query = interleave_heads(query, config.n_heads)
             state[at + "self_attn.q_proj.weight"] = query
             for ours_name, theirs in (
@@ -287,7 +287,7 @@ def test_qwen_lora_initializer_loads_base_and_initializes_only_adapters_and_buff
     monkeypatch,
 ):
     from workloads.lora import configure_lora
-    from workloads.models.shared import checkpoint as checkpoint_module
+    from workloads.models.shared.checkpoint import reader as checkpoint_module
 
     opened = []
     original = checkpoint_module.SafeTensors

@@ -1,7 +1,9 @@
 """Qwen 3.5 MoE weights from a Hugging Face checkpoint.
 
-The blocks' attention and linear-attention parameters load as the dense
-Qwen 3.5 family's do. The routed experts are the checkpoint's fused banks,
+The query/gate projection keeps Hugging Face's per-head interleaving, as
+the MoE attention implementation expects. Other attention and linear-attention
+parameters load as the dense Qwen 3.5 family's do. The routed experts are the
+checkpoint's fused banks,
 ``mlp.experts.gate_up_proj`` of shape ``[E, 2I, H]`` with each expert's
 gate rows before its up rows and ``mlp.experts.down_proj`` of ``[E, H,
 I]``, which are this model's ``w13`` and ``w2`` as they are; the router is
@@ -47,6 +49,8 @@ class Qwen35MoECheckpoint(Checkpoint):
         if block is not None:
             layer, rest = block
             prefix = f"{PREFIX}layers.{layer}."
+            if rest == "mixer.wq.weight" and config.layer_kind(layer) == "full":
+                return tensor(prefix + "self_attn.q_proj.weight")
             if rest in MIXTURE:
                 return tensor(prefix + MIXTURE[rest])
             if rest == "moe.shared.gate_up.weight":

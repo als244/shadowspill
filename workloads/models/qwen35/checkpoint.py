@@ -18,9 +18,8 @@ from workloads.models.shared.checkpoint import (
     Checkpoint,
     Source,
     concatenated,
-    deinterleave_heads,
+    deinterleaved,
     layer_name,
-    permuted,
     tensor,
 )
 
@@ -59,9 +58,9 @@ def block_source(prefix: str, rest: str, config, kind: str) -> Source | None:
         return tensor(prefix + COMMON[rest])
     if kind == "full":
         if rest == "mixer.wq.weight":
-            return permuted(
+            return deinterleaved(
                 prefix + "self_attn.q_proj.weight",
-                lambda weight: deinterleave_heads(weight, config.n_heads),
+                config.n_heads,
             )
         if rest in FULL:
             return tensor(prefix + FULL[rest])
