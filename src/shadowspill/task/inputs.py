@@ -14,7 +14,7 @@ from enum import StrEnum
 
 #: The policy the representative values were generated under. A profile recorded
 #: under an older policy is not comparable with one recorded under this.
-REPRESENTATIVE_VALUE_POLICY = "shadowspill.task-values/v5"
+REPRESENTATIVE_VALUE_POLICY = "shadowspill.task-values/v6"
 
 
 class TaskInputRole(StrEnum):
@@ -25,6 +25,7 @@ class TaskInputRole(StrEnum):
     CONSTANT = "constant"
     USER_INPUT = "user_input"
     CONTROL = "control"
+    STATISTIC = "statistic"
     ACTIVATION = "activation"
     RESIDUAL = "residual"
     TANGENT = "tangent"

@@ -1,7 +1,9 @@
 """Authentic control-value propagation across partition boundaries.
 
 Integer and boolean task inputs can select kernels, allocation paths, and
-kernel caches. They therefore cannot use geometry-only synthetic values.
+kernel caches. Such controls cannot use geometry-only synthetic values. The
+partitioner separately proves arithmetic-only integer statistics; those do not
+require producer execution and are excluded from this propagation.
 This module evaluates the producer dependency slices needed to construct such
 a value from caller-supplied roots, and nothing else: a stage the value does
 not depend on is never executed to manufacture a profiling input.
@@ -54,15 +56,16 @@ def derive_authentic_control_values(
     representative_root_inputs: tuple[object, ...] | None,
     *,
     caller_values: Mapping[StageOutputKey, torch.Tensor] | None = None,
+    numeric_values: frozenset[StageOutputKey] = frozenset(),
 ) -> dict[StageOutputKey, torch.Tensor]:
-    """Resolve every produced integer/boolean value consumed by another stage.
+    """Resolve produced integer/boolean controls consumed by another stage.
 
     Caller values are an explicit escape hatch for a producer slice that
     cannot execute on the planning host.  They obey the same geometry checks
     as values derived from the graph.
     """
 
-    required = _required_control_outputs(split)
+    required = _required_control_outputs(split) - numeric_values
     if not required:
         return {}
     resolved = _validate_caller_values(split, required, caller_values or {})

@@ -473,8 +473,15 @@ execution. Its ordinary CPU counters and hyperparameters keep their CPU bindings
 When partitioning needs authentic integer or boolean intermediates for
 profiling, it executes the required producer slice. Each input is materialized
 on its own captured device: explicit CPU controls stay on the CPU even when
-other inputs or outputs use the execution device. Pool-backed inputs are read
-through the setup-time pool access mechanism.
+other inputs or outputs use the execution device. Public build takes caller
+state and does not require an execution pool. Legacy pool-backed callers still
+use their setup-time access mechanism.
+
+Integer outputs used exclusively in proven fixed-shape arithmetic are marked
+numeric statistics. Isolated profiling supplies ones and records that generated
+value policy; it does not claim a real routing distribution. Any indexing,
+mutation or unknown operation downstream preserves the authentic-control rule.
+Actual execution always consumes the producer's real integer values.
 
 Control-value dependency discovery walks stages backwards, then evaluates the
 needed slices in topological order. This avoids Python recursion limits for

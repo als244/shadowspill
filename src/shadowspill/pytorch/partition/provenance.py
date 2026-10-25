@@ -21,6 +21,7 @@ from ..capture.storage import ExplicitMutation
 from .artifacts import Stage, StageExample, StageValueSource
 from .sources import stage_value_source
 from .split import SplitExportGraph
+from .statistics import numeric_outputs
 from .values import StageOutputKey, derive_authentic_control_values
 
 
@@ -78,10 +79,12 @@ def build_stage_examples(
 
     mutations = _partition_mutations(capture, split)
     user_outputs = _partition_user_outputs(capture, split)
+    numeric_values = numeric_outputs(split)
     control_values = derive_authentic_control_values(
         split,
         representative_root_inputs,
         caller_values=caller_stage_values,
+        numeric_values=numeric_values,
     )
     examples: list[StageExample] = []
     for index, record in enumerate(split.stages):
@@ -95,6 +98,7 @@ def build_stage_examples(
                 value=record.inputs[input_position],
                 roots=root_provenance,
                 control_values=control_values,
+                numeric_values=numeric_values,
             )
             provenance.append(item)
         examples.append(
@@ -226,6 +230,7 @@ def _stage_input_provenance(
     value: object,
     roots: tuple[TaskInputProvenance, ...],
     control_values: dict[StageOutputKey, torch.Tensor],
+    numeric_values: frozenset[StageOutputKey],
 ) -> TaskInputProvenance:
     if source.root_input_index is not None:
         try:
@@ -239,7 +244,9 @@ def _stage_input_provenance(
     key = (source.producer_stage_index, source.producer_output_index)
     control = isinstance(value, torch.Tensor) and _requires_authentic_value(value)
     return TaskInputProvenance(
-        TaskInputRole.CONTROL if control else TaskInputRole.ACTIVATION,
+        TaskInputRole.STATISTIC
+        if key in numeric_values
+        else (TaskInputRole.CONTROL if control else TaskInputRole.ACTIVATION),
         (
             f"stage_{source.producer_stage_index:04d}."
             f"output_{source.producer_output_index:04d}"

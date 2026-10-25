@@ -80,12 +80,18 @@ through the first one's split with its own inputs instead, so the mapping is a
 shortcut to the same stages and never a different answer. A microbatch whose
 inputs differ in geometry is split for itself.
 
-Deriving the integer and boolean values a stage needs from its producers runs
-those producers on authentic state ([allocation
-behavior](lowering.md#allocation-behavior)), and only a program's first
-microbatch does it; later microbatches check the derived values against their
-own geometry. So only the first microbatch reads state from the pool, and every
-later one works on describing values throughout. Which microbatch creates a
+Integer and boolean controls require authentic values from their producer
+slices or the caller. Arithmetic-only statistics are different: partitioning
+follows every downstream use across stages and permits generated profiling values
+only through a small whitelist of fixed-shape ATen arithmetic. Indexing, scalar
+extraction, mutations and unknown/custom operators retain the strict control
+requirement. This lets meta-built MoE models expose numeric expert counts without
+running the whole model merely to prepare a loss statistic. Runtime computation
+and integer dtypes remain unchanged.
+
+Producer evaluation occurs for only a program's first microbatch; later
+microbatches check the derived values against their own geometry. Public build
+uses caller state, not runtime pools. Which microbatch creates a
 stage's gradient and which adds into it is not decided here: every microbatch
 carries both backward forms and the step's ordering chooses ([graph-pair
 construction](graph-pair-construction.md#accumulating-onto-gradients-that-already-exist)).

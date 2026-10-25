@@ -272,6 +272,9 @@ def _populate_value(
         target.zero_()
         return "lazy_optimizer_state_zero"
     if not target.is_floating_point() and not target.is_complex():
+        if provenance.role is TaskInputRole.STATISTIC:
+            target.fill_(1)
+            return "fixed_shape_numeric_one"
         raise _value_error(
             structural_contract_key,
             position,
