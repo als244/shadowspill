@@ -5,6 +5,7 @@ from __future__ import annotations
 import ctypes
 from collections.abc import Mapping
 from dataclasses import dataclass, field
+from typing import cast
 
 import numpy as np
 
@@ -368,7 +369,7 @@ def _names(table: tuple[object, ...], indices: np.ndarray) -> list[object]:
     lookup = np.empty(len(table), dtype=object)
     for position, value in enumerate(table):
         lookup[position] = value
-    return lookup[indices].tolist()
+    return cast(list[object], lookup[indices].tolist())
 
 
 def _optional_name(names: tuple[str, ...], index: int) -> str | None:

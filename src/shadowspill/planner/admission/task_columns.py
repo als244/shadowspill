@@ -17,7 +17,7 @@ from __future__ import annotations
 
 import hashlib
 import json
-from collections.abc import Sequence
+from collections.abc import Iterable, Sequence
 from dataclasses import dataclass, fields
 from itertools import chain, compress, repeat
 from operator import attrgetter, is_, is_not
@@ -89,7 +89,7 @@ def _ragged(
     return offsets, tuple(chain.from_iterable(rows))
 
 
-def _integers(values: Sequence[object] | object, count: int) -> np.ndarray:
+def _integers(values: Iterable[object], count: int) -> np.ndarray:
     return np.fromiter(values, dtype=np.int64, count=count)
 
 

@@ -47,11 +47,10 @@ from .specs import (
     MutationSpec,
     ObjectSpec,
     ResourceSpec,
-    TaskOverlapCost,
     TaskProfile,
-    TaskResourcePhase,
     TaskSpec,
 )
+from .timing import TaskOverlapCost, TaskResourcePhase
 from .transfers import TransferPhase, TransferSpec
 
 PROGRAM_SCHEMA = artifact_schema("program")

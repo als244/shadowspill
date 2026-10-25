@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import hashlib
 import json
-from collections.abc import Iterator, Sequence
+from collections.abc import Iterable, Iterator, Sequence
 from dataclasses import dataclass
 from typing import Any, overload
 
@@ -55,7 +55,7 @@ def _optional(value: int) -> int | None:
     return None if value == NONE else value
 
 
-class _Columns:
+class _Columns(Iterable[object]):
     """Equality, length and list conversion shared by the column groups.
 
     Two groups are equal when every column and name table is; a group also
@@ -79,7 +79,7 @@ class _Columns:
                 for name in self.COLUMNS
             )
         if isinstance(other, (tuple, list)):
-            return tuple(self) == tuple(other)  # type: ignore[call-overload]
+            return tuple(self) == tuple(other)
         return NotImplemented
 
     __hash__ = None  # type: ignore[assignment]

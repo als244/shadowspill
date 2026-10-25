@@ -16,6 +16,7 @@ from collections import namedtuple
 from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Any
 
 import numpy as np
 
@@ -112,7 +113,7 @@ def write_step_diagnostics(path: Path, diagnostics: StepDiagnostics) -> Path:
         for name, dtype in _COLUMNS[group]:
             arrays[f"{group}.{name}"] = _column(records, name, dtype)
     events = events_path(path)
-    atomic_write(events, lambda output: np.savez(output, **arrays))
+    atomic_write(events, lambda output: np.savez(output, allow_pickle=False, **arrays))
     atomic_json(path, diagnostics.as_dict(events=False))
     return events
 
@@ -145,7 +146,8 @@ def _column(records: Sequence[object], name: str, dtype: type) -> np.ndarray:
     )
 
 
-def _rows(data: np.lib.npyio.NpzFile, source: Path, group: str) -> list[tuple]:
+def _rows(data: np.lib.npyio.NpzFile, source: Path, group: str) -> list[Any]:
+    # The dynamically named rows expose the raw C fields to both decoders.
     columns: list[list[int]] = []
     for name, dtype in _COLUMNS[group]:
         column = data[f"{group}.{name}"]

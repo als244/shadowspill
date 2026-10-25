@@ -323,7 +323,7 @@ class PressureFitTrace:
         """
         if not 0 <= reduction < len(self.reductions):
             raise IndexError("reduction index out of range")
-        by_reduction = {}
+        by_reduction: dict[int, int] = {}
         for step, rid in self.step_reductions:
             value = int(self.steps[int(step), 1])
             rid = int(rid)

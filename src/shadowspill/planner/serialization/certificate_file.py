@@ -96,7 +96,7 @@ def write_certificate(path: Path, admission: FixedLayoutAdmission) -> None:
             arrays[f"{group}.{name}"] = getattr(values, name)
     for name in _INTERVAL_COLUMNS:
         arrays[f"simulation.{name}"] = columns[name]
-    atomic_write(path, lambda output: np.savez(output, **arrays))
+    atomic_write(path, lambda output: np.savez(output, allow_pickle=False, **arrays))
 
 
 def read_certificate_meta(path: Path) -> dict[str, object]:
