@@ -29,7 +29,8 @@ def dispatch(bound: BoundTask, state: Storage, controls: Controls) -> None:
     try:
         wait_task_allocations(bridge, bound.handle, device)
         _run(bound, state, controls)
-    except BaseException:
+    except BaseException as error:
+        error.add_note(f"while executing task {bound.entry.task_id}")
         abort_task(bridge, bound.handle)
         raise
 

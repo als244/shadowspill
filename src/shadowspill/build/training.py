@@ -101,6 +101,12 @@ def _build_training(
         operator_recompute=operator_recompute,
         gradient_dtype=grad_dtype,
         device_index=device.index,
+        gradient_shards={
+            name: len(parameter.gradients.groups[0])
+            for parameter in parameters
+            if parameter.trainable and len(parameter.gradients.groups[0]) > 1
+            for name in parameter.names
+        },
     )
     artifacts = [
         artifact

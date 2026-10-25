@@ -70,10 +70,6 @@ def lower_training(
                 if name in trained
             },
         )
-        boundaries = bind_training_boundaries(
-            captures, objects, geometry, (None,) * len(captures)
-        )
-        templates = stage_templates(captures, objects, boundaries, geometry)
         completions, gradient_bindings = (
             ([], {})
             if gradient_operations is None
@@ -81,6 +77,10 @@ def lower_training(
                 gradient_operations, objects, geometry, for_optimizer=update is not None
             )
         )
+        boundaries = bind_training_boundaries(
+            captures, objects, geometry, (None,) * len(captures)
+        )
+        templates = stage_templates(captures, objects, boundaries, geometry)
         owned: dict[str, Any] = {}
         publications: dict[str, Any] = {}
         if update is not None and parameter_ownership:

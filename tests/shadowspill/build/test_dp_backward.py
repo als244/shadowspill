@@ -62,6 +62,25 @@ def test_one_gpu_build_profiles_compute_and_plans_sharded_gradient_spills(
     assert tuple(map(tuple, shard["groups"])) == ((0, 1), (2, 3))
     assert tuple(map(tuple, shard["replica_groups"])) == ((0, 2), (1, 3))
     profiles = measure_program(source, warmup_seconds=0.001, measure_seconds=0.002)
+    # Publication adopts the actual compiled allocation, not merely its tensor
+    # shape. Equal-shard padding must already exist in every first backward.
+    for form in source.bindings["training_templates"][0][0]:
+        if form["accumulates"]:
+            continue
+        backward = form["backward"]
+        leaf = next(
+            slot["leaf_index"]
+            for slot in backward["contributions"]
+            if slot["object_id"] == gradient
+        )
+        allocation = next(
+            event
+            for event in profiles.tasks[backward["profile_key"]].metadata[
+                "allocation_trace"
+            ]
+            if leaf in event["output_leaf_indices"]
+        )
+        assert allocation["requested_bytes"] == shard["padded_bytes"]
     # Compute profiles do not need distributed memory or timing measurements.
     profiled = apply_profiles(source, profiles)
     from tests.shadowspill.offline._communication import estimated_communication

@@ -51,6 +51,7 @@ def capture_training_model(
     operator_recompute: RetentionPolicy | None,
     gradient_dtype: torch.dtype | None,
     device_index: int,
+    gradient_shards: Mapping[str, int] | None = None,
 ) -> TrainingCapture:
     if isinstance(num_examples, bool) or not isinstance(num_examples, int):
         raise TypeError("num_examples must be an integer")
@@ -72,7 +73,7 @@ def capture_training_model(
     replica = fake_device_model(model, mode, device_index=device_index)
     original = nn.Module()
     original.add_module("model", model)
-    pairs = GraphPairStore()
+    pairs = GraphPairStore(gradient_shards=gradient_shards)
     captures = []
     constants_by_example = []
     templates: dict[

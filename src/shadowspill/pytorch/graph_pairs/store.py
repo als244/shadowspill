@@ -7,6 +7,7 @@ import json
 import os
 import pickle
 import tempfile
+from collections.abc import Mapping
 from contextlib import suppress
 from dataclasses import dataclass, replace
 from pathlib import Path
@@ -67,6 +68,7 @@ class GraphPairStore:
         *,
         policy: StorePolicy = CONTRIBUTE,
         artifact_recorder: ArtifactRecorder | None = None,
+        gradient_shards: Mapping[str, int] | None = None,
     ) -> None:
         self._pairs: dict[_Key, TaskGraphPairs] = {}
         #: The forms a step asks for, derived from the captured pairs.
@@ -74,6 +76,7 @@ class GraphPairStore:
         self._root = None if root is None else Path(root).expanduser()
         self._policy = policy
         self._artifact_recorder = artifact_recorder
+        self._gradient_shards = dict(gradient_shards or {})
         self._keys_seen: set[_Key] = set()
         self.hits = 0
         self.misses = 0
@@ -130,18 +133,22 @@ class GraphPairStore:
         from shadowspill.pytorch.distributed import current
 
         bound = current()
-        padding = []
+        shards = dict(self._gradient_shards)
         if bound is not None and bound.specification.shard_gradients:
-            for position, provenance in enumerate(example.stage.input_provenance):
-                name = (provenance.source or "").removeprefix("model.")
-                layout = bound.transfer_sharding.get(name)
-                if layout is not None:
-                    padding.append((position, layout.group.size()))
+            shards.update(
+                (name, layout.group.size())
+                for name, layout in bound.transfer_sharding.items()
+            )
+        padding = tuple(
+            (position, shards[name])
+            for position, provenance in enumerate(example.stage.input_provenance)
+            if (name := (provenance.source or "").removeprefix("model.")) in shards
+        )
         form = _Form(
             gradient_dtype,
             accumulating,
             fuse_narrow_gradient_accumulation,
-            tuple(padding),
+            padding,
         )
         self._keys_seen.add(key)
         existing = self._pairs.get(key)
