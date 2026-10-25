@@ -307,104 +307,55 @@ if logger is not None:
 <details>
 <summary><strong>Qwen3-30B-A3B: full training on eight GPUs</strong></summary>
 
-This example starts from random initialization and consumes 512 sequences per
-update: 64 distinct 4K-token sequences on each rank. Both kinds of sharding are
-explicit: `DataParallel(shard_weights=True, shard_gradients=True)` shards compute
-weights and gradients in the spill pool; `shard_optimizer=True` independently shards FP32 masters and AdamW moments
-across all eight ranks. Weight fetches all-gather the layer's execution tensors;
-gradient evictions reduce-scatter their contributions. The plan decides when
-those transfers occur and which tensors remain resident between uses.
+This recipe starts from random initialization and consumes 512 sequences per
+update: 64 distinct 4K-token sequences per rank. `Parallelism.dp(ranks_per_replica=8)`
+shards weights, gradients, FP32 masters and AdamW moments across the eight GPUs.
+The compute weights are BF16 and accumulated gradients are FP32.
 
-`prepare()` creates Gloo for coordination before opening the pools, then NCCL
-for tensor collectives. `close()` releases the pools before those groups.
-`DataParallel()` also supports ordinary replicated compute weights and gradient
-reductions; optimizer/master sharding remains enabled by default in either mode.
-`device="auto"` selects the rank's GPU. The
-[complete script](workloads/recipes/text/train_qwen3_distributed.py) requests
-77 GiB of GPU memory and 96 GiB of pinned host memory **per rank** (768 GiB of
-host pools across the node), suitable as a starting configuration for an
-8×80-GB H100 node with sufficient host RAM. Microbatch candidates range from
-one to 32 sequences per rank (4K–128K tokens):
+The [recipe](workloads/recipes/text/qwen3/README.md) builds and profiles local
+compute on a representative GPU, measures communication on all ranks, searches sizes/orderings
+on the CPU, and launches fresh Trainer workers with the selected saved Plan.
+Its defaults request 77 GiB of total GPU memory and 96 GiB of pinned host spill
+per rank. Batch candidates are 1, 2, 4, 8, 16 and 32 sequences per rank.
+
+Run the orchestrator once; it launches torchrun only for distributed phases:
 
 ```bash
-torchrun --standalone --nproc-per-node=8 \
-  -m workloads.recipes.text.train_qwen3_distributed --data /path/to/qwen3-tokens
+python -m workloads.recipes.text.train_qwen3_distributed \
+  --data /path/to/qwen3-tokens --run-dir runs/qwen3-dp8
 ```
 
-```python
-import torch
-from mlops.optim import AdamW
-from shadowspill.training import DataParallel, reset_parameters
-from shadowspill.training._legacy_trainer import Trainer
-from shadowspill.training.backends import ShadowSpill
-from shadowspill.training.schedules import WarmupCosine
-from workloads.models.catalog import build_on_meta
-from workloads.recipes.text.data.fixed import TokenUpdates
-from workloads.recipes.text.objectives import next_token_prediction
+Each phase is also independently runnable. For example, reuse measurements to
+search another budget with GPUs hidden:
 
-data_directory = "/path/to/qwen3-tokens"
-steps = 5
-# Trainer creates Gloo for coordination, then NCCL for tensor collectives.
-# Weight fetches all-gather; gradient evictions reduce-scatter.
-parallel = DataParallel(shard_weights=True, shard_gradients=True, timeout=7200)
-if parallel.world_size != 8:
-    raise ValueError("launch this script with eight torchrun processes")
-# Each rank reads 64 distinct sequences; losses use global token normalization.
-# Search sizes from 1 to 32 sequences per microbatch, and all factor orderings.
-data = TokenUpdates(
-    data_directory,
-    sequence_length=4096,
-    sequences_per_step=64,
-    rank=parallel.rank,
-    world_size=parallel.world_size,
-    max_sequences_per_microbatch=32,
-)
-model = build_on_meta("qwen3moe-30b-a3b", dtype="bfloat16")
-trainer = Trainer(
-    model,
-    objective=next_token_prediction,
-    optimizer=AdamW,
-    optimizer_args={"opt_state_dtype": torch.float32},
-    schedules={
-        "lr": WarmupCosine(lr=3e-4, min_lr=3e-5, warmup_steps=1, total_steps=steps)
-    },
-    master_dtype=torch.float32,
-    grad_dtype=torch.float32,
-    microbatch_candidates=data.candidates,
-    backend=ShadowSpill(
-        device="auto", execution_gib=77, spill_gib=96, preparation_timeout=7200
-    ),
-    distributed=parallel,
-    shard_optimizer=True,  # Separately shard FP32 masters and AdamW moments.
-)
-torch.manual_seed(0)
-# Allocate sharded storage, initialize randomly, search sizes/orderings, admit.
-trainer.prepare(data.example(), initialize=reset_parameters)
-trainer.fit(data, steps=steps, run_dir="runs/qwen3-dp8")
-trainer.close()  # Release callables, pools, then the owned process groups.
+```bash
+CUDA_VISIBLE_DEVICES= python -m workloads.recipes.text.train_qwen3_distributed \
+  --run-dir runs/qwen3-dp8 --phase plan --execution-gib 60
 ```
 
-Each rank reads different corpus windows. Its losses are normalized by all
-512 × 4,096 target tokens, because distributed gradients are summed. Search
-coordinates a compatible collective schedule across ranks. The Trainer writes
-per-rank metrics and plans under the run directory. See
-[distributed ownership](docs/python/api/distributed.md) for subgroup layouts.
+Initialization fills bounded Executor-provided CPU chunks. Per-rank losses use
+the global target-token count, because gradient contributions are summed.
+`search.json` records every candidate, `plan.ssp` holds the selected executable,
+`report/` contains simulated timelines, and `training/rank-NNNNN/` holds metrics
+and checkpoints. No model construction, profiling or planning occurs in the
+execution worker. See [distributed ownership](docs/python/api/distributed.md)
+for the general parallelism API.
 
 </details>
 
 ## More control
 
-`trainer.planning` exposes the microbatch search and each budget's selected plan;
-`plan.summary` reports estimated step time, memory peaks, recomputation, idle
-time and transfer utilization. For repeated budgets, use
-`trainer.prepare_artifacts(..., budgets=...)`, save its `PreparedTraining`, and
-pass it to another trainer's `prepare(..., prepared=...)`. Persistent preparation
-currently supports one rank; distributed training uses coordinated preparation.
+`Program`, `Profiles`, `ProfiledProgram` and `Plan` each support explicit save/load.
+Reuse a saved `ProfiledProgram` with `plan_program(...)` for different memory
+budgets or communication assumptions without rebuilding or measuring again.
+`plan.summary`, `plan.timeline` and `plan.memory_layout` expose the result;
+`write_report(plan, path)` writes CPU-only diagnostics. Trainer consumes the
+selected Plan; direct Executor use gives callers control over individual invocations.
 
 The [training API](docs/python/api/training.md) covers schedules, evaluation and
-checkpointing. [Reusable planning](docs/examples/reusable-planning.md) shows
-prepare/search/admit separately, and the [low-level training loop](docs/examples/training-lifecycle.md)
-shows explicit runtime ownership. [Examples](docs/examples/README.md) includes
+checkpointing. [Reusable planning](docs/examples/reusable-planning.md) shows the
+phase artifacts, and the [low-level training loop](docs/examples/training-lifecycle.md)
+shows explicit Executor ownership. [Examples](docs/examples/README.md) includes
 small models for learning the API. The [benchmark quickstart](benchmarking/quickstart.md)
 measures experiments and plots plans. [SSD spill pools](docs/python/api/ssd.md)
 provide an alternative to pinned host storage for single-rank training.

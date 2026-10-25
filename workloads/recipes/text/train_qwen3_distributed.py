@@ -1,68 +1,93 @@
-"""Eight-GPU Qwen3-30B-A3B full training: 4K x 512 sequences per global update.
+"""Qwen3 MoE full training through independently runnable public phases.
 
-Launch with torchrun --standalone --nproc-per-node=8 -m
-workloads.recipes.text.train_qwen3_distributed --data /path/to/qwen3-tokens.
+Run this once; communicate/execute launch their own torchrun workers.
+Defaults: eight GPUs, 4K tokens, 64 sequences per rank (512 globally).
 """
 
 import argparse
+import json
+from pathlib import Path
 
-import torch
-from mlops.optim import AdamW
-
-from shadowspill.training import DataParallel, reset_parameters
-from shadowspill.training._legacy_trainer import Trainer
-from shadowspill.training.backends import ShadowSpill
-from shadowspill.training.schedules import WarmupCosine
-from workloads.models.catalog import build_on_meta
-from workloads.recipes.text.data.fixed import TokenUpdates
-from workloads.recipes.text.objectives import next_token_prediction
+from workloads.recipes.phases import run_phases
 
 
-def main(data_directory):
-    steps = 5
-    # Trainer creates Gloo for coordination, then NCCL for tensor collectives.
-    # Weight fetches all-gather; gradient evictions reduce-scatter.
-    parallel = DataParallel(shard_weights=True, shard_gradients=True, timeout=7200)
-    if parallel.world_size != 8:
-        raise ValueError("launch this script with eight torchrun processes")
-    # Each rank reads 64 distinct sequences; losses use global token normalization.
-    # Search sizes from 1 to 32 sequences per microbatch, and all factor orderings.
-    data = TokenUpdates(
-        data_directory,
-        sequence_length=4096,
-        sequences_per_step=64,
-        rank=parallel.rank,
-        world_size=parallel.world_size,
-        max_sequences_per_microbatch=32,
+def main(argv=None):
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--data", help="Qwen3-tokenized corpus directory")
+    parser.add_argument("--run-dir", type=Path, default=Path("runs/qwen3-dp8"))
+    parser.add_argument(
+        "--phase",
+        default="all",
+        choices=["all", "build", "profile", "communicate", "plan", "execute"],
     )
-    model = build_on_meta("qwen3moe-30b-a3b", dtype="bfloat16")
-    trainer = Trainer(
-        model,
-        objective=next_token_prediction,
-        optimizer=AdamW,
-        optimizer_args={"opt_state_dtype": torch.float32},
-        schedules={
-            "lr": WarmupCosine(lr=3e-4, min_lr=3e-5, warmup_steps=1, total_steps=steps)
-        },
-        master_dtype=torch.float32,
-        grad_dtype=torch.float32,
-        microbatch_candidates=data.candidates,
-        backend=ShadowSpill(
-            device="auto", execution_gib=77, spill_gib=96, preparation_timeout=7200
-        ),
-        distributed=parallel,
-        shard_optimizer=True,  # Separately shard FP32 masters and AdamW moments.
+    parser.add_argument(
+        "--model",
+        choices=["qwen3moe-tiny", "qwen3moe-30b-a3b"],
+        default="qwen3moe-30b-a3b",
     )
-    torch.manual_seed(0)
-    # Allocate sharded storage, initialize randomly, search sizes/orderings, admit.
-    trainer.prepare(data.example(), initialize=reset_parameters)
-    trainer.fit(data, steps=steps, run_dir="runs/qwen3-dp8")
-    trainer.close()  # Release callables, pools, then the owned process groups.
+    parser.add_argument("--ranks", type=int, default=8)
+    parser.add_argument("--sequence-length", type=int, default=4096)
+    parser.add_argument(
+        "--sequences-per-step",
+        type=int,
+        default=64,
+        help="number of sequences per rank in one update",
+    )
+    parser.add_argument("--max-sequences-per-example", type=int, default=32)
+    parser.add_argument("--steps", type=int, default=5)
+    parser.add_argument("--learning-rate", type=float, default=3e-4)
+    parser.add_argument("--seed", type=int, default=0)
+    parser.add_argument("--execution-gib", type=float)
+    parser.add_argument("--spill-gib", type=float)
+    parser.add_argument("--warmup-seconds", type=float, default=0.05)
+    parser.add_argument("--measure-seconds", type=float, default=0.18)
+    parser.add_argument("--no-plots", dest="plots", action="store_false")
+    args = parser.parse_args(argv)
+    root = args.run_dir.resolve()
+    config = root / "config.json"
+    if args.phase in {"all", "build"}:
+        if config.exists() or not args.data:
+            parser.error("start with --data and a fresh run directory")
+        options = vars(args).copy()
+        options["run_dir"] = str(root)
+        options["data"] = str(Path(args.data).resolve())
+        options["execution_gib"] = (
+            77 if args.execution_gib is None else args.execution_gib
+        )
+        options["spill_gib"] = 96 if args.spill_gib is None else args.spill_gib
+    else:
+        if not config.exists():
+            parser.error("run the build phase first")
+        options = json.loads(config.read_text())
+        for key in ("execution_gib", "spill_gib"):
+            if getattr(args, key) is not None:
+                if args.phase != "plan":
+                    parser.error("changed budgets require --phase plan")
+                options[key] = getattr(args, key)
+    if (
+        min(
+            options[key]
+            for key in (
+                "ranks",
+                "sequence_length",
+                "sequences_per_step",
+                "max_sequences_per_example",
+                "steps",
+                "learning_rate",
+                "execution_gib",
+                "spill_gib",
+            )
+        )
+        <= 0
+    ):
+        parser.error("counts, learning rate and memory budgets must be positive")
+    if args.phase == "communicate" and options["ranks"] == 1:
+        parser.error("single-rank host-copy calibration is included in --phase profile")
+    root.mkdir(parents=True, exist_ok=True)
+    config.write_text(json.dumps(options, indent=2) + "\n")
+    run_phases("workloads.recipes.text.qwen3", root, args.phase, ranks=options["ranks"])
+    return 0
 
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument(
-        "--data", required=True, help="Qwen3-tokenized corpus directory"
-    )
-    main(parser.parse_args().data)
+    raise SystemExit(main())
