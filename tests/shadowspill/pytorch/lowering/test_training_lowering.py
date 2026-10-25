@@ -294,6 +294,7 @@ def _lowered(
     )
 
 
+@pytest.mark.cuda
 def test_training_lowering_composes_accumulation_and_recomputation() -> None:
     lowered = _lowered()
     assert len(lowered.program.task_alternative_groups) == 2
@@ -341,6 +342,7 @@ def test_training_lowering_composes_accumulation_and_recomputation() -> None:
     assert all(task.phase == "optimizer" for task in selected[4:])
 
 
+@pytest.mark.cuda
 def test_parameter_metrics_are_planned_public_outputs_before_updates():
     from shadowspill.training.observations import parameter_norms
 
@@ -372,6 +374,7 @@ def test_parameter_metrics_are_planned_public_outputs_before_updates():
     ]
 
 
+@pytest.mark.cuda
 def test_training_lowering_accepts_arbitrary_graph_pairs() -> None:
     lowered = _lowered(include_intermediate_variant=True)
     assert len(lowered.program.task_alternative_groups) == 2
@@ -421,10 +424,12 @@ def test_training_lowering_accepts_arbitrary_graph_pairs() -> None:
     assert planned.simulation.makespan_ns > 0
 
 
+@pytest.mark.cuda
 def test_training_lowering_is_deterministic() -> None:
     assert _lowered().program.to_json() == _lowered().program.to_json()
 
 
+@pytest.mark.cuda
 def test_saved_parameter_views_are_not_declared_as_outputs() -> None:
     real_model = _MultiLinearModel()
     optimizer = torch.optim.SGD(real_model.parameters(), lr=0.1, foreach=False)
@@ -492,6 +497,7 @@ def test_saved_parameter_views_are_not_declared_as_outputs() -> None:
     assert parameter_aliases.isdisjoint(produced_aliases)
 
 
+@pytest.mark.cuda
 def test_state_installed_before_capture_is_updated_in_place() -> None:
     """State that exists before capture is what the update reads and writes.
 
@@ -560,6 +566,7 @@ def test_state_installed_before_capture_is_updated_in_place() -> None:
     assert not any(task.outputs for task in update_tasks)
 
 
+@pytest.mark.cuda
 def test_partitioned_lowering_preserves_boundary_residual_aliases() -> None:
     real_model = _MultiLinearModel()
     optimizer = torch.optim.SGD(real_model.parameters(), lr=0.1, foreach=False)
@@ -673,6 +680,7 @@ class _ThroughFirstLayerPolicy:
         }
 
 
+@pytest.mark.cuda
 @pytest.mark.parametrize(
     ("model_type", "partition"),
     [(_MultiLinearModel, "auto"), (_ViewingModel, _ThroughFirstLayerPolicy())],
@@ -765,7 +773,7 @@ def test_microbatches_of_one_export_share_its_split_and_lower_the_same(
         pattern = []
         for stage in capture.stages:  # type: ignore[attr-defined]
             for value in (*stage.example.inputs, stage.example.output):
-                for leaf in value if isinstance(value, (tuple, list)) else (value,):
+                for leaf in value if isinstance(value, tuple | list) else (value,):
                     if isinstance(leaf, torch.Tensor):
                         key = leaf.untyped_storage()._cdata
                         pattern.append(numbered.setdefault(key, len(numbered)))
@@ -839,6 +847,7 @@ def test_microbatches_of_one_export_share_its_split_and_lower_the_same(
     )
 
 
+@pytest.mark.cuda
 def test_orderings_lowered_from_one_shared_lowering_match_lowering_each_alone() -> None:
     """Every ordering's program from one lowering, which registers objects
     and binds boundaries once, is the program lowering that ordering alone
@@ -925,6 +934,7 @@ def test_orderings_lowered_from_one_shared_lowering_match_lowering_each_alone() 
     assert together[4].program.digest == together[0].program.digest
 
 
+@pytest.mark.cuda
 def test_partitioned_forward_dependencies_cover_long_lived_boundaries() -> None:
     real_model = _LongLivedBoundaryModel()
     optimizer = torch.optim.SGD(real_model.parameters(), lr=0.1, foreach=False)
@@ -973,6 +983,7 @@ def test_partitioned_forward_dependencies_cover_long_lived_boundaries() -> None:
             producers.setdefault(object_id, []).append(task.task_id)
 
 
+@pytest.mark.cuda
 def test_forward_tasks_depend_only_on_data() -> None:
     """Order is the schedule; dependencies are data.
 
@@ -991,6 +1002,7 @@ def test_forward_tasks_depend_only_on_data() -> None:
             assert not backward_ids.intersection(task.dependencies), task.task_id
 
 
+@pytest.mark.cuda
 def test_partitioned_backward_uses_task_local_cotangent_handoff() -> None:
     real_model = _AuxiliaryPassThroughModel()
     optimizer = torch.optim.SGD(real_model.parameters(), lr=0.1, foreach=False)
@@ -1050,6 +1062,7 @@ def test_partitioned_backward_uses_task_local_cotangent_handoff() -> None:
     assert handoffs
 
 
+@pytest.mark.cuda
 def test_functional_buffer_mutation_does_not_displace_objective_output() -> None:
     real_model = _StatefulTrainingModel()
     optimizer = torch.optim.SGD(real_model.parameters(), lr=0.1, foreach=False)
@@ -1125,6 +1138,7 @@ def _supplied_aliases(lowered: LoweredTrainingProgram) -> set[str]:
     }
 
 
+@pytest.mark.cuda
 def test_every_initial_residency_alias_has_a_publisher() -> None:
     """A plan may not open by fetching something nothing puts in the pool.
 
@@ -1140,6 +1154,7 @@ def test_every_initial_residency_alias_has_a_publisher() -> None:
         assert declared - _supplied_aliases(lowered) == set()
 
 
+@pytest.mark.cuda
 def test_a_lifted_constant_becomes_a_root_input() -> None:
     """Export's third kind of state reaches the pool like the other two.
 
@@ -1168,6 +1183,7 @@ def test_training_lowering_rejects_empty_templates() -> None:
         lower_partitioned_training_program(model, (), {}, optimizer_capture)
 
 
+@pytest.mark.cuda
 def test_later_microbatches_add_onto_the_gradients_they_inherit() -> None:
     """The backward itself performs the accumulation, so the task declares it."""
 
@@ -1184,6 +1200,7 @@ def test_later_microbatches_add_onto_the_gradients_they_inherit() -> None:
     )
 
 
+@pytest.mark.cuda
 def test_one_microbatch_has_nothing_to_accumulate_onto() -> None:
     """A single microbatch creates its gradients, so it runs the captured backward.
 
@@ -1233,6 +1250,7 @@ def _depth_first_walk(microbatches: int, head: int) -> list[tuple[str, int, int]
     return walk
 
 
+@pytest.mark.cuda
 def test_default_ordering_is_depth_first_to_the_byte() -> None:
     implicit = _lowered(model_factory=_MultiLinearModel, microbatches=2)
     explicit = _lowered(
@@ -1246,6 +1264,7 @@ def test_default_ordering_is_depth_first_to_the_byte() -> None:
     assert walk == _depth_first_walk(2, head)
 
 
+@pytest.mark.cuda
 def test_breadth_first_runs_every_microbatch_through_a_stage_before_the_next() -> None:
     lowered = _lowered(
         model_factory=_MultiLinearModel,
@@ -1260,6 +1279,7 @@ def test_breadth_first_runs_every_microbatch_through_a_stage_before_the_next() -
     _assert_topological(lowered)
 
 
+@pytest.mark.cuda
 def test_paired_loss_and_reversed_walk_place_stages_and_creators_as_told() -> None:
     lowered = _lowered(
         model_factory=_MultiLinearModel,
@@ -1305,6 +1325,7 @@ def test_paired_loss_and_reversed_walk_place_stages_and_creators_as_told() -> No
     assert [creates(p, head) for p in range(4)] == [True, False, False, False]
 
 
+@pytest.mark.cuda
 def test_interleaved_optimizer_follows_the_stages_last_backward() -> None:
     lowered = _lowered(
         model_factory=_MultiLinearModel,
@@ -1324,11 +1345,13 @@ def test_interleaved_optimizer_follows_the_stages_last_backward() -> None:
         assert previous.task_id in tasks[task_id].dependencies
 
 
+@pytest.mark.cuda
 def test_ordering_must_cover_the_step() -> None:
     with pytest.raises(CaptureError, match="covers 4 microbatches, but the step has 2"):
         _lowered(microbatches=2, data_ordering=StepDataOrdering(1, 4))
 
 
+@pytest.mark.cuda
 @pytest.mark.parametrize("gradient_dtype", [None, torch.float32])
 def test_an_update_over_masters_owns_them_and_writes_the_weights(
     gradient_dtype: torch.dtype | None,
@@ -1422,6 +1445,7 @@ def test_an_update_over_masters_owns_them_and_writes_the_weights(
         assert {master, item.parameter_object_id} <= written
 
 
+@pytest.mark.cuda
 def test_unconsumed_input_gradient_is_backward_workspace():
     # The objective differentiates its input, but plan_step returns parameter
     # updates, not a gradient for the caller's batch. The discarded dX must

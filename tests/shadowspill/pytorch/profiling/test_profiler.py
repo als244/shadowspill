@@ -407,10 +407,17 @@ def test_compiler_function_transfer_deduplicates_structural_artifacts(
 
     monkeypatch.setattr(compiler_module, "compile_artifact", compile_once)
     profiler = _profiler(_TaskLibrary())
+    warmed: list[str] = []
+    monkeypatch.setattr(
+        profiler,
+        "_warm_selected_entrypoint",
+        lambda prepared, digest: warmed.append(digest),
+    )
     indexed = profiler.take_compiled_tasks((artifact, artifact))
     assert tuple(indexed.functions) == (artifact.compatibility_digest,)
     assert tuple(indexed.manifests) == (artifact.compatibility_digest,)
     assert calls == [artifact.compatibility_digest]
+    assert warmed == [artifact.compatibility_digest]
 
     profiler.executables.get(artifact)
     profiler.executables.get(artifact)

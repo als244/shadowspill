@@ -46,6 +46,7 @@ def _objective(
     return ObjectiveResult(loss, {"mean": prediction.mean(), "scale": scale})
 
 
+@pytest.mark.cuda
 def test_fake_export_and_aot_emit_save_and_recompute_graph_pairs() -> None:
     model = _Network()
     inputs = [torch.randn(4, 8), torch.randn(4, 8), 2]
@@ -304,6 +305,7 @@ def test_unrelated_registered_custom_operation_exports_as_opaque() -> None:
     )
 
 
+@pytest.mark.cuda
 def test_save_and_recompute_capture_isolates_custom_autograd_graphs() -> None:
     mode = FakeTensorMode(allow_non_fake_inputs=True)
     model = fake_device_model(_SavedOperationModule(), mode)
@@ -320,6 +322,7 @@ def test_save_and_recompute_capture_isolates_custom_autograd_graphs() -> None:
     assert capture.recompute_pair.specialized_unit_tangent_count == 1
 
 
+@pytest.mark.cuda
 def test_objective_schema_reconstructs_metrics_and_rejects_count_change() -> None:
     model = _Network()
     mode = FakeTensorMode(allow_non_fake_inputs=True)

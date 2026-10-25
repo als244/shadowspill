@@ -157,6 +157,7 @@ def test_a_leaf_that_is_not_a_gradient_is_refused() -> None:
         accumulate_gradient_outputs(backward, (absent,))
 
 
+@pytest.mark.cuda
 def test_a_multiply_writes_the_gradient_it_computes_at_the_dtype_asked_for() -> None:
     """Where PyTorch has a kernel that sums bf16 products into an fp32 result
     -- CUDA's -- the weight's gradient is that result, never rounded to bf16.
@@ -179,6 +180,7 @@ def test_a_multiply_writes_the_gradient_it_computes_at_the_dtype_asked_for() -> 
     assert all(item.dtype == torch.float32 for item in priors)
 
 
+@pytest.mark.cuda
 def test_a_dtype_the_multiply_does_not_write_is_cast() -> None:
     """Which dtypes a multiply writes is the operator's own check: CUDA's
     writes fp32 from bf16 or fp16, not fp64 from fp32, so fp64 gradients of
@@ -259,6 +261,7 @@ def _kept(
     return backward if dtype is None else cast_gradient_outputs(backward, leaves, dtype)
 
 
+@pytest.mark.cuda
 @pytest.mark.parametrize(
     ("gradient_dtype", "fused"), [(torch.float32, False), (None, True)]
 )
@@ -293,6 +296,7 @@ def test_a_multiply_adds_the_gradient_it_computes_into_the_running_one(
     assert bias.target is torch.ops.aten.add_.Tensor
 
 
+@pytest.mark.cuda
 def test_a_bf16_running_gradient_is_added_after_the_multiply_unless_fused() -> None:
     """Kept at bf16, narrower than the multiply sums at, a gradient is added
     inside the multiply by default; without fused narrow-gradient

@@ -61,6 +61,7 @@ def _arguments(
     return tuple(arguments)
 
 
+@pytest.mark.cuda
 @pytest.mark.parametrize("variant", ["save_pair", "recompute_pair"])
 def test_explicit_pair_matches_autograd(variant: str) -> None:
     torch.manual_seed(3)
@@ -87,6 +88,7 @@ def test_explicit_pair_matches_autograd(variant: str) -> None:
         torch.testing.assert_close(actual, parameter.grad)
 
 
+@pytest.mark.cuda
 def test_pair_executor_rejects_changed_contract() -> None:
     model = _Model()
     values = [torch.randn(2, 3), torch.randn(2, 2)]

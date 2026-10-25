@@ -103,6 +103,7 @@ def _capture_control_prologue() -> tuple[FakeTensorMode, object, tuple[object, .
     return mode, captured, roots
 
 
+@pytest.mark.cuda
 def test_a_control_only_prologue_is_folded_into_the_stage_that_uses_it() -> None:
     """A stage with only an index to show for itself is not a training stage.
 
@@ -150,6 +151,7 @@ def _capture(
     return mode, partitioned
 
 
+@pytest.mark.cuda
 def test_each_training_stage_has_endpoint_graph_pairs() -> None:
     mode, partitioned = _capture()
     with mode:
@@ -203,6 +205,7 @@ def test_each_training_stage_has_endpoint_graph_pairs() -> None:
     )
 
 
+@pytest.mark.cuda
 def test_a_request_may_build_only_the_variant_its_search_can_select() -> None:
     mode, partitioned = _capture()
     with mode:
@@ -232,6 +235,7 @@ def test_a_request_may_build_only_the_variant_its_search_can_select() -> None:
         validate_graph_pair_variants(())
 
 
+@pytest.mark.cuda
 def test_the_variants_built_are_part_of_the_store_key(tmp_path: Path) -> None:
     mode, partitioned = _capture()
     store = GraphPairStore(tmp_path)
@@ -247,6 +251,7 @@ def test_the_variants_built_are_part_of_the_store_key(tmp_path: Path) -> None:
     assert store.misses == 2 * both - 1
 
 
+@pytest.mark.cuda
 def test_the_accumulating_form_is_derived_only_when_asked_for() -> None:
     """Deriving the second form costs a capture, so nobody pays for it unasked.
 
@@ -283,6 +288,7 @@ def test_the_accumulating_form_is_derived_only_when_asked_for() -> None:
     )
 
 
+@pytest.mark.cuda
 def test_rounding_an_accumulation_once_is_a_form_of_its_own() -> None:
     """At bf16, adding a multiply's gradient inside the multiply rounds the
     sum once where adding after rounds it twice, so the store derives the
@@ -313,6 +319,7 @@ def test_rounding_an_accumulation_once_is_a_form_of_its_own() -> None:
     assert added_inside(False) == {False}
 
 
+@pytest.mark.cuda
 def test_partition_budgets_are_bound_to_the_lazy_partition_callback() -> None:
     """Each variant's budget is bound inside the callback AOT invokes, so the
     ambient Functorch configuration -- set here to the other variant's budget,
@@ -347,6 +354,7 @@ def test_partition_budgets_are_bound_to_the_lazy_partition_callback() -> None:
     assert internal_bytes(0.0, "save") > 0
 
 
+@pytest.mark.cuda
 def test_repeated_stage_occurrences_share_one_structural_inventory() -> None:
     mode, partitioned = _capture()
     repository = GraphPairStore()
@@ -380,6 +388,7 @@ def test_repeated_stage_occurrences_share_one_structural_inventory() -> None:
     assert first_storages != second_storages
 
 
+@pytest.mark.cuda
 def test_graph_pair_store_persists_structural_inventories(tmp_path: Path) -> None:
     mode, partitioned = _capture()
     with mode:

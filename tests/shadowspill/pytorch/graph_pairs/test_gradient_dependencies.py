@@ -1,5 +1,6 @@
 """Only derivatives connected to the objective belong to task boundaries."""
 
+import pytest
 import torch
 from torch import nn
 from torch._subclasses.fake_tensor import FakeTensorMode
@@ -73,6 +74,7 @@ class _Stages:
         return result
 
 
+@pytest.mark.cuda
 def test_detached_branch_does_not_require_an_unproduced_cotangent():
     mode = FakeTensorMode(allow_non_fake_inputs=True)
     model = fake_device_model(_Model(), mode)
