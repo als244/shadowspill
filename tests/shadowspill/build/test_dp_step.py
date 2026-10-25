@@ -75,6 +75,11 @@ def test_step_build_measure_plan_and_local_owned_updates(
         assert plan.simulation_only_reasons
         assert plan._accumulation_plan is None
         _check_completion(plan)
+
+    def alignment_copy(*args, **kwargs):
+        raise AssertionError("saved optimizer inserted an unprofiled alignment copy")
+
+    monkeypatch.setattr("torch._inductor.utils.clone_preserve_strides", alignment_copy)
     _check_local_math(program, master_dtype)
     if master_dtype is not None:
         profiled.save(tmp_path / "profiled.ssp")

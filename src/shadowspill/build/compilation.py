@@ -33,11 +33,13 @@ class BuiltTask:
     payload: bytes
     memory: dict[str, Any]
     dependencies: tuple[dict[str, str], ...] = ()
+    input_offsets: tuple[tuple[int, int], ...] = ()
 
 
 @dataclass
 class _TaskCompiler:
     contract: TaskStorageContract
+    input_offsets: tuple[tuple[int, int], ...] = ()
 
     def __call__(self, graph: Any, inputs: Any, **options: Any) -> Any:
         manifests: list[ExecutableTaskManifest] = []
@@ -47,6 +49,7 @@ class _TaskCompiler:
             manifests,
             canonicalize_input_aliases=True,
             on_lowering=lambda lowering: memories.append(compiler_memory(lowering)),
+            input_offsets=self.input_offsets,
         )
         compiled = inner(graph, inputs, **options)
         if len(manifests) == len(memories) == 1:
@@ -56,11 +59,16 @@ class _TaskCompiler:
                 "version": 1,
                 "manifest": manifests[0].to_dict(),
                 "memory": memories[0],
+                "input_offsets": self.input_offsets,
             }
         return compiled
 
 
-def _package(compiled: Any, contract: TaskStorageContract) -> BuiltTask | None:
+def _package(
+    compiled: Any,
+    contract: TaskStorageContract,
+    input_offsets: tuple[tuple[int, int], ...],
+) -> BuiltTask | None:
     if not isinstance(compiled, AOTCompiledArtifact):
         return None
     serialize = getattr(compiled.inner_fn.compiled_fn, "serialize", None)
@@ -70,13 +78,19 @@ def _package(compiled: Any, contract: TaskStorageContract) -> BuiltTask | None:
     metadata = getattr(entry.compiled_fw.result, "_shadowspill_build", None)
     if not isinstance(metadata, dict) or metadata.get("version") != 1:
         return None
+    if metadata.get("input_offsets", ()) != input_offsets:
+        return None  # A cached aligned task cannot serve rank-dependent views.
     manifest = ExecutableTaskManifest.from_dict(
         metadata["manifest"], semantic_contract=contract, toolchain=toolchain()
     )
-    return BuiltTask(manifest, compiled.serialize(), metadata["memory"])
+    return BuiltTask(
+        manifest, compiled.serialize(), metadata["memory"], input_offsets=input_offsets
+    )
 
 
-def compile_task(artifact: GraphArtifact) -> BuiltTask:
+def compile_task(
+    artifact: GraphArtifact, *, input_offsets: tuple[tuple[int, int], ...] = ()
+) -> BuiltTask:
     dependencies = operator_dependencies(artifact.graph_module)
     # Each forward/backward task is explicit; packaging must not save hidden
     # autograd state merely because its original arguments require gradients.
@@ -93,11 +107,13 @@ def compile_task(artifact: GraphArtifact) -> BuiltTask:
             artifact.graph_module,
             inputs,
             dynamic_shapes="from_example_inputs",
-            options={"inner_compile": _TaskCompiler(artifact.storage_contract)},
+            options={
+                "inner_compile": _TaskCompiler(artifact.storage_contract, input_offsets)
+            },
             aot=True,
             fake_mode=mode,
         )
-        return _package(compiled, artifact.storage_contract)
+        return _package(compiled, artifact.storage_contract, input_offsets)
 
     with torch.no_grad(), config.patch(task_compiler_patches()):
         result = invoke()
@@ -112,4 +128,6 @@ def compile_task(artifact: GraphArtifact) -> BuiltTask:
                 result = invoke()
     if result is None:
         raise CompilationError("task build did not produce portable code and geometry")
-    return BuiltTask(result.manifest, result.payload, result.memory, dependencies)
+    return BuiltTask(
+        result.manifest, result.payload, result.memory, dependencies, input_offsets
+    )

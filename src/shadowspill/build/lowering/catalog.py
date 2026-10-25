@@ -37,6 +37,7 @@ class CompiledTasks:
                 "implementation": item.manifest.compatibility_digest,
                 "setup": self.setup,
                 "dependencies": item.dependencies,
+                "compiler_input_offsets": item.input_offsets,
             }
         )
         definition = self.definitions.get(key)

@@ -26,6 +26,7 @@ from shadowspill.task.manifest import (
 )
 
 from .aliases import _canonicalize_input_alias_outputs
+from .alignment import alignment_examples
 from .cache import _fx_graph_cache_key, _load_cached_manifest, _store_cached_manifest
 from .contract import _graph_lowering_contract, _project_callable_contract
 from .manifest import _make_manifest
@@ -87,6 +88,7 @@ class _ManifestCompiler:
     canonicalize_input_aliases: bool
     phase_timings: dict[str, int] | None
     on_lowering: Callable[[GraphLowering], None] | None = None
+    input_offsets: tuple[tuple[int, int], ...] = ()
 
     def __call__(
         self,
@@ -154,6 +156,7 @@ class _ManifestCompiler:
     ) -> tuple[object, list[GraphLowering]]:
         started_ns = time.perf_counter_ns()
         inner_backend: Any = compile_fx_inner
+        inputs = alignment_examples(inputs, self.input_offsets)
         with _GRAPH_LOWERING_CAPTURE_LOCK:
             compiled, graph_lowerings = run_and_get_graph_lowering(
                 lambda: inner_backend(graph, inputs, **options)
@@ -283,6 +286,7 @@ def _manifest_inner_compile(
     canonicalize_input_aliases: bool = False,
     phase_timings: dict[str, int] | None = None,
     on_lowering: Callable[[GraphLowering], None] | None = None,
+    input_offsets: tuple[tuple[int, int], ...] = (),
 ) -> Callable[..., object]:
     """Return the compiler callback that publishes one physical contract."""
 
@@ -292,4 +296,5 @@ def _manifest_inner_compile(
         canonicalize_input_aliases,
         phase_timings,
         on_lowering,
+        input_offsets,
     )

@@ -18,6 +18,7 @@ from .finalize import finalize_providers
 from .gradient_ops import capture_gradient_operations
 from .lowering.training import lower_training
 from .optimizer import capture_update
+from .optimizer_alignment import optimizer_input_offsets
 from .parallelism import (
     attach_parallelism,
     model_parallelism,
@@ -146,7 +147,11 @@ def _build_training(
         for task in update.captured.update_tasks:
             assert isinstance(task.artifact, GraphArtifact)
             artifacts.append(task.artifact)
-    compiled = compile_artifacts(artifacts, device)
+    compiled = compile_artifacts(
+        artifacts,
+        device,
+        input_offsets=optimizer_input_offsets(update, parameters),
+    )
     program = lower_training(
         captured,
         compiled,
