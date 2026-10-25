@@ -20,5 +20,5 @@ def restore_executable(
     if triton_choices is not None:
         from .tuning import use_choices
 
-        function = use_choices(function, triton_choices)
+        return use_choices(function, triton_choices)
     return function
