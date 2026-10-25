@@ -75,6 +75,7 @@ src/shadowspill/
 │   ├── timing.py          what one invocation measures about itself: the
 │   │                      markers, the armed records, the invocation timelines
 │   ├── collection.py      resolving one traced step into that evidence
+│   ├── transfer_phases/   event matching, lane regions and payload throughput
 │   └── occupancy/         pool attribution, clocks and timeline rendering
 │       └── run/           stored-run discovery, trace matching and report indexes
 ├── pipeline/              the ordered work that turns a captured step into a
