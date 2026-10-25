@@ -474,7 +474,7 @@ When partitioning needs authentic integer or boolean intermediates for
 profiling, it executes the required producer slice. Each input is materialized
 on its own captured device: explicit CPU controls stay on the CPU even when
 other inputs or outputs use the execution device. Public build takes caller
-state and does not require an execution pool. Legacy pool-backed callers still
+state and does not require an execution pool. Pool-backed preparation callers
 use their setup-time access mechanism.
 
 Integer outputs used exclusively in proven fixed-shape arithmetic are marked

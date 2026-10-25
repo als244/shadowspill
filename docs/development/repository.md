@@ -140,6 +140,7 @@ src/shadowspill/
 └── pytorch/
     ├── distributed/       replica ownership, coordinated preparation and local execution
     ├── capture/           Export/AOT capture and semantic storage contracts
+    │   ├── gradients/     accumulation, precision and padded gradient storage
     │   └── storage/       one task's contract: the records, the roots, the
     │                      capture, the symbolic replay
     ├── partition/         stage policies, splitting, provenance, authentic controls
@@ -148,6 +149,7 @@ src/shadowspill/
     │   └── inductor/      one compiled task: the manifest, the compiler that
     │                      captures the lowering, the output geometry, the
     │                      contract, the alias views, the cache
+    ├── tuning/            finalized provider choices, saved and replayed per task
     ├── profiling/         representative inputs, timing, allocation contract, workspace
     │   └── profiler/      one task measured: the allocator boundary, the warmup and
     │                      timing, the workspace trace, the invariant path, the record

@@ -368,16 +368,23 @@ def test_root_readme_remains_a_minimal_entrypoint() -> None:
     assert len(collapsed.splitlines()) <= 125
 
 
-def test_architecture_overview_starts_with_purpose_and_visuals() -> None:
+def test_architecture_overview_describes_public_phase_boundaries() -> None:
     overview = (DOCS / "architecture" / "overview.md").read_text()
     for required in (
-        "## Why ShadowSpill exists",
-        "## System at a glance",
-        "## How planning responsibilities differ",
-        "## Runtime interaction",
+        "build_forward",
+        "build_forward_backward",
+        "build_step",
+        "measure_program",
+        "apply_profiles",
+        "measure_communication",
+        "plan_program",
+        "sweep_programs",
+        "Executor",
+        "simulation-only",
+        "## Source organization",
     ):
         assert required in overview
-    assert overview.count("```mermaid") >= 3
+    assert "```mermaid" in overview
 
 
 def test_architecture_index_groups_one_flat_reading_path() -> None:
@@ -700,14 +707,15 @@ def test_current_contract_docs_are_backend_and_topology_neutral() -> None:
         r"\b(?:cross-step )?cyclic residency\b",
         re.IGNORECASE,
     )
-    # The baseline harnesses document third-party systems by those systems'
-    # own names, options and hardware; ShadowSpill's pages say neither.
+    # Concrete workloads/baselines describe their hardware requirements. The
+    # neutral engine contracts must not imply a fixed backend or topology.
     violations = {
         path.relative_to(ROOT).as_posix(): sorted(
             set(forbidden.findall(path.read_text()))
         )
         for path in _normative_markdown_files()
         if not path.is_relative_to(ROOT / "baselines")
+        and not path.is_relative_to(ROOT / "workloads")
         and path
         not in {
             ROOT / "benchmarking/quickstart.md",

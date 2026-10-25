@@ -541,12 +541,13 @@ supports small plain Python containers and CPU tensors/arrays, without pickle.
 Checkpoints are single bounded-stream archives; partial weight-only export and
 model checkpoint conversion are separate from this full-resume path.
 
-This milestone qualifies local `build_step` plans and read-only evaluation sharing
-trained parameter storage. Distributed Trainer callers and old recipe migration
-are still pending. Remaining model/prepare callers explicitly use the private
-private implementation until migrated; the public Trainer has only the new API.
+Trainer runs saved `build_step` Plans and optional read-only evaluation sharing
+trained parameter storage. The [distributed regression recipe](../../workloads/recipes/regression/README.md)
+uses the same phase APIs, with separate collective calibration. Remaining
+model/prepare callers explicitly use the private preparation implementation until
+migrated; the public Trainer has only the saved-Plan API.
 
-### Logical parallelism and the first distributed simulation path
+### Logical parallelism and distributed plans
 
 All builders accept `parallelism=Parallelism.dp(...)`. Omitting it describes one
 rank. The declaration contains no process groups or devices and survives saving
@@ -587,11 +588,10 @@ plan = plan_program(
 The communication archive may contain calibration or explicit simulation estimates.
 The shared schedule describes one symmetric rank
 and uses the slowest corresponding group instance's transfer cost. Memory and
-traffic totals are **per rank**, not summed over the job. These distributed Plans
-are currently simulation-only: communicator resources, distributed allocation
-admission and execution binding still need qualification. Model-sharded execution,
-distributed inputs, and
-already-reduced-gradient overrides also remain pending.
+traffic totals are **per rank**, not summed over the job. Complete compute and
+communication memory evidence allows distributed admission and worker binding;
+estimated memory remains simulation-only. Model-sharded execution, annotated
+distributed input layouts and already-reduced-gradient overrides remain pending.
 
 `build_forward_backward` additionally supports sharded gradient storage. Local
 backward uses full logical accumulators, but an eviction can reduce and spill the
@@ -611,14 +611,19 @@ in-place transfer reductions from allocating optimizer reductions and records th
 buffer-zero time used on gradient fetch. Missing zero timing is explicitly
 estimated using the host-fetch rate. Collective scratch must still be supplied;
 manual memory estimates permit simulation only. CPU archive/planning tests forbid
-Torch, build and runtime imports. Replicated gradient storage and distributed
-Executor integration remain later work.
+Torch, build and runtime imports. Replicated gradient storage remains later work.
 
 `build_step` supports the common case with weights, gradients and optimizer data
 sharded over the same groups. Gradient completion feeds shard-shaped local
 optimizer inputs. Masters and moments have independent owned allocations.
 The compute-weight shard is a view of the full compute buffer, with its logical
-group-relative offset recorded for worker binding. An in-place all-gather on the same ordered compute resource
+group-relative offset recorded for worker binding. Build also accounts for the
+alignment of every owner's interior view: one rank's shard may be aligned while
+another's starts between vector boundaries. Code generation must support those
+views without inserting an unprofiled alignment copy. Masters and optimizer
+moments retain their separate, aligned allocations.
+
+An in-place all-gather on the same ordered compute resource
 publishes the updated weights immediately after the local update. Update placement waits for
 all contributions and reads of old weights, including aliased views.
 
@@ -627,8 +632,9 @@ update; the plan accounts for that allocation and any required fetch. It does no
 claim shard-only device residency during optimization. Differing component groups
 need explicit redistribution and are currently rejected. The saved local AdamW
 updates are checked over four logical owners on one GPU, including padded tails,
-with and without FP32 masters. This validates local math and bindings, not NCCL
-execution. Collectives and communicator memory still require separate qualification.
+with and without FP32 masters. Local compute measurement does not stand in for
+NCCL calibration: communication memory/timing evidence comes from
+`measure_communication`, and the saved worker path needs multi-GPU qualification.
 
 CommunicationInfo accepts flat scale-up/scale-out rates and latencies plus
 `measurements`, a sequence of plain mappings. An observation contains
@@ -659,9 +665,10 @@ assigned physical GPU at ordinal zero. Older artifacts without the recorded
 binding can still be inspected/planned on CPU, but need rebuilding for execution.
 This limitation is separate from logical rank assignment.
 
-Worker-group binding is being qualified independently before distributed
-Executor admission is enabled. It preserves explicit logical membership order
+Worker-group binding preserves explicit logical membership order
 after applying the complete worker-to-logical-rank map and rejects inconsistent
 maps/Plan identities before backend group creation. CPU multi-process checks
-cover both group ordering and SUM/reduce-scatter geometry. They do not establish
-multi-GPU runtime correctness or communicator memory requirements.
+cover group ordering and SUM/reduce-scatter geometry. Separate two-GPU tests
+exercise complete build/profile/calibration/CPU-plan/fresh-execution paths,
+including odd-sized shards, repeated calls, checkpoint restore and shared
+evaluation. Primitive group checks alone do not establish runtime correctness.
