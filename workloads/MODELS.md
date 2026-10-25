@@ -51,7 +51,7 @@ For a non-text example, see the [regression recipe](recipes/regression.py) and
 ## Preset dimensions and parameter counts
 
 Each family's `config.py` holds `PRESETS`, its named shapes by size, and the
-[catalog](models/catalog.py) names every one `<family>-<size>`: a `numerical`
+[catalog](models/catalog/) names every one `<family>-<size>`: a `numerical`
 shape is the small exact-scale one the numerical gate runs, `tiny` a smoke-test
 shape, and a published size is that checkpoint's text decoder (`qwen35-27b`
 and `qwen35-2b` without their multi-token prediction layer). The GLM

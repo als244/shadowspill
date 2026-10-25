@@ -7,7 +7,7 @@ probabilities sum to one. The default shape follows the published
 ## Shapes
 
 [config.py](config.py) holds `Config` and `PRESETS`, the named shapes the
-[catalog](../catalog.py) serves; the
+[catalog](../catalog/) serves; the
 [catalog table](../../MODELS.md#preset-dimensions-and-parameter-counts) lists
 their widths and parameter counts.
 

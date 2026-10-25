@@ -11,7 +11,7 @@ as [Qwen3-8B's](https://huggingface.co/Qwen/Qwen3-8B/blob/main/config.json).
 ## Shapes
 
 [config.py](config.py) holds `Config` and `PRESETS`, the named shapes the
-[catalog](../catalog.py) serves; the
+[catalog](../catalog/) serves; the
 [catalog table](../../MODELS.md#preset-dimensions-and-parameter-counts) lists
 their widths and parameter counts.
 

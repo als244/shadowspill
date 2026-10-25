@@ -10,7 +10,7 @@ multi-token prediction module are outside this text model.
 ## Shapes
 
 [config.py](config.py) holds `Config` and `PRESETS`, the named shapes the
-[catalog](../catalog.py) serves; the
+[catalog](../catalog/) serves; the
 [catalog table](../../MODELS.md#preset-dimensions-and-parameter-counts) lists
 their widths and parameter counts.
 

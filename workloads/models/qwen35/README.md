@@ -7,7 +7,7 @@ then one full-attention block. This family has no routed experts.
 ## Shapes
 
 [config.py](config.py) holds `Config` and `PRESETS`, the named shapes the
-[catalog](../catalog.py) serves; the
+[catalog](../catalog/) serves; the
 [catalog table](../../MODELS.md#preset-dimensions-and-parameter-counts) lists
 their widths and parameter counts. Each published size is the text decoder
 alone: the checkpoints' vision encoder and multi-token prediction layer are

@@ -12,7 +12,7 @@ from shadowspill.training.backends import PyTorch
 from shadowspill.training.schedules import WarmupCosine
 from workloads.models.llama3.config import Config
 from workloads.models.llama3.implementations.pytorch import Model
-from workloads.recipes.text.fixed import TokenUpdates
+from workloads.recipes.text.data.fixed import TokenUpdates
 from workloads.recipes.text.objectives import next_token_prediction
 
 

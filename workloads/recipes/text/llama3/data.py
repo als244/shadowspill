@@ -1,6 +1,6 @@
 """Adapt fixed text windows to ordinary per-example calls, with resume position."""
 
-from workloads.recipes.text.fixed import TokenUpdates
+from workloads.recipes.text.data.fixed import TokenUpdates
 
 
 class Inputs:

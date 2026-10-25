@@ -23,7 +23,7 @@
     "weight_decay": 0.1
   },
   "data": {
-    "@call": "workloads.recipes.text.data:PackedTokens",
+    "@call": "workloads.recipes.text.data.packed:PackedTokens",
     "directory": "training/data/tokens/llama3"
   },
   "steps": 4578,

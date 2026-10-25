@@ -192,7 +192,7 @@ with `rows.csv` of every point and `index.html` linking them.
 `python -m baselines.scripts.prepare_corpus --tokenizer <path or id> --shards
 '<glob of parquet files>' --output <dir> [--tokens N]` tokenizes a local text
 sample once per tokenizer family into `train.bin`, `val.bin` and `meta.json`,
-the files `workloads.recipes.text.prepare_data` writes, stopping at the last
+the files `workloads.recipes.text.data.prepare` writes, stopping at the last
 whole document within `--tokens`. An engine reads the result with `--data
 <dir>`; every model family that shares the tokenizer reads the same corpus,
 and a corpus whose vocabulary exceeds the model's is refused.

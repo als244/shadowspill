@@ -29,7 +29,7 @@
     "opt_state_dtype": "@torch:float32"
   },
   "data": {
-    "@call": "workloads.recipes.text.data:PackedTokens",
+    "@call": "workloads.recipes.text.data.packed:PackedTokens",
     "directory": "training/data/tokens/llama3"
   },
   "steps": 4578,

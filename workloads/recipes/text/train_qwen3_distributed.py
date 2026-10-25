@@ -14,7 +14,7 @@ from shadowspill.training._legacy_trainer import Trainer
 from shadowspill.training.backends import ShadowSpill
 from shadowspill.training.schedules import WarmupCosine
 from workloads.models.catalog import build_on_meta
-from workloads.recipes.text.fixed import TokenUpdates
+from workloads.recipes.text.data.fixed import TokenUpdates
 from workloads.recipes.text.objectives import next_token_prediction
 
 

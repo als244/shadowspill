@@ -6,7 +6,7 @@
 
 Reads the parquet files the glob matches, in sorted order, and writes
 ``train.bin``, ``val.bin`` and ``meta.json`` in ``--output`` as
-``workloads.recipes.text.prepare_data`` does: every document's token ids
+``workloads.recipes.text.data.prepare`` does: every document's token ids
 followed by the tokenizer's end-of-text id, as uint32, the first
 ``--val-tokens`` to ``val.bin`` and ``train.bin`` stopping at the last whole
 document within ``--tokens``. An engine reads the result with ``--data DIR``;
@@ -23,7 +23,7 @@ import json
 from pathlib import Path
 from typing import Any
 
-from workloads.recipes.text.prepare_data import tokenize, write_meta
+from workloads.recipes.text.data.prepare import tokenize, write_meta
 
 
 def prepare(

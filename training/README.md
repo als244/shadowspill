@@ -35,7 +35,7 @@ is recorded in the run directory. A model preset is optional user code.
 Data ingestion is also supplied as a recipe:
 
 ```bash
-python -m workloads.recipes.text.prepare_data --help
+python -m workloads.recipes.text.data.prepare --help
 ```
 
 `PackedTokens` reads the prepared token directory. The recipe packs documents,

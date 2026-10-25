@@ -6,7 +6,7 @@ from collections import deque
 
 import torch
 
-from .geometry import search_geometries
+from ..geometry import search_geometries
 from .packing import seq_slots
 
 

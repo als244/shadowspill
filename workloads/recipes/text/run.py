@@ -15,7 +15,7 @@ from shadowspill.training.backends import PyTorch
 from shadowspill.training.logging import Wandb
 from shadowspill.training.observations import MetricSummary, parameter_scalars
 
-from .source import PackedUpdates, candidate_data, validation_update
+from .data.source import PackedUpdates, candidate_data, validation_update
 
 
 def run_config(path, overrides=()):

@@ -8,8 +8,8 @@ import pytest
 import torch
 
 from tests.training._synthetic import EOS, LENGTHS, write_dataset
-from workloads.recipes.text.data import PackedTokens
-from workloads.recipes.text.documents import IGNORE
+from workloads.recipes.text.data.documents import IGNORE
+from workloads.recipes.text.data.packed import PackedTokens
 
 MAX_SEQ_LEN = 512
 TOKENS = 2048

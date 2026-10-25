@@ -1,6 +1,6 @@
 """Download a text dataset and tokenize it into the files a run packs.
 
-    python -m workloads.recipes.text.prepare_data --tokenizer <name or path> \\
+    python -m workloads.recipes.text.data.prepare --tokenizer <name or path> \\
         --dataset <hub dataset> --files <file pattern> --out <directory> \\
         [--revision REV] [--shards N] [--text-column text] [--val-tokens N]
 
@@ -29,7 +29,7 @@ from typing import Any
 import numpy as np
 import pyarrow.parquet as pq
 
-from workloads.recipes.text.tokenizer import tokenizer_identity
+from workloads.recipes.text.data.tokenizer import tokenizer_identity
 
 
 def arguments() -> argparse.Namespace:

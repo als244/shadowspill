@@ -44,10 +44,10 @@ Run these scripts from the checkout after installation. Replace each example
 path with a corpus tokenized using the matching model's tokenizer. `train.bin` and
 `val.bin` contain
 uint32 token IDs and `meta.json` records `vocab_size`. The
-[text data preparation recipe](workloads/recipes/text/prepare_data.py) writes
+[text data preparation recipe](workloads/recipes/text/data/prepare.py) writes
 this format. Supply at least five complete updates of data.
 
-The small [TokenUpdates helper](workloads/recipes/text/fixed.py) reads text
+The small [TokenUpdates helper](workloads/recipes/text/data/fixed.py) reads text
 windows, shifts targets by one token, and supplies every microbatch size that
 divides the local sequence count. It gives each microbatch independent storage
 and normalizes summed losses by the **global** token count. The Qwen examples
@@ -125,7 +125,7 @@ before loading weights. For example, this dataset revision supplies real text
 and the first whole-document batches are held out for validation:
 
 ```bash
-HF_HOME=/path/to/large-cache python -m workloads.recipes.text.prepare_data \
+HF_HOME=/path/to/large-cache python -m workloads.recipes.text.data.prepare \
   --tokenizer /path/to/GLM-5.3-Flash \
   --dataset HuggingFaceFW/fineweb-edu \
   --revision 87f09149ef4734204d70ed1d046ddc9ca3f2b8f9 \
@@ -228,7 +228,7 @@ from shadowspill.training.schedules import WarmupCosine
 from workloads.models.construction import build_on_meta
 from workloads.models.qwen35moe.checkpoint import Qwen35MoECheckpoint
 from workloads.models.qwen35moe.implementations.mlops import Model
-from workloads.recipes.text.fixed import TokenUpdates
+from workloads.recipes.text.data.fixed import TokenUpdates
 from workloads.recipes.text.objectives import next_token_prediction
 
 data_directory = "/path/to/qwen35-tokens"
@@ -339,7 +339,7 @@ from shadowspill.training._legacy_trainer import Trainer
 from shadowspill.training.backends import ShadowSpill
 from shadowspill.training.schedules import WarmupCosine
 from workloads.models.catalog import build_on_meta
-from workloads.recipes.text.fixed import TokenUpdates
+from workloads.recipes.text.data.fixed import TokenUpdates
 from workloads.recipes.text.objectives import next_token_prediction
 
 data_directory = "/path/to/qwen3-tokens"

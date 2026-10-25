@@ -79,8 +79,8 @@ def test_fixed_batch_learning_gate_rejects_flat_rising_and_nonfinite_losses():
 
 
 def test_prepared_corpus_records_checkpoint_tokenizer_identity(tmp_path):
-    from workloads.recipes.text.prepare_data import write_meta
-    from workloads.recipes.text.tokenizer import tokenizer_identity
+    from workloads.recipes.text.data.prepare import write_meta
+    from workloads.recipes.text.data.tokenizer import tokenizer_identity
 
     class Tokenizer:
         eos_token_id = 3

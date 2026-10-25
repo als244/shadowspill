@@ -37,13 +37,13 @@ from shadowspill.training.backends import ShadowSpill
 from shadowspill.training.schedules import WarmupCosine
 from workloads.models.glm53_flash.checkpoint import GLMCheckpoint
 from workloads.models.shared.glm.initialization import InitializationProgress
+from workloads.recipes.text.data.tokenizer import tokenizer_identity
 from workloads.recipes.text.glm import (
     GLMTokenUpdates,
     fixed_batch_learning_report,
     next_token_prediction,
 )
 from workloads.recipes.text.profiling import NsightTrainer
-from workloads.recipes.text.tokenizer import tokenizer_identity
 
 
 def arguments():

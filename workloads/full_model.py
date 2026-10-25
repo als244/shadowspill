@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import contextlib
-from collections.abc import Iterator
 from contextlib import AbstractContextManager
 from dataclasses import asdict, dataclass
 from typing import Any, cast
@@ -12,12 +11,12 @@ import torch
 import torch.nn as nn
 
 from workloads.models import catalog
+from workloads.models.construction import build_on_meta
 from workloads.models.construction import initialize as initialize_model
 from workloads.models.shared.decoder import auxiliary_share, language_model_loss
 from workloads.precision import TrainingDtypes
 from workloads.providers import MODEL_DTYPES, ModelImplementation
 
-_GIB = 1 << 30
 _RETAINED_HEAD_SCRATCH_BYTES = 512 << 20
 
 
@@ -198,32 +197,15 @@ def _head_chunk_size(vocabulary: int, scratch_bytes: int) -> int:
     return max(512, (rows // 256) * 256)
 
 
-@contextlib.contextmanager
-def meta_construction(dtype: torch.dtype) -> Iterator[None]:
-    """Declare structure without allocating: no storage, no values.
-
-    The dtype is chosen here rather than cast afterwards. A cast allocates,
-    which is what makes a model impossible to place anywhere but where it was
-    built.
-    """
-
-    previous = torch.get_default_dtype()
-    torch.set_default_dtype(dtype)
-    try:
-        with torch.device("meta"):
-            yield
-    finally:
-        torch.set_default_dtype(previous)
-
-
 def build_model(manifest: FullModelSpec) -> nn.Module:
     """Return this manifest's model on `meta`: structure only, no storage."""
 
     model_type = manifest.entry.model_class(manifest.implementation)
     if manifest.model_dtype not in MODEL_DTYPES:
         raise ValueError(f"model_dtype must be one of {MODEL_DTYPES}")
-    with meta_construction(getattr(torch, manifest.model_dtype)):
-        return model_type(manifest.model_config)
+    return build_on_meta(
+        model_type, dtype=manifest.model_dtype, config=manifest.model_config
+    )
 
 
 def build_case(

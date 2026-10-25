@@ -12,7 +12,7 @@ from shadowspill.training.schedules import WarmupCosine
 from workloads.models.construction import build_on_meta
 from workloads.models.qwen35moe.checkpoint import Qwen35MoECheckpoint
 from workloads.models.qwen35moe.implementations.mlops import Model
-from workloads.recipes.text.fixed import TokenUpdates
+from workloads.recipes.text.data.fixed import TokenUpdates
 from workloads.recipes.text.objectives import next_token_prediction
 
 

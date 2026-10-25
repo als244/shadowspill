@@ -17,7 +17,7 @@ The [example model catalog](MODELS.md) is the central reference for:
 - Frozen/trainable parameters, LoRA availability, and expert parallelism.
 - Inputs, losses, packing, and runnable Python/JSON/CLI examples.
 
-The [catalog](models/catalog.py) names every supplied model `<family>-<size>`:
+The [catalog](models/catalog/) names every supplied model `<family>-<size>`:
 `llama3-8b`, `qwen3-8b`, `qwen3-32b`, `qwen35-9b`, `qwen35-27b`,
 `olmoe-7b-a1b`, `qwen3moe-30b-a3b`, `qwen35moe-35b-a3b`, the small
 `llama3-1b`, `qwen3-1.7b` and `qwen35-2b`, each family's `numerical` and
@@ -36,14 +36,23 @@ needed; see [expert parallelism](MODELS.md#expert-parallelism).
 | [models/](models/) | One package per model family: its configuration, checkpoint reader, README and implementations (`pytorch`, `mlops`); `models/shared/` holds the code families share |
 | [lora/](lora/) | LoRA targeting for the supplied models over MLOps's reusable projections |
 | [recipes/](recipes/) | Caller-side model/data/objective composition |
+| [recipes/text/data/](recipes/text/data/) | Corpus preparation, fixed token sequences, document packing and resumable sources |
 | [full_model.py](full_model.py) | Reproducible full-model specifications and construction |
 | [numerical.py](numerical.py) | Exact-scale cases shared by the numerical qualification's two arms |
 | [precision.py](precision.py) | Explicit precision settings used by supplied workloads |
 | [providers.py](providers.py) | The implementation names |
 
 Model definitions describe computation. Recipes choose data, objectives,
-initialization, and run policy. Reusable training and forward execution live in
-`shadowspill.training` and accept ordinary user models without this directory.
+initialization, and run policy. ShadowSpill's build APIs accept ordinary user
+models; `shadowspill.execution.Executor` executes saved Plans and
+`shadowspill.training.Trainer` manages training through it. Neither requires
+this directory.
+
+The catalog separates its entry type, preset rows, and lookup functions.
+The shared [GLM checkpoint reader](models/shared/glm/checkpoint/) separates meta
+model declaration, precision/coverage validation, expert conversion, and loading;
+family readers supply only names and configurations. Keep kernel implementations
+in MLOps and pipeline orchestration in ShadowSpill.
 
 ## Run an example
 

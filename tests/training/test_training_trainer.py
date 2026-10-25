@@ -26,7 +26,7 @@ def _config(tmp_path):
         "optimizer": "@torch.optim:AdamW",
         "optimizer_args": {"lr": 0.01},
         "data": {
-            "@call": "workloads.recipes.text.data:PackedTokens",
+            "@call": "workloads.recipes.text.data.packed:PackedTokens",
             "directory": str(write_dataset(tmp_path / "tokens")),
         },
         "steps": 6,
