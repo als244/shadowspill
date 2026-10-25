@@ -85,6 +85,8 @@ src/shadowspill/
 │                          budget it seals, what it selected
 ├── profiling/             ordinary-allocator task timing and memory measurement;
 │   │                      CPU-only application of measured or manually supplied profiles
+│   ├── invariant.py       reconcile complete allocation paths into one contract
+│   ├── alignment.py       bounded sequence-distance and unique-alignment algorithms
 │   └── observation/       bounded allocator observations and lifetime decoding
 ├── task/                  one task's shape and provenance, framework-free
 │   ├── storage.py         the storage contract: roots, output views, mutations
