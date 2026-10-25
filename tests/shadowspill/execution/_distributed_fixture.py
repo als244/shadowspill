@@ -17,7 +17,9 @@ class Network(nn.Module):
         )
 
     def forward(self, x):
-        return self.layers[1](self.layers[0](x).tanh())
+        # ReLU's exact derivative keeps the distributed qualification independent
+        # of whether recomputation fuses an unrounded FP32 nonlinear derivative.
+        return self.layers[1](self.layers[0](x).relu())
 
 
 def objective(model, x, *, labels):
