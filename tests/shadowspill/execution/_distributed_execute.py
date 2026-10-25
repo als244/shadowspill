@@ -6,8 +6,16 @@ import sys
 from datetime import timedelta
 from pathlib import Path
 
-import torch
-import torch.distributed as dist
+# Every worker loads code compiled for process-local cuda:0. Select its physical
+# GPU before importing Torch; the logical-rank permutation is independent.
+local_rank = int(os.environ["LOCAL_RANK"])
+visible = os.environ.get("CUDA_VISIBLE_DEVICES")
+os.environ["CUDA_VISIBLE_DEVICES"] = (
+    visible.split(",")[local_rank] if visible is not None else str(local_rank)
+)
+
+import torch  # noqa: E402
+import torch.distributed as dist  # noqa: E402
 
 
 class NoPreparation(importlib.abc.MetaPathFinder):
@@ -51,7 +59,7 @@ def tolerance(name=""):
 executor = None
 try:
     executor = Executor(
-        plan, plans=plans, device=int(os.environ["LOCAL_RANK"]), rank_map={0: 1, 1: 0}
+        plan, plans=plans, device=0, rank_map={0: 1, 1: 0}
     )
     executor.initialize(fill, chunk_bytes=40)
     for index, expected in enumerate(fixture["expected"]):
