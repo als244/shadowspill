@@ -62,7 +62,10 @@ plan = plan_program(profiled,
         topology={'node0': tuple(range(8))}, scale_up_bytes_per_second=300e9))
 assert plan.summary['logical_ranks'] == 8
 assert plan.summary['simulation_only']
-assert plan.memory_layout is None
+# Compute allocations are measured, so their layout can be planned. Estimated
+# communication memory still prevents execution of the resulting bundle.
+assert plan.memory_layout is not None
+assert any('estimated' in reason for reason in plan.simulation_only_reasons)
 assert any(a.transfer and len(a.transfer.fetch) == 2
            for a in plan._costed_program.alias_groups)
 plan.save(sys.argv[2])
