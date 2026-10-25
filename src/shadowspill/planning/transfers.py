@@ -57,7 +57,7 @@ def communication_transfers(
                 family = tuple(r for r in requests[key] if r.operation == operation)
                 cost = task_collective_cost(family, info, source.setup)
                 costs.append((operation, cost))
-            # The native callback holds one ordered collective slot for the
+            # The runtime callback holds one ordered collective slot for the
             # entire reduction (scatter, then optional cross-replica sum).
             phases = (
                 TransferPhase(

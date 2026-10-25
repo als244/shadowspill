@@ -1,4 +1,4 @@
-"""Local padding for optimizer reductions; gradient spills use native transfers."""
+"""Local padding for optimizer reductions; gradient spills use runtime transfers."""
 
 from collections.abc import Callable
 from dataclasses import dataclass
