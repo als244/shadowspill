@@ -42,11 +42,15 @@ freezing or training either name affects the same Parameter.
 
 ## Implementations
 
-[implementations/pytorch.py](implementations/pytorch.py) is the readable
+[implementations/pytorch/](implementations/pytorch/) is the readable
 numerical authority; [implementations/mlops.py](implementations/mlops.py) is
 its state-dictionary-compatible twin on the operation library, whose DeltaNet
 mixer lives in [shared/delta_net.py](../shared/delta_net.py) because the Qwen
 mixture families use it too. Both expose `Model`.
+
+The PyTorch reference separates full attention (`attention.py`), convolution and
+linear attention (`linear_attention.py`), the recurrence and its custom-op
+registration (`delta_rule/`), and decoder assembly (`model.py`).
 
 ## Checkpoint
 
@@ -73,7 +77,7 @@ model = Model(PRESETS["9b"])
 
 `workloads.models.catalog.build_on_meta("qwen35-9b", "mlops", dtype="bfloat16")`
 declares the same model on `meta`, and the quickstart runs it with
-`python -m benchmarking.quickstart --model qwen35-9b`. The
+`python -m benchmarking.quickstart.cli --model qwen35-9b`. The
 [model catalog](../../MODELS.md) covers dtypes, LoRA, inputs and the loss.
 
 

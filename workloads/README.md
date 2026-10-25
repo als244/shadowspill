@@ -54,6 +54,11 @@ model declaration, precision/coverage validation, expert conversion, and loading
 family readers supply only names and configurations. Keep kernel implementations
 in MLOps and pipeline orchestration in ShadowSpill.
 
+Larger implementations use a package rather than a single long file. For example,
+the [Qwen3.5 PyTorch reference](models/qwen35/implementations/pytorch/) keeps its
+recurrence, operator registration, attention modules and model assembly separate;
+the caller still imports `Model` from `implementations.pytorch`.
+
 ## Run an example
 
 - [Training recipes](../training/README.md): complete configs, data preparation,

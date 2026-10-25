@@ -10,8 +10,10 @@ from workloads.models.qwen35.config import Config as Qwen35Config
 from workloads.models.qwen35.implementations.pytorch import (
     Model as Qwen35,
 )
-from workloads.models.qwen35.implementations.pytorch import (
+from workloads.models.qwen35.implementations.pytorch.delta_rule.operation import (
     _delta_rule,
+)
+from workloads.models.qwen35.implementations.pytorch.delta_rule.reference import (
     _delta_rule_reference,
 )
 
