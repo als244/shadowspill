@@ -182,15 +182,16 @@ rank_map retain the original local host-only behavior.
 Gather probes accept `inplace=True` when the input shard occupies its ordered
 slot inside the full output buffer. Program-derived weight gathers select this
 form. Calibration preserves that layout, and cost lookup distinguishes it from
-a gather with separate buffers. All-reduce is in-place; reduce-scatter currently
-uses separate buffers.
+a gather with separate buffers. All-reduce is in-place. Native gradient evictions
+use in-place reduce-scatter; optimizer tasks use a separate output so the input
+accumulator remains available to an overlapping spill.
 
 Derived requests cover lowered weight fetches, gradient completion and update
 publication tasks. Model-owned communication requires its own lowering before
 automatic derivation is supported. Exact observed collective timings do not infer
 a general scale-up/out rate or overlapping-group contention.
-The CPU/Gloo coordination and single-GPU copy paths are tested; multi-GPU NCCL
-calibration has an acceptance test but is not yet hardware-qualified.
+CPU/Gloo coordination, single-GPU copies and two-H100 NCCL calibration have
+hardware checks. Calibration and saved-plan execution have separate tests.
 
 CommunicationInfo also owns communication memory evidence. Each collective row
 can contain a `memory` mapping with `workspace_bytes`, `memory_kind` and per-rank
@@ -201,11 +202,11 @@ outputs are accounted as Program objects, not counted again as workspace.
 the setup, groups, topology and per-rank native/NVML observations. This remains
 separate from compute/provider overhead in Profiles.
 
-Native allocator observations and retained NVML deltas do not establish a bound
-on transient allocations made directly by the communication backend. Calibration
-records that coverage gap explicitly. Such records support simulation but do not
-by themselves qualify distributed execution. A one-GPU NCCL allocation-path test
-validates the observation/serialization path; it is not multi-GPU qualification.
+NCCL-owned allocations use ordinary external headroom. Executor warms the saved
+collective forms before admitting its arena, adds measured communicator memory
+to the reservation, and checks physical usage at admission and completed calls.
+These external resources are distinct from task-local PyTorch allocations, which
+still require allocation contracts. Estimated task memory remains simulation-only.
 
 The IR also supports explicit framework collective tasks with declared input,
 output and completion dependencies. Their durations and workspace are resolved from
@@ -231,14 +232,46 @@ optional cross-replica all-reduce remain inside compound evictions. These transf
 can overlap unrelated compute using the existing readiness/completion boundaries.
 The generic IR can describe independent task lanes, but concurrent shared-reader
 retirement is not qualified; generated DP plans deliberately retain ordered task
-execution. Distributed Executor integration still needs end-to-end qualification.
+execution.
 
 The runtime's existing task-boundary handshake acknowledges submission of queued
 collective transfers before the next explicit task is dispatched. Within a batch,
 collective evictions precede collective fetches, independent of event polling.
 This is a host submission-order guarantee, not a GPU completion wait. A native
 mock-backend test verifies interleaving under delayed callbacks while GPU work
-remains gated. Real multi-GPU NCCL qualification is still required.
+remains gated. Native two-H100 transfer tests cover FP32/BF16 gradient spill and
+restore; the saved Executor has a separate end-to-end test.
+
+Distributed workers initialize CPU rendezvous before constructing Executor. Each
+worker loads the same Plan and supplies the same complete launcher-to-logical-rank
+map. Executor owns the groups it creates, checks backend/topology compatibility,
+and leaves caller-owned rendezvous intact. Each worker needs a distinct GPU.
+
+```python
+import os
+import torch.distributed as dist
+from shadowspill import Executor, Plan
+
+dist.init_process_group("gloo")
+try:
+    with Executor(
+        Plan.load("training-plan.ssp"),
+        device=int(os.environ["LOCAL_RANK"]),
+        rank_map={0: 1, 1: 0},
+    ) as executor:
+        executor.initialize(fill_owned_chunk)
+        result = executor.run(args=local_args, kwargs=local_kwargs).result()
+finally:
+    dist.destroy_process_group()
+```
+
+The initial training integration uses symmetric DP with weights, gradients and
+optimizer data sharded over the same groups. Other ownership combinations and
+model-owned communication still require their lowering/binding implementation.
+Tensor loaders/exporters see original tensor geometry, global element offsets,
+and the worker's owned region. Checkpoint helpers save one archive per logical
+rank; callers supply distinct paths. A checkpoint rejects the wrong logical rank
+but can be restored by a different launcher rank mapped to that same logical rank.
 
 The GPU allowance includes fixed compute/provider and communication overhead.
 Planning subtracts both before scheduling objects/workspace, and reporting adds

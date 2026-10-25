@@ -12,7 +12,7 @@ from shadowspill.task.profiles import TaskMeasurement, TaskOutputInputBinding
 from .collectives import matching_measurements
 from .info import CommunicationInfo
 from .memory_records import validate_task_memory
-from .task_costs import task_collectives
+from .task_costs import task_collective_cost, task_collectives
 
 
 def collective_measurement(
@@ -23,8 +23,9 @@ def collective_measurement(
     A workspace total is insufficient: placement and runtime admission need the
     allocating callable's ordered allocation and output-alias records as well.
     """
-    records, durations = [], []
-    for request in task_collectives(program)[key]:
+    records = []
+    requests = task_collectives(program)[key]
+    for request in requests:
         rows = matching_measurements(
             info,
             {**request.to_dict(), "setup": program.setup, "topology": info.topology},
@@ -42,7 +43,6 @@ def collective_measurement(
         memory = row["memory"]
         validate_task_memory(memory, request.ranks)
         records.extend(memory["per_rank"])
-        durations.append(row["duration_seconds"])
     fields = (
         "workspace_bytes",
         "allocation_trace",
@@ -69,12 +69,13 @@ def collective_measurement(
             and event.allocation_ordinal in outputs
         )
     )
+    duration = task_collective_cost(requests, info, program.setup).duration_seconds
     return TaskMeasurement(
-        runtime_ns=round(max(durations) * 1e9),
+        runtime_ns=round(duration * 1e9),
         workspace_requested_bytes=baseline["workspace_bytes"],
         workspace_charged_bytes=baseline["workspace_bytes"],
         workspace_extent_bytes=(),
-        samples_ns=tuple(round(value * 1e9) for value in durations),
+        samples_ns=(round(duration * 1e9),),
         provenance="measured collective callable on every logical participant",
         allocation_trace=events,
         allocation_contract=TaskAllocationContract.from_dict(

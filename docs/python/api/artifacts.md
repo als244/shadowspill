@@ -103,9 +103,10 @@ write_report(loaded, "report")
 
 The saved bundle includes task payloads, profiles, schedule, layout and logical
 bindings. Model code and preparation caches are not needed to load it. Checkpoint
-weights and compatible runtime/provider libraries remain external. The public
-distributed Executor is still guarded pending full distributed qualification;
-a portable logical-rank declaration alone is not execution certification.
+weights and compatible runtime/provider libraries remain external. Distributed
+execution also requires compatible communication memory records and backend
+bindings; a logical-rank declaration alone is not execution admission. See the
+[phase API guide](../../architecture/offline-pipeline.md) for worker startup.
 
 ## SweepResult
 

@@ -9,7 +9,7 @@ from shadowspill.artifacts._values import digest, plain
 from shadowspill.artifacts.plan import Plan
 from shadowspill.communication.binding.backend import shared_backend_setup
 from shadowspill.communication.binding.groups import GroupBindings
-from shadowspill.communication.requests import collective_requests
+from shadowspill.communication.requests import CollectiveRequest, collective_requests
 
 from .storage import ShardedTransfers
 from .warmup import warm_collectives
@@ -20,24 +20,25 @@ class DistributedWorker:
         self.plans = dict(plans)
         self.transfers: dict[str, ShardedTransfers] = {}
         first = next(iter(plans.values()))
-        self.requests = tuple(
-            sorted(
-                {
-                    request
-                    for plan in plans.values()
-                    for request in collective_requests(plan.program, None)
-                },
-                key=lambda request: (
-                    request.ranks,
-                    request.operation,
-                    request.tensor_bytes,
-                    request.dtype,
-                    request.inplace,
-                ),
-            )
-        )
+        self.requests: tuple[CollectiveRequest, ...] = ()
         failure = None
         try:
+            self.requests = tuple(
+                sorted(
+                    {
+                        request
+                        for plan in plans.values()
+                        for request in collective_requests(plan.program, None)
+                    },
+                    key=lambda request: (
+                        request.ranks,
+                        request.operation,
+                        request.tensor_bytes,
+                        request.dtype,
+                        request.inplace,
+                    ),
+                )
+            )
             for plan in plans.values():
                 if plan.simulation_only_reasons:
                     raise ValueError(
@@ -69,6 +70,9 @@ class DistributedWorker:
 
     def prepare(self, device: int) -> None:
         """Initialize fixed backend resources before admitting the worker arena."""
+        devices = self.groups.gather(str(torch.cuda.get_device_properties(device).uuid))
+        if len(set(devices)) != len(devices):
+            raise ValueError("distributed workers require distinct CUDA devices")
         backend = shared_backend_setup(
             self.groups, self.requests, device_ordinal=device
         )
@@ -76,23 +80,32 @@ class DistributedWorker:
         for plan in self.plans.values():
             expected = plain(plan.communication_info.metadata.get("backend_setup", {}))
             # A forward Plan may use a subset of a training Plan's groups.
-            observed = {
-                **backend,
-                "groups": {
-                    name: backend.get("groups", {}).get(name)
-                    for name in expected.get("groups", {})
-                },
-            }
+            observed = (
+                {
+                    **backend,
+                    "groups": {
+                        name: backend.get("groups", {}).get(name)
+                        for name in expected.get("groups", {})
+                    },
+                }
+                if backend
+                else {}
+            )
             if observed != expected:
                 failure = "communication backend differs from the saved calibration"
         self.groups.check(failure)
         warm_collectives(self.requests, self.groups, torch.device("cuda", device))
-        for plan in self.plans.values():
-            key = plan.program.digest
-            if key not in self.transfers:
-                self.transfers[key] = ShardedTransfers(
-                    plan.program, self.groups, device
-                )
+        failure = None
+        try:
+            for plan in self.plans.values():
+                key = plan.program.digest
+                if key not in self.transfers:
+                    self.transfers[key] = ShardedTransfers(
+                        plan.program, self.groups, device
+                    )
+        except Exception as error:
+            failure = str(error)
+        self.groups.check(failure)
 
     def descriptors(self, plan: Plan) -> Mapping[str, int]:
         return self.transfers[plan.program.digest].descriptors

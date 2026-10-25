@@ -103,7 +103,9 @@ def communicate(path):
         dist.destroy_process_group()
 
 
-def plan(path):
+def plan(path, variant="auto"):
+    from dataclasses import replace
+
     from shadowspill import (
         CommunicationInfo,
         MemoryBudgets,
@@ -115,10 +117,26 @@ def plan(path):
     for prefix in ("", "evaluation-"):
         archive = path / f"{prefix}profiled.ssp"
         if archive.exists():
+            profiled = ProfiledProgram.load(archive)
+            if prefix == "" and variant != "auto":
+                bindings = dict(profiled.program.bindings)
+                bindings["training_templates"] = [
+                    [
+                        [form for form in stage if form["variant"] == variant]
+                        for stage in example
+                    ]
+                    for example in bindings["training_templates"]
+                ]
+                profiled = replace(
+                    profiled, program=replace(profiled.program, bindings=bindings)
+                )
             result = plan_program(
-                ProfiledProgram.load(archive),
+                profiled,
                 memory_budgets=MemoryBudgets(4 << 30, 64 << 20),
                 communication_info=info,
+                optimizer_ordering="tail"
+                if variant == "recompute"
+                else "stage_interleaved",
             )
             assert not result.simulation_only_reasons, result.simulation_only_reasons
             result.save(path / f"{prefix}plan.ssp")

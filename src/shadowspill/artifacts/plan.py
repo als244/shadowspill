@@ -76,6 +76,7 @@ class Plan(Artifact):
 
     @cached_property
     def _communication_memory(self) -> tuple[int, tuple[str, ...]]:
+        from shadowspill.communication.contracts import collective_measurement
         from shadowspill.communication.memory import (
             collective_memory,
             communication_overhead,
@@ -96,6 +97,11 @@ class Plan(Artifact):
                 fallback_kind=profile.metadata.get("memory_kind", "estimated"),
             )
             reasons.extend(task_reasons)
+            if self.program.executables:
+                try:
+                    collective_measurement(self.program, key, self.communication_info)
+                except ValueError as error:
+                    reasons.append(str(error))
         return fixed, tuple(dict.fromkeys(reasons))
 
     @property

@@ -100,7 +100,7 @@ def test_planner_keeps_local_copies_and_full_gather_as_distinct_phases(tmp_path)
     assert rows[0]["throughput_gb_per_second"] is None
     assert result.summary["spill_peak_bytes"] == 16
     assert result.summary["simulation_only"]
-    assert any("distributed" in reason for reason in result.simulation_only_reasons)
+    assert "estimated communicator overhead" in result.simulation_only_reasons
     result.save(tmp_path / "sharded.ssp")
     loaded = Plan.load(tmp_path / "sharded.ssp")
     assert loaded.program.parallelism == result.program.parallelism

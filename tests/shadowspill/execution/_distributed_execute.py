@@ -40,6 +40,14 @@ def fill(request, chunk):
     chunk.copy_(source[request.offset : request.offset + chunk.numel()])
 
 
+def tolerance(name=""):
+    if plan.program.bindings["kind"] != "step" or name.startswith("master."):
+        return dict(atol=3e-6, rtol=3e-5)
+    if name.startswith("optimizer."):
+        return dict(atol=2e-5, rtol=0.03)
+    return dict(atol=0.004, rtol=0.025)
+
+
 executor = None
 try:
     executor = Executor(
@@ -65,7 +73,7 @@ try:
             [output] if plan.program.bindings["kind"] == "forward" else output.losses
         )
         for actual, reference in zip(values, expected["outputs"][logical], strict=True):
-            torch.testing.assert_close(actual.cpu(), reference, atol=0.008, rtol=0.025)
+            torch.testing.assert_close(actual.cpu(), reference, **tolerance())
 
         seen = set()
 
@@ -76,8 +84,7 @@ try:
             torch.testing.assert_close(
                 chunk,
                 wanted[request.offset : request.offset + chunk.numel()],
-                atol=0.004,
-                rtol=0.03,
+                **tolerance(request.name),
             )
 
         executor.export_tensors(compare, chunk_bytes=28)

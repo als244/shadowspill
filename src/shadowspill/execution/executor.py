@@ -13,6 +13,7 @@ from shadowspill.pytorch.invocation import InvocationResult, ReusableCompletionE
 from .dispatch import dispatch
 from .distributed.checks import check_external_budget, check_invocation, coordinated
 from .inputs import stage_inputs
+from .paths import ExecutionPath
 from .results import collect_outputs
 from .tensors import TensorChunk, visit_tensors
 from .worker import create_paths
@@ -134,7 +135,7 @@ class Executor:
         if self._distributed is not None:
             check_invocation(self._distributed, plan, accumulate_gradients)
 
-        def prepare():
+        def prepare() -> ExecutionPath:
             if not self._initialized:
                 raise RuntimeError("initialize persistent tensors before run")
             if plan is not None and plan not in self._named_paths:

@@ -2,8 +2,9 @@
 
 The new phase API declares ownership through `Parallelism`, builds and measures
 DP compute on one representative device, and models communication separately in
-`CommunicationInfo`. Its public distributed Executor is still guarded pending
-multi-device memory/completion qualification. See the
+`CommunicationInfo`. Saved-plan Executor reconstructs logical groups and sharded
+transfers, validates communication allocation records, and keeps generated
+optimizer tasks on the ordered compute stream. See the
 [phase API guide](../../architecture/offline-pipeline.md) for those declarations
 and current limitations. The results below describe the older runtime path;
 they do not qualify the new saved-plan Executor.

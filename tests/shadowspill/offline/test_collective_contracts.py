@@ -20,6 +20,16 @@ def test_collective_contract_is_resolved_without_compiled_payload():
     assert observed.runtime_ns == 1000
 
 
+def test_memory_evidence_does_not_require_a_measured_duration():
+    value = measured_info().to_dict()
+    value["measurements"][0].pop("duration_seconds")
+    value.update(scale_up_bytes_per_second=1e9, scale_up_latency_seconds=1e-6)
+    observed = collective_measurement(
+        collective_program(), "reduce", CommunicationInfo(**value)
+    )
+    assert observed.runtime_ns == 1016
+
+
 def test_collective_workspace_total_cannot_stand_in_for_allocation_evidence():
     value = measured_info().to_dict()
     value["measurements"][0]["memory"] = {
