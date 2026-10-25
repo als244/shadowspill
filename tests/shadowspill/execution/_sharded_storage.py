@@ -97,7 +97,10 @@ def worker(index, rendezvous, archive, mode):
                 "evict": TransferRoute("execution", "spill"),
             },
         ) as runtime:
-            groups = source.bindings["weight_shards"]["alias_000001"]["groups"]
+            gradient = bool(source.bindings.get("gradient_shards"))
+            shards = source.bindings["gradient_shards" if gradient else "weight_shards"]
+            description = shards["alias_000001"]
+            groups = (*description["groups"], *description.get("replica_groups", ()))
             bound = GroupBindings(
                 identity=source.digest,
                 groups=groups,
@@ -118,9 +121,7 @@ def worker(index, rendezvous, archive, mode):
                 execution_device=device,
                 require_calibration=False,
             )
-            shard_bytes = source.bindings["weight_shards"]["alias_000001"][
-                "shard_bytes"
-            ]
+            shard_bytes = description["shard_bytes"]
             ir = ShadowSpillProgram(
                 devices=source.devices,
                 objects=source.objects,
@@ -166,6 +167,7 @@ def worker(index, rendezvous, archive, mode):
                 host = state.host("alias_000001")
                 assert host.numel() == shard_bytes and host.is_pinned()
                 region = state.regions["object_000001"]
+                dtype = getattr(torch, region.geometry["dtype"].removeprefix("torch."))
                 calls = []
 
                 def fill(request, destination):
@@ -178,15 +180,17 @@ def worker(index, rendezvous, archive, mode):
                         + 1
                     )
 
-                visit_tensors(state, fill, 6, initialize=True)
-                expected = torch.zeros(region.capacity, dtype=torch.bfloat16)
+                visit_tensors(
+                    state, fill, 3 * dtype.itemsize, initialize=True, restore=gradient
+                )
+                expected = torch.zeros(region.capacity, dtype=dtype)
                 expected[: region.length] = (
                     torch.arange(region.offset, region.offset + region.length) + 1
                 )
-                torch.testing.assert_close(host.view(torch.bfloat16), expected)
+                torch.testing.assert_close(host.view(dtype), expected)
                 assert calls[0] == region.offset
                 rows = bound.gather(
-                    (bound.logical_rank, host.view(torch.bfloat16).tolist())
+                    (bound.logical_rank, host.view(dtype).tolist())
                 )
                 by_rank = dict(rows)
                 width = source.parallelism.ranks_per_replica
@@ -194,7 +198,14 @@ def worker(index, rendezvous, archive, mode):
                     assert by_rank[rank] == by_rank[rank % width]
                 del host
                 if mode != "host":
-                    from tests.shadowspill.execution._shard_roundtrips import roundtrips
+                    if gradient:
+                        from tests.shadowspill.execution._gradient_roundtrips import (
+                            roundtrips,
+                        )
+                    else:
+                        from tests.shadowspill.execution._shard_roundtrips import (
+                            roundtrips,
+                        )
 
                     roundtrips(state, bound if mode == "nccl" else None)
                 state.clear_views()

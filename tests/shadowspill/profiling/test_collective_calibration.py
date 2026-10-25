@@ -195,6 +195,7 @@ def _gpu_worker(worker, rendezvous, output):
                 ("all_gather", False),
                 ("all_gather", True),
                 ("reduce_scatter", False),
+                ("reduce_scatter", True),
                 ("all_reduce", True),
             )
         )
@@ -211,6 +212,8 @@ def _gpu_worker(worker, rendezvous, output):
         for observation in info.measurements:
             assert observation["ranks"] == (1, 0)
             assert observation["duration_seconds"] > 0
+            if observation["operation"] == "reduce_scatter" and observation["inplace"]:
+                assert observation["zero_duration_seconds"] > 0
             memory = observation["memory"]
             assert memory["memory_kind"] == "measured", memory
             assert memory["workspace_bytes"] >= 0
