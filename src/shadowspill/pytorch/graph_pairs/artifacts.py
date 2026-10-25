@@ -7,16 +7,16 @@ from dataclasses import dataclass, replace
 
 import torch
 
-from shadowspill.pytorch.capture.aot import (
-    TrainingObjectiveCapture,
+from shadowspill.pytorch.capture.aot import TrainingObjectiveCapture
+from shadowspill.pytorch.capture.artifacts import (
+    AotGraphPair,
+    GraphArtifact,
+)
+from shadowspill.pytorch.capture.gradients import (
     accumulate_gradient_outputs,
     cast_gradient_outputs,
     materialize_gradient_outputs,
     pad_gradient_outputs,
-)
-from shadowspill.pytorch.capture.artifacts import (
-    AotGraphPair,
-    GraphArtifact,
 )
 from shadowspill.task.inputs import TaskInputRole
 
@@ -220,11 +220,11 @@ def _activation_gradient_formats(
         (index, ()) for index in range(len(inputs))
     )
     return {
-        logical: suggest_memory_format(inputs[physical])
+        logical: suggest_memory_format(value)
         for physical, (logical, path) in enumerate(components)
         if not path
         and logical not in parameter_leaves
-        and isinstance(inputs[physical], torch.Tensor)
+        and isinstance(value := inputs[physical], torch.Tensor)
     }
 
 

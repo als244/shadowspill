@@ -20,12 +20,12 @@ from torch._subclasses.fake_tensor import FakeTensorMode
 from torch.fx.experimental.proxy_tensor import make_fx
 
 from shadowspill.errors import CaptureError
-from shadowspill.pytorch.capture.aot import (
+from shadowspill.pytorch.capture.aot import capture_graph_pair
+from shadowspill.pytorch.capture.artifacts import GraphArtifact
+from shadowspill.pytorch.capture.gradients import (
     accumulate_gradient_outputs,
-    capture_graph_pair,
     cast_gradient_outputs,
 )
-from shadowspill.pytorch.capture.artifacts import GraphArtifact
 from shadowspill.pytorch.compilation.compiler import compile_artifact
 from shadowspill.task.inputs import TaskInputRole
 from tests.precision import low_precision_dtype

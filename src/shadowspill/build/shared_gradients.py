@@ -2,7 +2,7 @@
 
 from dataclasses import replace
 
-from shadowspill.pytorch.capture.aot import accumulate_gradient_outputs
+from shadowspill.pytorch.capture.gradients import accumulate_gradient_outputs
 from shadowspill.pytorch.graph_pairs import PartitionedTrainingCapture
 from shadowspill.task.inputs import TaskInputRole
 

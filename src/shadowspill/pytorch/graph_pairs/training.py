@@ -45,7 +45,7 @@ def partition_training_capture(
     are created and accumulated at; ``None`` keeps each at its parameter's.
     ``fuse_narrow_gradient_accumulation`` lets a matrix multiply add its product into a
     running gradient narrower than it sums at, with BLAS-controlled rounding
-    (:func:`~shadowspill.pytorch.capture.aot.accumulate_gradient_outputs`).
+    (:func:`~shadowspill.pytorch.capture.gradients.accumulate_gradient_outputs`).
     ``graph_pair_variants`` names the variants to build, both by default.
     ``template`` is a partition of another position of the same exported
     program, as :func:`partition_export` takes it.
