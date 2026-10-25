@@ -38,11 +38,10 @@ class GraphPairVariant:
     accumulates: bool = False
     """Whether this backward adds its gradients onto ones it is given.
 
-    Microbatches after the first contribute to gradients that already exist,
-    so they run a backward that takes those gradients as further arguments
-    and returns the sum. Which form a stage uses follows from its microbatch,
-    not from planning, so both forms share one option ID and the planner sees
-    the same graph-pair choices at every microbatch.
+    Both forms share one option ID. Build captures the creator and accumulating
+    computations; planning chooses the first writer and subsequent contributions
+    according to the selected example order. Forward/backward Plans also retain
+    the accumulating form for calls that add to gradients from a prior invocation.
     """
 
     def __post_init__(self) -> None:
@@ -190,14 +189,10 @@ class TaskGraphPairs:
     def options(self, *, accumulates: bool) -> tuple[GraphPairVariant, ...]:
         """Return the variants one microbatch may choose between.
 
-        Every microbatch offers the same graph-pair choices; which form of
-        them it runs follows from its position rather than from planning. A
-        step with a single microbatch never asks for the accumulating form, so
-        the store never derives it and it is never compiled or profiled.
-
-        Both forms are ordinary variants by the time they get here. Deriving
-        one costs a graph capture, so it happens once per structural contract
-        in the store and is rebound per occurrence like everything else.
+        The caller selects the creator or accumulating inventory. Both are
+        ordinary variants derived once per structural contract and rebound per
+        occurrence. Public training builders retain both so planning can change
+        example order without capture or compilation.
         """
 
         return tuple(item for item in self.variants if item.accumulates == accumulates)

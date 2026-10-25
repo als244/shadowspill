@@ -5,6 +5,7 @@ import math
 import os
 import subprocess
 import sys
+import zipfile
 
 import pytest
 import torch
@@ -97,6 +98,7 @@ def test_distributed_regression_runs_through_saved_artifacts(tmp_path):
     assert (root / "report/index.html").is_file()
     for artifact in ("program", "profiles", "profiled", "communication", "plan"):
         assert (root / f"{artifact}.ssp").is_file()
+    counters = []
     for rank in range(2):
         directory = root / f"training/rank-{rank:05d}"
         records = [
@@ -105,4 +107,14 @@ def test_distributed_regression_runs_through_saved_artifacts(tmp_path):
         ]
         assert [row["step"] for row in records] == [1, 2, 3]
         assert all(math.isfinite(row["train/loss"]) for row in records)
-        assert (directory / "checkpoints/step_00000003.ssp").is_file()
+        checkpoint = directory / "checkpoints/step_00000003.ssp"
+        with zipfile.ZipFile(checkpoint) as archive:
+            manifest = json.loads(archive.read("manifest.json"))
+            for tensor in manifest["tensors"]:
+                if tensor["name"] == "updates" and tensor["bytes"]:
+                    counters.append(
+                        int.from_bytes(archive.read(tensor["member"]), "little")
+                    )
+    # The counter is logically one INT64: padding occupies the other rank's
+    # physical shard, but only the actual counter belongs in the checkpoint.
+    assert counters == [3]
