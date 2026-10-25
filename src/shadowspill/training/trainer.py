@@ -140,6 +140,7 @@ class Trainer:
             # Release the Executor's completed handle. StepResult keeps only CPU
             # observations, so fit never retains execution-pool output leases.
             self.executor.synchronize()
+            del result
         seconds = time.perf_counter() - started
         summary = MetricSummary()
         if self.metric_reducer is not None:

@@ -18,6 +18,17 @@ def run(request, selection):
     attempt = directory / f"run-{len(list(directory.glob('run-*'))):04d}"
     attempt.mkdir()
     records = []
+
+    def record(owner, result):
+        records.append(
+            {
+                "step": result.step,
+                "seconds": result.seconds,
+                "loss": float(result.summary.scalars.get("loss", result.loss)),
+                "objective_loss": result.loss,
+            }
+        )
+
     # Install Executor before the user factory can create live CUDA resources.
     device = int(request["device"].split(":")[-1])
     with Trainer(
@@ -32,15 +43,7 @@ def run(request, selection):
             (inputs for _ in range(request["steps"])),
             steps=request["steps"],
             run_dir=attempt,
-            callbacks=[
-                lambda owner, result: records.append(
-                    {
-                        "step": result.step,
-                        "seconds": result.seconds,
-                        "loss": result.loss,
-                    }
-                )
-            ],
+            callbacks=[record],
         )
     median = statistics.median(record["seconds"] for record in records)
     units = index.get("units_per_step")

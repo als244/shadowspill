@@ -120,6 +120,8 @@ execution/budget-*/run-*/     # host metrics for each execution attempt
 execution/budget-*/result.json
 execution/summary.json       # latest matching results and predicted/actual times
 execution/summary.csv
+execution/performance.svg    # measured throughput and simulated/measured times
+execution/performance.png
 ```
 
 Execution summaries record every step plus the median duration and optional
@@ -127,5 +129,10 @@ throughput; the first step can include startup overhead and remains visible.
 These small regression runs qualify the pipeline, not model performance.
 Rerunning execution creates another attempt directory. Plan identities prevent
 old measurements from being reported as belonging to a newly selected plan.
+With `--plots`, the execution comparison uses matching measured runs only.
+`--no-plots` keeps JSON/CSV summaries and removes older comparison figures.
+Per-step `loss` honors the metric reducer's display override; `objective_loss`
+always retains the differentiated objective. Detailed reducer metrics live in
+each attempt's `metrics.jsonl`, copied to host before the reducer is called.
 The numerical report exporters for the old quickstart format remain under the
 private migration path until updated.

@@ -1,12 +1,12 @@
 """A process boundary between preparation and the execution allocator."""
 
-import csv
 import os
 import subprocess
 import sys
 from pathlib import Path
 
 from .phases.common import read, reference, write
+from .results import write_measurements
 
 
 def run(
@@ -82,7 +82,7 @@ def run_request(request, phase):
                 )
                 continue
             _launch("execute", request_file, selection=selected[budget])
-        _measurements(root, winners)
+        write_measurements(root, winners, plots=request["plots"])
     print(f"quickstart {phase} complete: {root}", flush=True)
     return 0
 
@@ -152,34 +152,3 @@ def _launch(phase, request_file, selection=None):
             raise
     if code:
         raise RuntimeError(f"quickstart {phase} failed ({code}); see {log_path}")
-
-
-def _measurements(root, winners):
-    rows = []
-    for winner in winners:
-        path = root / "execution" / winner["file"].removesuffix(".ssp") / "result.json"
-        if path.exists():
-            value = read(path)
-            if any(
-                value[key] != winner[key]
-                for key in ("candidate", "budget", "plan_digest")
-            ):
-                continue  # A replan may have replaced the plan selected at this path.
-            rows.append(
-                {
-                    key: value[key]
-                    for key in (
-                        "budget",
-                        "candidate",
-                        "predicted_seconds",
-                        "median_seconds",
-                        "units_per_second",
-                    )
-                }
-            )
-    write(root / "execution" / "summary.json", rows)
-    if rows:
-        with (root / "execution" / "summary.csv").open("w") as stream:
-            writer = csv.DictWriter(stream, fieldnames=list(rows[0]))
-            writer.writeheader()
-            writer.writerows(rows)

@@ -2,6 +2,7 @@
 
 import json
 import random
+import weakref
 from dataclasses import replace
 from types import SimpleNamespace
 
@@ -115,6 +116,26 @@ def test_owned_executor_and_predispatch_validation(executor, monkeypatch):
         with pytest.raises(TypeError, match="source item"):
             trainer.fit([torch.ones(2)], steps=1)
     assert executor.closed and len(opened) == 1
+
+
+def test_device_results_are_released_before_calling_a_reducer(executor):
+    outputs = []
+
+    def run(**inputs):
+        loss = torch.tensor(2.0)
+        outputs.append(weakref.ref(loss))
+        return SimpleNamespace(result=lambda: TrainingResult((loss,), ()))
+
+    def fail(observations):
+        assert observations.losses == (2.0,)
+        assert all(output() is None for output in outputs)
+        raise ValueError("reducer failed")
+
+    executor.run = run
+    with Trainer(executor.plan, executor=executor, metric_reducer=fail) as trainer:
+        with pytest.raises(ValueError, match="reducer failed"):
+            trainer.step(args=[()])
+        assert trainer.step_count == 1
 
 
 def test_evaluation_requires_prebuilt_plan_and_does_not_advance_loop(executor):

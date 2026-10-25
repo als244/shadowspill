@@ -23,17 +23,9 @@ Supply a Python factory receiving the selected local `device` and returning a
 plain mapping. It is called after runtime installation, so it can safely create
 model resources then. No base class or registration is required.
 
-```bash
-python -u -m benchmarking.quickstart.cli \
-  --factory workloads.recipes.regression:experiment \
-  --factory-args '{"rows": 64, "width": 16, "outputs": 8}' \
-  --search-budget-gib 2,3 --run-budget-gib 2,3 --spill-gib 2 \
-  --steps 5 --plots --resolution-plans \
-  --output-dir benchmarking/quickstart_reports/regression
-```
-
-The [regression factory](../workloads/recipes/regression.py) is a complete
-non-text example. Its mapping contains:
+This mapping documents only the remaining old CLI presets. New user factories,
+including the [regression example](../workloads/recipes/regression.py), use the
+[phase quickstart](quickstart.md) instead:
 
 | Key | Meaning |
 | --- | --- |
@@ -69,23 +61,13 @@ its default remains 0.5 GiB. Workloads with communication allocations can reques
 more. This reserve comes out of each requested physical execution budget, and
 the console reports the resulting slab budgets.
 
-The Python `run(...)` API accepts `search_workers`, `external_headroom_gib`,
+The old CLI accepts `search_workers`, `external_headroom_gib`,
 `plan_store`, `minimum_evict_kib` and `max_evict_gib` as well. A stable `artifact_store` and `plan_store` let later
 invocations reuse completed builds/searches while keeping separate output
 directories for their logs and measurements.
 
-Python callers may use the same workflow:
-
-```python
-from benchmarking.quickstart._legacy import run
-from workloads.recipes.regression import experiment
-
-run(
-    experiment, search_budget_gib=[2, 3], run_budget_gib=[2, 3],
-    spill_gib=2, steps=5, output_dir="benchmarking/quickstart_reports/regression",
-    plots=True, resolution_plans=True,
-)
-```
+The old Python wrapper has been removed. Python callers use
+`benchmarking.quickstart.run` and its documented phase factory contract.
 
 `--device` selects a local device. Automatic selection uses the only visible
 device or `LOCAL_RANK` when several are visible. Device selection alone does
@@ -580,7 +562,7 @@ Launch one process per GPU, with each process seeing its GPU as logical device 0
 
 ```bash
 torchrun --standalone --nproc-per-node=2 -m benchmarking.rank_device \
-  -m benchmarking.quickstart --model llama3-8b \
+  -m benchmarking.quickstart.cli --model llama3-8b \
   --distributed --sequence-length 1024 --sequences-per-step 16 \
   --search-budget-gib 12,16 --run-budget-gib 12,16 --spill-gib 40 \
   --steps 5 --plots --resolution-plans --output-dir runs/llama_dp

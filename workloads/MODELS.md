@@ -388,7 +388,7 @@ optimizer schedules, evaluation, W&B, and checkpoints.
 For a benchmark using a supplied throughput preset and saved resolution plans:
 
 ```bash
-python -m benchmarking.quickstart --model llama3-8b \
+python -m benchmarking.quickstart.cli --model llama3-8b \
   --sequence-length 1024 --sequences-per-step 64 \
   --min-tokens-per-microbatch 8192 --max-tokens-per-microbatch 16384 \
   --search-budget-gib 20,30 --run-budget-gib 20,30 \

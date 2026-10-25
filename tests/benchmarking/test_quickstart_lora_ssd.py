@@ -32,7 +32,7 @@ def test_ssd_selection_reaches_the_request_and_saved_configuration(
     args = parser.parse_args(
         [
             "--factory",
-            "tests.shadowspill.pytorch.api.test_06_generic_quickstart:experiment",
+            "tests.benchmarking._generic_quickstart:experiment",
             "--ssd-spill",
             str(tmp_path),
             "--spill-gib",
