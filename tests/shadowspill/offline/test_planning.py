@@ -3,11 +3,11 @@ from dataclasses import replace
 import pytest
 
 from shadowspill import MemoryBudgets, apply_profiles, plan_program, sweep_programs
-from shadowspill.artifacts._legacy import split_costed_program
 from shadowspill.errors import PlanInfeasibleError
 from shadowspill.ir import MemoryLocation, ResidencySpec
 from tests.shadowspill.planner._examples import recomputation_program
 
+from ._costed_fixture import split_costed_program
 from ._example import communication, options, profiled, profiles, program
 
 

@@ -46,11 +46,6 @@ def _u32(values: tuple[int, ...]) -> ctypes.Array[ctypes.c_uint32]:
     return result_type.from_buffer_copy(array("I", values)) if values else result_type()
 
 
-def _u64(values: tuple[int, ...]) -> ctypes.Array[ctypes.c_uint64]:
-    result_type = ctypes.c_uint64 * max(1, len(values))
-    return result_type.from_buffer_copy(array("Q", values)) if values else result_type()
-
-
 def _u8(values: tuple[int, ...]) -> ctypes.Array[ctypes.c_uint8]:
     result_type = ctypes.c_uint8 * max(1, len(values))
     return result_type.from_buffer_copy(bytes(values)) if values else result_type()

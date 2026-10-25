@@ -40,7 +40,6 @@ from shadowspill.planner.admission.admission_replay import (
     CausalAdmissionDependency,
     OwnershipTransition,
     OwnershipTransitionKind,
-    _LeaseProvenance,
 )
 from shadowspill.runtime import (
     AdmissionReplayOperation as PoolAdmissionOperation,
@@ -50,6 +49,14 @@ from shadowspill.runtime import (
     AdmissionReuseDependency,
     run_admission_replay,
 )
+
+
+@dataclass(frozen=True, slots=True)
+class _LeaseProvenance:
+    purpose: AdmissionReplayPurpose
+    task_id: str | None = None
+    alias_group_id: str | None = None
+    action_index: int | None = None
 
 
 @dataclass(frozen=True, slots=True)

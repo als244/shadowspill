@@ -5,7 +5,6 @@ from dataclasses import replace
 import pytest
 
 from shadowspill import MemoryBudgets, apply_profiles, plan_program
-from shadowspill.artifacts._legacy import split_costed_program
 from shadowspill.errors import PlanInfeasibleError
 from shadowspill.ir import (
     AliasGroupSpec,
@@ -28,6 +27,7 @@ from shadowspill.task.profiles import TaskMeasurement
 from shadowspill.task.storage import TaskStorageContract
 from tests.shadowspill.planner._examples import COMPUTE, DEVICE
 
+from ._costed_fixture import split_costed_program
 from ._example import communication, options
 
 

@@ -1,9 +1,8 @@
-"""Internal migration of captured IR; not a second public build interface."""
+"""Reuse planner IR fixtures in offline phase tests without shipping an adapter."""
 
+from shadowspill.artifacts.profiles import Profiles, TaskProfile
+from shadowspill.artifacts.program import Program, TaskDefinition
 from shadowspill.ir import ResidencySpec, ShadowSpillProgram
-
-from .profiles import Profiles, TaskProfile
-from .program import Program, TaskDefinition
 
 
 def split_costed_program(

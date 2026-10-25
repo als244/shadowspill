@@ -92,14 +92,6 @@ class AdmissionReplay:
     compatibility_digest: str
 
 
-@dataclass(frozen=True, slots=True)
-class _LeaseProvenance:
-    purpose: AdmissionReplayPurpose
-    task_id: str | None = None
-    alias_group_id: str | None = None
-    action_index: int | None = None
-
-
 __all__ = [
     "AdmissionReplay",
     "AdmissionReplayPurpose",

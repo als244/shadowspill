@@ -338,11 +338,6 @@ Implementation ownership:
 - `reporting/`: semantic task/transfer tables and timeline/memory figures.
 - `ir/` and existing native planner/simulator: shared structural validation and engines.
 
-The internal `_legacy.split_costed_program` imports old captured IR for validation
-while callers migrate. It is not a second public build path and does not claim
-that imported workspace totals carry allocator evidence.
-
-
 ### Execution in a fresh worker
 
 Load the saved Plan before constructing an Executor. The worker must not have
