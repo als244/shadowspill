@@ -114,7 +114,10 @@ def _readers(path: Path) -> list[Path]:
         ROOT / "qualification/numerical/run.py",
         ROOT / "qualification/performance/run.py",
     }
-    if path.name not in ("__init__.py", "__main__.py") and path not in package_commands:
+    if (
+        path.name not in ("__init__.py", "__main__.py", "cli.py")
+        and path not in package_commands
+    ):
         return [path]
     return sorted(item for item in path.parent.glob("*.py"))
 
