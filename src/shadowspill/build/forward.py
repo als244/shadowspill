@@ -16,6 +16,7 @@ from shadowspill.pytorch.partition import PartitionSpec
 
 from .capture import capture_forward_model
 from .common import build_setup, compile_artifacts
+from .finalize import finalize_providers
 from .lowering.forward import lower_forward
 from .parallelism import attach_parallelism, model_parallelism, validate_forward
 
@@ -62,4 +63,4 @@ def build_forward(
         raise NotImplementedError(
             "distributed forward currently requires a read-only model"
         )
-    return attach_parallelism(program, spec, parameters)
+    return finalize_providers(attach_parallelism(program, spec, parameters), device)

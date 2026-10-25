@@ -358,13 +358,29 @@ contract. They are not certified by this stateless-Python-op qualification.
 Likewise, the registration digest is not a fingerprint of all transitive native
 libraries or proof that a provider's internal autotuning/resources are portable.
 
+For Python providers that use Triton's autotuner, build now runs each affected
+task with bounded representative inputs and records its selected configurations.
+Backward uses the corresponding forward's tensors. Kernel source, tuning keys
+and candidate configurations identify each selection, and selections contribute
+to profile compatibility. Measurement and execution bind these saved choices;
+they reject unseen specializations or changed candidates before benchmarking.
+No GPU timing records or runtime pools are produced by this build pass.
+
+Only compact configuration records belong to the Program archive. Compiler
+caches remain disposable, and provider code remains an external dependency.
+Fixed kernels may compile lazily without selecting a different implementation.
+Other autotuner systems and shared provider resources still need their own
+initialization support; this does not certify arbitrary provider state.
+
 MLOps AdamW also passes cold-worker execution with BF16 compute weights, FP32
 gradients/masters/moments, CPU step counters, changing learning rates and
 checkpoint restore against independent PyTorch updates. Its fixed-block Triton
 kernel compiles lazily in an empty cache; this does not select a new algorithm,
 change the observed allocation requests, or recompile on subsequent updates.
-Such fixed provider compilation is allowed by the build contract. This check
-does not qualify providers that perform autotuning or recreate shared resources.
+Such fixed provider compilation is allowed by the build contract. Separately,
+the tiny Qwen3.5 MoE LoRA recipe passes cold checkpoint resume with the FLA
+Triton choices finalized at build, including exact tensor and loss comparison.
+Neither check qualifies providers that recreate shared resources.
 
 Implementation ownership:
 
@@ -583,6 +599,9 @@ owned shard between examples. A fetch zeros the full accumulator and restores
 only that shard. With repeated model replicas, only the first corresponding
 replica injects the old value; new local contributions then sum without repeating
 the previous total. Final gradients use the same reduce-and-spill path.
+For uneven sizes, build includes equal-shard padding in the compiled backward's
+allocation contract before reconciling it with the canonical storage layout;
+the physical output is larger than its logical tensor view where necessary.
 
 One saved Plan supports fresh gradients and cross-call accumulation. The latter
 starts from existing spilled shards and uses the same compiled accumulation

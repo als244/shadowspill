@@ -10,10 +10,10 @@ from torch._inductor.standalone_compile import AOTCompiledArtifact
 from shadowspill import Profiles, Program
 from shadowspill.artifacts._values import plain
 from shadowspill.libraries import resolve_library
-from shadowspill.profiling.inputs import prepare_inputs
 from shadowspill.pytorch.frontend import PyTorchFrontend
 from shadowspill.pytorch.profiling.profiler.boundary import AllocatorBoundary
 from shadowspill.pytorch.profiling.profiler.workspace import output_allocation_views
+from shadowspill.pytorch.task_inputs import prepare_inputs
 from shadowspill.runtime.abi import runtime_library
 from shadowspill.runtime.bootstrap import install_runtime
 from shadowspill.runtime.telemetry import (

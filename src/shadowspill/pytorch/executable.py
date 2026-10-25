@@ -10,7 +10,15 @@ from .dependencies import restore_dependencies
 
 
 def restore_executable(
-    payload: bytes, *, dependencies: Sequence[Mapping[str, str]] = ()
+    payload: bytes,
+    *,
+    dependencies: Sequence[Mapping[str, str]] = (),
+    triton_choices: Mapping[str, Any] | None = None,
 ) -> Any:
     restore_dependencies(dependencies)
-    return AOTCompiledArtifact.deserialize(payload)
+    function = AOTCompiledArtifact.deserialize(payload)
+    if triton_choices is not None:
+        from .tuning import use_choices
+
+        function = use_choices(function, triton_choices)
+    return function

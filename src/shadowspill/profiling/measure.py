@@ -11,13 +11,13 @@ from shadowspill.artifacts._values import nonnegative_int, plain
 from shadowspill.artifacts.device import require_compiled_device
 from shadowspill.artifacts.profiles import Profiles, TaskProfile
 from shadowspill.artifacts.program import Program
+from shadowspill.artifacts.tasks import stage_jobs
 from shadowspill.pytorch.accelerator import resolve_device
 from shadowspill.pytorch.executable import restore_executable
+from shadowspill.pytorch.task_inputs import prepare_inputs
 from shadowspill.pytorch.toolchain import build_setup
 
 from .device_memory import external_device_bytes
-from .inputs import prepare_inputs
-from .jobs import stage_jobs
 from .streams import MeasurementStreams
 from .task import measure_task
 
@@ -47,6 +47,7 @@ class _Session:
                 dependencies=self.program.bindings.get("operator_dependencies", {}).get(
                     key, ()
                 ),
+                triton_choices=self.program.bindings.get("triton_choices", {}).get(key),
             )
             self.persistent += max(0, torch.cuda.memory_allocated(self.device) - before)
         return self.functions[key]
@@ -63,7 +64,12 @@ class _Session:
                 warmup_seconds=self.warmup,
                 measure_seconds=self.measurement,
             )
-        self.profiles.tasks[key] = replace(result, compatibility_digest=key)
+        definition = next(
+            item for item in self.program.task_definitions if item.profile_key == key
+        )
+        self.profiles.tasks[key] = replace(
+            result, compatibility_digest=definition.compatibility_digest
+        )
         self.persistent += sum(result.metadata["warmup_persistent_bytes"])
         external = external_device_bytes(self.device)
         if external is not None:

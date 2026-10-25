@@ -91,6 +91,9 @@ def prepare(
                         dependencies=plan.program.bindings.get(
                             "operator_dependencies", {}
                         ).get(key, ()),
+                        triton_choices=plan.program.bindings.get(
+                            "triton_choices", {}
+                        ).get(key),
                     )
                 measurement = measured_task(
                     plan.profiled_program.task_profiles[key],

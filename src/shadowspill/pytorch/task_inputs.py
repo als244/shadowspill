@@ -94,12 +94,16 @@ def _extent(geometry: Mapping[str, Any]) -> int:
 def _initialize(value: torch.Tensor, source: Mapping[str, Any]) -> None:
     if "value" in source:
         value.copy_(
-            torch.as_tensor(source["value"], dtype=value.dtype, device=value.device)
+            torch.as_tensor(
+                source["value"], dtype=value.dtype, device=value.device
+            ).reshape(value.shape)
         )
     elif source.get("role") in {"control", "constant", "optimizer_hyperparameter"}:
         raise CaptureError(
             f"task input {source.get('source')} needs caller-supplied values"
         )
+    elif source.get("role") == "statistic":
+        value.fill_(1)
     elif value.dtype in {torch.float32, torch.float64, torch.float16, torch.bfloat16}:
         if source.get("role") in {"optimizer_state", "gradient"}:
             value.zero_()

@@ -14,6 +14,7 @@ from shadowspill.pytorch.capture.retention import RetentionPolicy
 from shadowspill.pytorch.partition import PartitionSpec
 
 from .common import build_setup, compile_artifacts
+from .finalize import finalize_providers
 from .gradient_ops import capture_gradient_operations
 from .lowering.training import lower_training
 from .optimizer import capture_update
@@ -159,4 +160,4 @@ def _build_training(
     program = replace(
         program, bindings={**program.bindings, "compiled_device_index": device.index}
     )
-    return attach_parallelism(program, spec, parameters)
+    return finalize_providers(attach_parallelism(program, spec, parameters), device)
