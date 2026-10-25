@@ -82,21 +82,36 @@ try:
         )
         for actual, reference in zip(values, expected["outputs"][logical], strict=True):
             torch.testing.assert_close(actual.cpu(), reference, **tolerance())
+        del pending, output, values, actual
 
         seen = set()
+        failures = []
 
-        def compare(request, chunk, seen=seen, expected=expected):
+        def compare(
+            request, chunk, seen=seen, expected=expected, failures=failures, index=index
+        ):
             assert chunk.nbytes <= 28
             seen.add(request.name)
             wanted = expected["state"][request.name].reshape(-1)
-            torch.testing.assert_close(
-                chunk,
-                wanted[request.offset : request.offset + chunk.numel()],
-                **tolerance(request.name),
-            )
+            try:
+                torch.testing.assert_close(
+                    chunk,
+                    wanted[request.offset : request.offset + chunk.numel()],
+                    **tolerance(request.name),
+                )
+            except AssertionError as error:
+                failures.append(
+                    f"logical rank {logical}, invocation {index}, "
+                    f"{request.name}[{request.offset}:"
+                    f"{request.offset + chunk.numel()}]: "
+                    f"{error}"
+                )
 
         executor.export_tensors(compare, chunk_bytes=28)
         assert seen == expected["state"].keys(), (seen, expected["state"].keys())
+        all_failures = [None] * dist.get_world_size()
+        dist.all_gather_object(all_failures, failures)
+        assert not any(all_failures), all_failures
         if index == 0:
             checkpoint = directory / f"checkpoint-rank-{logical}.ssp"
             save_checkpoint(
@@ -107,6 +122,9 @@ try:
                 "completed": 1
             }
             executor.export_tensors(compare, chunk_bytes=28)
+            all_failures = [None] * dist.get_world_size()
+            dist.all_gather_object(all_failures, failures)
+            assert not any(all_failures), all_failures
         if plans:
             evaluated = executor.run(plan="evaluation", args=[calls[0][0]]).result()
             torch.testing.assert_close(
@@ -117,7 +135,6 @@ try:
             f"logical rank {logical}: invocation {index} values/shards passed",
             flush=True,
         )
-        del pending, output, values, actual
     executor.close()
     executor = None
 finally:

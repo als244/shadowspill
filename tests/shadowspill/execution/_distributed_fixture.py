@@ -49,6 +49,18 @@ def oracle(kind, dtype):
         for name, p in model.named_parameters()
     }
     optimizer = torch.optim.AdamW(masters.values(), lr=0.001, foreach=False)
+    linear_outputs = {}
+
+    def remember_linear(module, args, output):
+        output.retain_grad()
+        linear_outputs[module] = (args[0].detach(), output)
+
+    # The Program requests FP32 parameter gradients. A BF16 Parameter.grad
+    # would round the GEMM result before conversion; retain its operands so the
+    # independent eager oracle can form the unrounded FP32 weight gradient.
+    for module in model.modules():
+        if isinstance(module, nn.Linear):
+            module.register_forward_hook(remember_linear)
     summed = {name: torch.zeros_like(master) for name, master in masters.items()}
     expected = []
     for invocation in range(3):
@@ -68,7 +80,12 @@ def oracle(kind, dtype):
                 loss.backward()
                 local.append(loss.detach().clone())
                 for name, parameter in model.named_parameters():
-                    summed[name].add_(parameter.grad.float())
+                    gradient = parameter.grad.float()
+                    if name.endswith(".weight"):
+                        module = model.get_submodule(name.removesuffix(".weight"))
+                        inputs, output = linear_outputs[module]
+                        gradient = output.grad.float().T @ inputs.float()
+                    summed[name].add_(gradient)
             outputs.append(local)
         state = {}
         if kind == "step":
