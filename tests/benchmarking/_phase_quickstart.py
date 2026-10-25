@@ -2,7 +2,7 @@
 
 import torch
 
-from workloads.recipes.regression import experiment as regression
+from workloads.recipes.regression.benchmark import experiment as regression
 
 
 def mixed_examples(*, device, rows=8, width=8, outputs=8):

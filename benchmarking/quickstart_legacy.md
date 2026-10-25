@@ -24,7 +24,7 @@ plain mapping. It is called after runtime installation, so it can safely create
 model resources then. No base class or registration is required.
 
 This mapping documents only the remaining old CLI presets. New user factories,
-including the [regression example](../workloads/recipes/regression.py), use the
+including the [regression example](../workloads/recipes/regression/benchmark.py), use the
 [phase quickstart](quickstart.md) instead:
 
 | Key | Meaning |

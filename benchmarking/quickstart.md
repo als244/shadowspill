@@ -25,7 +25,7 @@ The core APIs can be used directly without quickstart; see the
 
 ```bash
 python -u -m benchmarking.quickstart \
-  --factory workloads.recipes.regression:experiment \
+  --factory workloads.recipes.regression.benchmark:experiment \
   --factory-args '{"rows":64,"width":16,"outputs":8}' \
   --search-budget-gib 2 3 --run-budget-gib 2 3 --spill-gib 2 \
   --steps 5 --device cuda:0 --output-dir runs/regression
@@ -49,7 +49,7 @@ Start with build alone, without selecting planning budgets yet:
 
 ```bash
 python -m benchmarking.quickstart --phase build \
-  --factory workloads.recipes.regression:experiment --output-dir runs/regression
+  --factory workloads.recipes.regression.benchmark:experiment --output-dir runs/regression
 python -m benchmarking.quickstart --phase profile --output-dir runs/regression
 CUDA_VISIBLE_DEVICES='' python -m benchmarking.quickstart --phase plan \
   --output-dir runs/regression --search-budget-gib 2 3 --spill-gib 2
@@ -73,7 +73,7 @@ archive; estimated memory produces simulation-only plans and cannot execute.
 
 ## Factory inputs
 
-The [regression factory](../workloads/recipes/regression.py) is a complete example.
+The [regression factory](../workloads/recipes/regression/benchmark.py) is a complete example.
 It returns a plain mapping:
 
 | Entry | Purpose |

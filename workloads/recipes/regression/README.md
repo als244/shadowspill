@@ -1,4 +1,4 @@
-# Distributed regression example
+# Regression examples
 
 A small non-text model trains with weights, gradients and optimizer state sharded
 across a single DP replica. Inputs differ by rank. The objective divides each
@@ -49,3 +49,18 @@ The run directory contains one archive for each phase, `logs/`, `report/`, and
 metrics; DistributedLogger also combines records. Optional `--wandb-project`
 enables the existing logger's device telemetry. Inductor/Triton caches remain
 outside the run directory.
+
+## Single-GPU quickstart benchmark
+
+`benchmark.py` supplies the model, synthetic data and bounded initializer to the
+shared quickstart driver. It sweeps two microbatch sizes and the requested GPU
+budgets using the same public phase APIs:
+
+```bash
+python -m benchmarking.quickstart \
+  --factory workloads.recipes.regression.benchmark:experiment \
+  --search-budget-gib 2 3 --spill-gib 0.125 --output-dir runs/regression-benchmark
+```
+
+See the [quickstart guide](../../../benchmarking/quickstart.md) for independent
+phases, CPU replanning and saved results.

@@ -45,7 +45,7 @@ MLOps MoE architectures can enable EP through the same Python constructor
 arguments. An experiment factory supplies groups and resources; a catalog
 name alone does not enable EP.
 
-For a non-text example, see the [regression recipe](recipes/regression.py) and
+For a non-text example, see the [regression recipe](recipes/regression/benchmark.py) and
 [generic training walkthrough](../docs/examples/generic-training.md).
 
 ## Preset dimensions and parameter counts
