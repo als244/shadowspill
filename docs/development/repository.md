@@ -34,16 +34,16 @@ runs: the manifest and its budgets, the readings taken off the runtime, the
 phases (calibrate, plan, warm, measure), and the verdict each gate reaches.
 
 `workloads/` supplies optional model and data recipes; qualification budgets and
-acceptance rules live under `qualification/`. `shadowspill.training`
-accepts ordinary user models, functions and iterables, without importing recipes.
+acceptance rules live under `qualification/`. Build accepts ordinary user models
+and call examples. `shadowspill.training.Trainer` drives an Executor from saved
+Plans and iterable inputs, without importing recipes.
 
-`benchmarking/` holds the generic quickstart factory runner and text CLI presets, and
-two harnesses that split that job so its expensive half is paid once: program
-collection builds programs -- capture, compilation, profiling, lowering --
-and planning evaluation plans saved programs across budgets and transfer
-bandwidths. The separation is enforced by the arguments each accepts:
-collection takes no planning arguments, and evaluation takes no build
-arguments beyond its corpus path.
+`benchmarking/quickstart/` composes the public phase APIs; the older factory
+runner remains while its model-specific callers migrate. The
+`bandwidth_frontier/` package consumes `ProfiledProgram` archives and runs CPU
+planning/plotting only. Older corpus collection/evaluation harnesses remain
+separate: collection builds and profiles, while evaluation reads the saved
+corpus and plans budgets and transfer assumptions.
 
 ## Python package
 
@@ -74,7 +74,9 @@ src/shadowspill/
 │   │                      is read against
 │   ├── timing.py          what one invocation measures about itself: the
 │   │                      markers, the armed records, the invocation timelines
-│   └── collection.py      resolving one traced step into that evidence
+│   ├── collection.py      resolving one traced step into that evidence
+│   └── occupancy/         pool attribution, clocks and timeline rendering
+│       └── run/           stored-run discovery, trace matching and report indexes
 ├── pipeline/              the ordered work that turns a captured step into a
 │   │                      plan, minus the framework: the phase clock, the
 │   │                      budgets, the report
