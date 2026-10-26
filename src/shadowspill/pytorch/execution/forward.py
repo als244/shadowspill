@@ -42,11 +42,12 @@ from shadowspill.runtime.plan import (
     seal_fixed_layout,
     trace_capacities,
 )
+from shadowspill.runtime.plan.annotations import TaskBoundaryAnnotations
 from shadowspill.runtime.transfer_labels import TransferLabelIndex
 from shadowspill.simulator import SimulationResult
 from shadowspill.task.entrypoints import execution_entrypoints
 
-from .annotations import AnnotatedExecutor, TaskBoundaryAnnotations
+from .annotations import AnnotatedExecutor
 from .timing import (
     ExecutionTiming,
     TracedInvocation,

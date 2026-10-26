@@ -1,7 +1,20 @@
 # Diagnostics API
 
-Planning diagnostics are always produced; step diagnostics are opt-in through
-`runtime_trace=True`. This page inventories the public values. For
+Saved Plans expose `summary`, `schedule`, `timeline`, `memory_layout` and
+`diagnostics`. These are inspectable on CPU; `write_report(plan, directory)`
+produces simulated timelines and tables without execution. Search results retain
+each successful Plan and failure diagnostics. See the
+[phase API](../../architecture/offline-pipeline.md) for artifact boundaries.
+
+For external GPU captures, `Executor.run(..., profiler_annotations=True)` emits
+semantic task and transfer ranges until invocation completion. It defaults off
+and does not replan or collect a runtime-event ledger. The
+[saved-winner capture tool](../../../benchmarking/quickstart.md#nsight-captures-of-saved-winners)
+uses the existing Plan in fresh workers and checks trace completeness.
+
+The remaining sections document the older callable report/event interfaces,
+which are retained while their diagnostic consumers migrate. In that path,
+step diagnostics are opt-in through `runtime_trace=True`. For
 field-by-field workflows use [Interpreting a PlanReport](../plan-report.md) and
 its [field reference](../plan-report-fields.md), and [Interpreting StepResult
 diagnostics](../step-diagnostics.md).

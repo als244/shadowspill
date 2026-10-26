@@ -718,23 +718,18 @@ python -m tools.pressurefit_trace.matrix render RUN/winner-videos-inputs \
   --resolution 4k --quality best --jobs 2
 ```
 
-On the original GPU environment, capture separate Nsight Systems reports of the
-already benchmarked winners. The replay requires matching program, schedule,
-layout and capture identities. It reuses the search report and stored incumbent;
-profiler timings are not throughput measurements:
-
-Replay restores the winner's recorded timing model instead of replanning with
-new collective/profiling measurements. Before doing so, it checks that the fresh
-capture has the same executable structure, tensor/storage facts, residency,
-transfer operations and resource order. Workspace and scratch must still fit
-the saved admission. A change to measured durations alone is allowed; a change
-to operations, bytes or memory requirements is rejected. Each rank retains a
-`replay-contract.json` record, and the final program/schedule/layout/capture
-identity checks still apply before capture begins.
+For a current phase quickstart, capture separate Nsight Systems reports of its
+already executed winners. Each fresh worker loads the exact portable Plan from
+`plans/`, initializes with the factory's bounded loader and runs warmup/captured
+updates. It does not build, measure, calibrate or replan. The complete archive
+identity must agree with both the planning index and the completed result;
+memory admission remains unchanged. Each rank retains an `exact-plan.json`.
+Profiler timings are not throughput measurements. Older runtime-first quickstart
+folders must be regenerated with the phase quickstart to use this command.
 
 ```sh
 python -m tools.pressurefit_trace.profile_winners RUN/quickstart \
-  --output RUN/nsys --world-size 8 --warmup-steps 3 --capture-steps 3 \
+  --output RUN/nsys --warmup-steps 3 --capture-steps 3 \
   --gpu-metrics-frequency 10000 --nsys /path/to/nsys
 ```
 
@@ -743,6 +738,12 @@ command, logs, `.nsys-rep`, SQLite export and validation. Validation requires ke
 records on every GPU, device metrics, semantic task/transfer NVTX and step ranges
 from every rank. Resume checks identities and hashes before skipping a capture.
 GPU metrics require permission on the allocated node.
+Only GPUs selected through `CUDA_VISIBLE_DEVICES` are sampled. NCCL API tracing
+is enabled when advertised by the installed Nsight version; otherwise collective
+GPU kernels and runtime-transfer ranges remain in the GPU/NVTX trace.
+Worker count comes from the saved Program; optional `--world-size` checks it.
+The saved request's full logical rank mapping is retained. Captures initialize
+the model anew rather than loading the benchmark's final mutable tensors.
 Capture boundaries coordinate over a CPU/Gloo group. The command disables
 Nsight's synchronous flush inside `cudaProfilerStop`; Nsight still flushes at
 collection end. This avoids a documented multi-context profiler-stop hang
@@ -784,7 +785,7 @@ pressurefit_trace/
   winner_capture.py           opt-in exact admitted-plan export
   search_capture.py           opt-in verified distributed search input export
   winners.py                  prepare executed winners for the three video types
-  profile_winners.py          exact-plan Nsight replay with metrics/NVTX checks
+  profile_winners/            saved-Plan Nsight replay, selection and evidence checks
   replan.py                   CPU-only search with hypothetical host-copy rates
   library.py                  indexed results, configuration pages, live progress
   library_html.py             offline HTML views

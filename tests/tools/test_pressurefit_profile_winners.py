@@ -1,117 +1,10 @@
 """A profiler subprocess exit alone cannot prove metrics or all-rank coverage."""
 
-import copy
 import sqlite3
-from types import SimpleNamespace
 
 import pytest
 
-from tools.pressurefit_trace.profile_winners import (
-    execution_structure,
-    replay_request_resolver,
-    require_exact_plan,
-    validate_sqlite,
-)
-
-
-def replay_program():
-    return {
-        "tasks": [{"task_id": "backward", "inputs": ["weight"]}],
-        "objects": [{"object_id": "weight", "size_bytes": 128}],
-        "profiles": [
-            {
-                "profile_id": "p",
-                "runtime_ns": 10,
-                "workspace_bytes": 64,
-                "compatibility_digest": "original",
-                "overlap_costs": [],
-                "resource_phases": [{"resource": "nccl", "duration_ns": 5}],
-            }
-        ],
-        "alias_groups": [
-            {
-                "alias_group_id": "a",
-                "size_bytes": 128,
-                "transfer": {
-                    "spill_size_bytes": 16,
-                    "evict": [],
-                    "fetch": [
-                        {"kind": "copy", "bytes": 16, "duration_ns": 0},
-                        {
-                            "kind": "timed",
-                            "bytes": 112,
-                            "duration_ns": 5,
-                            "resource": "nccl",
-                            "submission_ordered": True,
-                        },
-                    ],
-                },
-            }
-        ],
-    }
-
-
-def test_replay_distinguishes_changed_costs_from_changed_execution_contracts():
-    original = replay_program()
-    measured = copy.deepcopy(original)
-    measured["profiles"][0].update(
-        runtime_ns=20, compatibility_digest="new", overlap_costs=[{"task_rate": 0.5}]
-    )
-    measured["profiles"][0]["resource_phases"][0]["duration_ns"] = 9
-    measured["alias_groups"][0]["transfer"]["fetch"][1]["duration_ns"] = 11
-    assert measured != original
-    assert execution_structure(measured) == execution_structure(original)
-    assert original["profiles"][0]["runtime_ns"] == 10
-
-
-@pytest.mark.parametrize(
-    "change", ["workspace", "task", "shard", "collective", "resource"]
-)
-def test_replay_never_treats_storage_or_communication_changes_as_timing(change):
-    original = replay_program()
-    changed = copy.deepcopy(original)
-    if change == "workspace":
-        changed["profiles"][0]["workspace_bytes"] += 1
-    elif change == "task":
-        changed["tasks"][0]["inputs"] = []
-    elif change == "shard":
-        changed["alias_groups"][0]["transfer"]["spill_size_bytes"] *= 2
-    elif change == "collective":
-        changed["alias_groups"][0]["transfer"]["fetch"][1]["bytes"] *= 2
-    else:
-        changed["profiles"][0]["resource_phases"][0]["resource"] = "different"
-    assert execution_structure(changed) != execution_structure(original)
-
-
-def test_replay_preserves_admission_policy_without_changing_calibration_or_budget():
-    request = {"plan_store_mode": "contribute"}
-    arguments = SimpleNamespace(
-        plan_store_mode="require",
-        artifact_store_mode="require",
-        transfer_bandwidths=object(),
-        search_budget_gib=[20, 30],
-    )
-    calibration = arguments.transfer_bandwidths
-    resolved = replay_request_resolver(lambda parser, values: values, request)(
-        None, arguments
-    )
-    assert resolved.plan_store_mode == "contribute"
-    assert resolved.artifact_store_mode == "require"
-    assert resolved.transfer_bandwidths is calibration
-    assert resolved.search_budget_gib == [20, 30]
-
-
-@pytest.mark.parametrize(
-    "field", ["program_digest", "schedule_digest", "layout_digest", "capture_identity"]
-)
-def test_replay_rejects_any_changed_plan_identity(field):
-    expected = dict.fromkeys(
-        ("program_digest", "schedule_digest", "layout_digest", "capture_identity"),
-        "original",
-    )
-    require_exact_plan(expected, expected)
-    with pytest.raises(ValueError, match=field):
-        require_exact_plan({**expected, field: "changed"}, expected)
+from tools.pressurefit_trace.profile_winners.evidence import validate_sqlite
 
 
 def evidence(path, *, metric_groups=2, kernel_devices=2, step_ranks=(0, 1)):
@@ -139,7 +32,7 @@ def evidence(path, *, metric_groups=2, kernel_devices=2, step_ranks=(0, 1)):
                 for s in (4, 5, 6)
             ]
             + [
-                ("shadowspill.pytorch.task.execution_0",),
+                ("shadowspill.task.execution_0",),
                 ("shadowspill.runtime.transfer.fetch/example",),
             ],
         )

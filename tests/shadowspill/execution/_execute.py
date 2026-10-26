@@ -1,5 +1,6 @@
 """Worker intentionally has no model and cannot build, measure or calibrate."""
 
+import ctypes
 import importlib.abc
 import sys
 from pathlib import Path
@@ -73,6 +74,12 @@ def cpu(value):
 
 
 executor = Executor(plan, parameter_norms=bool(norms))
+annotations_enabled = executor._paths[
+    0
+].bridge.runtime_library.shadowspill_profiler_annotations_enabled
+annotations_enabled.argtypes = [ctypes.c_void_p]
+annotations_enabled.restype = ctypes.c_uint8
+assert not annotations_enabled(executor.runtime._runtime_handle)
 prepared_norm_kernels = [name for name in compiled_kernels if name in norm_kernels]
 statistics = adapter_statistics()
 assert statistics.physical_budget_sealed
@@ -98,10 +105,13 @@ for index, (outputs, state) in enumerate(oracle["expected"]):
             hyperparams=oracle["hyperparams"][index],
             accumulate_gradients=oracle["accumulate"][index],
             collect_parameter_norms=bool(norms and norms[index] is not None),
+            profiler_annotations=index == 1,
         )
         if streams is not None:
             streams.check()
+    assert bool(annotations_enabled(executor.runtime._runtime_handle)) == (index == 1)
     result = pending.result()
+    assert not annotations_enabled(executor.runtime._runtime_handle)
     assert [
         name for name in compiled_kernels if name in norm_kernels
     ] == prepared_norm_kernels

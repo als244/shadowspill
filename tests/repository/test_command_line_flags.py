@@ -108,13 +108,24 @@ def _readers(path: Path) -> list[Path]:
             ROOT / "workloads/recipes/text/precision.py",
         ]
     recipe_packages = {
-        ROOT / "workloads/recipes/text/train_llama3.py": "llama3",
-        ROOT / "workloads/recipes/text/train_qwen3_distributed.py": "qwen3",
-        ROOT / "workloads/recipes/text/train_qwen35_lora.py": "qwen35_lora",
-        ROOT / "workloads/recipes/distributed_training.py": "regression",
+        ROOT / "workloads/recipes/text/train_llama3.py": ("llama3",),
+        ROOT / "workloads/recipes/text/train_qwen3_distributed.py": ("qwen3",),
+        ROOT / "workloads/recipes/text/train_qwen35_lora.py": ("qwen35_lora", "phases"),
+        ROOT / "workloads/recipes/text/glm53_flash_lora/arguments.py": (
+            ".",
+            "../phases",
+        ),
+        ROOT / "workloads/recipes/distributed_training.py": ("regression",),
     }
     if path in recipe_packages:
-        return [path, *sorted((path.parent / recipe_packages[path]).glob("*.py"))]
+        return [
+            path,
+            *(
+                reader
+                for package in recipe_packages[path]
+                for reader in sorted((path.parent / package).glob("*.py"))
+            ),
+        ]
     if path.parent == ROOT / "baselines/moe_layer":
         return list(path.parent.rglob("*.py"))
     package_commands = {

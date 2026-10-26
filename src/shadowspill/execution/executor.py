@@ -10,6 +10,7 @@ import torch
 from shadowspill.artifacts.plan import Plan
 from shadowspill.communication.binding.ranks import RankAssignment
 from shadowspill.pytorch.invocation import InvocationResult, ReusableCompletionEvent
+from shadowspill.runtime.plan.annotations import TaskBoundaryAnnotations
 
 from .dispatch import dispatch
 from .distributed.checks import check_external_budget, check_invocation, coordinated
@@ -137,6 +138,7 @@ class Executor:
         hyperparams: Mapping[str, Any] | None = None,
         accumulate_gradients: bool = False,
         collect_parameter_norms: bool | None = None,
+        profiler_annotations: bool = False,
     ) -> InvocationResult[Any]:
         self.synchronize()
         observe = (
@@ -148,6 +150,8 @@ class Executor:
             check_invocation(self._distributed, plan, accumulate_gradients, observe)
 
         def prepare() -> ExecutionPath:
+            if type(profiler_annotations) is not bool:
+                raise TypeError("profiler_annotations must be a bool")
             if type(observe) is not bool:
                 raise TypeError("collect_parameter_norms must be a bool or None")
             if observe and (self._observations is None or plan is not None):
@@ -174,12 +178,19 @@ class Executor:
 
         path = coordinated(self._distributed, prepare)
         observations = self._observations if observe else None
+        annotations = (
+            TaskBoundaryAnnotations(path.bridge) if profiler_annotations else None
+        )
         try:
+            if annotations is not None:
+                annotations.set_enabled(True)
             parameter_metrics = {} if observations is None else observations.begin()
             with self._streams.invocation() as streams:
                 for task in path.tasks:
                     with torch.cuda.stream(streams[task.task.resource]):
-                        dispatch(task, path.storage, path.controls, observations)
+                        dispatch(
+                            task, path.storage, path.controls, observations, annotations
+                        )
             payload = collect_outputs(path.storage, path.acquisition)
             if observations is not None:
                 assert isinstance(payload, TrainingResult)
@@ -189,6 +200,8 @@ class Executor:
             def finish() -> None:
                 wait()
                 path.bridge.wait_until_idle()
+                if annotations is not None:
+                    annotations.set_enabled(False)
                 if observations is not None:
                     observations.finish(parameter_metrics)
                 if self._distributed is not None:

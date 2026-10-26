@@ -44,6 +44,13 @@ property sums the example losses. `Trainer.step` waits for completion. For direc
 asynchronous control use `Executor.run`, whose result handle waits only when
 `.result()` is called; the next run automatically waits for its predecessor.
 
+For an external profiler, `Executor.run(..., profiler_annotations=True)` adds
+semantic task and runtime-transfer ranges to that invocation. The default is off.
+Annotations remain enabled until the result handle waits for task and transfer
+completion, then disable before the next invocation. They do not change the saved
+Plan or its admission. The [quickstart capture tool](../../../benchmarking/quickstart.md#nsight-captures-of-saved-winners)
+uses this option in fresh workers.
+
 ## Evaluation
 
 Build and plan a forward computation separately, with the same parameter names

@@ -177,3 +177,26 @@ always retains the differentiated objective. Detailed reducer metrics live in
 each attempt's `metrics.jsonl`, copied to host before the reducer is called.
 The numerical report exporters for the old quickstart format remain under the
 private migration path until updated.
+
+## Nsight captures of saved winners
+
+After a budget has executed successfully, capture its exact saved Plan:
+
+```bash
+python -m tools.pressurefit_trace.profile_winners runs/regression \
+  --output runs/regression-nsys --budget-gib 2 \
+  --warmup-steps 3 --capture-steps 3
+```
+
+Omit `--budget-gib` to capture every completed winner. The saved Program determines
+the worker count and the request supplies the complete rank map. Each fresh worker
+loads the same Plan and initializes through the original bounded loader. Capture
+does not build, profile, calibrate or replan, and starts from initialized values
+rather than continuing the benchmark's final weights.
+
+Each budget gets separate attempt logs, an `.nsys-rep`, a SQLite export and checked
+plan identities. Validation requires GPU kernels, device metrics and semantic
+task/transfer/step ranges from every worker. Existing validated captures are reused
+only when their inputs and output hashes match. These captures explain execution;
+use the ordinary quickstart measurements for throughput. Device metrics require
+permission on the selected GPUs.

@@ -14,6 +14,7 @@ from shadowspill.pytorch.runtime_adapter.boundaries import (
 )
 from shadowspill.pytorch.runtime_adapter.replacements import ReplacementStorageViews
 from shadowspill.runtime.plan import abort_task
+from shadowspill.runtime.plan.annotations import TaskBoundaryAnnotations
 
 from .admission import BoundTask
 from .controls import Controls
@@ -28,6 +29,23 @@ def dispatch(
     state: Storage,
     controls: Controls,
     observations: "ParameterNorms | None" = None,
+    annotations: TaskBoundaryAnnotations | None = None,
+) -> None:
+    if annotations is None:
+        _dispatch(bound, state, controls, observations)
+        return
+    name = state.plan.program.bindings.get("task_names", {}).get(
+        bound.entry.task_id, bound.entry.task_id
+    )
+    with annotations.range(f"shadowspill.task.{name}"):
+        _dispatch(bound, state, controls, observations)
+
+
+def _dispatch(
+    bound: BoundTask,
+    state: Storage,
+    controls: Controls,
+    observations: "ParameterNorms | None",
 ) -> None:
     bridge, device = state.bridge, state.device.index
     tensors = [

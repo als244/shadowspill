@@ -34,9 +34,10 @@ from shadowspill.runtime.plan import (
     clear_tasks,
     trace_capacities,
 )
+from shadowspill.runtime.plan.annotations import TaskBoundaryAnnotations
 from shadowspill.simulator import SimulationResult
 
-from ..annotations import AnnotatedExecutor, TaskBoundaryAnnotations
+from ..annotations import AnnotatedExecutor
 from ..records import (
     PlanRun as _PlanRun,
 )
