@@ -75,8 +75,9 @@ can aggregate completed `StepObservations` for application-specific reporting.
 ## Parameter norms and custom logging
 
 `Trainer(plan, parameter_norms_every=N)` optionally collects compute-weight and
-final-gradient L2 norms on every Nth completed update. Zero (the default) disables
-collection. The result is `result.parameter_metrics[name]`, containing CPU scalar
+final-gradient L2 norms on every Nth completed update. Zero (the default) creates
+no collector, norm buffers, diagnostic kernels or norm-summary transfers.
+The result is `result.parameter_metrics[name]`, containing CPU scalar
 tensors named `param_norm` and `grad_norm`; unobserved updates return an empty map.
 The frequency uses the restored step count after resume.
 
@@ -108,9 +109,12 @@ to allocator alignment, within the existing execution pool and total GPU budget.
 If that spare space is unavailable, worker setup fails rather than exceeding the
 budget. There are no additional Program tasks or per-task allocations. Diagnostic
 kernels are prepared during worker setup; scalar summaries are copied at result
-completion. Actual step timing includes this optional overhead; simulated timelines
-describe the saved training tasks and omit it. Caller-owned CPU summaries survive
-later calls and executor shutdown.
+completion. `StepResult.seconds` includes norm collection only on updates where
+it runs. Skipped updates do no norm computation or summary transfer; an enabled
+collector keeps its small buffers reserved between updates. Simulated timelines
+describe the saved training tasks and omit diagnostics. Python reducers and loggers
+run outside the step timer; total loop elapsed time includes them when enabled.
+Caller-owned CPU summaries survive later calls and executor shutdown.
 
 Direct users enable `Executor(plan, parameter_norms=True)` and can skip collection
 per call with `run(collect_parameter_norms=False)`. Collection defaults to enabled
@@ -164,8 +168,8 @@ All builders take one `parallelism` argument. `Parallelism.dp(...)` describes
 logical model replicas and weight/gradient/optimizer storage sharding; actual
 process groups are bound later from the saved declarations and a complete rank
 map. Simple DP compute profiling uses one representative device. Distributed
-execution remains guarded pending the separate memory/completion qualification;
-see [distributed status](distributed.md).
+execution is qualified for the common sharded-DP path; broader combinations
+remain separate qualification work. See [distributed status](distributed.md).
 
 ## Startup diagnostics
 
