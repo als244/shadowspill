@@ -24,9 +24,10 @@ from shadowspill.pytorch.dependencies import operator_dependencies
 from shadowspill.task.manifest import ExecutableTaskManifest
 from shadowspill.task.storage import TaskStorageContract
 
+from .kernel_names import portable_kernel_names
 from .memory import compiler_memory
 
-_BUILD_VERSION = 4
+_BUILD_VERSION = 6
 
 
 @dataclass(frozen=True)
@@ -63,7 +64,10 @@ class _TaskCompiler:
         # standalone_compile forces synthetic per-kernel autotuning on. Those
         # buffers cannot represent dependent integer controls. The final build
         # pass instead tunes complete tasks and bundles their selected binaries.
-        with config.patch({"triton.autotune_at_compile_time": False}):
+        with (
+            config.patch({"triton.autotune_at_compile_time": False}),
+            portable_kernel_names(),
+        ):
             compiled = inner(graph, inputs, **options)
         if len(manifests) == len(memories) == 1:
             # AOT's cache retains these plain fields with the matching code.

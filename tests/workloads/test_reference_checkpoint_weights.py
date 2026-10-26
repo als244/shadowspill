@@ -7,8 +7,9 @@ import torch
 from torch import nn
 
 from shadowspill.training import checkpoints
-from shadowspill.training._legacy_trainer import Trainer
-from shadowspill.training.backends import PyTorch
+from shadowspill.training.observations import MetricSummary
+from workloads.recipes.text.reference import checkpoint
+from workloads.recipes.text.reference.engine import EagerStep
 
 
 class Tied(nn.Module):
@@ -86,54 +87,61 @@ def test_single_weight_representation_and_casts(
         assert not target_optimizer.state
 
 
+class Source:
+    name = "sample"
+
+    def __init__(self):
+        self.position = 1
+
+    def state_dict(self):
+        return {"position": self.position}
+
+    def load_state_dict(self, state):
+        self.position = state["position"]
+
+
 @pytest.mark.parametrize("weights", ["master", "compute"])
 @pytest.mark.parametrize("include_optimizer", [False, True])
-def test_trainer_periodic_checkpoint_threads_choice(
+def test_reference_checkpoint_restores_requested_weight_and_optimizer_state(
     tmp_path, weights, include_optimizer
 ):
     sample = torch.tensor([[2.0, 3.0]], dtype=torch.bfloat16)
-
-    def build():
-        return Trainer(
-            Tied(),
-            objective=lambda model, x: model(x).float().square().sum(),
-            optimizer=torch.optim.AdamW,
-            optimizer_args={"lr": 0.01},
-            master_dtype=torch.float32,
-            backend=PyTorch(compile=False, device="cpu"),
-        )
-
-    with build() as trainer:
-        trainer.prepare(sample)
-        trainer.fit(
-            [sample],
-            steps=1,
-            run_dir=tmp_path,
-            checkpoint_every=1,
-            checkpoint_weights=weights,
-            checkpoint_include_optimizer=include_optimizer,
-            log_every=0,
-        )
-        before = trainer._execution.weights.masters["weight"].detach().clone()
-    checkpoint = tmp_path / "checkpoints/step_00000001"
-    saved = torch.load(checkpoint / "state.pt", weights_only=True)["model"]["weight"]
+    options = {
+        "device": "cpu",
+        "compile": False,
+        "objective": lambda model, x: model(x).float().square().sum(),
+        "optimizer": torch.optim.AdamW,
+        "optimizer_args": {"lr": 0.01},
+        "master_dtype": torch.float32,
+        "checkpoint_weights": weights,
+        "checkpoint_include_optimizer": include_optimizer,
+    }
+    engine = EagerStep(Tied(), options, initialize=None)
+    engine.step([(sample, 1.0)], 1, lambda _: MetricSummary())
+    before = engine.weights.masters["weight"].detach().clone()
+    path = tmp_path / "step-one"
+    checkpoint.save(path, engine, Source(), 1, 0.25, options)
+    saved = torch.load(path / "state.pt", weights_only=True)["model"]["weight"]
     assert saved.dtype == (torch.float32 if weights == "master" else torch.bfloat16)
-    with build() as resumed:
-        resumed.prepare(sample, checkpoint=checkpoint)
-        expected = before if weights == "master" else saved.float()
-        torch.testing.assert_close(
-            resumed._execution.weights.masters["weight"], expected, rtol=0, atol=0
-        )
-        assert resumed.step_count == 1
-        resumed.step(sample)
-        parameter = resumed._execution.weights.masters["weight"]
-        assert resumed._execution.optimizer.state[parameter]["step"].item() == (
-            2 if include_optimizer else 1
-        )
-        if not include_optimizer:
-            with pytest.raises(ValueError, match="fresh Trainer"):
-                resumed.load(checkpoint)
-            assert resumed.step_count == 2
+
+    resumed = EagerStep(Tied(), options, initialize=None)
+    source = Source()
+    source.position = 0
+    assert checkpoint.load(path, resumed, source) == (1, 0.25)
+    assert source.position == 1 and resumed.model.alias is resumed.model.weight
+    expected = before if weights == "master" else saved.float()
+    torch.testing.assert_close(
+        resumed.weights.masters["weight"], expected, rtol=0, atol=0
+    )
+    resumed.step([(sample, 1.0)], 2, lambda _: MetricSummary())
+    parameter = resumed.weights.masters["weight"]
+    assert resumed.optimizer.state[parameter]["step"].item() == (
+        2 if include_optimizer else 1
+    )
+    # Reloading an optimizer-free checkpoint discards the moments just created.
+    if not include_optimizer:
+        checkpoint.load(path, resumed, source)
+        assert not resumed.optimizer.state
 
 
 def test_invalid_choice_does_not_write_checkpoint(tmp_path):

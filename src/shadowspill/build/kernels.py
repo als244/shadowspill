@@ -54,6 +54,12 @@ def freeze_kernels(function: Any, kernels: dict[str, Any]) -> dict[str, str]:
         if kernels:
             raise ValueError("compiled task has kernels but no portable binary bundle")
         return {}
+    declared = {item.kernel_name for item in original.static_autotuners}
+    if missing := kernels.keys() - declared:
+        raise ValueError(
+            "Inductor did not package statically launchable kernels: "
+            + ", ".join(sorted(missing))
+        )
     selected: dict[str, str] = {}
     TritonBundler.begin_compile()
     try:
