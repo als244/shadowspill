@@ -1,23 +1,28 @@
 """Build final task definitions, without pools or task measurement."""
 
 from contextlib import nullcontext
+from functools import partial
 from pathlib import Path
 
 from shadowspill import build_step
 
+from .candidates import attempt
 from .common import experiment, write
 
 
 def run(request):
+    root = Path(request["output_dir"])
+    (root / "programs" / "index.json").unlink(missing_ok=True)
+    (root / "profiled" / "index.json").unlink(missing_ok=True)
     setup = experiment(request)
     with setup.get("context", nullcontext)():
         _build(request, setup)
 
 
 def _build(request, setup):
+    root = Path(request["output_dir"])
     model = setup["model_factory"]()
     optimizer = setup["optimizer"](model.parameters())
-    root = Path(request["output_dir"]) / "programs"
     entries, world_size = [], 1
     for index, (name, inputs) in enumerate(setup["candidates"].items()):
         if set(inputs) - {"args", "kwargs"}:
@@ -29,26 +34,38 @@ def _build(request, setup):
                 "candidate needs equally sized, nonempty args/kwargs sequences"
             )
         print(f"build: {name}, {count} examples", flush=True)
-        program = build_step(
-            model,
-            optimizer=optimizer,
-            objective=setup["objective"],
-            example_calls=list(
-                zip(args or [()] * count, kwargs or [{}] * count, strict=True)
+        entry = {
+            "name": name,
+            "file": f"candidate-{index:04d}.ssp",
+            "num_examples": count,
+        }
+        program = attempt(
+            entry,
+            "build",
+            partial(
+                build_step,
+                model,
+                optimizer=optimizer,
+                objective=setup["objective"],
+                example_calls=list(
+                    zip(args or [()] * count, kwargs or [{}] * count, strict=True)
+                ),
+                target=request["device"],
+                **setup.get("build_options", {}),
             ),
-            target=request["device"],
-            **setup.get("build_options", {}),
+            request["device"],
         )
-        filename = f"candidate-{index:04d}.ssp"
-        program.save(root / filename)
-        world_size = (
-            1 if program.parallelism is None else program.parallelism.world_size
-        )
-        entries.append({"name": name, "file": filename, "num_examples": count})
+        if program is not None:
+            program.save(root / "programs" / entry["file"])
+            world_size = (
+                1 if program.parallelism is None else program.parallelism.world_size
+            )
+        entries.append(entry)
+        del program
     if not entries:
         raise ValueError("quickstart requires at least one candidate")
     write(
-        root / "index.json",
+        root / "programs" / "index.json",
         {
             "candidates": entries,
             "world_size": world_size,

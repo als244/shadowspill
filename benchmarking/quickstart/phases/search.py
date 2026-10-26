@@ -15,6 +15,9 @@ def search(programs, entries, budgets, communication, options):
                 label = "default" if ordering is None else ordering.label
                 case_name = f"{name}: {label}"
                 choices[case_name] = {"candidate": name, "ordering": label}
+                if "failure" in entry:
+                    cases.append(SweepCase(case_name, budget, failure=entry["failure"]))
+                    continue
                 print(
                     f"plan: {case_name}, {budget.execution_bytes / (1 << 30):g} GiB",
                     flush=True,

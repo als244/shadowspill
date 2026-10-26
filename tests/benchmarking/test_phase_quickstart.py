@@ -14,12 +14,25 @@ from tests.shadowspill.offline._example import communication, profiled
 
 def test_plan_worker_consumes_saved_profiles_without_torch_or_factory(tmp_path):
     write(
-        tmp_path / "programs/index.json",
+        tmp_path / "profiled/index.json",
         {
-            "candidates": [{"name": "sample", "file": "candidate-0000.ssp"}],
+            "candidates": [
+                {"name": "sample", "file": "candidate-0000.ssp"},
+                {
+                    "name": "too_large",
+                    "file": "absent.ssp",
+                    "num_examples": 2,
+                    "failure": {
+                        "type": "OutOfMemoryError",
+                        "phase": "profile",
+                        "message": "profile: candidate exhausted the device",
+                    },
+                },
+            ],
         },
     )
     profiled().save(tmp_path / "profiled/candidate-0000.ssp")
+    (tmp_path / "profiled/absent.ssp").write_bytes(b"stale profile must not be loaded")
     communication().save(tmp_path / "communication.ssp")
     request = {
         "output_dir": str(tmp_path),
@@ -64,6 +77,19 @@ def test_plan_worker_consumes_saved_profiles_without_torch_or_factory(tmp_path):
     assert [row["budget"] for row in winners] == [200]
     assert all(row["plan_digest"] for row in winners)
     assert (tmp_path / "report/index.html").is_file()
+    from shadowspill.artifacts.sweep import SweepResult
+
+    result = SweepResult.load(tmp_path / "planning/sweep.ssp")
+    failures = [
+        case for case in result.cases if case.candidate.startswith("too_large:")
+    ]
+    assert len(failures) == 6  # Two orderings at each of three budgets.
+    assert all(
+        case.plan is None and case.failure["phase"] == "profile" for case in failures
+    )
+    assert (
+        "candidate exhausted the device" in (tmp_path / "report/index.html").read_text()
+    )
     assert not list((tmp_path / "report").rglob("*.svg"))
     assert not (tmp_path / "execution").exists()
 

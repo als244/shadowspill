@@ -9,7 +9,9 @@ from .distributed import workers
 
 def probes(root, index):
     programs = [
-        Program.load(root / "programs" / entry["file"]) for entry in index["candidates"]
+        Program.load(root / "programs" / entry["file"])
+        for entry in index["candidates"]
+        if "failure" not in entry
     ]
     first = programs[0]
     if any(program.parallelism != first.parallelism for program in programs):
@@ -28,6 +30,9 @@ def run(request):
         CommunicationInfo.load(request["communication_info"]).save(
             root / "communication.ssp"
         )
+        return
+    if not any("failure" not in entry for entry in index["candidates"]):
+        print("communicate: no built candidates; skipping calibration", flush=True)
         return
     program, collectives = probes(root, index)
     from shadowspill import measure_communication

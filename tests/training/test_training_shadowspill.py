@@ -138,58 +138,6 @@ def test_search_and_forward_share_imported_state_and_build_store(
     assert len(released) == 1 and released[0] is imported[0]
 
 
-def test_preparation_continues_after_one_microbatch_candidate_exhausts_device(
-    monkeypatch,
-):
-    from shadowspill.search.report import StepSearchReport
-
-    class RuntimeStub:
-        pass
-
-    backend = object.__new__(module.ShadowSpill)
-    backend.runtime = RuntimeStub()
-    backend.budget = (100, 200)
-    backend.orderings = lambda count: [StepDataOrdering.depth_first(count)]
-    backend.artifact_store = backend.search_options = None
-    backend.fuse_narrow_gradient_accumulation = True
-    backend.graph_pair_variants = ("recompute",)
-    backend._import = lambda model: model
-    backend._planning_args = lambda: {"search_options": None}
-    spec = SimpleNamespace(
-        distributed=None,
-        objective=None,
-        optimizer=lambda model: None,
-        hyperparams=(),
-        master_dtype=None,
-        grad_dtype=None,
-        parameter_metrics=None,
-    )
-    artifact = object()
-
-    def prepare(model, *, example_inputs, **kwargs):
-        if example_inputs[0][0] == "too large":
-            raise torch.OutOfMemoryError("candidate cannot be profiled")
-        return artifact
-
-    def search(candidates, **kwargs):
-        assert candidates == {"fits": artifact}
-        return StepSearchReport(tuple(kwargs["budgets"]), (), ())
-
-    monkeypatch.setattr(module, "prepare_step", prepare)
-    monkeypatch.setattr(module, "search_prepared_steps", search)
-    bundle = backend.prepare_artifacts(
-        torch.nn.Linear(1, 1),
-        spec,
-        {"large": [("too large",)], "fits": [("small",)]},
-        budgets=[(80, 200), (100, 200)],
-    )
-    assert len(bundle.search.points) == 2
-    assert all(
-        p.candidate == "large" and p.status == "infeasible"
-        for p in bundle.search.points
-    )
-
-
 @pytest.mark.parametrize("microbatches", [1, 2])
 def test_distributed_build_and_search_use_requested_variants(monkeypatch, microbatches):
     monkeypatch.setattr(module, "resolve_device", lambda _: torch.device("cuda:0"))

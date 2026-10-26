@@ -1,5 +1,7 @@
 """CPU-only replanning and reports from saved profile artifacts."""
 
+from pathlib import Path
+
 from shadowspill import (
     CommunicationInfo,
     MemoryBudgets,
@@ -13,16 +15,21 @@ from .search import search
 
 
 def run(request):
-    root, index = paths(request)
     # A failed replan must not leave the former selection executable by accident.
-    write(root / "plans" / "index.json", [])
-    communication = CommunicationInfo.load(
-        request.get("communication_info") or root / "communication.ssp"
-    )
+    write(Path(request["output_dir"]) / "plans" / "index.json", [])
+    root, index = paths(request, "profiled")
     programs = {
         entry["name"]: ProfiledProgram.load(root / "profiled" / entry["file"])
         for entry in index["candidates"]
+        if "failure" not in entry
     }
+    communication = (
+        CommunicationInfo.load(
+            request.get("communication_info") or root / "communication.ssp"
+        )
+        if programs
+        else None
+    )
     print("plan: " + ", ".join(programs), flush=True)
     result, choices = search(
         programs,

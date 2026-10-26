@@ -23,15 +23,17 @@ def experiment(request, *, logical_rank=None):
     factory = importlib.import_module(module)
     for component in name.split("."):
         factory = getattr(factory, component)
+    if not callable(factory):
+        raise TypeError("quickstart factory must be callable")
     arguments = dict(request.get("factory_args", {}))
     if logical_rank is not None:
         arguments["logical_rank"] = logical_rank
     return factory(device=request["device"], **arguments)
 
 
-def paths(request):
+def paths(request, phase="programs"):
     root = Path(request["output_dir"])
-    return root, read(root / "programs" / "index.json")
+    return root, read(root / phase / "index.json")
 
 
 def plan_identity(plan):

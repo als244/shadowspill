@@ -76,6 +76,15 @@ of collective probes required by the candidates. This calibration can be replace
 CPU replanning. Supplied task durations or memory estimates should be applied
 through `Profiles` / `apply_profiles` and saved to the corresponding `profiled/`
 archive; estimated memory produces simulation-only plans and cannot execute.
+For a manual profile pass, copy `programs/index.json` to `profiled/index.json`
+after saving every successful candidate's ProfiledProgram; the normal profile
+phase writes this index automatically.
+
+Typed device out-of-memory failures during build or profiling are recorded for
+that candidate; the sweep continues with the others. The saved sweep and HTML/CSV
+report retain each failure at every requested budget and ordering. Other errors
+stop the phase. A profile rerun retries built candidates, and an interrupted
+build/profile pass cannot leave its old completion index eligible for planning.
 
 ## Factory inputs
 
@@ -141,7 +150,7 @@ including calibrated communication memory, and retains physical admission checks
 request.json                 # reproducible orchestration settings
 programs/                    # one Program archive per geometry + small index
 profiles/                    # reusable measured task records
-profiled/                    # independent Program + Profiles archives
+profiled/                    # independent Program + Profiles archives + outcome index
 communication.ssp            # measured or supplied transfer information
 planning/sweep.ssp           # all cases, plans and failures
 plans/                       # one selected portable Plan per feasible budget
