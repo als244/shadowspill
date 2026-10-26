@@ -19,6 +19,7 @@ triton.knobs.compilation.listener = compilation_finished
 forbid_preparation()
 from shadowspill import Executor, Plan, Trainer, load_checkpoint, save_checkpoint  # noqa: E402
 from shadowspill.planning.shared import shared_memory  # noqa: E402
+from shadowspill.runtime.occupancy import plan_slices  # noqa: E402
 
 directory, mode = Path(sys.argv[1]), sys.argv[2]
 plan, evaluation = (
@@ -66,10 +67,13 @@ executor = (
 )
 executor.initialize(fill, chunk_bytes=40)
 joint = shared_memory(plan, {"evaluation": evaluation})
-assert (
-    sum(executor.runtime._installed.admitted_layout_bytes.values())
-    == joint.fixed_slice_bytes
-)
+installed = executor.runtime._installed
+assert sum(installed.admitted_layout_bytes.values()) == joint.fixed_slice_bytes
+slices = plan_slices(executor.runtime)
+assert len(slices) == 2
+assert len({item.offset for item in slices}) == 1
+assert len({item.slab_plan_id for item in slices}) == 1
+assert all(item.slab_bytes == joint.fixed_slice_bytes for item in slices)
 primary, additional = (
     executor._paths[0].storage,
     executor._named_paths["evaluation"].storage,
@@ -139,4 +143,8 @@ if trainer:
 else:
     del pending
     executor.close()
+assert not installed.admitted_layout_bytes
+executor.close()
+with pytest.raises(RuntimeError, match="closed"):
+    executor.run(plan="evaluation")
 print("Qualified shared evaluation " + mode, flush=True)

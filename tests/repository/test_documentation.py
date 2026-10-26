@@ -339,7 +339,7 @@ def test_documentation_index_exposes_reading_paths() -> None:
         "python/planning-json.md",
         "python/failures.md",
         "examples/README.md",
-        "examples/training-lifecycle.md",
+        "examples/generic-training.md",
         "examples/forward-only.md",
         "examples/reusable-planning.md",
         "examples/diagnostics.md",
@@ -401,19 +401,19 @@ def test_architecture_index_groups_one_flat_reading_path() -> None:
 def test_examples_cover_complete_public_workflows() -> None:
     examples = DOCS / "examples"
     expected = {
-        "training-lifecycle.md": (
-            "Runtime(",
-            "import_model_state(",
-            "plan_step(",
-            "state_dict()",
-            "train_step.close()",
+        "forward-only.md": (
+            "build_forward(",
+            "measure_program(",
+            "plan_program(",
+            "Executor(Plan.load(",
+            "executor.initialize(",
+            "pending.result()",
         ),
-        "forward-only.md": ("plan_forward(", "run_forward.close()"),
         "reusable-planning.md": (
             "ProfiledProgram.load(",
             "plan_program(",
             "sweep_programs(",
-            'plan.save(',
+            "plan.save(",
             "write_report(",
         ),
         "generic-training.md": (
@@ -429,7 +429,11 @@ def test_examples_cover_complete_public_workflows() -> None:
             "report.diagnostics.task(",
             "step.transfers.fetch",
         ),
-        "custom-partitioning.md": ("assign_stages(", "partition=EveryNNodes("),
+        "custom-partitioning.md": (
+            "assign_stages(",
+            "build_step(",
+            "partition=EveryNNodes(",
+        ),
         "concurrent-callables.md": (".submit(", ".close()"),
     }
     for name, required in expected.items():

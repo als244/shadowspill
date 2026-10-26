@@ -238,16 +238,16 @@ rules, and platforms.
 Complete, runnable workflows built from the public API, one per page. The
 [examples index](examples/README.md) says what each assumes.
 
-- [Training loop](examples/training-lifecycle.md) — create a runtime, import
-  model state, train, checkpoint, and clean up.
+- [Training loop](examples/generic-training.md) — build/profile, plan on CPU,
+  then train and checkpoint in a fresh worker.
 - [Forward-only execution](examples/forward-only.md) — plan and run a forward
   pass without an optimizer.
-- [Concurrent planned callables](examples/concurrent-callables.md) — dispatch
-  distinct callables before either result is resolved.
+- [Concurrent planned callables](examples/concurrent-callables.md) — model-based
+  frontend calls; saved Executor invocations remain sequential.
 - [Reusable planning and budget sweeps](examples/reusable-planning.md) — plan
   once, then re-plan across budgets from the same artifacts.
-- [Diagnosing a plan and real step](examples/diagnostics.md) — join planning
-  diagnostics to a traced step.
+- [Diagnosing a plan and real step](examples/diagnostics.md) — model-based frontend
+  trace diagnostics; use saved-Plan Nsight capture for phase execution.
 - [Custom stage partitioning](examples/custom-partitioning.md) — override the
   automatic partition when the module structure does not repeat.
 

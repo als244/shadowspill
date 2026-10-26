@@ -306,7 +306,7 @@ Pass the policy to any of the three public builders:
 
 ```python
 from shadowspill import build_forward
-from workloads.models.glm53_flash.partition import GLMStages
+from workloads.models.shared.glm.partition import GLMStages
 
 program = build_forward(
     model,

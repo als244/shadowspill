@@ -17,7 +17,8 @@ from dataclasses import dataclass
 import torch
 import torch.nn as nn
 from torch.fx import GraphModule
-from shadowspill.pytorch import PartitionPolicy, plan_step
+from shadowspill import build_step
+from shadowspill.pytorch.partition import PartitionPolicy
 
 
 @dataclass(frozen=True)
@@ -43,19 +44,19 @@ class EveryNNodes(PartitionPolicy):
         }
 
 
-train_step = plan_step(
+program = build_step(
     model,
     objective=objective,
-    optimizer=torch.optim.AdamW,
-    hyperparams=("lr",),
-    example_inputs=example_inputs,
-    runtime=runtime,
-    execution="execution",
-    spill="spill",
+    optimizer=torch.optim.AdamW(model.parameters(), lr=3e-4, foreach=False),
+    example_args=(features,),
+    example_kwargs={"targets": targets},
     partition=EveryNNodes(nodes_per_stage=12),
-    artifact_store=artifact_store,
 )
 ```
+
+The model, objective and CPU input tensors are defined as in the
+[training example](generic-training.md). Partitioning happens during build;
+profiling and planning consume the resulting Program without calling the policy.
 
 The returned mapping must:
 
@@ -80,7 +81,8 @@ remain unchanged.
 
 [GLMStages](../../workloads/models/shared/glm/partition.py) implements this same
 protocol using exported module paths. The GLM [workload factory](../../workloads/models/glm53_flash/quickstart.py)
-passes the policy through `plan_options` when asked (`partition="glm_stages"`),
-so quickstart uses it for both geometry search and the chosen training plan.
+passes the policy to `build_step` through its build options when asked
+(`partition="glm_stages"`). Quickstart saves the resulting Program, profiles it
+and searches its budgets/orderings without rebuilding the partition.
 Model operators contain no partition API calls. Other architectures can supply
 their own policy in exactly the same way.

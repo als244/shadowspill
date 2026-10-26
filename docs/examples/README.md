@@ -1,45 +1,42 @@
 # Examples
 
-These examples are task-oriented recipes built from the public
-`shadowspill.memory` and `shadowspill.pytorch` APIs. They complement the
-[Python API reference](../python/README.md): examples show complete workflows,
-while API pages define individual contracts.
+These examples compose the public build, profiling, planning and execution APIs
+from `shadowspill`. Preparation produces saved artifacts; fresh execution workers
+consume Plans. See the [phase guide](../architecture/offline-pipeline.md) for the
+API boundaries and the [Python reference](../python/README.md) for details.
 
-## Suggested order
+## Start here
 
-Start with the [generic trainer example](generic-training.md) for ordinary models
-and iterable data. The [README's expandable training examples](../../README.md#model-recipes)
-show Llama 3 full training, Qwen3.5 LoRA and eight-rank Qwen3 training with both
-transfer and optimizer sharding. The [example model catalog](../../workloads/MODELS.md) lists
-architectures, dimensions, dtypes, trainable parameters, and model recipes.
-The pages below expose the lower-level planning lifecycle.
+1. [Training and checkpointing](generic-training.md) — build/profile, CPU planning,
+   bounded initialization and a Trainer loop in a fresh worker.
+2. [Forward-only execution](forward-only.md) — save and execute a prediction Plan,
+   or share model tensors with training for evaluation.
+3. [Reusable planning and budget sweeps](reusable-planning.md) — replan saved
+   profiles and produce simulated reports without a GPU.
+4. [Custom stage partitioning](custom-partitioning.md) — control build-time FX
+   boundaries through a small policy.
 
-1. [Training loop](training-lifecycle.md) — end-to-end training and checkpoint.
-2. [Forward-only execution](forward-only.md) — plan and execute a fixed-shape
-   inference graph.
-3. [Concurrent planned callables](concurrent-callables.md) — dispatch several
-   admitted callables before synchronizing their results.
-4. [Reusable planning and budget sweeps](reusable-planning.md) — separate
-   building a program from planning it, then plan one program many times.
-5. [Diagnosing a plan and real step](diagnostics.md) — join PlanReport and
-   StepResult evidence by execution ID.
-6. [Custom stage partitioning](custom-partitioning.md) — supply a validated
-   contiguous FX partition policy.
+The [README recipes](../../README.md#model-recipes) cover Llama, Qwen3.5 LoRA,
+Qwen3 distributed training and GLM Flash LoRA. The [model catalog](../../workloads/MODELS.md)
+lists model dimensions, precisions and available implementations.
 
-## Assumptions
+## Process and storage requirements
 
-- ShadowSpill was installed with `./scripts/setup.sh`.
-- The process has a supported accelerator and enough memory for the declared
-  runtime pools.
-- Runtime construction occurs before any accelerator allocation in the
-  process.
-- Example tensors remain on CPU until ShadowSpill owns execution placement.
-- The artifact store lives on a fast local filesystem.
+- Install ShadowSpill with `./scripts/setup.sh`.
+- The current GPU builder and measurement phase need a supported representative
+  GPU. Artifact loading, profile application, planning and reporting work on CPU.
+- Create Executor/Trainer in a fresh worker before other device allocations. It owns
+  the runtime pools; earlier phases do not require them.
+- Runtime inputs are rank-local. Examples use CPU tensors and bounded loaders.
+- Save phase archives wherever convenient. Inductor/Triton caches remain separate
+  from those archives and use their normal temporary/cache locations.
 
-The training example is self-contained. The other pages focus on the changed
-portion of the workflow and refer back to it for common model, runtime, and
-lifecycle setup.
+## Lower-level tools
 
-Failure propagation and automatic rollback are documented separately in
-[Errors, failures, and cleanup](../python/failures.md); the happy-path examples
-stay linear so ownership order remains easy to see.
+[Concurrent planned callables](concurrent-callables.md) and
+[plan/step diagnostics](diagnostics.md) currently describe the model-based
+frontend. Their behavior has not yet migrated to the saved Executor API; in
+particular, one Executor runs its admitted Plans sequentially. Use
+[the saved-Plan capture tool](../../benchmarking/quickstart.md#nsight-captures-of-saved-winners)
+for current Nsight capture. Error propagation is described in
+[failures and cleanup](../python/failures.md).

@@ -103,12 +103,12 @@ shadowspill_add_public_api_test(
   test_public_training_breadth_first_matches_the_eager_reference 300
 )
 shadowspill_add_public_api_test(
-  shadowspill/pytorch/api/test_parameter_metrics.py
-  test_parameter_metrics_depth_first 300
+  shadowspill/training/test_mixed_inputs.py
+  test_mixed_calls_keep_weights_metrics_and_group_controls[depth_first] 300
 )
 shadowspill_add_public_api_test(
-  shadowspill/pytorch/api/test_parameter_metrics.py
-  test_parameter_metrics_breadth_first 300
+  shadowspill/training/test_mixed_inputs.py
+  test_mixed_calls_keep_weights_metrics_and_group_controls[breadth_first] 300
 )
 shadowspill_add_public_api_test(
   shadowspill/pytorch/api/test_01_public_training.py
@@ -167,16 +167,8 @@ shadowspill_add_public_api_test(
   test_public_training_keeps_no_output_the_caller_dropped 300
 )
 shadowspill_add_public_api_test(
-  shadowspill/pytorch/api/test_02_shared_model.py
-  test_a_forward_planned_after_training_sees_every_update 300
-)
-shadowspill_add_public_api_test(
-  shadowspill/pytorch/api/test_02_shared_model.py
-  test_a_training_step_planned_after_a_forward_shares_its_model 300
-)
-shadowspill_add_public_api_test(
-  shadowspill/pytorch/api/test_02_shared_model.py
-  test_state_a_plan_imported_for_itself_is_not_shared 300
+  shadowspill/execution/test_shared_plans.py
+  test_shared_evaluation_and_checkpoint_in_cold_workers 300
 )
 shadowspill_add_public_api_test(
   shadowspill/pytorch/api/test_03_planning_host_memory.py
@@ -185,14 +177,6 @@ shadowspill_add_public_api_test(
 shadowspill_add_public_api_test(
   shadowspill/pytorch/api/test_03_planning_host_memory.py
   test_planning_fails_when_the_spill_pool_has_no_room_for_saved_values 300
-)
-shadowspill_add_public_api_test(
-  shadowspill/pytorch/api/test_04_plans_side_by_side.py
-  test_a_forward_is_planned_beside_a_step_holding_more_than_it_reserves 300
-)
-shadowspill_add_public_api_test(
-  shadowspill/pytorch/api/test_04_plans_side_by_side.py
-  test_a_forward_shares_the_slab_of_the_step_it_evaluates 300
 )
 
 shadowspill_add_public_api_test(
@@ -237,7 +221,6 @@ shadowspill_add_public_api_test(
   shadowspill/execution/test_packed_gradients.py
   test_packed_parameter_gradients_in_cold_worker 300
 )
-
 
 shadowspill_add_public_api_test(
   shadowspill/pytorch/api/test_05_generic_training.py

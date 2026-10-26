@@ -5,7 +5,10 @@ from pathlib import Path
 
 import torch
 
-from shadowspill import Plan, Trainer
+from tests.shadowspill.execution._cold import forbid_preparation
+
+forbid_preparation()
+from shadowspill import Plan, Trainer  # noqa: E402
 
 directory = Path(sys.argv[1])
 oracle = torch.load(directory / "oracle.pt", weights_only=True)
@@ -43,6 +46,7 @@ with Trainer(
         torch.testing.assert_close(
             actual[name].reshape_as(value), value, rtol=0, atol=0
         )
+    retained = []
     for index, calls in enumerate(oracle["examples"]):
         args, kwargs = [call[0] for call in calls], [call[1] for call in calls]
         # Validation must reject a nonexistent runtime control without an update.
@@ -58,11 +62,20 @@ with Trainer(
         torch.testing.assert_close(torch.tensor(result.loss), expected["loss"])
         torch.testing.assert_close(result.metrics, expected["metrics"])
         torch.testing.assert_close(result.parameter_metrics, expected["norms"])
+        assert all(
+            value.device.type == "cpu" and not value.requires_grad
+            for metrics in result.parameter_metrics.values()
+            for value in metrics.values()
+        )
+        retained.append(result)
         actual = snapshot(trainer.executor)
         for name, value in expected["values"].items():
             torch.testing.assert_close(actual[name].reshape_as(value), value)
         for name, value in oracle["controls"][index].items():
             torch.testing.assert_close(actual[name], torch.tensor([value]))
+    for result, expected in zip(retained, oracle["expected"], strict=True):
+        torch.testing.assert_close(result.metrics, expected["metrics"])
+        torch.testing.assert_close(result.parameter_metrics, expected["norms"])
 assert "shadowspill.build" not in sys.modules
 assert "shadowspill.training._legacy_trainer" not in sys.modules
 print("Qualified mixed-input Trainer")

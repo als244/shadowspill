@@ -283,7 +283,7 @@ selected Plan; direct Executor use gives callers control over individual invocat
 
 The [training API](docs/python/api/training.md) covers schedules, evaluation and
 checkpointing. [Reusable planning](docs/examples/reusable-planning.md) shows the
-phase artifacts, and the [low-level training loop](docs/examples/training-lifecycle.md)
+phase artifacts, and the [low-level training loop](docs/examples/generic-training.md)
 shows explicit Executor ownership. [Examples](docs/examples/README.md) includes
 small models for learning the API. The [benchmark quickstart](benchmarking/quickstart.md)
 measures experiments and plots plans. [SSD spill pools](docs/python/api/ssd.md)

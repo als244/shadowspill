@@ -18,6 +18,7 @@ from shadowspill import (
     measure_program,
     plan_program,
 )
+from shadowspill.step import StepDataOrdering
 from tests.shadowspill.execution._oracle import optimizer_values
 
 
@@ -42,7 +43,8 @@ def optimizer(model):
 
 
 @pytest.mark.cuda
-def test_mixed_calls_keep_weights_metrics_and_group_controls(tmp_path):
+@pytest.mark.parametrize("breadth", [1, 2], ids=["depth_first", "breadth_first"])
+def test_mixed_calls_keep_weights_metrics_and_group_controls(tmp_path, breadth):
     if not torch.cuda.is_available():
         pytest.skip("requires CUDA")
     torch.manual_seed(10)
@@ -112,6 +114,7 @@ def test_mixed_calls_keep_weights_metrics_and_group_controls(tmp_path):
         apply_profiles(program, profiles),
         memory_budgets=MemoryBudgets(2 << 30, 64 << 20),
         communication_info=CommunicationInfo(1e10, 1e10),
+        ordering=StepDataOrdering(2 // breadth, breadth, pair_loss=False),
     )
     plan.save(tmp_path / "plan.ssp")
     child = subprocess.run(
@@ -121,7 +124,11 @@ def test_mixed_calls_keep_weights_metrics_and_group_controls(tmp_path):
             str(Path(__file__).with_name("_mixed_inputs.py")),
             str(tmp_path),
         ],
-        env=os.environ,
+        env={
+            **os.environ,
+            "TORCHINDUCTOR_CACHE_DIR": str(tmp_path / "worker-inductor"),
+            "TRITON_CACHE_DIR": str(tmp_path / "worker-triton"),
+        },
         capture_output=True,
         text=True,
         timeout=180,

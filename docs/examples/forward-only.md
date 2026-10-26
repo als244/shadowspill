@@ -1,53 +1,79 @@
 # Forward-only execution
 
-Given the imported `model` and open `runtime` from the [training
-example](training-lifecycle.md), `plan_forward()` creates a fixed-shape
-forward-only callable:
+Build and profile a fixed-shape forward computation, save its Plan, then load it
+in a fresh execution worker. No optimizer or training objective is needed. The
+[training example](generic-training.md) shows the same phases for updates.
+
+## Prepare and save
+
+The current GPU builder finalizes kernels on a representative GPU. Build and
+profiling use ordinary GPU allocations; planning opens no execution pools.
 
 ```python
 import torch
-
-from shadowspill.pytorch import plan_forward
-
-example_tokens = torch.randn(8, 128)
-
-run_forward = plan_forward(
-    model,
-    example_inputs=[example_tokens],
-    runtime=runtime,
-    execution="execution",
-    spill="spill",
-    artifact_store="artifacts/store",
+from torch import nn
+from shadowspill import (
+    CommunicationInfo, MemoryBudgets, apply_profiles, build_forward,
+    measure_communication, measure_program, plan_program,
 )
 
-output = run_forward([torch.randn(8, 128)])
-print(output.shape)
-run_forward.close()
+model = nn.Sequential(nn.Linear(16, 32), nn.SiLU(), nn.Linear(32, 8)).eval()
+program = build_forward(model, example_args=(torch.randn(8, 16),))
+profiled = apply_profiles(program, measure_program(program))
+profiled.save("forward-profiled.ssp")
+communication = measure_communication()
+communication.save("communication.ssp")
+plan = plan_program(
+    profiled,
+    memory_budgets=MemoryBudgets(execution_bytes=2 << 30, spill_bytes=64 << 20),
+    communication_info=communication,
+)
+plan.save("forward.ssp")
+torch.save(model.state_dict(), "initial.pt")
 ```
 
-Use `forward_fn=lambda model, batch: ...` to select another model method or
-include an objective. Automatic partitioning still uses the model's registered
-layer paths, including when the callback calls `model.loss(...)`. A custom
-`PartitionPolicy` receives those same paths. Use `partition="whole"` only when
-one compiled task for the complete forward is intended.
+The saved ProfiledProgram can also be loaded and planned in a separate CPU-only
+process. `CommunicationInfo` may contain explicit rates instead of calibration
+results; the [budget sweep example](reusable-planning.md) covers that workflow.
 
-Forward outputs use caller-owned dynamic leases because the caller may retain
-them after another invocation. Release references when they are no longer
-needed. Each call and each `submit()` on a `PlannedForward` also accepts
-`profiler_annotations=True` and `runtime_trace=True`.
-
-A traced call is timed task by task on the device's own clock and resolves
-against the plan that predicted it, the same way a training step's trace
-does. A training step carries its handle on the `StepResult` it returns; a
-forward call returns the model's own output, so its handle is on the
-callable:
+## Run in a fresh worker
 
 ```python
-output = run_forward([torch.randn(8, 128)], runtime_trace=True)
-step = run_forward.diagnostics.result()
-print(step.summary.real_selected_span_seconds)
+import torch
+from shadowspill import Executor, Plan
+
+initial = torch.load("initial.pt", map_location="cpu", weights_only=True)
+
+def fill_tensor(chunk, destination):
+    source = initial[chunk.name].reshape(-1)
+    destination.copy_(source[chunk.offset:chunk.offset + destination.numel()])
+
+with Executor(Plan.load("forward.ssp")) as executor:
+    executor.initialize(fill_tensor)
+    pending = executor.run(args=[(torch.randn(8, 16),)])
+    # The CPU may do other work here. result() waits for completion.
+    output = pending.result()
+    prediction = output.cpu()
+    print(prediction.shape)
+    del pending, output
 ```
 
-Resolve the handle before the next call. `mark_cycle_end()` and
-`invocation_timings()` read the always-on invocation timeline, as they do on
-a planned training step.
+`run` takes a sequence of per-example positional tuples and keyword mappings;
+a forward Plan has one example. Its result has the model's ordinary output
+structure. The next call waits for the preceding invocation automatically.
+Returned tensors remain valid across calls; release device outputs before closing
+Executor so its allocator can shut down. CPU copies can outlive the worker.
+
+`forward_fn=lambda model, *args, **kwargs: model.loss(*args, **kwargs)` selects
+another model method while preserving registered parameter names. Automatic
+partitioning uses those module paths. `partition="whole"` compiles one complete
+forward task; a [custom partition policy](custom-partitioning.md) can define
+other boundaries.
+
+For evaluation during training, save a forward Plan with compatible parameter
+names/layouts and pass it as `evaluation_plan` to Trainer. Both plans share the
+current model tensors and one admitted execution workspace; see
+[shared evaluation](../python/api/training.md#evaluation).
+`run(..., profiler_annotations=True)` optionally adds semantic task/transfer
+ranges for an external profiler. See the
+[saved-Plan capture tool](../../benchmarking/quickstart.md#nsight-captures-of-saved-winners).
