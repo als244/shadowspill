@@ -10,10 +10,13 @@ from shadowspill import (
     ParameterStorage,
     Sharded,
     apply_profiles,
+    build_forward,
+    build_forward_backward,
     build_step,
     measure_program,
     plan_program,
 )
+from shadowspill.artifacts.tensors import shared_model_aliases
 from tests.shadowspill.offline._communication import estimated_communication
 
 
@@ -100,3 +103,31 @@ def test_mixed_ownership_builds_and_profiles_without_groups(
         plan.save(tmp_path / f"{ordering}.ssp")
     program.save(tmp_path / "program.ssp")
     profiled.save(tmp_path / "profiled.ssp")
+
+    # Sharded optimizer publication pads the 35-element dense weight. All
+    # builders must derive the same storage, even when no update is captured.
+    builders = (
+        (build_forward, build_forward_backward)
+        if mode == "local_experts"
+        else (build_forward,)
+    )
+    for builder in builders:
+        options = (
+            {"objective": lambda model, x: model(x).square().mean()}
+            if builder is build_forward_backward
+            else {}
+        )
+        other = builder(
+            model,
+            example_args=(torch.empty(2, 7),),
+            partition="whole",
+            parallelism=parallelism(mode),
+            **options,
+        )
+        mapping = shared_model_aliases(program, other)
+        assert len(mapping) == 2
+        aliases = {a.alias_group_id: a for a in program.alias_groups}
+        assert sorted(aliases[a].size_bytes for a in mapping.values()) == [
+            60,
+            140 if mode == "replicated" else 144,
+        ]

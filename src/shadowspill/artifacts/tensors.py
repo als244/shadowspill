@@ -71,6 +71,18 @@ def registration_name(item: Mapping[str, Any]) -> str:
     return ".".join(parts)
 
 
+def model_storage_bytes(program: Program) -> dict[str, int]:
+    """Registered storage extents, excluding padding added by distributed lowering."""
+    objects = {item.object_id: item for item in program.objects}
+    sizes: dict[str, int] = {}
+    for entry in program.bindings.get("registrations", ()):
+        item = objects[entry["object_id"]]
+        sizes[item.alias_group_id] = max(
+            sizes.get(item.alias_group_id, 0), item.offset_bytes + item.size_bytes
+        )
+    return sizes
+
+
 def shared_model_aliases(primary: Program, other: Program) -> dict[str, str]:
     """Match named model storage, including ties/views, without importing Torch."""
     registered = {

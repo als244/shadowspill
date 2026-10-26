@@ -8,7 +8,7 @@ from typing import Any
 import torch
 
 from shadowspill.artifacts.program import Program
-from shadowspill.artifacts.tensors import tensor_geometry
+from shadowspill.artifacts.tensors import model_storage_bytes, tensor_geometry
 from shadowspill.parallelism import GroupRef
 
 
@@ -41,14 +41,23 @@ def tensor_regions(program: Program, logical_rank: int) -> dict[str, TensorRegio
     bindings = program.bindings
     geometry = tensor_geometry(program)
     objects = {item.object_id: item for item in program.objects}
+    sizes = {item.alias_group_id: item.size_bytes for item in program.alias_groups}
+    logical_sizes = model_storage_bytes(program)
     regions = {}
     for item in bindings.get("registrations", ()):
         value = item["object_id"]
-        shard = bindings.get("weight_shards", {}).get(objects[value].alias_group_id)
-        if shard is None:
-            continue
+        alias = objects[value].alias_group_id
+        shard = bindings.get("weight_shards", {}).get(alias)
         layout = geometry[value]
         width = getattr(torch, layout["dtype"].removeprefix("torch.")).itemsize
+        if shard is None:
+            if sizes[alias] > logical_sizes[alias]:
+                # Replicated weights may still be padded for shard-local updates.
+                # Load/export valid values only; visit_tensors zeros the tail.
+                regions[value] = _region(
+                    layout, logical_sizes[alias] // width, sizes[alias] // width, 0
+                )
+            continue
         if shard["shard_bytes"] % width or shard["logical_bytes"] % width:
             raise ValueError("weight shard must contain complete tensor elements")
         regions[value] = _region(

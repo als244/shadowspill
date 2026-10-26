@@ -1,5 +1,6 @@
 """Bounded original-tensor requests over padded, logically ordered host shards."""
 
+from dataclasses import replace
 from types import SimpleNamespace
 
 import pytest
@@ -195,3 +196,40 @@ def test_wrong_host_capacity_rejected_before_loading():
         visit_tensors(
             state, lambda *_: pytest.fail("must reject first"), 12, initialize=True
         )
+
+
+@pytest.mark.parametrize("rank", [0, 1])
+def test_replicated_weights_hide_optimizer_padding_and_seed_local_masters(rank):
+    program = fixture()
+    program = replace(program, bindings={**program.bindings, "weight_shards": {}})
+    state, values = host_storage(program, rank)
+    reference = torch.arange(1, 16, dtype=torch.bfloat16)
+    calls = []
+
+    def fill(request, chunk):
+        assert request.name == "layer.weight" and request.storage_elements == 15
+        assert chunk.nbytes <= 12
+        calls.append(chunk.numel())
+        chunk.copy_(reference[request.offset : request.offset + chunk.numel()])
+
+    visit_tensors(state, fill, 12, initialize=True)
+    assert sum(calls) == 15
+    torch.testing.assert_close(values["weight"][:15], reference)
+    assert values["weight"][15] == 0
+    region = state.regions["master"]
+    torch.testing.assert_close(
+        values["master"][: region.length],
+        reference[region.offset :][: region.length].float(),
+    )
+    assert not values["master"][region.length :].count_nonzero()
+    exported = []
+    visit_tensors(
+        state,
+        lambda request, chunk: exported.append((request, chunk.numel())),
+        12,
+        initialize=False,
+    )
+    assert (
+        sum(size for request, size in exported if request.name == "layer.weight") == 15
+    )
+    assert all(request.offset + size <= 15 for request, size in exported)
