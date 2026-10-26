@@ -3,8 +3,8 @@
 **Refactor branch:** the public API now separates build, measurement, CPU planning
 and saved-plan execution. Start with the [phase API guide](docs/architecture/offline-pipeline.md)
 or [quickstart](benchmarking/quickstart.md). `Trainer(plan, ...)` consumes an already
-prepared Plan. The Llama recipe below uses this API. Remaining model/prepare
-recipes are explicitly routed through a private implementation during migration.
+prepared Plan. The Llama and Qwen recipes below use these phases. The practical
+GLM checkpoint-training recipe still awaits migration.
 
 ShadowSpill turns a fixed-shape PyTorch forward or training step into a
 memory-budgeted callable: it decides what to keep on the device, what to spill
@@ -30,8 +30,8 @@ use; that needs the mlops checkout beside this one.
 The Llama example separates build, profiling, CPU planning, and saved-plan
 training into independent processes. `Trainer(plan, ...)` runs the resulting
 plan and shares its current weights with a separately built evaluation plan.
-The Qwen/GLM examples still use the private model/prepare implementation while
-their caller and distributed migration is in progress.
+The Qwen recipes use the same phases. The practical GLM recipe still uses the
+private preparation implementation and is marked below.
 
 | Example | Sequence length | Sequences per update | Execution | Microbatch selection |
 |---|---:|---:|---|---|
@@ -51,7 +51,7 @@ The small [TokenUpdates helper](workloads/recipes/text/data/fixed.py) reads text
 windows, shifts targets by one token, and supplies every microbatch size that
 divides the local sequence count. It gives each microbatch independent storage
 and normalizes summed losses by the **global** token count. The Qwen examples
-search sizes and orderings with `microbatch_candidates=data.candidates`; Llama
+build one Program per example size and search orderings during planning; Llama
 fixes both. The total update size stays fixed in every example.
 
 These examples use FP32 masters/gradients/AdamW moments and a warmup-cosine
@@ -108,6 +108,10 @@ performance or memory-fit result on this refactor branch.
 
 <details>
 <summary><strong>GLM-5.3-Flash: eight-GPU LoRA at 32K</strong></summary>
+
+**Migration status:** this practical recipe still uses the private preparation
+path. The family quickstart uses the shared phases; migrating this training loop
+and its distributed checkpoint/evaluation behavior remains work on this branch.
 
 The [training recipe](workloads/recipes/text/train_glm53_flash_lora.py) loads a
 local Hugging Face checkpoint and trains rank-32 LoRA adapters on real text with
@@ -182,125 +186,47 @@ python -m workloads.recipes.text.train_qwen35_lora \
 ```
 
 The corpus also needs `val.bin`, containing at least two complete validation
-items: 16 sequences, or 524,288 target tokens. Evaluation uses the same held-out windows every two updates and at the
-final update. `metrics.jsonl` records training/evaluation loss, learning rate and
-timing; `search.json` and `plan.json` record the selected plan. Add
-`--wandb-project my-project` to also send metrics and system telemetry to W&B
-(using your W&B login).
+updates: 16 sequences, or 524,288 target tokens. Evaluation reuses the same
+held-out windows every two updates and at the final update. Training and
+evaluation use separate saved Plans sharing current model tensors.
 
-The Trainer's `frozen_state_id` enables partial checkpoints: this LoRA run saves
-each adapter parameter once (its FP32 master), adapter optimizer state, and training progress,
-including RNG and data position. Frozen base weights and derived rotary tables
-are omitted. The generic mechanism also retains persistent buffers or frozen
-state that a training graph mutates. Supply an immutable ID for your exact base
-checkpoint and configuration; resume checks that ID and reloads the base from HF.
-
-Checkpoint precision and optimizer state are independent options:
-`trainer.save(path, weights="compute", include_optimizer=False)` saves only
-compute-precision parameters, plus buffers and progress. A new Trainer can
-resume that progress with a fresh optimizer. Periodic saves expose the same
-options as `checkpoint_weights` and `checkpoint_include_optimizer` in `fit`.
-
-The script keeps the latest two checkpoints under `run_dir/checkpoints`. Resume
-from a saved step, optionally using a new output directory:
+The recipe's [phase modules](workloads/recipes/text/qwen35_lora/) build each
+candidate, measure it, search batch sizes/orderings on CPU, and execute in a
+fresh worker. Saved settings let phases run independently:
 
 ```bash
 python -m workloads.recipes.text.train_qwen35_lora \
   --data /path/to/qwen35-tokens --checkpoint /path/to/Qwen3.5-35B-A3B \
-  --frozen-state-id qwen35-base-v1 \
-  --resume runs/qwen35-lora/checkpoints/step_00000004 \
-  --run-dir runs/qwen35-resumed
+  --frozen-state-id qwen35-base-v1 --run-dir runs/qwen35-lora --phase build
+python -m workloads.recipes.text.train_qwen35_lora \
+  --run-dir runs/qwen35-lora --phase profile
+CUDA_VISIBLE_DEVICES= python -m workloads.recipes.text.train_qwen35_lora \
+  --run-dir runs/qwen35-lora --phase plan --execution-gib 28 --spill-gib 144
+python -m workloads.recipes.text.train_qwen35_lora \
+  --run-dir runs/qwen35-lora --phase execute
 ```
 
-`steps=5` is the target total, so that command performs the remaining update.
-Keep the same corpus, frozen base and schedule when resuming. W&B logging is
-optional and starts a new run for each invocation; the
-[logger API](docs/python/api/training.md) also accepts W&B run IDs and resume
-options when you want one continuous history.
+`programs/`, `profiles/` and `profiled/` retain reusable phase artifacts.
+`search.json` records the candidates; `selected.json`, `plans/` and `reports/`
+hold the selection and simulated timelines. `training/` contains metrics,
+evaluation logs and checkpoints. Add `--wandb-project my-project` to the initial
+build command for optional W&B logging.
 
-```python
-import torch
-from mlops.optim import AdamW
-from shadowspill.training._legacy_trainer import Trainer
-from shadowspill.training.backends import ShadowSpill
-from shadowspill.training.logging import Wandb
-from shadowspill.training.schedules import WarmupCosine
-from workloads.models.construction import build_on_meta
-from workloads.models.qwen35moe.checkpoint import Qwen35MoECheckpoint
-from workloads.models.qwen35moe.implementations.mlops import Model
-from workloads.recipes.text.data.fixed import TokenUpdates
-from workloads.recipes.text.objectives import next_token_prediction
+Supply an immutable `--frozen-state-id` for the exact base and configuration.
+Partial checkpoints save trainable tensors, optimizer data and progress while
+omitting immutable base weights. The bounded loader reloads the base from HF
+on resume. For example:
 
-data_directory = "/path/to/qwen35-tokens"
-checkpoint_directory = "/path/to/Qwen3.5-35B-A3B"
-frozen_state_id = "qwen35-base-v1"  # An immutable ID for your base and configuration.
-run_dir = "runs/qwen35-lora"
-resume = None  # Or a Trainer checkpoint directory from an earlier run.
-wandb_project = None  # Set a project name to enable W&B.
-steps = 5
-# Read next-token examples and supply candidate microbatch sizes.
-data = TokenUpdates(data_directory, sequence_length=32768, sequences_per_step=8)
-
-# Each validation item contains eight 32K sequences, just like a training item.
-# A fresh iterator evaluates the same held-out windows each time.
-def validation_data():
-    return TokenUpdates(
-        data_directory, split="val", sequence_length=32768, sequences_per_step=8
-    )
-
-checkpoint = Qwen35MoECheckpoint(checkpoint_directory)
-model = build_on_meta(
-    Model,
-    config=checkpoint.config,
-    dtype="bfloat16",
-    lora={"rank": 32, "alpha": 32},
-)
-trainer = Trainer(
-    model,
-    objective=next_token_prediction,
-    optimizer=AdamW,
-    optimizer_args={"opt_state_dtype": torch.float32},
-    schedules={
-        "lr": WarmupCosine(lr=2e-4, min_lr=2e-5, warmup_steps=1, total_steps=steps)
-    },
-    master_dtype=torch.float32,
-    grad_dtype=torch.float32,
-    microbatch_candidates=data.candidates,
-    backend=ShadowSpill(execution_gib=28, spill_gib=144),
-    # Save trainable state only, referencing this immutable frozen base ID.
-    frozen_state_id=frozen_state_id,
-)
-# Load the frozen base; on resume, restore saved adapters/optimizer/progress.
-trainer.prepare(data.example(), initialize=checkpoint.initialize, checkpoint=resume)
-# Local JSONL logging is always enabled; W&B is optional.
-logger = None
-if wandb_project is not None:
-    logger = Wandb(
-        project=wandb_project,
-        run_dir=run_dir,
-        config={
-            "model": "Qwen3.5-35B-A3B",
-            "lora_rank": 32,
-            "sequence_length": 32768,
-            "sequences_per_step": 8,
-        },
-    )
-trainer.fit(
-    data,
-    steps=steps,  # Target total updates, including any restored progress.
-    run_dir=run_dir,
-    log_every=1,  # Loss, LR and step timing go to metrics.jsonl and the logger.
-    logger=logger,
-    eval_data=validation_data,
-    eval_every=2,  # Every two training updates, and also at the final update.
-    eval_updates=2,  # Two validation updates: 16 sequences, 524,288 target tokens.
-    checkpoint_every=2,  # Adapter masters once, optimizer, RNG and data position.
-    keep_last=2,  # Retain the two newest checkpoints under run_dir/checkpoints.
-)
-trainer.close()  # Release the callable and its memory pools.
-if logger is not None:
-    logger.close()  # Finish and flush this W&B run.
+```bash
+python -m workloads.recipes.text.train_qwen35_lora \
+  --run-dir runs/qwen35-lora --phase execute \
+  --resume runs/qwen35-lora/training/checkpoints/step_00000004.ssp
 ```
+
+The configured `steps=5` is the total target, so this performs the remaining
+update. Keep the same corpus, base and schedule. A tiny checkpoint fixture
+qualifies exact cold resume on this branch; the full 35B/32K configuration is
+not a claimed performance or memory-fit result.
 
 </details>
 
