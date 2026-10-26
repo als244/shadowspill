@@ -13,8 +13,7 @@ from workloads.models.qwen35moe.implementations.mlops import Model
 from workloads.recipes.phases import settings
 from workloads.recipes.text.data.calls import Inputs
 from workloads.recipes.text.objectives import normalized_next_token_prediction as loss
-
-from .candidates import batch_sizes
+from workloads.recipes.text.phases.candidates import batch_sizes
 
 
 def run(directory):

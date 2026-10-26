@@ -428,8 +428,10 @@ projections come from `mlops.sequential_moe.precision`; the MoE itself is
 sharded backing storage and trains on a corpus tokenized with that checkpoint.
 It defaults to 32K sequences, checkpoint FP8 expert storage and GEMMs, BF16
 dense GEMMs/adapters, and FP32 adapter masters, gradients and AdamW moments.
-Launch with `torchrun --standalone --nproc-per-node=8 -m` and provide
-`--checkpoint`, `--data`, `--frozen-state-id`, and `--run-dir`. The corpus
+Launch once with `--ranks 8` and provide `--checkpoint`, `--data`,
+`--frozen-state-id`, and `--run-dir`. The driver runs build/profile on one GPU,
+planning on the CPU, and communication/execution in fresh distributed workers.
+See the [phase recipe and artifact layout](../../recipes/text/glm53_flash_lora/README.md). The corpus
 `meta.json` must contain `tokenizer_sha256` for both `tokenizer.json` and
 `tokenizer_config.json` from the base checkpoint.
 

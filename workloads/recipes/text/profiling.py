@@ -5,13 +5,13 @@ from contextlib import nullcontext
 import torch
 import torch.distributed as dist
 
-from shadowspill.training._legacy_trainer import Trainer
+from shadowspill.training.trainer import Trainer
 
 
 class NsightTrainer(Trainer):
     """Use with nsys --capture-range=cudaProfilerApi --capture-range-end=stop.
 
-    Launch one nsys process around torchrun to collect all workers together.
+    Launch one nsys process around the execute phase to collect its worker tree.
     Rank zero controls the session; barriers bound the capture across workers.
     Step ranges exclude evaluation/checkpointing, which Trainer.fit performs
     after step returns. Set their cadences outside the captured step interval.
@@ -34,7 +34,7 @@ class NsightTrainer(Trainer):
         if distributed:
             dist.barrier()
 
-    def step(self, data, *, hyperparams=None):
+    def step(self, **inputs):
         number = self.step_count + 1
         last = self.nsys_start_step + self.nsys_steps - 1
         captured = self.nsys_steps > 0 and self.nsys_start_step <= number <= last
@@ -43,7 +43,7 @@ class NsightTrainer(Trainer):
         rank = dist.get_rank() if dist.is_initialized() else 0
         label = f"train/step={number}/rank={rank}"
         with torch.cuda.nvtx.range(label) if captured else nullcontext():
-            result = super().step(data, hyperparams=hyperparams)
+            result = super().step(**inputs)
         # Trainer.step synchronizes execution before returning. The collective
         # boundary waits for every worker before ending process-tree capture.
         if captured and number == last:

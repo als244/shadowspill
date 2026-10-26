@@ -51,9 +51,11 @@ models; `shadowspill.execution.Executor` executes saved Plans and
 this directory.
 
 The standalone [Llama](recipes/text/llama3/) and
-[Qwen3.5 LoRA](recipes/text/qwen35_lora/) recipes separate build, profile, plan
+[Qwen3.5 LoRA](recipes/text/qwen35_lora/) and
+[GLM checkpoint LoRA](recipes/text/glm53_flash_lora/) recipes separate build, profile, plan
 and execution into small modules. They share the [recipe phase driver](recipes/phases.py) and resumable
-text-call adapter, while model-specific initialization remains with each recipe.
+text-call adapter. GLM and Qwen3.5 also share [candidate preparation](recipes/text/phases/);
+model-specific initialization remains with each recipe.
 The [configured text runner](recipes/text/experiment/) follows the same phases,
 preserving document packing, runtime norm logging, held-out evaluation and resume.
 The [distributed regression example](recipes/regression/) uses the same driver

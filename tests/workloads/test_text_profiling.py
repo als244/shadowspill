@@ -32,7 +32,12 @@ def test_capture_boundaries_and_per_rank_step_ranges(monkeypatch, rank, count):
 
     monkeypatch.setattr(module.torch.cuda.nvtx, "range", nvtx)
 
-    def train(self, data, *, hyperparams=None):
+    def train(self, **inputs):
+        assert inputs == {
+            "args": [("tokens",)],
+            "kwargs": [{"normalizer": 0.5}],
+            "hyperparams": {"lr": 0.01},
+        }
         self.step_count += 1
         events.append(("step", self.step_count))
         return SimpleNamespace(step=self.step_count)
@@ -43,7 +48,14 @@ def test_capture_boundaries_and_per_rank_step_ranges(monkeypatch, rank, count):
     trainer.nsys_start_step = 2
     trainer.nsys_steps = count
     for number in range(1, 8):
-        assert trainer.step(None).step == number
+        assert (
+            trainer.step(
+                args=[("tokens",)],
+                kwargs=[{"normalizer": 0.5}],
+                hyperparams={"lr": 0.01},
+            ).step
+            == number
+        )
 
     expected = [("step", 1)]
     if count:

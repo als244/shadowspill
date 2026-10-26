@@ -3,8 +3,7 @@
 **Refactor branch:** the public API now separates build, measurement, CPU planning
 and saved-plan execution. Start with the [phase API guide](docs/architecture/offline-pipeline.md)
 or [quickstart](benchmarking/quickstart.md). `Trainer(plan, ...)` consumes an already
-prepared Plan. The Llama and Qwen recipes below use these phases. The practical
-GLM checkpoint-training recipe still awaits migration.
+prepared Plan. The Llama, Qwen and GLM recipes below use these phases.
 
 ShadowSpill turns a fixed-shape PyTorch forward or training step into a
 memory-budgeted callable: it decides what to keep on the device, what to spill
@@ -109,11 +108,7 @@ performance or memory-fit result on this refactor branch.
 <details>
 <summary><strong>GLM-5.3-Flash: eight-GPU LoRA at 32K</strong></summary>
 
-**Migration status:** this practical recipe still uses the private preparation
-path. The family quickstart uses the shared phases; migrating this training loop
-and its distributed checkpoint/evaluation behavior remains work on this branch.
-
-The [training recipe](workloads/recipes/text/train_glm53_flash_lora.py) loads a
+The [training recipe](workloads/recipes/text/glm53_flash_lora/README.md) loads a
 local Hugging Face checkpoint and trains rank-32 LoRA adapters on real text with
 held-out validation. The [eight-GPU launcher](workloads/recipes/text/glm53_flash_lora_32k_8gpu.sh)
 uses one 32,768-token sequence per rank: 262,144 target tokens per update.
@@ -149,23 +144,31 @@ complete validation update. `--steps`, `--schedule-steps`, `--execution-gib` and
 storage with room for the full base; initialization writes into the sharded
 spill pools with bounded staging. The starting budgets are 76 GiB execution and
 96 GiB pinned host spill per rank (768 GiB pinned host memory across the node,
-plus process and staging overhead). The planner also reserves 2 GiB external GPU
+plus process and staging overhead). The GPU budget includes 2 GiB external
 headroom. This configuration is being qualified on eight 80 GB H100s; it is not
 yet a completed 32K checkpoint-training performance result.
 
-`metrics.jsonl` records train/validation loss and timing, and the run directory
-also contains the configuration, selected plan and partial checkpoints.
-Supply an immutable `--frozen-state-id` for the exact base checkpoint. Resume by
-adding `--resume /path/to/glm32k-run/checkpoints/step_00000010`, keeping the same
-corpus, base ID and total schedule; `--steps` is the final total step count.
-Frozen base weights are reloaded from the original checkpoint on resume.
+The recipe saves Programs, Profiles, communication measurements, Plans and reports
+in separate directories, with logs per phase. Build/profile use a representative device; only
+communication and execution launch all ranks. Run the launcher once outside
+`torchrun`. See the [phase commands and artifact map](workloads/recipes/text/glm53_flash_lora/README.md).
+
+Per-rank metrics and checkpoints live under `training/rank-NNNNN/`; global
+validation losses live in `training/evaluation.jsonl`. Supply an immutable base
+ID. Resume the saved plans with:
+
+```bash
+python -m workloads.recipes.text.train_glm53_flash_lora \
+  --run-dir /path/to/glm32k-run --phase execute \
+  --resume '/path/to/glm32k-run/training/rank-{rank:05d}/checkpoints/step_00000010.ssp'
+```
 
 For a learning sanity check, add `--repeat-training-batch
---minimum-relative-loss-drop 0.01`; normal training advances through the corpus.
-For five-step Nsight capture, add `--nsys-start-step 2 --nsys-steps 5` and launch
-under `nsys profile --capture-range=cudaProfilerApi --capture-range-end=stop`.
-Inductor/Triton compiler intermediates use node-local temporary storage by
-default and are separate from the saved run artifacts.
+--minimum-relative-loss-drop 0.01` when building. For Nsight capture, wrap the
+execute phase in `nsys profile --capture-range=cudaProfilerApi
+--capture-range-end=stop` and pass `--nsys-start-step 2 --nsys-steps 5`.
+Evaluation/checkpoint cadences must lie outside the capture. Inductor/Triton
+caches use node-local temporary storage separately from the saved artifacts.
 
 </details>
 

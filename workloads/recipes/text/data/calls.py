@@ -4,14 +4,17 @@ from workloads.recipes.text.data.fixed import TokenUpdates
 
 
 class Inputs:
-    def __init__(self, options, *, split="train", rank=0, world_size=1):
-        self.data = TokenUpdates(
+    data_type = TokenUpdates
+
+    def __init__(self, options, *, split="train", rank=0, world_size=1, **data_options):
+        self.data = self.data_type(
             options["data"],
             sequence_length=options["sequence_length"],
             sequences_per_step=options["sequences_per_step"],
             split=split,
             rank=rank,
             world_size=world_size,
+            **data_options,
         )
         self.size = options["sequences_per_example"]
         if self.size < 1 or self.data.sequences_per_step % self.size:
