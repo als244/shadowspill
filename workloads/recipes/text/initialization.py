@@ -1,11 +1,11 @@
 """Bounded catalog initialization; no anonymous full model or expert-bank copy."""
 
 import math
-from hashlib import sha256
 
 import torch
 
 from workloads.models.shared.decoder import llama3_frequencies
+from workloads.models.shared.initialization import fill_generated
 
 FAMILIES = {"llama3", "qwen3", "qwen35", "olmoe", "qwen3moe", "qwen35moe"}
 
@@ -28,32 +28,13 @@ class Initialize:
             )
 
     def __call__(self, request, destination):
-        if (
-            destination.device.type != "cpu"
-            or request.storage_offset
-            or (request.storage_elements != math.prod(request.shape))
-        ):
-            raise ValueError(
-                "catalog initialization requires contiguous CPU spill storage"
-            )
-        width, end = self.block_elements, request.offset + destination.numel()
-        for start in range(request.offset // width * width, end, width):
-            stop = min(start + width, request.storage_elements)
-            seed = int.from_bytes(
-                sha256(f"{self.seed}:{request.name}:{start}".encode()).digest()[:8],
-                "little",
-            )
-            values = self.values(
-                request.name,
-                request.shape,
-                start,
-                stop,
-                torch.Generator().manual_seed(seed),
-            )
-            left, right = max(start, request.offset), min(stop, end)
-            destination[left - request.offset : right - request.offset].copy_(
-                values[left - start : right - start]
-            )
+        fill_generated(
+            request,
+            destination,
+            sample=self.values,
+            seed=self.seed,
+            block_elements=self.block_elements,
+        )
 
     def values(self, name, shape, start, stop, generator):
         values = torch.empty(stop - start, dtype=torch.float32)

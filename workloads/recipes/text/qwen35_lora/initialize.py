@@ -1,11 +1,9 @@
 """Bounded base loading and chunk-independent initialization of LoRA and RoPE."""
 
-import math
-from hashlib import sha256
-
 import torch
 
 from workloads.models.qwen35moe.checkpoint import Qwen35MoECheckpoint
+from workloads.models.shared.initialization import fill_generated, validate_chunk
 
 
 class Initialize:
@@ -18,44 +16,31 @@ class Initialize:
         self.seed = options["seed"]
 
     def __call__(self, request, destination):
-        if destination.device.type != "cpu":
-            raise ValueError("checkpoint initialization requires CPU spill storage")
-        if request.storage_offset or request.storage_elements != math.prod(
-            request.shape
-        ):
-            raise ValueError("Qwen initialization requires whole contiguous storage")
+        validate_chunk(request, destination)
         name, leaf = request.name, request.name.rsplit(".", 1)[-1]
         if leaf in {"lora_b", "lora_gate_up_b", "lora_down_b"}:
             destination.zero_()
         elif leaf in {"lora_a", "lora_gate_up_a", "lora_down_a"} or name.startswith(
             "rotary."
         ):
-            self._generated(request, destination)
+            fill_generated(
+                request,
+                destination,
+                sample=self._values,
+                seed=self.seed,
+                block_elements=self.block_elements,
+            )
         else:
             self.checkpoint.copy_chunk(name, request.shape, request.offset, destination)
 
-    def _generated(self, request, destination):
-        width = self.block_elements
-        end = request.offset + destination.numel()
-        for start in range(request.offset // width * width, end, width):
-            stop = min(start + width, request.storage_elements)
-            if request.name.startswith("rotary."):
-                values = self._rotary(request.name, start, stop)
-            else:
-                key = f"{self.seed}:{request.name}:{start}".encode()
-                generator = torch.Generator().manual_seed(
-                    int.from_bytes(sha256(key).digest()[:8], "little")
-                )
-                values = torch.empty(stop - start, dtype=torch.float32)
-                scale = request.shape[-1] ** -0.5
-                if request.name.endswith(".lora_a"):
-                    values.uniform_(-scale, scale, generator=generator)
-                else:
-                    values.normal_(std=scale, generator=generator)
-            left, right = max(start, request.offset), min(stop, end)
-            destination[left - request.offset : right - request.offset].copy_(
-                values[left - start : right - start]
-            )
+    def _values(self, name, shape, start, stop, generator):
+        if name.startswith("rotary."):
+            return self._rotary(name, start, stop)
+        values = torch.empty(stop - start, dtype=torch.float32)
+        scale = shape[-1] ** -0.5
+        if name.endswith(".lora_a"):
+            return values.uniform_(-scale, scale, generator=generator)
+        return values.normal_(std=scale, generator=generator)
 
     def _rotary(self, name, start, stop):
         if name not in {"rotary.cosine", "rotary.sine"}:
