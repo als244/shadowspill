@@ -16,7 +16,7 @@ API boundaries and the [Python reference](../python/README.md) for details.
 4. [Custom stage partitioning](custom-partitioning.md) — control build-time FX
    boundaries through a small policy.
 
-The [README recipes](../../README.md#model-recipes) cover Llama, Qwen3.5 LoRA,
+The [README recipes](../../README.md#real-model-training) cover Llama, Qwen3.5 LoRA,
 Qwen3 distributed training and GLM Flash LoRA. The [model catalog](../../workloads/MODELS.md)
 lists model dimensions, precisions and available implementations.
 
