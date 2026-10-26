@@ -6,9 +6,10 @@ from dataclasses import replace
 
 from torch._guards import detect_fake_mode
 
+from shadowspill.pytorch.operators.materialize import PAD_STORAGE
+
 from .artifacts import GraphArtifact
 from .gradients.nodes import _record_value
-from .materialize import PAD_STORAGE
 from .storage import ExplicitMutation
 from .torch_deprecations import copy_graph_module
 

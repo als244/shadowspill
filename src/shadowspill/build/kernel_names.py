@@ -18,7 +18,8 @@ def portable_kernel_names() -> Iterator[None]:
     # expects the complete symbol. Leave room for its prefix and numeric suffix.
     # Source/module metadata remains complete in the generated wrapper and IR.
     with _lock:
-        original: Callable[..., str] = getattr(triton, "get_fused_kernel_name")
+        # PyTorch re-exports this internal symbol without declaring it to mypy.
+        original: Callable[..., str] = getattr(triton, "get_fused_kernel_name")  # noqa: B009
 
         def bounded(*args: Any, **kwargs: Any) -> str:
             name = original(*args, **kwargs)

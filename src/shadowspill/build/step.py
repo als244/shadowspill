@@ -40,6 +40,9 @@ def build_step(
     ``master_dtype`` optionally captures separate optimizer parameters; model
     compute precision is unchanged. ``grad_dtype`` controls stored gradients
     independently. Optimizer state dtypes come from that optimizer's own rules.
+    Trainable tensor wrappers require an explicit ``master_dtype`` even if their
+    logical dtype matches it. The bounded initializer must fill their physical
+    components and ``master.<parameter_name>`` separately.
     ``example_args``/``example_kwargs`` plus ``num_examples`` describe repeated
     geometry. Optional ``example_calls=[(args, kwargs), ...]`` describes distinct
     geometries instead; planning still chooses their execution order.

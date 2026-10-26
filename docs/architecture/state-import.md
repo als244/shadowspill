@@ -1,358 +1,179 @@
-# Importing state
+# Model tensors and initialization
 
-How a caller's model and optimizer state come to live in the runtime's pools,
-what the caller must guarantee for that to stay bounded, how dtype is decided,
-and how the values come back out.
+Build records model structure; execution owns its values. A saved Program or Plan
+contains names, shapes, dtypes, storage relationships and initialization
+descriptions. It does not contain a checkpoint or a live Python model.
 
-## The problem
+See [the offline pipeline](offline-pipeline.md) for the phase boundaries. This
+page explains how tensors cross the execution boundary without creating another
+model-sized host allocation.
 
-State that a plan will place has to live in a pool the runtime owns. The
-obvious way to arrange that — build the state the ordinary way and copy it in
-— means the state exists twice at once, so ordinary memory must hold a full
-copy of something that was only ever meant to live in the pool. For state that
-is large relative to the memory available, that transient is what decides
-whether the model can be loaded at all, and it is paid on every run.
+## Declare first, fill later
 
-ShadowSpill allocates state in its destination pool before running its
-initializer. Constructing on `meta` therefore avoids a complete temporary host
-model. Addressable pools expose their bytes directly. Non-addressable pools
-(such as SSD and remote memory) stage only the storage roots used by the current
-initialization operation, write mutations back, and keep metadata-only tensors
-between operations. The model's initialization code is unchanged.
+Construct large models on `meta`, with parameters and buffers already at their
+intended dtypes. The builders inspect that structure and capture its computation.
+They do not install runtime pools or initialize persistent model values. Kernel
+finalization can require a representative GPU; this is separate from state loading.
 
-## Three paths in
-
-| Path | Values come from | Host payload outside the pool |
-|---|---|---|
-| **Meta model, then initialize** | `reset_parameters()` or an explicit `initialize(model)` callback | Initializer scratch; non-addressable pools also stage roots touched by one operation |
-| **Import an existing model** | Already initialized registered tensors | The caller's source until its references are dropped |
-| **Import a checkpoint** | A memory-mapped file | Reclaimable file pages, plus per-operation staging for non-addressable pools |
-| **Adopt a pool image** | An SSD pool file a conversion imported into once | None for the adopted state; the rest of the model as in the meta path |
-
-A meta model is materialized in place and returned as the same module. An
-already initialized model is copied into a distinct module hierarchy, preserving
-ties, views and values; assign the returned model back to the input variable if
-the source is no longer needed. Checkpoint import fills the supplied model in
-place. No full CPU payload is retained for a non-addressable pool: attempting to
-read such a tensor directly raises an error explaining that its bytes belong
-to the pool.
-
-`import_model_state(model, runtime=runtime, pool="spill", initialize=fn)` accepts
-an optional in-place initializer. With a meta model and no callback, each module
-that owns state must implement `reset_parameters()`. Trainer and Forward retain
-their explicit `prepare(..., initialize=fn)` contract and execute that callback
-after the ShadowSpill backend has allocated pool state. Quickstart uses the same
-import path. Optimizer moments and optional master parameters are also declared
-without payloads and initialized after pool allocation.
-
-A pool image is the fourth path. A conversion imports the frozen model once
-into an SSD pool created as a named file and writes a manifest of where every
-storage root lies and which tensors view it. A later runtime opens its pool on
-that image, read-only, with a scratch file behind it for everything new, and
-`import_model_state(..., image=...)` binds the tensors the manifest names to
-those offsets after checking name, geometry and dtype, so the frozen state is
-neither copied nor written again; the initializer is told which names it must
-leave alone and the remaining state is allocated and initialized as in the meta
-path. The runtime keeps the image's range out of the allocator for its lifetime,
-and the pool refuses a write into it, so a frozen tensor that is somehow
-mutated fails loudly rather than changing the image.
-
-The entry points and return values are in the
-[frontend API](../python/api/frontend.md#persistent-state).
-
-## The contract
-
-### Tensor representations
-
-A registered tensor can use PyTorch's `__tensor_flatten__` /
-`__tensor_unflatten__` protocol to represent one logical value with several
-ordinary tensors, such as quantized bytes, scales and a transposed payload.
-ShadowSpill imports and accounts for those physical components, preserving
-shared storage, views and tied parameter identities. It rebuilds the logical
-wrapper for capture and state reads; the wrapper's nominal dtype does not
-determine its storage size. Nested representations use the same traversal.
-
-Setup-time operations also walk those components. Reading or converting a
-wrapper backed by an SSD/remote pool stages its physical roots; mutating it
-writes those roots back before staging is reused. Returned views refer to pool
-metadata, not temporary staging storage. Authentic control-value derivation
-during planning uses the same bounded access, so it does not require copying
-the whole model into host memory.
-
-All physical state must be named by that protocol. Its metadata must be
-serializable, data-free configuration. Allocations hidden in a library or a
-communication handle remain external memory. The layer's logical backward
-defines the parameter gradient; integer payloads and scale components do not
-become separate trainable parameters just because they hold the bytes.
-
-For dense optimizer masters, the representation implements ordinary PyTorch
-`dense.copy_(wrapped)` for initialization and `wrapped.copy_(dense)` for
-publication and restore. Publication must be traceable, including every
-component it changes. A custom operation can expose an external kernel's tensor
-inputs and mutations. The tensor library supplies the conversion math;
-ShadowSpill neither chooses quantization nor recognizes particular libraries.
-
-This state protocol does not imply support for arbitrary wrapper-valued public
-inputs or task outputs. The supported boundary is registered state whose
-captured operations produce ordinary tensors and logical dense gradients.
-
-Profiling also records allocations retained by a library during task warmup.
-Their measured bytes reserve execution-pool capacity once; they are separate
-from the workspace allocated on each invocation. Allocations outside the
-framework allocator remain covered by external-memory headroom.
-
-Reusable library resources should be initialized outside individual task
-invocations. An allocation made inside a plan's task scope belongs to that plan
-and is reclaimed when it closes; a process-global library cache must not retain
-it for a later plan. Setup allocations made through the framework allocator are
-included in the runtime's fixed reserve before planning.
-
-### Construction and initialization
-
-Constructing into the pool asks three things of a model. They are not
-ShadowSpill inventions: they are the standard recipe for a model too large to
-build on the host, and a model that satisfies them works with other systems
-that build on `meta` for the same reason.
-
-1. **Constructible on `meta`.** `__init__` allocates no data and reads no
-   values — nothing that inspects a tensor's contents. On `meta` the model is
-   structure alone and costs nothing.
-2. **Dtype fixed at construction.** Parameters and buffers are created in the
-   dtype they will be used in. A cast afterwards allocates, and a cast is
-   exactly what defeats any scheme that placed the state carefully.
-3. **Initialization writes in place.** Each state-owning module implements
-   `reset_parameters()`, or the caller supplies an initializer for the whole
-   model. It writes existing tensors instead of replacing them or their storage.
-
-The rule behind all three: **`__init__` declares shape and dtype;
-`reset_parameters` produces values.** A module that fuses allocation and
-initialisation cannot have its storage placed anywhere but where it happened
-to be allocated.
-
-Stock library modules already satisfy this, so most models comply for the
-parts they did not write.
-
-### Two kinds of owned state, one rule
-
-A module should not have to know which kind it holds, and nothing here is
-special-cased by kind.
-
-- **Learned parameters** are drawn from a distribution.
-- **Derived constants** are computed deterministically from configuration:
-  rotary tables, positional encodings, causal masks, precomputed index
-  tensors. They are usually registered non-persistent, because a checkpoint
-  can recompute them rather than store them.
-
-Both are initialised in place, by the same hook. Derived constants are the
-common accidental violation, because the natural way to write one computes
-the value and registers the result in a single line — which allocates its own
-storage and pins it where it was computed. Written to the contract, the
-buffer is registered empty with a shape and dtype, and the value is computed
-and copied in when the hook runs.
+Create Executor in a fresh process from a saved Plan. It admits the physical
+layout, allocates persistent storage and accepts a bounded initializer.
+`Trainer.initialize` delegates to the same interface.
 
 ```python
-class RotaryTables(nn.Module):
-    def __init__(self, width: int, *, capacity: int) -> None:
-        super().__init__()
-        self.width, self.capacity = width, capacity
-        table = torch.empty(capacity, width, dtype=torch.float32)
-        self.register_buffer("cosine", table, persistent=False)
-        self.register_buffer("sine", table.clone(), persistent=False)
-        self.reset_parameters()
+from shadowspill import Executor, Plan
 
-    def reset_parameters(self) -> None:
-        angles = self._angles()          # scratch: one table, not one model
-        with torch.no_grad():
-            self.cosine.copy_(angles.cos())
-            self.sine.copy_(angles.sin())
+plan = Plan.load("training.ssp")
+
+def fill_tensor(request, destination):
+    # Application-owned reader fills exactly this physical storage region.
+    checkpoint_reader.copy_chunk(request, destination)
+
+with Executor(plan) as executor:
+    executor.initialize(fill_tensor, chunk_bytes=64 << 20)
+    pending = executor.run(args=[(features, targets)])
+    result = pending.result()
 ```
 
-### Temporary memory bounds
+`checkpoint_reader`, `features` and `targets` are application inputs here. The
+loader writes into Executor-provided CPU buffers. It must not replace them,
+retain them beyond the call or load the whole model just to serve a chunk.
+Random initialization and derived constants use the same callback.
 
-Host-addressable pools require no second parameter allocation. An initializer
-may still allocate its own scratch. For a non-addressable pool, extra CPU
-payload is bounded by the storage roots touched by one tensor operation plus
-that operation's scratch. Staging buffers are reused across operations and
-released at the end of setup. This is a largest-operation bound, not a promise
-of constant bytes independent of tensor dimensions.
+An ordinary materialized model can also be built, but its payload is not embedded
+in the artifact. Supplying its values at execution remains explicit.
 
-Initialize tensors individually. Passing every parameter to one bulk operation,
-or retaining clones of every parameter, defeats that bound. A partial view may
-stage its entire underlying storage to preserve the untouched bytes. Library
-initializers must support the device on which their setup operations run; the
-pool mechanism does not implement library-specific quantization.
+## What a chunk describes
 
-Explicit `read_model_state()` and `export_model_state()` intentionally return
-ordinary host values and can require a full model copy. Use `release_model_state()`
-to discard pool state without reading it out. `PlannedTrainStep.save()` writes
-pool objects incrementally into a standard `torch.load`-compatible checkpoint,
-flushing mapped ranges as it goes. Restoring model and optimizer values also
-processes one parameter's storage at a time. Distributed checkpoint restoration
-may additionally need communication buffers for rebuilding replicated weights.
+`TensorChunk` names a contiguous region of physical storage. Its offsets are in
+**dtype elements**, not bytes or flattened logical tensor indices.
 
-## What is refused
+| Field | Meaning |
+| --- | --- |
+| `name` | Canonical tensor/component name supplied to the loader |
+| `dtype` | Declared physical dtype of the destination |
+| `shape`, `stride`, `storage_offset` | Original tensor view over storage |
+| `storage_elements` | Complete physical storage extent |
+| `offset` | First storage element in this callback |
+| `region_offset`, `region_elements` | This worker's valid storage region |
 
-The contract is enforced rather than assumed, because every way of breaking
-it produces a plausible-looking wrong answer rather than an error.
+The destination's length gives the number of elements to fill. A transposed view
+cannot generally be initialized by flattening its logical values: respect the
+storage ordering. Tied tensors and views sharing storage are initialized once.
+Their relationships are saved in Program and reconstructed by Executor. Empty
+tensors retain their geometry without requiring a payload callback.
 
-- A meta model without an explicit initializer whose modules own state without
-  a `reset_parameters` is refused,
-  naming them. Materialising it would leave whatever the pool memory
-  contained, which reads as values.
-- A model that mixes `meta` and materialised tensors is refused: which of its
-  values are real is then unclear, and guessing is worse than stopping.
+With supported distributed storage, workers receive only their declared shards.
+Offsets remain relative to the original storage; the runtime initializes internal
+padding. Loading a shard does not require allocating the complete tensor. See
+[distributed execution](../python/api/distributed.md) for supported layouts.
 
-## Dtype
+`chunk_bytes` bounds the supplied slice, except that one element is indivisible.
+The application must also bound its scratch. A file-backed loader can read only
+intersecting ranges. Reproducible sharded random initialization should use tensor
+identity and global offset rather than depend on request order.
 
-**The caller decides what the state is, including every dtype. ShadowSpill
-decides only where it lives.** Nothing on the state path names a dtype: what a
-tensor declares is what gets allocated, per tensor.
+## Initial values and precision
 
-Four decisions are easy to run together and are better kept apart:
+The model declares compute-weight and buffer dtypes. The optimizer declares moment
+and counter dtypes. Build's `master_dtype` and `grad_dtype` select logical master and
+stored-gradient precision independently. See [optimizer capture](optimizer.md).
 
-| decision | whose | where it is written |
-|---|---|---|
-| a tensor's dtype | the model's | the module that declares the tensor |
-| the precision a value is *drawn* in | the module's | inside its `reset_parameters` |
-| the optimizer state's dtype | the optimizer's | wherever the optimizer creates it |
-| whether a higher-precision master exists | the optimizer's | as ordinary optimizer state |
+Executor fills captured constants and declared optimizer defaults itself. Ordinary
+masters can be initialized by casting matching compute-weight chunks directly
+into their destinations. The callback supplies externally initialized tensors,
+including model parameters and buffers. Restore uses saved values instead of
+initialization defaults.
 
-### One dtype per tensor, not per model
+Models can mix BF16, FP32 and compressed storage. ShadowSpill does not widen frozen
+weights or choose quantization schemes. Frozen parameters still consume storage
+and participate in forward/backward but have no masters, parameter gradients or
+optimizer moments.
 
-A model is not required to be uniform. Each tensor is materialised in the
-dtype it declares, so a module that needs more precision than its neighbours
-simply says so:
+Derived buffers, such as positional tables, have explicit geometry and dtype. The
+loader computes their requested ranges. Executor does not invoke a module's
+`reset_parameters()`: it does not reconstruct the model.
+
+## Tensor representations
+
+Registered tensors can implement PyTorch's `__tensor_flatten__` /
+`__tensor_unflatten__` protocol to expose ordinary physical tensors: for example,
+integer payloads, scales and transposed payloads. Nested wrappers use the same
+traversal. ShadowSpill accounts for the components and their aliases; a wrapper's
+advertised dtype does not determine its storage size.
+
+Build uses wrapper operations to capture the computation. Saved tasks take
+ordinary component tensors, so execution and restore need neither the Python
+wrapper instance nor its class. Custom runtime operations still need their
+recorded, importable provider registrations.
+
+All physical storage must be exposed by the protocol. Wrapper metadata must be
+serializable, data-free configuration. Hidden library allocations and live
+communication handles are not managed tensor storage. This protocol covers
+registered model state, not arbitrary wrapper-valued public inputs and outputs.
+
+Logical backward defines one dense gradient for a trainable wrapper. Integer
+payloads and scales are not independent trainable parameters. Trainable wrappers
+require an explicit `master_dtype` and a separate dense master, even when that
+dtype matches the wrapper's advertised dtype. For example:
+
+| Initializer name | Value |
+| --- | --- |
+| `weight.payload` | Quantized physical payload |
+| `weight.scale` | Quantization scale |
+| `master.weight` | Dense logical optimizer parameter |
+
+The caller fills all three through bounded requests. Arbitrary physical components
+do not define a universal chunkwise dequantizer, so Executor cannot infer the
+master's initial contents. After updates, the wrapper's traceable
+`wrapped.copy_(dense)` operation publishes every changed component. The tensor
+library owns that math; ShadowSpill does not choose or reinterpret it.
+
+Owned optimizer updates of sharded wrappers still require a representation-specific
+shard/copy contract and are rejected by the generic builder. Frozen wrappers, as
+used by LoRA, require no logical master.
+
+## Export and checkpoints
+
+`Executor.export_tensors(write_chunk, chunk_bytes=...)` provides bounded CPU views
+using the same names and storage offsets. Consume each view before the callback
+returns; stream it to files without retaining a full-model snapshot.
+
+`save_checkpoint` and `load_checkpoint` use this interface for atomic archives.
+Each checkpoint contains a JSON manifest and packed tensor payloads, including
+layout metadata and checksums. This is a ShadowSpill archive, not a `torch.load`
+state dictionary. Physical components and masters are retained separately and
+restored without conversions.
 
 ```python
-class PreciseNorm(nn.Module):
-    """Normalisation kept in fp32 inside an otherwise bf16 model."""
+from shadowspill import load_checkpoint, save_checkpoint
 
-    def __init__(self, width: int) -> None:
-        super().__init__()
-        self.weight = nn.Parameter(torch.empty(width, dtype=torch.float32))
-        self.reset_parameters()
-
-    def reset_parameters(self) -> None:
-        with torch.no_grad():
-            self.weight.fill_(1.0)
+save_checkpoint(executor, "step.ssp", chunk_bytes=64 << 20)
+load_checkpoint(executor, "step.ssp", chunk_bytes=64 << 20)
 ```
 
-Nothing else in the model changes, and nothing in the import path inspects
-this. Derived constants work the same way -- rotary tables are commonly fp32
-inside a low-precision model, and they are declared fp32 where they are
-registered.
+Restore validates the Program, logical rank, additional Plans and tensor geometry.
+Trainer checkpoints also preserve loop progress, schedules, source position and
+RNG. An evaluation Plan shares current model storage; only its additional,
+nonshared tensors need separate checkpoint payloads.
 
-A caller that wants a *default* for tensors which do not say applies one while
-constructing, which is the caller's own setup step and not something
-ShadowSpill supplies:
+For partial checkpoints, `frozen_state_id` identifies the external frozen base.
+Only unchanged frozen parameters can be omitted. Trainable tensors, buffers,
+optimizer state and mutated parameters remain included. Restore requires the
+matching identity and a bounded loader for omitted tensors; it does not assume
+that an already initialized base is correct.
 
-```python
-def build(config: object) -> nn.Module:
-    previous = torch.get_default_dtype()
-    torch.set_default_dtype(torch.bfloat16)
-    try:
-        with torch.device("meta"):
-            return MyModel(config)
-    finally:
-        torch.set_default_dtype(previous)
-```
+## Library memory and pool tools
 
-Tensors that declare a dtype keep it; the rest take the default. The model
-handed over is then fully described by itself.
+Profiles distinguish retained provider setup allocations from per-task workspace.
+The former contributes to fixed memory; the latter belongs to the task allocation
+contract. Memory outside the framework allocator is covered by external headroom.
+A process-global cache must not retain a task-scoped allocation after its Plan
+releases it.
 
-### Drawing more precisely than you store
-
-The dtype a value is *drawn* in is a separate question from the dtype it is
-*kept* in, and it is the module's business. A module that wants a
-high-precision draw uses scratch the size of that one tensor:
-
-```python
-class WidelyDrawn(nn.Module):
-    def reset_parameters(self) -> None:
-        scratch = torch.empty_like(self.weight, dtype=torch.float32)
-        nn.init.normal_(scratch, std=self.width**-0.5)
-        with torch.no_grad():
-            self.weight.copy_(scratch)
-```
-
-This costs one tensor of host memory at a time, never two copies of the model,
-and needs nothing from ShadowSpill.
-
-### Optimizer state at its own dtype
-
-An optimizer's state dtype is the optimizer's decision, and it is routinely
-not the parameter's -- fp32 moments over low-precision parameters are the
-usual mixed-precision arrangement. Nothing needs to be declared for that to
-work: whatever dtype the optimizer creates is the dtype that is allocated in
-the pool, because the state's shape and dtype are discovered from the
-optimizer itself rather than assumed from the parameter.
-
-A frozen parameter is still model state and still lives in the pool, because
-it is read every step; that it carries no *optimizer* state is
-[the optimizer's page](optimizer.md#frozen-parameters-carry-no-state).
-
-### A higher-precision master copy
-
-Whether a master copy exists at all is the optimizer's decision, and what
-exists differs by case. This is worth being explicit about, because the answer
-is not the same:
-
-| master dtype | what exists |
-|---|---|
-| same as the parameter | **one object.** The optimizer mutates the parameter in place. There is no separate master, so no duplicate pool capacity and no second fetch. |
-| different from the parameter | **two objects**, each with its own dtype and residency. The optimizer reads and updates the master and writes the parameter the forward pass consumes. |
-
-The first case is the default and costs nothing: a same-dtype master *is* the
-parameter, so nothing is duplicated and no aliasing machinery is involved --
-it is identity, not aliasing.
-
-The second needs no new concept either. The master is ordinary optimizer
-state: pool-resident, checkpointed, updated by the task the optimizer capture
-already produces. Because it is a distinct object, the planner schedules it
-independently -- its first use is the optimizer's task, so it need not occupy
-device memory during forward and backward at all, and a task that requires the
-higher precision simply reads the object that has it.
-
-Two dtypes are therefore always two objects. An alias holds the same bytes on
-both sides of a transfer -- which is what the residency model, the planner's
-transfer accounting and the byte count the runtime hands a lane to copy all
-assume -- so a
-conversion on the way to the device is not something a single alias can
-express.
-
-## And back out, the same way
-
-Training checkpoint files encode tensor wrappers as their ordinary component
-tensors, plus a description of the representation. They remain readable with
-`torch.load(..., weights_only=True)`. Loading through ShadowSpill reconstructs
-the wrapper using the receiving model's class and metadata, after checking the
-description and component geometry. No quantizer object is unpickled from the
-checkpoint. Compute checkpoints preserve both quantized orientations and scales
-exactly; master checkpoints still save only the dense master where one exists.
-In-memory `state_dict()` results retain the model's logical tensor types.
-
-State leaves a pool by copying, exactly as it enters. `read_model_state()` and
-its optimizer counterpart answer with ordinary host memory -- one buffer per
-storage root, with the target's views laid over it, so entries that shared a
-root still share one. `export_model_state()` does the same and hands ownership
-back, rebinding the target's own tensors.
-
-Neither hands out a pool address, and there is deliberately no second path that
-reads the pool in place. A pool whose memory is not in this address space has
-no address to view, so an in-place read is available only sometimes -- and a
-cheaper path that silently stops applying is the one a caller comes to rely on.
-The same trade as the import side above, decided the same way.
-
-How the bytes actually cross the edge is the kind's business: a pool this
-process can address leaves the [pool-memory contract](../c/pool-memory.md)'s
-`read` entry out and the runtime copies directly, and one whose memory is
-elsewhere implements it. The caller makes the same call either way.
-
-## See also
-
-- [The ShadowSpillProgram](program.md) for persistence: how long a piece of
-  state must survive, which is a different question from where it lives.
-- [Plan search](search.md) for how residency decides when state is on the
-  device.
+The saved Executor currently uses GPU execution storage and pinned-host spill.
+Pool import and SSD/remote pool-image tools have model-based interfaces described
+in the [frontend reference](../python/api/frontend.md#persistent-state). Their
+initialization and `torch.load` checkpoints are separate from the saved-Plan
+interface. Saved Executor does not yet support those backing stores.
 
 Previous: [The step artifacts](step.md). Next: [The optimizer](optimizer.md).

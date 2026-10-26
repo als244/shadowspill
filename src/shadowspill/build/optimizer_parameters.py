@@ -9,6 +9,7 @@ from torch import nn
 from shadowspill.parallelism.ownership import ParameterOwnership
 from shadowspill.pytorch.optimizer.sandbox import optimizer_parameters
 from shadowspill.pytorch.optimizer.sharding import validate_flat_shards
+from shadowspill.pytorch.representations import is_wrapper
 
 
 def local_optimizer_parameters(
@@ -35,8 +36,9 @@ def local_optimizer_parameters(
     for parameter in optimizer_parameters(optimizer):
         name = names[id(parameter)]
         target_dtype = dtype or parameter.dtype
+        wrapped = is_wrapper(model_parameters[name])
         if name not in trained or (
-            parameter.dtype == target_dtype and name not in sharded
+            parameter.dtype == target_dtype and name not in sharded and not wrapped
         ):
             continue
         if name in sharded and optimizer.state.get(parameter):
@@ -44,14 +46,11 @@ def local_optimizer_parameters(
                 "build sharded updates with an uninitialized optimizer; "
                 "restore persistent optimizer tensors during execution"
             )
-        if name in sharded:
-            from shadowspill.pytorch.representations import is_wrapper
-
-            if is_wrapper(model_parameters[name]):
-                raise NotImplementedError(
-                    "owned updates of tensor-wrapper parameters need their "
-                    "representation's shard/copy contract"
-                )
+        if name in sharded and wrapped:
+            raise NotImplementedError(
+                "owned updates of tensor-wrapper parameters need their "
+                "representation's shard/copy contract"
+            )
         shape = (sharded[name],) if name in sharded else tuple(parameter.shape)
         stride = (1,) if name in sharded else tuple(parameter.stride())
         owned = nn.Parameter(
@@ -64,7 +63,7 @@ def local_optimizer_parameters(
             requires_grad=parameter.requires_grad,
         )
         replacements[id(parameter)] = owned
-        if target_dtype != parameter.dtype:
+        if target_dtype != parameter.dtype or wrapped:
             copies[name] = (
                 torch.empty(shape, dtype=model_parameters[name].dtype, device="meta")
                 if name in sharded

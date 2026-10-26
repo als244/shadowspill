@@ -64,7 +64,9 @@ or passing only trainable parameters both preserve this behavior.
 - `master_dtype` selects the optimizer's parameter precision. A separate master
   starts from its compute weight; the update publishes the changed compute weight
   after updating the master. An ordinary weight already at that dtype needs no
-  additional master. Tensor representations may require a dense logical master.
+  additional master. Trainable tensor wrappers require an explicit `master_dtype`
+  and always have a dense logical master, even when their advertised dtype
+  matches it. Frozen wrappers need no master.
 - `grad_dtype` selects stored and accumulated parameter-gradient precision. The
   backward keeps provider-produced wide gradients and requests wide GEMM outputs
   where supported, instead of rounding a result and then widening it. Other
@@ -78,6 +80,15 @@ their gradient remains one dense logical tensor. Publishing a master uses that
 representation's copy operation. Sharded tensor-wrapper updates require a
 representation-specific shard/copy implementation and are currently rejected by
 the generic owned-update builder.
+
+The bounded initializer receives physical names such as `weight.payload` and
+`weight.scale`, and `master.weight` for the logical master. For ordinary weights,
+Executor initializes the master by casting the matching stored weight chunks.
+For tensor wrappers, the caller must also fill `master.weight`: physical leaves
+alone do not define a generic chunkwise dequantizer. Build captures the wrapper's
+copy operation to publish updated payloads/scales; execution never reconstructs
+the Python wrapper. Saved checkpoints retain both the exact physical tensors and
+the master, so resume requires no dequantization or wrapper-class import.
 
 ## Values that change between calls
 

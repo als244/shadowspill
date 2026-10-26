@@ -1,30 +1,13 @@
 """Cold worker: a Trainer sees a Plan, inputs and tensor data, never a model."""
 
-import importlib.abc
 import sys
 from pathlib import Path
 
 import torch
 
+from tests.shadowspill.execution._cold import forbid_preparation
 
-class BlockPreparation(importlib.abc.MetaPathFinder):
-    def find_spec(self, fullname, path=None, target=None):
-        if any(
-            fullname == name or fullname.startswith(name + ".")
-            for name in (
-                "shadowspill.build",
-                "shadowspill.profiling.measure",
-                "shadowspill.store",
-                "shadowspill.training._legacy_trainer",
-                "shadowspill.training.backends",
-                "shadowspill.pytorch.capture",
-                "shadowspill.pytorch.compilation",
-            )
-        ):
-            raise AssertionError(f"training worker imported {fullname}")
-
-
-sys.meta_path.insert(0, BlockPreparation())
+forbid_preparation()
 from shadowspill import Executor, Plan, Trainer  # noqa: E402
 
 directory, mode = Path(sys.argv[1]), sys.argv[2]

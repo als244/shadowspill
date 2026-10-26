@@ -1,41 +1,18 @@
 """Worker intentionally has no model and cannot build, measure or calibrate."""
 
 import ctypes
-import importlib.abc
 import sys
 from pathlib import Path
 
 import pytest
 import torch
-import torch._inductor.compile_fx as compiler
 import triton
 from torch.utils._pytree import tree_map
 
 from shadowspill import Plan
-from shadowspill.runtime import Runtime
+from tests.shadowspill.execution._cold import forbid_preparation
 
-
-def forbidden(*args, **kwargs):
-    raise AssertionError("execution tried to compile or calibrate")
-
-
-class BlockPhases(importlib.abc.MetaPathFinder):
-    def find_spec(self, fullname, path=None, target=None):
-        if any(
-            fullname == name or fullname.startswith(name + ".")
-            for name in (
-                "shadowspill.build",
-                "shadowspill.store",
-                "shadowspill.profiling.measure",
-                "shadowspill.pytorch.capture",
-                "shadowspill.pytorch.compilation",
-            )
-        ):
-            raise AssertionError(f"execution imported {fullname}")
-
-
-compiler.compile_fx = compiler.compile_fx_inner = Runtime._calibrate = forbidden
-sys.meta_path.insert(0, BlockPhases())
+forbid_preparation()
 from qualification.runtime_evidence import adapter_statistics  # noqa: E402
 from shadowspill import Executor, load_checkpoint, save_checkpoint  # noqa: E402
 from tests.shadowspill.execution._stream_checks import StreamChecks  # noqa: E402

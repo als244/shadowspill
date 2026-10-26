@@ -137,8 +137,8 @@ src/shadowspill/
 ├── search/                a step planned at every geometry, budget and walk:
 │                          the geometries, the rule one point is answered by,
 │                          the refusals it records, and the report
-├── training/              generic model/objective/data execution and loop policy
-│   └── backends/          PyTorch and planned execution of the same objective
+├── training/              saved-Plan training loops, schedules and checkpoints
+│   └── backends/          model-based backends awaiting caller migration
 ├── plots/                 step-run and step-search figures
 │   └── step_search/       one module per figure family, over shared series and axes
 └── pytorch/
@@ -155,6 +155,7 @@ src/shadowspill/
     │                      captures the lowering, the output geometry, the
     │                      contract, the alias views, the cache
     ├── tuning/            finalized provider choices, saved and replayed per task
+    ├── operators/         runtime-importable task operations, independent of capture
     ├── profiling/         representative inputs, timing, allocation contract, workspace
     │   └── profiler/      one task measured: the allocator boundary, the warmup and
     │                      timing, the workspace trace, the invariant path, the record

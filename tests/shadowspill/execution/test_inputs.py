@@ -24,6 +24,7 @@ def test_only_consumed_nonempty_inputs_are_staged_but_all_inputs_are_guarded():
 
     state = SimpleNamespace(
         aliases={f"o{i}": f"a{i}" for i in range(3)},
+        geometry={f"o{i}": {"device_type": "cuda"} for i in range(3)},
         sizes={f"a{i}": value.nbytes for i, value in enumerate(args)},
         initial={"a0", "a2"},
         host=host,

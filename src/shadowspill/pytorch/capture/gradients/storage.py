@@ -9,8 +9,8 @@ import torch
 from torch._guards import detect_fake_mode
 
 from shadowspill.pytorch.capture.artifacts import GraphArtifact
+from shadowspill.pytorch.operators.materialize import MATERIALIZE_GRADIENT
 
-from ..materialize import MATERIALIZE_GRADIENT
 from ..torch_deprecations import copy_graph_module
 from .nodes import (
     _record_value,

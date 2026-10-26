@@ -25,7 +25,7 @@ def tensor_entries(
         yield registration_name(item), item["object_id"], None
     optimizer_bindings = bindings.get("optimizer_bindings", ())
     mastered = {
-        item["name"].removeprefix("compute.")
+        item["parameter_name"]
         for item in optimizer_bindings
         if item["role"] == "compute_copy"
     }

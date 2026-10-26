@@ -1,49 +1,25 @@
 """Cold worker alternates separately built Plans without model or compiler access."""
 
-import importlib.abc
 import sys
 from pathlib import Path
 
 import pytest
 import torch
-import torch._inductor.compile_fx as compiler
 import triton
 from torch.utils._pytree import tree_map
 
-
-class BlockPreparation(importlib.abc.MetaPathFinder):
-    def find_spec(self, fullname, path=None, target=None):
-        if any(
-            fullname == name or fullname.startswith(name + ".")
-            for name in (
-                "shadowspill.build",
-                "shadowspill.profiling.measure",
-                "shadowspill.store",
-                "shadowspill.training._legacy_trainer",
-                "shadowspill.training.backends",
-                "shadowspill.pytorch.capture",
-                "shadowspill.pytorch.compilation",
-            )
-        ):
-            raise AssertionError(f"execution imported {fullname}")
-
-
-def forbidden(*args, **kwargs):
-    raise AssertionError("execution tried to compile or calibrate")
+from tests.shadowspill.execution._cold import forbid_preparation
 
 
 def compilation_finished(**event):
     assert event["cache_hit"], f"unexpected compilation: {event['src'].name}"
 
 
-compiler.compile_fx = compiler.compile_fx_inner = forbidden
 triton.knobs.compilation.listener = compilation_finished
-sys.meta_path.insert(0, BlockPreparation())
+forbid_preparation()
 from shadowspill import Executor, Plan, Trainer, load_checkpoint, save_checkpoint  # noqa: E402
 from shadowspill.planning.shared import shared_memory  # noqa: E402
-from shadowspill.runtime import Runtime  # noqa: E402
 
-Runtime._calibrate = forbidden
 directory, mode = Path(sys.argv[1]), sys.argv[2]
 plan, evaluation = (
     Plan.load(directory / f"{name}.ssp") for name in ("training", "evaluation")
@@ -110,9 +86,7 @@ with pytest.raises(ValueError, match="gradient-accumulation"):
 previous = None
 for index in range(4):
     before = snapshot(executor)
-    inputs = dict(
-        args=[(oracle["evaluation"],)], kwargs=[oracle["evaluation_kwargs"]]
-    )
+    inputs = dict(args=[(oracle["evaluation"],)], kwargs=[oracle["evaluation_kwargs"]])
     if trainer:
         actual = trainer.evaluate(**inputs)
         assert trainer.step_count == index

@@ -30,6 +30,7 @@ from shadowspill.pytorch.optimizer.starts import (
     StateStart,
     ValueStart,
 )
+from shadowspill.pytorch.representations import is_wrapper
 
 from .optimizer_parameters import local_optimizer_parameters
 from .training_capture import TrainingCapture
@@ -56,6 +57,10 @@ def capture_update(
     copied, names = copy_optimizer_to_meta(
         optimizer, {id(value): name for name, value in named.items()}
     )
+    if master_dtype is None and any(
+        name in trained and is_wrapper(named[name]) for name in names.values()
+    ):
+        raise ValueError("trainable tensor-wrapper parameters require master_dtype")
     copied, names, compute_copies = local_optimizer_parameters(
         copied,
         names,
@@ -67,7 +72,15 @@ def capture_update(
     parameters = {names[id(value)]: value for value in optimizer_parameters(copied)}
     declared = declare_optimizer_state(parameters, copied, receives_gradient=trained)
     initialization = {
-        name: {"kind": "parameter", "name": name} for name in compute_copies
+        # Physical components do not define a generic chunkwise dequantizer.
+        # The caller fills a wrapper's logical master through the same bounded
+        # initializer as its payload/scales; execution never recreates the model.
+        name: (
+            {"kind": "external"}
+            if is_wrapper(named[name])
+            else {"kind": "parameter", "name": name}
+        )
+        for name in compute_copies
     }
     for entry in declared:
         parameter = parameters[entry.parameter_name]

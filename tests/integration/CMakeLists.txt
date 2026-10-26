@@ -59,10 +59,9 @@ shadowspill_add_pytorch_canary(training 120)
 shadowspill_add_pytorch_canary(step_archive 120)
 shadowspill_add_pytorch_canary(planning_residue 120)
 
-# Installing the allocator needs a process where CUDA has not been
-# initialized, so exactly one of these can run per pytest process; in the
-# ordinary suite the first one takes that slot and the rest skip. Running each
-# in its own process is the only way they all execute.
+# Older tests install the allocator in pytest; saved-phase tests launch their
+# own fresh execution workers. Select the named case explicitly so both forms
+# run here, including tests excluded by the ordinary suite's default markers.
 function(shadowspill_add_public_api_test file name timeout)
   add_test(
     NAME shadowspill_pytorch_public_${name}
@@ -72,7 +71,7 @@ function(shadowspill_add_public_api_test file name timeout)
       ${Python3_EXECUTABLE} -m pytest
       ${PROJECT_SOURCE_DIR}/tests/${file}
       -k ${name}
-      -m fresh_process
+      -o addopts=
       --no-header
       -q
   )
@@ -219,12 +218,12 @@ shadowspill_add_public_api_test(
   test_mutable_buffer_survives_diagnostics_and_repeated_training 300
 )
 shadowspill_add_public_api_test(
-  shadowspill/pytorch/api/test_08_tensor_representations.py
-  test_planned_representation_save 300
+  shadowspill/execution/test_tensor_representations.py
+  test_quantized_training_evaluation_and_cold_checkpoint[save] 300
 )
 shadowspill_add_public_api_test(
-  shadowspill/pytorch/api/test_08_tensor_representations.py
-  test_planned_representation_recompute 300
+  shadowspill/execution/test_tensor_representations.py
+  test_quantized_training_evaluation_and_cold_checkpoint[recompute] 300
 )
 shadowspill_add_public_api_test(
   shadowspill/pytorch/state/test_pool_initialization.py
@@ -235,8 +234,8 @@ shadowspill_add_public_api_test(
   test_a_wrapped_weight_in_an_unreadable_pool_is_read_component_by_component 180
 )
 shadowspill_add_public_api_test(
-  shadowspill/pytorch/api/test_08_tensor_representations.py
-  test_planned_packed_parameter_gradients 300
+  shadowspill/execution/test_packed_gradients.py
+  test_packed_parameter_gradients_in_cold_worker 300
 )
 
 
