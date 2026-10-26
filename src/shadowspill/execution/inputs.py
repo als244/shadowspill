@@ -63,7 +63,9 @@ def stage_inputs(
                 continue
             value = leaves[source["user_leaf"]]
             alias = state.aliases[slot["object_id"]]
-            if alias in copied:
+            # Keep full call guards, but copy only storage the selected plan
+            # consumes. Export can retain unused arguments in its signature.
+            if alias in copied or alias not in state.initial or not state.sizes[alias]:
                 continue
             copied.add(alias)
             raw = torch.empty(0, dtype=torch.uint8).set_(
