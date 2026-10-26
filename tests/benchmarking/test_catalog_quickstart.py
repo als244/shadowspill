@@ -138,7 +138,9 @@ def test_catalog_training_from_saved_phases(tmp_path, lora, ranks):
                     "opt_state_dtype": "float32",
                 },
             },
-            search_budget_gib=[2],
+            # Two H100 workers retain about 2.46 GiB of calibrated fixed
+            # overhead. Leave room for the task instead of weakening admission.
+            search_budget_gib=[2 if ranks == 1 else 3],
             spill_gib=0.125,
             steps=3,
             output_dir=tmp_path,
@@ -149,13 +151,15 @@ def test_catalog_training_from_saved_phases(tmp_path, lora, ranks):
         )
         == 0
     )
+    sweep = SweepResult.load(tmp_path / "planning/sweep.ssp")
+    assert {case.candidate for case in sweep.cases} == {"1: 1x2rp", "1: 2x1rp"}
+    assert all(case.plan is not None for case in sweep.cases), {
+        case.candidate: dict(case.failure) for case in sweep.cases if case.plan is None
+    }
     result = json.loads((tmp_path / "execution/budget-0000/result.json").read_text())
     assert result["units_per_step"] == 64 * ranks
     assert result["units_per_second"] > 0
     losses = [row["loss"] for row in result["steps"]]
     assert losses[-1] < losses[0]
     assert all(torch.isfinite(torch.tensor(losses)))
-    sweep = SweepResult.load(tmp_path / "planning/sweep.ssp")
-    assert {case.candidate for case in sweep.cases} == {"1: 1x2rp", "1: 2x1rp"}
-    assert all(case.plan is not None for case in sweep.cases)
     assert len(list((tmp_path / "programs").glob("*.ssp"))) == 1
