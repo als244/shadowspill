@@ -1,6 +1,7 @@
 """One budget in a fresh worker; never builds, measures, or replans."""
 
 import statistics
+from contextlib import nullcontext
 
 from shadowspill import Plan, Trainer
 
@@ -48,7 +49,8 @@ def _execute(request, selection, root, index, group):
             request, logical_rank=None if group.count == 1 else group.logical_rank
         )
         trainer.metric_reducer = setup.get("metric_reducer")
-        trainer.initialize(setup["fill_tensor"])
+        with setup.get("context", nullcontext)():
+            trainer.initialize(setup["fill_tensor"])
         inputs = dict(setup["candidates"][winner["candidate"]])
         inputs["hyperparams"] = setup.get("hyperparams", {})
         trainer.fit(

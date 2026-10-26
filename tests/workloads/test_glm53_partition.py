@@ -1,4 +1,4 @@
-"""The GLM workload supplies its policy through the generic planning contract."""
+"""The GLM workload supplies its policy through the generic build contract."""
 
 import pytest
 import torch
@@ -107,13 +107,14 @@ def test_recipe_preserves_step_data_across_microbatch_candidates():
         tiny=True,
         sequence_length=65,
         sequences_per_step=4,
-        sequences_per_microbatch=(1, 2, 4),
+        sequences_per_example=(1, 2, 4),
     )
-    # The planner partitions by its own default unless GLMStages is asked for.
-    assert "partition" not in spec["plan_options"]
-    assert spec["plan_options"]["grad_dtype"] is torch.float32
-    expected = spec["candidates"]["4"][0]
-    for batches in spec["candidates"].values():
+    # Build partitions automatically unless GLMStages is requested.
+    assert "partition" not in spec["build_options"]
+    assert spec["build_options"]["grad_dtype"] is torch.float32
+    expected = spec["candidates"]["4"]["args"][0]
+    for inputs in spec["candidates"].values():
+        batches = inputs["args"]
         assert torch.equal(torch.cat([batch[0] for batch in batches]), expected[0])
         assert torch.equal(torch.cat([batch[1] for batch in batches]), expected[1])
         for tokens, _, boundaries, cumulative, chunks in batches:
@@ -127,13 +128,13 @@ def test_recipe_preserves_step_data_across_microbatch_candidates():
             assert reduction == "sum"
             return args[0].numel() * torch.tensor(2.0)
 
-    for batches in spec["candidates"].values():
-        assert sum(spec["objective"](Loss(), *batch) for batch in batches) == 2
+    for inputs in spec["candidates"].values():
+        assert sum(spec["objective"](Loss(), *batch) for batch in inputs["args"]) == 2
 
 
 def test_glm_stages_are_opt_in():
     spec = experiment(device="cuda:0", tiny=True, partition="glm_stages")
-    assert isinstance(spec["plan_options"]["partition"], GLMStages)
+    assert isinstance(spec["build_options"]["partition"], GLMStages)
     assert spec["metadata"]["partition"] == "GLMStages()"
 
 
@@ -144,8 +145,8 @@ def test_glm_stages_are_opt_in():
         {"expert_storage": "nvfp4"},
         {"tiny": False},
         {"checkpoint": "unused", "tiny": True},
-        {"sequences_per_microbatch": (3,)},
-        {"sequences_per_microbatch": (1, 1)},
+        {"sequences_per_example": (3,)},
+        {"sequences_per_example": (1, 1)},
         {"lora_rank": 0},
     ),
 )

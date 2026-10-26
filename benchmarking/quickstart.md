@@ -18,7 +18,8 @@ the previous one to fill missing artifacts.
 The migrated path supports single-GPU training and single-node sharded DP,
 including examples with different shapes and static arguments within one update.
 The [catalog factory](../workloads/recipes/text/benchmark/README.md) supplies
-ordinary text models, precision and LoRA settings. GLM and model-owned EP
+ordinary text models, precision and LoRA settings. The GLM families use this
+same runner with their own model/input/initialization helpers. Model-owned EP
 resources still use the old `python -m benchmarking.quickstart.cli` path until
 migrated; its [migration reference](quickstart_legacy.md) is separate.
 The core APIs can be used directly without quickstart; see the
@@ -91,6 +92,7 @@ It returns a plain mapping:
 | `fill_tensor` | Execution callback `(TensorChunk, destination)` filling the bounded CPU buffer supplied by Executor. Checkpoint slices or deterministic random initialization belong here. |
 | `hyperparams` | Optional per-call runtime values using the names declared in the Program. |
 | `metric_reducer` | Optional reducer of host observations to named scalars or MetricSummary. |
+| `context` | Optional context-manager factory around build and execution initialization, for scoped compiler settings and closing readers. Saved tasks do not require it for profiling or execution. |
 | `units_per_step`, `unit_label` | Optional throughput numerator and label; quickstart does not assume tokens. |
 | `metadata` | Optional JSON description retained with the candidate inventory. |
 
@@ -103,8 +105,9 @@ remain available. Runtime hyperparameters must be declared during build—for
 example, construct the optimizer with a tensor-valued learning rate to change it
 at execution time. There is no automatic alias from `lr` to an optimizer group.
 
-The factory runs separately for build and execution. It should return the lazy
-model factory rather than allocating a complete model in its own body. Execution
+The factory runs separately for build and execution. It should return a lazy
+model factory, or declare only meta tensors when the initializer needs their
+geometry. It must not allocate a complete model's payload in its own body. Execution
 never calls `model_factory` or `optimizer`. Initializers must fill supplied chunks;
 quickstart does not create an anonymous full-model host copy. Each budget starts
 from the same contents when the initializer is deterministic.

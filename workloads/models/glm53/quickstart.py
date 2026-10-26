@@ -12,8 +12,8 @@ from .implementations.mlops import Model
 
 # The indexer's discrete top-k depends on the checkpoint's intermediate BF16
 # rounding. Fusing these casts away can change selected keys, not just produce
-# a small continuous rounding error. Keep this policy throughout capture,
-# profiling and execution; the profiling environment includes it in cache keys.
+# a small continuous rounding error. Build under this policy; profiling and
+# execution load the resulting finalized task code without recompiling the model.
 experiment = partial(
     lora_experiment,
     "glm53",

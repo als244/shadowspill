@@ -15,7 +15,7 @@ parallel group is created.
 
 ## Training and precision
 
-The [shared GLM recipe](../shared/glm/recipe.py) defaults to rank-32 BF16 LoRA factors,
+The [shared GLM recipe](../shared/glm/recipe/factory.py) defaults to rank-32 BF16 LoRA factors,
 alpha 32, FP32 accumulated gradients, and BF16 AdamW moments with stochastic
 rounding. The importer preserves the checkpoint's block-FP8 expert data and
 scales; expert GEMMs run in FP8. Compressed dense projections keep their stored
@@ -30,35 +30,32 @@ for byte preservation and the scope of this direct-copy path.
 
 The normal model's quickstart preserves intermediate BF16 casts during
 compilation. Removing those casts can change discrete top-k attention choices.
-This setting covers capture, profiling and execution and participates in the
-profile/manifest cache identity.
+Build finalizes task code under this setting. Independent profiling and execution
+load that saved code without rebuilding the model.
 
 For eight ranks, 4K sequences, 2M global tokens per step, and an 8K-token
 microbatch per rank:
 
 ```bash
-torchrun --standalone --nproc-per-node=8 -m benchmarking.rank_device \
-  -m benchmarking.quickstart \
+python -m benchmarking.quickstart \
   --factory workloads.models.glm53.quickstart:experiment \
-  --factory-args '{"checkpoint":"/local/models/GLM-5.3","expert_storage":"fp8_block","sequence_length":4096,"sequences_per_step":64,"sequences_per_microbatch":[2]}' \
-  --distributed --transfer-shard-size 8 --shard-gradients \
+  --factory-args '{"checkpoint":"/local/models/GLM-5.3","expert_storage":"fp8_block","ranks":8,"sequence_length":4096,"sequences_per_step":64,"sequences_per_example":[2]}' \
   --search-budget-gib 70 --run-budget-gib 70 --spill-gib "$SPILL_GIB" \
-  --steps 7 --resolution-plans --output-dir /local/results/glm53-dp-sharded
+  --steps 7 --output-dir /local/results/glm53-dp-sharded
 ```
 
 Set `SPILL_GIB` from the checkpoint inventory plus training/activation storage;
 the Flash model's capacity requirement does not apply to this larger model.
 Host memory must cover all eight spill pools plus initialization and compiler
-scratch. Set `sequences_per_microbatch` to `[2,4,8,16]` to search the requested
+scratch. Set `sequences_per_example` to `[2,4,8,16]` to search the requested
 8K/16K/32K/64K geometries together, or run each separately for independent
 throughput measurements. `sequences_per_step` is per rank. The objective divides
 by the global token count once; data-parallel reductions sum contributions.
-The launcher gives each process one visible GPU, preserving distributed rank
-identities while using the same compiler device ordinal on every rank.
+The shared runner builds and profiles compute on one GPU, then launches all
+ranks for communication calibration and execution.
 
-Computation weights and gradients can be sharded within local groups independently
-of master/optimizer state ownership across the full replica group. See the
-[distributed API](../../../docs/python/api/distributed.md) and the
+Weights, gradients and optimizer data use the common logical parallelism
+specification. See the [phase API](../../../docs/architecture/offline-pipeline.md) and the
 [shared recipe arguments](../glm53_flash/README.md#generic-quickstart-and-training-sweeps).
 `tiny=true` selects a small random fixture explicitly; `layer_limit` selects a
 checkpoint prefix. Omit both for all 78 layers.

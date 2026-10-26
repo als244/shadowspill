@@ -1,5 +1,4 @@
-"""An optional stage partition for the GLM model; the planner's own is the
-default."""
+"""Optional per-layer GLM partitioning; automatic build partitioning is default."""
 
 import re
 from dataclasses import dataclass

@@ -52,7 +52,7 @@ def test_checkpoint_metadata_rejects_other_architectures_and_rope_variants():
         from_huggingface({"rope_parameters": {"rope_type": "yarn"}})
 
 
-def test_normal_recipe_keeps_bf16_casts_during_its_entire_lifetime():
+def test_normal_recipe_keeps_bf16_casts_while_building_finalized_tasks():
     from torch._inductor import config as inductor_config
 
     recipe = experiment(
@@ -60,7 +60,7 @@ def test_normal_recipe_keeps_bf16_casts_during_its_entire_lifetime():
         tiny=True,
         sequence_length=16,
         sequences_per_step=1,
-        sequences_per_microbatch=(1,),
+        sequences_per_example=(1,),
     )
     with inductor_config.patch(emulate_precision_casts=False):
         with recipe["context"]():

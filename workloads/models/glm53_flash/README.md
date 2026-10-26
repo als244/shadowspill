@@ -327,124 +327,89 @@ and no GLM rule in the neutral planner.
 
 ## Generic quickstart and training sweeps
 
-[quickstart.py](quickstart.py) supplies a text-only LoRA experiment through the
-normal quickstart factory interface. Its `plan_options` carry the gradient
-dtype and, with `partition="glm_stages"`, `GLMStages`, shared by geometry
-search and execution planning. Use `--factory` for this workload; it is not
-one of the short-name performance gate presets.
+[quickstart.py](quickstart.py) supplies model configuration to the
+[shared phase runner](../../../benchmarking/quickstart.md). Both GLM families
+use the same build, profile, communication calibration, CPU planning and
+fresh-worker execution as the other workloads. Family helpers own only model
+construction, input metadata, the objective, precision and initialization.
 
 A small random validation model:
 
 ```bash
-mkdir -p /local/spill
 python -m benchmarking.quickstart \
   --factory workloads.models.glm53_flash.quickstart:experiment \
-  --factory-args '{"tiny":true,"sequence_length":17,"sequences_per_step":2,"sequences_per_microbatch":[1,2],"lora_rank":8}' \
+  --factory-args '{"tiny":true,"sequence_length":17,"sequences_per_step":2,"sequences_per_example":[1,2]}' \
   --search-budget-gib 4 --run-budget-gib 4 --spill-gib 2 \
-  --ssd-spill /local/spill --steps 3 --resolution-plans \
-  --output-dir /local/results/glm-tiny
+  --steps 3 --output-dir /local/results/glm-tiny
 ```
 
-With a local checkpoint, quickstart defaults to `initialization="random"`.
-It reads configuration and safetensors headers, declares the checkpoint's exact
-physical shapes and dtypes (including BF16/FP32 controls and FP8 data/scales),
-and fills them without reading weight payloads. FP8 experts retain one block-scaled
-copy and FP8 GEMMs; initialization uses bounded FP32 scratch. Generated values
-are synthetic and seeded, with positive quantization scales and zero LoRA B
-factors. This mode currently supports dense and block-FP8 storage; other
-compressed dense formats and two-orientation expert storage require checkpoint
-initialization.
+With a local checkpoint, `initialization="random"` reads configuration and
+safetensors headers only. All models, including the tiny fixture, are declared
+on meta. Execution fills Executor-provided CPU chunks in the declared BF16,
+FP32 and FP8 dtypes; no full-model or expert-bank staging copy is created.
+Generated values use fixed seeded blocks independent of request/shard boundaries,
+positive FP8 scales and zero LoRA B factors. This retains the initialization
+distributions. Values depend on tensor names and fixed RNG blocks, so they are
+independent of initialization chunk boundaries and shard ownership.
 
-Set `"initialization":"checkpoint"` in `--factory-args` to load real weights.
-Both modes report initialization bytes, throughput and ETA; these rates include
-initialization/assembly and shard distribution, not just disk reads. Real-text
-training below continues to load actual checkpoint weights.
+`initialization="checkpoint"` reads actual weights into the same bounded chunks.
+Direct BF16 and block-FP8 experts preserve checkpoint bytes. Expert format
+conversion, including NVFP4 experts and two-orientation FP8 storage, is not yet
+supported by this bounded recipe; it fails explicitly before build. The separate
+checkpoint reader's existing `load_into` conversion path remains available.
+Random initialization supports ordinary dense and block-FP8 storage.
 
-For example, to load a four-layer LoRA prefix:
+A four-layer checkpoint prefix:
 
 ```bash
 python -m benchmarking.quickstart \
   --factory workloads.models.glm53_flash.quickstart:experiment \
-  --factory-args '{"checkpoint":"/local/models/GLM-5.3-Flash-NVFP4","initialization":"checkpoint","layer_limit":4,"sequence_length":1024,"sequences_per_step":8,"sequences_per_microbatch":[1,2,4]}' \
-  --lora-rank 32 --minimum-evict-kib 128 \
-  --search-budget-gib 16,24 --run-budget-gib 24 --spill-gib 64 \
-  --ssd-spill /local/spill --steps 3 --resolution-plans \
-  --output-dir /local/results/glm-prefix
+  --factory-args '{"checkpoint":"/local/models/GLM-5.3-Flash-FP8","initialization":"checkpoint","layer_limit":4,"sequence_length":1024,"sequences_per_step":8,"sequences_per_example":[1,2,4]}' \
+  --search-budget-gib 16 24 --run-budget-gib 24 --spill-gib 64 \
+  --steps 3 --output-dir /local/results/glm-prefix
 ```
 
-These are configurable experiment examples, not throughput or numerical
-qualification claims for a full checkpoint training run. Omit `layer_limit`
-for all 45 layers and provision spill capacity for the actual checkpoint plus
-trainable state and saved activations. Do not assume the prefix budgets suffice.
+Defaults are rank-32 BF16 adapters, alpha 32, FP32 accumulated gradients and
+BF16 AdamW moments with stochastic rounding. Frozen tensors retain checkpoint
+precision; dense compressed projections decode for BF16 GEMMs and block-FP8
+experts use FP8 GEMMs. `master_dtype`, `grad_dtype`, `opt_state_dtype` and
+`opt_state_rounding` control trainable state independently. LoRA targets are
+family-defined main projections; auxiliary gates and indexers remain frozen.
 
-Factory arguments: `checkpoint` or `tiny`; `initialization`; `sequence_length`;
-`sequences_per_step`; `sequences_per_microbatch`; `lora_rank`;
-`lora_alpha`; `lora_dtype`; `lora_head`; `grad_dtype`; `opt_state_dtype`;
-`opt_state_rounding`; `gemm_precision`; `expert_storage`; `layer_limit`;
-`head_chunk_size`; `partition`; `seed`; `transfer_shard_size`; `shard_gradients`;
-`preparation_timeout`. The quickstart flags `--lora-rank`, `--lora-alpha` and `--lora-dtype`
-reach the factory under the first three of those LoRA names.
-`--minimum-evict-kib 128` is the forward CLI's small-object policy for this
-checkpoint's many scales.
+`partition="glm_stages"` selects the family partition policy; otherwise build
+uses its automatic policy. `build_options` carries this and the other builder
+controls. Every candidate uses the same rank-local token stream. The objective
+sums token losses and divides once by the global token count.
 
-The optimizer is `mlops.optim.AdamW`, as in the other mlops recipes: one fused
-update per parameter, reading each gradient at `grad_dtype`, the dtype the step
-accumulates it in, and keeping its moments at `opt_state_dtype` (BF16 by
-default, rounded stochastically; `opt_state_rounding` names another rounding).
-The quickstart defaults are rank-16 BF16 factors, alpha 32, FP32 accumulated
-gradients, and BF16 Adam moments. The same training recipe serves
-[GLM-5.3](../glm53/README.md), with separate architecture and checkpoint mappings.
-The checkpoint path rejects unsupported low-precision dense GEMMs immediately;
-its experts compute at their storage's precision (`expert_storage`). The small
-random fixture's experts are bf16, or with `gemm_precision="fp8"` block-scaled
-FP8 (`expert_storage` picks another form), quantized from its random weights;
-that is not the full checkpoint's quantization recipe.
-
-Each candidate uses the same generated token/target sequence, split into
-microbatches. The objective sums token losses and divides by tokens per step.
-All candidates therefore describe the same update. Under `torchrun` with
-`--distributed`, the recipe gives each rank distinct data, divides its objective
-by the global token count, and creates data-parallel groups. `sequences_per_step`
-is per rank. Optimizer reduction sums these contributions; do not divide by the
-world size again.
-
-`--transfer-shard-size N --shard-gradients` enables computation-weight and
-gradient spill sharding. A wrapped frozen weight's data and scale tensors inherit
-its sharding layout. Master/optimizer ownership remains independent and uses the
-full replica group. See the [distributed API](../../../docs/python/api/distributed.md).
-This enables distributed setup; full-checkpoint distributed GLM training still
-requires qualification.
-
-For example, eight ranks, local sharding over all eight, and a fixed 8K-token
-microbatch per rank:
+For eight ranks with weights, gradients and optimizer data sharded across the
+replica, use the same runner and declare `ranks` in the factory arguments:
 
 ```bash
-torchrun --standalone --nproc-per-node=8 -m benchmarking.rank_device \
-  -m benchmarking.quickstart \
+python -m benchmarking.quickstart \
   --factory workloads.models.glm53_flash.quickstart:experiment \
-  --factory-args '{"checkpoint":"/local/models/GLM-5.3-Flash","expert_storage":"fp8_block","sequence_length":4096,"sequences_per_step":64,"sequences_per_microbatch":[2]}' \
-  --distributed --transfer-shard-size 8 --shard-gradients \
+  --factory-args '{"checkpoint":"/local/models/GLM-5.3-Flash-FP8","ranks":8,"sequence_length":4096,"sequences_per_step":64,"sequences_per_example":[2]}' \
   --search-budget-gib 70 --run-budget-gib 70 --spill-gib 96 \
   --steps 5 --output-dir /local/results/glm-dp-sharded
 ```
 
-That example uses random initialization and the factory's rank-32 BF16 LoRA
-defaults. Add `"initialization":"checkpoint"` to load weights. Its original FP8
-checkpoint model occupies about 303 GiB including factors, before gradients,
-optimizer state and activations. Eight 96 GiB spill pools allocate 768 GiB of host
-memory in total; reserve additional memory for initialization, compilation and
-runtime metadata. The example budgets are starting points, not a feasibility or
-throughput result. Each rank still needs a complete stage's execution tensors on
-GPU even though its CPU pool stores only shards.
-The launcher isolates each process on its own GPU before importing the workload,
-so all ranks compile against logical device 0 while retaining their distributed
-rank identities and distinct physical GPUs.
+Build and compute profiling use one GPU. The runner launches all ranks only for
+communication calibration and execution. No live process group is consulted by
+the factory. `num_replicas` repeats the complete replica; `weights`, `gradients`
+and `optimizer` choose storage modes through the common `Parallelism.dp` API.
+`sequences_per_step` is per rank; throughput counts global tokens.
 
-To use `plan_step_search` directly, build/import the factory's model with its
-optional `initialize` callback, then pass its `objective`, `optimizer`,
-`candidates`, and `**experiment["plan_options"]`. The factory's `context()`
-closes any remaining checkpoint readers on failure. Other models can use this
-same factory contract without changing quickstart.
+The budgets above are examples, not measured feasibility or performance claims.
+The original FP8 Flash model occupies about 303 GiB including adapters before
+trainable state and activations. Eight 96 GiB spill pools reserve 768 GiB of host
+memory plus process/compiler overhead. Each GPU still needs a complete stage's
+execution tensors. Full-checkpoint distributed training needs separate validation.
+
+Saved Programs and ProfiledPrograms can be reused by the independent phases.
+For example, `--phase plan --output-dir ...` replans without importing Torch or
+the model. The optional factory `context()` scopes build settings and closes
+checkpoint readers after build/initialization, including on failure. Profiling
+and execution load finalized task code. See the shared runner guide for the
+complete argument contract and artifact layout.
 
 ## General operation dependencies
 

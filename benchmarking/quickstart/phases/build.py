@@ -1,5 +1,6 @@
 """Build final task definitions, without pools or task measurement."""
 
+from contextlib import nullcontext
 from pathlib import Path
 
 from shadowspill import build_step
@@ -9,6 +10,11 @@ from .common import experiment, write
 
 def run(request):
     setup = experiment(request)
+    with setup.get("context", nullcontext)():
+        _build(request, setup)
+
+
+def _build(request, setup):
     model = setup["model_factory"]()
     optimizer = setup["optimizer"](model.parameters())
     root = Path(request["output_dir"]) / "programs"

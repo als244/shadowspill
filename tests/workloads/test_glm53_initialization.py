@@ -7,6 +7,7 @@ pytest.importorskip("mlops")
 
 from mlops.kernels.block_fp8 import quantize_blocks
 
+from shadowspill.execution.tensors import TensorChunk
 from tests.workloads.test_glm53_checkpoint import (
     _materialized,
     _write,
@@ -37,8 +38,28 @@ def mixed_checkpoint(tmp_path):
     return tmp_path
 
 
+def fill_recipe(spec, model):
+    initialize = spec["fill_tensor"]
+    initialize.block_elements = 257
+    for name, tensor in physical_state(model).items():
+        flat = tensor.detach().view(-1)
+        for start in range(0, flat.numel(), 2053):
+            request = TensorChunk(
+                name, tuple(tensor.shape), tensor.dtype, start, flat.numel()
+            )
+            initialize(request, flat[start : start + 2053])
+        # A separate non-aligned shard must agree with the same range above.
+        start, stop = min(11, flat.numel()), min(299, flat.numel())
+        request = TensorChunk(
+            name, tuple(tensor.shape), tensor.dtype, start, flat.numel()
+        )
+        piece = torch.empty(stop - start, dtype=tensor.dtype)
+        initialize(request, piece)
+        assert torch.equal(piece.float(), flat[start:stop].float()), name
+
+
 def test_random_default_uses_only_metadata_and_keeps_physical_storage(
-    mixed_checkpoint, monkeypatch, capsys
+    mixed_checkpoint, monkeypatch
 ):
     with GLMCheckpoint(mixed_checkpoint) as source:
         declared = source.build_model(lora_rank=8, lora_factor_dtype=torch.bfloat16)
@@ -60,12 +81,12 @@ def test_random_default_uses_only_metadata_and_keeps_physical_storage(
         lora_rank=8,
         sequence_length=8,
         sequences_per_step=1,
-        sequences_per_microbatch=(1,),
+        sequences_per_example=(1,),
     )
     assert spec["metadata"]["initialization"] == "random"
     with spec["context"]():
         model = _materialized(spec["model_factory"]())
-        spec["initialize"](model)
+        fill_recipe(spec, model)
     actual = physical_state(model)
     assert {
         name: (tuple(value.shape), value.dtype, value.requires_grad)
@@ -80,10 +101,6 @@ def test_random_default_uses_only_metadata_and_keeps_physical_storage(
             assert torch.count_nonzero(value) == 0, name
     assert model.layers[0].attn_hc.fn.dtype == torch.bfloat16
     assert model.layers[0].self_attn.conv1d.weight.dtype == torch.bfloat16
-    output = capsys.readouterr().out
-    assert "initialization[random]: starting" in output
-    assert f"{len(actual):,}/{len(actual):,} tensors" in output
-    assert "ETA 0s" in output
 
 
 @pytest.mark.parametrize("device", ["cpu", "cuda"])
@@ -125,11 +142,11 @@ def test_checkpoint_mode_loads_actual_weights_and_reports_every_tensor(
         lora_rank=8,
         sequence_length=8,
         sequences_per_step=1,
-        sequences_per_microbatch=(1,),
+        sequences_per_example=(1,),
     )
     with spec["context"]():
         model = _materialized(spec["model_factory"]())
-        spec["initialize"](model)
+        fill_recipe(spec, model)
     with GLMCheckpoint(mixed_checkpoint) as source:
         expected = _materialized(source.build_model(lora_rank=8))
         progress = InitializationProgress(expected, mode="checkpoint")
@@ -141,6 +158,31 @@ def test_checkpoint_mode_loads_actual_weights_and_reports_every_tensor(
         if "lora" not in name:
             assert torch.equal(value.float(), state[name].float()), name
     assert "initialization[checkpoint]" in capsys.readouterr().out
+
+
+@pytest.mark.parametrize("family", ["glm53", "glm53_flash"])
+def test_factory_is_meta_only_and_uses_the_shared_phase_contract(family, monkeypatch):
+    from importlib import import_module
+
+    def no_cuda(*args, **kwargs):
+        pytest.fail("factory construction must not initialize CUDA")
+
+    monkeypatch.setattr(torch.cuda, "_lazy_init", no_cuda)
+    spec = import_module(f"workloads.models.{family}.quickstart").experiment(
+        device="cuda:0",
+        tiny=True,
+        sequence_length=8,
+        sequences_per_step=1,
+        sequences_per_example=(1,),
+    )
+    with spec["context"]():
+        model = spec["model_factory"]()
+        assert all(tensor.is_meta for tensor in physical_state(model).values())
+        assert "initialize" not in spec and "plan_options" not in spec
+        optimizer = spec["optimizer"](model.parameters())
+        assert isinstance(optimizer, torch.optim.Optimizer)
+        assert isinstance(optimizer.param_groups[0]["lr"], torch.Tensor)
+        assert spec["hyperparams"] == {"optimizer_group.0.lr": 1e-4}
 
 
 @pytest.mark.parametrize(

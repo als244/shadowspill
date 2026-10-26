@@ -1,4 +1,4 @@
-"""GLM-5.3-Flash FP8 LoRA quickstart, including local transfer sharding."""
+"""GLM-5.3-Flash LoRA configuration for the shared phase quickstart."""
 
 from functools import partial
 

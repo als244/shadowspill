@@ -91,47 +91,39 @@ def test_sharding_flags_reach_supporting_factories(monkeypatch):
 
 
 def test_glm_dp_objective_is_scaled_once_and_data_differs_between_ranks(monkeypatch):
-    from contextlib import nullcontext
-
     from workloads.models.glm53_flash import quickstart as glm
-    from workloads.recipes.text import distributed
 
-    monkeypatch.setattr(torch.distributed, "is_initialized", lambda: True)
-    monkeypatch.setattr(torch.distributed, "get_world_size", lambda: 4)
-    specification = object()
-    requested = []
+    def no_live_group(*args, **kwargs):
+        pytest.fail("the factory must use logical parallelism, not a live group")
 
-    def groups(**kwargs):
-        requested.append(kwargs)
-        return specification, nullcontext
-
-    monkeypatch.setattr(distributed, "data_parallel_groups", groups)
+    for name in ("is_initialized", "get_world_size", "get_rank", "init_process_group"):
+        monkeypatch.setattr(torch.distributed, name, no_live_group)
     recipes = []
     for rank in (0, 1):
-        monkeypatch.setattr(torch.distributed, "get_rank", lambda rank=rank: rank)
         recipes.append(
             glm.experiment(
                 device="cuda:0",
                 tiny=True,
                 sequence_length=16,
                 sequences_per_step=4,
-                sequences_per_microbatch=(1, 2),
-                transfer_shard_size=2,
-                shard_gradients=True,
+                sequences_per_example=(1, 2),
+                ranks=2,
+                num_replicas=2,
+                logical_rank=rank,
             )
         )
-    assert requested[0]["shard_size"] == 2
-    assert requested[0]["shard_gradients"] is True
-    assert recipes[0]["distributed"] is specification
+    assert recipes[0]["build_options"]["parallelism"].world_size == 4
+    assert recipes[0]["units_per_step"] == 64 * 4
     assert not torch.equal(
-        recipes[0]["candidates"]["1"][0][0], recipes[1]["candidates"]["1"][0][0]
+        recipes[0]["candidates"]["1"]["args"][0][0],
+        recipes[1]["candidates"]["1"]["args"][0][0],
     )
     for recipe in recipes:
         parameter = torch.tensor(2.0, requires_grad=True)
         model = SimpleNamespace(
             loss=lambda *args, value=parameter, **kwargs: value.square()
         )
-        loss = recipe["objective"](model, *recipe["candidates"]["1"][0])
+        loss = recipe["objective"](model, *recipe["candidates"]["1"]["args"][0])
         loss.backward()
         torch.testing.assert_close(parameter.grad, torch.tensor(4.0 / (64 * 4)))
         with recipe["context"]():
