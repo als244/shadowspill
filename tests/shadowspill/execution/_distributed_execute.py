@@ -82,19 +82,20 @@ try:
             collect_parameter_norms=bool(expected["parameter_metrics"]),
         )
         output = pending.result()
-        if plan.program.bindings["kind"] == "step":
-            torch.testing.assert_close(
-                output.parameter_metrics,
-                expected["parameter_metrics"],
-                atol=3e-5,
-                rtol=3e-4,
-            )
+        parameter_metrics = getattr(output, "parameter_metrics", {})
         values = (
             [output] if plan.program.bindings["kind"] == "forward" else output.losses
         )
         for actual, reference in zip(values, expected["outputs"][logical], strict=True):
             torch.testing.assert_close(actual.cpu(), reference, **tolerance())
         del pending, output, values, actual
+        if plan.program.bindings["kind"] == "step":
+            torch.testing.assert_close(
+                parameter_metrics,
+                expected["parameter_metrics"],
+                atol=3e-5,
+                rtol=3e-4,
+            )
 
         seen = set()
         failures = []

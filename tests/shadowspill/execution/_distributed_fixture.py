@@ -58,8 +58,8 @@ def oracle(kind, dtype):
         linear_outputs[module] = (args[0].detach(), output)
 
     # The Program requests FP32 parameter gradients. A BF16 Parameter.grad
-    # would round the GEMM result before conversion; retain its operands so the
-    # independent eager oracle can form the unrounded FP32 weight gradient.
+    # would round GEMM/reduction results before conversion; retain operands so
+    # the eager oracle can form the unrounded FP32 weight and bias gradients.
     for module in model.modules():
         if isinstance(module, nn.Linear):
             module.register_forward_hook(remember_linear)
@@ -83,10 +83,14 @@ def oracle(kind, dtype):
                 local.append(loss.detach().clone())
                 for name, parameter in model.named_parameters():
                     gradient = parameter.grad.float()
-                    if name.endswith(".weight"):
-                        module = model.get_submodule(name.removesuffix(".weight"))
+                    if name.endswith((".weight", ".bias")):
+                        module = model.get_submodule(name.rsplit(".", 1)[0])
                         inputs, output = linear_outputs[module]
-                        gradient = output.grad.float().T @ inputs.float()
+                        gradient = (
+                            output.grad.float().T @ inputs.float()
+                            if name.endswith(".weight")
+                            else output.grad.float().sum(0)
+                        )
                     summed[name].add_(gradient)
             outputs.append(local)
         state = {}
