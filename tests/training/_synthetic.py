@@ -36,12 +36,24 @@ def write_dataset(directory: Path, repeats: int = 40) -> Path:
     return directory
 
 
+class DenseEmbedding(nn.Embedding):
+    """Equivalent tiny-fixture lookup without nondeterministic gradient atomics."""
+
+    def forward(self, tokens):
+        return (
+            F.one_hot(tokens, self.num_embeddings).to(self.weight.dtype) @ self.weight
+        )
+
+
 class TinyModel(nn.Module):
     """An embedding and a head: enough of a language model to train."""
 
-    def __init__(self, vocab: int = VOCAB, width: int = 8) -> None:
+    def __init__(
+        self, vocab: int = VOCAB, width: int = 8, *, deterministic_embedding=False
+    ) -> None:
         super().__init__()
-        self.embed = nn.Embedding(vocab, width)
+        embedding = DenseEmbedding if deterministic_embedding else nn.Embedding
+        self.embed = embedding(vocab, width)
         self.head = nn.Linear(width, vocab)
 
     def loss(
@@ -68,3 +80,10 @@ NOTES: list[str] = []
 
 def note(text: str) -> None:
     NOTES.append(text)
+
+
+def fill_tiny_tensor(request, destination):
+    """Chunk-independent values for the saved-Plan text recipe fixture."""
+    indices = torch.arange(request.offset, request.offset + destination.numel())
+    salt = sum(request.name.encode())
+    destination.copy_((indices.float() + salt).sin() * 0.1)

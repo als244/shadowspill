@@ -40,10 +40,12 @@ def candidate_data(
             seq_slots(capacity, data.min_tokens_per_seq), dtype=torch.int32
         )
         lengths[:sequences] = max_seq_len
+        # A slice clone can retain the full-step stride of the singleton axis.
+        # Match the packer's canonical [1, capacity] layout for exact guards.
         examples[name] = [
             [
-                tokens[:, start : start + capacity].clone(),
-                targets[:, start : start + capacity].clone(),
+                tokens[:, start : start + capacity].flatten().clone().unsqueeze(0),
+                targets[:, start : start + capacity].flatten().clone().unsqueeze(0),
                 lengths.clone(),
             ]
             for start in range(0, max_tokens_per_step, capacity)

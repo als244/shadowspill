@@ -37,6 +37,7 @@ needed; see [expert parallelism](MODELS.md#expert-parallelism).
 | [lora/](lora/) | LoRA targeting for the supplied models over MLOps's reusable projections |
 | [recipes/](recipes/) | Caller-side model/data/objective composition |
 | [recipes/text/data/](recipes/text/data/) | Corpus preparation, fixed token sequences, document packing and resumable sources |
+| [recipes/text/experiment/](recipes/text/experiment/) | Configured text experiments with separate build, profile, CPU plan and fresh-worker execution |
 | [full_model.py](full_model.py) | Reproducible full-model specifications and construction |
 | [numerical.py](numerical.py) | Exact-scale cases shared by the numerical qualification's two arms |
 | [precision.py](precision.py) | Explicit precision settings used by supplied workloads |
@@ -52,6 +53,8 @@ The standalone [Llama](recipes/text/llama3/) and
 [Qwen3.5 LoRA](recipes/text/qwen35_lora/) recipes separate build, profile, plan
 and execution into small modules. They share the [recipe phase driver](recipes/phases.py) and resumable
 text-call adapter, while model-specific initialization remains with each recipe.
+The [configured text runner](recipes/text/experiment/) follows the same phases,
+preserving document packing, runtime norm logging, held-out evaluation and resume.
 The [distributed regression example](recipes/regression/) uses the same driver
 and adds a separate communication-calibration phase. Build and task measurement
 use one GPU; only calibration and execution launch all ranks.
