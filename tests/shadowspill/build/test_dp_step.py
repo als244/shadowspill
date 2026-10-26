@@ -19,6 +19,7 @@ from shadowspill import (
     plan_program,
 )
 from shadowspill.artifacts.tensors import tensor_geometry
+from shadowspill.execution.host_values import HostValues
 from shadowspill.ir import ResourceKind
 from shadowspill.parallelism.views import owned_view_offsets
 from shadowspill.pytorch.executable import restore_executable
@@ -120,6 +121,9 @@ def _check_completion(plan):
                 tuple(slot["object_id"] for slot in entry["output_slots"])
                 == task.outputs
             )
+    # Declared collective inputs participate in the same device classification
+    # as compiled compute inputs, without requiring a live process group here.
+    assert not HostValues(plan).values
     intervals = {item.task_id: item for item in plan.timeline.task_intervals}
     serial = sorted(intervals.values(), key=lambda item: item.start_ns)
     assert all(left.end_ns <= right.start_ns for left, right in pairwise(serial))

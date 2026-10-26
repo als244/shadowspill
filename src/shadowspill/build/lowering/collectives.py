@@ -34,6 +34,7 @@ def declare_collective(
         "tensor_geometry": [
             {
                 "dtype": request.dtype,
+                "device_type": "cuda",
                 "shape": [size],
                 "stride": [1],
                 "storage_offset": 0,

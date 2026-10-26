@@ -38,8 +38,12 @@ def worker(rank, rendezvous):
                 raise ValueError("incorrect local input shape")
             return "ready"
 
-        with pytest.raises(RuntimeError, match="worker 1: incorrect local input shape"):
+        with pytest.raises(
+            RuntimeError, match="worker 1: incorrect local input shape"
+        ) as failure:
             coordinated(context, prepare_inputs)
+        if rank == 1:
+            assert isinstance(failure.value.__cause__, ValueError)
         # Recoverable validation errors leave the control group usable.
         check_invocation(context, None, False)
         with pytest.raises(ValueError, match="observations"):
