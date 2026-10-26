@@ -1,127 +1,108 @@
 # Training composition
 
-The generic runner executes caller-supplied work. Model examples, text packing
-and qualification thresholds sit outside it.
+Preparation produces saved phase artifacts; training consumes a Plan. Models,
+objectives, data packing and qualification thresholds stay outside the installed
+trainer. See the [phase API](offline-pipeline.md) for the full artifact contracts.
 
 ```mermaid
-flowchart TD
-    U[User model, objective, iterable] --> T[Trainer or Forward]
-    R[Optional workload recipe] --> T
-    T --> P[PyTorch backend]
-    T --> S[ShadowSpill backend]
-    S --> L[Capture, compile, profile, plan and admit]
-    L --> E[Local runtime execution]
-    Q[Generic quickstart experiment factory] --> L
-    O[Completed tensor observations] --> T
-    E --> O
-    P --> O
+flowchart LR
+    M[Model and example calls] --> B[build_step]
+    B --> P[Program]
+    P --> V[measure_program / apply_profiles]
+    V --> PP[ProfiledProgram]
+    PP --> S[plan_program]
+    C[CommunicationInfo and MemoryBudgets] --> S
+    S --> EP[Plan]
+    EP --> T[Trainer]
+    T --> E[Executor in a fresh worker]
+    D[Rank-local input calls] --> T
+    E --> O[Completed observations]
+    O --> T
 ```
 
 ## Responsibilities
 
 | Component | Owns |
 | --- | --- |
-| Caller model/objective | Forward math, differentiable scalar, optional small observations |
-| Caller data iterable | One logical update per item, and optional progress serialization |
-| Microbatch function | Splitting one update and assigning each contribution's loss scale |
-| `Trainer` | Update count, schedule evaluation, optional fit/eval/log/checkpoint loop |
-| `DistributedLogger` | Asynchronous CPU metric aggregation and optional grouped W&B runs; per-rank records remain independent |
-| `Forward` | Forward preparation/calls and temporary module mode |
-| Execution backend | Model placement/import, optimizer construction, prepared execution lifecycle |
-| PyTorch frontend | Tensor capture, differentiation, compilation, profiling and lowering |
-| Neutral planner/runtime | Local object lifetimes, offload/recompute schedule and physical admission |
-| `workloads/recipes/text` | Token ingestion, document packing, valid-target normalization and text metrics |
-| `qualification` | Test geometries, hardware policies, references and acceptance thresholds |
-| `benchmarking.quickstart` | Factory composition, named-candidate search, per-budget execution and diagnostics |
+| Model and objective | Forward math, differentiable loss, optional tensor outputs |
+| Builders | Capture, operator recomputation, stage partitioning, finalized task implementations and static storage |
+| Profiling | Task durations and missing memory evidence, using the ordinary allocator |
+| Planning | Example/optimizer ordering, save/recompute selection, transfers and physical admission |
+| Executor | Allocator/pools, groups, saved task execution and bounded tensor access |
+| Trainer | Update count, schedules, host observations, optional fit loop and checkpoint progress |
+| Caller data source | Per-example args/kwargs and optional progress serialization |
+| Logger/callbacks | CPU metrics, evaluation cadence and application-specific actions |
+| Workload recipes | Model configuration, initialization/checkpoint mapping, tokenizer and data semantics |
 
-The installed `shadowspill.training` package does not import workload recipes or
-qualification cases. Backends receive the objective and concrete representative
-microbatches, without a tokenizer, model family or data-source implementation.
-PyTorch pytrees carry arbitrary tensor structures. Input shape/alias guards are
-still enforced by prepared execution.
+`Trainer(plan, ...)` performs no build, profiling or planning. Direct callers can
+use Executor without a Trainer, or supply an existing Executor to Trainer.
+Quickstart and recipes compose the same phases in separate workers. An ordinary
+PyTorch reference loop remains an independent workload implementation.
 
 ## State and lifetime
 
-A ShadowSpill backend context installs the local runtime before accelerator
-resources are created. CPU initialization is ordinary caller code; meta models
-need an explicit initializer or checkpoint. Import retains model values and
-state names. Parameter groups are resolved against the imported model.
+Executor installs its allocator before device initialization, binds the saved
+logical groups and admits the selected memory layout. `initialize(fill_tensor)`
+asks the caller to fill bounded buffers for declared tensor shards. A saved Plan
+contains computation and initialization contracts, not checkpoint weights.
 
-A backend may serve training and forward sessions over the same imported state.
-A forward plan can borrow an admitted training slab when it fits. Borrowing
-sessions close before their owners, then imported state is released and the
-backend closes. The backend closes remaining sessions in reverse order.
+A separately built forward Plan can be passed as `evaluation_plan`. Its model
+tensors share training storage; both plans are admitted against one budget before
+execution. They run sequentially. Evaluation uses current compute weights and
+does not update gradients, optimizer state, schedules or training progress.
 
-Preparation does not consume data, advance schedules or commit an optimizer
-update. A resumed trainer chooses its saved candidate before preparing, restores
-optimizer/loop/RNG state, and optionally restores source progress.
+Trainer owns an Executor it creates; an externally supplied Executor remains
+caller-owned. Returned step observations contain CPU values. Direct Executor
+calls return a pending handle; `.result()` waits for caller-owned outputs.
 
-## Data and observation semantics
+## Data and observations
 
-A source item represents a whole update. The caller either supplies an already
-normalized objective, or supplies per-microbatch loss scales. Gradients sum;
-no model, token-count or replica-count rule is inferred. Runtime scalar weights
-allow normalizers to vary while a fixed-shape graph remains reusable.
+Each `fit` source item is a mapping of arguments for `Trainer.step`, normally
+`{"args": [...], "kwargs": [...]}`. Each sequence entry describes one example
+in the saved Program. The plan chooses execution order. Nested model inputs and
+static metadata use the builder's ordinary PyTorch argument structure.
 
-The objective and parameter observers return tensors from compiled work.
-Returned per-microbatch metrics remain separate until a caller reducer combines
-them. Host conversion happens after step completion. Optional logger/callback
-code does not enter a compiled task.
+The objective supplies its normalization. Contributions accumulate; the trainer
+does not infer token counts or replica denominators. Rank-local loss and other
+observations remain separate until the caller's CPU metric reducer combines them.
 
-## Search and quickstart
+Optional weight/gradient norms are eager observations before optimizer updates,
+with bounded, budgeted scratch. They are disabled by default. They do not become
+compiled tasks, and their runtime is absent from simulated timelines. Enabled
+observations contribute to measured step time. Ordinary callbacks run after the
+completed step, outside compiled work.
 
-`plan_step_search` accepts named representative updates. Every candidate supplies
-its own microbatch sequence. It captures/profiles once per candidate, lowers each
-requested ordering, and evaluates budgets. Report metadata can name throughput
-units; neither search nor plots assume language-model tokens.
+## Checkpoint and resume
 
-Quickstart invokes a supplied experiment factory after runtime installation,
-then uses the ordinary planning API. Text CLI presets build the same experiment
-mapping through an optional recipe. Stores, incremental result tables, traces
-and plots belong to the run directory. Per-budget model factories must recreate
-identical initial state for a comparable measurement.
+Trainer checkpoint helpers stream Executor tensors and save loop, source,
+schedule and RNG progress. Partial LoRA checkpoints require an immutable frozen
+base identity and a bounded loader for omitted weights. They retain optimizer
+state and masters so training can resume faithfully.
 
-## Distributed execution boundary
+`steps` is the total completed-update target. Schedules are evaluated at the
+zero-based update count and name the saved Plan's runtime hyperparameters, such
+as `optimizer_group.0.lr`. Data sources can implement `state_dict` and
+`load_state_dict` for exact continuation. Resuming loads the same Programs;
+compatible budgets and planning order can change independently.
 
-`Distributed` belongs to the PyTorch frontend and is re-exported by the generic
-trainer. The caller first creates a Gloo control group; Runtime checks combined
-host reservations before pinning its pools. Accelerator communication groups and model resources are
-then created by the caller. Initial parameter synchronization follows explicit
-replica ownership; independent mutable buffers stay local.
+## Distributed execution and reporting
 
-Preparation aligns capture/profile invocations, cache decisions, common task
-selections, and admission. Runtime tasks and fetch/evict use local progress with
-no added global task barrier. Intra-task communication completes before that
-local task's completion event. The neutral simulator models each admitted local
-sequence using the coordinated profiles.
+The central `Parallelism` description fixes logical ranks, placements and storage
+sharding during build. Ordinary DP compute tasks build and profile without live
+process groups. `measure_communication` separately calibrates the declared
+collectives. Planning consumes those saved costs and memory evidence.
 
-Local optimizer math is wrapped in explicit gradient SUM, owned-state update,
-and compute-weight exchange tasks. Optimizer state and optional masters are
-sharded by default. The text quickstart recipe supplies token normalization;
-the generic trainer and benchmark do not infer a replica-count denominator.
+Fresh workers share the same Plan and complete worker-to-logical-rank mapping.
+Compute and optimizer communication retain their ordered execution contract.
+Parameter fetch/all-gather and gradient eviction/reduce-scatter use the tracked
+transfer paths. Backend work must finish under its task's completion event;
+private streams remain the backend's responsibility.
 
-Checkpoints store one selected weight representation: masters by default, or
-compute weights on request. Restore casts into compute and configured master
-storage; rank-local buffers, RNG, data progress and moments are separate state.
+`DistributedLogger` can aggregate completed CPU records asynchronously, retaining
+per-rank logs and optional W&B runs. It does not add runtime task barriers.
+Workloads may explicitly reduce globally normalized losses after step completion.
 
-See the [training API](../python/api/training.md),
-[distributed guide](../python/api/distributed.md),
-[planning pipeline](planning-pipeline.md), and
-[quickstart runner](../../benchmarking/quickstart.md).
-
-
-## Diagnostics and reporting
-
-Opt-in startup diagnostics run the admitted task sequence at zero LR only when
-the optimizer advertises state-preserving zero-LR updates. All optimizer work and
-communication still execute. The runner restores mutable model buffers and RNG,
-without snapshotting parameters or optimizer moments, and saves each rank's trace
-and occupancy pages. These invocations do not advance training/data/logging state.
-
-Reporting consumes CPU observations after step completion. A dedicated bounded
-mailbox asynchronously combines matching rank records; it does not enter task
-coordination or add a runtime barrier. Default loss contributions are additive
-and already globally normalized; applications supply a reducer for other
-aggregation semantics. Each rank retains its own records and optional W&B run,
-with an additional aggregate run in the same W&B group. Ordinary torchrun provides
-process supervision, rank-tagged console output and stdout/stderr files.
+See the [training example](../examples/generic-training.md),
+[checkpoint lifecycle](../examples/training-lifecycle.md),
+[quickstart](../../benchmarking/quickstart.md), and
+[text recipes](../../workloads/README.md).

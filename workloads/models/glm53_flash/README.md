@@ -283,7 +283,7 @@ sequence packing. Output-head LoRA is enabled with `lora_head=True`.
 
 ## Partitioning
 
-By default the planner partitions GLM as it does any model. `GLMStages`
+By default the builder partitions GLM as it does any model. `GLMStages`
 ([partition.py](../shared/glm/partition.py)) is an optional `PartitionPolicy`, kept apart
 from model mathematics, checkpoint conversion and MLOps kernels; the
 [generic architecture contract](../../../docs/architecture/partitioning.md)
@@ -302,28 +302,25 @@ work after them joining the next layer's stage; GLM's stacked experts have no
 such modules. Repeated layer occurrences can reuse compiled contracts; stage
 count does not equal compilation count.
 
-Use the policy explicitly with any direct planning API:
+Pass the policy to any of the three public builders:
 
 ```python
+from shadowspill import build_forward
 from workloads.models.glm53_flash.partition import GLMStages
 
-# The same partition= argument works for plan_forward, plan_step,
-# build_step_programs and plan_step_search.
-with plan_forward(
+program = build_forward(
     model,
-    example_inputs=inputs,
-    runtime=runtime,
-    execution="execution",
-    spill="spill",
+    example_args=tuple(inputs),
     partition=GLMStages(),
-) as forward:
-    outputs = forward(inputs)
+)
+program.save("glm-forward.ssp")
 ```
 
-The forward CLI takes `--partition glm-stages` and the quickstart factory
-`partition="glm_stages"`. A custom model can provide a different
-`PartitionPolicy`; there is no architecture-name lookup in the planning API
-and no GLM rule in the neutral planner.
+The quickstart factory accepts `partition="glm_stages"`. The standalone
+SSD-backed forward diagnostic uses the Runtime/plan_forward workflow and accepts
+`--partition glm-stages`; its phase migration remains pending. A custom model can
+provide a different `PartitionPolicy`; there is no architecture-name lookup in
+the build API and no GLM rule in the neutral planner.
 
 ## Generic quickstart and training sweeps
 

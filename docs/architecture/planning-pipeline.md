@@ -1,238 +1,138 @@
 # The planning pipeline
 
-The ordered work that turns a captured step into a callable plan. It is a
-sequence of reusable artifact transformations: the public orchestrators are
-intentionally small, and each artifact can also be constructed or consumed
-independently. These transformations select and physically admit the [logical
-program](program.md); they do not recapture or execute the model.
+Planning consumes a `ProfiledProgram`, memory budgets and communication
+information. It selects a schedule and physical layout without building a model,
+profiling tasks, initializing an accelerator driver or creating runtime pools.
 
 ```text
-capture/export and stage partitioning
-        -> graph-pair construction
-        -> structural compilation and profiling
-        -> canonical ShadowSpillProgram lowering
-        -> StepProgram
-        -> ShadowSpillPlanningProblem
-        -> resolved programs, one per complete graph-pair selection
-        -> the search
-        -> fixed physical layout and admission
-        -> AnnotatedProgramPlan
-        -> materialized callable and PlanReport
+build_forward / build_forward_backward / build_step
+    -> Program: tasks, storage, alternatives and executable payloads
+measure_program, or explicit task profiles
+    -> Profiles: durations and missing memory evidence
+apply_profiles
+    -> ProfiledProgram
+plan_program
+    -> Plan: selected tasks, schedule, layout and simulated timeline
+Executor in a fresh worker
+    -> execution
 ```
 
-`build_step_programs()` stops before the search, with one program per
-ordering from one capture. `plan_program()` accepts a saved problem with new
-budgets or transfer bandwidths, so budget sweeps do not repeat capture,
-compilation, or profiling; with an export bypass key a build does not repeat
-them either, because the programs it produced last time are filed in the build
-store under the identity the request has before any capture. Capturing a program needs the
-frontend; planning a saved one does not, so `plan_program()` lives in
-`shadowspill.planner` and a sweep never imports torch.
+The [phase API](offline-pipeline.md) describes the public calls and artifacts.
+Build owns stage partitioning, operator-level recomputation and task
+implementations. Profiling supplies costs. Planning owns example traversal,
+optimizer placement, stage save/recompute selection and transfers. Execution
+loads the saved decisions and binds actual worker resources.
 
-Stage boundaries follow the frontend [partition policy contract](partitioning.md).
-Policies belong to callers/workloads and reach this pipeline through the ordinary
-`partition=` argument; the neutral planner has no model-specific rules.
+## Planning one candidate
 
-## Two layers
+```python
+from shadowspill import MemoryBudgets, plan_program, write_report
+from shadowspill.step import StepDataOrdering
 
-Two functions divide the work, and the boundary between them is exactly the
-line between *what is asked* and *how it is answered*.
+plan = plan_program(
+    profiled_program,
+    memory_budgets=MemoryBudgets(
+        execution_bytes=40 * 2**30, spill_bytes=128 * 2**30,
+    ),
+    communication_info=communication_info,
+    ordering=StepDataOrdering(depth=2, breadth=4),
+    optimizer_ordering="stage_interleaved",
+)
+plan.save("plan.ssp")
+write_report(plan, "report")
+```
 
-| Layer | Entry | In | Out |
-|---|---|---|---|
-| the planner | `plan_program()` | a [`ShadowSpillPlanningProblem`](planning-problem.md), a store, and a `SearchOptions`: the generic options and the search itself | `AnnotatedProgramPlan` |
-| the search | any [`SearchAlgorithm`](search.md) | a [program](program.md), boundary residency, machine facts, and the generic options -- its own options it already holds | `ProgramPlanResult` |
+`execution_bytes` is the total per-rank GPU allowance, including recorded fixed
+overhead and reserved headroom. `spill_bytes` is a separate per-rank spill
+capacity. The planner subtracts overhead before fitting task tensors and
+workspace; it does not silently allocate extra GPU memory beyond the allowance.
 
-**`plan_program()` is the entry point, and the only one.** It resolves the
-artifact store, turns budgets and bandwidths into a `SimulationConfig` and
-`AdmissionFacts`, consults the planning store, runs the search, holds it to
-any plan it was handed, certifies the physical layout, and returns an
-`AnnotatedProgramPlan`. A plan the store already holds is read back with the
-simulation and the certificate recorded beside it, so a hit simulates and
-places nothing; a refusal the store recorded is raised again as it was. It is the only one of the two that touches disk, and
-the only one that knows what a budget is. Certifying a plan also writes a
-summary of it beside the plan -- its makespan, what it promises, what each
-graph-pair selection cost -- which `summarize_plan()` reads without the plan,
-so a caller comparing many plans deserializes the one it will run and no
-other.
-
-**Where the two layers live.** `plan_program()` and the searches are
-`shadowspill.planner`. The ordered work around them -- the clock each phase is
-measured on, the budget and capacity arithmetic the search is configured from,
-the two refusals a plan can raise, what a plan needs of a live runtime, and the
-plan report -- is `shadowspill.pipeline`. Neither names a framework: a frontend
-captures a step, compiles its tasks and measures them, and everything after
-that is these two. The frontend's own planning package composes the phases and
-calls in; it contributes the capture and the measurement, not the ordering.
-
-**The search answers one question and is pluggable.** It receives a program
-with its alternatives still open, and everything about how to fix them and
-which schedule to choose is its own -- including the order resolutions are
-tried in, which is part of how a search works rather than something the
-planner could choose on its behalf. [Plan search](search.md) states the
-contract in full; [PressureFit](pressurefit.md) is the implementation that
-ships, and `search_options.algorithm` is where another goes.
+The returned Plan exposes `summary`, `schedule`, `selections`, `timeline`,
+`memory_layout` and `diagnostics`. Infeasible requests raise
+`PlanInfeasibleError` or `PlanSearchExhaustedError` with diagnostics. Invalid
+inputs and implementation errors are not converted into infeasible results.
 
 ## The walk through the microbatches
 
-An accumulated training step is one forward and one backward per microbatch,
-then one optimizer update, and the tasks of every microbatch depend only on
-their own data and on the gradients earlier microbatches created. So the
-order the step runs its microbatches in is a free choice, and it decides how
-much moves over the lanes: a step that runs one microbatch through every
-stage before starting the next fetches each stage's parameters once per
-microbatch, while a step that runs every microbatch through one stage before
-any starts the next fetches them once per pass.
+Build fixes the number and geometry of example calls, while planning chooses
+their traversal. `StepDataOrdering(depth, breadth)` describes `depth` passes of
+`breadth` examples, with their product equal to the Program's example count.
+Within each pass, forward visits one stage across all examples before advancing;
+backward visits stages in reverse. A breadth of one is depth-first traversal.
 
-The choice is a `StepDataOrdering`: `depth` passes of `breadth` microbatches
-each, with `depth * breadth` the microbatch count. Within a pass the forward
-is stage-major and the backward stage-major in reverse. `pair_loss` runs each
-microbatch's last stage forward and backward together, because that stage's
-saved state -- the logits a loss keeps for its backward -- is the largest per
-microbatch, and consuming it as it is produced keeps one copy in flight
-rather than a pass's worth. `reverse_breadth` walks a pass's microbatches in
-reverse during backward, so the freshest activations go first. Both flags are
-on by default and mean nothing at `breadth = 1`, which is the microbatch-major
-order: one microbatch start to finish before the next. `plan_step()` takes all
-four.
+Two default flags reduce live activations: `pair_loss` runs each example's final
+forward stage and its backward together; `reverse_breadth` visits examples in
+reverse during backward. The first backward that reaches a parameter creates
+its gradient; subsequent contributions use the accumulation form. That choice
+follows traversal, not the original example index.
 
-One consequence reaches the graph pairs. The gradient of a stage is created by
-the first backward the walk emits for it and accumulated into by every later
-one, so which microbatch runs a stage's creating form and which its
-accumulating form follows from the walk (`StepDataOrdering.creates`), not from
-the microbatch's position, and capture derives both forms for every
-microbatch of an accumulating step; see
-[graph-pair construction](graph-pair-construction.md#accumulating-onto-gradients-that-already-exist).
+Changing traversal reuses the built task forms and compatible profiles. Model
+mutations and RNG effects restrict reorderings when necessary. Optimizer
+placement also happens during planning: stage-interleaved updates follow all
+required gradient writes and old-weight reads; tail updates follow backward.
+`build_forward_backward` Plans include both fresh-gradient and accumulate-into-
+existing-gradient paths, admitted together. Fresh gradients remain the runtime
+default.
 
-`plan_step_search()` accepts caller-named representative updates and lowers
-every `depth x breadth` factor pair of their microbatch counts
-into its own program over the geometry's one capture and profile set -- one
-lowering, whose ordering-independent part is done once
-([cross-task lowering](lowering.md#cross-task-lowering)) -- and
-plans each under every budget, so the winner at a budget is a walk of a
-geometry rather than a geometry alone. Which walk wins depends on the budget:
-a breadth-first walk keeps a stage's activations together and lets a tight
-budget fetch and evict them in bulk, where the depth-first walk of the same
-geometry pays for every microbatch's round trip alone.
+## Search and physical admission
 
-## Policy selection
+Save/recompute alternatives remain open until search chooses a legal assignment.
+The search also chooses fetch, eviction and residency decisions under the supplied
+capacities and costs. `search_options` configures the existing native planner and
+simulator; it performs no build or measurement work.
 
-[Graph-pair construction](graph-pair-construction.md) and [graph-pair
-selection](graph-pair-selection.md) leave the task alternatives *open* in the
-program: they say which implementations exist and which complete assignments
-are legal, not which one to use. Fixing them is the search's work, and the
-planner sees one call and one answer, which is why it can be handed a
-different search without changing. The two levels stay separate in the
-diagnostics, so a report says which assignment won and what it cost to find
-out.
+Logical fit is not sufficient for execution. Physical admission assigns ranges,
+checks allocation contracts and range-reuse dependencies, and re-simulates the
+result. The certified layout travels with the Plan. Estimated memory supports
+simulation only; it cannot produce an executable admission certificate.
+`plan.simulation_only_reasons` reports missing evidence or executable payloads.
+See [physical admission](physical-admission.md) for the placement mechanics.
 
-[PressureFit](pressurefit.md), the search that ships, evaluates eight policies
-per resolved program by default: two residency strategies and four fetch rules,
-using split eviction/fetch exposure and `E, writeback, -slack, -size` cut ranking.
-Search uses
-logical object capacity after provider, fixed-service and
-allocator allowances. It requires the C planner and simulator and fails closed
-on a missing or ABI-incompatible library.
+`sweep_programs` is a convenience loop over explicitly supplied candidates and
+budgets. It retains each successful Plan, diagnostic failures and a
+`best_per_budget` lookup. Callers can write the same loop themselves, including
+additional traversal choices. The helper does not invent candidates or recapture
+models.
 
-## Physical admission
+## Communication costs
 
-The selected logical schedule is not callable until physical admission
-assigns its execution-pool ranges, proves every shared-range dependency, and
-re-simulates the resulting schedule. The certificate that produces is written
-beside the plan in the planning store, named for the facts it was certified
-against, and a later read for the same facts is served with it. Whether it
-fits is settled during the search: each candidate measures its own plan's extent against the pool and
-gives back what it overran, so the schedule reaching this stage has already
-been measured and there is no capacity to lower afterwards.
+`CommunicationInfo` contains host fetch/evict rates and latencies, optional
+concurrent rates, topology, scale-up/out rates and measured collective timings.
+It is separate from compute Profiles, so a saved ProfiledProgram can be replanned
+under different communication assumptions.
 
-The complete capacity equations, allocation lifetimes, deterministic placement
-algorithm, offset coordinate systems, fixed-core/dynamic-scratch boundary,
-runtime sealing, per-candidate capacity refinement, and diagnostics are
-documented in
-[Physical admission and offset handling](physical-admission.md).
+`measure_communication` is an optional, independent GPU calibration API. Given a
+Program it derives the relevant groups, dtypes, sizes and transfer forms; callers
+may override the probes. It also records communication memory evidence. Planning
+prefers matching measurements and estimates gaps from the supplied rates and
+topology, recording the assumptions. Unknown memory is never silently zero.
 
-## Transfer bandwidths
+Optimizer reductions and publication remain ordered with local updates on the
+compute resource. Native fetch includes host-shard copy and all-gather; native
+gradient eviction includes reduction and host-shard copy. Their completion
+boundaries cover all constituent work. Simulation distinguishes collective bytes
+and time from host traffic. Ordinary DP compute profiling can therefore run on
+one representative GPU, while real calibration/execution uses the declared
+participants.
 
-Transfer measurement belongs to runtime initialization. Every supported
-direction is calibrated independently and then under simultaneous
-bidirectional traffic. Planning consumes the solo and concurrent rates and
-switches between them according to simulated overlap. Route latency remains
-recorded metadata and contributes no transfer time. `TransferBandwidths` stored in
-the program and plan make this input explicit and serializable. A plan is
-keyed by the lanes it was priced against, and a calibration moves from run to
-run on one machine, so a caller that has to plan what an earlier search
-planned hands the frontend the lanes that search planned against rather than
-letting a fresh calibration ask the store a new question.
+## Persistence and reports
 
-## The artifact store
+`Program`, `Profiles`, `ProfiledProgram`, `CommunicationInfo`, `Plan` and
+`SweepResult` have explicit save/load methods. Each uses one archive containing
+descriptive metadata and packed payloads. ProfiledProgram includes its Program
+and applied profiles; Plan includes the computation and decisions needed to load
+it independently of the original preparation directory. Weights/checkpoints and
+compatible runtime/provider libraries remain external.
 
-`plan_program()` reads and writes one versioned store with two independent
-trees. `build/` holds what a run pays for and another run can reuse: exports,
-compiler caches, graph pairs, profiles, and, under an export bypass key, the
-step programs a build produced, filed by the identity the request has before
-any capture. `planning/` holds what a run decided: the canonical program each call was given, the requests put to the
-search, the plans it chose, and a readable manifest linking one call to the
-artifacts behind it. A planning call writes nothing under `build/` and a build
-writes nothing under `planning/`, which is what lets one build store serve many
-runs that each keep their own plans. `plan_store` puts the `planning` tree
-under a directory of its own for exactly that case.
+No artifact store is required to pass results between phases. Compiler caches
+remain separate from saved phase artifacts. `write_report` is a CPU-only
+presentation step that writes summaries, timelines and inspection data; saving
+an artifact does not require generating its report.
 
-Each tree carries one policy, a `StoreMode`: `contribute` reads the tree and
-writes back what it lacks, `reuse` reads and persists nothing, `require` reads
-and refuses a miss, and `refresh` ignores what is there and writes over it.
-One mode per tree is one setting with four named states rather than separate
-read, write and overwrite switches.
+The same Plan is loaded by every execution worker for its fixed logical
+parallelism configuration. A complete worker-to-logical-rank map binds physical
+workers at startup. Build/profile artifacts carry implementation identities;
+execution validates relevant builds and memory evidence before admission.
 
-The [artifact store guide](../python/artifact-store.md) documents the layout
-and the per-directory contents.
-
-## Plan report
-
-Planning diagnostics are always present. `PlanReport` maps chronological
-execution IDs to semantic tasks, unique stages, structural contracts, selected
-graph-pair variants, storage contracts, physical layouts, allocation events,
-profile measurements, store hits and misses, transfer calibration, and phase
-times. Verbose console output is only presentation; disabling it does not
-remove the report.
-
-The [PlanReport interpretation guide](../python/plan-report.md) gives the
-inspection order, field tables, task/stage lookup workflow, search
-diagnostics, and common investigations. The [JSON artifact
-guide](../python/planning-json.md) documents the portable program and admitted
-plan schemas separately from the callable's in-memory report.
-
-Previous: [Fixed-offset placement](fixed-placement.md). Next: [Plan
-identity](plan-identity.md).
-
-[Training composition](training.md) describes the generic runner, optional
-recipes and benchmark factories that supply these planning inputs.
-
-## Coordinated distributed preparation
-
-The PyTorch frontend can bind caller-owned process groups and parameter replicas
-through `Distributed`. A Gloo control group checks combined host budgets before
-Runtime allocation. Capture preserves borrowed group handles; profiling and
-cache decisions align actual collective-bearing calls across participants.
-
-The distributed search evaluates common ordered task choices using each rank's
-own memory facts and the slowest predicted rank duration. Every chosen local
-schedule receives ordinary physical admission. Execution adds no global task
-barriers: transfers and task progress remain local, and communication finishes
-inside each task. See [the distributed API](../python/api/distributed.md).
-
-## Explicit prepared computation
-
-`prepare_step` retains a `PreparedStep`: exported objective templates, independent
-position bindings and measured planning problems. `search_prepared_steps` searches
-those problems across budgets without entering a runtime. `admit_step` reloads the
-captured objective, binds current state, validates the selected program and
-certifies the selected schedule against the actual pools. It does not export the
-objective or search again. `Trainer.prepare_artifacts` and `PreparedTraining`
-provide the same boundary with named microbatch candidates and persisted winners.
-
-This artifact selects a computation explicitly and contains no initialized model
-or optimizer state. Structural build/profile stores still supply reusable task
-artifacts. A case orchestrator must separately decide whether source, environment
-and geometry permit reusing a prepared computation; the baseline sweep includes
-those facts in its preparation-group identity. The persistent path currently
-supports one rank. Distributed training retains coordinated preparation.
+Previous: [Fixed-offset placement](fixed-placement.md).
+See also: [training composition](training.md) and [phase API](offline-pipeline.md).
