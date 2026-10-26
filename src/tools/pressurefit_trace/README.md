@@ -11,7 +11,7 @@ Generated data belongs in a separate, ignored run directory such as `runs/`.
 | Emission + placement | Saved `AnnotatedProgramPlan` JSON | [`plan/render_emission_placement.py`](plan/render_emission_placement.py) | [Plan videos](plan/README.md) |
 | Execution timelines | Saved `AnnotatedProgramPlan` JSON | [`plan/render_execution.py`](plan/render_execution.py) | [Plan videos](plan/README.md) |
 
-Capture once with `dump`, search with `plan`, then record decisions with `trace`.
+Export saved profiles with `dump`, search with `plan`, then record decisions with `trace`.
 The resulting raw trace feeds the cut video; the saved plan feeds the other two.
 The [trace API guide](../../../docs/python/pressurefit-trace.md) covers recording
 from Python. The [algorithm guide](../../../docs/architecture/pressurefit.md)
@@ -29,8 +29,8 @@ python -m tools.pressurefit_trace.plan render --help
 
 Python, NumPy, and Matplotlib are already project dependencies. MP4 rendering
 also needs `ffmpeg` on `PATH`. Analysis and PNG rendering run on the CPU and
-do not need an accelerator. `dump` uses the quickstart frontend and its normal
-accelerator/workload dependencies. This package lives under `src/tools/` and
+do not need an accelerator. `dump` reads existing phase artifacts on CPU; build,
+profiling and optional communication calibration happen beforehand. This package lives under `src/tools/` and
 is not included in the product wheel.
 
 If necessary, set `PYTHONPATH=src` when running from the repository root.
@@ -398,12 +398,13 @@ and normal frontend semantic-label export. The optional `semantic_labels.json`
 sidecar must have the same program digest; the renderer works with the generic
 object/task labels when that sidecar is absent.
 
-For a quickstart workload, the collection commands separate accelerator
-capture from CPU planning and recording:
+For an already profiled phase quickstart, all collection commands below run
+on CPU. Build/profile/calibrate first with the normal quickstart phases:
 
 ```sh
-# Pass the same preset/factory and profiling arguments used by quickstart.
-python -m tools.pressurefit_trace dump runs/example/dump -- <quickstart arguments>
+# Read request.json, profiled/*.ssp and communication.ssp; no factory import.
+python -m tools.pressurefit_trace dump runs/example/quickstart \
+    --output runs/example/dump
 
 python -m tools.pressurefit_trace plan runs/example/dump --output runs/example/plans
 python -m tools.pressurefit_trace trace runs/example/plans --output runs/example/traces
@@ -417,15 +418,22 @@ python -m tools.pressurefit_trace export runs/example/all_traces \
     --output runs/example/export
 ```
 
-Capture/plan/trace/export require fresh output directories. `plan` defaults
-to the captured budgets; `--execution-gib` and `--spill-gib` override them.
-`--execution-gib` is usable planner capacity. To specify a physical device cap
-like quickstart's budget, use `--physical-gib` instead: it subtracts the captured
-runtime/headroom carve-out. The two execution-budget options are mutually
-exclusive. Capture with a pool at least as large as the largest intended device
-budget: the saved problem rejects execution budgets above the pool used for
-profiling. Increasing `--physical-gib` does not enlarge that profiling contract.
-Within that ceiling, one capture can feed several independent budget searches:
+Dump/plan/trace/export require fresh output directories. The dump enumerates
+supported example orderings from saved Programs without rebuilding. It uses the
+largest requested physical budget unless `dump --physical-gib` overrides it.
+Across geometries, it reserves the largest recorded fixed device overhead,
+including communication resources; each candidate's original value is also saved.
+This conservative common allowance makes the diagnostic comparisons consistent.
+
+`plan` defaults to the exported capacities. `--execution-gib` specifies usable
+planner capacity; `--physical-gib` subtracts the recorded common overhead. These
+options are mutually exclusive. A dump bounds the diagnostic searches at its
+exported cap; export again with a larger `dump --physical-gib` to raise it, using
+the same saved profiles without any GPU work. The artifacts are diagnostic
+planner inputs and annotated JSON, not portable Executor plans. Use the public
+`plan_program` API or normal quickstart plan phase to produce an executable.
+
+Within the exported cap, one dump can feed several independent budget searches:
 
 ```sh
 python -m tools.pressurefit_trace plan runs/example/dump \
@@ -452,14 +460,12 @@ the effective calibration, and `trace` reuses it when recording the winner, so
 the cut trajectory corresponds to the hypothetical plan rather than the capture's
 original transfer rates. This records planner decisions, not measured execution.
 
-If capture exhausts device capacity while profiling a geometry, it uses the
-normal search's typed out-of-memory detection and rollback validation,
-records that geometry and every associated ordering as `profiling_infeasible`,
-and continues with the remaining geometries. It does not enlarge the pool.
-These failures are preserved in `infeasible_NNNN.json`, `dump.json`, and each
-budget's `plans.json`. Non-capacity failures and incomplete cleanup still stop
-capture. The physical/usable budget mapping and workload metadata also remain
-in `dump.json`.
+Failures already recorded by the profile phase remain in `dump.json` and each
+budget's `plans.json`. Unsupported example orderings also remain explicit
+rejections. Dump never runs profiling, retries a failed geometry or changes the
+source archives. This physical-placement diagnostic requires recorded allocation
+evidence. For simulations using estimated memory, use the public
+`plan_program`/`write_report` path; estimates cannot become execution evidence.
 
 `--workers` controls CPU planning. `trace` defaults to the winning program and
 winning candidate. `--candidates-json pairs.json` supplies a JSON list of
@@ -470,8 +476,8 @@ Collection arguments:
 
 | Command | Argument | Meaning/default |
 | --- | --- | --- |
-| `dump` | `output` | Fresh output directory for captured programs and profiling metadata. |
-| `dump` | `-- <quickstart arguments>` | Forward workload, geometry, and profiling options to quickstart. Use `python -m benchmarking.quickstart --help` for that frontend's arguments. |
+| `dump` | `input`, `--output` | Saved phase quickstart and fresh output directory for diagnostic inputs. |
+| `dump` | `--physical-gib` | Largest exported total GPU cap; defaults to the largest requested quickstart budget. |
 | `plan` | `input`, `--output` | Capture directory and required fresh planning output directory. |
 | `plan` | `--physical-gib` | Physical execution cap; subtract the capture's runtime/headroom carve-out. |
 | `plan` | `--execution-gib` | Usable planner execution capacity; mutually exclusive with `--physical-gib`. Without either, retain captured budgets. |
@@ -779,7 +785,7 @@ completion order does not change winner tie-breaking.
 ```text
 pressurefit_trace/
   __main__.py                 capture, trace analysis, and cut-video CLI
-  collect.py                  dump / plan / trace / export
+  collect/                    saved-profile inputs / CPU planning / trace / export
   matrix.py                   retain and trace each resolution's best policy
   render_batch.py             resumable matrix rendering and verified copies
   winner_capture.py           opt-in exact admitted-plan export

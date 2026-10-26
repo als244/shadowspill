@@ -6,7 +6,7 @@ import argparse
 import json
 from pathlib import Path
 
-from .collect import add_commands
+from .collect.cli import add_commands
 from .data import Trajectory, analyze
 
 
@@ -348,8 +348,6 @@ def build_parser():
 def main(argv=None):
     parser = build_parser()
     args = parser.parse_args(argv)
-    if args.mode == "dump" and args.quickstart[:1] == ["--"]:
-        args.quickstart = args.quickstart[1:]
     try:
         args.run(args)
     except (ValueError, FileNotFoundError) as error:

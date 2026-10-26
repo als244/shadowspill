@@ -3,7 +3,8 @@
 PressureFit can record every cut in selected candidates, including the base
 reduction and later repairs. Tracing is off by default. The recording is a
 single-device, deterministic rerun after the ordinary planning API obtains
-its answer, including when that answer came from the plan store.
+its answer. The public phase API reads existing ProfiledPrograms and runs
+entirely on CPU; no allocator, model, or process group is required.
 
 The fixed ascending key is `E, writeback, -slack, -size`, then alias, start,
 and cut ID. Signed slack is maximized without clamping; exposure sums separately
@@ -11,10 +12,13 @@ clamped eviction and fetch delays. Transfer strategies omit `E`. See the
 [formulas and policy definitions](../architecture/pressurefit.md).
 
 ```python
-from shadowspill.planner import GenericPlanningOptions, SearchOptions, plan_program
+from shadowspill import CommunicationInfo, MemoryBudgets, ProfiledProgram, plan_program
+from shadowspill.planner import GenericPlanningOptions, SearchOptions
 
 answer = plan_program(
-    problem,
+    ProfiledProgram.load("measured.ssp"),
+    memory_budgets=MemoryBudgets(execution_bytes=16 << 30, spill_bytes=112 << 30),
+    communication_info=CommunicationInfo.load("communication.ssp"),
     search_options=SearchOptions(
         generic=GenericPlanningOptions(deterministic=True),
         trace_directory="/tmp/pressurefit-recordings",
@@ -22,8 +26,7 @@ answer = plan_program(
 )
 ```
 
-Each call creates a unique `pressurefit-*` subdirectory. Progress output names
-it. The directory contains `program.json`, `manifest.json`, and a binary
+Each call creates a unique `pressurefit-*` subdirectory. The directory contains `program.json`, `manifest.json`, and a binary
 `.pftrace` file per requested candidate. `trace_candidates=((selection_id,
 candidate_id), ...)` selects explicit pairs from the original diagnostics;
 omitting it records the winner. It does not narrow the ordinary search.
@@ -35,7 +38,7 @@ diagnostic. Internal step recording does not change the caller's keyed
 `record_reduction_steps` option. Failed recording or a mismatched rerun raises
 an error and leaves a manifest marked `failed`, never `complete`.
 
-Generic planning defaults to `deterministic=False`; set it explicitly as above.
+Set `deterministic=True` explicitly when recording traces, as above.
 An isolated replay cannot reproduce the shared placement gate of a
 nondeterministic search, so that mode is refused. A winning incumbent has no
 local cut history: automatic winner tracing refuses it, while explicit

@@ -28,7 +28,7 @@ from tests.shadowspill.planner._examples import (
     training_chain_initial,
     training_chain_program,
 )
-from tools.pressurefit_trace.collect import execution_budget
+from tools.pressurefit_trace.collect.budgets import execution_budget
 from tools.pressurefit_trace.data import (
     Trajectory,
     analyze,

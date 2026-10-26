@@ -127,6 +127,10 @@ def _plan_bound(
                 capacity_bytes=error.capacity_bytes,
             ) from error
         layout, timeline = certified.layout, certified.simulation
+    if options.trace_directory is not None:
+        options.resolved_algorithm.record_trace(
+            result, options=options, placement=facts
+        )
     return Plan(
         program,
         memory_budgets,

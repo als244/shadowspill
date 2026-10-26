@@ -14,7 +14,7 @@ from shadowspill.ir import MutationSpec
 from shadowspill.planner import plan_program
 from tests.shadowspill.planner.test_annotated_plan import _pressurefit_program
 from tools.pressurefit_trace.__main__ import main
-from tools.pressurefit_trace.collect import transfer_bandwidths
+from tools.pressurefit_trace.collect.budgets import transfer_bandwidths
 
 
 @pytest.mark.parametrize(
@@ -92,7 +92,10 @@ def test_recorded_winner_uses_the_saved_bandwidth_override(tmp_path):
         plans["transfer_bandwidths_override"]["evict_solo_bytes_per_second"]
         == 450_000_000_000
     )
-    main(["trace", str(planning), "--output", str(recording)])
+    # A rejected geometry has no saved plan. "all" still traces every success.
+    plans["programs"].append({"name": "rejected", "error": "does not fit"})
+    (planning / "plans.json").write_text(json.dumps(plans))
+    main(["trace", str(planning), "--output", str(recording), "--programs", "all"])
     collection = json.loads((recording / "collection.json").read_text())
     trace = Path(collection["directories"][0])
     manifest = read_manifest(trace)
