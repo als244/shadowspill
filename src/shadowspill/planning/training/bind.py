@@ -5,6 +5,7 @@ from typing import Literal
 
 from shadowspill.artifacts._values import plain
 from shadowspill.artifacts.program import Program
+from shadowspill.errors import PlanInfeasibleError
 from shadowspill.ir import MemoryLocation, ResidencySpec
 from shadowspill.step.ordering import StepDataOrdering
 
@@ -32,7 +33,11 @@ def bind_training(
         raise TypeError("ordering must be StepDataOrdering")
     constraints = program.bindings.get("ordering_constraints", ())
     if constraints and ordering != default:
-        raise ValueError("unsupported reordering: " + "; ".join(constraints))
+        raise PlanInfeasibleError(
+            "unsupported reordering: " + "; ".join(constraints),
+            kind="ordering_constraints",
+            diagnostics=tuple(constraints),
+        )
     aliases = {item.object_id: item.alias_group_id for item in program.objects}
     gradients = tuple(
         item["gradient_object_id"] for item in program.bindings["gradients"]
