@@ -234,14 +234,14 @@ def test_corpus_round_trip_keeps_plan_axes_separate(tmp_path: Path) -> None:
     external_directory = save_annotated_plan(
         loaded_case,
         selected,
-        step_program=loaded_program,
+        source_program=loaded_program,
         output_root=tmp_path / "external-evaluations",
     )
     external = load_annotated_plan(external_directory)
     repeated_directory = save_annotated_plan(
         loaded_case,
         replace(selected, wall_time_ns=selected.wall_time_ns + 1),
-        step_program=loaded_program,
+        source_program=loaded_program,
         output_root=tmp_path / "evaluations",
     )
     repeated = load_annotated_plan(repeated_directory)

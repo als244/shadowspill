@@ -15,11 +15,11 @@ from typing import Any
 
 from benchmarking.program_collection.corpus import (
     ProgramCaseIdentity,
-    load_step_program,
 )
 
-from .config import CollectionConfig
+from .artifacts import load_program
 from .matrix import ProgramRequest
+from .settings import CollectionConfig
 
 _STATUS_SCHEMA = "shadowspill.program_corpus_collection.case/v1"
 _SUMMARY_SCHEMA = "shadowspill.program_corpus_collection.summary/v1"
@@ -227,7 +227,7 @@ def completed_artifact(
             return None
         recovered = True
     directory = _resolve_artifact_directory(paths, request, raw)
-    case, program = load_step_program(directory)
+    case, program = load_program(directory)
     if case.program_digest != raw.get("program_digest"):
         raise ValueError(f"saved program digest changed for {request.case_id}")
     if program.digest != raw.get("program_digest"):

@@ -8,8 +8,6 @@ import json
 import subprocess
 from pathlib import Path
 
-from shadowspill.store import STORE_MODES
-
 from .config import load_collection_config
 from .controller import ControllerOptions, run_collection
 from .matrix import ProgramRequest, expand_program_requests
@@ -57,12 +55,9 @@ def main() -> int:
         return 0
     options = ControllerOptions(
         revision=arguments.revision or _head(Path.cwd()),
-        artifact_store=arguments.artifact_store.expanduser().resolve(),
         resume=arguments.resume,
         timeout_seconds=timeout,
         max_attempts=max_attempts,
-        quiet_plan=arguments.quiet_plan,
-        build_store_mode=arguments.build_store_mode,
     )
     try:
         summary = run_collection(
@@ -92,7 +87,6 @@ def _parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--config", type=Path, required=True)
     parser.add_argument("--output-dir", type=Path, required=True)
-    parser.add_argument("--artifact-store", type=Path, required=True)
     parser.add_argument(
         "--resume",
         action="store_true",
@@ -120,13 +114,6 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--limit", type=int)
     parser.add_argument("--timeout-seconds", type=int)
     parser.add_argument("--max-attempts", type=int)
-    parser.add_argument("--quiet-plan", action="store_true")
-    parser.add_argument(
-        "--build-store-mode",
-        choices=STORE_MODES,
-        help="override the config: what a worker does about a build artifact"
-        " the store does not hold, or holds staleley",
-    )
     parser.add_argument(
         "--dry-run",
         action="store_true",

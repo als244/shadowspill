@@ -8,7 +8,7 @@ from dataclasses import dataclass
 
 from benchmarking.data_geometry import DataGeometry
 
-from .config import BuildSpec, CollectionConfig, ModelSpec, RuntimeSpec
+from .settings import CollectionConfig, ModelSpec, ProfilingSpec
 
 
 @dataclass(frozen=True, slots=True)
@@ -21,8 +21,7 @@ class ProgramRequest:
     tokens_per_microbatch: int
     sequence_length: int
     accumulation_rounds: int
-    runtime: RuntimeSpec
-    build: BuildSpec
+    profiling: ProfilingSpec
     seed: int
 
     @property
@@ -59,12 +58,10 @@ class ProgramRequest:
                 "tokens_per_microbatch": self.tokens_per_microbatch,
                 "sequence_length": self.sequence_length,
                 "sequences_per_microbatch": self.sequences_per_microbatch,
-                # Preserve the schema-v1 ShadowSpillProgram request digest.
-                "accumulation_steps": self.accumulation_rounds,
+                "accumulation_rounds": self.accumulation_rounds,
                 "tokens_per_step": self.tokens_per_step,
             },
-            "runtime": self.runtime.to_dict(),
-            "build": self.build.to_dict(),
+            "profiling": self.profiling.to_dict(),
             "seed": self.seed,
         }
 
@@ -106,8 +103,7 @@ def _model_requests(
             tokens_per_microbatch=tokens,
             sequence_length=sequence_length,
             accumulation_rounds=accumulation_rounds,
-            runtime=config.runtime,
-            build=config.build,
+            profiling=config.profiling,
             seed=model_seed,
         )
         for tokens in axes.tokens_per_microbatch

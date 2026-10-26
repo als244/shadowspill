@@ -109,10 +109,11 @@ class SavedProgramCase:
     identity: ProgramCaseIdentity
     program_digest: str
     artifact_digest: str
+    filename: str = "step_program.json"
 
     @property
     def program_path(self) -> Path:
-        return self.directory / "step_program.json"
+        return self.directory / self.filename
 
 
 def initialize_corpus(root: Path) -> None:
@@ -221,15 +222,16 @@ def _safe(value: str) -> str:
     return normalized
 
 
-_README = """# ShadowSpill input ShadowSpillProgram dataset
+_README = """# Planning input dataset
 
-Each case stores one self-contained `step_program.json` produced before
-PressureFit. Directories are organized by provider/model, data geometry, and
-content digest. Planning-evaluation results live outside this immutable input
-dataset under `benchmarking/planning_eval/results/`.
+Each case stores an immutable manifest and a self-contained phase archive
+(`profiled_program.ssp`). Older cases contain `step_program.json` instead;
+planning evaluation can read both formats. Cases are grouped by provider/model,
+data geometry and content digest. Checksums cover each saved artifact.
 
-Every program has a SHA-256 entry in its adjacent manifest and is validated by
-`StepProgram.from_json()` when loaded.
+Collection builds and measures tasks with the ordinary PyTorch allocator.
+Execution budgets, transfer assumptions and planning results belong in the
+separate planning-evaluation output. Compiler caches remain external.
 """
 
 

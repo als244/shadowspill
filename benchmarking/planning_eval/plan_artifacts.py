@@ -15,15 +15,16 @@ from benchmarking._serialization import (
     string,
     text_digest,
 )
-from benchmarking.program_collection.corpus import (
-    SavedProgramCase,
-    load_step_program,
-)
+from benchmarking.program_collection.artifacts import load_program
+from benchmarking.program_collection.corpus import SavedProgramCase
+from shadowspill.artifacts.profiled_program import ProfiledProgram
 from shadowspill.planner.program import (
     AnnotatedProgramPlan,
 )
 from shadowspill.schema import artifact_schema
-from shadowspill.step import StepProgram
+from shadowspill.step.program import StepProgram
+
+from .inputs import program_digest
 
 _SELECTION_SCHEMA = artifact_schema("planning_corpus.selection")
 
@@ -33,21 +34,21 @@ def save_annotated_plan(
     plan: AnnotatedProgramPlan,
     *,
     metadata: Mapping[str, object] | None = None,
-    step_program: StepProgram | None = None,
+    source_program: ProfiledProgram | StepProgram | None = None,
     output_root: Path,
 ) -> Path:
     """Save one plan under independent budget and bandwidth axes."""
 
-    if step_program is None:
-        saved_case, selected_program = load_step_program(case.directory)
+    if source_program is None:
+        saved_case, selected_program = load_program(case.directory)
         if saved_case != case:
             raise ValueError("saved ShadowSpillProgram case identity changed on disk")
     else:
-        selected_program = step_program
+        selected_program = source_program
         if selected_program.digest != case.program_digest:
-            raise ValueError("provided StepProgram does not match the saved case")
-    if plan.program.program.digest != selected_program.problem.program.digest:
-        raise ValueError("annotated plan does not belong to the saved StepProgram")
+            raise ValueError("provided program does not match the saved case")
+    if plan.program.program.digest != program_digest(selected_program):
+        raise ValueError("annotated plan does not belong to the saved program")
 
     budgets = plan.memory_budgets
     bandwidths = plan.transfer_bandwidths

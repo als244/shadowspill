@@ -1,19 +1,26 @@
 # Planning evaluation
 
-This harness **plans**. It reads a frozen corpus of `StepProgram` inputs
-built by [program collection](../program_collection/README.md) and runs
+This harness **plans**. It reads saved `ProfiledProgram` archives from
+[program collection](../program_collection/README.md), or existing JSON
+`StepProgram` corpora, and runs
 graph-pair selection, the search, simulation, and physical admission over a
 grid of budgets and transfer bandwidths. It constructs no model, captures no
 graph, compiles no task, and profiles no kernel, so it takes no build
 arguments beyond `--corpus-dir`, the path the corpus lives at.
 
 It needs no GPU. The task costs it plans against were measured when the
-corpus was collected and are carried in each `StepProgram`, so a run measures
+corpus was collected and are carried in each artifact, so a run measures
 the planner on the machine it runs on against costs recorded on the machine
 that collected the corpus, and those need not be the same machine. The
 frontier config names no worker count, so the planner's default applies and
 the search uses every logical CPU; wall time is dominated by selection, so a
 host with more cores finishes sooner.
+
+For phase archives, GPU budgets include the recorded fixed device overhead.
+The evaluation worker binds task ordering and measured allocation evidence on
+CPU, using the sweep's budgets and transfer rates. Collection creates no pools
+and imposes no execution-budget ceiling. Existing JSON corpora retain their
+recorded capacity conventions.
 
 ## Running it
 

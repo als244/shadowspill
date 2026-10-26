@@ -1,45 +1,50 @@
-"""Registered model construction for ShadowSpillProgram-corpus workers."""
+"""Build catalog structure and packed input geometry without model storage."""
 
-from __future__ import annotations
-
-from collections.abc import Sequence
 from dataclasses import replace
+from functools import partial
 
-from workloads.full_model import FullModelCase, build_case, spec
+import torch
+
+from shadowspill import Program, build_step
+from workloads.full_model import build_model, full_model_objective, spec
+from workloads.models.shared.training import LEARNING_RATE
 
 from .matrix import ProgramRequest
 
 
-def build_program_case(request: ProgramRequest) -> FullModelCase:
-    """Construct one registered model with the request's packed geometry."""
-
-    manifest = spec(request.model.model, request.model.implementation)
+def build_program(request: ProgramRequest) -> Program:
+    base = spec(request.model.model, request.model.implementation)
     manifest = replace(
-        manifest,
+        base,
         sequence_length=request.sequence_length,
         sequences_per_microbatch=request.sequences_per_microbatch,
         accumulation_count=request.accumulation_rounds,
-        head_scratch_bytes=(
-            manifest.head_scratch_bytes
-            if request.model.head_scratch_bytes is None
-            else request.model.head_scratch_bytes
-        ),
+        head_scratch_bytes=base.head_scratch_bytes
+        if request.model.head_scratch_bytes is None
+        else request.model.head_scratch_bytes,
     )
-    # No Runtime here: this builds programs, and the model is only needed
-    # on the host long enough to lower it.
-    return build_case(manifest, seed=request.seed)
-
-
-def profiling_metadata(case: FullModelCase) -> tuple[object, ...]:
-    """Preserve authentic packed sequence geometry for every microbatch."""
-
-    result: list[object] = []
-    for index, microbatch in enumerate(case.microbatches):
-        lengths = microbatch[2]
-        if not isinstance(lengths, Sequence):
-            raise TypeError(f"microbatch {index} sequence lengths are not a sequence")
-        result.append({"sequence_lengths": [int(value) for value in lengths]})
-    return tuple(result)
-
-
-__all__ = ["build_program_case", "profiling_metadata"]
+    generator = torch.Generator().manual_seed(request.seed)
+    args = (
+        *(
+            torch.randint(
+                manifest.model_config.vocab_size,
+                (1, request.tokens_per_microbatch),
+                generator=generator,
+            )
+            for _ in range(2)
+        ),
+        (request.sequence_length,) * request.sequences_per_microbatch,
+    )
+    model = build_model(manifest)
+    optimizer = manifest.dtypes.optimizer()(
+        model.parameters(), lr=torch.tensor(LEARNING_RATE)
+    )
+    return build_step(
+        model,
+        objective=partial(full_model_objective, manifest),
+        optimizer=optimizer,
+        example_args=args,
+        num_examples=request.accumulation_rounds,
+        target=request.profiling.device,
+        **manifest.dtypes.plan_arguments(),
+    )

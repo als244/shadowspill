@@ -14,8 +14,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import TextIO
 
-from benchmarking.program_collection.corpus import load_step_program
-
+from .artifacts import load_program
 from .matrix import ProgramRequest
 from .state import utc_now
 
@@ -159,6 +158,13 @@ def load_worker_outcome(
             "InvalidWorkerResult",
             "case identity changed",
         )
+    if value.get("request_digest") != expected_request.digest:
+        return _failure(
+            return_code,
+            elapsed_seconds,
+            "InvalidWorkerResult",
+            "request identity changed",
+        )
     raw_artifact = value.get("artifact")
     if not isinstance(raw_artifact, dict):
         return _failure(
@@ -169,7 +175,7 @@ def load_worker_outcome(
         )
     try:
         directory = Path(str(raw_artifact["directory"]))
-        saved, program = load_step_program(directory)
+        saved, program = load_program(directory)
         if saved.program_digest != raw_artifact.get("program_digest"):
             raise ValueError("worker artifact ShadowSpillProgram digest changed")
         if program.digest != saved.program_digest:

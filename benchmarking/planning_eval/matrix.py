@@ -26,12 +26,17 @@ class FrontierAxes:
 
     @property
     def label(self) -> str:
-        execution = self.execution_budget_bytes >> 30
-        spill = self.spill_budget_bytes >> 30
+        execution = _budget_label(self.execution_budget_bytes)
+        spill = _budget_label(self.spill_budget_bytes)
         return (
-            f"execution-{execution}GiB_spill-{spill}GiB_"
+            f"execution-{execution}_spill-{spill}_"
             f"transfer-{self.bandwidth_scale.label}"
         )
+
+
+def _budget_label(value: int) -> str:
+    # Preserve existing GiB corpus IDs without aliasing smaller test budgets.
+    return f"{value >> 30}GiB" if value % (1 << 30) == 0 else f"{value}B"
 
 
 @dataclass(frozen=True, slots=True)

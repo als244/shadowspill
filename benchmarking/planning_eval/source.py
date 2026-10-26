@@ -101,9 +101,9 @@ def _case_from_manifest(path: Path) -> CorpusProgramCase:
     if not isinstance(value, dict):
         raise ValueError(f"ShadowSpillProgram manifest {path} is not an object")
     identity = ProgramCaseIdentity.from_value(value.get("identity"))
-    artifact = value.get("step_program")
+    artifact = value.get("profiled_program", value.get("step_program"))
     if not isinstance(artifact, dict):
-        raise ValueError(f"program manifest {path} has no step_program object")
+        raise ValueError(f"program manifest {path} has no program artifact")
     program_digest = artifact.get("program_digest")
     artifact_digest = artifact.get("artifact_sha256")
     if not isinstance(program_digest, str) or len(program_digest) != 64:

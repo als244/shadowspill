@@ -6,14 +6,7 @@ from pathlib import Path
 
 import pytest
 
-from benchmarking.program_collection.config import (
-    BuildSpec,
-    CollectionConfig,
-    GeometryAxes,
-    ModelSpec,
-    RuntimeSpec,
-    load_collection_config,
-)
+from benchmarking.program_collection.config import load_collection_config
 from benchmarking.program_collection.controller import (
     ControllerOptions,
     run_collection,
@@ -25,6 +18,12 @@ from benchmarking.program_collection.corpus import (
 from benchmarking.program_collection.matrix import (
     ProgramRequest,
     expand_program_requests,
+)
+from benchmarking.program_collection.settings import (
+    CollectionConfig,
+    GeometryAxes,
+    ModelSpec,
+    ProfilingSpec,
 )
 from benchmarking.program_collection.state import (
     CollectionPaths,
@@ -41,7 +40,7 @@ _FULL_CONFIG = (
     / "benchmarking"
     / "program_collection"
     / "configs"
-    / "full_model_program_corpus_v1.json"
+    / "full_model_program_corpus_v2.json"
 )
 
 
@@ -54,8 +53,7 @@ def _config() -> CollectionConfig:
         max_attempts=2,
         geometry=GeometryAxes((1024,), (1024,), (1, 2)),
         models=(ModelSpec("mlops-llama", "llama3-8b", "mlops"),),
-        runtime=RuntimeSpec(4096, 8192, 4096, 8192),
-        build=BuildSpec("stage_interleaved", 1, 2, "contribute", None),
+        profiling=ProfilingSpec(),
     )
 
 
@@ -225,12 +223,9 @@ def test_controller_records_each_failure_and_continues(
         output_root=output,
         options=ControllerOptions(
             revision="0" * 40,
-            artifact_store=tmp_path / "cache",
             resume=False,
             timeout_seconds=10,
             max_attempts=1,
-            quiet_plan=False,
-            build_store_mode=None,
         ),
     )
     assert summary["counts"] == {
@@ -274,12 +269,9 @@ def test_controller_records_controller_exception_and_continues(
         output_root=output,
         options=ControllerOptions(
             revision="0" * 40,
-            artifact_store=tmp_path / "cache",
             resume=False,
             timeout_seconds=10,
             max_attempts=1,
-            quiet_plan=False,
-            build_store_mode=None,
         ),
     )
     assert len(visited) == 2

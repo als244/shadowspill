@@ -6,26 +6,28 @@ import argparse
 import time
 from pathlib import Path
 
-from benchmarking.program_collection.corpus import (
-    SavedProgramCase,
-    load_step_program,
-)
+from benchmarking.program_collection.artifacts import load_program
+from benchmarking.program_collection.corpus import SavedProgramCase
+from shadowspill.artifacts.profiled_program import ProfiledProgram
 from shadowspill.planner import (
+    GenericPlanningOptions,
     SearchOptions,
     plan_program,
 )
 from shadowspill.planner.program import (
     ShadowSpillPlanningProblem,
 )
+from shadowspill.planner.search.algorithms.pressurefit import PressureFit
 from shadowspill.planner.search.algorithms.pressurefit.options import (
     PressureFitOptions,
 )
 from shadowspill.schema import artifact_schema
 from shadowspill.simulator import SimulationInfeasibleError
-from shadowspill.step import StepProgram
+from shadowspill.step.program import StepProgram
 
 from .config import FrontierConfig, load_frontier_config
 from .evidence import failed_point_evidence, successful_point_evidence
+from .inputs import planning_problem
 from .matrix import FrontierPointRequest, expand_frontier_points
 from .plan_artifacts import save_annotated_plan
 from .source import CorpusProgramCase
@@ -45,21 +47,8 @@ _EXPECTED_INFEASIBLE = (SimulationInfeasibleError,)
 _EXPECTED_EXHAUSTED = ()
 
 
-def _planner_options(config: FrontierConfig) -> SearchOptions | None:
-    """What every search is told, or None for the defaults."""
-
-    named = {
-        name: value
-        for name, value in (("deterministic", config.deterministic),)
-        if value is not None
-    }
-    return SearchOptions(**named) if named else None
-
-
-def _search_options(config: FrontierConfig) -> PressureFitOptions | None:
-    """What this search is told. Held apart from the planner's own settings,
-    because a field here is PressureFit's candidate space and means nothing
-    to another search."""
+def _search_options(config: FrontierConfig) -> SearchOptions:
+    """Combine generic determinism with the selected algorithm's controls."""
 
     named = {
         name: value
@@ -69,7 +58,13 @@ def _search_options(config: FrontierConfig) -> PressureFitOptions | None:
         )
         if value is not None
     }
-    return PressureFitOptions(**named) if named else None
+    generic = (
+        {} if config.deterministic is None else {"deterministic": config.deterministic}
+    )
+    return SearchOptions(
+        generic=GenericPlanningOptions(**generic),
+        algorithm=PressureFit(PressureFitOptions(**named)),
+    )
 
 
 def evaluate_case(
@@ -86,8 +81,8 @@ def evaluate_case(
 ) -> dict[str, object]:
     """Load one ShadowSpillProgram once, then independently persist every point."""
 
-    saved_case, step_program = load_step_program(case_directory)
-    program = step_program.problem
+    saved_case, source_program = load_program(case_directory)
+    program = planning_problem(source_program, config)
     case = CorpusProgramCase(
         saved_case.directory,
         saved_case.identity,
@@ -132,7 +127,7 @@ def evaluate_case(
                 paths=paths,
                 case=case,
                 saved_case=saved_case,
-                step_program=step_program,
+                source_program=source_program,
                 program=program,
                 request=request,
                 directory=directory,
@@ -166,7 +161,7 @@ def _evaluate_point(
     paths: BaselinePaths,
     case: CorpusProgramCase,
     saved_case: SavedProgramCase,
-    step_program: StepProgram,
+    source_program: ProfiledProgram | StepProgram,
     program: ShadowSpillPlanningProblem,
     request: FrontierPointRequest,
     directory: Path,
@@ -200,7 +195,6 @@ def _evaluate_point(
             execution_budget=request.axes.execution_budget_bytes,
             spill_budget=request.axes.spill_budget_bytes,
             transfer_bandwidths=request.transfer_bandwidths,
-            options=_planner_options(config),
             search_options=_search_options(config),
             artifact_store=artifact_store,
             verbose=verbose_search,
@@ -214,7 +208,7 @@ def _evaluate_point(
                 "purpose": "search-frontier",
                 "program_role": program.role,
             },
-            step_program=step_program,
+            source_program=source_program,
             output_root=paths.case_directory(case) / "annotated-plans",
         )
         elapsed = time.perf_counter() - started

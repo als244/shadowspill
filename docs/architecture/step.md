@@ -1,86 +1,48 @@
-# The step artifacts
+# Step structure and ordering
 
-A captured step, the question asked about it and the answer are three different
-things. This page is the first: what a step *is*, in the two values that survive
-capture and travel onwards. Both live in `shadowspill.step`, and neither imports
-a framework.
-
-## Why they are their own package
-
-`StepDataOrdering` and `StepProgram` speak the vocabulary of a training step --
-microbatches, passes, the orderings that walk them. That is not
-planning vocabulary, so they do not belong to the [planner](planning-pipeline.md), which
-is handed a [problem](planning-problem.md) and has no opinion about what shape
-of step produced it.
-
-They do not belong to the [PyTorch frontend](lowering.md) either, and this is
-the load-bearing half. A `StepProgram` is read, validated and planned with no
-PyTorch installed. That is what lets a corpus be collected in one process, on a
-machine with a model and an accelerator, and planned in another that has
-neither -- which is how [program
-collection](../../benchmarking/program_collection/README.md) and [planning
-evaluation](../../benchmarking/planning_eval/README.md) run separately. Under
-`shadowspill.pytorch` these two values would make the import of a saved corpus
-pull in a framework it does not need. So they sit beside both, as a peer
-package holding the step's own description.
-
-## `StepDataOrdering`
-
-The walk a step takes through its microbatches: `depth` passes of `breadth`
-microbatches, with the product pinned to the microbatch count. Within a pass the
-forward is stage-major and the backward stage-major in reverse.
-
-Two flags change the walk rather than its extent, and both are on by default.
-`pair_loss` runs a microbatch's last stage forward and backward together, so
-that stage's saved state is consumed as it is produced instead of being held for
-the whole pass. `reverse_breadth` walks a pass's microbatches in reverse during
-backward, so the microbatch whose activations are youngest is consumed first.
-Neither means anything at `breadth = 1`, which is the microbatch-major walk: one
-microbatch start to finish before the next.
-
-Why the ordering is part of the step and not a planning option: it changes which
-objects exist at the same time, so it changes the program that is lowered, not
-the policy applied to one. Two orderings are two programs, and the search
-compares plans for each rather than choosing between orderings itself. What each
-walk does to peak residency is in
-[graph-pair construction](graph-pair-construction.md).
-
-`resolve()` fills in whichever of the two counts a caller left out, and refuses a
-pair whose product is not the microbatch count rather than quietly dropping or
-repeating data. `creates()` says whether one microbatch's backward for a stage
-creates that stage's gradient -- the first the walk reaches does, and every later
-one adds into it -- which is what makes gradient accumulation expressible as
-ordinary object dependencies rather than a special case. `label` and
-`from_label()` carry an ordering as `2x4rp`, which is how a figure or a report
-names one.
-
-## `StepProgram`
-
-The [planning problem](planning-problem.md) a captured step lowered to, the
-orderings it was lowered under, and the provenance that says what produced them.
-
-Every invocation of a step is the same program. Optimizer state exists in the
-spill pool before the first one -- planning creates each entry at the value the
-optimizer's own first step would give it, or the caller imports it -- so the
-first step has nothing to create and plans like every other.
-
-`digest` identifies planning content -- the program, the orderings, and the
-measurements they were taken under -- and not the run that produced them, so two
-collections of the same step are one artifact rather than two that have to be
-planned twice. `to_json()` and `from_json()` round a step through a file, and
-that file is the unit a corpus is made of.
-
-## Where they sit
+`build_step` produces a `Program` containing fixed task implementations, tensor
+structure and save/recompute alternatives. `measure_program` supplies reusable
+`Profiles`; `apply_profiles` produces a `ProfiledProgram`. None of these phases
+requires execution pools or a planning memory budget.
 
 ```text
-capture → lowering → StepProgram → ShadowSpillPlanningProblem → search → plan
-                         │
-                    StepDataOrdering travels with it, and with the plan report
+build_step → Program → measure_program → Profiles
+                 └── apply_profiles ──→ ProfiledProgram
+                                           │
+                  ordering, budgets, communication_info
+                                           ↓
+                                      plan_program → Plan
 ```
 
-`build_step_programs()` stops at the `StepProgram`, one per ordering;
-`plan_program()` takes one of a program's problems. The [planning pipeline](planning-pipeline.md) page covers what happens
-after, and [reusable artifacts](../python/api/artifacts.md) documents the fields.
+The public [phase API](offline-pipeline.md) defines the artifacts and their
+save/load boundaries. [Program collection](../../benchmarking/program_collection/README.md)
+stops at a saved `ProfiledProgram`; [planning evaluation](../../benchmarking/planning_eval/README.md)
+consumes it without importing a model or framework.
+
+## Planning-time ordering
+
+`StepDataOrdering` describes `depth` passes of `breadth` examples, whose product
+must equal the Program's example count. Within a pass, forward visits each stage
+for all examples; backward visits stages in reverse. Breadth one gives the
+usual one-example-at-a-time order.
+
+`pair_loss` pairs each example's terminal forward and backward.
+`reverse_breadth` visits the youngest example first during backward. Both default
+to true. Labels such as `2x4rp` record these settings in reports.
+
+The planner binds this ordering to the saved stage templates. It chooses which
+backward creates a gradient and which later backwards add into it, without
+rebuilding or remeasuring the tasks. `optimizer_ordering` similarly selects
+stage-interleaved or tail updates. Mutation and random-state dependencies still
+constrain valid schedules; an incompatible ordering is rejected.
+
+## Diagnostic JSON corpora
+
+`shadowspill.step.StepProgram` remains the reader for JSON planning corpora. It
+contains a bound `ShadowSpillPlanningProblem`, a fixed ordering and provenance.
+These files can still be inspected and replanned, but new collection writes
+`ProfiledProgram` archives. The [JSON reference](../python/planning-json.md)
+describes their retained format.
 
 Previous: [Graph-pair construction](graph-pair-construction.md). Next:
 [Importing state](state-import.md).

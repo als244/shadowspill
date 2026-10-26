@@ -281,8 +281,8 @@ These pages live beside the code they describe, outside `docs/`.
 - [Quickstart plots for slides](../benchmarking/quickstart_timeline.md) — export
   memory/compute/transfer timelines, summary statistics, and budget/throughput
   comparison slides from saved reports.
-- [program collection](../benchmarking/program_collection/README.md) — the
-  harness that builds a corpus of step programs and runs no planner.
+- [Program collection](../benchmarking/program_collection/README.md) — the
+  harness that saves profiled-program archives and runs no planner.
 - [Planning evaluation](../benchmarking/planning_eval/README.md) — the
   harness that plans that corpus: search, simulation, and physical
   admission across budgets and bandwidths.

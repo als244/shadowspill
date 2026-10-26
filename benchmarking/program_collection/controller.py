@@ -6,9 +6,9 @@ import sys
 from dataclasses import dataclass
 from pathlib import Path
 
-from .config import CollectionConfig
 from .matrix import ProgramRequest
 from .process import WorkerOutcome, execute_worker, load_worker_outcome
+from .settings import CollectionConfig
 from .state import (
     CollectionLock,
     CollectionPaths,
@@ -29,12 +29,9 @@ class ControllerOptions:
 
     #: The revision every case this run produces records.
     revision: str
-    artifact_store: Path
     resume: bool
     timeout_seconds: int
     max_attempts: int
-    quiet_plan: bool
-    build_store_mode: str | None
 
 
 def run_collection(
@@ -48,7 +45,6 @@ def run_collection(
     """Collect every selected ShadowSpillProgram, recording failures and continuing."""
 
     paths = CollectionPaths.initialize(output_root, config)
-    options.artifact_store.mkdir(parents=True, exist_ok=True)
     _preflight_resume(paths, selected, options)
     started_at = utc_now()
     selected_ids = tuple(request.case_id for request in selected)
@@ -202,6 +198,7 @@ def _worker_command(
 ) -> list[str]:
     command = [
         sys.executable,
+        *(["-S"] if sys.flags.no_site else []),
         "-m",
         "benchmarking.program_collection.worker",
         "--config",
@@ -210,15 +207,9 @@ def _worker_command(
         request.case_id,
         "--output-dir",
         str(paths.output_root),
-        "--artifact-store",
-        str(options.artifact_store),
         "--result",
         str(result_path),
     ]
-    if options.quiet_plan:
-        command.append("--quiet-plan")
-    if options.build_store_mode is not None:
-        command.extend(("--build-store-mode", options.build_store_mode))
     return command
 
 

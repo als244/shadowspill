@@ -1,0 +1,58 @@
+{
+  "schema": "shadowspill.program_corpus_collection/v2",
+  "name": "full-model-program-corpus-v2",
+  "seed": 20260816,
+  "expected_programs": 168,
+  "case_timeout_seconds": 3600,
+  "max_attempts": 3,
+  "geometry": {
+    "tokens_per_microbatch": [
+      4096,
+      8192,
+      16384,
+      32768,
+      65536
+    ],
+    "sequence_lengths": [
+      1024,
+      8192,
+      16384,
+      32768
+    ],
+    "accumulation_rounds": [
+      1,
+      2,
+      4,
+      8
+    ]
+  },
+  "models": [
+    {
+      "name": "mlops-llama3-8b",
+      "model": "llama3-8b",
+      "implementation": "mlops",
+      "geometry": null,
+      "head_scratch_bytes": null
+    },
+    {
+      "name": "mlops-qwen35-9b",
+      "model": "qwen35-9b",
+      "implementation": "mlops",
+      "geometry": null,
+      "head_scratch_bytes": null
+    },
+    {
+      "name": "mlops-olmoe-7b",
+      "model": "olmoe-7b-a1b",
+      "implementation": "mlops",
+      "geometry": null,
+      "head_scratch_bytes": null
+    }
+  ],
+  "profiling": {
+    "device": "cuda:0",
+    "warmup_seconds": 0.05,
+    "measure_seconds": 0.18,
+    "external_headroom_bytes": 536870912
+  }
+}
