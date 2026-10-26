@@ -11,6 +11,7 @@ from torch import nn
 from torch._subclasses.fake_tensor import FakeTensorMode
 from torch.utils._pytree import TreeSpec, tree_flatten
 
+from shadowspill.errors import CaptureError
 from shadowspill.pytorch.capture.artifacts import (
     GraphArtifact,
     capture_forward_stage_artifacts,
@@ -59,7 +60,12 @@ def capture_forward_model(
         (tuple(args), dict(kwargs)), mode, device_index=device_index
     )
     with mode, torch.no_grad():
-        output_values, output_tree = tree_flatten(replica(*fake_args, **fake_kwargs))
+        try:
+            output_values, output_tree = tree_flatten(
+                replica(*fake_args, **fake_kwargs)
+            )
+        except Exception as error:
+            raise CaptureError(f"forward output capture failed: {error}") from error
         exported = capture_forward(replica, fake_args, kwargs=fake_kwargs)
         if view is not None:
             restore_module_paths(exported, replica, view)

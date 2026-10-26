@@ -49,7 +49,6 @@ shadowspill_add_pytorch_canary(pool_sizing_refusal 60)
 shadowspill_add_pytorch_canary(allocator_oom 60)
 shadowspill_add_pytorch_canary(allocation_contract_failure 20)
 shadowspill_add_pytorch_canary(invalid_access 60)
-shadowspill_add_pytorch_canary(planning_failure 120)
 shadowspill_add_pytorch_canary(profiler 60)
 shadowspill_add_pytorch_canary(forward 90)
 shadowspill_add_pytorch_canary(state_import_export 90)
@@ -83,6 +82,10 @@ function(shadowspill_add_public_api_test file name timeout)
   )
 endfunction()
 
+shadowspill_add_public_api_test(
+  shadowspill/build/test_failures.py
+  test_phase_failures_leave_preparation_reusable 300
+)
 shadowspill_add_public_api_test(
   shadowspill/execution/test_saved_executor.py
   test_saved_plan_executes_without_build_or_measurement[forward-None-False] 300

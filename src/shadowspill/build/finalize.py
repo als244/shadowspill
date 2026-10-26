@@ -10,8 +10,10 @@ from torch.utils._pytree import tree_flatten
 from shadowspill.artifacts._values import digest
 from shadowspill.artifacts.program import Program
 from shadowspill.artifacts.tasks import stage_jobs
+from shadowspill.errors import CompilationError
 from shadowspill.pytorch.control_inputs import ControlInputs
 from shadowspill.pytorch.executable import restore_executable
+from shadowspill.pytorch.task_errors import task_error
 from shadowspill.pytorch.task_inputs import prepare_inputs
 from shadowspill.pytorch.tuning import capture_choices
 from shadowspill.resources.preparation import prepare_resources
@@ -39,7 +41,7 @@ def _finalize_tasks(program: Program, device: torch.device) -> Program:
     functions: dict[str, Any] = {}
     controls = ControlInputs(program, device)
 
-    def invoke(key: str, arguments: Sequence[Any]) -> Any:
+    def finalize(key: str, arguments: Sequence[Any]) -> Any:
         if key not in functions:
             functions[key] = restore_executable(
                 program.executables[key], dependencies=dependencies.get(key, ())
@@ -58,6 +60,14 @@ def _finalize_tasks(program: Program, device: torch.device) -> Program:
         executables[key] = functions[key].serialize()
         pending.remove(key)
         return result
+
+    def invoke(key: str, arguments: Sequence[Any]) -> Any:
+        try:
+            return finalize(key, arguments)
+        except Exception as error:
+            raise task_error(
+                CompilationError, program, key, "kernel finalization", error
+            ) from error
 
     with (
         torch.cuda.device(device),

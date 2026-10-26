@@ -4,6 +4,7 @@ from collections.abc import Iterable, Mapping
 
 import torch
 
+from shadowspill.errors import CompilationError
 from shadowspill.pytorch.capture.artifacts import GraphArtifact
 from shadowspill.pytorch.toolchain import build_setup as build_setup
 
@@ -21,7 +22,15 @@ def compile_artifacts(
         for artifact in artifacts:
             key = artifact.compatibility_digest
             if key not in result:
-                result[key] = compile_task(
-                    artifact, input_offsets=(input_offsets or {}).get(key, ())
-                )
+                try:
+                    result[key] = compile_task(
+                        artifact, input_offsets=(input_offsets or {}).get(key, ())
+                    )
+                except Exception as error:
+                    raise CompilationError(
+                        f"task compilation failed ({artifact.kind}, {key}): {error}",
+                        structural_contract=key,
+                        task_kind=artifact.kind,
+                        operators=artifact.operator_targets,
+                    ) from error
     return result

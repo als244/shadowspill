@@ -2,8 +2,33 @@
 
 The detailed callable/store lifecycle below covers the model-based frontend
 still used by some integrations. For saved-plan execution and its ownership
-boundaries, see [Trainer and Executor](api/training.md) and the
-[phase API guide](../architecture/offline-pipeline.md).
+boundaries, see [Trainer and Executor](api/training.md). The saved-phase behavior
+is summarized first.
+
+## Saved phase failures
+
+The [phase APIs](../architecture/offline-pipeline.md) separate preparation from
+execution. Build and measurement use ordinary allocations, while planning uses
+only saved artifacts. None of these phases constructs runtime pools.
+
+- `build_forward`, `build_forward_backward` and `build_step` report unsupported
+  capture as `CaptureError` and task compilation/finalization as `CompilationError`.
+  A missing device implementation therefore fails during build, before profiling.
+- `measure_program` reports failed task measurement as `ProfilingError`, with
+  the task's structural identity, kind and operators. Provider failures, including
+  out-of-memory errors, remain attached as the original cause.
+- `plan_program` distinguishes infeasibility from an exhausted search. It does
+  not modify the supplied profiles, so callers can retry with different budgets.
+- A preparation failure does not publish a partial result. Provider resource
+  scopes close on failure. Ordinary temporary tensors are released when their
+  references, including any retained exception tracebacks, are released.
+
+A valid build/profile/plan can follow a recoverable failure in the same process.
+Execution still starts in a fresh worker through `Executor`; a failed device
+context is not made reusable merely by catching an exception. Preparation does
+not transfer ownership of the caller's model tensors to an execution pool.
+
+## Model-based frontend lifecycle
 
 ShadowSpill fails closed at the boundary that can still explain the problem.
 Capture, compilation, profiling, planning, admission, input validation, and

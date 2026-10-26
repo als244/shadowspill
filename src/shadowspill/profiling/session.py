@@ -11,8 +11,10 @@ from shadowspill.artifacts._values import plain
 from shadowspill.artifacts.profiles import Profiles
 from shadowspill.artifacts.program import Program
 from shadowspill.communication.binding.groups import GroupBindings
+from shadowspill.errors import ProfilingError
 from shadowspill.pytorch.control_inputs import ControlInputs
 from shadowspill.pytorch.executable import restore_executable
+from shadowspill.pytorch.task_errors import task_error
 from shadowspill.pytorch.task_inputs import prepare_inputs
 
 from .device_memory import external_device_bytes
@@ -57,18 +59,23 @@ class MeasurementSession:
     def measure(self, key: str, arguments: Sequence[Any]) -> None:
         if key in self.profiles.tasks:
             return
-        with torch.cuda.stream(self.streams[key]):
-            result = measure_task(
-                self.function(key),
-                arguments,
-                self.program.bindings["manifests"][key],
-                device=self.device,
-                warmup_seconds=self.warmup,
-                measure_seconds=self.measurement,
-                continue_while=None
-                if self.groups is None
-                else self.groups.continue_sampling,
-            )
+        try:
+            with torch.cuda.stream(self.streams[key]):
+                result = measure_task(
+                    self.function(key),
+                    arguments,
+                    self.program.bindings["manifests"][key],
+                    device=self.device,
+                    warmup_seconds=self.warmup,
+                    measure_seconds=self.measurement,
+                    continue_while=None
+                    if self.groups is None
+                    else self.groups.continue_sampling,
+                )
+        except Exception as error:
+            raise task_error(
+                ProfilingError, self.program, key, "measurement", error
+            ) from error
         definition = next(
             item for item in self.program.task_definitions if item.profile_key == key
         )

@@ -28,6 +28,7 @@ class CompiledTasks:
         self.memory: dict[str, Any] = {}
         self.inputs: dict[str, Any] = {}
         self.dependencies: dict[str, Any] = {}
+        self.metadata: dict[str, Any] = {}
 
     def key(self, artifact: GraphArtifact, paths: tuple[str, ...] = ()) -> str:
         item = self.compiled[artifact.compatibility_digest]
@@ -56,6 +57,11 @@ class CompiledTasks:
             self.memory[key] = item.memory
             self.inputs[key] = task_inputs(artifact)
             self.dependencies[key] = item.dependencies
+            self.metadata[key] = {
+                "structural_contract": artifact.compatibility_digest,
+                "kind": artifact.kind,
+                "operators": artifact.operator_targets,
+            }
         paths = tuple(dict.fromkeys((*definition.module_paths, *paths)))
         self.definitions[key] = replace(
             definition,
@@ -100,4 +106,5 @@ class CompiledTasks:
             "compiler_memory": self.memory,
             "task_inputs": self.inputs,
             "operator_dependencies": self.dependencies,
+            "task_metadata": self.metadata,
         }
