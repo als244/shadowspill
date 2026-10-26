@@ -8,7 +8,6 @@ from torch import nn
 
 from shadowspill.errors import CaptureError
 from shadowspill.parallelism.ownership import ParameterOwnership
-from shadowspill.pytorch.capture.artifacts import GraphArtifact
 from shadowspill.pytorch.optimizer import OptimizerCapture, capture_optimizer
 from shadowspill.pytorch.optimizer.artifacts import OptimizerTensorRole
 from shadowspill.pytorch.optimizer.bindings import tensor_bindings
@@ -120,13 +119,6 @@ def capture_update(
         gradient_dtype=gradient_dtype,
         compute_copies=compute_copies,
     )
-    if result.update_is_opaque or any(
-        not isinstance(task.artifact, GraphArtifact) for task in result.update_tasks
-    ):
-        raise CaptureError(
-            "portable build_step requires a traceable optimizer update: "
-            f"{result.opaque_reason or result.optimizer_type}"
-        )
     return BuiltOptimizer(
         result,
         initialization,

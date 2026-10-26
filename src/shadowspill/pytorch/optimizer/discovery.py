@@ -15,9 +15,6 @@ from torch._subclasses.fake_tensor import FakeTensor
 
 from shadowspill.errors import CaptureError
 
-from .artifacts import (
-    OptimizerCapture,
-)
 from .bindings import (
     representative_optimizer_values,
     state_structure,
@@ -25,7 +22,6 @@ from .bindings import (
 )
 from .sandbox import (
     canonical_parameters,
-    copy_optimizer,
     copy_optimizer_to_meta,
     fake_device_optimizer,
     optimizer_parameters,
@@ -45,14 +41,9 @@ class OptimizerDiscovery:
     optimizer_type: str
     sandbox: torch.optim.Optimizer
     name_by_sandbox_id: dict[int, str]
-    first_step_is_opaque: bool
     created_state_names: tuple[str, ...]
     initialized_state_dict: dict[str, Any] | None
     representative_values: dict[str, torch.Tensor]
-    #: The sandbox before it moved onto fake tensors, and its names: what an
-    #: opaque fallback is captured from, since an opaque task keeps real values.
-    real_sandbox: torch.optim.Optimizer | None = None
-    real_name_by_sandbox_id: dict[int, str] | None = None
     #: What each state entry starts at, by parameter and entry name, read from
     #: how the step made it (`starts`).
     state_starts: dict[tuple[str, str], StateStart] = field(default_factory=dict)
@@ -100,7 +91,7 @@ def discover_optimizer_state(
     optimizer: torch.optim.Optimizer,
     *,
     receives_gradient: Collection[str] | None = None,
-) -> OptimizerDiscovery | OptimizerCapture:
+) -> OptimizerDiscovery:
     """Discover lazy tensor state on a storage-free optimizer copy.
 
     ``receives_gradient`` names the parameters a captured backward really
@@ -111,10 +102,7 @@ def discover_optimizer_state(
     parameter that may be trained is treated as trained.
     """
 
-    copied = _copy_discovery_sandbox(inventory, optimizer)
-    if isinstance(copied, OptimizerCapture):
-        return copied
-    sandbox, sandbox_parameters, names = copied
+    sandbox, sandbox_parameters, names = _copy_discovery_sandbox(inventory, optimizer)
     actual_names = {
         id(parameter): name
         for name, parameter in inventory.canonical_parameters.items()
@@ -143,13 +131,10 @@ def discover_optimizer_state(
     )
     with recorder:
         step = _run_discovery_step(
-            inventory.optimizer_type,
             sandbox,
             names,
             baseline,
         )
-    if isinstance(step, OptimizerCapture):
-        return step
     sandbox, names, initialized_state, discovered_values = step
     representative_values.update(discovered_values)
     return _finish_optimizer_discovery(
@@ -189,25 +174,19 @@ def _state_starts(
 def _copy_discovery_sandbox(
     inventory: OptimizerInventory,
     optimizer: torch.optim.Optimizer,
-) -> (
-    tuple[
-        torch.optim.Optimizer,
-        tuple[torch.nn.Parameter, ...],
-        dict[int, str],
-    ]
-    | OptimizerCapture
-):
+) -> tuple[
+    torch.optim.Optimizer,
+    tuple[torch.nn.Parameter, ...],
+    dict[int, str],
+]:
     try:
         actual_names = {
             id(parameter): name
             for name, parameter in inventory.canonical_parameters.items()
         }
         sandbox, names = copy_optimizer_to_meta(optimizer, actual_names)
-    except BaseException as exc:
-        return _empty_opaque_capture(
-            inventory.optimizer_type,
-            f"optimizer cannot be copied for capture: {exc}",
-        )
+    except Exception as exc:
+        raise CaptureError(f"optimizer cannot be copied for capture: {exc}") from exc
     parameters = optimizer_parameters(sandbox)
     if len(parameters) != len(inventory.actual_parameters):
         raise CaptureError("copied optimizer changed its parameter inventory")
@@ -266,19 +245,15 @@ def _discovery_baseline(
 
 
 def _run_discovery_step(
-    optimizer_type: str,
     sandbox: torch.optim.Optimizer,
     names: dict[int, str],
     baseline: _DiscoveryBaseline,
-) -> (
-    tuple[
-        torch.optim.Optimizer,
-        dict[int, str],
-        dict[str, Any] | None,
-        dict[str, torch.Tensor],
-    ]
-    | OptimizerCapture
-):
+) -> tuple[
+    torch.optim.Optimizer,
+    dict[int, str],
+    dict[str, Any] | None,
+    dict[str, torch.Tensor],
+]:
     try:
         # Discovery is not a semantic optimizer step.  Invoke the unwrapped
         # implementation so user/global step hooks remain reserved for real
@@ -286,9 +261,8 @@ def _run_discovery_step(
         step = inspect.unwrap(type(sandbox).step).__get__(sandbox, type(sandbox))
         with torch.no_grad():
             step()
-    except BaseException as exc:
+    except Exception as exc:
         return _recover_failed_discovery(
-            optimizer_type,
             sandbox,
             names,
             baseline,
@@ -298,53 +272,39 @@ def _run_discovery_step(
 
 
 def _recover_failed_discovery(
-    optimizer_type: str,
     sandbox: torch.optim.Optimizer,
     names: dict[int, str],
     baseline: _DiscoveryBaseline,
     failure: BaseException,
-) -> (
-    tuple[
-        torch.optim.Optimizer,
-        dict[int, str],
-        dict[str, Any] | None,
-        dict[str, torch.Tensor],
-    ]
-    | OptimizerCapture
-):
+) -> tuple[
+    torch.optim.Optimizer,
+    dict[int, str],
+    dict[str, Any] | None,
+    dict[str, torch.Tensor],
+]:
     if state_structure(sandbox, names) == baseline.state_structure:
-        # A data-dependent but stateless optimizer can fail symbolic execution
-        # without changing its tensor inventory.  Preserve the symbolic
-        # sandbox so graph export can classify it as a bounded opaque task.
-        if is_data_dependent_failure(failure):
-            return sandbox, names, None, {}
-        return _empty_opaque_capture(
-            optimizer_type,
-            f"optimizer discovery step failed: {failure}",
-        )
+        raise CaptureError(
+            f"optimizer discovery step failed; provide a capturable update: {failure}"
+        ) from failure
     if any(
         isinstance(parameter, FakeTensor) for parameter in optimizer_parameters(sandbox)
     ):
-        return _empty_opaque_capture(
-            optimizer_type,
-            "storage-free optimizer discovery step failed after changing its "
-            f"tensor inventory: {failure}",
-        )
+        raise CaptureError(
+            "storage-free optimizer discovery failed after changing its "
+            f"tensor inventory: {failure}"
+        ) from failure
     try:
         _complete_failed_state_discovery(sandbox, names, baseline.parameters)
         state = sandbox.state_dict()
         representative = representative_optimizer_values(sandbox, names)
         fake_sandbox, fake_names = fake_device_optimizer(sandbox, names)
         return fake_sandbox, fake_names, state, representative
-    except BaseException as fake_failure:
-        return _empty_opaque_capture(
-            optimizer_type,
-            (
-                f"optimizer discovery step failed: {failure}; "
-                "optimizer must provide valid fake/meta behavior for lazy "
-                f"state discovery: {fake_failure}"
-            ),
-        )
+    except Exception as fake_failure:
+        raise CaptureError(
+            f"optimizer discovery step failed: {failure}; "
+            "optimizer must provide valid fake/meta behavior for lazy "
+            f"state discovery: {fake_failure}"
+        ) from fake_failure
 
 
 def _finish_optimizer_discovery(
@@ -357,7 +317,7 @@ def _finish_optimizer_discovery(
     representative_values: dict[str, torch.Tensor],
     state_starts: dict[tuple[str, str], StateStart],
 ) -> OptimizerDiscovery:
-    first_step_is_opaque = state_structure(sandbox, names) != baseline.state_structure
+    creates_state = state_structure(sandbox, names) != baseline.state_structure
     actual_names = {
         id(parameter): name
         for name, parameter in inventory.canonical_parameters.items()
@@ -367,13 +327,12 @@ def _finish_optimizer_discovery(
     created_state_names = tuple(
         sorted(set(after_state_names) - set(before_state_names))
     )
-    if not first_step_is_opaque:
+    if not creates_state:
         _restore_discovery_baseline(sandbox, baseline)
     return OptimizerDiscovery(
         optimizer_type=inventory.optimizer_type,
         sandbox=sandbox,
         name_by_sandbox_id=names,
-        first_step_is_opaque=first_step_is_opaque,
         created_state_names=created_state_names,
         initialized_state_dict=initialized_state,
         representative_values=representative_values,
@@ -462,7 +421,7 @@ def _complete_failed_state_discovery(
             try:
                 with torch.no_grad():
                     optimizer.step()
-            except BaseException:
+            except Exception:
                 _require_unchanged_discovery_parameters(
                     (snapshots_by_id[id(selected)],)
                 )
@@ -497,40 +456,6 @@ def fake_update_sandbox(discovery: OptimizerDiscovery) -> None:
     discovery.representative_values.update(
         representative_optimizer_values(sandbox, names)
     )
-    # The fake conversion consumes the sandbox, so what an opaque fallback is
-    # captured from is a copy of it; on meta that copy is storage-free. Names
-    # follow the parameters, which is all a name map holds.
-    real = copy_optimizer(sandbox)
-    pairs = tuple(
-        zip(optimizer_parameters(sandbox), optimizer_parameters(real), strict=True)
-    )
-    # A Parameter's deep copy is made from its data alone, so the gradients the
-    # discovery seeded are copied across by hand.
-    for original, copied in pairs:
-        if original.grad is not None and copied.grad is None:
-            copied.grad = original.grad.detach().clone()
-    discovery.real_sandbox = real
-    discovery.real_name_by_sandbox_id = {
-        id(copied): names[id(original)]
-        for original, copied in pairs
-        if id(original) in names
-    }
     sandbox, names = fake_device_optimizer(sandbox, names)
     discovery.sandbox = sandbox
     discovery.name_by_sandbox_id = names
-
-
-def is_data_dependent_failure(failure: BaseException) -> bool:
-    description = str(failure)
-    return "_local_scalar_dense" in description or "Tensor.item" in description
-
-
-def _empty_opaque_capture(optimizer_type: str, reason: str) -> OptimizerCapture:
-    return OptimizerCapture(
-        optimizer_type=optimizer_type,
-        update=None,
-        update_tasks=(),
-        bindings=(),
-        mutation_names=(),
-        opaque_reason=reason,
-    )

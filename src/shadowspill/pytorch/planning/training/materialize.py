@@ -244,11 +244,6 @@ def materialize_training_state(
 
         with timer.measure("model_placeholder_restoration"):
             state.restore_device_placeholders_after_optimizer_capture()
-        if optimizer_capture.update is None:
-            raise PlanningError(
-                "the optimizer state/update cannot be bounded: "
-                f"{optimizer_capture.opaque_reason}"
-            )
         return TrainingMaterializationArtifacts(
             state, optimizer, optimizer_capture, optimizer_parameters
         )

@@ -17,9 +17,6 @@ from shadowspill.diagnostics.timing import (
     ArmedTaskTiming as _ArmedTaskTiming,
 )
 from shadowspill.pytorch.capture.artifacts import GraphArtifact
-from shadowspill.pytorch.optimizer import (
-    OpaqueOptimizerArtifact,
-)
 from shadowspill.pytorch.runtime_adapter.boundaries import (
     before_task_and_acquire,
     wait_task_allocations,
@@ -261,8 +258,6 @@ def _assemble_optimizer_call(
     executor: TrainingExecutor, record: _ExecutionTaskRecord
 ) -> TaskCall:
     artifact = record.artifact
-    if isinstance(artifact, OpaqueOptimizerArtifact):
-        return TaskCall((), None, True)
     if not isinstance(artifact, GraphArtifact):
         raise RuntimeError("optimizer task has no executable artifact")
     # Every argument the plan holds -- a parameter, its master, its gradient,

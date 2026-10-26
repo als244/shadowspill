@@ -3,37 +3,31 @@
 `capture` is the entry: it discovers the state an optimizer keeps
 (`discovery`), traces its update once (`trace`) and partitions it
 into tasks (`tasks`), over copies of the optimizer (`sandbox`) and the named
-tensors it touches (`bindings`); `opaque` materialises the bounded fallback for
-profiling. `artifacts` are the values these produce, `store` the trace's cache,
+tensors it touches (`bindings`). `artifacts` holds their results and `store`
+the trace's cache;
 `staging` which stage owns each parameter, `checkpoint` the state's structure.
 """
 
 from .artifacts import (
-    OpaqueOptimizerArtifact,
     OptimizerCapture,
     OptimizerTask,
-    OptimizerTaskArtifact,
     OptimizerTensorBinding,
     OptimizerTensorRole,
 )
 from .capture import capture_optimizer, current_optimizer_bindings
 from .checkpoint import restore_optimizer_checkpoint_structure
-from .opaque import materialize_opaque_optimizer
 from .staging import (
     training_parameter_stage_owners,
     training_parameters_with_gradients,
 )
 
 __all__ = [
-    "OpaqueOptimizerArtifact",
     "OptimizerCapture",
     "OptimizerTask",
-    "OptimizerTaskArtifact",
     "OptimizerTensorBinding",
     "OptimizerTensorRole",
     "capture_optimizer",
     "current_optimizer_bindings",
-    "materialize_opaque_optimizer",
     "restore_optimizer_checkpoint_structure",
     "training_parameter_stage_owners",
     "training_parameters_with_gradients",

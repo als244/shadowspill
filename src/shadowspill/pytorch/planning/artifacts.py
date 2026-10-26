@@ -17,7 +17,7 @@ from shadowspill.pytorch.capture.objective import TrainingObjectiveCapture
 from shadowspill.pytorch.capture.retention import RetentionPolicy
 from shadowspill.pytorch.compilation.compiler import CompiledTaskSet
 from shadowspill.pytorch.materialization.training import TrainingMaterializedState
-from shadowspill.pytorch.optimizer import OptimizerCapture, OptimizerTaskArtifact
+from shadowspill.pytorch.optimizer import OptimizerCapture
 from shadowspill.pytorch.profiling import (
     ProfilingMetadata,
     ProfilingResult,
@@ -118,9 +118,9 @@ class TrainingProfileArtifacts:
     """Unique structural contract inventory, manifests, and task measurements."""
 
     partitioned: tuple[PartitionedTrainingCapture, ...]
-    compile_tasks: tuple[OptimizerTaskArtifact, ...]
+    compile_tasks: tuple[GraphArtifact, ...]
     profile_keys: tuple[tuple[str, str | None], ...]
-    profile_tasks: tuple[OptimizerTaskArtifact, ...]
+    profile_tasks: tuple[GraphArtifact, ...]
     profile_metadata_digests: tuple[str | None, ...]
     profiler: TaskProfiler
     manifests: ResolvedTaskManifests

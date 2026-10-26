@@ -8,7 +8,6 @@ from shadowspill.errors import CaptureError
 from shadowspill.ir import TaskProfile
 from shadowspill.pytorch.capture.artifacts import GraphArtifact
 from shadowspill.pytorch.capture.storage import TaskStorageContract
-from shadowspill.pytorch.optimizer import OptimizerTaskArtifact
 from shadowspill.pytorch.profiling import TaskMeasurement
 from shadowspill.task.geometry import TaskStorageGeometry
 from shadowspill.task.layout import (
@@ -18,7 +17,7 @@ from shadowspill.task.layout import (
 from shadowspill.task.manifest import ExecutableRootAllocation
 
 ProfileMeasurementKey = str | tuple[str, str | None]
-ProfiledArtifact = GraphArtifact | OptimizerTaskArtifact
+ProfiledArtifact = GraphArtifact
 
 
 class CompiledLayoutIndex:

@@ -317,7 +317,7 @@ def test_optimizer_publishes_all_components_from_dense_master():
     capture = capture_optimizer(
         {"weight": master}, optimizer, compute_copies={"weight": net.weight}
     )
-    assert isinstance(capture.update, GraphArtifact), capture.opaque_reason
+    assert isinstance(capture.update, GraphArtifact)
     assert [b.name for b in capture.bindings] == [
         "weight",
         "gradient.weight",

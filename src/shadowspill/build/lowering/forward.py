@@ -87,6 +87,11 @@ def lower_forward(
             **catalog.bindings(),
             "kind": "forward",
             "entrypoints": [asdict(item) for item in graph.entrypoints],
+            "transient_outputs": {
+                item.task_id: item.replacement_output_leaves
+                for item in graph.entrypoints
+                if item.replacement_output_leaves
+            },
             "registrations": model_registrations(captured.model, objects.registrations),
             "model_tensor_geometry": model_tensor_geometry(
                 captured.model, objects.registrations

@@ -53,7 +53,6 @@ shadowspill_add_pytorch_canary(planning_failure 120)
 shadowspill_add_pytorch_canary(profiler 60)
 shadowspill_add_pytorch_canary(forward 90)
 shadowspill_add_pytorch_canary(state_import_export 90)
-shadowspill_add_pytorch_canary(mutation 90)
 shadowspill_add_pytorch_canary(training 120)
 shadowspill_add_pytorch_canary(planning_residue 120)
 
@@ -137,10 +136,6 @@ shadowspill_add_public_api_test(
   test_mixed_calls_keep_weights_metrics_and_group_controls[breadth_first] 300
 )
 shadowspill_add_public_api_test(
-  shadowspill/pytorch/api/test_01_public_training.py
-  test_public_training_profiles_bounded_opaque_optimizer 300
-)
-shadowspill_add_public_api_test(
   shadowspill/execution/test_shared_plans.py
   test_shared_evaluation_and_checkpoint_in_cold_workers 300
 )
@@ -209,6 +204,11 @@ shadowspill_add_public_api_test(
 shadowspill_add_public_api_test(
   shadowspill/execution/test_host_metrics.py
   test_host_metrics_and_mixed_shapes_in_saved_training 300
+)
+
+shadowspill_add_public_api_test(
+  shadowspill/execution/test_mutations.py
+  test_saved_buffer_replacement_preserves_state_and_workspace 300
 )
 
 shadowspill_add_public_api_test(

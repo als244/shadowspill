@@ -25,7 +25,6 @@ from shadowspill.pytorch.lowering.profiles import ProfileMeasurementKey
 from shadowspill.pytorch.lowering.training import (
     LoweredTrainingProgram,
 )
-from shadowspill.pytorch.optimizer import OptimizerTaskArtifact
 from shadowspill.pytorch.profiling import TaskMeasurement
 from shadowspill.step import StepDataOrdering
 from shadowspill.task.entrypoints import TaskEntrypoint, execution_entrypoints
@@ -230,7 +229,7 @@ def _training_occurrence_identity(
 
 
 def _task_contract_digests(
-    artifact: OptimizerTaskArtifact | None,
+    artifact: GraphArtifact | None,
     entrypoint: TaskEntrypoint,
     measurements: Mapping[ProfileMeasurementKey, TaskMeasurement],
     manifests: Mapping[str, ExecutableTaskManifest],

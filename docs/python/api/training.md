@@ -222,3 +222,8 @@ preparation/backend path. They are not arguments to the saved-plan Trainer.
 `Forward` and `PreparedTraining` will be removed after those callers migrate;
 new code should use `build_forward`, saved artifacts and Executor. The private
 compatibility Trainer is not the public Trainer documented above.
+
+Custom optimizers must expose a tensor-only, capturable update. Python control
+flow that reads tensor values and Python step hooks are rejected during build;
+there is no eager optimizer fallback in a saved Plan. Capture failures leave the
+caller's optimizer and parameters unchanged.

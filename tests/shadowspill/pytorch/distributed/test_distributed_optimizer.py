@@ -164,7 +164,6 @@ def worker(rank, root, capture_on_gpu=False):
                                 item.entry_name
                             ] = value
                         captured = capture_optimizer(owned, optimizer)
-                        assert not captured.update_is_opaque, captured.opaque_reason
                         staged = distribute_capture(
                             captured,
                             layouts,

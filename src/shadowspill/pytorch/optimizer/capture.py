@@ -1,5 +1,4 @@
-"""Optimizer-agnostic capture with an explicit bounded opaque fallback: the entry
-points, composing discovery, the trace and the tasks."""
+"""Optimizer state discovery and capturable tensor updates."""
 
 from __future__ import annotations
 
@@ -73,8 +72,6 @@ def declare_optimizer_state(
     discovery = discover_optimizer_state(
         inventory, optimizer, receives_gradient=receives_gradient
     )
-    if isinstance(discovery, OptimizerCapture):
-        return ()
     declared: list[DeclaredStateEntry] = []
     for parameter, entries in discovery.sandbox.state.items():
         name = discovery.name_by_sandbox_id.get(id(parameter))
@@ -117,9 +114,8 @@ def capture_optimizer(
     The update is found on a deep-copied optimizer, which must already hold the
     state the update reads: planning creates what the optimizer's first step
     would before capturing, and state that step would still create is refused.
-    A lifted tensor-only graph is used when Dynamo can represent the update;
-    otherwise every step runs it as a bounded opaque task with measured
-    workspace.
+    Updates must be capturable as tensor-only graphs; unsupported Python
+    behavior raises CaptureError without changing the caller's optimizer.
 
     With a ``store``, the traced update is served from it when the same
     optimizer, over the same tensors, split the same way, was traced before.
@@ -129,9 +125,7 @@ def capture_optimizer(
     precision, and the update writes each copy from its master once it has
     stepped. Every gradient reaches the update as the step produces it: at
     ``gradient_dtype``, or at its weights' dtype when that is ``None``; the
-    update casts one that is not at its parameter's dtype. Only a traced
-    update does either; an optimizer whose update cannot be traced is refused
-    them.
+    update casts one that is not at its parameter's dtype.
     """
 
     phases = timer if timer is not None else NoTimer()
@@ -140,41 +134,21 @@ def capture_optimizer(
         discovery = discover_optimizer_state(
             inventory, optimizer, receives_gradient=receives_gradient
         )
-    casts = bool(compute_copies) or any(
-        parameter.requires_grad and parameter.dtype != gradient_dtype
-        for parameter in named_parameters.values()
-        if gradient_dtype is not None
-    )
-    if isinstance(discovery, OptimizerCapture):
-        return _refuse_opaque_casts(discovery, casts)
     if discovery.created_state_names:
         created = ", ".join(discovery.created_state_names[:4])
         raise CaptureError(
             f"the optimizer's first step creates state ({created}) that planning "
             "did not create before it; import the optimizer's state before planning"
         )
-    return _refuse_opaque_casts(
-        capture_optimizer_update(
-            discovery,
-            optimizer,
-            parameter_stage_owners=parameter_stage_owners,
-            store=store,
-            timer=phases,
-            compute_copies=compute_copies,
-            gradient_dtype=gradient_dtype,
-        ),
-        casts,
+    return capture_optimizer_update(
+        discovery,
+        optimizer,
+        parameter_stage_owners=parameter_stage_owners,
+        store=store,
+        timer=phases,
+        compute_copies=compute_copies,
+        gradient_dtype=gradient_dtype,
     )
-
-
-def _refuse_opaque_casts(captured: OptimizerCapture, casts: bool) -> OptimizerCapture:
-    if casts and captured.update_is_opaque:
-        raise CaptureError(
-            "an optimizer over master copies or over gradients kept at another "
-            "dtype needs an update that can be traced, which casts the gradients "
-            f"and writes the copies; this one cannot be: {captured.opaque_reason}"
-        )
-    return captured
 
 
 def current_optimizer_bindings(

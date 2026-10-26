@@ -182,7 +182,9 @@ if plan.program.bindings["kind"] == "forward":
     assert not first.resolved
     second = executor.run(input_loader=lambda i: oracle["examples"][i])
     assert first.resolved
-    torch.testing.assert_close(cpu(second.result()), oracle["expected"][-1][0])
+    queued = oracle.get("queued_outputs", [oracle["expected"][-1][0]] * 2)
+    torch.testing.assert_close(cpu(first.result()), queued[0])
+    torch.testing.assert_close(cpu(second.result()), queued[1])
     del first, second
 with pytest.raises(Exception, match="caller-owned device outputs"):
     executor.close()

@@ -11,10 +11,7 @@ from shadowspill.errors import (
 from shadowspill.pipeline.common import PlanningTimer
 from shadowspill.pytorch.capture.artifacts import GraphArtifact
 from shadowspill.pytorch.distributed import current as distributed_preparation
-from shadowspill.pytorch.optimizer import (
-    OptimizerCapture,
-    OptimizerTaskArtifact,
-)
+from shadowspill.pytorch.optimizer import OptimizerCapture
 from shadowspill.pytorch.profiling import (
     ProfileEnvironment,
     ProfilingResult,
@@ -48,9 +45,9 @@ from ..stores import PlanningStores
 
 @dataclass(frozen=True, slots=True)
 class _TrainingTaskInventory:
-    compile_tasks: tuple[OptimizerTaskArtifact, ...]
+    compile_tasks: tuple[GraphArtifact, ...]
     profile_keys: tuple[tuple[str, str | None], ...]
-    profile_tasks: tuple[OptimizerTaskArtifact, ...]
+    profile_tasks: tuple[GraphArtifact, ...]
     profile_metadata_digests: tuple[str | None, ...]
 
 
@@ -208,9 +205,9 @@ def _training_task_inventory(
     contract, so a form seen before, by any ordering or any run, is a lookup.
     """
 
-    all_profiles: list[tuple[OptimizerTaskArtifact, str | None]] = []
-    compile_by_digest: dict[str, OptimizerTaskArtifact] = {}
-    profile_by_key: dict[tuple[str, str | None], OptimizerTaskArtifact] = {}
+    all_profiles: list[tuple[GraphArtifact, str | None]] = []
+    compile_by_digest: dict[str, GraphArtifact] = {}
+    profile_by_key: dict[tuple[str, str | None], GraphArtifact] = {}
     for position, partitioned in enumerate(captured.partitioned):
         metadata_digest = captured.workloads[position].digest
         for stage in partitioned.stages:

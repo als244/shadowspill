@@ -17,11 +17,7 @@ from shadowspill.ir import (
     TaskSpec,
 )
 from shadowspill.pytorch.capture.artifacts import GraphArtifact, ObjectiveSchema
-from shadowspill.pytorch.optimizer import (
-    OptimizerCapture,
-    OptimizerTask,
-    OptimizerTaskArtifact,
-)
+from shadowspill.pytorch.optimizer import OptimizerCapture, OptimizerTask
 from shadowspill.step import StepDataOrdering
 from shadowspill.task.entrypoints import TaskEntrypoint, TaskOptions
 from shadowspill.task.slots import ObjectSlot
@@ -82,7 +78,7 @@ class _TrainingTaskEmitter:
             invocation_start(profiles.control_profile_id(), device_id)
         ]
         self.entrypoints: list[TaskEntrypoint] = []
-        self.executables: dict[str, GraphArtifact | OptimizerTaskArtifact | None] = {}
+        self.executables: dict[str, GraphArtifact | None] = {}
         self.forward_ids: dict[tuple[int, int, str], str] = {}
         self.backward_ids: dict[tuple[int, int, str], str] = {}
         self.all_backward_ids: list[str] = []
@@ -559,7 +555,7 @@ def emit_training_tasks(
 def _append_optimizer_tasks(
     tasks: list[TaskSpec],
     entrypoints: list[TaskEntrypoint],
-    executables: dict[str, GraphArtifact | OptimizerTaskArtifact | None],
+    executables: dict[str, GraphArtifact | None],
     optimizer: OptimizerCapture,
     optimizer_objects: tuple[OptimizerObjectBinding, ...],
     gradients: tuple[GradientBinding, ...],
@@ -598,7 +594,7 @@ class _OptimizerTaskAppender:
         self,
         tasks: list[TaskSpec],
         entrypoints: list[TaskEntrypoint],
-        executables: dict[str, GraphArtifact | OptimizerTaskArtifact | None],
+        executables: dict[str, GraphArtifact | None],
         optimizer: OptimizerCapture,
         optimizer_objects: tuple[OptimizerObjectBinding, ...],
         gradients: tuple[GradientBinding, ...],

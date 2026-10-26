@@ -25,10 +25,7 @@ from shadowspill.planner.search import SearchOptions
 from shadowspill.pytorch.capture.artifacts import GraphArtifact
 from shadowspill.pytorch.compilation.compiler import CompiledTaskSet
 from shadowspill.pytorch.distributed import current as distributed_preparation
-from shadowspill.pytorch.optimizer import (
-    OptimizerCapture,
-    OptimizerTaskArtifact,
-)
+from shadowspill.pytorch.optimizer import OptimizerCapture
 from shadowspill.pytorch.planning.admission import (
     FixedLayoutSelection,
     build_fixed_selected_admission,
@@ -101,7 +98,7 @@ def compile_selected_training_tasks(
 
 
 def _entrypoint_contract(
-    artifact: GraphArtifact | OptimizerTaskArtifact | None,
+    artifact: GraphArtifact | None,
 ) -> str | None:
     """The compiled contract behind one task, where there is one."""
 

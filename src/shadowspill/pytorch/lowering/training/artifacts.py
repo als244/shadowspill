@@ -18,7 +18,7 @@ from shadowspill.pytorch.capture.artifacts import (
     GraphArtifact,
     ObjectiveSchema,
 )
-from shadowspill.pytorch.optimizer import OptimizerTaskArtifact, OptimizerTensorRole
+from shadowspill.pytorch.optimizer import OptimizerTensorRole
 from shadowspill.pytorch.representations import RootInputKey
 from shadowspill.task.entrypoints import TaskEntrypoint
 from shadowspill.task.slots import ObjectSlot, TaskStorageHandoff
@@ -59,7 +59,7 @@ class LoweredTrainingProgram:
     root_input_slots: tuple[tuple[ObjectSlot, ...], ...]
     entrypoints: tuple[TaskEntrypoint, ...]
     #: What to call for each task. The entrypoint is neutral; this is not.
-    executables: Mapping[str, GraphArtifact | OptimizerTaskArtifact | None]
+    executables: Mapping[str, GraphArtifact | None]
     gradients: tuple[GradientBinding, ...]
     optimizer_objects: tuple[OptimizerObjectBinding, ...]
     fixed_tensors: tuple[FixedTensorBinding, ...]
@@ -123,7 +123,7 @@ class TrainingTaskGraph:
     tasks: tuple[TaskSpec, ...]
     entrypoints: tuple[TaskEntrypoint, ...]
     #: What to call for each task. The entrypoint is neutral; this is not.
-    executables: Mapping[str, GraphArtifact | OptimizerTaskArtifact | None]
+    executables: Mapping[str, GraphArtifact | None]
     task_alternative_groups: tuple[TaskAlternativeGroup, ...]
     optimizer_task_ids: tuple[str, ...]
     parameter_metric_schemas: Mapping[str, ObjectiveSchema] = field(

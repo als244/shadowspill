@@ -19,7 +19,6 @@ from shadowspill.pytorch.capture.artifacts import (
 )
 from shadowspill.pytorch.compilation.compiler import CompiledTaskSet
 from shadowspill.pytorch.distributed import current as distributed_preparation
-from shadowspill.pytorch.optimizer import OpaqueOptimizerArtifact
 from shadowspill.pytorch.state.storage import (
     NamedTensor,
     import_then_fill,
@@ -35,7 +34,6 @@ from ..executables import ProfileExecutable, ProfileExecutableStore
 from ..runner import ProfilableArtifact
 from .boundary import AllocatorBoundary
 from .measurement import MeasuredTask, measure_task
-from .opaque import measure_opaque_optimizer
 from .saved_values import resolve_graph_pair_saved_values
 
 
@@ -139,12 +137,8 @@ class TaskProfiler:
         )
 
     def measure(self, artifact: ProfilableArtifact) -> TaskMeasurement:
-        """Measure one compiled graph or bounded eager optimizer task."""
+        """Measure one compiled graph."""
 
-        if isinstance(artifact, OpaqueOptimizerArtifact):
-            return self._timed(
-                artifact, lambda: measure_opaque_optimizer(self, artifact)
-            )
         if not isinstance(artifact, GraphArtifact):
             raise TypeError(f"unsupported profiling artifact {type(artifact).__name__}")
         with self._saved_inputs(artifact) as prepared:
@@ -330,7 +324,7 @@ class TaskProfiler:
 
     def _timed(
         self,
-        artifact: GraphArtifact | OpaqueOptimizerArtifact,
+        artifact: GraphArtifact,
         measure: Callable[[], TaskMeasurement],
     ) -> TaskMeasurement:
         """Charge one measurement to the profiling clock, naming what failed."""
@@ -349,18 +343,13 @@ class TaskProfiler:
 
 
 def profiling_error(
-    artifact: GraphArtifact | OpaqueOptimizerArtifact,
+    artifact: GraphArtifact,
     cause: BaseException,
 ) -> ProfilingError:
     """Name the structural contract a profiling failure belongs to."""
 
-    kind: str
-    if isinstance(artifact, GraphArtifact):
-        kind = artifact.kind
-        operators = tuple(artifact.operator_targets)
-    else:
-        kind = "opaque_optimizer"
-        operators = ()
+    kind = artifact.kind
+    operators = tuple(artifact.operator_targets)
     return ProfilingError(
         "ShadowSpill failed to profile structural contract "
         f"{artifact.compatibility_digest} "

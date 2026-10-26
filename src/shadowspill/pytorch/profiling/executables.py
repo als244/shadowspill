@@ -16,7 +16,6 @@ from shadowspill.pytorch.compilation.compiler import CompiledTask, CompiledTaskS
 from shadowspill.pytorch.distributed import current as distributed_preparation
 from shadowspill.pytorch.distributed._profiling import all_ready, phase
 from shadowspill.pytorch.distributed._profiling import cases as distributed_cases
-from shadowspill.pytorch.optimizer import OpaqueOptimizerArtifact
 from shadowspill.task.inputs import RepresentativeInputSummary
 from shadowspill.task.manifest import ExecutableTaskManifest
 
@@ -345,8 +344,6 @@ def _selected_graph_artifacts(
 ) -> dict[str, GraphArtifact]:
     selected: dict[str, GraphArtifact] = {}
     for artifact in artifacts:
-        if isinstance(artifact, OpaqueOptimizerArtifact):
-            continue
         if not isinstance(artifact, GraphArtifact):
             raise TypeError(
                 f"unsupported executable artifact {type(artifact).__name__}"

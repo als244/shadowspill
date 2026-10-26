@@ -1,5 +1,4 @@
-"""The optimizer update traced once as a lifted tensor-only graph, served from the
-store when it was traced before, and the bounded opaque task it falls back to."""
+"""Capture a portable tensor-only optimizer update, with optional trace caching."""
 
 from __future__ import annotations
 
@@ -16,7 +15,6 @@ from shadowspill.pytorch.capture.artifacts import GraphArtifact
 from shadowspill.pytorch.representations import detached_representation
 
 from .artifacts import (
-    OpaqueOptimizerArtifact,
     OptimizerCapture,
     OptimizerTask,
     OptimizerTensorBinding,
@@ -32,9 +30,7 @@ from .bindings import (
 from .discovery import (
     OptimizerDiscovery,
     fake_update_sandbox,
-    is_data_dependent_failure,
 )
-from .opaque import opaque_execution_bindings
 from .phases import PhaseTimer
 from .sandbox import (
     has_optimizer_step_hooks,
@@ -55,7 +51,7 @@ def capture_optimizer_update(
     compute_copies: Mapping[str, torch.Tensor] | None = None,
     gradient_dtype: torch.dtype | None = None,
 ) -> OptimizerCapture:
-    """Capture the optimizer's update, or publish a bounded opaque task.
+    """Capture the optimizer's update; reject updates that cannot be saved.
 
     The update takes each gradient as the step produces it -- at
     ``gradient_dtype``, or at its weights' dtype -- and casts it where the
@@ -72,7 +68,9 @@ def capture_optimizer_update(
                 detached_representation(copy)
             )
     if has_optimizer_step_hooks(optimizer):
-        return _hooked_optimizer_capture(discovery)
+        raise CaptureError(
+            "optimizer step hooks are not capturable; provide a tensor-only update"
+        )
     key: str | None = None
     if store is not None:
         key = update_capture_identity(
@@ -113,16 +111,12 @@ def capture_optimizer_update(
                     parameter_stage_owners=parameter_stage_owners,
                 )
             return _update_capture(discovery, artifact, update_tasks, bindings)
-    # The trace decides whether the update is representable: it exports once
-    # and falls back to an opaque task when the export fails, so nothing is
-    # exported twice to find out first.
     if discovery.initialized_state_dict is None:
         fake_update_sandbox(discovery)
     with timer.measure("optimizer_trace"):
-        captured = _capture_optimizer_artifact(discovery, copies, gradient_dtype)
-    if isinstance(captured, OptimizerCapture):
-        return captured
-    artifact, bindings = captured
+        artifact, bindings = _capture_optimizer_artifact(
+            discovery, copies, gradient_dtype
+        )
     update_tasks = partition_optimizer_graph(
         artifact,
         bindings,
@@ -149,27 +143,11 @@ def _update_capture(
     )
 
 
-def _hooked_optimizer_capture(
-    discovery: OptimizerDiscovery,
-) -> OptimizerCapture:
-    bindings = tensor_bindings(
-        discovery.sandbox,
-        discovery.name_by_sandbox_id,
-    )
-    artifact = OpaqueOptimizerArtifact.capture(discovery.sandbox, bindings)
-    return _opaque_optimizer_capture(
-        discovery,
-        artifact,
-        bindings,
-        reason="optimizer step hooks require ordinary eager execution",
-    )
-
-
 def _capture_optimizer_artifact(
     discovery: OptimizerDiscovery,
     copies: Mapping[str, torch.Tensor],
     gradient_dtype: torch.dtype | None,
-) -> tuple[GraphArtifact, tuple[OptimizerTensorBinding, ...]] | OptimizerCapture:
+) -> tuple[GraphArtifact, tuple[OptimizerTensorBinding, ...]]:
     sandbox = discovery.sandbox
     names = discovery.name_by_sandbox_id
     own = tensor_bindings(sandbox, names)
@@ -208,60 +186,14 @@ def _capture_optimizer_artifact(
                 discovery.representative_values,
             ),
         )
-    except BaseException as exc:
-        restore_binding_values(closed, snapshots)
-        # An opaque task runs the real update, so it is captured from the
-        # sandbox as it was before it moved onto fake tensors.
-        real = discovery.real_sandbox
-        real_names = discovery.real_name_by_sandbox_id
-        if real is None or real_names is None:
-            real, real_names = sandbox, names
-        discovery.sandbox = real
-        discovery.name_by_sandbox_id = real_names
-        real_bindings = tensor_bindings(real, real_names)
-        opaque_artifact = OpaqueOptimizerArtifact.capture(real, real_bindings)
-        return _opaque_optimizer_capture(
-            discovery,
-            opaque_artifact,
-            real_bindings,
-            reason=_opaque_optimizer_reason(exc),
-        )
+    except Exception as exc:
+        raise CaptureError(
+            f"optimizer update must be capturable as a tensor-only graph: {exc}"
+        ) from exc
     finally:
+        restore_binding_values(closed, snapshots)
         torch.set_grad_enabled(grad_enabled)
     return artifact, bindings
-
-
-def _opaque_optimizer_reason(failure: BaseException) -> str:
-    description = str(failure)
-    if is_data_dependent_failure(failure):
-        return f"the optimizer update is data-dependent: {description}"
-    return f"the optimizer update is opaque: {description}"
-
-
-def _opaque_optimizer_capture(
-    discovery: OptimizerDiscovery,
-    artifact: OpaqueOptimizerArtifact,
-    bindings: tuple[OptimizerTensorBinding, ...],
-    *,
-    reason: str,
-) -> OptimizerCapture:
-    bindings = opaque_execution_bindings(bindings)
-    mutations = tuple(binding.name for binding in bindings if binding.mutable)
-    return OptimizerCapture(
-        optimizer_type=discovery.optimizer_type,
-        update=artifact,
-        update_tasks=(
-            OptimizerTask(
-                artifact,
-                tuple(binding.name for binding in bindings),
-                mutations,
-            ),
-        ),
-        bindings=bindings,
-        mutation_names=mutations,
-        opaque_reason=reason,
-        initialized_state_dict=discovery.initialized_state_dict,
-    )
 
 
 def _export_optimizer_graph(

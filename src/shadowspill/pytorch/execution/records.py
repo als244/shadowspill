@@ -16,7 +16,6 @@ from shadowspill.pytorch.lowering.training import (
     LoweredTrainingProgram,
     optimizer_object_ids,
 )
-from shadowspill.pytorch.optimizer import OptimizerTaskArtifact
 from shadowspill.runtime.failures import ExecutionTaskIdentity
 from shadowspill.runtime.plan import (
     RuntimeBridge,
@@ -34,7 +33,7 @@ class ExecutionTaskRecord:
 
     entrypoint: TaskEntrypoint
     #: What to call for this task. The entrypoint is neutral; this is not.
-    artifact: GraphArtifact | OptimizerTaskArtifact | None
+    artifact: GraphArtifact | None
     task: TaskSpec
     input_aliases: tuple[str, ...]
     input_storage_aliases: tuple[str, ...]
@@ -217,7 +216,7 @@ def _build_task_record(
     bridge: RuntimeBridge,
     functions: Mapping[str, Callable[..., object]],
     memory_envelope: TaskMemoryEnvelope,
-    artifact: GraphArtifact | OptimizerTaskArtifact | None,
+    artifact: GraphArtifact | None,
 ) -> ExecutionTaskRecord:
     function = (
         functions[artifact.compatibility_digest]

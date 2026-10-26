@@ -12,7 +12,6 @@ from shadowspill.pytorch.optimizer import (
     capture_optimizer,
     restore_optimizer_checkpoint_structure,
 )
-from shadowspill.pytorch.optimizer import discovery as discovery_module
 from shadowspill.pytorch.optimizer import sandbox as sandbox_module
 from shadowspill.pytorch.optimizer import trace as trace_module
 from shadowspill.pytorch.optimizer.artifacts import optimizer_value_identity
@@ -98,10 +97,12 @@ def test_device_only_registered_optimizer_uses_fake_contract() -> None:
     # Only parameter, gradient and moment payloads enter the execution pool.
     for binding in captured.bindings:
         expected = (
-            "cpu" if (
+            "cpu"
+            if (
                 binding.role is OptimizerTensorRole.HYPERPARAMETER
                 or binding.name == "optimizer.weight.step"
-            ) else "cuda"
+            )
+            else "cuda"
         )
         assert binding.tensor.device.type == expected
         if binding.name == "optimizer.weight.step":
@@ -370,23 +371,16 @@ def test_unrelated_custom_optimizer_is_captured_without_allowlist() -> None:
     assert "aten.add_.Tensor" in captured.update.operator_targets
 
 
-def test_valid_data_dependent_optimizer_becomes_bounded_opaque_task() -> None:
+def test_data_dependent_optimizer_is_rejected_without_mutation() -> None:
     parameter = torch.nn.Parameter(torch.ones(4))
     parameter.grad = torch.full_like(parameter, 2)
-    first = capture_optimizer(
-        {"parameter": parameter}, _DataDependentOptimizer([parameter])
-    )
-    second = capture_optimizer(
-        {"parameter": parameter}, _DataDependentOptimizer([parameter])
-    )
-
-    assert first.update_is_opaque
-    assert first.update is not None
-    assert second.update is not None
-    assert first.update.compatibility_digest == second.update.compatibility_digest
-    assert "data-dependent" in (first.opaque_reason or "")
+    optimizer = _DataDependentOptimizer([parameter])
+    with pytest.raises(CaptureError, match="capturable update"):
+        capture_optimizer({"parameter": parameter}, optimizer)
     assert torch.is_grad_enabled()
+    assert not optimizer.state
     torch.testing.assert_close(parameter, torch.ones_like(parameter))
+    torch.testing.assert_close(parameter.grad, torch.full_like(parameter, 2))
 
 
 def test_optimizer_copy_preserves_subclass_state_omitted_by_base_protocol() -> None:
@@ -444,47 +438,51 @@ class _FailingAfterStateOptimizer(_CustomOptimizer):
         raise RuntimeError("kernel unavailable")
 
 
-def test_opaque_fallbacks_preserve_the_original_optimizer(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
+@pytest.mark.parametrize(
+    ("optimizer_type", "reason"),
+    [
+        (_UncopyableOptimizer, "cannot be copied"),
+        (_FailingOptimizer, "discovery step failed"),
+        (_FailingAfterStateOptimizer, "fake/meta behavior"),
+    ],
+)
+def test_capture_failures_preserve_the_original_optimizer(optimizer_type, reason):
     parameter = torch.nn.Parameter(torch.ones(4))
-    parameter.grad = None
-    uncopyable = capture_optimizer(
-        {"parameter": parameter}, _UncopyableOptimizer([parameter])
-    )
-    assert uncopyable.update_is_opaque
-    assert "cannot be copied" in (uncopyable.opaque_reason or "")
+    optimizer = optimizer_type([parameter])
+    with pytest.raises(CaptureError, match=reason):
+        capture_optimizer({"parameter": parameter}, optimizer)
+    assert not optimizer.state
+    assert parameter.grad is None
+    assert torch.is_grad_enabled()
+    torch.testing.assert_close(parameter, torch.ones_like(parameter))
 
-    failing = capture_optimizer(
-        {"parameter": parameter}, _FailingOptimizer([parameter])
-    )
-    assert failing.update_is_opaque
-    assert "discovery step failed" in (failing.opaque_reason or "")
 
+def test_failed_export_preserves_the_original_optimizer(monkeypatch):
+    parameter = torch.nn.Parameter(torch.ones(4))
     optimizer = torch.optim.SGD([parameter], lr=0.1)
 
-    def fail_export(_optimizer: torch.optim.Optimizer) -> torch.fx.GraphModule:
+    def fail_export(*arguments):
         raise RuntimeError("graph disabled")
 
     monkeypatch.setattr(trace_module, "_export_optimizer_graph", fail_export)
-    opaque_graph = capture_optimizer({"parameter": parameter}, optimizer)
-    assert opaque_graph.update_is_opaque
-    assert opaque_graph.bindings[1].name == "gradient.parameter"
-    assert opaque_graph.bindings[1].tensor.device.type == "cuda"
-    assert tuple(opaque_graph.bindings[1].tensor.shape) == (4,)
+    with pytest.raises(CaptureError, match=r"capturable.*graph disabled"):
+        capture_optimizer({"parameter": parameter}, optimizer)
+    assert not optimizer.state
     assert parameter.grad is None
-    assert "the optimizer update is opaque" in (opaque_graph.opaque_reason or "")
+    assert torch.is_grad_enabled()
+    torch.testing.assert_close(parameter, torch.ones_like(parameter))
 
-    def fail_fake(*arguments: object) -> object:
-        del arguments
-        raise RuntimeError("fake inventory disabled")
 
-    monkeypatch.setattr(discovery_module, "fake_device_optimizer", fail_fake)
-    failed_fake = capture_optimizer(
-        {"parameter": parameter}, _FailingAfterStateOptimizer([parameter])
-    )
-    assert failed_fake.update is None
-    assert "fake/meta behavior" in (failed_fake.opaque_reason or "")
+def test_optimizer_step_hooks_are_rejected_without_calling_them():
+    parameter = torch.nn.Parameter(torch.ones(4))
+    optimizer = torch.optim.SGD([parameter], lr=0.1)
+    calls = []
+    optimizer.register_step_pre_hook(lambda *args: calls.append(args))
+    with pytest.raises(CaptureError, match="step hooks are not capturable"):
+        capture_optimizer({"parameter": parameter}, optimizer)
+    assert not calls
+    assert parameter.grad is None
+    torch.testing.assert_close(parameter, torch.ones_like(parameter))
 
 
 def test_optimizer_option_identity_covers_bounded_containers() -> None:
@@ -679,7 +677,7 @@ def test_masters_need_an_update_that_can_be_traced() -> None:
     parameter = torch.nn.Parameter(torch.ones(4))
     master = torch.nn.Parameter(torch.ones(4, dtype=torch.float64))
 
-    with pytest.raises(CaptureError, match="needs an update that can be traced"):
+    with pytest.raises(CaptureError, match="capturable update"):
         capture_optimizer(
             {"parameter": master},
             _DataDependentOptimizer([master]),
@@ -731,46 +729,3 @@ def test_stochastic_optimizer_tasks_share_structure_with_distinct_salts():
     ]
     assert all(len(names) == 1 for names in occurrences)
     assert len(set(occurrences)) == 3
-
-
-def test_opaque_execution_geometry_preserves_aliases_and_cpu_counters() -> None:
-    from torch._subclasses.fake_tensor import FakeTensor
-
-    from shadowspill.pytorch.optimizer.artifacts import (
-        OptimizerTensorBinding,
-        OptimizerTensorRole,
-    )
-    from shadowspill.pytorch.optimizer.opaque import opaque_execution_bindings
-
-    # Distinct views of a CPU-side template describe one GPU state allocation.
-    state = torch.arange(16, dtype=torch.float32)
-    counter = torch.tensor(3, dtype=torch.int64)
-    bindings = (
-        OptimizerTensorBinding(
-            "optimizer.weight.first", OptimizerTensorRole.STATE, state[2:6], True, True
-        ),
-        OptimizerTensorBinding(
-            "optimizer.weight.second",
-            OptimizerTensorRole.STATE,
-            state[8::2],
-            True,
-            True,
-        ),
-        OptimizerTensorBinding(
-            "optimizer.weight.step", OptimizerTensorRole.STATE, counter, True, False
-        ),
-    )
-    first, second, step = opaque_execution_bindings(bindings)
-    assert isinstance(first.tensor, FakeTensor)
-    assert first.tensor.device.type == second.tensor.device.type == "cuda"
-    assert (
-        first.tensor.untyped_storage()._cdata == second.tensor.untyped_storage()._cdata
-    )
-    assert first.tensor.untyped_storage().nbytes() == state.untyped_storage().nbytes()
-    assert first.tensor.storage_offset() == 2
-    assert second.tensor.storage_offset() == 8
-    assert second.tensor.stride() == (2,)
-    assert step is bindings[2]
-    assert step.tensor.device.type == "cpu"
-    assert step.tensor.item() == 3
-    torch.testing.assert_close(state, torch.arange(16, dtype=torch.float32))
