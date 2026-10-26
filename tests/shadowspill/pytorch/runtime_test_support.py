@@ -1,11 +1,24 @@
 """Shared process-lifetime Runtime for in-process PyTorch public-API tests."""
 
+import pytest
+import torch
+
 from shadowspill.memory import device, transfer_route
 from shadowspill.pytorch import Runtime
+from shadowspill.runtime.configuration import adapter_path
 
 from ...spill_pool import spill_pool
 
 _RUNTIME: Runtime | None = None
+
+
+def require_adapter() -> None:
+    if torch.cuda.is_initialized():
+        pytest.skip("public allocator installation requires a fresh process")
+    try:
+        adapter_path(None)
+    except RuntimeError:
+        pytest.skip("the built PyTorch adapter is not installed")
 
 
 def public_test_runtime() -> Runtime:

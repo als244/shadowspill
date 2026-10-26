@@ -1,6 +1,7 @@
-> Migration reference for the old runtime-first implementation. New single-GPU
-> callers should use the [phase quickstart](quickstart.md). Distributed/model presets
-> remain on `benchmarking.quickstart.cli` until their separate migration.
+> Migration reference for the old runtime-first implementation. Single-GPU and
+> common sharded-DP callers, including the GLM families, use the
+> [phase quickstart](quickstart.md). Model-owned EP resources and SSD/remote
+> storage options remain on `benchmarking.quickstart.cli` until their migration.
 
 # Quickstart
 

@@ -12,7 +12,7 @@ from torch.utils._pytree import tree_map
 from shadowspill import Plan
 from tests.shadowspill.execution._cold import forbid_preparation
 
-forbid_preparation()
+forbid_preparation("tests.shadowspill.execution.optimizers")
 from qualification.runtime_evidence import adapter_statistics  # noqa: E402
 from shadowspill import Executor, load_checkpoint, save_checkpoint  # noqa: E402
 from tests.shadowspill.execution._stream_checks import StreamChecks  # noqa: E402
@@ -50,6 +50,32 @@ def cpu(value):
     return tree_map(lambda t: t.cpu() if isinstance(t, torch.Tensor) else t, value)
 
 
+def assert_state(executor, state):
+    actual = {}
+
+    def collect(request, chunk):
+        assert chunk.device.type == "cpu" and chunk.nbytes <= 40
+        if request.name not in actual:
+            actual[request.name] = torch.empty(
+                request.storage_elements, dtype=request.dtype
+            )
+        actual[request.name][request.offset : request.offset + chunk.numel()].copy_(
+            chunk
+        )
+
+    executor.export_tensors(collect, chunk_bytes=40)
+    assert actual.keys() == state.keys(), {
+        "unexpected": actual.keys() - state.keys(),
+        "missing": state.keys() - actual.keys(),
+    }
+    for name, expected in state.items():
+        torch.testing.assert_close(
+            actual[name].reshape(expected.shape),
+            expected,
+            msg=lambda error, name=name: f"{name}: {error}",
+        )
+
+
 executor = Executor(plan, parameter_norms=bool(norms))
 annotations_enabled = executor._paths[
     0
@@ -63,6 +89,8 @@ assert statistics.physical_budget_sealed
 assert statistics.runtime.event_lease_sealed
 streams = StreamChecks(executor) if oracle.get("check_task_streams") else None
 executor.initialize(fill, chunk_bytes=40, restore=oracle["restore"])
+if "initial_state" in oracle:
+    assert_state(executor, oracle["initial_state"])
 assert (
     sum(executor.runtime._installed.admitted_layout_bytes.values())
     == plan.memory_layout.fixed_slice_bytes
@@ -122,18 +150,7 @@ for index, (outputs, state) in enumerate(oracle["expected"]):
         )
         result["weight"].zero_()  # A caller snapshot must not change stored parameters.
     previous, previous_value = actual_outputs, cpu(actual_outputs)
-    actual = {}
-
-    def collect(request, chunk, actual=actual):
-        if request.name not in actual:
-            actual[request.name] = torch.empty(
-                request.storage_elements, dtype=request.dtype
-            )
-        actual[request.name][request.offset : request.offset + chunk.numel()].copy_(
-            chunk
-        )
-
-    executor.export_tensors(collect, chunk_bytes=40)
+    assert_state(executor, state)
     statistics = adapter_statistics()
     if steady_statistics is not None:
         assert (
@@ -144,12 +161,6 @@ for index, (outputs, state) in enumerate(oracle["expected"]):
             statistics.backend.device_allocations
             == steady_statistics.backend.device_allocations
         )
-    assert actual.keys() == state.keys(), {
-        "unexpected": actual.keys() - state.keys(),
-        "missing": state.keys() - actual.keys(),
-    }
-    for name, expected in state.items():
-        torch.testing.assert_close(actual[name].reshape(expected.shape), expected)
     if index == 0:
         checkpoint = directory / "checkpoint.ssp"
         save_checkpoint(executor, checkpoint, metadata={"completed": 1}, chunk_bytes=40)

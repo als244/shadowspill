@@ -21,8 +21,7 @@ from shadowspill.pytorch.profiling.profiler import TaskProfiler, _SavedValues
 from shadowspill.pytorch.state.registry import registry_for
 from shadowspill.runtime import Runtime
 
-from ..runtime_test_support import public_test_runtime
-from .test_01_public_training import _require_adapter
+from ..runtime_test_support import public_test_runtime, require_adapter
 
 
 def _objective(model: nn.Module, value: torch.Tensor, target: torch.Tensor):
@@ -50,7 +49,7 @@ def test_a_plan_keeps_no_host_copy_of_what_its_forwards_saved(
 ) -> None:
     """Both fresh profiles and cache-only warmups retain one snapshot at a time."""
 
-    _require_adapter()
+    require_adapter()
     snapshots: list[tuple[torch.Tensor, ...]] = []
     sizes: list[int] = []
     completed: list[tuple[int, int]] = []
@@ -116,7 +115,7 @@ def test_planning_fails_when_the_spill_pool_has_no_room_for_saved_values(
     """Holding them beside the pool instead would spend the host memory the
     pool was sized to leave free, so a pool without room fails planning."""
 
-    _require_adapter()
+    require_adapter()
     statistics = Runtime.pool_statistics
 
     def full_spill_pool(self: Runtime, pool: str = "execution"):

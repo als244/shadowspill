@@ -397,8 +397,9 @@ python -m benchmarking.quickstart \
 
 The [quickstart guide](../benchmarking/quickstart.md) describes every flag and
 custom experiment factories. The [text factory](recipes/text/benchmark/README.md)
-supplies catalog models and optional LoRA; `ranks` selects sharded DP. Model-owned
-EP and GLM resources still use `benchmarking.quickstart.cli` while their
+supplies catalog models and optional LoRA; `ranks` selects sharded DP. The GLM
+families use the same phase runner with family-specific construction and loading.
+Model-owned EP resources still use `benchmarking.quickstart.cli` while their
 phase migration is completed.
 
 ## Source organization

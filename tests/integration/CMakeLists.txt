@@ -95,12 +95,40 @@ shadowspill_add_public_api_test(
   test_public_forward_sets_a_model_buffer_each_call 300
 )
 shadowspill_add_public_api_test(
-  shadowspill/pytorch/api/test_01_public_training.py
-  test_public_training_accumulates_replays_and_restores 300
+  shadowspill/execution/optimizers/test_starts.py
+  test_constant_and_parameter_initializers_survive_cold_execution 300
 )
 shadowspill_add_public_api_test(
-  shadowspill/pytorch/api/test_01_public_training.py
-  test_public_training_breadth_first_matches_the_eager_reference 300
+  shadowspill/execution/optimizers/test_precision_matrix.py
+  test_saved_adam_precision_matrix 600
+)
+shadowspill_add_public_api_test(
+  shadowspill/execution/optimizers/test_precision_matrix.py
+  test_mixed_parameters_only_create_masters_where_needed 300
+)
+shadowspill_add_public_api_test(
+  shadowspill/execution/optimizers/test_masters.py
+  test_mixed_precision_master_update_and_checkpoint 300
+)
+shadowspill_add_public_api_test(
+  shadowspill/execution/optimizers/test_mlops.py
+  test_mlops_adamw_cold_worker_matches_independent_torch_updates 300
+)
+shadowspill_add_public_api_test(
+  shadowspill/build/test_optimizer_initialization.py
+  test_gradient_initialized_state_has_no_guess_before_first_step 120
+)
+shadowspill_add_public_api_test(
+  shadowspill/build/test_optimizer_initialization.py
+  test_portable_build_refuses_python_optimizer_fallback 120
+)
+shadowspill_add_public_api_test(
+  shadowspill/execution/test_saved_executor.py
+  test_saved_plan_executes_without_build_or_measurement[step-save-True] 300
+)
+shadowspill_add_public_api_test(
+  shadowspill/training/test_saved_trainer.py
+  test_trainer_updates_and_cold_resume_match_independent_eager_loop 300
 )
 shadowspill_add_public_api_test(
   shadowspill/training/test_mixed_inputs.py
@@ -112,59 +140,11 @@ shadowspill_add_public_api_test(
 )
 shadowspill_add_public_api_test(
   shadowspill/pytorch/api/test_01_public_training.py
-  test_public_training_declared_adamw_state_replays 300
-)
-shadowspill_add_public_api_test(
-  shadowspill/pytorch/api/test_01_public_training.py
-  test_public_training_fills_declared_state_in_the_spill_pool 300
-)
-shadowspill_add_public_api_test(
-  shadowspill/pytorch/api/test_01_public_training.py
-  test_public_training_refuses_state_with_no_value_before_its_first_step 300
-)
-shadowspill_add_public_api_test(
-  shadowspill/pytorch/api/test_01_public_training.py
-  test_public_training_owns_the_model_state_it_imported 300
-)
-shadowspill_add_public_api_test(
-  shadowspill/pytorch/api/test_01_public_training.py
-  test_public_training_saves_straight_from_the_pool 300
-)
-shadowspill_add_public_api_test(
-  shadowspill/pytorch/api/test_01_public_training.py
-  test_public_training_steps_masters_of_its_weights 300
-)
-shadowspill_add_public_api_test(
-  shadowspill/pytorch/api/test_01_public_training.py
-  test_public_training_steps_masters_beside_weights_that_have_none 300
-)
-shadowspill_add_public_api_test(
-  shadowspill/pytorch/api/test_01_public_training.py
-  test_public_training_keeps_masters_gradients_and_moments_at_their_own_dtypes 600
-)
-shadowspill_add_public_api_test(
-  shadowspill/pytorch/api/test_01_public_training.py
-  test_public_training_checkpoints_masters_in_place_of_their_weights 300
-)
-shadowspill_add_public_api_test(
-  shadowspill/pytorch/api/test_01_public_training.py
   test_public_training_profiles_bounded_opaque_optimizer 300
 )
 shadowspill_add_public_api_test(
   shadowspill/pytorch/api/test_01_public_training.py
-  test_public_training_partitions_device_only_optimizer_and_replays 300
-)
-shadowspill_add_public_api_test(
-  shadowspill/pytorch/api/test_01_public_training.py
-  test_public_training_follows_a_learning_rate_schedule 300
-)
-shadowspill_add_public_api_test(
-  shadowspill/pytorch/api/test_01_public_training.py
   test_public_training_sets_a_model_buffer_each_step 300
-)
-shadowspill_add_public_api_test(
-  shadowspill/pytorch/api/test_01_public_training.py
-  test_public_training_keeps_no_output_the_caller_dropped 300
 )
 shadowspill_add_public_api_test(
   shadowspill/execution/test_shared_plans.py

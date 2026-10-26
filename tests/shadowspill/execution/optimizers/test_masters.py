@@ -1,22 +1,11 @@
 """Compute weights, stored gradients and optimizer masters retain distinct dtypes."""
 
-import os
-import subprocess
-import sys
-from pathlib import Path
-
 import pytest
 import torch
 from torch import nn
 
-from shadowspill import (
-    CommunicationInfo,
-    MemoryBudgets,
-    apply_profiles,
-    build_step,
-    measure_program,
-    plan_program,
-)
+from shadowspill import build_step
+from tests.shadowspill.execution.optimizers.common import run_worker, save_plan
 
 
 def objective(model, x):
@@ -25,15 +14,25 @@ def objective(model, x):
 
 
 @pytest.mark.cuda
-@pytest.mark.parametrize("gradient_dtype", [None, torch.float32])
-def test_mixed_precision_master_update_and_checkpoint(tmp_path, gradient_dtype):
+@pytest.mark.parametrize(
+    "weight_dtype,master_dtype,gradient_dtype",
+    [
+        (torch.bfloat16, torch.float32, None),
+        (torch.bfloat16, torch.float32, torch.float32),
+        (torch.float32, torch.float64, torch.float64),
+    ],
+    ids=["bf16_native_grad", "bf16_fp32_grad", "fp32_fp64_master"],
+)
+def test_mixed_precision_master_update_and_checkpoint(
+    tmp_path, weight_dtype, master_dtype, gradient_dtype
+):
     if not torch.cuda.is_available():
         pytest.skip("requires CUDA")
     with torch.device("meta"):
-        template = nn.Linear(8, 8, bias=False, dtype=torch.bfloat16)
+        template = nn.Linear(8, 8, bias=False, dtype=weight_dtype)
     optimizer = torch.optim.AdamW(template.parameters(), lr=0.001, foreach=False)
     examples = [
-        ((torch.full((4, 8), value, dtype=torch.bfloat16),), {})
+        ((torch.full((4, 8), value, dtype=weight_dtype),), {})
         for value in (0.125, 0.25)
     ]
     program = build_step(
@@ -43,38 +42,36 @@ def test_mixed_precision_master_update_and_checkpoint(tmp_path, gradient_dtype):
         example_args=examples[0][0],
         num_examples=2,
         partition="whole",
-        master_dtype=torch.float32,
+        master_dtype=master_dtype,
         grad_dtype=gradient_dtype,
     )
-    assert template.weight.dtype == torch.bfloat16 and not optimizer.state
+    assert template.weight.dtype == weight_dtype and not optimizer.state
     assert optimizer.param_groups[0]["params"][0] is template.weight
     bindings = {item["name"]: item for item in program.bindings["optimizer_bindings"]}
-    assert bindings["weight"]["dtype"] == "torch.float32"
-    assert bindings["compute.weight"]["dtype"] == "torch.bfloat16"
-    assert bindings["gradient.weight"]["dtype"] == str(gradient_dtype or torch.bfloat16)
-    assert bindings["optimizer.weight.exp_avg"]["dtype"] == "torch.float32"
-    profiles = measure_program(program, warmup_seconds=0.001, measure_seconds=0.002)
-    plan = plan_program(
-        apply_profiles(program, profiles),
-        memory_budgets=MemoryBudgets(2 << 30, 64 << 20),
-        communication_info=CommunicationInfo(1e10, 1e10),
-    )
-    plan.save(tmp_path / "plan.ssp")
-    reference = nn.Linear(8, 8, bias=False, dtype=torch.bfloat16)
+    assert bindings["weight"]["dtype"] == str(master_dtype)
+    assert bindings["compute.weight"]["dtype"] == str(weight_dtype)
+    assert bindings["gradient.weight"]["dtype"] == str(gradient_dtype or weight_dtype)
+    assert bindings["optimizer.weight.exp_avg"]["dtype"] == str(master_dtype)
+    save_plan(program, tmp_path)
+    reference = nn.Linear(8, 8, bias=False, dtype=weight_dtype)
     with torch.no_grad():
         reference.weight.copy_(torch.arange(64).reshape(8, 8) / 64)
-    master = nn.Parameter(reference.weight.float().detach().clone())
+    master = nn.Parameter(reference.weight.to(master_dtype).detach().clone())
     opt = torch.optim.AdamW([master], lr=0.001, foreach=False)
     initial = {"weight": reference.weight.detach().clone()}
     expected, parameter_metrics = [], []
     for index in range(3):
-        reference.zero_grad(set_to_none=True)
+        gradient = torch.zeros_like(
+            reference.weight, dtype=gradient_dtype or weight_dtype
+        )
         outputs = []
         for args, kwargs in examples:
+            reference.zero_grad(set_to_none=True)
             loss, metrics = objective(reference, *args, **kwargs)
             loss.backward()
+            gradient.add_(reference.weight.grad.to(gradient.dtype))
             outputs.append((loss.detach(), metrics))
-        master.grad = reference.weight.grad.float()
+        master.grad = gradient.to(master_dtype)
         parameter_metrics.append(
             {
                 "weight": {
@@ -82,7 +79,7 @@ def test_mixed_precision_master_update_and_checkpoint(tmp_path, gradient_dtype):
                         reference.weight.detach(), dtype=torch.float32
                     ),
                     "grad_norm": torch.linalg.vector_norm(
-                        reference.weight.grad, dtype=torch.float32
+                        gradient.float(), dtype=torch.float32
                     ),
                 }
             }
@@ -113,16 +110,4 @@ def test_mixed_precision_master_update_and_checkpoint(tmp_path, gradient_dtype):
         ),
         tmp_path / "oracle.pt",
     )
-    result = subprocess.run(
-        [
-            sys.executable,
-            "-S",
-            str(Path(__file__).with_name("_execute.py")),
-            str(tmp_path),
-        ],
-        env=os.environ,
-        capture_output=True,
-        text=True,
-        timeout=180,
-    )
-    assert result.returncode == 0, result.stdout + result.stderr
+    run_worker(tmp_path)
