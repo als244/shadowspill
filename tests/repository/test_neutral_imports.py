@@ -28,6 +28,7 @@ NEUTRAL_MODULES = (
     "shadowspill.planner.program",
     "shadowspill.planner.selection",
     "shadowspill.profiling",
+    "shadowspill.resources",
     "shadowspill.frontend",
     "shadowspill.runtime",
     "shadowspill.search",
@@ -59,7 +60,12 @@ if loaded:
 
 def _imports_without_torch(module: str) -> tuple[bool, str]:
     completed = subprocess.run(
-        [sys.executable, "-c", _PROBE.format(name=module, frameworks=_FRAMEWORKS)],
+        [
+            sys.executable,
+            *(["-S"] if sys.flags.no_site else []),
+            "-c",
+            _PROBE.format(name=module, frameworks=_FRAMEWORKS),
+        ],
         capture_output=True,
         text=True,
         check=False,

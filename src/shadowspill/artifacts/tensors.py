@@ -35,6 +35,7 @@ class TensorChunk:
 
 def tensor_geometry(program: Program) -> dict[str, Mapping[str, Any]]:
     result = dict(program.bindings.get("model_tensor_geometry", {}))
+    result.update(program.bindings.get("gradient_geometry", {}))
     tasks = {task.task_id: task for task in program.tasks}
     for entry in program.bindings["entrypoints"]:
         description = program.bindings["task_inputs"][

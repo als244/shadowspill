@@ -12,6 +12,8 @@ from shadowspill.parallelism import Parallelism
 from shadowspill.pytorch.accelerator import resolve_device
 from shadowspill.pytorch.capture.retention import RetentionPolicy
 from shadowspill.pytorch.partition import PartitionSpec
+from shadowspill.resources import Resource
+from shadowspill.resources.description import validate_resources
 
 from .common import build_setup, compile_artifacts
 from .finalize import finalize_tasks
@@ -25,6 +27,7 @@ from .parallelism import (
     model_parallelism,
     validate_step,
 )
+from .resources import attach_resources
 from .training_capture import capture_training_model
 
 
@@ -41,6 +44,8 @@ def build_forward_backward(
     operator_recompute: RetentionPolicy | None = None,
     grad_dtype: torch.dtype | None = None,
     parallelism: Parallelism | None = None,
+    resources: Mapping[str, Resource] | None = None,
+    rank_map: Mapping[int, int] | None = None,
     target: str | torch.device = "cuda",
 ) -> Program:
     """Finalize both backward forms; order is selected later by CPU planning.
@@ -63,6 +68,8 @@ def build_forward_backward(
         operator_recompute=operator_recompute,
         grad_dtype=grad_dtype,
         parallelism=parallelism,
+        resources=resources,
+        rank_map=rank_map,
         target=target,
     )
 
@@ -83,8 +90,11 @@ def _build_training(
     target: str | torch.device,
     parallelism: Parallelism | None = None,
     master_dtype: torch.dtype | None = None,
+    resources: Mapping[str, Resource] | None = None,
+    rank_map: Mapping[int, int] | None = None,
 ) -> Program:
     spec, parameters = model_parallelism(model, parallelism)
+    validate_resources(resources or {}, spec)
     if optimizer is not None:
         validate_step(spec, parameters)
     device = resolve_device(target)
@@ -164,4 +174,7 @@ def _build_training(
     program = replace(
         program, bindings={**program.bindings, "compiled_device_index": device.index}
     )
-    return finalize_tasks(attach_parallelism(program, spec, parameters), device)
+    program = attach_resources(
+        attach_parallelism(program, spec, parameters), resources or {}
+    )
+    return finalize_tasks(program, device, rank_map=rank_map)

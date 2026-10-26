@@ -51,8 +51,10 @@ program = build_forward(
 program.save("program.ssp")
 ```
 
-The model may have CPU or meta parameters. This initial backend uses one
-representative GPU to finalize CUDA task implementations. It accepts normal
+The model may have CPU or meta parameters. This initial backend uses a
+representative GPU to finalize local CUDA task implementations. Model-owned
+distributed operators require their participants and saved
+[provider resource descriptions](resources.md). It accepts normal
 positional and keyword arguments, including nested structures and specialized
 non-tensor values. It records semantic module/parameter names, output storage
 geometry, scheduled compiler-buffer lifetimes and explicit unresolved memory
@@ -376,9 +378,11 @@ provider qualification and normal caller migration remain in progress.
 Packaged tasks retain importable Python custom-op registration modules, their
 source digests and operator schemas. Measurement and execution restore/check
 these registrations before loading task code; the original model need not be
-imported. Native or dynamically created registrations, cross-module kernel
-overrides and provider-owned resources still require a provider initialization
-contract. They are not certified by this stateless-Python-op qualification.
+imported. Native or dynamically created registrations and cross-module kernel
+overrides require separate provider support. Shared backend resources use the
+optional, generic [`resources` builder argument](resources.md), with saved
+descriptions and checked initialization code. Stateless-op tests alone do not
+qualify these resources.
 Likewise, the registration digest is not a fingerprint of all transitive native
 libraries or proof that a provider's internal autotuning/resources are portable.
 
@@ -393,8 +397,8 @@ No GPU timing records or runtime pools are produced by this build pass.
 Only compact configuration records belong to the Program archive. Compiler
 caches remain disposable, and provider code remains an external dependency.
 Fixed kernels may compile lazily without selecting a different implementation.
-Other autotuner systems and shared provider resources still need their own
-initialization support; this does not certify arbitrary provider state.
+Other autotuner systems still need saved-choice support; resource initialization
+must not retune the finalized task. This does not certify arbitrary provider state.
 
 MLOps AdamW also passes cold-worker execution with BF16 compute weights, FP32
 gradients/masters/moments, CPU step counters, changing learning rates and

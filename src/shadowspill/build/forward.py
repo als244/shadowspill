@@ -13,12 +13,15 @@ from shadowspill.artifacts.program import Program
 from shadowspill.parallelism import Parallelism
 from shadowspill.pytorch.accelerator import resolve_device
 from shadowspill.pytorch.partition import PartitionSpec
+from shadowspill.resources import Resource
+from shadowspill.resources.description import validate_resources
 
 from .capture import capture_forward_model
 from .common import build_setup, compile_artifacts
 from .finalize import finalize_tasks
 from .lowering.forward import lower_forward
 from .parallelism import attach_parallelism, model_parallelism
+from .resources import attach_resources
 
 
 def build_forward(
@@ -29,6 +32,8 @@ def build_forward(
     forward_fn: Callable[..., Any] | None = None,
     partition: PartitionSpec = "auto",
     parallelism: Parallelism | None = None,
+    resources: Mapping[str, Resource] | None = None,
+    rank_map: Mapping[int, int] | None = None,
     target: str | torch.device = "cuda",
 ) -> Program:
     """Build fixed implementations without profiling, pools or live training state.
@@ -39,6 +44,7 @@ def build_forward(
     receives ``(model, *args, **kwargs)``, preserving registered parameter names.
     """
     spec, parameters = model_parallelism(model, parallelism)
+    validate_resources(resources or {}, spec)
     device = resolve_device(target)
     assert device.index is not None
     captured = capture_forward_model(
@@ -62,4 +68,7 @@ def build_forward(
         raise NotImplementedError(
             "distributed forward currently requires a read-only model"
         )
-    return finalize_tasks(attach_parallelism(program, spec, parameters), device)
+    program = attach_resources(
+        attach_parallelism(program, spec, parameters), resources or {}
+    )
+    return finalize_tasks(program, device, rank_map=rank_map)

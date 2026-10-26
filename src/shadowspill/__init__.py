@@ -38,6 +38,7 @@ _PUBLIC = {
     "Replicated": "parallelism",
     "Sharded": "parallelism",
     "GroupRef": "parallelism",
+    "Resource": "resources",
 }
 
 

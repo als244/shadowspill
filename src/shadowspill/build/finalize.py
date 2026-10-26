@@ -1,6 +1,6 @@
 """Finalize generated and provider kernels using one stage's ordinary tensors."""
 
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from dataclasses import replace
 from typing import Any
 
@@ -14,12 +14,20 @@ from shadowspill.pytorch.control_inputs import ControlInputs
 from shadowspill.pytorch.executable import restore_executable
 from shadowspill.pytorch.task_inputs import prepare_inputs
 from shadowspill.pytorch.tuning import capture_choices
+from shadowspill.resources.preparation import prepare_resources
 
 from .kernels import capture_kernels, freeze_kernels
 from .output_devices import resolve_output_devices
 
 
-def finalize_tasks(program: Program, device: torch.device) -> Program:
+def finalize_tasks(
+    program: Program, device: torch.device, *, rank_map: Mapping[int, int] | None = None
+) -> Program:
+    with prepare_resources(program, device, rank_map):
+        return _finalize_tasks(program, device)
+
+
+def _finalize_tasks(program: Program, device: torch.device) -> Program:
     dependencies = program.bindings["operator_dependencies"]
     pending = set(program.executables)
     if not pending:

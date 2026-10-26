@@ -199,6 +199,12 @@ def lower_training(
             "entrypoints": sequence.entrypoints,
             "transient_outputs": sequence.transient_outputs,
             "gradients": [asdict(item) for item in objects.gradients],
+            "gradient_geometry": {
+                item.gradient_object_id: objects.catalog.tensor_geometry(
+                    item.gradient_object_id
+                )
+                for item in objects.gradients
+            },
             "registrations": model_registrations(captured.model, objects.registrations),
             "model_tensor_geometry": model_tensor_geometry(
                 captured.model, objects.registrations

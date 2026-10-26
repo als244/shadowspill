@@ -1,6 +1,7 @@
 """Admitted saved Plans, one worker, one outstanding asynchronous invocation."""
 
 from collections.abc import Callable, Mapping, Sequence
+from contextlib import ExitStack
 from dataclasses import replace
 from types import MappingProxyType
 from typing import Any, Self
@@ -59,6 +60,7 @@ class Executor:
             self._streams,
             self._distributed,
             self._observations,
+            self._providers,
         ) = create_paths(
             plan, device, external_headroom_bytes, self.plans, rank_map, parameter_norms
         )
@@ -263,14 +265,16 @@ class Executor:
             try:
                 self.synchronize()
             finally:
-                self._completion.release()
-                if self._observations is not None:
-                    self._observations.close()
-                for path in reversed((*self._paths, *self._named_paths.values())):
-                    path.close(self.runtime)
-                if self._distributed is not None:
-                    self._distributed.close()
                 self._plan_released = True
+                with ExitStack() as cleanup:
+                    if self._distributed is not None:
+                        cleanup.callback(self._distributed.close)
+                    cleanup.callback(self._providers.close)
+                    for path in (*self._paths, *self._named_paths.values()):
+                        cleanup.callback(path.close, self.runtime)
+                    if self._observations is not None:
+                        cleanup.callback(self._observations.close)
+                    cleanup.callback(self._completion.release)
         # A caller-held output may prevent runtime shutdown. Allow close() to
         # be retried after it is released without destroying plan handles twice.
         self.runtime.close()

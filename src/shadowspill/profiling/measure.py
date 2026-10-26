@@ -13,6 +13,7 @@ from shadowspill.artifacts.tasks import stage_jobs
 from shadowspill.pytorch.accelerator import resolve_device
 from shadowspill.pytorch.task_inputs import prepare_inputs
 from shadowspill.pytorch.toolchain import build_setup
+from shadowspill.resources.preparation import prepare_resources
 
 from .session import MeasurementSession
 
@@ -22,6 +23,7 @@ def measure_program(
     *,
     device: str | torch.device = "cuda",
     stages: Sequence[int] | None = None,
+    rank_map: Mapping[int, int] | None = None,
     inputs: Mapping[str, Sequence[Any]] | None = None,
     warmup_seconds: float = 0.05,
     measure_seconds: float = 0.18,
@@ -55,10 +57,17 @@ def measure_program(
         torch.cuda.device(target),
         torch.no_grad(),
         torch.random.fork_rng(devices=[target]),
+        prepare_resources(program, target, rank_map) as resources,
     ):
         session = MeasurementSession(
-            program, target, inputs or {}, warmup_seconds, measure_seconds
+            program,
+            target,
+            inputs or {},
+            warmup_seconds,
+            measure_seconds,
+            groups=resources.groups,
         )
+        session.persistent += resources.retained_bytes
         for job in jobs:
             if "optimizer" in job or "gradient" in job:
                 component = job["optimizer"] if "optimizer" in job else job["gradient"]
@@ -94,7 +103,12 @@ def measure_program(
             "external_headroom_bytes": external_headroom_bytes,
             "resource_streams": session.streams.description,
             "stream_workspace_bytes": session.streams.retained_bytes,
+            "provider_resource_bytes": resources.retained_bytes,
             "input_policy": "automatic values; geometry preserved; caller overrides",
             "execution_qualification": "pending physical admission",
         }
+        if resources.groups is not None:
+            from .distributed import combine_profiles
+
+            return combine_profiles(session.profiles, resources.groups)
         return session.profiles

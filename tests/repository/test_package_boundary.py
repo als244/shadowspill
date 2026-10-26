@@ -43,6 +43,7 @@ def test_top_level_public_surface_is_explicit() -> None:
         "Replicated",
         "Sharded",
         "GroupRef",
+        "Resource",
     }
     assert len(package.__all__) == len(set(package.__all__))
     assert package.__version__

@@ -6,7 +6,7 @@ from collections.abc import Callable, Mapping
 from dataclasses import asdict, dataclass, field
 from hashlib import sha256
 from types import MappingProxyType
-from typing import Any, ClassVar
+from typing import TYPE_CHECKING, Any, ClassVar
 
 from shadowspill.ir import (
     AliasGroupSpec,
@@ -28,6 +28,9 @@ from shadowspill.parallelism import Parallelism
 
 from ._values import digest, freeze, nonnegative_int, plain
 from .archive import Artifact
+
+if TYPE_CHECKING:
+    from shadowspill.resources import Resource
 
 
 @dataclass(frozen=True)
@@ -73,12 +76,17 @@ class Program(Artifact):
     executables: Mapping[str, bytes] = field(default_factory=dict, repr=False)
     bindings: Mapping[str, Any] = field(default_factory=dict)
     parallelism: Parallelism | None = None
+    resources: Mapping[str, Resource] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
+        from shadowspill.resources.description import validate_resources
+
         if self.parallelism is not None and not isinstance(
             self.parallelism, Parallelism
         ):
             raise TypeError("parallelism must be Parallelism")
+        validate_resources(self.resources, self.parallelism)
+        object.__setattr__(self, "resources", MappingProxyType(dict(self.resources)))
         require_shapes(self)
         if not isinstance(self.task_definitions, tuple):
             raise TypeError("task_definitions must be a tuple")
@@ -115,7 +123,7 @@ class Program(Artifact):
         return digest(self.to_dict())
 
     def to_dict(self) -> dict[str, Any]:
-        return {
+        value = {
             **{
                 name: [item.to_dict() for item in getattr(self, name)]
                 for name in (
@@ -143,6 +151,11 @@ class Program(Artifact):
             if self.parallelism is None
             else self.parallelism.to_dict(),
         }
+        if self.resources:
+            value["resources"] = {
+                name: resource.to_dict() for name, resource in self.resources.items()
+            }
+        return value
 
     def _archive_payloads(self) -> Mapping[str, bytes]:
         return {sha256(value).hexdigest(): value for value in self.executables.values()}
@@ -160,7 +173,13 @@ class Program(Artifact):
             "final_residency": ResidencySpec.from_value,
             "task_alternative_groups": TaskAlternativeGroup.from_value,
         }
+        from shadowspill.resources import Resource
+
         data = dict(value)
+        data["resources"] = {
+            name: Resource.from_dict(item)
+            for name, item in data.get("resources", {}).items()
+        }
         if data.get("parallelism") is not None:
             data["parallelism"] = Parallelism.from_dict(data["parallelism"])
         for name, record in records.items():

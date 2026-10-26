@@ -10,6 +10,7 @@ from shadowspill.artifacts.plan import Plan
 from shadowspill.communication.binding.backend import shared_backend_setup
 from shadowspill.communication.binding.groups import GroupBindings
 from shadowspill.communication.requests import CollectiveRequest, collective_requests
+from shadowspill.resources.description import resource_groups
 
 from .storage import ShardedTransfers
 from .warmup import warm_collectives
@@ -61,7 +62,12 @@ class DistributedWorker:
             identity=digest(
                 {name: plan.to_dict() for name, plan in sorted(plans.items())}
             ),
-            groups=[request.ranks for request in self.requests],
+            groups=[request.ranks for request in self.requests]
+            + [
+                ranks
+                for plan in plans.values()
+                for ranks in resource_groups(plan.program.resources)
+            ],
             rank_map=rank_map,
             topology=first.communication_info.topology,
             backend="nccl",

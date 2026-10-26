@@ -60,6 +60,7 @@ src/shadowspill/
 │   └── observations/      optional bounded runtime norm collection
 ├── checkpoint/            streamed checkpoint format over Executor tensor access
 ├── parallelism/           logical groups, parameter placement and storage declarations
+├── resources/             portable provider descriptions, setup and cleanup
 ├── planning/              CPU-only profile binding, scheduling and physical layout
 │   ├── admission/         resolve saved memory evidence without a live pool
 │   └── training/          bind example/update orderings and gradient completion

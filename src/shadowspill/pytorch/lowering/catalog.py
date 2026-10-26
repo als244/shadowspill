@@ -148,6 +148,19 @@ class ObjectCatalog:
         self._object_specs: tuple[ObjectSpec, ...] | None = None
         self._next_alias_id = 0
 
+    def tensor_geometry(self, object_id: str) -> dict[str, object]:
+        """Layout of an explicitly registered tensor, independent of its readers."""
+        for key, identity in self._object_by_key.items():
+            if identity == object_id:
+                return {
+                    "dtype": str(key.dtype),
+                    "element_size": key.dtype.itemsize,
+                    "shape": key.shape,
+                    "stride": key.stride,
+                    "storage_offset": key.storage_offset,
+                }
+        raise ValueError(f"object {object_id!r} has no registered tensor geometry")
+
     def copy(self) -> ObjectCatalog:
         """An independent catalog holding what this one holds.
 

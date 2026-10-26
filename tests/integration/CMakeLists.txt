@@ -212,6 +212,11 @@ shadowspill_add_public_api_test(
 )
 
 shadowspill_add_public_api_test(
+  shadowspill/execution/test_resources.py
+  test_saved_provider_resource_lifecycle_and_memory[step] 300
+)
+
+shadowspill_add_public_api_test(
   shadowspill/training/test_partial_trainer.py
   test_partial_trainer_preserves_masters_mutations_evaluation_and_resume 300
 )

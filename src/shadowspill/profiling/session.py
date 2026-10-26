@@ -10,6 +10,7 @@ from torch.utils._pytree import tree_flatten
 from shadowspill.artifacts._values import plain
 from shadowspill.artifacts.profiles import Profiles
 from shadowspill.artifacts.program import Program
+from shadowspill.communication.binding.groups import GroupBindings
 from shadowspill.pytorch.control_inputs import ControlInputs
 from shadowspill.pytorch.executable import restore_executable
 from shadowspill.pytorch.task_inputs import prepare_inputs
@@ -27,8 +28,11 @@ class MeasurementSession:
         inputs: Mapping[str, Sequence[Any]],
         warmup: float,
         measurement: float,
+        *,
+        groups: GroupBindings | None = None,
     ):
         self.program, self.device, self.inputs = program, device, inputs
+        self.groups = groups
         self.warmup, self.measurement = warmup, measurement
         self.functions: dict[str, Any] = {}
         self.controls = ControlInputs(program, device, inputs)
@@ -61,6 +65,9 @@ class MeasurementSession:
                 device=self.device,
                 warmup_seconds=self.warmup,
                 measure_seconds=self.measurement,
+                continue_while=None
+                if self.groups is None
+                else self.groups.continue_sampling,
             )
         definition = next(
             item for item in self.program.task_definitions if item.profile_key == key

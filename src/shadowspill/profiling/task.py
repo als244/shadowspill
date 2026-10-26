@@ -29,13 +29,14 @@ def measure_task(
     device: torch.device,
     warmup_seconds: float,
     measure_seconds: float,
+    continue_while: Callable[[bool, bool], bool] | None = None,
 ) -> TaskProfile:
     cold = observe_task(function, arguments, device=device)
     timer = EventTimer(lambda: function(*arguments))
     options = ProfilingOptions(
         conditioning_seconds=warmup_seconds, measurement_seconds=measure_seconds
     )
-    condition_task(timer.sample, options=options)
+    condition_task(timer.sample, options=options, continue_while=continue_while)
     observations = [observe_task(function, arguments, device=device) for _ in range(3)]
     storage = TaskStorageContract.from_dict(plain(manifest["storage_contract"]))
     contracts = [
@@ -54,7 +55,9 @@ def measure_task(
         raise CaptureError(
             "output/input aliases change across repeated warmed executions"
         )
-    timing = collect_timing_samples(timer.sample, options=options)
+    timing = collect_timing_samples(
+        timer.sample, options=options, continue_while=continue_while
+    )
     samples = tuple(sample / 1e9 for sample in timing.samples)
     duration = median(samples)
     output_ordinals = {

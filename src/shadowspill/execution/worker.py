@@ -1,11 +1,17 @@
 """Assemble admitted paths; startup failures reach all participating workers."""
 
 from collections.abc import Mapping
+from contextlib import ExitStack
 from typing import TYPE_CHECKING
+
+import torch
 
 from shadowspill.artifacts.plan import Plan
 from shadowspill.planning.shared import shared_memory
 from shadowspill.pytorch.resource_streams import ResourceStreams
+from shadowspill.resources.description import resource_groups
+from shadowspill.resources.inventory import resource_inventory
+from shadowspill.resources.lifecycle import ResourceBindings
 from shadowspill.runtime import Runtime
 
 from .distributed.checks import coordinated
@@ -32,6 +38,7 @@ def create_paths(
     ResourceStreams,
     DistributedWorker | None,
     "ParameterNorms | None",
+    ResourceBindings,
 ]:
     plans = dict(plans or {})
     inventory = plan_inventory(plan, plans)
@@ -39,10 +46,14 @@ def create_paths(
     distributed = (
         DistributedWorker(inventory, rank_map)
         if plan.program.parallelism is not None
-        and plan.program.parallelism.world_size > 1
+        and (
+            plan.program.parallelism.world_size > 1
+            or any(resource_groups(p.program.resources) for p in candidates)
+        )
         else None
     )
     runtime, paths, named, observations = None, [], {}, None
+    providers = ResourceBindings()
     try:
 
         def validate_observations() -> None:
@@ -76,6 +87,18 @@ def create_paths(
             distributed.groups.check(failure)
             distributed.prepare(device)
         assert runtime is not None
+        descriptions, sources = coordinated(
+            distributed, lambda: resource_inventory(p.program for p in candidates)
+        )
+        coordinated(
+            distributed,
+            lambda: providers.open(
+                descriptions,
+                sources,
+                device=torch.device("cuda", device),
+                groups=None if distributed is None else distributed.groups,
+            ),
+        )
         streams = coordinated(distributed, lambda: worker_streams(candidates, device))
 
         def bind() -> None:
@@ -140,15 +163,25 @@ def create_paths(
             seal_paths(candidates)
 
         coordinated(distributed, bind)
-        return runtime, tuple(paths), named, streams, distributed, observations
+        return (
+            runtime,
+            tuple(paths),
+            named,
+            streams,
+            distributed,
+            observations,
+            providers,
+        )
     except BaseException:
-        if observations is not None:
-            observations.close()
-        for path in reversed([*paths, *named.values()]):
-            assert runtime is not None
-            path.close(runtime)
-        if distributed is not None:
-            distributed.close()
-        if runtime is not None:
-            runtime.close()
+        with ExitStack() as cleanup:
+            if runtime is not None:
+                cleanup.callback(runtime.close)
+            if distributed is not None:
+                cleanup.callback(distributed.close)
+            cleanup.callback(providers.close)
+            for path in [*paths, *named.values()]:
+                assert runtime is not None
+                cleanup.callback(path.close, runtime)
+            if observations is not None:
+                cleanup.callback(observations.close)
         raise
