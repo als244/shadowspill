@@ -1,5 +1,6 @@
 """Inline constants remain usable through a caller-selected forward."""
 
+import copy
 import io
 
 import pytest
@@ -9,6 +10,24 @@ from torch.export.graph_signature import InputKind
 
 from shadowspill.pytorch.capture.export import capture_forward
 from shadowspill.pytorch.capture.forward import select_forward
+
+
+def test_callback_keeps_state_names_and_original_model_call():
+    model = nn.Sequential(nn.Linear(3, 2), nn.Sigmoid())
+    original = copy.deepcopy(model)
+    inputs = {"left": torch.randn(5, 3), "right": torch.randn(5, 3)}
+
+    def callback(m, x):
+        return {"sum": m(x["left"]) + m(x["right"])}
+
+    select_forward(model, callback)
+    exported = torch.export.export(model, (inputs,), strict=True)
+    torch.testing.assert_close(exported.module()(inputs), callback(original, inputs))
+    assert [
+        item.target
+        for item in exported.graph_signature.input_specs
+        if item.kind is InputKind.PARAMETER
+    ] == ["0.weight", "0.bias"]
 
 
 class _WithConstants(nn.Module):

@@ -8,6 +8,23 @@ from shadowspill.training._inputs import ScaledObjective
 from shadowspill.training._model import initialize_model
 
 
+def test_scaled_tuple_objective_is_accepted_by_capture():
+    from shadowspill.pytorch.capture.objective import capture_training_objective
+
+    model = nn.Linear(3, 2)
+
+    def objective(model, inputs):
+        output = model(inputs["features"])
+        return output.square().mean(), {"sum": output.detach().sum()}
+
+    capture = capture_training_objective(
+        model,
+        ScaledObjective(objective),
+        ({"features": torch.randn(5, 3)}, torch.tensor(0.25)),
+    )
+    assert capture.objective_schema.tensor_metric_positions == (0,)
+
+
 @pytest.mark.parametrize("buffer_only", [False, True])
 def test_meta_state_materializes_and_scale_is_an_input(buffer_only):
     model = nn.Module()
