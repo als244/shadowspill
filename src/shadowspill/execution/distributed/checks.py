@@ -2,7 +2,7 @@
 
 from collections.abc import Callable
 
-from shadowspill.errors import AdmissionError
+from shadowspill.pipeline.admission.physical import check_physical_budget
 from shadowspill.runtime import Runtime
 
 from .worker import DistributedWorker
@@ -41,8 +41,4 @@ def check_invocation(
 
 
 def check_external_budget(runtime: Runtime) -> None:
-    status = int(runtime._installed.library.shadowspill_pytorch_check_physical_budget())
-    if status:
-        raise AdmissionError(
-            f"worker exceeded its physical memory reservation (status {status})"
-        )
+    check_physical_budget(runtime._installed)

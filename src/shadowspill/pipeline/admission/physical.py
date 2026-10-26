@@ -126,16 +126,8 @@ def seal_physical_budget(
     )
 
 
-def seal_worker_budget(
-    installed: InstalledRuntime,
-    *,
-    selected_task_count: int,
-    initial_transfer_count: int,
-    scheduled_transfer_count: int,
-    fixed_lifetime_count: int,
-    dynamic_lifetime_count: int,
-) -> None:
-    """Seal the admitted worker's physical budget and reusable record inventory."""
+def check_physical_budget(installed: InstalledRuntime) -> None:
+    """Check the same reservation at admission and after distributed updates."""
     library = installed.library
     status = int(library.shadowspill_pytorch_check_physical_budget())
     if status != 0:
@@ -158,6 +150,20 @@ def seal_worker_budget(
                 f"allocator_pool={int(admission.allocator_pool_bytes)}"
             )
         raise AdmissionError(f"physical budget check failed (status {status}){details}")
+
+
+def seal_worker_budget(
+    installed: InstalledRuntime,
+    *,
+    selected_task_count: int,
+    initial_transfer_count: int,
+    scheduled_transfer_count: int,
+    fixed_lifetime_count: int,
+    dynamic_lifetime_count: int,
+) -> None:
+    """Seal the admitted worker's physical budget and reusable record inventory."""
+    check_physical_budget(installed)
+    library = installed.library
     statistics = AdapterStatistics()
     status = int(
         library.shadowspill_pytorch_allocator_statistics(ctypes.byref(statistics))

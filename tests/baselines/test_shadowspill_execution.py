@@ -29,7 +29,10 @@ def test_saved_baseline_matches_reference_in_fresh_worker(tmp_path, mode, world)
         sequence_length=32,
         tokens_per_step=128 * world,
         tokens_per_microbatch=64,
-        execution_gib=3,
+        # This qualification also holds a compiled independent reference model
+        # and, at two ranks, a second NCCL communicator. Reserve its memory.
+        execution_gib=5 if world > 1 else 3,
+        external_headroom_gib=2 if world > 1 else 0.5,
         spill_gib=0.25,
         steps=2,
         warmup_steps=1,
