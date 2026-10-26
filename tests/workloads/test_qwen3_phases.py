@@ -15,8 +15,8 @@ from shadowspill.execution.tensors import TensorChunk
 from workloads.models.qwen3moe.config import PRESETS
 from workloads.models.shared.decoder import RotaryEmbedding
 from workloads.recipes.text.data.calls import Inputs
+from workloads.recipes.text.initialization import Initialize
 from workloads.recipes.text.qwen3.common import batch_sizes
-from workloads.recipes.text.qwen3.initialize import Initialize
 
 
 def test_replanning_preserves_prior_profile_headroom(tmp_path, monkeypatch):
@@ -40,7 +40,7 @@ def test_replanning_preserves_prior_profile_headroom(tmp_path, monkeypatch):
 
 def test_initializer_reconstructs_identical_shards_and_rotary_tables():
     config = PRESETS["tiny"]
-    initialize = Initialize(config, seed=41)
+    initialize = Initialize("qwen3moe", config, seed=41)
     initialize.block_elements = 257
 
     def fill(name, shape, dtype, width):

@@ -17,13 +17,13 @@ from shadowspill.execution.tensors import TensorChunk
 from workloads.models.llama3.config import LLAMA_3_1_ROPE_SCALING, Config
 from workloads.models.shared.decoder import RotaryEmbedding
 from workloads.recipes.text.data.calls import Inputs
-from workloads.recipes.text.llama3.initialize import Initialize
+from workloads.recipes.text.initialization import Initialize
 
 
 @pytest.mark.parametrize("scaling", [None, LLAMA_3_1_ROPE_SCALING])
 def test_initializer_chunks_preserve_tables_norms_and_random_values(scaling):
     config = Config(1, 128, 2, 1, 256, 512, max_seq_len=64, rope_scaling=scaling)
-    initialize = Initialize(config, seed=123)
+    initialize = Initialize("llama3", config, seed=123)
     initialize.block_elements = 257  # Cross RNG blocks with deliberately odd chunks.
 
     def fill(name, shape, dtype, width):

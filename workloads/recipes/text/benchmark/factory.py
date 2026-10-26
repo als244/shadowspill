@@ -10,8 +10,8 @@ from workloads.full_model import build_model, full_model_objective, spec
 from workloads.lora import configure_lora
 from workloads.models.shared.training import LEARNING_RATE
 
+from ..initialization import Initialize
 from ..precision import Precision
-from .initialize import Initialize
 from .inputs import candidates
 
 
@@ -65,7 +65,7 @@ def experiment(
     )
     if not 0 <= logical_rank < parallelism.world_size:
         raise ValueError("logical_rank is outside the declared parallelism")
-    initializer = Initialize(manifest, seed=seed)
+    initializer = Initialize(manifest.family, manifest.model_config, seed=seed)
     inputs, skipped = candidates(
         manifest,
         size=sequences_per_example,

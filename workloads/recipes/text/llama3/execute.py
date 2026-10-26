@@ -8,8 +8,8 @@ from shadowspill.training.schedules import WarmupCosine
 from workloads.recipes.phases import settings
 from workloads.recipes.text.data.calls import Inputs
 
+from ..initialization import Initialize
 from .common import model_config
-from .initialize import Initialize
 
 
 def run(directory):
@@ -29,7 +29,9 @@ def run(directory):
         if options.get("resume"):
             trainer.load(options["resume"])
         else:
-            trainer.initialize(Initialize(model_config(options), seed=options["seed"]))
+            trainer.initialize(
+                Initialize("llama3", model_config(options), seed=options["seed"])
+            )
         with (root / "training/evaluation.jsonl").open("a", buffering=1) as stream:
 
             def evaluate(owner, result=None):

@@ -20,12 +20,8 @@ class Initialize:
 
     block_elements = 256 << 10
 
-    def __init__(self, manifest, *, seed=0):
-        self.family, self.config, self.seed = (
-            manifest.family,
-            manifest.model_config,
-            seed,
-        )
+    def __init__(self, family, config, *, seed=0):
+        self.family, self.config, self.seed = family, config, seed
         if self.family not in FAMILIES:
             raise ValueError(
                 f"{self.family} needs its own checkpoint/initialization recipe"

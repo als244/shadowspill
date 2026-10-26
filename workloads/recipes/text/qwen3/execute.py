@@ -13,8 +13,8 @@ from shadowspill.training.schedules import WarmupCosine
 from workloads.recipes.phases import settings
 from workloads.recipes.text.data.calls import Inputs
 
+from ..initialization import Initialize
 from .common import model_config
-from .initialize import Initialize
 
 
 def run(directory):
@@ -48,7 +48,9 @@ def run(directory):
                 else nullcontext()
             ) as logger,
         ):
-            trainer.initialize(Initialize(model_config(options), seed=options["seed"]))
+            trainer.initialize(
+                Initialize("qwen3moe", model_config(options), seed=options["seed"])
+            )
             trainer.fit(
                 Inputs(options, rank=rank, world_size=ranks),
                 steps=options["steps"],

@@ -43,7 +43,7 @@ The files have one purpose each:
 | `communicate.py` | Host copies, declared collectives and communication memory | `communication/batch-N.ssp` |
 | `plan.py` | All factor sizes/orderings under the supplied memory budget | `search.json`, `plans/`, selected `plan.ssp`, `report/` |
 | `execute.py` | Fresh worker, bounded initialization, Trainer updates/checkpoint | `training/rank-NNNNN/` |
-| `initialize.py` | Identical random tensor values across shards/chunk sizes | Fills Executor buffers |
+| `../initialization.py` | Identical random tensor values across shards/chunk sizes | Fills Executor buffers |
 
 The default candidates contain 1, 2, 4, 8, 16 and 32 sequences per example;
 planning selects their execution order without rebuilding. Inputs are rank-local

@@ -36,7 +36,7 @@ For example, add `"ranks":8` for eight-way sharded DP, or
 for FP32 training state. Metadata records the resolved settings and global token
 count. Batch orderings are enumerated during CPU planning using the saved Program.
 
-`initialize.py` fills Executor-provided CPU storage in deterministic 256K-element
+The shared `text/initialization.py` fills Executor-provided CPU storage in deterministic 256K-element
 RNG blocks. Scratch stays bounded, shard/chunk boundaries do not change values,
 and no complete anonymous model is allocated. It preserves family initialization
 distributions and derived RoPE/norm/gate values, not the original module traversal's
