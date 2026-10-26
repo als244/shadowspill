@@ -52,7 +52,6 @@ shadowspill_add_pytorch_canary(invalid_access 60)
 shadowspill_add_pytorch_canary(profiler 60)
 shadowspill_add_pytorch_canary(forward 90)
 shadowspill_add_pytorch_canary(state_import_export 90)
-shadowspill_add_pytorch_canary(training 120)
 shadowspill_add_pytorch_canary(planning_residue 120)
 
 # Older tests install the allocator in pytest; saved-phase tests launch their

@@ -19,6 +19,7 @@ forbid_preparation(
 from qualification.runtime_evidence import adapter_statistics  # noqa: E402
 from shadowspill import Executor, load_checkpoint, save_checkpoint  # noqa: E402
 from tests.shadowspill.execution._stream_checks import StreamChecks  # noqa: E402
+from tests.shadowspill.execution._trace_checks import check_trace  # noqa: E402
 
 directory = Path(sys.argv[1])
 plan = Plan.load(directory / "plan.ssp")
@@ -117,11 +118,16 @@ for index, (outputs, state) in enumerate(oracle["expected"]):
             accumulate_gradients=oracle["accumulate"][index],
             collect_parameter_norms=bool(norms and norms[index] is not None),
             profiler_annotations=index == 1,
+            runtime_trace=index == 0,
         )
         if streams is not None:
             streams.check()
     assert bool(annotations_enabled(executor.runtime._runtime_handle)) == (index == 1)
     result = pending.result()
+    if index == 0:
+        check_trace(plan, pending.diagnostics)
+    else:
+        assert pending.diagnostics is None
     assert not annotations_enabled(executor.runtime._runtime_handle)
     assert [
         name for name in compiled_kernels if name in norm_kernels
@@ -171,10 +177,16 @@ for index, (outputs, state) in enumerate(oracle["expected"]):
         )
     if index == 0:
         checkpoint = directory / "checkpoint.ssp"
+        before_checkpoint = adapter_statistics()
         save_checkpoint(executor, checkpoint, metadata={"completed": 1}, chunk_bytes=40)
         executor.initialize(lambda request, chunk: chunk.zero_(), restore=True)
         assert load_checkpoint(executor, checkpoint, chunk_bytes=28) == {"completed": 1}
         steady_statistics = adapter_statistics()
+        assert (
+            steady_statistics.allocation_callbacks
+            == before_checkpoint.allocation_callbacks
+        )
+        assert steady_statistics.free_callbacks == before_checkpoint.free_callbacks
 if plan.program.bindings["kind"] == "forward":
     first = executor.run(
         args=[oracle["examples"][0][0]], kwargs=[oracle["examples"][0][1]]
