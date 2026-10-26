@@ -19,6 +19,25 @@ from workloads.recipes.text.qwen3.common import batch_sizes
 from workloads.recipes.text.qwen3.initialize import Initialize
 
 
+def test_replanning_preserves_prior_profile_headroom(tmp_path, monkeypatch):
+    from workloads.recipes.text import train_qwen3_distributed as recipe
+
+    calls = []
+    monkeypatch.setattr(recipe, "run_phases", lambda *a, **k: calls.append((a, k)))
+    data = tmp_path / "tokens"
+    root = tmp_path / "run"
+    recipe.main(["--phase", "build", "--data", str(data), "--run-dir", str(root)])
+    path = root / "config.json"
+    options = json.loads(path.read_text())
+    assert options.pop("external_headroom_mib") == 768
+    path.write_text(json.dumps(options))
+    recipe.main(["--phase", "plan", "--run-dir", str(root), "--execution-gib", "4"])
+    restored = json.loads(path.read_text())
+    assert restored["external_headroom_mib"] == 512
+    assert restored["execution_gib"] == 4
+    assert [call[0][2] for call in calls] == ["build", "plan"]
+
+
 def test_initializer_reconstructs_identical_shards_and_rotary_tables():
     config = PRESETS["tiny"]
     initialize = Initialize(config, seed=41)

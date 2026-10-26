@@ -17,6 +17,13 @@ for communication calibration and execution. Defaults are 4K tokens, 64 sequence
 per rank, five updates, and 77 GiB GPU / 96 GiB host spill per rank. The latter
 requires 768 GiB of host pools across the node.
 
+Profiling reserves 768 MiB of external GPU headroom (configurable with
+`--external-headroom-mib` when creating the run), in addition to calibrated
+communication overhead. This is included in the total GPU budget. The SonicMoE
+H100 worker exceeded the earlier 512 MiB allowance by 8 MiB during library/backend
+setup; the extra margin reduces the memory available to planning rather than
+relaxing runtime admission. Changing this reservation requires fresh profiles.
+
 Each phase also runs independently with `--phase build`, `profile`, `communicate`,
 `plan`, or `execute`. Start build with the data path and configuration. Subsequent
 phases read saved settings; a new build requires a fresh directory. Change memory

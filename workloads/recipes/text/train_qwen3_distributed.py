@@ -39,6 +39,7 @@ def main(argv=None):
     parser.add_argument("--seed", type=int, default=0)
     parser.add_argument("--execution-gib", type=float)
     parser.add_argument("--spill-gib", type=float)
+    parser.add_argument("--external-headroom-mib", type=int, default=768)
     parser.add_argument("--warmup-seconds", type=float, default=0.05)
     parser.add_argument("--measure-seconds", type=float, default=0.18)
     parser.add_argument("--no-plots", dest="plots", action="store_false")
@@ -59,6 +60,9 @@ def main(argv=None):
         if not config.exists():
             parser.error("run the build phase first")
         options = json.loads(config.read_text())
+        # Earlier runs profiled with 512 MiB. Replanning must retain that
+        # reservation rather than silently claiming the new profiling default.
+        options.setdefault("external_headroom_mib", 512)
         for key in ("execution_gib", "spill_gib"):
             if getattr(args, key) is not None:
                 if args.phase != "plan":
@@ -76,6 +80,7 @@ def main(argv=None):
                 "learning_rate",
                 "execution_gib",
                 "spill_gib",
+                "external_headroom_mib",
             )
         )
         <= 0

@@ -15,7 +15,11 @@ def run(directory):
         name = f"batch-{size}.ssp"
         print(f"profiling {name}", flush=True)
         program = Program.load(root / "programs" / name)
-        profiles = measure_program(program, **timing)
+        profiles = measure_program(
+            program,
+            external_headroom_bytes=options.get("external_headroom_mib", 768) << 20,
+            **timing,
+        )
         profiles.save(root / "profiles" / name)
         apply_profiles(program, profiles).save(root / "profiled" / name)
     if options["ranks"] == 1:
