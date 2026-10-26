@@ -83,6 +83,8 @@ def optimizer_templates(
     ]
     return components, {
         "optimizer_type": update.captured.optimizer_type,
+        "optimizer_zero_lr_preserves_state": update.zero_lr_preserves_state,
+        "optimizer_learning_rates": update.learning_rates,
         "optimizer_bindings": bindings,
         "optimizer_objects": [asdict(item) for item in objects.optimizer_objects],
     }

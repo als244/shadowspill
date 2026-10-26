@@ -1,4 +1,4 @@
-"""Real, separate-device DP correctness using the public Trainer/Runtime path.
+"""Retained model-based DP coverage, pending migration to saved phase workers.
 
 Launch with torchrun. Results are checked against a combined-data CPU oracle.
 Any forced graph-pair selection is a test-only search restriction; capture,
@@ -23,7 +23,8 @@ from torch import nn
 
 from shadowspill.pytorch import ProfilingOptions
 from shadowspill.runtime.occupancy import live_allocations
-from shadowspill.training import Distributed, Trainer
+from shadowspill.training import Distributed
+from shadowspill.training._legacy_trainer import Trainer as LegacyTrainer
 from shadowspill.training.backends import ShadowSpill
 from shadowspill.training.observations import parameter_norms
 
@@ -227,7 +228,7 @@ def run(args):
                     optimizer = MatrixNormalizedMomentum
 
                 def make_trainer(model):
-                    return Trainer(
+                    return LegacyTrainer(
                         model,
                         objective=objective,
                         optimizer=optimizer,

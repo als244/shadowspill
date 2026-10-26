@@ -111,7 +111,7 @@ def begin_collective_trace(
     if not dist.is_initialized():
         return None
     groups = {
-        group.group_name: tuple(dist.get_process_group_ranks(group))
+        str(group.group_name): tuple(dist.get_process_group_ranks(group))
         for group in dist.distributed_c10d._world.pg_map
     }
     tasks = {

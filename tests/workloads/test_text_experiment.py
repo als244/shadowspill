@@ -72,6 +72,11 @@ def test_text_phases_preserve_packing_metrics_and_exact_cold_resume(
     if masters:
         options["model"]["dtype"] = "bfloat16"
         options.update(master_dtype="@torch:float32", grad_dtype="@torch:float32")
+    else:
+        options["optimizer"] = "@mlops.optim:AdamW"
+        options["optimizer_args"].update(
+            gradient_dtype="@torch:float32", opt_state_dtype="@torch:float32"
+        )
     # Keep variable document boundaries/packing, but use learnable text rather
     # than independent random next tokens for the loss-decrease assertion.
     for split in ("train", "val"):
@@ -91,6 +96,7 @@ def test_text_phases_preserve_packing_metrics_and_exact_cold_resume(
         warmup_seconds=0.001,
         measure_seconds=0.002,
         plots=False,
+        startup_diagnostics=not masters,
     )
     options["optimizer_args"]["lr"] = {"@call": "torch:tensor", "data": 0.01}
     options["schedules"]["optimizer_group.0.lr"] = options["schedules"].pop("lr")
@@ -112,6 +118,10 @@ def test_text_phases_preserve_packing_metrics_and_exact_cold_resume(
 
     final = run(whole)
     assert final.step == 6
+    if not masters:
+        assert (whole / "startup/timelines/traced.html").is_file()
+        startup = json.loads((whole / "startup/summary.json").read_text())
+        assert startup["training_step"] == 0
     assert final.parameter_metrics["embed.weight"]["grad_norm"].device.type == "cpu"
     torch.testing.assert_close(
         asdict(final), asdict(results.load(whole / "result.json"))

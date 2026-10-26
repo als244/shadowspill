@@ -55,7 +55,6 @@ shadowspill_add_pytorch_canary(forward 90)
 shadowspill_add_pytorch_canary(state_import_export 90)
 shadowspill_add_pytorch_canary(mutation 90)
 shadowspill_add_pytorch_canary(training 120)
-shadowspill_add_pytorch_canary(step_archive 120)
 shadowspill_add_pytorch_canary(planning_residue 120)
 
 # Older tests install the allocator in pytest; saved-phase tests launch their
@@ -146,18 +145,14 @@ shadowspill_add_public_api_test(
   test_shared_evaluation_and_checkpoint_in_cold_workers 300
 )
 shadowspill_add_public_api_test(
-  shadowspill/pytorch/api/test_03_planning_host_memory.py
-  test_a_plan_keeps_no_host_copy_of_what_its_forwards_saved 300
+  shadowspill/profiling/test_pair_lifetimes.py
+  test_pair_inputs_are_released_between_measurements_and_on_failure 300
 )
 shadowspill_add_public_api_test(
-  shadowspill/pytorch/api/test_03_planning_host_memory.py
-  test_planning_fails_when_the_spill_pool_has_no_room_for_saved_values 300
+  shadowspill/build/test_step.py
+  test_adam_updates_and_moments_match_pytorch_without_rebuilding 300
 )
 
-shadowspill_add_public_api_test(
-  shadowspill/pytorch/api/test_05_generic_training.py
-  test_shadowspill_generic_candidates_shared_forward_and_checkpoint 300
-)
 shadowspill_add_public_api_test(
   benchmarking/test_generic_quickstart.py
   test_generic_quickstart_search_run_plot 300
@@ -173,8 +168,8 @@ shadowspill_add_public_api_test(
 )
 
 shadowspill_add_public_api_test(
-  shadowspill/pytorch/api/test_05_generic_training.py
-  test_mutable_buffer_survives_diagnostics_and_repeated_training 300
+  shadowspill/training/test_diagnostics.py
+  test_saved_startup_diagnostics_preserve_state_and_rng[False] 300
 )
 shadowspill_add_public_api_test(
   shadowspill/execution/test_tensor_representations.py
@@ -198,8 +193,8 @@ shadowspill_add_public_api_test(
 )
 
 shadowspill_add_public_api_test(
-  shadowspill/pytorch/api/test_05_generic_training.py
-  test_first_stochastic_update_is_independent_of_preparation_and_diagnostics 300
+  shadowspill/training/test_diagnostics.py
+  test_saved_startup_diagnostics_preserve_state_and_rng[True] 300
 )
 shadowspill_add_public_api_test(
   shadowspill/execution/test_random.py

@@ -14,6 +14,7 @@ from shadowspill.profiling.records import measured_task
 from shadowspill.pytorch.executable import restore_executable
 from shadowspill.runtime.plan import (
     RuntimeBridge,
+    TaskMemoryEnvelope,
     TaskPublication,
     actions_by_task,
     admit_caller_acquisition,
@@ -38,6 +39,7 @@ class BoundTask:
     publications: tuple[TaskPublication, ...]
     actions: Any
     host_inputs: tuple[tuple[int, str], ...]
+    memory_envelope: TaskMemoryEnvelope
 
 
 def prepare(
@@ -135,6 +137,7 @@ def prepare(
                         "host_inputs", ()
                     )
                 ),
+                envelope or TaskMemoryEnvelope(),
             )
         )
     public = plan.program.bindings["public_outputs"]

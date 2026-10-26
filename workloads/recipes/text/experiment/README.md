@@ -78,6 +78,12 @@ Execution writes `metrics.jsonl`, `packing.jsonl`, optional metric tables and
 and logging hooks as the reference loop. `result.json` contains only the final
 CPU observations, not model tensors. Compiler caches remain external.
 
+Optional `startup_diagnostics=true` writes `startup/` with measured and simulated
+timelines before the first update. It requires an optimizer with the explicit
+zero-LR preservation guarantee (MLOps AdamW) and CPU tensor learning rates.
+Buffers, RNG and training progress are preserved; ordinary PyTorch AdamW is
+rejected. See [startup diagnostics](../../../../docs/python/api/training.md#startup-diagnostics).
+
 ```bash
 python -m workloads.recipes.text.run experiment.json \
   resume=runs/text/checkpoints/step_00000003.ssp steps=6 --phase execute

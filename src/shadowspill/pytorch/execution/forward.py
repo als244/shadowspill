@@ -12,6 +12,12 @@ from torch.utils._pytree import TreeSpec, tree_flatten, tree_unflatten
 
 from shadowspill.diagnostics.timing import ArmedTaskTiming as _ArmedTaskTiming
 from shadowspill.errors import PlanningError
+from shadowspill.execution.recording.spec import (
+    TracedInvocation,
+    TracedTask,
+    alias_accesses,
+)
+from shadowspill.execution.recording.timing import ExecutionTiming
 from shadowspill.ir import ExecutionPlan, MemoryAction, MemoryActionKind, TaskSpec
 from shadowspill.pytorch.invocation import ReusableCompletionEvent
 from shadowspill.pytorch.lowering.forward import LoweredForwardProgram, TaskEntrypoint
@@ -48,12 +54,6 @@ from shadowspill.simulator import SimulationResult
 from shadowspill.task.entrypoints import execution_entrypoints
 
 from .annotations import AnnotatedExecutor
-from .timing import (
-    ExecutionTiming,
-    TracedInvocation,
-    TracedTask,
-    alias_accesses,
-)
 
 
 @dataclass(slots=True)

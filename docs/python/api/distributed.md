@@ -279,8 +279,10 @@ partial checkpoints.
 `DataParallel`, `Distributed`, `TransferSharding`, `Forward` and `PreparedTraining`
 belong to the older preparation path, retained for unmigrated integration tests
 and tools. They are not arguments to `Trainer(plan)` or the new builders.
-Older startup diagnostics still preserve state through their optimizer-specific
-no-update contract; they are not yet an option on the saved-plan Trainer.
+Saved-plan [startup diagnostics](training.md#startup-diagnostics) retain the
+explicit optimizer no-update guarantee and write one directory per logical rank.
+Single-GPU state/RNG preservation is qualified; distributed trace collection
+still needs its own multi-GPU check.
 
 ### Initial replica synchronization and mapped checkpoints
 

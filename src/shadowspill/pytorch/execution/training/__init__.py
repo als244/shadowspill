@@ -19,6 +19,7 @@ import torch
 from shadowspill.diagnostics.timing import (
     ArmedExecutionTiming as _ArmedExecutionTiming,
 )
+from shadowspill.execution.recording.timing import ExecutionTiming
 from shadowspill.ir import ExecutionPlan
 from shadowspill.pytorch.invocation import ReusableCompletionEvent
 from shadowspill.pytorch.lowering.training import LoweredTrainingProgram
@@ -44,7 +45,6 @@ from ..records import (
 from ..records import (
     build_plan_run,
 )
-from ..timing import ExecutionTiming
 from .admission import admit_run
 from .boundary import execute_task
 from .optimizer_state import OptimizerState

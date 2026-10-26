@@ -11,14 +11,14 @@ from unittest.mock import patch
 import pytest
 import torch
 
-import shadowspill.pytorch.execution.timing as timing_module
+import shadowspill.execution.recording.timing as timing_module
 import shadowspill.pytorch.execution.training.boundary as boundary_module
 import shadowspill.pytorch.execution.training.publication as publication_module
 import shadowspill.runtime.plan.annotations as annotations_module
 from shadowspill.diagnostics.timing import InvocationTimelines
+from shadowspill.execution.recording.timing import ExecutionTiming
 from shadowspill.ir import MemoryActionKind
 from shadowspill.pytorch.execution.forward import _ExecutingStage
-from shadowspill.pytorch.execution.timing import ExecutionTiming
 from shadowspill.pytorch.execution.training import TrainingExecutor
 from shadowspill.pytorch.execution.training.boundary import execute_task
 from shadowspill.pytorch.execution.training.publication import after_task

@@ -2,7 +2,7 @@
 
 import json
 
-from shadowspill.pytorch.execution.collectives import decode_collectives
+from shadowspill.execution.recording.collectives import decode_collectives
 
 
 def test_collective_phase_preserves_issue_queue_delay_and_group_identity():

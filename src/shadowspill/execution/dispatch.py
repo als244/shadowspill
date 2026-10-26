@@ -1,5 +1,6 @@
 """Run one saved callable between exact acquisition/publication boundaries."""
 
+import time
 from typing import TYPE_CHECKING, Any
 
 import torch
@@ -21,7 +22,10 @@ from .controls import Controls
 from .storage import Storage
 
 if TYPE_CHECKING:
+    from shadowspill.diagnostics.timing import ArmedTaskTiming
+
     from .observations.collector import ParameterNorms
+    from .tracing import InvocationTrace
 
 
 def dispatch(
@@ -30,15 +34,16 @@ def dispatch(
     controls: Controls,
     observations: "ParameterNorms | None" = None,
     annotations: TaskBoundaryAnnotations | None = None,
+    trace: "InvocationTrace | None" = None,
 ) -> None:
     if annotations is None:
-        _dispatch(bound, state, controls, observations)
+        _dispatch(bound, state, controls, observations, trace)
         return
     name = state.plan.program.bindings.get("task_names", {}).get(
         bound.entry.task_id, bound.entry.task_id
     )
     with annotations.range(f"shadowspill.task.{name}"):
-        _dispatch(bound, state, controls, observations)
+        _dispatch(bound, state, controls, observations, trace)
 
 
 def _dispatch(
@@ -46,19 +51,35 @@ def _dispatch(
     state: Storage,
     controls: Controls,
     observations: "ParameterNorms | None",
+    trace: "InvocationTrace | None",
 ) -> None:
     bridge, device = state.bridge, state.device.index
+    timing = None if trace is None else trace.timing
+    task = None if timing is None else timing.begin_task(bound.entry)
+    stream = torch.cuda.current_stream(state.device) if timing is not None else None
+    if timing is not None:
+        timing.record_task_readiness(task, stream)
     tensors = [
         state.owner(a) for a in bound.inputs if bridge.objects.requires_storage(a)
     ]
     before_task_and_acquire(bridge, bound.handle, device, tensors)
     try:
+        if timing is not None:
+            timing.record_task_inputs_ready(task, stream)
         wait_task_allocations(bridge, bound.handle, device)
-        _run(bound, state, controls, observations)
+        if timing is not None:
+            assert trace is not None
+            if bound.entry.task_id == trace.first:
+                timing.record_compute_start(stream)
+            timing.record_task_start(task, stream)
+        _run(bound, state, controls, observations, trace, task, stream)
     except BaseException as error:
         error.add_note(f"while executing task {bound.entry.task_id}")
         abort_task(bridge, bound.handle)
         raise
+    finally:
+        if timing is not None:
+            timing.finish_task(task)
 
 
 def _run(
@@ -66,6 +87,9 @@ def _run(
     state: Storage,
     controls: Controls,
     observations: "ParameterNorms | None",
+    trace: "InvocationTrace | None",
+    task: "ArmedTaskTiming | None",
+    stream: torch.cuda.Stream | None,
 ) -> None:
     description, entry = bound.description, bound.entry
     arguments: list[Any] = [None] * description.get("count", 0)
@@ -89,9 +113,17 @@ def _run(
             # Allocation-free reads on the task's own stream complete before
             # its update/publication can overwrite or retire these inputs.
             observations.observe(bound, arguments)
+        if task is not None:
+            task.before_task_exit_ns = time.perf_counter_ns()
         leaves, _ = tree_flatten(
             () if bound.function is None else bound.function(*arguments)
         )
+        if task is not None:
+            assert trace is not None
+            task.after_task_enter_ns = time.perf_counter_ns()
+            trace.timing.record_task_end(task, stream)
+            if bound.entry.task_id == trace.last:
+                trace.timing.record_compute_end(stream)
     # A returned input alias is an in-place update. Extra eager reductions would
     # be unprofiled work, so refuse those until build packages that computation.
     for slot in entry.options.contribution_slots:

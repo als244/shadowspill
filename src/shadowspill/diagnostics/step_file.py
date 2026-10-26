@@ -20,6 +20,7 @@ from typing import Any
 
 import numpy as np
 
+from shadowspill._files import atomic_json, atomic_write
 from shadowspill.diagnostics.step import StepDiagnostics
 from shadowspill.runtime.telemetry import (
     NO_ID,
@@ -32,7 +33,6 @@ from shadowspill.runtime.trace import (
     decode_runtime_events,
 )
 from shadowspill.schema import artifact_schema
-from shadowspill.store import atomic_json, atomic_write
 
 #: What follows a step file's stem in the name of the file holding its events.
 EVENTS_SUFFIX = ".events.npz"

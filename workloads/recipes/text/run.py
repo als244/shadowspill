@@ -28,8 +28,6 @@ def run_config(path, overrides=(), *, phase="all"):
         raise ValueError(
             "use parameter_norms_every; raw metric callbacks are not tasks"
         )
-    if raw.get("startup_diagnostics"):
-        raise ValueError("profile the saved Plan explicitly; no hidden startup updates")
     if raw.get("checkpoint_weights", "master") != "master" or not raw.get(
         "checkpoint_include_optimizer", True
     ):

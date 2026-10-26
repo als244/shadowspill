@@ -40,6 +40,8 @@ from .training_capture import TrainingCapture
 class BuiltOptimizer:
     captured: OptimizerCapture
     initialization: dict[str, Any]
+    zero_lr_preserves_state: bool
+    learning_rates: tuple[str, ...]
 
 
 def capture_update(
@@ -125,7 +127,14 @@ def capture_update(
             "portable build_step requires a traceable optimizer update: "
             f"{result.opaque_reason or result.optimizer_type}"
         )
-    return BuiltOptimizer(result, initialization)
+    return BuiltOptimizer(
+        result,
+        initialization,
+        getattr(optimizer, "zero_lr_preserves_state", False) is True,
+        tuple(
+            f"optimizer_group.{index}.lr" for index in range(len(copied.param_groups))
+        ),
+    )
 
 
 def _initial_value(start: StateStart, parameter_name: str) -> dict[str, Any]:

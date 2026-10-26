@@ -27,6 +27,7 @@ def fit(
     checkpoint_every: int,
     checkpoint_dir: str | Path | None,
     keep_last: int,
+    startup_diagnostics: bool,
 ) -> StepResult | None:
     trainer._require_open()
     if type(steps) is not int or steps < trainer.step_count:
@@ -39,6 +40,10 @@ def fit(
         raise ValueError("keep_last must be a positive integer")
     if checkpoint_every and checkpoint_dir is None and run_dir is None:
         raise ValueError("checkpointing needs checkpoint_dir or run_dir")
+    if type(startup_diagnostics) is not bool:
+        raise TypeError("startup_diagnostics must be a bool")
+    if startup_diagnostics and run_dir is None:
+        raise ValueError("startup diagnostics need run_dir")
     trainer._source = source
     if trainer._source_state is not None:
         restore = getattr(source, "load_state_dict", None)
@@ -72,6 +77,10 @@ def fit(
                 raise TypeError(
                     "each source item must contain keyword arguments for Trainer.step"
                 )
+            if startup_diagnostics:
+                assert root is not None
+                trainer.diagnose(directory=root / "startup", **data)
+                startup_diagnostics = False
             last = trainer.step(**data)
             if _logs.due(log_every, last.step, steps):
                 _logs.emit(last, trainer.elapsed_seconds, stream, logger)

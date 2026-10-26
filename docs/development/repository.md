@@ -55,6 +55,7 @@ src/shadowspill/
 ├── communication/         calibration and reusable communication information
 │   └── binding/           resolve logical groups into calibration participants
 ├── execution/             saved-plan workers, initialization and bounded tensor export
+│   ├── recording/         opt-in task/transfer recording, shared by retained frontends
 │   ├── distributed/       collective and shard-storage execution bindings
 │   └── observations/      optional bounded runtime norm collection
 ├── checkpoint/            streamed checkpoint format over Executor tensor access
@@ -138,6 +139,7 @@ src/shadowspill/
 │                          the geometries, the rule one point is answered by,
 │                          the refusals it records, and the report
 ├── training/              saved-Plan training loops, schedules and checkpoints
+│   ├── diagnostics/       no-update startup calls, state preservation and reports
 │   └── backends/          model-based backends awaiting caller migration
 ├── plots/                 step-run and step-search figures
 │   └── step_search/       one module per figure family, over shared series and axes

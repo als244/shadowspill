@@ -81,6 +81,7 @@ def run(directory):
             checkpoint_every=options.get("checkpoint_every", 0),
             checkpoint_dir=options.get("checkpoint_dir"),
             keep_last=options.get("keep_last", 3),
+            startup_diagnostics=options.get("startup_diagnostics", False),
         )
         results.save(last, root / "result.json")
 

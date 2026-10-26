@@ -5,6 +5,11 @@ from __future__ import annotations
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 
+from shadowspill.execution.recording.spec import (
+    TracedInvocation,
+    TracedTask,
+    alias_accesses,
+)
 from shadowspill.ir import ExecutionPlan, MemoryAction, MemoryActionKind, TaskSpec
 from shadowspill.pytorch.capture.artifacts import GraphArtifact
 from shadowspill.pytorch.lowering.training import (
@@ -21,8 +26,6 @@ from shadowspill.runtime.plan import (
 )
 from shadowspill.simulator import SimulationResult
 from shadowspill.task.entrypoints import TaskEntrypoint, execution_entrypoints
-
-from .timing import TracedInvocation, TracedTask, alias_accesses
 
 
 @dataclass(frozen=True, slots=True)

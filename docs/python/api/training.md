@@ -188,12 +188,31 @@ remain separate qualification work. See [distributed status](distributed.md).
 
 ## Startup diagnostics
 
-The phase runners save build/profile/plan archives and execute in fresh workers.
-Runtime timing/trace collection observes an already admitted Executor. It does
-not trigger preparation or use a zero-learning-rate update as an implicit no-op.
-A warmup that must leave state unchanged needs checkpoint restore or a backend
-with an explicit no-update contract. Qualification checks physical budget sealing
-and steady-state allocation/event growth separately from numerical comparisons.
+`Trainer.diagnose(args=..., kwargs=..., directory="startup", warmup=1)` runs the
+saved Plan at zero learning rate and writes measured and simulated timelines.
+It requires the optimizer used by `build_step` to explicitly guarantee
+`zero_lr_preserves_state=True`, with a captured CPU tensor learning rate for every
+parameter group. MLOps AdamW provides this guarantee; ordinary PyTorch AdamW
+does not. Unsupported Plans fail before dispatching a diagnostic update.
+
+Only affected model buffers are saved in a temporary file, using bounded CPU
+spill views. Parameters, master weights, moments and counters stay in place.
+Diagnostics restore model buffers, runtime controls and default RNG, and do not
+advance Trainer counters, schedules or input position. Their time is excluded
+from Trainer's elapsed training time. Indexed input loaders must be repeatable.
+GPU execution failures still make Executor unusable, as for any invocation.
+
+`Trainer.fit(..., startup_diagnostics=True, run_dir=...)` diagnoses its first
+input and then reuses it for training. The option defaults off. Each rank writes
+its own directory in distributed execution. The JSON text runner accepts the
+same `startup_diagnostics` option.
+
+For a trace of an actual invocation, use
+`pending = executor.run(..., runtime_trace=True)` and `pending.diagnostics`.
+Reading diagnostics waits for completion and returns `StepDiagnostics` with
+task, allocation and transfer records; `.result()` retains its normal output.
+Untraced calls return `None` for diagnostics and allocate no trace resources.
+Unlike `Trainer.diagnose`, tracing alone does not preserve training state.
 
 ## Callers still being migrated
 

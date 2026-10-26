@@ -4,17 +4,22 @@ from __future__ import annotations
 
 import threading
 from collections.abc import Callable
+from typing import TYPE_CHECKING
 
 import torch
 
 from shadowspill.pytorch.accelerator import is_accelerator
 from shadowspill.runtime.timing import Marker
 
+if TYPE_CHECKING:
+    from shadowspill.diagnostics.step import StepDiagnostics
+
 
 class InvocationResult[T]:
     """One dispatched callable result with an explicit synchronization point."""
 
     __slots__ = (
+        "_diagnostics",
         "_error",
         "_lock",
         "_on_failure",
@@ -31,6 +36,7 @@ class InvocationResult[T]:
         *,
         on_resolved: Callable[[InvocationResult[T]], None],
         on_failure: Callable[[BaseException], None],
+        diagnostics: Callable[[], StepDiagnostics | None] | None = None,
     ) -> None:
         self._payload = payload
         self._synchronize = synchronize
@@ -39,6 +45,15 @@ class InvocationResult[T]:
         self._lock = threading.RLock()
         self._resolved = False
         self._error: BaseException | None = None
+        self._diagnostics = diagnostics
+
+    @property
+    def diagnostics(self) -> StepDiagnostics | None:
+        """Wait for this call's optional runtime trace; untraced calls return None."""
+        if self._diagnostics is None:
+            return None
+        self.result()
+        return self._diagnostics()
 
     @property
     def resolved(self) -> bool:

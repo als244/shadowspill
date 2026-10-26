@@ -224,6 +224,7 @@ class Trainer:
         checkpoint_every: int = 0,
         checkpoint_dir: str | Path | None = None,
         keep_last: int = 3,
+        startup_diagnostics: bool = False,
     ) -> StepResult | None:
         """Consume call arguments until the total completed count is steps."""
         return _loop.fit(
@@ -238,6 +239,37 @@ class Trainer:
             checkpoint_every=checkpoint_every,
             checkpoint_dir=checkpoint_dir,
             keep_last=keep_last,
+            startup_diagnostics=startup_diagnostics,
+        )
+
+    def diagnose(
+        self,
+        *,
+        directory: str | Path,
+        warmup: int = 1,
+        args: Sequence[tuple[Any, ...]] | None = None,
+        kwargs: Sequence[Mapping[str, Any]] | None = None,
+        input_loader: Callable[[int], tuple[tuple[Any, ...], Mapping[str, Any]]]
+        | None = None,
+        hyperparams: Mapping[str, Any] | None = None,
+    ) -> Mapping[str, Any]:
+        """Trace without updating weights, loop progress, schedules or default RNG.
+
+        Requires the saved optimizer's explicit ``zero_lr_preserves_state``
+        guarantee and host-tensor learning rates. Only mutable model buffers are
+        snapshotted; optimizer state is never copied. Input loaders must be
+        repeatable indexed readers, as for Executor.run.
+        """
+        from .diagnostics import diagnose
+
+        return diagnose(
+            self,
+            directory=directory,
+            warmup=warmup,
+            args=args,
+            kwargs=kwargs,
+            input_loader=input_loader,
+            hyperparams=hyperparams,
         )
 
     def save(

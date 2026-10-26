@@ -18,6 +18,7 @@ from .inputs import stage_inputs
 from .paths import ExecutionPath
 from .results import TrainingResult, collect_outputs
 from .tensors import TensorChunk, visit_tensors
+from .tracing import InvocationTrace
 from .worker import create_paths
 
 
@@ -139,6 +140,7 @@ class Executor:
         accumulate_gradients: bool = False,
         collect_parameter_norms: bool | None = None,
         profiler_annotations: bool = False,
+        runtime_trace: bool = False,
     ) -> InvocationResult[Any]:
         self.synchronize()
         observe = (
@@ -152,6 +154,8 @@ class Executor:
         def prepare() -> ExecutionPath:
             if type(profiler_annotations) is not bool:
                 raise TypeError("profiler_annotations must be a bool")
+            if type(runtime_trace) is not bool:
+                raise TypeError("runtime_trace must be a bool")
             if type(observe) is not bool:
                 raise TypeError("collect_parameter_norms must be a bool or None")
             if observe and (self._observations is None or plan is not None):
@@ -181,7 +185,10 @@ class Executor:
         annotations = (
             TaskBoundaryAnnotations(path.bridge) if profiler_annotations else None
         )
+        trace = InvocationTrace(path) if runtime_trace else None
         try:
+            if trace is not None:
+                trace.start()
             if annotations is not None:
                 annotations.set_enabled(True)
             parameter_metrics = {} if observations is None else observations.begin()
@@ -189,17 +196,26 @@ class Executor:
                 for task in path.tasks:
                     with torch.cuda.stream(streams[task.task.resource]):
                         dispatch(
-                            task, path.storage, path.controls, observations, annotations
+                            task,
+                            path.storage,
+                            path.controls,
+                            observations,
+                            annotations,
+                            trace,
                         )
             payload = collect_outputs(path.storage, path.acquisition)
             if observations is not None:
                 assert isinstance(payload, TrainingResult)
                 payload = replace(payload, parameter_metrics=parameter_metrics)
             wait = self._completion.record()
+            if trace is not None:
+                trace.dispatched()
 
             def finish() -> None:
                 wait()
                 path.bridge.wait_until_idle()
+                if trace is not None:
+                    trace.finish()
                 if annotations is not None:
                     annotations.set_enabled(False)
                 if observations is not None:
@@ -214,9 +230,15 @@ class Executor:
                 finish,
                 on_resolved=lambda result: None,
                 on_failure=self._failed,
+                diagnostics=None if trace is None else lambda: trace.result,
             )
             return self._pending
         except BaseException as error:
+            if trace is not None:
+                try:
+                    trace.cancel()
+                except BaseException as cleanup:
+                    error.add_note(f"Trace cleanup also failed: {cleanup}")
             self._failed(error)
             raise
 
