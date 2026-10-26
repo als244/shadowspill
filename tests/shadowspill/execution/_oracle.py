@@ -27,7 +27,7 @@ def oracle(model, examples, kind):
         optimizer.step()
         initial = copy.deepcopy(model.state_dict())
         initial.update(optimizer_values(model, optimizer))
-    calls, expected = [], []
+    calls, expected, parameter_metrics = [], [], []
     for index in range(3):
         hyperparams = {}
         if kind == "step_tensor_lr":
@@ -46,6 +46,22 @@ def oracle(model, examples, kind):
             for loss, _ in outputs:
                 loss.backward()
             if kind.startswith("step"):
+                parameter_metrics.append(
+                    {
+                        name: {
+                            "param_norm": torch.linalg.vector_norm(
+                                p.detach(), dtype=torch.float32
+                            ),
+                            "grad_norm": torch.linalg.vector_norm(
+                                p.grad, dtype=torch.float32
+                            ),
+                        }
+                        for name, p in model.named_parameters()
+                        if p.grad is not None
+                    }
+                    if index != 1
+                    else None
+                )
                 optimizer.step()
                 state.update(optimizer_values(model, optimizer))
             else:
@@ -74,6 +90,7 @@ def oracle(model, examples, kind):
         hyperparams=calls,
         accumulate=accumulate,
         restore=kind.endswith("resume"),
+        parameter_metrics=parameter_metrics,
     )
 
 

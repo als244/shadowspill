@@ -42,9 +42,19 @@ class Trainer:
         rank_map: Mapping[int, int] | None = None,
         external_headroom_bytes: int | None = None,
         frozen_state_id: str | None = None,
+        parameter_norms_every: int = 0,
     ) -> None:
         if not isinstance(plan, Plan) or plan.program.bindings.get("kind") != "step":
             raise TypeError("Trainer requires a Plan produced from build_step")
+        if type(parameter_norms_every) is not int or parameter_norms_every < 0:
+            raise ValueError("parameter_norms_every must be a nonnegative integer")
+        if (
+            executor is not None
+            and parameter_norms_every
+            and not executor.parameter_norms
+        ):
+            raise ValueError("supplied Executor must enable parameter_norms")
+        self.parameter_norms_every = parameter_norms_every
         if evaluation_plan is not None and (
             not isinstance(evaluation_plan, Plan)
             or evaluation_plan.program.bindings.get("kind") != "forward"
@@ -85,6 +95,7 @@ class Trainer:
             rank_map=rank_map,
             external_headroom_bytes=external_headroom_bytes,
             plans=None if evaluation_plan is None else {"evaluation": evaluation_plan},
+            parameter_norms=parameter_norms_every > 0,
         )
         self.evaluation_plan = self.executor.plans.get("evaluation")
         self._owns_executor = executor is None
@@ -133,13 +144,22 @@ class Trainer:
         values.update(hyperparams or {})
         started = time.perf_counter()
         result = self.executor.run(
-            args=args, kwargs=kwargs, input_loader=input_loader, hyperparams=values
+            args=args,
+            kwargs=kwargs,
+            input_loader=input_loader,
+            hyperparams=values,
+            collect_parameter_norms=bool(
+                self.parameter_norms_every
+                and (self.step_count + 1) % self.parameter_norms_every == 0
+            ),
         ).result()
         if not isinstance(result, TrainingResult):
             raise TypeError("training Plan returned an invalid result")
         self.step_count += 1
         try:
-            host = StepObservations.collect(result.losses, result.metrics)
+            host = StepObservations.collect(
+                result.losses, result.metrics, result.parameter_metrics
+            )
         finally:
             # Release the Executor's completed handle. StepResult keeps only CPU
             # observations, so fit never retains execution-pool output leases.

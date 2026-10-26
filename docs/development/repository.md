@@ -55,7 +55,8 @@ src/shadowspill/
 ├── communication/         calibration and reusable communication information
 │   └── binding/           resolve logical groups into calibration participants
 ├── execution/             saved-plan workers, initialization and bounded tensor export
-│   └── distributed/       collective and shard-storage execution bindings
+│   ├── distributed/       collective and shard-storage execution bindings
+│   └── observations/      optional bounded runtime norm collection
 ├── checkpoint/            streamed checkpoint format over Executor tensor access
 ├── parallelism/           logical groups, parameter placement and storage declarations
 ├── planning/              CPU-only profile binding, scheduling and physical layout

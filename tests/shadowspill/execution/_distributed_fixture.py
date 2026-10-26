@@ -90,7 +90,20 @@ def oracle(kind, dtype):
                     summed[name].add_(gradient)
             outputs.append(local)
         state = {}
+        parameter_metrics = {}
         if kind == "step":
+            if invocation != 1:
+                parameter_metrics = {
+                    name: {
+                        "param_norm": torch.linalg.vector_norm(
+                            parameter.detach(), dtype=torch.float32
+                        ),
+                        "grad_norm": torch.linalg.vector_norm(
+                            summed[name], dtype=torch.float32
+                        ),
+                    }
+                    for name, parameter in model.named_parameters()
+                }
             for name, master in masters.items():
                 master.grad = summed[name]
             optimizer.step()
@@ -125,6 +138,7 @@ def oracle(kind, dtype):
                 outputs=outputs,
                 state=state,
                 accumulate=accumulate,
+                parameter_metrics=parameter_metrics,
                 evaluation=[model(*local[0][0]).detach().clone() for local in calls],
             )
         )

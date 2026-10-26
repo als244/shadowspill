@@ -21,12 +21,16 @@ def coordinated[T](worker: DistributedWorker | None, function: Callable[[], T]) 
 
 
 def check_invocation(
-    worker: DistributedWorker, plan: str | None, accumulate: bool
+    worker: DistributedWorker,
+    plan: str | None,
+    accumulate: bool,
+    parameter_norms: bool = False,
 ) -> None:
-    choice = (plan, accumulate)
+    choice = (plan, accumulate, parameter_norms)
     if any(value != choice for value in worker.groups.gather(choice)):
         raise ValueError(
-            "workers selected different Plans or gradient accumulation modes"
+            "workers selected different Plans, gradient accumulation modes "
+            "or observations"
         )
 
 

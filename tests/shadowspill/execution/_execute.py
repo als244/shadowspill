@@ -43,6 +43,8 @@ directory = Path(sys.argv[1])
 plan = Plan.load(directory / "plan.ssp")
 oracle = torch.load(directory / "oracle.pt", weights_only=True)
 lazy_kernels = set(oracle.get("lazy_kernels", ()))
+norms = oracle.get("parameter_metrics", ())
+norm_kernels = {"norm_partials", "norm_sum"} if norms else set()
 compiled_kernels = []
 
 
@@ -51,7 +53,9 @@ def compilation_finished(**event):
     # This listener sees real compilation, including that internal entry point.
     if not event["cache_hit"]:
         name = event["src"].name
-        assert name in lazy_kernels, f"execution compiled unexpected kernel: {name}"
+        assert name in lazy_kernels | norm_kernels, (
+            f"execution compiled unexpected kernel: {name}"
+        )
         compiled_kernels.append(name)
 
 
@@ -68,7 +72,8 @@ def cpu(value):
     return tree_map(lambda t: t.cpu() if isinstance(t, torch.Tensor) else t, value)
 
 
-executor = Executor(plan)
+executor = Executor(plan, parameter_norms=bool(norms))
+prepared_norm_kernels = [name for name in compiled_kernels if name in norm_kernels]
 statistics = adapter_statistics()
 assert statistics.physical_budget_sealed
 assert statistics.runtime.event_lease_sealed
@@ -83,6 +88,7 @@ with pytest.raises(ValueError, match="unknown runtime hyperparameters"):
         input_loader=lambda i: oracle["examples"][i], hyperparams={"unknown": 1}
     )
 previous, previous_value = None, None
+previous_norms, previous_norm_values = None, None
 first_invocation_compiles = None
 steady_statistics = None
 for index, (outputs, state) in enumerate(oracle["expected"]):
@@ -91,10 +97,25 @@ for index, (outputs, state) in enumerate(oracle["expected"]):
             input_loader=lambda i: oracle["examples"][i],
             hyperparams=oracle["hyperparams"][index],
             accumulate_gradients=oracle["accumulate"][index],
+            collect_parameter_norms=bool(norms and norms[index] is not None),
         )
         if streams is not None:
             streams.check()
     result = pending.result()
+    assert [
+        name for name in compiled_kernels if name in norm_kernels
+    ] == prepared_norm_kernels
+    if norms:
+        expected_norms = norms[index] or {}
+        torch.testing.assert_close(
+            result.parameter_metrics, expected_norms, rtol=2e-6, atol=1e-6
+        )
+        if previous_norms is not None:
+            torch.testing.assert_close(
+                previous_norms, previous_norm_values, rtol=0, atol=0
+            )
+        previous_norms = result.parameter_metrics
+        previous_norm_values = tree_map(lambda t: t.clone(), previous_norms)
     if first_invocation_compiles is None:
         first_invocation_compiles = len(compiled_kernels)
     else:
@@ -161,5 +182,5 @@ with pytest.raises(Exception, match="caller-owned device outputs"):
     executor.close()
 del pending, result, actual_outputs, previous
 executor.close()
-assert set(compiled_kernels) == lazy_kernels, compiled_kernels
+assert set(compiled_kernels) - norm_kernels == lazy_kernels, compiled_kernels
 print("Qualified three saved-plan invocations", flush=True)

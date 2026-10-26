@@ -1,6 +1,7 @@
 """Assemble admitted paths; startup failures reach all participating workers."""
 
 from collections.abc import Mapping
+from typing import TYPE_CHECKING
 
 from shadowspill.artifacts.plan import Plan
 from shadowspill.planning.shared import shared_memory
@@ -13,6 +14,9 @@ from .paths import ExecutionPath, bind_path
 from .resources import plan_inventory, seal_paths, worker_headroom, worker_streams
 from .setup import open_path, open_worker
 
+if TYPE_CHECKING:
+    from .observations.collector import ParameterNorms
+
 
 def create_paths(
     plan: Plan,
@@ -20,12 +24,14 @@ def create_paths(
     external_headroom_bytes: int | None,
     plans: Mapping[str, Plan] | None = None,
     rank_map: Mapping[int, int] | None = None,
+    parameter_norms: bool = False,
 ) -> tuple[
     Runtime,
     tuple[ExecutionPath, ...],
     dict[str, ExecutionPath],
     ResourceStreams,
     DistributedWorker | None,
+    "ParameterNorms | None",
 ]:
     plans = dict(plans or {})
     inventory = plan_inventory(plan, plans)
@@ -36,8 +42,23 @@ def create_paths(
         and plan.program.parallelism.world_size > 1
         else None
     )
-    runtime, paths, named = None, [], {}
+    runtime, paths, named, observations = None, [], {}, None
     try:
+
+        def validate_observations() -> None:
+            if type(parameter_norms) is not bool:
+                raise TypeError("parameter_norms must be a bool")
+            if parameter_norms and plan.program.bindings["kind"] != "step":
+                raise ValueError(
+                    "parameter norms currently require an optimizer step Plan"
+                )
+
+        coordinated(distributed, validate_observations)
+        if distributed is not None and any(
+            value != parameter_norms
+            for value in distributed.groups.gather(parameter_norms)
+        ):
+            raise ValueError("workers selected different parameter norm options")
         joint = coordinated(
             distributed, lambda: shared_memory(plan, plans) if plans else None
         )
@@ -58,6 +79,7 @@ def create_paths(
         streams = coordinated(distributed, lambda: worker_streams(candidates, device))
 
         def bind() -> None:
+            nonlocal observations
             memory, bridge = open_path(runtime, plan, device)
             other = plan._accumulation_plan
             extra = (
@@ -111,11 +133,17 @@ def create_paths(
                     shared_aliases=joint.aliases[name],
                     distributed=distributed,
                 )
+            if parameter_norms:
+                from .observations.collector import ParameterNorms
+
+                observations = ParameterNorms(paths[0], distributed)
             seal_paths(candidates)
 
         coordinated(distributed, bind)
-        return runtime, tuple(paths), named, streams, distributed
+        return runtime, tuple(paths), named, streams, distributed, observations
     except BaseException:
+        if observations is not None:
+            observations.close()
         for path in reversed([*paths, *named.values()]):
             assert runtime is not None
             path.close(runtime)

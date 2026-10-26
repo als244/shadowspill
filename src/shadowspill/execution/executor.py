@@ -1,6 +1,7 @@
 """Admitted saved Plans, one worker, one outstanding asynchronous invocation."""
 
 from collections.abc import Callable, Mapping, Sequence
+from dataclasses import replace
 from types import MappingProxyType
 from typing import Any, Self
 
@@ -14,7 +15,7 @@ from .dispatch import dispatch
 from .distributed.checks import check_external_budget, check_invocation, coordinated
 from .inputs import stage_inputs
 from .paths import ExecutionPath
-from .results import collect_outputs
+from .results import TrainingResult, collect_outputs
 from .tensors import TensorChunk, visit_tensors
 from .worker import create_paths
 
@@ -28,7 +29,9 @@ class Executor:
         device: int = 0,
         rank_map: Mapping[int, int] | None = None,
         external_headroom_bytes: int | None = None,
+        parameter_norms: bool = False,
     ) -> None:
+        self.parameter_norms = parameter_norms
         world_size = (
             1
             if plan.program.parallelism is None
@@ -53,7 +56,10 @@ class Executor:
             self._named_paths,
             self._streams,
             self._distributed,
-        ) = create_paths(plan, device, external_headroom_bytes, self.plans, rank_map)
+            self._observations,
+        ) = create_paths(
+            plan, device, external_headroom_bytes, self.plans, rank_map, parameter_norms
+        )
         if self._distributed is not None:
             self._assignment = self._distributed.groups.assignment
         self._completion = ReusableCompletionEvent(
@@ -130,12 +136,24 @@ class Executor:
         | None = None,
         hyperparams: Mapping[str, Any] | None = None,
         accumulate_gradients: bool = False,
+        collect_parameter_norms: bool | None = None,
     ) -> InvocationResult[Any]:
         self.synchronize()
+        observe = (
+            self.parameter_norms and plan is None
+            if collect_parameter_norms is None
+            else collect_parameter_norms
+        )
         if self._distributed is not None:
-            check_invocation(self._distributed, plan, accumulate_gradients)
+            check_invocation(self._distributed, plan, accumulate_gradients, observe)
 
         def prepare() -> ExecutionPath:
+            if type(observe) is not bool:
+                raise TypeError("collect_parameter_norms must be a bool or None")
+            if observe and (self._observations is None or plan is not None):
+                raise ValueError(
+                    "enable parameter_norms on Executor and select its training Plan"
+                )
             if not self._initialized:
                 raise RuntimeError("initialize persistent tensors before run")
             if plan is not None and plan not in self._named_paths:
@@ -155,17 +173,24 @@ class Executor:
             return path
 
         path = coordinated(self._distributed, prepare)
+        observations = self._observations if observe else None
         try:
+            parameter_metrics = {} if observations is None else observations.begin()
             with self._streams.invocation() as streams:
                 for task in path.tasks:
                     with torch.cuda.stream(streams[task.task.resource]):
-                        dispatch(task, path.storage, path.controls)
+                        dispatch(task, path.storage, path.controls, observations)
             payload = collect_outputs(path.storage, path.acquisition)
+            if observations is not None:
+                assert isinstance(payload, TrainingResult)
+                payload = replace(payload, parameter_metrics=parameter_metrics)
             wait = self._completion.record()
 
             def finish() -> None:
                 wait()
                 path.bridge.wait_until_idle()
+                if observations is not None:
+                    observations.finish(parameter_metrics)
                 if self._distributed is not None:
                     coordinated(
                         self._distributed, lambda: check_external_budget(self.runtime)
@@ -204,6 +229,8 @@ class Executor:
                 self.synchronize()
             finally:
                 self._completion.release()
+                if self._observations is not None:
+                    self._observations.close()
                 for path in reversed((*self._paths, *self._named_paths.values())):
                     path.close(self.runtime)
                 if self._distributed is not None:

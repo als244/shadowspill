@@ -533,6 +533,15 @@ targets}]}`. No new batch wrapper or automatic input sharding is required.
 `run_dir`, logging/table cadences, callbacks and periodic checkpoints are optional.
 Callbacks run before the checkpoint for that update.
 
+Optional `parameter_norms_every=N` collects pre-update compute-weight and final
+gradient norms through Executor, then supplies CPU scalars to the existing
+`metric_reducer`. It adds no compiled tasks or full-tensor copies. Fixed reduction
+buffers must fit inside the existing execution pool; per-task allocation contracts
+remain unchanged. Direct Executor callers enable `parameter_norms=True` and can
+select collection per invocation. See [parameter observations and logging](../python/api/training.md#parameter-norms-and-custom-logging)
+for timing, ownership and sharded aggregation behavior. Arbitrary GPU observation
+callbacks are not supported by this bounded path.
+
 `load("checkpoint.ssp")` restores all persistent tensors and loop progress.
 A source with `state_dict`/`load_state_dict` resumes before the next `fit` reads
 it. Stateful schedules use the same methods. Default Python, NumPy and PyTorch

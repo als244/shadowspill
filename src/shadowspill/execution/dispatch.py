@@ -1,6 +1,6 @@
 """Run one saved callable between exact acquisition/publication boundaries."""
 
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import torch
 from torch.utils._pytree import tree_flatten
@@ -19,8 +19,16 @@ from .admission import BoundTask
 from .controls import Controls
 from .storage import Storage
 
+if TYPE_CHECKING:
+    from .observations.collector import ParameterNorms
 
-def dispatch(bound: BoundTask, state: Storage, controls: Controls) -> None:
+
+def dispatch(
+    bound: BoundTask,
+    state: Storage,
+    controls: Controls,
+    observations: "ParameterNorms | None" = None,
+) -> None:
     bridge, device = state.bridge, state.device.index
     tensors = [
         state.owner(a) for a in bound.inputs if bridge.objects.requires_storage(a)
@@ -28,14 +36,19 @@ def dispatch(bound: BoundTask, state: Storage, controls: Controls) -> None:
     before_task_and_acquire(bridge, bound.handle, device, tensors)
     try:
         wait_task_allocations(bridge, bound.handle, device)
-        _run(bound, state, controls)
+        _run(bound, state, controls, observations)
     except BaseException as error:
         error.add_note(f"while executing task {bound.entry.task_id}")
         abort_task(bridge, bound.handle)
         raise
 
 
-def _run(bound: BoundTask, state: Storage, controls: Controls) -> None:
+def _run(
+    bound: BoundTask,
+    state: Storage,
+    controls: Controls,
+    observations: "ParameterNorms | None",
+) -> None:
     description, entry = bound.description, bound.entry
     arguments: list[Any] = [None] * description.get("count", 0)
     for index, value in description.get("static_values", ()):
@@ -54,6 +67,10 @@ def _run(bound: BoundTask, state: Storage, controls: Controls) -> None:
     for position, name in bound.host_inputs:
         arguments[position] = controls.host[name]
     with torch.no_grad():
+        if observations is not None:
+            # Allocation-free reads on the task's own stream complete before
+            # its update/publication can overwrite or retire these inputs.
+            observations.observe(bound, arguments)
         leaves, _ = tree_flatten(
             () if bound.function is None else bound.function(*arguments)
         )

@@ -66,8 +66,8 @@ def test_mixed_precision_master_update_and_checkpoint(tmp_path, gradient_dtype):
     master = nn.Parameter(reference.weight.float().detach().clone())
     opt = torch.optim.AdamW([master], lr=0.001, foreach=False)
     initial = {"weight": reference.weight.detach().clone()}
-    expected = []
-    for _ in range(3):
+    expected, parameter_metrics = [], []
+    for index in range(3):
         reference.zero_grad(set_to_none=True)
         outputs = []
         for args, kwargs in examples:
@@ -75,6 +75,20 @@ def test_mixed_precision_master_update_and_checkpoint(tmp_path, gradient_dtype):
             loss.backward()
             outputs.append((loss.detach(), metrics))
         master.grad = reference.weight.grad.float()
+        parameter_metrics.append(
+            {
+                "weight": {
+                    "param_norm": torch.linalg.vector_norm(
+                        reference.weight.detach(), dtype=torch.float32
+                    ),
+                    "grad_norm": torch.linalg.vector_norm(
+                        reference.weight.grad, dtype=torch.float32
+                    ),
+                }
+            }
+            if index != 1
+            else None
+        )
         opt.step()
         with torch.no_grad():
             reference.weight.copy_(master)
@@ -95,6 +109,7 @@ def test_mixed_precision_master_update_and_checkpoint(tmp_path, gradient_dtype):
             hyperparams=[{}, {}, {}],
             accumulate=[False] * 3,
             restore=False,
+            parameter_metrics=parameter_metrics,
         ),
         tmp_path / "oracle.pt",
     )

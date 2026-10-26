@@ -72,6 +72,51 @@ can implement `state_dict`/`load_state_dict` for checkpointed progress. Custom
 loops can call `step`, `evaluate`, `save` and `load` directly. A `metric_reducer`
 can aggregate completed `StepObservations` for application-specific reporting.
 
+## Parameter norms and custom logging
+
+`Trainer(plan, parameter_norms_every=N)` optionally collects compute-weight and
+final-gradient L2 norms on every Nth completed update. Zero (the default) disables
+collection. The result is `result.parameter_metrics[name]`, containing CPU scalar
+tensors named `param_norm` and `grad_norm`; unobserved updates return an empty map.
+The frequency uses the restored step count after resume.
+
+```python
+def summarize(observations):
+    return {
+        f"gradient_norm/{name}": values["grad_norm"].item()
+        for name, values in observations.parameter_metrics.items()
+    }
+
+trainer = Trainer(plan, parameter_norms_every=100, metric_reducer=summarize)
+trainer.fit(source, steps=1000, logger=write_record, callbacks=[after_step])
+```
+
+`metric_reducer` receives host observations; `logger(record)` receives log records;
+each callback receives `(trainer, result)` after normal logging and before
+checkpointing. These are ordinary Python functions and can customize aggregation,
+destinations and loop behavior. They are not compiled tasks. Parameter norm
+collection itself is a bounded built-in operation, not an arbitrary tensor callback.
+
+Executor observes each compute weight at its first task read and the final
+gradient before its local optimizer update. It does not measure the FP32 master
+in place of the compute weight. Sharded norms sum squared contributions over
+unique owned elements, excluding padding and duplicate replicas. The collector
+uses one ordered task stream and retains no parameter or gradient references.
+
+Reduction buffers occupy 1 KiB plus eight bytes per observed parameter, subject
+to allocator alignment, within the existing execution pool and total GPU budget.
+If that spare space is unavailable, worker setup fails rather than exceeding the
+budget. There are no additional Program tasks or per-task allocations. Diagnostic
+kernels are prepared during worker setup; scalar summaries are copied at result
+completion. Actual step timing includes this optional overhead; simulated timelines
+describe the saved training tasks and omit it. Caller-owned CPU summaries survive
+later calls and executor shutdown.
+
+Direct users enable `Executor(plan, parameter_norms=True)` and can skip collection
+per call with `run(collect_parameter_norms=False)`. Collection defaults to enabled
+for its training Plan and disabled for named evaluation Plans. A Trainer supplied
+with an existing Executor requires that Executor to enable norms when N is nonzero.
+
 ## Checkpoints
 
 `save(path, source=None, chunk_bytes=...)` streams model tensors, masters,

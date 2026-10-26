@@ -42,6 +42,8 @@ def worker(rank, rendezvous):
             coordinated(context, prepare_inputs)
         # Recoverable validation errors leave the control group usable.
         check_invocation(context, None, False)
+        with pytest.raises(ValueError, match="observations"):
+            check_invocation(context, None, False, bool(rank))
         assert coordinated(context, lambda: rank) == rank
     finally:
         if groups is not None:

@@ -1,6 +1,6 @@
 """Caller-owned output handoff and the small training result record."""
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any
 
 from torch.utils._pytree import tree_unflatten, treespec_loads
@@ -17,6 +17,7 @@ from .storage import Storage
 class TrainingResult:
     losses: tuple[Any, ...]
     metrics: tuple[Any, ...]
+    parameter_metrics: dict[str, Any] = field(default_factory=dict)
 
 
 def collect_outputs(state: Storage, acquisition: int) -> Any:

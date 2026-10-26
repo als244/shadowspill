@@ -59,7 +59,11 @@ def tolerance(name=""):
 executor = None
 try:
     executor = Executor(
-        plan, plans=plans, device=0, rank_map={0: 1, 1: 0}
+        plan,
+        plans=plans,
+        device=0,
+        rank_map={0: 1, 1: 0},
+        parameter_norms=plan.program.bindings["kind"] == "step",
     )
     executor.initialize(fill, chunk_bytes=40)
     for index, expected in enumerate(fixture["expected"]):
@@ -75,8 +79,16 @@ try:
                 else None
             ),
             accumulate_gradients=expected["accumulate"],
+            collect_parameter_norms=bool(expected["parameter_metrics"]),
         )
         output = pending.result()
+        if plan.program.bindings["kind"] == "step":
+            torch.testing.assert_close(
+                output.parameter_metrics,
+                expected["parameter_metrics"],
+                atol=3e-5,
+                rtol=3e-4,
+            )
         values = (
             [output] if plan.program.bindings["kind"] == "forward" else output.losses
         )
