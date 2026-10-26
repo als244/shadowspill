@@ -10,6 +10,7 @@ from mlops.sequential_moe.precision.checkpoint import HFWeights
 from torch import nn
 
 from ..moe import MoE
+from .chunks import copy_chunk, index_copies
 from .experts import plan_experts
 from .loading import initialize_lora, load_conversions, load_copies
 from .model import configure, map_tensors, replace_projections
@@ -57,6 +58,7 @@ class GLMCheckpoint:
         self._keys = None
         self._expert_keys = set()
         self._expert_shapes = None
+        self._chunk_copies = None
 
     def vision_config(self, include_vision):
         """The vision encoder's configuration when one is asked for; a
@@ -103,11 +105,22 @@ class GLMCheckpoint:
         map_tensors(self, model, c)
         targets = apply_dtypes(self, model, router_weight_dtype)
         validate_copies(self, targets, router_weight_dtype)
+        self._chunk_copies = index_copies(self.copies, targets)
         used = used_keys(self, c, include_vision)
         if not c.lora_rank:
             model.requires_grad_(False)
         self.inventory = inventory(self, model, c, vision, targets, used)
         return model
+
+    def copy_chunk(self, name, shape, offset, destination):
+        """Fill a caller-provided flat CPU range in declared checkpoint precision.
+
+        Matches the other family readers' bounded loading interface. Joined Q/K/V
+        projections and expert banks read only overlapping source ranges. This
+        path preserves storage; adapters need initialization, and explicit expert
+        format conversion remains available through ``load_into``.
+        """
+        copy_chunk(self, name, shape, offset, destination)
 
     @torch.no_grad()
     def load_into(

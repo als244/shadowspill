@@ -17,6 +17,17 @@ as bf16). Both FP8 forms compute the experts' GEMMs in FP8 on SM90.
 
 ## Direct checkpoint import
 
+The reader also provides the same bounded loading interface as other model
+families: `source.copy_chunk(name, shape, offset, destination)`, after declaring
+the meta model with `source.build_model(...)`. `destination` is a flat CPU buffer
+in the declared dtype; `offset` counts elements of the physical tensor. This
+interface is suitable for the shared Executor's tensor-filling callback.
+Joined Q/K/V rows and expert banks read only intersecting checkpoint ranges.
+BF16 values and FP8 data/scales are preserved without temporary bank assembly.
+Adapters require their initializer. Explicit expert-format conversion uses
+`load_into`; the bounded direct-copy interface rejects it rather than allocating
+a temporary converted bank.
+
 No permanent converted checkpoint is required. The importer:
 
 1. Reads safetensors headers and quantization metadata.

@@ -15,13 +15,18 @@ parallel group is created.
 
 ## Training and precision
 
-The [shared GLM recipe](../shared/glm/recipe.py) defaults to rank-16 BF16 LoRA factors,
+The [shared GLM recipe](../shared/glm/recipe.py) defaults to rank-32 BF16 LoRA factors,
 alpha 32, FP32 accumulated gradients, and BF16 AdamW moments with stochastic
 rounding. The importer preserves the checkpoint's block-FP8 expert data and
 scales; expert GEMMs run in FP8. Compressed dense projections keep their stored
 weights and use BF16 GEMMs (`gemm_precision="bf16"`). The router, shared experts,
 indexer, normalization and base weights stay frozen. The output head is frozen
 unless `lora_head=true`.
+
+The shared checkpoint reader supports `copy_chunk(name, shape, offset, destination)`
+after meta-model declaration, matching the bounded loading interface used by
+other families. See [checkpoint loading](../glm53_flash/README.md#direct-checkpoint-import)
+for byte preservation and the scope of this direct-copy path.
 
 The normal model's quickstart preserves intermediate BF16 casts during
 compilation. Removing those casts can change discrete top-k attention choices.
