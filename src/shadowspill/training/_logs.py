@@ -39,9 +39,11 @@ def _value(value: Any) -> Any:
     return value.tolist() if hasattr(value, "tolist") else value
 
 
-def tables(result: StepResult, root: Path | None, logger: Any) -> None:
+def tables(
+    result: StepResult, root: Path | None, logger: Any, *, phase: str = "train"
+) -> None:
     for name, table in result.summary.tables.items():
-        key = "train/" + name
+        key = phase + "/" + name
         if root is not None:
             with (root / "observations.jsonl").open("a") as output:
                 output.write(

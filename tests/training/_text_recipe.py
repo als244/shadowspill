@@ -36,11 +36,9 @@ def _config(tmp_path):
                 "total_steps": 6,
             }
         },
-        "backend": {
-            "@call": "shadowspill.training.backends:PyTorch",
-            "compile": False,
-            "device": "cpu",
-        },
+        "engine": "pytorch",
+        "compile": False,
+        "device": "cpu",
         "eval_every": 3,
         "eval_microbatches": 2,
         "checkpoint_every": 3,

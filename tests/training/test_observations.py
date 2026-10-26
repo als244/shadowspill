@@ -5,7 +5,7 @@ import math
 import pytest
 import torch
 
-from shadowspill.training.backends._weights import Weights as _Masters
+from shadowspill.training._weights import Weights as _Masters
 from shadowspill.training.observations import (
     StepObservations,
     parameter_norms,

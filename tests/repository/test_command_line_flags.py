@@ -105,6 +105,7 @@ def _readers(path: Path) -> list[Path]:
         return [
             *sorted(path.parent.glob("*.py")),
             ROOT / "workloads/recipes/text/quickstart.py",
+            ROOT / "workloads/recipes/text/precision.py",
         ]
     recipe_packages = {
         ROOT / "workloads/recipes/text/train_llama3.py": "llama3",

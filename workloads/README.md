@@ -38,6 +38,7 @@ needed; see [expert parallelism](MODELS.md#expert-parallelism).
 | [recipes/](recipes/) | Caller-side model/data/objective composition |
 | [recipes/text/data/](recipes/text/data/) | Corpus preparation, fixed token sequences, document packing and resumable sources |
 | [recipes/text/experiment/](recipes/text/experiment/) | Configured text experiments with separate build, profile, CPU plan and fresh-worker execution |
+| [recipes/text/reference/](recipes/text/reference/) | Ordinary PyTorch reference updates, evaluation and checkpoint/resume |
 | [full_model.py](full_model.py) | Reproducible full-model specifications and construction |
 | [numerical.py](numerical.py) | Exact-scale cases shared by the numerical qualification's two arms |
 | [precision.py](precision.py) | Explicit precision settings used by supplied workloads |

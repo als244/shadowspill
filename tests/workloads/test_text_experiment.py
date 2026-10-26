@@ -65,7 +65,7 @@ def test_text_phases_preserve_packing_metrics_and_exact_cold_resume(
         pytest.skip("requires CUDA")
     path = _config(tmp_path)
     options = json.loads(path.read_text())
-    options.pop("backend")
+    options["engine"] = "shadowspill"
     # Exact resume checks require deterministic reductions. The ordinary CUDA
     # embedding backward uses atomics whose summation order can vary by launch.
     options["model"]["deterministic_embedding"] = True

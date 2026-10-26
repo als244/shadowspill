@@ -10,21 +10,15 @@ from workloads.recipes.phases import run_phases
 
 def run_config(path, overrides=(), *, phase="all"):
     raw = config.load(path, list(overrides))
-    backend = raw.get("backend", {})
-    pytorch_backend = (
-        isinstance(backend, dict)
-        and backend.get("@call") == "shadowspill.training.backends:PyTorch"
-    )
-    if backend and not pytorch_backend:
-        raise ValueError("use engine='shadowspill' with explicit phase settings")
-    reference = raw.get("engine") == "pytorch" or pytorch_backend
-    if reference:
+    if raw.get("backend"):
+        raise ValueError("use engine='pytorch' or engine='shadowspill', not backend")
+    if raw.get("engine") == "pytorch":
         if phase != "all":
             raise ValueError("ordinary PyTorch reference execution has no saved phases")
-        from .experiment.reference import run_config as run_reference
+        from .reference.run import run_config as run_reference
 
         return run_reference(path, overrides)
-    if backend or raw.get("engine", "shadowspill") != "shadowspill":
+    if raw.get("engine", "shadowspill") != "shadowspill":
         raise ValueError("use engine='shadowspill' with explicit phase settings")
     if phase not in {"all", "build", "profile", "plan", "execute"}:
         raise ValueError(f"unknown phase: {phase}")

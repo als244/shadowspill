@@ -9,7 +9,7 @@ from torch import nn
 
 from shadowspill.pytorch.representations import is_wrapper
 
-from .._types import ParameterObserver
+from ._types import ParameterObserver
 
 
 class Weights:

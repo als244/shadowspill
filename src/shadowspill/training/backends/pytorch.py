@@ -14,9 +14,10 @@ from shadowspill.pytorch.accelerator import resolve_device
 from shadowspill.pytorch.distributed import Distributed
 
 from .. import checkpoints
+from .._hyperparams import set_hyperparams
 from .._inputs import on_device
+from .._weights import Weights
 from ._spec import StepSpec
-from ._weights import Weights
 
 
 class PyTorch:
@@ -118,7 +119,7 @@ class _Step:
     ) -> tuple[Any, Any, Any]:
         if self.closed:
             raise RuntimeError("training execution is closed")
-        _set_hyperparams(self.model, self.optimizer, hyperparams)
+        set_hyperparams(self.model, self.optimizer, hyperparams)
         losses, metrics = [], []
         for data, scale in microbatches:
             loss, values = self.objective(
@@ -221,37 +222,3 @@ class _Forward:
 
 def _detach(value: Any) -> Any:
     return value.detach() if isinstance(value, torch.Tensor) else value
-
-
-def _set_hyperparams(
-    model: nn.Module, optimizer: torch.optim.Optimizer, values: Mapping[str, Any]
-) -> None:
-    buffers = dict(model.named_buffers())
-    for name, value in values.items():
-        groups = [group for group in optimizer.param_groups if name in group]
-        buffer = buffers.get(name)
-        if groups and buffer is not None:
-            raise ValueError(
-                f"{name!r} names both an optimizer value and a model buffer"
-            )
-        if buffer is not None:
-            with torch.no_grad():
-                buffer.fill_(value)
-        elif groups:
-            for group in groups:
-                held = group[name]
-                if isinstance(held, torch.Tensor):
-                    held.fill_(value)
-                elif isinstance(held, (tuple, list)):
-                    items = (
-                        [value] * len(held)
-                        if isinstance(value, (int, float))
-                        else list(value)
-                    )
-                    if len(items) != len(held):
-                        raise ValueError(f"{name!r} needs {len(held)} values per group")
-                    group[name] = type(held)(items)
-                else:
-                    group[name] = value
-        else:
-            raise KeyError(f"no optimizer value or model buffer named {name!r}")

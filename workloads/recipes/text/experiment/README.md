@@ -90,6 +90,8 @@ than silently changing their meaning.
 
 This initial configured recipe launches one worker. Use the separate
 [Qwen3 distributed recipe](../qwen3/) for qualified sharded DP execution.
-`engine="pytorch"` selects the ordinary PyTorch reference loop. Its compatibility
-path still uses the old eager Trainer and is a remaining migration item; it does
-not construct ShadowSpill Plans or install the execution allocator.
+`engine="pytorch"` selects the ordinary [PyTorch reference loop](../reference/).
+It uses `device` (default `"auto"`) and `compile` (default `true`), without
+constructing ShadowSpill Plans or installing the execution allocator. It preserves
+packing, schedules, optional observations, evaluation and local PyTorch checkpoints.
+Select one fixed microbatch size; planning/search belongs to the phase runner.
