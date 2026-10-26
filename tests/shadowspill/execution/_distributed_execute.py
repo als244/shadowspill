@@ -1,6 +1,5 @@
 """Fresh NCCL worker: saved Plans only, bounded shards, eager reference checks."""
 
-import importlib.abc
 import os
 import sys
 from datetime import timedelta
@@ -17,19 +16,9 @@ os.environ["CUDA_VISIBLE_DEVICES"] = (
 import torch  # noqa: E402
 import torch.distributed as dist  # noqa: E402
 
+from tests.shadowspill.execution._cold import forbid_preparation  # noqa: E402
 
-class NoPreparation(importlib.abc.MetaPathFinder):
-    def find_spec(self, fullname, path=None, target=None):
-        if fullname in {
-            "shadowspill.build",
-            "shadowspill.profiling.measure",
-            "shadowspill.communication.measure",
-            "shadowspill.store",
-        }:
-            raise AssertionError(f"execution imported preparation phase: {fullname}")
-
-
-sys.meta_path.insert(0, NoPreparation())
+forbid_preparation("shadowspill.communication.measure")
 from shadowspill import Executor, Plan, load_checkpoint, save_checkpoint  # noqa: E402
 
 directory = Path(sys.argv[1])
@@ -40,6 +29,10 @@ plans = {"evaluation": Plan.load(evaluation)} if evaluation.exists() else None
 dist.init_process_group("gloo", timeout=timedelta(seconds=90))
 logical = 1 - dist.get_rank()
 assert not torch.cuda.is_initialized(), "worker initialized CUDA before Executor"
+if "initial_by_rank" in fixture:
+    fixture["initial"] = fixture["initial_by_rank"][logical]
+    for item in fixture["expected"]:
+        item["state"] = item["states"][logical]
 
 
 def fill(request, chunk):
@@ -49,6 +42,8 @@ def fill(request, chunk):
 
 
 def tolerance(name=""):
+    if fixture.get("precision") == "float32":
+        return dict(atol=3e-6, rtol=3e-5)
     if plan.program.bindings["kind"] != "step" or name.startswith("master."):
         return dict(atol=3e-6, rtol=3e-5)
     if name.startswith("optimizer."):
@@ -68,6 +63,10 @@ try:
     executor.initialize(fill, chunk_bytes=40)
     for index, expected in enumerate(fixture["expected"]):
         calls = fixture["examples"][logical]
+        if fixture.get("diagnostics") and index in {0, 1}:
+            from tests.shadowspill.execution._distributed_diagnostics import check
+
+            check(executor, calls, directory / f"diagnostics-{index}")
         pending = executor.run(
             args=[
                 args

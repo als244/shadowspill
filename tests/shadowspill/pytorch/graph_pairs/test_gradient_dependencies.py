@@ -8,7 +8,10 @@ from torch.fx.experimental.proxy_tensor import make_fx
 
 from shadowspill.pytorch.capture.aot import capture_graph_pair
 from shadowspill.pytorch.capture.fake import fake_device_inputs, fake_device_model
-from shadowspill.pytorch.capture.objective import capture_training
+from shadowspill.pytorch.capture.objective import (
+    capture_training,
+    capture_training_objective,
+)
 from shadowspill.pytorch.graph_pairs import partition_training_capture
 
 
@@ -28,6 +31,31 @@ def test_selecting_roots_does_not_leave_zero_tangent_arguments():
     values = pair.forward.graph_module(x)
     got = pair.backward.graph_module(*values[2:], torch.ones_like(x))
     torch.testing.assert_close(got[0], x.cos())
+
+
+def test_objective_root_uses_stage_local_position_after_buffer_mutation():
+    class Stateful(nn.Module):
+        def __init__(self):
+            super().__init__()
+            self.first = nn.Linear(7, 5)
+            self.last = nn.Linear(5, 3)
+            self.register_buffer("count", torch.tensor(0))
+
+        def forward(self, x):
+            self.count.add_(1)
+            return self.last(self.first(x).relu())
+
+    capture = partition_training_capture(
+        capture_training_objective(
+            Stateful(), lambda model, x: model(x).square().mean(), [torch.randn(2, 7)]
+        ),
+        partition="auto",
+    )
+    assert len(capture.stages) > 1
+    terminal = capture.stages[-1]
+    local_loss = terminal.example.stage.user_output_indices[0]
+    assert local_loss != capture.partitioned.user_output_indices[0]
+    assert terminal.graph_pairs.root_output_indices == (local_loss,)
 
 
 class _Branch(nn.Module):

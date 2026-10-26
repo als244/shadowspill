@@ -50,33 +50,20 @@ def attach_parallelism(
     return program
 
 
-def validate_forward(
-    spec: Parallelism, parameters: tuple[ParameterOwnership, ...]
-) -> None:
-    if spec.world_size > 1 and any(len(item.copy_groups) != 1 for item in parameters):
-        raise NotImplementedError(
-            "initial distributed forward lowering supports replicated local "
-            "computation; "
-            "model-sharded operators need their provider resource bindings"
-        )
-
-
 def validate_step(
     spec: Parallelism, parameters: tuple[ParameterOwnership, ...]
 ) -> None:
-    validate_forward(spec, parameters)
     if spec.world_size == 1:
         return
     if any(
         item.trainable
-        and (
-            len(item.optimizer.groups[0]) == 1
-            or item.weights.groups != item.optimizer.groups
-            or item.gradients.groups != item.optimizer.groups
+        and any(
+            component.groups != item.optimizer.groups and len(component.groups[0]) > 1
+            for component in (item.weights, item.gradients)
         )
         for item in parameters
     ):
         raise NotImplementedError(
-            "initial distributed steps require weights, gradients and optimizer "
-            "data sharded over the same groups; differing layouts need redistribution"
+            "sharded weights/gradients and optimizer data require the same storage "
+            "groups; differing layouts need redistribution"
         )

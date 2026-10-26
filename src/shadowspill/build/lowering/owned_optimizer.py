@@ -49,6 +49,11 @@ def owned_optimizer(
             name = binding.name.removeprefix("compute.")
             parameter = by_name[name]
             model_id = objects.parameter_objects[name]
+            if len(parameter.optimizer.groups[0]) == 1:
+                # Local experts and replicated optimizers update the original
+                # shape; no flattened shard view or publication is required.
+                names[binding.name] = model_id
+                continue
             alias = objects.catalog.alias_id(model_id)
             width = binding.tensor.element_size()
             size = parameter.optimizer.capacity * width

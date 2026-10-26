@@ -29,17 +29,21 @@ def gradient_templates(
         example = item.owned
         alias = objects.catalog.alias_id(binding.gradient_object_id)
         width = example.dtype.itemsize
-        objects.catalog.pad_alias(alias, reduction.padded_elements * width)
-        shards[alias] = {
-            "groups": reduction.phases[0].groups,
-            "replica_groups": (
-                reduction.phases[1].groups if len(reduction.phases) > 1 else ()
-            ),
-            "shard_bytes": reduction.result_elements * width,
-            "logical_bytes": reduction.source_elements * width,
-            "padded_bytes": reduction.padded_elements * width,
-            "dtype": str(example.dtype),
-        }
+        spill = item.spill_reduction
+        objects.catalog.pad_alias(
+            alias, max(reduction.padded_elements, spill.padded_elements) * width
+        )
+        if spill.phases and spill.phases[0].operation == "reduce_scatter":
+            shards[alias] = {
+                "groups": spill.phases[0].groups,
+                "replica_groups": (
+                    spill.phases[1].groups if len(spill.phases) > 1 else ()
+                ),
+                "shard_bytes": spill.result_elements * width,
+                "logical_bytes": spill.source_elements * width,
+                "padded_bytes": spill.padded_elements * width,
+                "dtype": str(example.dtype),
+            }
         if not for_optimizer:
             persistent.append(
                 {
@@ -50,7 +54,6 @@ def gradient_templates(
                 }
             )
             continue
-        stored = _buffer(objects, example, reduction.result_elements, Persistence.STEP)
         padding = None
         if item.padding is not None:
             padding = {
@@ -59,6 +62,17 @@ def gradient_templates(
                     objects, example, reduction.padded_elements, Persistence.STEP
                 ),
             }
+        if not reduction.phases:
+            stored = binding.gradient_object_id
+        elif reduction.phases[0].operation == "all_reduce":
+            # Clone the local contribution before its in-place SUM. The
+            # original accumulator may still be the source of an eviction.
+            assert padding is not None
+            stored = padding["output"]
+        else:
+            stored = _buffer(
+                objects, example, reduction.result_elements, Persistence.STEP
+            )
         phases = []
         for phase in reduction.phases:
             description = {

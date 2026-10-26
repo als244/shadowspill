@@ -4,7 +4,7 @@ import sys
 from pathlib import Path
 
 
-def build(path, kind):
+def build(path, kind, ownership="sharded"):
     import torch
 
     from shadowspill import (
@@ -20,13 +20,20 @@ def build(path, kind):
     )
 
     dtype = torch.bfloat16 if kind == "step" else torch.float32
-    fixture = oracle(kind, dtype)
-    torch.save(fixture, path / "oracle.pt")
+    fixture = oracle(kind, dtype) if ownership == "sharded" else None
     template = Network(dtype=dtype, device="meta")
+    parallelism = Parallelism.dp(ranks_per_replica=2)
+    if ownership != "sharded":
+        from tests.shadowspill.execution import _ownership_fixture as case
+
+        assert kind == "step"
+        fixture, template = case.oracle(ownership), case.Network(device="meta")
+        objective, parallelism = case.objective, case.parallelism(ownership)
+    torch.save(fixture, path / "oracle.pt")
     args, kwargs = fixture["examples"][0][0]
     common = dict(
         example_args=args,
-        parallelism=Parallelism.dp(ranks_per_replica=2),
+        parallelism=parallelism,
         partition="auto",
     )
     if kind == "forward":
@@ -39,12 +46,17 @@ def build(path, kind):
             grad_dtype=torch.float32,
         )
         if kind == "step":
+            optimizer = torch.optim.AdamW(
+                template.parameters(), lr=0.001, foreach=False
+            )
+            if ownership == "diagnostics":
+                from mlops.optim import AdamW
+
+                optimizer = AdamW(template.parameters(), lr=torch.tensor(0.001))
             program = build_step(
                 template,
-                optimizer=torch.optim.AdamW(
-                    template.parameters(), lr=0.001, foreach=False
-                ),
-                master_dtype=torch.float32,
+                optimizer=optimizer,
+                master_dtype=torch.float32 if ownership == "sharded" else None,
                 **common,
             )
         else:
@@ -54,6 +66,9 @@ def build(path, kind):
         build_forward(
             template,
             example_args=args,
+            forward_fn=(
+                None if ownership == "sharded" else lambda model, x: model.predict(x)
+            ),
             parallelism=common["parallelism"],
             partition="auto",
         ).save(path / "evaluation-program.ssp")

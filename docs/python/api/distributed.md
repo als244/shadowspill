@@ -104,10 +104,13 @@ exchange = parallelism.group("partition")
 ```
 
 This describes ownership, not an executable EP recipe. The model supplies each
-local expert slice and the distributed operation. The current CUDA builders
-reject model-sharded computation until its provider lowering/resource bindings
-are implemented. Differing weight/gradient/optimizer layouts also need explicit
-redistribution and are rejected by the initial training builder.
+local expert slice and the distributed operation. Builders now lower local
+parameter shards and replicated optimizer updates alongside sharded DP. Their
+build/profile and CPU planning checks pass; multi-GPU execution qualification is
+pending. Model-owned communication still needs portable provider-resource binding.
+Weights and gradients may be replicated while optimizer data is sharded; when
+weights or gradients are sharded, their storage groups must currently match the
+optimizer group. Other layouts need explicit redistribution.
 Equal contiguous model slices are represented today; noncontiguous maps,
 distributed input-placement maps and different graphs per logical rank remain
 unimplemented. The declaration API must not be mistaken for qualification of
@@ -301,6 +304,6 @@ forward/backward/AdamW execution, save/recompute choices, bounded initialization
 checkpoint restoration and shared evaluation. Tiny catalog full-training and
 LoRA also have separate distributed checks. These do not qualify every model,
 provider, repeated-replica layout or arbitrary model-owned communication path.
-The latest migrated baseline controller still needs its multi-GPU execution
-check. The [phase guide](../../architecture/offline-pipeline.md) describes the
+The migrated baseline controller has also passed full-training and LoRA checks
+on two H100s. The [phase guide](../../architecture/offline-pipeline.md) describes the
 implementation boundary; [phase artifacts](artifacts.md) describes persistence.

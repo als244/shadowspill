@@ -21,6 +21,7 @@ from .training_capture import TrainingCapture
 @dataclass(frozen=True)
 class GradientOperations:
     reduction: GradientReduction
+    spill_reduction: GradientReduction
     owned: torch.Tensor
     padding: GraphArtifact | None
 
@@ -56,34 +57,46 @@ def capture_gradient_operations(
                     "contiguous whole-storage parameters"
                 )
             reduction = gradient_reduction(parameter, destination=destination)
+            spill = gradient_reduction(parameter, destination="gradients")
             if (
-                not reduction.phases
-                or reduction.phases[0].operation != "reduce_scatter"
+                destination == "gradients"
+                and reduction.phases
+                and reduction.phases[0].operation != "reduce_scatter"
             ):
                 raise NotImplementedError(
-                    "initial distributed backward lowering requires sharded gradients"
+                    "forward/backward-only calls with replicated reduced gradients "
+                    "need a final reduction and accumulation injection contract"
                 )
             dtype = gradient_dtype or value.dtype
             gradient = torch.empty_like(value, dtype=dtype)
             padding = (
-                _padding(gradient, reduction.padded_elements)
-                if destination == "optimizer"
+                _padding(
+                    gradient,
+                    reduction.padded_elements,
+                    copy=reduction.phases[0].operation == "all_reduce",
+                )
+                if destination == "optimizer" and reduction.phases
                 else None
             )
             owned = torch.empty(
                 (reduction.result_elements,), dtype=dtype, device=value.device
             )
-            result[parameter.name] = GradientOperations(reduction, owned, padding)
+            result[parameter.name] = GradientOperations(
+                reduction, spill, owned, padding
+            )
     return result
 
 
-def _padding(gradient: torch.Tensor, capacity: int) -> GraphArtifact | None:
+def _padding(
+    gradient: torch.Tensor, capacity: int, *, copy: bool = False
+) -> GraphArtifact | None:
     extra = capacity - gradient.numel()
-    if extra == 0:
+    if extra == 0 and not copy:
         return None
 
     def pad(value: torch.Tensor) -> tuple[torch.Tensor]:
-        return (torch.nn.functional.pad(value.reshape(-1), (0, extra)),)
+        flat = value.reshape(-1)
+        return (torch.nn.functional.pad(flat, (0, extra)) if extra else flat.clone(),)
 
     return _capture(pad, (gradient,))
 

@@ -12,16 +12,19 @@ import torch
 
 @pytest.mark.cuda
 @pytest.mark.parametrize(
-    "kind,variant",
+    "kind,variant,ownership",
     [
-        ("forward", "auto"),
-        ("forward_backward", "save"),
-        ("forward_backward", "recompute"),
-        ("step", "save"),
-        ("step", "recompute"),
+        ("forward", "auto", "sharded"),
+        ("forward_backward", "save", "sharded"),
+        ("forward_backward", "recompute", "sharded"),
+        ("step", "save", "sharded"),
+        ("step", "recompute", "sharded"),
+        ("step", "save", "replicated"),
+        ("step", "recompute", "local_experts"),
+        ("step", "recompute", "diagnostics"),
     ],
 )
-def test_distributed_saved_executor(tmp_path, kind, variant):
+def test_distributed_saved_executor(tmp_path, kind, variant, ownership):
     if torch.cuda.device_count() < 2:
         pytest.skip("requires two distinct GPUs")
     directory = Path(__file__).parent
@@ -68,7 +71,7 @@ def test_distributed_saved_executor(tmp_path, kind, variant):
         assert status == 0, (tmp_path / f"{phase}.log").read_text()
         print(f"{kind}: {phase} passed", flush=True)
 
-    run("build", False, kind)
+    run("build", False, kind, ownership)
     run("profile")
     run("communicate", True)
     run("plan", False, variant)

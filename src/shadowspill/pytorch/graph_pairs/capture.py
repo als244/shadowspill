@@ -37,7 +37,10 @@ def capture_training_stages(
     # custom backward returning None. Follow actual VJPs from the objective,
     # so such values never become unproduced activation-gradient inputs.
     needed: list[set[int]] = [set() for _ in partitioned.stages]
-    needed[-1].add(partitioned.user_output_indices[0])
+    # Functionalized mutations precede public outputs in the whole export,
+    # but partitioning can move them to another stage or reorder its outputs.
+    # Differentiate the loss at its terminal-stage position, not its root slot.
+    needed[-1].add(partitioned.stages[-1].stage.user_output_indices[0])
     read_later = {
         source.producer_stage_index
         for example in partitioned.stages

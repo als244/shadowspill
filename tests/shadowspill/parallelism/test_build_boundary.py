@@ -53,8 +53,8 @@ def test_unsupported_full_step_redistribution_fails_before_cuda(monkeypatch):
                 default_parameter_storage=ParameterStorage(
                     group="all_ranks",
                     weights="sharded",
-                    gradients="replicated",
-                    optimizer="sharded",
+                    gradients="sharded",
+                    optimizer="replicated",
                 ),
             ),
             objective=lambda model, x: x.sum(),

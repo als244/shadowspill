@@ -18,7 +18,7 @@ from .capture import capture_forward_model
 from .common import build_setup, compile_artifacts
 from .finalize import finalize_tasks
 from .lowering.forward import lower_forward
-from .parallelism import attach_parallelism, model_parallelism, validate_forward
+from .parallelism import attach_parallelism, model_parallelism
 
 
 def build_forward(
@@ -39,7 +39,6 @@ def build_forward(
     receives ``(model, *args, **kwargs)``, preserving registered parameter names.
     """
     spec, parameters = model_parallelism(model, parallelism)
-    validate_forward(spec, parameters)
     device = resolve_device(target)
     assert device.index is not None
     captured = capture_forward_model(

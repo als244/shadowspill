@@ -23,7 +23,6 @@ from .optimizer_alignment import optimizer_input_offsets
 from .parallelism import (
     attach_parallelism,
     model_parallelism,
-    validate_forward,
     validate_step,
 )
 from .training_capture import capture_training_model
@@ -88,8 +87,6 @@ def _build_training(
     spec, parameters = model_parallelism(model, parallelism)
     if optimizer is not None:
         validate_step(spec, parameters)
-    else:
-        validate_forward(spec, parameters)
     device = resolve_device(target)
     assert device.index is not None
     captured = capture_training_model(
