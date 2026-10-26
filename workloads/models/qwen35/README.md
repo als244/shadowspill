@@ -77,7 +77,8 @@ model = Model(PRESETS["9b"])
 
 `workloads.models.catalog.build_on_meta("qwen35-9b", "mlops", dtype="bfloat16")`
 declares the same model on `meta`, and the quickstart runs it with
-`python -m benchmarking.quickstart.cli --model qwen35-9b`. The
+the [phase benchmark factory](../../recipes/text/benchmark/README.md)
+with `model="qwen35-9b"`. The
 [model catalog](../../MODELS.md) covers dtypes, LoRA, inputs and the loss.
 
 

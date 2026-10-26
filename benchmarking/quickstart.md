@@ -5,7 +5,8 @@ Quickstart composes the public library APIs in separate processes:
 ```text
 build_step → Program
 measure_program → Profiles → apply_profiles → ProfiledProgram
-sweep_programs → Plans + simulated reports
+measure_communication → CommunicationInfo
+plan_program over geometries/orderings/budgets → Plans + simulated reports
 Trainer(Plan) → execution measurements
 ```
 
@@ -14,10 +15,12 @@ Each execution budget gets a fresh worker with Executor's allocator installed.
 Compiler caches stay outside the result directory. No stage implicitly invokes
 the previous one to fill missing artifacts.
 
-The migrated path supports single-GPU training, including examples with different
-shapes and static arguments within one update. The old
-model/distributed presets remain on `python -m benchmarking.quickstart.cli`
-until migrated; their [migration reference](quickstart_legacy.md) is separate.
+The migrated path supports single-GPU training and single-node sharded DP,
+including examples with different shapes and static arguments within one update.
+The [catalog factory](../workloads/recipes/text/benchmark/README.md) supplies
+ordinary text models, precision and LoRA settings. GLM and model-owned EP
+resources still use the old `python -m benchmarking.quickstart.cli` path until
+migrated; its [migration reference](quickstart_legacy.md) is separate.
 The core APIs can be used directly without quickstart; see the
 [public phase guide](../docs/architecture/offline-pipeline.md).
 
@@ -51,6 +54,7 @@ Start with build alone, without selecting planning budgets yet:
 python -m benchmarking.quickstart --phase build \
   --factory workloads.recipes.regression.benchmark:experiment --output-dir runs/regression
 python -m benchmarking.quickstart --phase profile --output-dir runs/regression
+python -m benchmarking.quickstart --phase communicate --output-dir runs/regression
 CUDA_VISIBLE_DEVICES='' python -m benchmarking.quickstart --phase plan \
   --output-dir runs/regression --search-budget-gib 2 3 --spill-gib 2
 python -m benchmarking.quickstart --phase execute \
@@ -64,7 +68,8 @@ this worker. `--no-plots` keeps numeric reports/HTML while skipping figure files
 
 `--phase profile` loads saved Programs without the model factory. Use
 `--warmup-seconds` and `--measure-seconds` to control measurement; defaults are
-0.05 and 0.18 seconds. Its separate host-copy calibration can be replaced with
+0.05 and 0.18 seconds. `--phase communicate` calibrates host copies and the union
+of collective probes required by the candidates. This calibration can be replaced with
 `--communication-info /path/to/communication.ssp`, saved by
 `CommunicationInfo.save`. The same option overrides communication inputs during
 CPU replanning. Supplied task durations or memory estimates should be applied
@@ -104,6 +109,29 @@ never calls `model_factory` or `optimizer`. Initializers must fill supplied chun
 quickstart does not create an anonymous full-model host copy. Each budget starts
 from the same contents when the initializer is deterministic.
 
+## Distributed workers
+
+The factory can declare `Parallelism` through `build_options`. Build and task
+profiling still launch one representative GPU process for ordinary DP.
+Communication calibration and execution launch the Program's worker count
+using `torchrun`; they create actual process groups only there. The launcher
+supports one node and symmetric DP tasks. Model-owned distributed operators
+still need their own resource binding and qualification.
+
+Distributed factories accept `logical_rank=0`. Execution passes each worker's
+logical rank so inputs can differ while state initialization stays identical for
+matching parameter slices. Objectives and displayed losses must be normalized
+contributions to the global update; quickstart sums them across ranks. Set
+`units_per_step` to the global count. Reported step time is the maximum worker
+time, and the result retains every rank's measurement.
+
+Use `device="cuda:0"` for distributed builds. Workers expose their assigned GPU
+as `cuda:0` so all use the saved code's device ordinal. Select physical devices
+through `CUDA_VISIBLE_DEVICES`. The default logical rank mapping is identity;
+`rank_map={0: 1, 1: 0}` in Python, or `--rank-map '{"0":1,"1":0}'`, supplies a
+complete alternative. Executor inherits the Plan's recorded overhead reservation,
+including calibrated communication memory, and retains physical admission checks.
+
 ## Results
 
 ```text
@@ -117,6 +145,7 @@ plans/                       # one selected portable Plan per feasible budget
 report/index.html            # simulated timelines, memory and transfer tables
 logs/                        # separate phase and execution worker logs
 execution/budget-*/run-*/     # host metrics for each execution attempt
+                             # distributed attempts contain rank-0000/, ...
 execution/budget-*/result.json
 execution/summary.json       # latest matching results and predicted/actual times
 execution/summary.csv

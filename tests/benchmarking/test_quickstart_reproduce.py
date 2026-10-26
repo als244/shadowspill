@@ -18,7 +18,7 @@ from benchmarking.quickstart.options import (
 )
 from shadowspill.planner.program_inputs import TransferBandwidths
 from shadowspill.pytorch import StepSearchReport
-from workloads.recipes.text.quickstart import Precision
+from workloads.recipes.text.precision import Precision
 
 
 class _Parser:
@@ -233,36 +233,31 @@ def test_a_dtype_flag_takes_a_torch_name_or_none() -> None:
 
 
 def test_text_recipe_normalizes_by_the_requested_step_total():
-    from workloads.recipes.text.quickstart import recipe
+    from workloads.recipes.text.benchmark.factory import experiment
 
-    arguments = _arguments(
+    setup = experiment(
+        device="cuda:0",
         model="olmoe-7b-a1b",
         sequence_length=8192,
         sequences_per_step=32,
-        min_tokens_per_microbatch=None,
-        max_tokens_per_microbatch=None,
-        sequences_per_microbatch=None,
     )
-    setup, _, _ = recipe(_Parser(), arguments)
-    experiment = setup(device=torch.device("cuda:0"))
-    assert experiment["units_per_step"] == 8192 * 32
-    assert experiment["objective"].args[0].tokens_per_step == 8192 * 32
+    assert setup["units_per_step"] == 8192 * 32
+    assert setup["metadata"]["tokens_per_step"] == 8192 * 32
 
 
 def test_text_recipe_reports_head_loss_and_keeps_other_objectives():
     from shadowspill.training.observations import StepObservations
-    from workloads.recipes.text.quickstart import text_metrics
+    from workloads.recipes.text.benchmark.factory import metrics
 
     observed = StepObservations((2.0, 3.0), ({"head_loss": 1.5}, None))
-    assert text_metrics(observed)["loss"] == 4.5
+    assert metrics(observed)["loss"] == 4.5
 
 
 @pytest.mark.parametrize("master", ["none", "float32"])
 @pytest.mark.parametrize("grad", [None, "float16", "float32"])
 def test_fp16_quickstart_constructs_the_requested_model_and_precision(master, grad):
     from benchmarking.quickstart.options import _parser
-    from workloads.full_model import build_model
-    from workloads.recipes.text.quickstart import recipe
+    from workloads.recipes.text.benchmark.factory import experiment
 
     parser = _parser()
     flags = [
@@ -278,13 +273,20 @@ def test_fp16_quickstart_constructs_the_requested_model_and_precision(master, gr
     if grad is not None:
         flags += ["--grad-dtype", grad]
     arguments = parser.parse_args(flags)
-    setup, _, _ = recipe(parser, arguments)
-    experiment = setup(device=torch.device("cuda:0"))
-    manifest = experiment["objective"].args[0]
-    model = build_model(manifest)
+    setup = experiment(
+        device="cuda:0",
+        model="llama3-8b",
+        precision={
+            "model_dtype": "float16",
+            "master_dtype": None if master == "none" else master,
+            "grad_dtype": grad,
+            "opt_state_dtype": "float32",
+        },
+    )
+    model = setup["model_factory"]()
     assert {p.dtype for p in model.parameters()} == {torch.float16}
     assert all(p.is_meta for p in model.parameters())
-    assert manifest.dtypes.as_dict() == {
+    assert setup["metadata"]["dtypes"] == {
         "model_dtype": "float16",
         "master_dtype": master,
         "grad_dtype": grad or "float16",
@@ -302,14 +304,10 @@ def test_fp16_quickstart_constructs_the_requested_model_and_precision(master, gr
 
 
 def test_quickstart_keeps_bf16_defaults_without_probing_the_gpu():
-    from benchmarking.quickstart.options import _parser
-    from workloads.recipes.text.quickstart import recipe
+    from workloads.recipes.text.benchmark.factory import experiment
 
-    parser = _parser()
-    arguments = parser.parse_args(["--model", "llama3-8b"])
-    setup, _, _ = recipe(parser, arguments)
-    manifest = setup(device=torch.device("cuda:0"))["objective"].args[0]
-    assert manifest.dtypes.as_dict() == {
+    setup = experiment(device="cuda:0", model="llama3-8b")
+    assert setup["metadata"]["dtypes"] == {
         "model_dtype": "bfloat16",
         "master_dtype": "none",
         "grad_dtype": "bfloat16",

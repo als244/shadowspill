@@ -3,8 +3,9 @@
 import json
 import os
 import subprocess
-import sys
 from pathlib import Path
+
+from benchmarking.processes import worker_command
 
 
 def settings(directory):
@@ -25,24 +26,10 @@ def run_phases(package, root, selected, *, ranks=1):
         environment = dict(os.environ)
         if phase == "plan":
             environment["CUDA_VISIBLE_DEVICES"] = ""
-        python = [sys.executable, *(["-S"] if sys.flags.no_site else [])]
-        command = [*python, "-u", "-m", f"{package}.{phase}", str(root)]
-        if ranks > 1 and phase in {"communicate", "execute"}:
+        workers = ranks if phase in {"communicate", "execute"} else 1
+        command = worker_command(f"{package}.{phase}", [root], ranks=workers)
+        if workers > 1:
             environment.setdefault("OMP_NUM_THREADS", "1")
-            command = [
-                *python,
-                "-m",
-                "torch.distributed.run",
-                "--standalone",
-                f"--nproc-per-node={ranks}",
-                "--no-python",
-                *python,
-                "-u",
-                "-m",
-                "workloads.recipes.logical_device_worker",
-                f"{package}.{phase}",
-                str(root),
-            ]
         with log_path.open("w") as log:
             subprocess.run(
                 command,

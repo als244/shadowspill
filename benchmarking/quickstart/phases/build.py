@@ -12,7 +12,7 @@ def run(request):
     model = setup["model_factory"]()
     optimizer = setup["optimizer"](model.parameters())
     root = Path(request["output_dir"]) / "programs"
-    entries = []
+    entries, world_size = [], 1
     for index, (name, inputs) in enumerate(setup["candidates"].items()):
         if set(inputs) - {"args", "kwargs"}:
             raise ValueError("candidate inputs contain only args/kwargs sequences")
@@ -35,13 +35,17 @@ def run(request):
         )
         filename = f"candidate-{index:04d}.ssp"
         program.save(root / filename)
-        entries.append({"name": name, "file": filename})
+        world_size = (
+            1 if program.parallelism is None else program.parallelism.world_size
+        )
+        entries.append({"name": name, "file": filename, "num_examples": count})
     if not entries:
         raise ValueError("quickstart requires at least one candidate")
     write(
         root / "index.json",
         {
             "candidates": entries,
+            "world_size": world_size,
             "metadata": setup.get("metadata", {}),
             "units_per_step": setup.get("units_per_step"),
             "unit_label": setup.get("unit_label", "units"),

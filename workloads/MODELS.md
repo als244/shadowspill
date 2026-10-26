@@ -130,14 +130,14 @@ Shape dataclasses describe architecture. Precision is chosen during model
 construction and when building the trainer/optimizer. Internal reductions may
 use FP32 even when stored weights and activations use BF16 or FP16.
 
-| Setting | Python / recipe location | Text quickstart flag | Default / choices |
+| Setting | Python / recipe location | Catalog factory `precision` field | Default / choices |
 |---|---|---|---|
-| Model weights | Construct with the desired PyTorch dtype; recipe `model.dtype` | `--model-dtype` | Quickstart: `bfloat16`; also `float16`, `float32` |
-| Optimizer masters | Trainer `master_dtype` | `--master-dtype` | No masters; or a floating dtype |
-| Accumulated gradients | Trainer `grad_dtype` | `--grad-dtype` | Parameter dtype; or a floating dtype |
-| Optimizer moments | `mlops.optim.AdamW(opt_state_dtype=...)` / `optimizer_args.opt_state_dtype` | `--opt-state-dtype` | MLOps: `bfloat16`; also `float16`, `float32`, or `parameter` |
-| Parameter rounding | Optimizer `parameter_rounding` | `--parameter-rounding` | `nearest` or `stochastic` |
-| Moment rounding | Optimizer `opt_state_rounding` | `--opt-state-rounding` | `nearest` or `stochastic`; ShadowSpill defaults to stochastic for BF16 AdamW moments, nearest otherwise |
+| Model weights | Construct with the desired PyTorch dtype; recipe `model.dtype` | `model_dtype` | Quickstart: `bfloat16`; also `float16`, `float32` |
+| Optimizer masters | Builder `master_dtype` | `master_dtype` | No masters; or a floating dtype |
+| Accumulated gradients | Builder `grad_dtype` | `grad_dtype` | Parameter dtype; or a floating dtype |
+| Optimizer moments | `mlops.optim.AdamW(opt_state_dtype=...)` / `optimizer_args.opt_state_dtype` | `opt_state_dtype` | MLOps: `bfloat16`; also `float16`, `float32`, or `parameter` |
+| Parameter rounding | Optimizer `parameter_rounding` | `parameter_rounding` | `nearest` or `stochastic` |
+| Moment rounding | Optimizer `opt_state_rounding` | `opt_state_rounding` | `nearest` or `stochastic`; ShadowSpill defaults to stochastic for BF16 AdamW moments, nearest otherwise |
 
 Ordinary constructors follow PyTorch's default dtype unless a dtype is supplied
 or the module is converted. The text recipe's `build_on_meta(..., dtype=...)`
@@ -155,7 +155,7 @@ FP32 masters. MLOps AdamW supports independently selected moment storage. See
 [training precision](../training/README.md#precision-and-initialization).
 
 FP8 is an [expert-compute setting](#expert-parallelism), not a value for
-`--model-dtype`. Selecting FP8 experts does not convert attention, router,
+`precision.model_dtype`. Selecting FP8 experts does not convert attention, router,
 normalization, shared experts, or the output head to FP8.
 
 ## Trainable parameters and LoRA
@@ -388,16 +388,18 @@ optimizer schedules, evaluation, W&B, and checkpoints.
 For a benchmark using a supplied throughput preset and saved resolution plans:
 
 ```bash
-python -m benchmarking.quickstart.cli --model llama3-8b \
-  --sequence-length 1024 --sequences-per-step 64 \
-  --min-tokens-per-microbatch 8192 --max-tokens-per-microbatch 16384 \
-  --search-budget-gib 20,30 --run-budget-gib 20,30 \
-  --spill-gib 112 --plots --resolution-plans
+python -m benchmarking.quickstart \
+  --factory workloads.recipes.text.benchmark.factory:experiment \
+  --factory-args '{"model":"llama3-8b","sequence_length":1024,"sequences_per_step":64,"min_tokens_per_example":8192,"max_tokens_per_example":16384}' \
+  --search-budget-gib 20 30 --run-budget-gib 20 30 \
+  --spill-gib 112 --output-dir runs/llama3
 ```
 
 The [quickstart guide](../benchmarking/quickstart.md) describes every flag and
-custom experiment factories. A factory supplies custom model shapes or EP
-resources. Text `--distributed` presets use replicated data parallelism.
+custom experiment factories. The [text factory](recipes/text/benchmark/README.md)
+supplies catalog models and optional LoRA; `ranks` selects sharded DP. Model-owned
+EP and GLM resources still use `benchmarking.quickstart.cli` while their
+phase migration is completed.
 
 ## Source organization
 

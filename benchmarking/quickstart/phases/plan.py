@@ -4,16 +4,18 @@ from shadowspill import (
     CommunicationInfo,
     MemoryBudgets,
     ProfiledProgram,
-    sweep_programs,
     write_report,
 )
 from shadowspill.planner import SearchOptions
 
 from .common import paths, plan_identity, write
+from .search import search
 
 
 def run(request):
     root, index = paths(request)
+    # A failed replan must not leave the former selection executable by accident.
+    write(root / "plans" / "index.json", [])
     communication = CommunicationInfo.load(
         request.get("communication_info") or root / "communication.ssp"
     )
@@ -22,14 +24,15 @@ def run(request):
         for entry in index["candidates"]
     }
     print("plan: " + ", ".join(programs), flush=True)
-    result = sweep_programs(
+    result, choices = search(
         programs,
-        memory_budgets=[
+        index["candidates"],
+        [
             MemoryBudgets(budget, request["spill_bytes"])
             for budget in request["search_budgets"]
         ],
-        communication_info=communication,
-        search_options=SearchOptions(workers=request["search_workers"]),
+        communication,
+        SearchOptions(workers=request["search_workers"]),
     )
     result.save(root / "planning" / "sweep.ssp")
     write_report(result, root / "report", plots=request["plots"])
@@ -41,7 +44,7 @@ def run(request):
         winners.append(
             {
                 "budget": budget.execution_bytes,
-                "candidate": candidate,
+                **choices[candidate],
                 "file": filename,
                 "predicted_seconds": plan.summary["duration_seconds"],
                 "plan_digest": plan_identity(plan),

@@ -74,5 +74,6 @@ model = Model(PRESETS["8b"])
 
 `workloads.models.catalog.build_on_meta("llama3-8b", "mlops", dtype="bfloat16")`
 declares the same model on `meta`, and the quickstart runs it with
-`python -m benchmarking.quickstart.cli --model llama3-8b`. The
+the [phase benchmark factory](../../recipes/text/benchmark/README.md)
+with `model="llama3-8b"`. The
 [model catalog](../../MODELS.md) covers dtypes, LoRA, inputs and the loss.

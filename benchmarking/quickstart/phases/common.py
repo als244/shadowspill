@@ -18,12 +18,15 @@ def write(path, value):
     temporary.replace(path)
 
 
-def experiment(request):
+def experiment(request, *, logical_rank=None):
     module, _, name = request["factory"].partition(":")
     factory = importlib.import_module(module)
     for component in name.split("."):
         factory = getattr(factory, component)
-    return factory(device=request["device"], **request.get("factory_args", {}))
+    arguments = dict(request.get("factory_args", {}))
+    if logical_rank is not None:
+        arguments["logical_rank"] = logical_rank
+    return factory(device=request["device"], **arguments)
 
 
 def paths(request):

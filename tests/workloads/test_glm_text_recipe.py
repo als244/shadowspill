@@ -109,7 +109,7 @@ def test_recipe_worker_keeps_global_rank_and_maps_assigned_device(
     import os
     import sys
 
-    from workloads.recipes import logical_device_worker as worker
+    from benchmarking import device_worker as worker
 
     monkeypatch.setenv("LOCAL_RANK", "1")
     monkeypatch.setenv("RANK", "5")

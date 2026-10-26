@@ -1,10 +1,8 @@
 """A process boundary between preparation and the execution allocator."""
 
-import os
-import subprocess
-import sys
 from pathlib import Path
 
+from .launch import launch as _launch
 from .phases.common import read, reference, write
 from .results import write_measurements
 
@@ -20,6 +18,7 @@ def run(
     device="cuda:0",
     factory_args=None,
     communication_info=None,
+    rank_map=None,
     warmup_seconds=0.05,
     measure_seconds=0.18,
     search_workers=1,
@@ -54,6 +53,7 @@ def run(
         "spill_bytes": int(spill_gib * (1 << 30)),
         "steps": steps,
         "communication_info": communication,
+        "rank_map": rank_map,
         "warmup_seconds": warmup_seconds,
         "measure_seconds": measure_seconds,
         "search_workers": search_workers,
@@ -68,7 +68,7 @@ def run_request(request, phase):
     root = Path(request["output_dir"])
     request_file = root / "request.json"
     write(request_file, request)
-    for item in ("build", "profile", "plan"):
+    for item in ("build", "profile", "communicate", "plan"):
         if phase in ("all", item):
             _launch(item, request_file)
     if phase in ("all", "execute"):
@@ -88,7 +88,7 @@ def run_request(request, phase):
 
 
 def _validate(request, phase):
-    if phase not in {"all", "build", "profile", "plan", "execute"}:
+    if phase not in {"all", "build", "profile", "communicate", "plan", "execute"}:
         raise ValueError("unknown quickstart phase")
     if phase in {"all", "plan"} and (
         not request["search_budgets"]
@@ -104,51 +104,3 @@ def _validate(request, phase):
         raise ValueError("invalid measurement durations")
     if not request["device"].startswith("cuda:") or not request["device"][5:].isdigit():
         raise ValueError("device must name a CUDA ordinal, for example cuda:0")
-
-
-def _launch(phase, request_file, selection=None):
-    suffix = "" if selection is None else f"-{selection:04d}"
-    log_path = request_file.parent / "logs" / (phase + suffix + ".log")
-    log_path.parent.mkdir(parents=True, exist_ok=True)
-    command = [
-        sys.executable,
-        *(["-S"] if sys.flags.no_site else []),
-        "-u",
-        "-m",
-        "benchmarking.quickstart.phases.worker",
-        phase,
-        str(request_file),
-    ]
-    if selection is not None:
-        command += ["--selection", str(selection)]
-    environment = dict(os.environ)
-    if phase == "plan":
-        environment["CUDA_VISIBLE_DEVICES"] = ""
-    print(f"{phase}{suffix}: starting; log {log_path}", flush=True)
-    with (
-        log_path.open("w") as log,
-        subprocess.Popen(
-            command,
-            env=environment,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.STDOUT,
-            text=True,
-            bufsize=1,
-        ) as worker,
-    ):
-        try:
-            for line in worker.stdout:
-                log.write(line)
-                log.flush()
-                print(line, end="", flush=True)
-            code = worker.wait()
-        except BaseException:
-            worker.terminate()
-            try:
-                worker.wait(timeout=5)
-            except subprocess.TimeoutExpired:
-                worker.kill()
-                worker.wait()
-            raise
-    if code:
-        raise RuntimeError(f"quickstart {phase} failed ({code}); see {log_path}")

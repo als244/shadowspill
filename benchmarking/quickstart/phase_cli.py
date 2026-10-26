@@ -11,7 +11,9 @@ from .phases.common import read
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
-        "--phase", choices=("all", "build", "profile", "plan", "execute"), default="all"
+        "--phase",
+        choices=("all", "build", "profile", "communicate", "plan", "execute"),
+        default="all",
     )
     parser.add_argument("--factory")
     parser.add_argument("--factory-args", type=json.loads)
@@ -22,6 +24,7 @@ def main(argv=None):
     parser.add_argument("--device")
     parser.add_argument("--steps", type=int)
     parser.add_argument("--communication-info", type=Path)
+    parser.add_argument("--rank-map", type=json.loads)
     parser.add_argument("--warmup-seconds", type=float)
     parser.add_argument("--measure-seconds", type=float)
     parser.add_argument("--external-headroom-gib", type=float)
@@ -57,6 +60,7 @@ def main(argv=None):
         "measure_seconds",
         "search_workers",
         "plots",
+        "rank_map",
     ):
         value = getattr(args, name)
         if value is not None:

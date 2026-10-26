@@ -8,7 +8,9 @@ from .common import read
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("phase", choices=("build", "profile", "plan", "execute"))
+    parser.add_argument(
+        "phase", choices=("build", "profile", "communicate", "plan", "execute")
+    )
     parser.add_argument("request")
     parser.add_argument("--selection", type=int)
     args = parser.parse_args()

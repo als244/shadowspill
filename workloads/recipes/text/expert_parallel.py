@@ -20,7 +20,8 @@ from workloads.full_model import spec
 from workloads.models import catalog
 from workloads.models.shared.training import LEARNING_RATE
 
-from .quickstart import Precision, _distributed_objective, text_metrics
+from .precision import Precision
+from .quickstart import _distributed_objective, text_metrics
 
 
 def experiment(

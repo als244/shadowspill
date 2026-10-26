@@ -136,7 +136,7 @@ def test_build_keeps_every_examples_arguments(tmp_path, monkeypatch, form):
 
     def capture(model, **options):
         calls.append(options)
-        return SimpleNamespace(save=lambda path: None)
+        return SimpleNamespace(save=lambda path: None, parallelism=None)
 
     monkeypatch.setattr(build, "experiment", lambda request: setup)
     monkeypatch.setattr(build, "build_step", capture)

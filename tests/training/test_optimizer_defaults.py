@@ -9,7 +9,7 @@ from torch import nn
 from shadowspill.training._model import OptimizerFactory
 from workloads.numerical import build_case
 from workloads.precision import TrainingDtypes
-from workloads.recipes.text.quickstart import Precision
+from workloads.recipes.text.precision import Precision
 
 
 @pytest.mark.parametrize("dtype", [torch.bfloat16, torch.float16, torch.float32])
