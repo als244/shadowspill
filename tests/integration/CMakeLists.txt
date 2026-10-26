@@ -207,17 +207,13 @@ shadowspill_add_public_api_test(
 )
 
 shadowspill_add_public_api_test(
-  shadowspill/pytorch/api/test_cpu_literals.py
-  test_cpu_literal_forward_from_ssd 300
-)
-shadowspill_add_public_api_test(
-  shadowspill/pytorch/api/test_cpu_literals.py
-  test_cpu_literal_training_from_ssd 300
+  shadowspill/execution/test_host_metrics.py
+  test_host_metrics_and_mixed_shapes_in_saved_training 300
 )
 
 shadowspill_add_public_api_test(
-  shadowspill/pytorch/api/test_partial_checkpoint.py
-  test_partial_checkpoint_keeps_mutations_and_replays_from_ssd 300
+  shadowspill/training/test_partial_trainer.py
+  test_partial_trainer_preserves_masters_mutations_evaluation_and_resume 300
 )
 
 shadowspill_add_public_api_test(

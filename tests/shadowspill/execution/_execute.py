@@ -146,6 +146,8 @@ for index, (outputs, state) in enumerate(oracle["expected"]):
         if plan.program.bindings["kind"] == "forward"
         else list(zip(result.losses, result.metrics, strict=True))
     )
+    if oracle.get("host_metrics"):
+        assert all(metric["bounds"].device.type == "cpu" for metric in result.metrics)
     torch.testing.assert_close(cpu(actual_outputs), outputs)
     if previous is not None:
         torch.testing.assert_close(cpu(previous), previous_value)
