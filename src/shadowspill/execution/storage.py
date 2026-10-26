@@ -13,6 +13,7 @@ from shadowspill.ir import MemoryLocation
 from shadowspill.parallelism.views import owned_view_offsets
 from shadowspill.runtime.plan import RuntimeBridge
 
+from .host_values import HostValues
 from .tensor_regions import tensor_regions
 from .views import StorageViews
 
@@ -65,6 +66,7 @@ class Storage:
                 borrowed=True,
             )
         self.outputs: dict[str, torch.Tensor] = {}
+        self.host_values = HostValues(plan)
         self.geometry = tensor_geometry(plan.program)
         self.initial = {
             r.alias_group_id for r in plan.schedule.initial_residency
@@ -98,6 +100,8 @@ class Storage:
         return self.owners[alias]
 
     def argument(self, object_id: str, geometry: Mapping[str, Any]) -> torch.Tensor:
+        if geometry["device_type"] == "cpu":
+            return self.host_values.get(object_id)
         return torch.empty(0, dtype=dtype_of(geometry), device=self.device).set_(
             self.owner(self.aliases[object_id]).untyped_storage(),
             geometry.get("storage_offset", 0) + self.owned_offsets.get(object_id, 0),
@@ -123,4 +127,5 @@ class Storage:
 
     def clear_views(self) -> None:
         self.outputs.clear()
+        self.host_values.values.clear()
         self.owners.local.clear()

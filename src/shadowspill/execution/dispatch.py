@@ -103,7 +103,11 @@ def _run(
         else:
             state.owners[publication.alias_id] = value
     for slot in (*entry.output_slots, *entry.options.contribution_slots):
-        state.outputs[slot.object_id] = leaves[slot.leaf_index]
+        value = leaves[slot.leaf_index]
+        state.outputs[slot.object_id] = value
+        if isinstance(value, torch.Tensor) and value.device.type == "cpu":
+            state.host_values.values[slot.object_id] = value
+    state.host_values.finish(entry.task_id)
     handoff_sources = {
         b.source_alias_group_id for b in bound.outputs if b.source_alias_group_id
     }

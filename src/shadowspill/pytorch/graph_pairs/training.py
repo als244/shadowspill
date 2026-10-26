@@ -31,6 +31,7 @@ def partition_training_capture(
     fuse_narrow_gradient_accumulation: bool = True,
     graph_pair_variants: tuple[str, ...] = GRAPH_PAIR_VARIANTS,
     template: PartitionedExport | None = None,
+    derive_controls: bool = True,
 ) -> PartitionedTrainingCapture:
     """Partition and differentiate one captured objective template.
 
@@ -62,6 +63,7 @@ def partition_training_capture(
         # it rather than standing alone.
         fold_control_only_stages=True,
         template=template,
+        derive_controls=derive_controls,
     )
     return PartitionedTrainingCapture(
         training=capture,

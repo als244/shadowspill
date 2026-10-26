@@ -65,13 +65,32 @@ class CompiledTasks:
         return key
 
     def contract(self, artifact: GraphArtifact) -> TaskStorageContract:
-        return self.compiled[artifact.compatibility_digest].manifest.storage_contract
+        item = self.compiled[artifact.compatibility_digest]
+        return item.manifest.storage_contract.without_device_storage(
+            item.memory["off_device_output_leaves"]
+        )
 
     def geometry(
         self, artifact: GraphArtifact, metadata_digest: str | None = None
     ) -> TaskStorageGeometry:
-        return TaskStorageGeometry.from_manifest(
-            self.compiled[artifact.compatibility_digest].manifest
+        item = self.compiled[artifact.compatibility_digest]
+        contract = self.contract(artifact)
+        host_roots = {
+            view.root_id
+            for view in contract.output_views
+            if view.leaf_index in item.memory["off_device_output_leaves"]
+        }
+        sizes = tuple(
+            0 if allocation.root_id in host_roots else allocation.requested_bytes
+            for allocation in item.manifest.root_allocations
+        )
+        return TaskStorageGeometry(
+            contract.compatibility_digest,
+            sizes,
+            sizes,
+            tuple(
+                (view.leaf_index, view.offset_bytes) for view in contract.output_views
+            ),
         )
 
     def bindings(self) -> dict[str, Any]:

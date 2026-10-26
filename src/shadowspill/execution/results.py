@@ -40,6 +40,7 @@ def collect_outputs(state: Storage, acquisition: int) -> Any:
     for alias in aliases:
         state.owners.pop(alias, None)
     state.outputs.clear()
+    state.host_values.values.clear()
     if bindings["kind"] == "forward":
         for index, value in bindings["output_literals"]:
             outputs[0][index] = value

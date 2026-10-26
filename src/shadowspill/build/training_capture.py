@@ -117,6 +117,7 @@ def capture_training_model(
                 gradient_dtype=gradient_dtype,
                 fuse_narrow_gradient_accumulation=fuse_narrow_gradient_accumulation,
                 template=previous,
+                derive_controls=False,
             )
             templates[signature.digest] = (
                 template,

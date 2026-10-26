@@ -26,6 +26,8 @@ from shadowspill.task.storage import TaskStorageContract
 
 from .memory import compiler_memory
 
+_BUILD_VERSION = 2
+
 
 @dataclass(frozen=True)
 class BuiltTask:
@@ -40,6 +42,8 @@ class BuiltTask:
 class _TaskCompiler:
     contract: TaskStorageContract
     input_offsets: tuple[tuple[int, int], ...] = ()
+    # Part of AOT's compiler identity, so changed build facts invalidate its cache.
+    version: int = _BUILD_VERSION
 
     def __call__(self, graph: Any, inputs: Any, **options: Any) -> Any:
         manifests: list[ExecutableTaskManifest] = []
@@ -48,7 +52,12 @@ class _TaskCompiler:
             self.contract,
             manifests,
             canonicalize_input_aliases=True,
-            on_lowering=lambda lowering: memories.append(compiler_memory(lowering)),
+            on_lowering=lambda lowering, host_outputs: memories.append(
+                {
+                    **compiler_memory(lowering),
+                    "off_device_output_leaves": host_outputs,
+                }
+            ),
             input_offsets=self.input_offsets,
         )
         compiled = inner(graph, inputs, **options)
@@ -56,7 +65,7 @@ class _TaskCompiler:
             # AOT's cache retains these plain fields with the matching code.
             # A foreign cache entry without them must be rebuilt, not guessed.
             compiled._shadowspill_build = {  # type: ignore[attr-defined]
-                "version": 1,
+                "version": self.version,
                 "manifest": manifests[0].to_dict(),
                 "memory": memories[0],
                 "input_offsets": self.input_offsets,
@@ -76,7 +85,7 @@ def _package(
         return None
     entry = serialize()
     metadata = getattr(entry.compiled_fw.result, "_shadowspill_build", None)
-    if not isinstance(metadata, dict) or metadata.get("version") != 1:
+    if not isinstance(metadata, dict) or metadata.get("version") != _BUILD_VERSION:
         return None
     if metadata.get("input_offsets", ()) != input_offsets:
         return None  # A cached aligned task cannot serve rank-dependent views.

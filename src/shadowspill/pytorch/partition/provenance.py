@@ -73,6 +73,7 @@ def build_stage_examples(
     *,
     representative_root_inputs: tuple[object, ...] | None = None,
     caller_stage_values: Mapping[StageOutputKey, torch.Tensor] | None = None,
+    derive_controls: bool = True,
 ) -> tuple[tuple[StageExample, ...], Mapping[StageOutputKey, torch.Tensor]]:
     """Build occurrence-local stage contracts from one split root graph, and
     the authentic control values they were given, derived or supplied."""
@@ -80,11 +81,15 @@ def build_stage_examples(
     mutations = _partition_mutations(capture, split)
     user_outputs = _partition_user_outputs(capture, split)
     numeric_values = numeric_outputs(split)
-    control_values = derive_authentic_control_values(
-        split,
-        representative_root_inputs,
-        caller_values=caller_stage_values,
-        numeric_values=numeric_values,
+    control_values = (
+        derive_authentic_control_values(
+            split,
+            representative_root_inputs,
+            caller_values=caller_stage_values,
+            numeric_values=numeric_values,
+        )
+        if derive_controls
+        else {}
     )
     examples: list[StageExample] = []
     for index, record in enumerate(split.stages):

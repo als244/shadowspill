@@ -10,6 +10,7 @@ from torch.utils._pytree import tree_flatten
 from shadowspill.artifacts._values import digest
 from shadowspill.artifacts.program import Program
 from shadowspill.artifacts.tasks import stage_jobs
+from shadowspill.pytorch.control_inputs import ControlInputs
 from shadowspill.pytorch.executable import restore_executable
 from shadowspill.pytorch.task_inputs import prepare_inputs
 from shadowspill.pytorch.tuning import capture_choices
@@ -26,6 +27,7 @@ def finalize_providers(program: Program, device: torch.device) -> Program:
         return program
     choices: dict[str, Any] = {}
     functions: dict[str, Any] = {}
+    controls = ControlInputs(program, device)
 
     def invoke(key: str, arguments: Sequence[Any]) -> Any:
         if key not in functions:
@@ -59,7 +61,7 @@ def finalize_providers(program: Program, device: torch.device) -> Program:
             backward_key = None if backward is None else backward["profile_key"]
             if key not in pending and backward_key not in pending:
                 continue
-            arguments = prepare_inputs(program, key, device)
+            arguments = controls.prepare(forward, invoke)
             leaves, _ = tree_flatten(invoke(key, arguments))
             if backward_key in pending:
                 assert backward is not None and backward_key is not None

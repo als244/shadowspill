@@ -62,7 +62,11 @@ def stage_inputs(
             if source["kind"] != "USER_INPUT":
                 continue
             value = leaves[source["user_leaf"]]
-            alias = state.aliases[slot["object_id"]]
+            object_id = slot["object_id"]
+            alias = state.aliases[object_id]
+            if state.geometry.get(object_id, {}).get("device_type") == "cpu":
+                state.host_values.values[object_id] = value.detach().cpu().clone()
+                continue
             # Keep full call guards, but copy only storage the selected plan
             # consumes. Export can retain unused arguments in its signature.
             if alias in copied or alias not in state.initial or not state.sizes[alias]:

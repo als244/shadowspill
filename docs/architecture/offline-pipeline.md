@@ -312,6 +312,17 @@ standalone optimizer work. Backward inputs include saved values from the exact
 forward form. An `inputs` mapping can supply flat task arguments by profile key
 when automatic values are unsuitable or control semantics are unknown.
 
+Structural capture does not read model payloads to compute inter-stage controls.
+When an integer/boolean input is produced by another stage, build-time provider
+finalization and profiling obtain it by replaying the compiled producer with the
+ordinary profiling inputs. This preparation runs outside task timing and also
+works when profiling a stage subset. Caller overrides apply to producer inputs
+as well. Only the needed dependency slice is materialized, with CPU snapshots
+between producers; generated index arrays are not embedded in Program archives.
+Unknown root controls still require explicit values. CPU task outputs retain
+their dependencies but have zero GPU extent, and Executor holds their host values
+until the last ordered consumer.
+
 Measurement records durations, allocation lifetimes, output aliases and observed
 fixed memory. Completed native frees permit a later equal-sized allocation on
 the same allocation stream to reuse that slot, independent of native addresses.

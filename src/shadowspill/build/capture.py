@@ -71,7 +71,11 @@ def capture_forward_model(
             )
         )
         partitioned = partition_export(
-            exported, replica, partition=partition, representative_root_inputs=roots
+            exported,
+            replica,
+            partition=partition,
+            representative_root_inputs=roots,
+            derive_controls=False,
         )
         artifacts = capture_forward_stage_artifacts(partitioned)
     return ForwardCapture(

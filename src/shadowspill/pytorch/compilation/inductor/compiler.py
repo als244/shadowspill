@@ -30,6 +30,7 @@ from .alignment import alignment_examples
 from .cache import _fx_graph_cache_key, _load_cached_manifest, _store_cached_manifest
 from .contract import _graph_lowering_contract, _project_callable_contract
 from .manifest import _make_manifest
+from .outputs import _select_graph_outputs
 
 # Geometry is an input to planning: it sizes objects and alias extents before a
 # task is ever compiled, so the compiler is not free to choose it. Shape padding
@@ -87,7 +88,7 @@ class _ManifestCompiler:
     manifests: list[ExecutableTaskManifest]
     canonicalize_input_aliases: bool
     phase_timings: dict[str, int] | None
-    on_lowering: Callable[[GraphLowering], None] | None = None
+    on_lowering: Callable[[GraphLowering, tuple[int, ...]], None] | None = None
     input_offsets: tuple[tuple[int, int], ...] = ()
 
     def __call__(
@@ -105,7 +106,18 @@ class _ManifestCompiler:
         )
         if self.on_lowering is not None:
             for lowering in graph_lowerings:
-                self.on_lowering(lowering)
+                _, outputs = _select_graph_outputs(
+                    lowering, optimized_graph, inner_contract, self.semantic_contract
+                )
+                leaves = sorted(
+                    view.leaf_index for view in self.semantic_contract.output_views
+                )
+                host_outputs = tuple(
+                    leaf
+                    for leaf, output in zip(leaves, outputs, strict=True)
+                    if output.get_device().type == "cpu"
+                )
+                self.on_lowering(lowering, host_outputs)
         cache_key = self._capture_cache_key(compiled)
         self._publish_manifest(
             cache_key,
@@ -285,7 +297,7 @@ def _manifest_inner_compile(
     *,
     canonicalize_input_aliases: bool = False,
     phase_timings: dict[str, int] | None = None,
-    on_lowering: Callable[[GraphLowering], None] | None = None,
+    on_lowering: Callable[[GraphLowering, tuple[int, ...]], None] | None = None,
     input_offsets: tuple[tuple[int, int], ...] = (),
 ) -> Callable[..., object]:
     """Return the compiler callback that publishes one physical contract."""

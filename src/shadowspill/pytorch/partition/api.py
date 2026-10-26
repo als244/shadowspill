@@ -33,6 +33,7 @@ def partition_export(
     representative_stage_outputs: Mapping[StageOutputKey, torch.Tensor] | None = None,
     fold_control_only_stages: bool = False,
     template: PartitionedExport | None = None,
+    derive_controls: bool = True,
 ) -> PartitionedExport:
     """Split one Export graph according to a built-in or custom policy.
 
@@ -48,6 +49,10 @@ def partition_export(
     control values has no backward to take. A stage with no kernel to
     generate is folded whatever the caller, because neither path can compile
     one.
+
+    The phase builders set ``derive_controls=False``: they preserve control
+    dependencies in Program and obtain profiling values from compiled producers.
+    This avoids executing model payloads during structural capture.
 
     ``template`` is a partition of another position of the same exported
     program, whose inputs have this position's geometry. The policy, the
@@ -99,6 +104,7 @@ def partition_export(
         provenance,
         representative_root_inputs=representative_root_inputs,
         caller_stage_values=representative_stage_outputs,
+        derive_controls=derive_controls,
     )
     return PartitionedExport(
         root=split.root,
