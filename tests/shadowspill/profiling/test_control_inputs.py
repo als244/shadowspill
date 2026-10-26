@@ -1,6 +1,7 @@
 """Saved profiling controls retain real values without embedding model weights."""
 
 import json
+from types import SimpleNamespace
 
 import pytest
 import torch
@@ -8,6 +9,7 @@ import torch
 from shadowspill.build.metadata import _input_source
 from shadowspill.errors import CaptureError
 from shadowspill.pytorch.capture.artifacts import TaskInputProvenance
+from shadowspill.pytorch.control_inputs import ControlInputs
 from shadowspill.pytorch.task_inputs import _initialize
 from shadowspill.task.inputs import TaskInputRole
 
@@ -65,3 +67,33 @@ def test_proven_numeric_statistics_use_recorded_generation_policy():
     value = torch.empty(8, dtype=torch.int64)
     _initialize(value, source)
     assert torch.equal(value, torch.ones_like(value))
+
+
+def test_missing_root_control_cannot_be_derived_from_its_passthrough():
+    slot = {"leaf_index": 0, "object_id": "positions"}
+    component = {"profile_key": "identity", "inputs": [slot], "outputs": [slot]}
+    description = {
+        "count": 1,
+        "tensor_positions": [0],
+        "tensor_aliases": [0],
+        "tensor_geometry": [
+            {
+                "shape": [3],
+                "stride": [1],
+                "storage_offset": 0,
+                "dtype": "torch.int64",
+                "device_type": "cpu",
+            }
+        ],
+        "provenance": [{"role": "control", "source": "positions"}],
+        "static_values": [],
+    }
+    program = SimpleNamespace(
+        bindings={
+            "training_templates": [[[{"forward": component, "backward": {}}]]],
+            "task_inputs": {"identity": description},
+        }
+    )
+    controls = ControlInputs(program, torch.device("cpu"))
+    with pytest.raises(CaptureError, match="positions needs caller-supplied values"):
+        controls.prepare(component, lambda *_: pytest.fail("must not replay an alias"))

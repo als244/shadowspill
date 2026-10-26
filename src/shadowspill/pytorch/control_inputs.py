@@ -33,8 +33,11 @@ class ControlInputs:
         self.producers: dict[str, Mapping[str, Any]] = {}
         for job in stage_jobs(program, None):
             if "forward" in job:
+                input_ids = {slot["object_id"] for slot in job["forward"]["inputs"]}
                 for slot in job["forward"]["outputs"]:
-                    self.producers.setdefault(slot["object_id"], job["forward"])
+                    # Passing an input through does not create its missing value.
+                    if slot["object_id"] not in input_ids:
+                        self.producers.setdefault(slot["object_id"], job["forward"])
 
     def prepare(
         self,
