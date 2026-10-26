@@ -12,7 +12,7 @@ from typing import TYPE_CHECKING, Any, cast
 
 import torch
 
-from shadowspill.execution.tensors import TensorChunk
+from shadowspill.artifacts.tensors import TensorChunk
 
 from .frozen import validate_restore
 from .tensors import byte_view, geometry, region_bytes

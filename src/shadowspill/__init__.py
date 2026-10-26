@@ -29,7 +29,7 @@ _PUBLIC = {
     "write_report": "reporting",
     "Executor": "execution",
     "TrainingResult": "execution",
-    "TensorChunk": "execution",
+    "TensorChunk": "artifacts.tensors",
     "save_checkpoint": "checkpoint",
     "load_checkpoint": "checkpoint",
     "Trainer": "training.trainer",

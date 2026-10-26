@@ -4,7 +4,7 @@ from typing import Any
 
 import torch
 
-from shadowspill.execution.tensors import TensorChunk
+from shadowspill.artifacts.tensors import TensorChunk
 
 
 def geometry(chunk: TensorChunk) -> dict[str, Any]:

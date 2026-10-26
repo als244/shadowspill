@@ -10,6 +10,14 @@ from workloads.models.shared.initialization import fill_generated
 FAMILIES = {"llama3", "qwen3", "qwen35", "olmoe", "qwen3moe", "qwen35moe"}
 
 
+def from_catalog(model, *, seed=0, **configuration):
+    """A JSON-configurable bounded loader; resolve geometry without a model."""
+    from workloads.models.catalog import entry
+
+    selected = entry(model)
+    return Initialize(selected.family, selected.config(**configuration), seed=seed)
+
+
 class Initialize:
     """Reproduce model distributions, independently of chunks and rank ownership.
 

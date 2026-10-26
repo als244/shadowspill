@@ -89,9 +89,8 @@ def test_fp16_model_and_optimizer_precision_survive_config(tmp_path, master):
     import torch
 
     from shadowspill.training import reset_parameters
-    from shadowspill.training._legacy_trainer import Trainer
-    from shadowspill.training.backends import PyTorch
     from tests.training._synthetic import write_dataset
+    from workloads.recipes.text.reference.engine import EagerStep
 
     path = _write(
         tmp_path,
@@ -120,19 +119,13 @@ def test_fp16_model_and_optimizer_precision_survive_config(tmp_path, master):
             "master_dtype=" + json.dumps(master),
         ],
     )
-    values = config.resolve(raw)
-    model, data = values.pop("model"), values.pop("data")
+    model = config.resolve(raw["model"])
     assert all(p.is_meta and p.dtype == torch.float16 for p in model.parameters())
-    with (
-        PyTorch(device="cpu", compile=False) as backend,
-        Trainer(model, backend=backend, **values) as trainer,
-    ):
-        trainer.prepare(data.examples(1, 1, 512)[0], initialize=reset_parameters)
-        assert {p.dtype for p in trainer.model.parameters()} == {torch.float16}
-        assert {p.dtype for p in trainer._execution.weights.parameters()} == {
-            torch.float16 if master is None else torch.float32
-        }
-        assert (
-            trainer._execution.optimizer.param_groups[0]["opt_state_dtype"]
-            == torch.float32
-        )
+    engine = EagerStep(
+        model, {**raw, "device": "cpu", "compile": False}, reset_parameters
+    )
+    assert {p.dtype for p in engine.model.parameters()} == {torch.float16}
+    assert {p.dtype for p in engine.weights.parameters()} == {
+        torch.float16 if master is None else torch.float32
+    }
+    assert engine.optimizer.param_groups[0]["opt_state_dtype"] == torch.float32

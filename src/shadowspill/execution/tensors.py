@@ -3,11 +3,11 @@
 from __future__ import annotations
 
 from collections.abc import Callable, Iterator, Mapping
-from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
 import torch
 
+from shadowspill.artifacts.tensors import TensorChunk as TensorChunk
 from shadowspill.artifacts.tensors import registration_name
 
 from .initialization import fill_default
@@ -15,27 +15,6 @@ from .storage import dtype_of
 
 if TYPE_CHECKING:
     from .storage import Storage
-
-
-@dataclass(frozen=True)
-class TensorChunk:
-    """A contiguous region of physical tensor storage, in dtype elements.
-
-    ``shape`` describes the original tensor. ``offset`` indexes its storage,
-    not a flattened logical view; tied/strided views share one initialization.
-    Distributed loaders receive only this worker's valid region. ``offset`` is
-    still relative to the complete tensor storage; physical padding is internal.
-    """
-
-    name: str
-    shape: tuple[int, ...]
-    dtype: torch.dtype
-    offset: int
-    storage_elements: int
-    stride: tuple[int, ...] = ()
-    storage_offset: int = 0
-    region_offset: int = 0
-    region_elements: int | None = None
 
 
 def tensor_entries(

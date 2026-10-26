@@ -1,9 +1,36 @@
 """Portable tensor names and layouts shared by admission and execution."""
 
+from __future__ import annotations
+
 from collections.abc import Mapping
-from typing import Any
+from dataclasses import dataclass
+from typing import TYPE_CHECKING, Any
 
 from .program import Program
+
+if TYPE_CHECKING:
+    import torch
+
+
+@dataclass(frozen=True)
+class TensorChunk:
+    """A contiguous region of physical tensor storage, in dtype elements.
+
+    ``shape`` describes the original tensor. ``offset`` indexes its storage,
+    not a flattened logical view; tied/strided views share one initialization.
+    Distributed loaders receive only this worker's valid region. ``offset`` is
+    still relative to the complete tensor storage; physical padding is internal.
+    """
+
+    name: str
+    shape: tuple[int, ...]
+    dtype: torch.dtype
+    offset: int
+    storage_elements: int
+    stride: tuple[int, ...] = ()
+    storage_offset: int = 0
+    region_offset: int = 0
+    region_elements: int | None = None
 
 
 def tensor_geometry(program: Program) -> dict[str, Mapping[str, Any]]:

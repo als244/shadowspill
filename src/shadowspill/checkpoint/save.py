@@ -14,7 +14,7 @@ from typing import TYPE_CHECKING, Any, BinaryIO, cast
 import torch
 
 from shadowspill.artifacts._values import encoded
-from shadowspill.execution.tensors import TensorChunk
+from shadowspill.artifacts.tensors import TensorChunk
 
 from .frozen import omitted_parameters, validate_identity
 from .tensors import byte_view, geometry, region_bytes

@@ -6,10 +6,11 @@ from pathlib import Path
 
 import torch
 
-from shadowspill.training import config, reset_parameters
+from shadowspill.training import config
 
 from ..experiment import inputs, logging
 from .engine import EagerStep
+from .initialization import initializer
 from .loop import fit
 
 
@@ -37,13 +38,11 @@ def run_config(path, overrides=()):
     }
     (root / "planning.json").write_text(json.dumps(choice, indent=2) + "\n")
 
-    def initialize(module):
-        with torch.random.fork_rng(devices=[]):
-            torch.manual_seed(seed)
-            reset_parameters(module)
-
     meta = any(value.is_meta for value in (*model.parameters(), *model.buffers()))
-    engine = EagerStep(model, options, initialize if meta else None)
+    with initializer(options) as initialize:
+        engine = EagerStep(
+            model, options, initialize if meta or options.get("initialize") else None
+        )
     sizes = {name: p.numel() for name, p in engine.model.named_parameters()}
     source = inputs.source(data, options, choice)
     with ExitStack() as stack:

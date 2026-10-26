@@ -23,15 +23,15 @@ are recipe behavior, and can be replaced without changing the trainer.
 
 ## Run a supplied text recipe
 
-The JSON-configured launchers below still use the older preparation path while
-they migrate. The standalone Llama and Qwen3.5 LoRA recipes use the public saved
-phases; new callers should follow those examples.
+The JSON-configured launchers use separate build, profile, plan and execution
+workers. See the [configuration reference](../workloads/recipes/text/experiment/README.md)
+for all fields and saved artifacts. Each phase can also be selected with
+`--phase build`, `--phase profile`, `--phase plan` or `--phase execute`.
 
 ```bash
 python -u -m training.train training/configs/olmoe_1b.json \
   run_dir=training/runs/olmoe_example \
-  steps=1000 schedules.lr.total_steps=1000 \
-  backend.execution_gib=8 backend.spill_gib=32
+  steps=1000 execution_gib=8 spill_gib=32
 ```
 
 The JSON file names constructors and functions explicitly. `@module:name`
@@ -55,7 +55,7 @@ The generic trainer never infers tokens or units from an input tensor.
 ## Precision and initialization
 
 Model construction sets compute dtypes. `master_dtype` and `grad_dtype` are
-independent trainer arguments; optimizer state dtype and rounding are arguments
+independent builder arguments; optimizer state dtype and rounding are arguments
 to the optimizer constructor. For example, the supplied MLOps optimizer supports
 FP16 weights and gradients with FP32 optimizer state without master weights:
 
@@ -70,7 +70,7 @@ For stock `torch.optim.AdamW`, use FP32 masters when FP16 compute weights need
 FP32 moments. Set `master_dtype=@torch:float32`. This consumes more storage.
 No dtype changes are inferred from the selected model or machine in this recipe.
 
-When Trainer constructs MLOps AdamW, it selects stochastic rounding for BF16
+When the build recipe constructs MLOps AdamW, it selects stochastic rounding for BF16
 moments by default. FP16 and FP32 moments and parameter rounding retain the
 optimizer's nearest-rounding default. Set
 `optimizer_args.opt_state_rounding=nearest` to override this, or supply rounding
@@ -78,67 +78,66 @@ in an optimizer partial or parameter group. MLOps used directly and
 `torch.optim.AdamW` keep their own defaults. Numerical qualification explicitly
 uses nearest rounding so existing references remain valid.
 
-Initialized models retain their values. Meta models need an explicit initializer
-or checkpoint; this recipe supplies `reset_parameters` with its configured seed.
-An initializer can rebuild nonpersistent buffers before saved state is restored.
-The generic APIs never silently reset an initialized model.
+The build recipe declares models on meta. Execution uses an explicit bounded
+`initialize(request, destination)` callback or checkpoint. Supplied configs use
+the shared catalog initializer, including derived buffers and deterministic
+per-tensor seeds. `initialize.model` and its geometry must match `model.model`
+and its geometry when overriding a preset. Initialization does not allocate an
+anonymous full model alongside spill storage.
 
 ## Run policy and results
 
 `steps` is the target total completed update count. Schedules are mappings such
-as `schedules.lr`, evaluated with the zero-based update index. A warmup/cosine
+as `schedules["optimizer_group.0.lr"]`, evaluated with the zero-based update index. A warmup/cosine
 schedule has an explicit `total_steps`; changing the run length does not silently
 change the schedule.
 
 `eval_every`, `checkpoint_every`, `log_every`, `metric_tables_every` and
-`keep_last` control the optional loop behavior. Checkpoints go under
-`checkpoint_dir`, or `<run_dir>/checkpoints`. `checkpoint_weights=master` is the
-default: save masters where available, otherwise compute weights. Set
-`checkpoint_weights=compute` to save compute weights alone; restore upcasts them
-when masters are configured, without recovering the original higher precision.
-Optimizer state is saved with either choice unless `checkpoint_include_optimizer=false`.
-A resumed run then restores progress but initializes fresh optimizer moments and
-counters. The directory contains:
+`keep_last` control the optional loop behavior. Resume checkpoints retain model
+weights, masters, optimizer state and loop/source progress. Compute-only or
+optimizer-omitting resume policies are rejected. The directory contains:
 
-| File | Meaning |
+| Path | Meaning |
 | --- | --- |
 | `config.json` | Configuration including explicit overrides |
-| `planning.json` | Selected text microbatch geometry and skipped candidates |
-| `search.json`, `plan.json` | Search and admitted plan, when applicable |
-| `metrics.jsonl` | Completed `step`, `train/loss`, `train/step_seconds`, active elapsed time, schedules, evaluation and recipe metrics |
-| `observations.jsonl` | Optional small observation tables |
+| `programs/`, `profiles/`, `profiled/` | Reusable phase artifacts |
+| `planning.json`, `search.json` | Selected geometry and candidate outcomes |
+| `plans/`, `report/` | Saved Plans and simulated timeline |
+| `logs/` | A log for each preparation/execution phase |
+| `metrics.jsonl`, `observations.jsonl` | Completed losses, timing, schedules and optional tables |
 | `packing.jsonl` | Document identities and packing statistics |
-| `checkpoints/step_XXXXXXXX/` | Atomic model/optimizer/loop/source checkpoints |
+| `checkpoints/step_XXXXXXXX.ssp` | Model/optimizer/loop/source checkpoint archives |
 
-The packed text recipe's `eval_microbatches` sets the number of packed
-microbatches in its validation item. The generic Trainer uses `eval_updates` to
-limit complete validation items; this recipe passes its one combined item.
+`eval_microbatches` sets the number of packed examples in each held-out
+validation item. Evaluation calls a separately built forward Plan sharing the
+current model weights.
 
 `wandb_project` enables the optional logger. `step` is the actual completed
 training step; evaluation, tables and training records use the same axis.
 `wandb` passes additional SDK options. System telemetry keeps the SDK defaults.
 Tensor summaries leave compiled tasks as tensors. Host collection and `.item()`
-run after the step completes. Norm observers run before optimizer updates and
-can report compute-weight and final-gradient statistics.
+run after the step completes. `parameter_norms_every` enables bounded eager observations before optimizer
+updates. These are off by default and can report compute-weight and final-gradient
+statistics without compiled observation tasks.
 
 Resume is explicit:
 
 ```bash
 python -m training.train training/configs/olmoe_1b.json \
   run_dir=training/runs/olmoe_example \
-  resume=training/runs/olmoe_example/checkpoints/step_00000500
+  resume=training/runs/olmoe_example/checkpoints/step_00000500.ssp --phase execute
 ```
 
 The checkpoint restores model and optimizer state, update count, RNG,
-stateful schedules and the packed source's progress. The saved microbatch
-candidate is pinned before planning. An ordinary iterable is also valid, but
+stateful schedules and the packed source's progress. The saved Plans fix the candidate;
+execution does not repeat preparation. An ordinary iterable is also valid, but
 exact data continuation requires caller-managed progress or the optional
 `state_dict`/`load_state_dict` source methods.
 
 ## Layout and comparison
 
-- `src/shadowspill/training/`: reusable trainer, forward runner, backends,
-  schedules, checkpoint and logging helpers.
+- `src/shadowspill/training/`: Trainer over saved Plans, schedules and logging.
+- `src/shadowspill/execution/`, `checkpoint/`: execution and bounded state I/O.
 - `workloads/recipes/text/`: optional model construction, token ingestion,
   packing, objectives and text experiment composition.
 - `training/configs/`: example recipe requests.
@@ -157,7 +156,7 @@ installed generic trainer.
 
 The trainer uses ordinary `requires_grad` and has no LoRA-specific execution
 mode. Apply [`workloads.lora.configure_lora`](../workloads/MODELS.md#trainable-parameters-and-lora)
-before creating the trainer. The `build_on_meta` text recipe accepts a `lora`
+before building the Program. The `build_on_meta` text recipe accepts a `lora`
 configuration dictionary (for example `{"rank": 32, "alpha": 32, "head": "lora"}`)
 so configuration-driven training can make the same selection. Optimizer updates and state are created for trainable parameters; frozen state
 remains available to forward and input-gradient computation.

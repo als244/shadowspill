@@ -48,14 +48,14 @@ def run_config(path, overrides=(), *, phase="all"):
     return None
 
 
-def main():
+def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("config")
     parser.add_argument("overrides", nargs="*")
     parser.add_argument(
         "--phase", choices=["all", "build", "profile", "plan", "execute"], default="all"
     )
-    args = parser.parse_args()
+    args = parser.parse_args(argv)
     run_config(args.config, args.overrides, phase=args.phase)
 
 

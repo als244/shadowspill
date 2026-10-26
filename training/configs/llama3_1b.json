@@ -20,7 +20,11 @@
       0.9,
       0.95
     ],
-    "weight_decay": 0.1
+    "weight_decay": 0.1,
+    "lr": {
+      "@call": "torch:tensor",
+      "data": 0.0003
+    }
   },
   "data": {
     "@call": "workloads.recipes.text.data.packed:PackedTokens",
@@ -30,24 +34,27 @@
   "max_seq_len": 2048,
   "max_tokens_per_step": 16384,
   "max_tokens_per_microbatch": 8192,
-  "backend": {
-    "@call": "shadowspill.training.backends:ShadowSpill",
-    "execution_gib": 8,
-    "spill_gib": 32,
-    "artifact_store": "training/artifact_store"
-  },
   "seed": 0,
   "eval_every": 100,
   "eval_microbatches": 10,
   "checkpoint_every": 500,
   "wandb_project": "shadowspill-training",
   "schedules": {
-    "lr": {
+    "optimizer_group.0.lr": {
       "@call": "shadowspill.training.schedules:WarmupCosine",
       "lr": 0.0003,
       "min_lr": 3e-05,
       "warmup_steps": 100,
       "total_steps": 1000
     }
+  },
+  "engine": "shadowspill",
+  "execution_gib": 8,
+  "spill_gib": 32,
+  "initialize": {
+    "@call": "workloads.recipes.text.initialization:from_catalog",
+    "model": "llama3-numerical",
+    "max_seq_len": 2048,
+    "seed": 0
   }
 }

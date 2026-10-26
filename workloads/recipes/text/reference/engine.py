@@ -31,16 +31,17 @@ class EagerStep:
             self.weights.parameters(),
             config.resolve(options.get("optimizer_args", {})),
         )
-        self.objective = ScaledObjective(
+        objective = ScaledObjective(
             functools.partial(
                 config.resolve(options["objective"]),
                 **config.resolve(options.get("objective_args", {})),
             )
         )
-        if options.get("compile", True):
-            self.objective = torch.compile(
-                self.objective, fullgraph=True, dynamic=False
-            )
+        self.objective = (
+            torch.compile(objective, fullgraph=True, dynamic=False)
+            if options.get("compile", True)
+            else objective
+        )
         self.schedules = config.resolve(options.get("schedules", {}))
         self.observer = config.resolve(options.get("parameter_metrics"))
         self.norms_every = options.get(

@@ -12,7 +12,18 @@ def set_hyperparams(
 ) -> None:
     buffers = dict(model.named_buffers())
     for name, value in values.items():
-        groups = [group for group in optimizer.param_groups if name in group]
+        key = name
+        if name.startswith("optimizer_group."):
+            parts = name.split(".", 2)
+            if len(parts) != 3:
+                raise KeyError(f"expected optimizer_group.<index>.<key>: {name!r}")
+            _, index, key = parts
+            if not index.isdecimal() or int(index) >= len(optimizer.param_groups):
+                raise KeyError(f"no optimizer group named {name!r}")
+            selected = optimizer.param_groups[int(index)]
+            groups = [selected] if key in selected else []
+        else:
+            groups = [group for group in optimizer.param_groups if key in group]
         buffer = buffers.get(name)
         if groups and buffer is not None:
             raise ValueError(
@@ -23,7 +34,7 @@ def set_hyperparams(
                 buffer.fill_(value)
         elif groups:
             for group in groups:
-                held = group[name]
+                held = group[key]
                 if isinstance(held, torch.Tensor):
                     held.fill_(value)
                 elif isinstance(held, (tuple, list)):
@@ -34,8 +45,8 @@ def set_hyperparams(
                     )
                     if len(items) != len(held):
                         raise ValueError(f"{name!r} needs {len(held)} values per group")
-                    group[name] = type(held)(items)
+                    group[key] = type(held)(items)
                 else:
-                    group[name] = value
+                    group[key] = value
         else:
             raise KeyError(f"no optimizer value or model buffer named {name!r}")

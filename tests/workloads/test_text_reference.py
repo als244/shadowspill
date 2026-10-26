@@ -1,11 +1,45 @@
 """The reference stays independent of preparation and observes only requested steps."""
 
+import json
 import os
 import subprocess
 import sys
 
 from tests.training._text_recipe import _config, _records
 from workloads.recipes.text.run import run_config
+
+
+def test_reference_uses_shared_bounded_initializer_and_plan_schedule_names(tmp_path):
+    import torch
+
+    from shadowspill.artifacts.tensors import TensorChunk
+    from shadowspill.training._model import initialize_model
+    from tests.training._synthetic import TinyModel, fill_tiny_tensor
+    from workloads.recipes.text.reference.initialization import initializer
+
+    options = {"initialize": "@tests.training._synthetic:fill_tiny_tensor"}
+    with torch.device("meta"):
+        model = TinyModel()
+    with initializer(options) as fill:
+        initialize_model(model, initialize=fill)
+    for name, parameter in model.named_parameters():
+        expected = torch.empty_like(parameter).view(-1)
+        fill_tiny_tensor(
+            TensorChunk(
+                name, tuple(parameter.shape), parameter.dtype, 0, parameter.numel()
+            ),
+            expected,
+        )
+        torch.testing.assert_close(parameter.view(-1), expected, rtol=0, atol=0)
+
+    path = _config(tmp_path)
+    raw = json.loads(path.read_text())
+    raw.update(options)
+    raw["schedules"]["optimizer_group.0.lr"] = raw["schedules"].pop("lr")
+    path.write_text(json.dumps(raw))
+    result = run_config(path, ["steps=2", "checkpoint_every=0", "eval_every=0"])
+    assert result.step == 2
+    assert result.hyperparams["optimizer_group.0.lr"] == 0.01
 
 
 def test_reference_runs_without_legacy_preparation_or_execution(tmp_path):
