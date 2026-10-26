@@ -1,4 +1,4 @@
-"""Finalize opaque Triton provider choices using one stage's ordinary tensors."""
+"""Finalize generated and provider kernels using one stage's ordinary tensors."""
 
 from collections.abc import Sequence
 from dataclasses import replace
@@ -15,17 +15,19 @@ from shadowspill.pytorch.executable import restore_executable
 from shadowspill.pytorch.task_inputs import prepare_inputs
 from shadowspill.pytorch.tuning import capture_choices
 
+from .kernels import capture_kernels, freeze_kernels
+from .output_devices import resolve_output_devices
 
-def finalize_providers(program: Program, device: torch.device) -> Program:
+
+def finalize_tasks(program: Program, device: torch.device) -> Program:
     dependencies = program.bindings["operator_dependencies"]
-    pending = {
-        key
-        for key, values in dependencies.items()
-        if any(not item["operator"].startswith("shadowspill::") for item in values)
-    }
+    pending = set(program.executables)
     if not pending:
         return program
     choices: dict[str, Any] = {}
+    kernels: dict[str, Any] = {}
+    output_devices: dict[str, tuple[str | None, ...]] = {}
+    executables = dict(program.executables)
     functions: dict[str, Any] = {}
     controls = ControlInputs(program, device)
 
@@ -36,9 +38,16 @@ def finalize_providers(program: Program, device: torch.device) -> Program:
             )
         if key not in pending:
             return functions[key](*arguments)
-        with capture_choices() as captured:
+        with capture_choices() as captured, capture_kernels() as generated:
             result = functions[key](*arguments)
+        leaves, _ = tree_flatten(result)
+        output_devices[key] = tuple(
+            value.device.type if isinstance(value, torch.Tensor) else None
+            for value in leaves
+        )
         choices[key] = captured
+        kernels[key] = freeze_kernels(functions[key], generated)
+        executables[key] = functions[key].serialize()
         pending.remove(key)
         return result
 
@@ -87,9 +96,8 @@ def finalize_providers(program: Program, device: torch.device) -> Program:
             del arguments, leaves
         torch.cuda.synchronize(device)
     if pending:
-        raise ValueError(
-            f"provider finalization did not cover tasks: {sorted(pending)}"
-        )
+        raise ValueError(f"kernel finalization did not cover tasks: {sorted(pending)}")
+    program = resolve_output_devices(program, output_devices)
     return replace(
         program,
         task_definitions=tuple(
@@ -99,6 +107,8 @@ def finalize_providers(program: Program, device: torch.device) -> Program:
                     {
                         "task": item.compatibility_digest,
                         "triton_choices": choices[item.profile_key],
+                        "inductor_kernels": kernels[item.profile_key],
+                        "output_devices": output_devices[item.profile_key],
                     }
                 ),
             )
@@ -106,5 +116,10 @@ def finalize_providers(program: Program, device: torch.device) -> Program:
             else item
             for item in program.task_definitions
         ),
-        bindings={**program.bindings, "triton_choices": choices},
+        executables=executables,
+        bindings={
+            **program.bindings,
+            "triton_choices": choices,
+            "inductor_kernels": kernels,
+        },
     )

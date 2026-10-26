@@ -56,7 +56,17 @@ representative GPU to finalize CUDA task implementations. It accepts normal
 positional and keyword arguments, including nested structures and specialized
 non-tensor values. It records semantic module/parameter names, output storage
 geometry, scheduled compiler-buffer lifetimes and explicit unresolved memory
-requirements for provider calls. No state initialization or task timing occurs.
+requirements for provider calls. No persistent-state initialization or task
+duration profiling occurs. Generated kernels are finalized by executing complete
+tasks with valid example controls and outputs from their producer tasks. This
+avoids benchmarking indexing kernels on unrelated synthetic integer buffers
+during standalone compilation. Selected binaries are saved in the Program;
+measurement and execution do not select new kernels or depend on an earlier
+process's compiler cache.
+Finalization also resolves backend outputs whose device was provisional in
+compiler metadata, such as attention RNG controls returned on CPU. Those values
+have host lifetimes and no GPU allocation; conflicting observed storage locations
+fail build before profiling or planning.
 An optional `forward_fn(model, *args, **kwargs)` selects another model method or
 computation without changing registered parameter names. For example, an
 evaluation loss can use `forward_fn=lambda m, *a, **kw: m.loss(*a, **kw)` with
