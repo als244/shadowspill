@@ -221,11 +221,13 @@ class Reference:
                 parameter.data = parameter.data.to(self.model_dtype)
         self.model.train()
         self.parameters = dict(self.model.named_parameters())
-        self.trained = {
+        # Each rank must reduce gradients in the same order. A set's iteration
+        # order depends on the process hash seed and can mismatch collectives.
+        self.trained = sorted(
             canonical_name(name)
             for name, parameter in sharded.named_parameters()
             if parameter.requires_grad
-        }
+        )
         # The routed experts' LoRA factors: the factors a module that
         # declares routed experts carries.
         modules = dict(self.model.named_modules())
