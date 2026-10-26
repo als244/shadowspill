@@ -146,15 +146,17 @@ mathematical forward. Pass the policy through the generic public API:
 
 ```text
 workload PartitionPolicy
-  -> plan_forward / plan_step / build_step_programs / plan_step_search(partition=...)
+  -> build_forward / build_forward_backward / build_step(partition=...)
   -> FX stage partitioning
-  -> ordinary contracts, graph pairs, profiling and planning
+  -> Program with compiled tasks and save/recompute variants
+  -> separate measurement, profile application and planning
 ```
 
 Quickstart factories return the same object in
-`experiment["plan_options"]["partition"]`. The generic runner forwards these
-options both to candidate search and to execution planning. It does not recognize
-architecture names or substitute a model-specific policy.
+`experiment["build_options"]["partition"]`. The generic runner passes it to build;
+planning chooses among the resulting variants. Comparing different partitions
+requires building different Programs. The runner does not recognize architecture
+names or substitute a model-specific policy.
 
 The [custom partitioning example](../examples/custom-partitioning.md) shows a
 small standalone policy. The [GLM workload](../../workloads/models/glm53_flash/README.md#partitioning)
@@ -162,6 +164,6 @@ is a model-scale example: its optional workload-local policy bounds each
 decoder layer and vision block, and would bound individual expert modules. No
 GLM condition belongs in the planner, simulator, runtime, or MLOps operators.
 
-See also [frontend API](../python/api/frontend.md#partitionpolicy),
+See also [phase APIs](offline-pipeline.md),
 [graph-pair construction](graph-pair-construction.md), and
 [task boundaries](task-boundaries.md).

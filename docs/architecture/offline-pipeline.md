@@ -321,6 +321,9 @@ it measures all unique task forms; `stages=[...]` selects stage indices and omit
 standalone optimizer work. Backward inputs include saved values from the exact
 forward form. An `inputs` mapping can supply flat task arguments by profile key
 when automatic values are unsuitable or control semantics are unknown.
+Build and measurement preserve the caller's default CPU and target-device random
+generator states. Execution consumes random values normally; preparation does
+not advance the training stream.
 
 Structural capture does not read model payloads to compute inter-stage controls.
 When an integer/boolean input is produced by another stage, build-time provider

@@ -51,7 +51,11 @@ def measure_program(
             "measure_program requires the ordinary PyTorch native allocator"
         )
     jobs = list(stage_jobs(program, stages))
-    with torch.cuda.device(target), torch.no_grad():
+    with (
+        torch.cuda.device(target),
+        torch.no_grad(),
+        torch.random.fork_rng(devices=[target]),
+    ):
         session = MeasurementSession(
             program, target, inputs or {}, warmup_seconds, measure_seconds
         )

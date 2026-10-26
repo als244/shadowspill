@@ -67,8 +67,16 @@ with `run(plan="evaluation", ...)`.
 
 ## Updates, schedules and loop policy
 
-`hyperparams` supplies per-call optimizer controls declared during build. A
-`schedules` mapping passed to Trainer maps those same names to
+`hyperparams` supplies per-call optimizer controls declared during build and scalar
+fills of persistent model buffers by their qualified names. For example,
+`hyperparams={"lr": 0.001, "loss_scale": 2.0}` changes the learning rate and fills
+the model's `loss_scale` buffer before the call. Omitted optimizer controls use
+their captured defaults; omitted model buffers keep their current values. Model
+parameters, nonpersistent buffers and tensor-wrapper components cannot be set
+this way. Sharded buffer fills affect only owned elements and require a dense
+full-storage view.
+
+A `schedules` mapping passed to Trainer maps control names to
 `callable(completed_steps)`. Explicit per-call values override schedule outputs.
 Only captured runtime controls can change; a Python constant baked into an
 optimizer graph cannot become a runtime control later.

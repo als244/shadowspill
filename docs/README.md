@@ -9,9 +9,9 @@ the step once, measures its compiled tasks, then decides for every value
 whether to keep it on the device, move it to spill storage and fetch it back, or
 throw it away and recompute it — and when each of those should happen, so the
 copies overlap the compute that does not need them yet. It proves the answer
-fits the declared pools down to the byte offset, and hands back an ordinary
-Python callable that runs that plan every time it is called. PyTorch still
-executes every kernel; only the memory decisions move.
+fits the declared pools down to the byte offset, and saves a Plan that Executor
+runs in a fresh worker. Trainer handles the training loop over that Plan.
+PyTorch still executes every kernel; only the memory decisions move.
 
 Three properties shape how the rest of these pages read. The step is planned
 as a framework-neutral program, so the planner, the simulator and the runtime
@@ -25,7 +25,7 @@ admission and placement get pages of their own.
 
 Pick the entry that matches what you came to do; each path stands on its own.
 
-- To use ShadowSpill from PyTorch, read the [Python quickstart](python/quickstart.md),
+- To use ShadowSpill from PyTorch, read [Training with saved plans](examples/generic-training.md),
   then the [Python API](python/README.md), then the complete workflows in the
   [examples](examples/README.md).
 - To understand the system, follow the ordered path in the [architecture
@@ -150,16 +150,14 @@ underneath, and the clocks a step is read on.
 
 ## Python
 
-The `shadowspill` package: model-state import, capture and lowering, reusable
-planning artifacts, plan search, diagnostics, and callable execution. The
+The `shadowspill` package: build, measurement, reusable profiles, CPU planning,
+reports and execution through Executor or Trainer. The
 [Python guide](python/README.md) indexes this section.
 
 ### Guides
 
 Task-oriented pages: how to do something, and how to read what comes back.
 
-- [Python quickstart](python/quickstart.md) — constructing the runtime,
-  importing model state, planning a step, and the callable lifecycle.
 - [Artifact store](python/artifact-store.md) — the content-addressed store,
   its build and planning trees, and what each mode does with them.
 - [PyTorch allocator integration](python/allocator.md) — how the ShadowSpill

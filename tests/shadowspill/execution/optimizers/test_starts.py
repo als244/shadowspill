@@ -8,7 +8,7 @@ from torch import nn
 
 from shadowspill import build_step
 from tests.shadowspill.execution._oracle import optimizer_values
-from tests.shadowspill.execution.optimizers.common import run_worker, save_plan
+from tests.shadowspill.execution.helpers import run_worker, save_plan
 
 
 class StartingOptimizer(torch.optim.Optimizer):

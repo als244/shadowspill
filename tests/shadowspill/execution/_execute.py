@@ -12,7 +12,10 @@ from torch.utils._pytree import tree_map
 from shadowspill import Plan
 from tests.shadowspill.execution._cold import forbid_preparation
 
-forbid_preparation("tests.shadowspill.execution.optimizers")
+forbid_preparation(
+    "tests.shadowspill.execution.optimizers",
+    "tests.shadowspill.execution.test_model_controls",
+)
 from qualification.runtime_evidence import adapter_statistics  # noqa: E402
 from shadowspill import Executor, load_checkpoint, save_checkpoint  # noqa: E402
 from tests.shadowspill.execution._stream_checks import StreamChecks  # noqa: E402
@@ -99,6 +102,9 @@ with pytest.raises(ValueError, match="unknown runtime hyperparameters"):
     executor.run(
         input_loader=lambda i: oracle["examples"][i], hyperparams={"unknown": 1}
     )
+for values in oracle.get("invalid_hyperparams", ()):
+    with pytest.raises(ValueError, match="unknown runtime hyperparameters"):
+        executor.run(input_loader=lambda i: oracle["examples"][i], hyperparams=values)
 previous, previous_value = None, None
 previous_norms, previous_norm_values = None, None
 first_invocation_compiles = None

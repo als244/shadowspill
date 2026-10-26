@@ -18,7 +18,7 @@ class TrainingDtypes:
 
     ``parameter`` accumulates gradients at model-weight dtype. Optimizers read
     the accumulated gradient at the dtype of the parameter they update (the
-    master when present), matching the public ``plan_step`` contract.
+    master when present), matching the public ``build_step`` contract.
     """
 
     model_dtype: str = "bfloat16"

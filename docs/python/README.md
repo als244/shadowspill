@@ -1,14 +1,15 @@
 # Python guide
 
-The Python package covers model-state import, PyTorch capture and lowering,
-reusable planning artifacts, planning, diagnostics, and callable execution. The
-directory is split between task-oriented guides and the `api/` reference.
+The public workflow separates build, measurement, CPU planning and fresh-worker
+execution. Each phase produces an artifact that can be saved and reused. Trainer
+runs an already prepared Plan through Executor. This directory contains guides
+and the `api/` reference.
 
 ## Guides
 
 How to use the system and how to read what it produces.
 
-- [Quickstart](quickstart.md)
+- [Training with saved plans](../examples/generic-training.md)
 - [Independent build, profile, plan and execution APIs](../architecture/offline-pipeline.md)
 - [Artifact store](artifact-store.md)
 - [PyTorch allocator integration](allocator.md)
@@ -29,7 +30,7 @@ ordered outward from the framework-neutral layer to the PyTorch frontend.
 
 - [Framework-neutral Python APIs](api/neutral.md)
 - [Reusable planning artifacts](api/artifacts.md)
-- [Generic trainer and forward runner](api/training.md)
+- [Trainer and Executor](api/training.md)
 - [Distributed planning and training](api/distributed.md)
 - [Frontend and lifecycle](api/frontend.md)
 - [SSD spill storage](api/ssd.md)

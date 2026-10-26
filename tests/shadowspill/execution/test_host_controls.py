@@ -1,23 +1,12 @@
 """Host controls have zero GPU extent but survive until their final consumer."""
 
-import os
-import subprocess
-import sys
-from pathlib import Path
-
 import pytest
 import torch
 from torch import nn
 
-from shadowspill import (
-    CommunicationInfo,
-    MemoryBudgets,
-    apply_profiles,
-    build_forward,
-    measure_program,
-    plan_program,
-)
+from shadowspill import build_forward, measure_program
 from tests.shadowspill.execution._host_controls import host_control, read_host_control
+from tests.shadowspill.execution.helpers import run_worker, save_plan
 
 
 class Produce(nn.Module):
@@ -72,12 +61,7 @@ def test_host_outputs_across_tasks_and_cold_execution(tmp_path):
         measure_seconds=0.002,
     )
     assert subset.tasks.keys() <= profiles.tasks.keys()
-    plan = plan_program(
-        apply_profiles(program, profiles),
-        memory_budgets=MemoryBudgets(2 << 30, 64 << 20),
-        communication_info=CommunicationInfo(1e10, 1e10),
-    )
-    plan.save(tmp_path / "plan.ssp")
+    save_plan(program, tmp_path, profiles=profiles)
     expected = model(x)
     state = {"weight": model.weight.detach().clone()}
     torch.save(
@@ -91,16 +75,4 @@ def test_host_outputs_across_tasks_and_cold_execution(tmp_path):
         ),
         tmp_path / "oracle.pt",
     )
-    child = subprocess.run(
-        [
-            sys.executable,
-            "-S",
-            str(Path(__file__).with_name("_execute.py")),
-            str(tmp_path),
-        ],
-        env=os.environ,
-        capture_output=True,
-        text=True,
-        timeout=180,
-    )
-    assert child.returncode == 0, child.stdout + child.stderr
+    run_worker(tmp_path)

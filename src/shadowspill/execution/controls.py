@@ -6,6 +6,7 @@ from typing import Any
 
 import torch
 
+from .buffer_controls import BufferControls
 from .storage import Storage, dtype_of
 from .tensors import TensorChunk
 
@@ -18,6 +19,11 @@ class Controls:
             for b in storage.plan.program.bindings.get("optimizer_bindings", ())
             if b["object_id"] is None or b["role"] == "hyperparameter"
         }
+        self.buffers = BufferControls(storage)
+        if self.buffers.bindings.keys() & self.bindings.keys():
+            raise ValueError(
+                "model buffer names must not collide with optimizer controls"
+            )
         self.host = {}
         for name, binding in self.bindings.items():
             if binding["object_id"] is not None:
@@ -90,11 +96,18 @@ class Controls:
             )
 
     def apply(self, values: Mapping[str, Any]) -> None:
-        unknown = set(values) - {
-            name for name, b in self.bindings.items() if b["role"] == "hyperparameter"
-        }
+        unknown = (
+            set(values)
+            - {
+                name
+                for name, b in self.bindings.items()
+                if b["role"] == "hyperparameter"
+            }
+            - self.buffers.bindings.keys()
+        )
         if unknown:
             raise ValueError(f"unknown runtime hyperparameters: {sorted(unknown)}")
+        buffers = self.buffers.prepare(values)
         prepared = []
         for name, binding in self.bindings.items():
             if binding["role"] != "hyperparameter":
@@ -124,3 +137,5 @@ class Controls:
                     .as_strided(binding["shape"], binding["stride"])
                 )
                 destination.copy_(value)
+        for destination, value in buffers:
+            destination.fill_(value)

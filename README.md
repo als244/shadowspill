@@ -61,7 +61,7 @@ from workloads.models.catalog import build_on_meta
 model = build_on_meta("llama3-8b", dtype="bfloat16", max_seq_len=4096)
 # Four examples of 4 × 4K tokens = 16 sequences per update; random initialization.
 program = ss.build_step(model, optimizer=optimizer, objective=next_token_loss,
-                        example_args=(tokens_4x4096, targets_4x4096), num_examples=4)
+                        example_args=(tokens, targets), num_examples=4)
 ```
 
 [Complete recipe](workloads/recipes/text/train_llama3.py)
@@ -75,12 +75,12 @@ program = ss.build_step(model, optimizer=optimizer, objective=next_token_loss,
 import torch
 from workloads.models.glm53_flash.checkpoint import GLMCheckpoint
 
-with GLMCheckpoint("/models/GLM-5.3-Flash") as checkpoint:
-    model = checkpoint.build_model(lora_rank=32, lora_factor_dtype=torch.bfloat16)
-    # One 32K sequence per GPU; frozen base keeps checkpoint precision, including FP8.
-    program = ss.build_step(model, optimizer=optimizer, objective=next_token_loss,
-                            example_args=(tokens_1x32768, targets_1x32768),
-                            parallelism=ss.Parallelism.dp(ranks_per_replica=8))
+checkpoint = GLMCheckpoint(checkpoint_path)
+model = checkpoint.build_model(lora_rank=32, lora_factor_dtype=torch.bfloat16)
+# One 32K sequence per GPU; frozen base keeps checkpoint precision, including FP8.
+program = ss.build_step(model, optimizer=optimizer, objective=next_token_loss,
+                        example_args=(tokens, targets),
+                        parallelism=ss.Parallelism.dp(ranks_per_replica=8))
 ```
 
 [Complete recipe](workloads/recipes/text/glm53_flash_lora/README.md)
@@ -97,7 +97,7 @@ model = build_on_meta("qwen35moe-35b-a3b", dtype="bfloat16", max_seq_len=32768,
                       lora={"rank": 32, "alpha": 32})
 # Eight examples of 1 × 32K tokens; load the frozen checkpoint and initialize adapters.
 program = ss.build_step(model, optimizer=optimizer, objective=next_token_loss,
-                        example_args=(tokens_1x32768, targets_1x32768), num_examples=8)
+                        example_args=(tokens, targets), num_examples=8)
 ```
 
 [Complete recipe](workloads/recipes/text/train_qwen35_lora.py)
@@ -113,7 +113,7 @@ from workloads.models.catalog import build_on_meta
 model = build_on_meta("qwen3moe-30b-a3b", dtype="bfloat16", max_seq_len=4096)
 # 16 examples of 4 × 4K tokens per GPU = 512 sequences globally; random initialization.
 program = ss.build_step(model, optimizer=optimizer, objective=next_token_loss,
-                        example_args=(tokens_4x4096, targets_4x4096), num_examples=16,
+                        example_args=(tokens, targets), num_examples=16,
                         parallelism=ss.Parallelism.dp(ranks_per_replica=8))
 ```
 

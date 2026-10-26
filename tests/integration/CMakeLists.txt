@@ -33,8 +33,7 @@ function(shadowspill_add_pytorch_canary name timeout)
       # whatever still gets past it.
       #
       # PYTHONPATH is the source tree, so a canary runs what is checked out.
-      # Isolate compiler calls outside planning. Public planning calls also
-      # supply a temporary artifact store, which owns their compiler caches.
+      # The test wrapper isolates compiler caches outside saved artifacts.
       ENVIRONMENT
         "PYTHONPATH=${PROJECT_SOURCE_DIR}/src:${PROJECT_SOURCE_DIR};SHADOWSPILL_CANARY_TIMEOUT=${timeout};SHADOWSPILL_LIBRARY_DIRECTORY=$<TARGET_FILE_DIR:shadowspill>"
       TIMEOUT ${timeout}
@@ -87,12 +86,12 @@ function(shadowspill_add_public_api_test file name timeout)
 endfunction()
 
 shadowspill_add_public_api_test(
-  shadowspill/pytorch/api/test_00_public_forward.py
-  test_public_forward_executes_reloads_and_restores 300
+  shadowspill/execution/test_saved_executor.py
+  test_saved_plan_executes_without_build_or_measurement[forward-None-False] 300
 )
 shadowspill_add_public_api_test(
-  shadowspill/pytorch/api/test_00_public_forward.py
-  test_public_forward_sets_a_model_buffer_each_call 300
+  shadowspill/execution/test_model_controls.py
+  test_model_buffer_controls_in_saved_workers 300
 )
 shadowspill_add_public_api_test(
   shadowspill/execution/optimizers/test_starts.py
@@ -141,10 +140,6 @@ shadowspill_add_public_api_test(
 shadowspill_add_public_api_test(
   shadowspill/pytorch/api/test_01_public_training.py
   test_public_training_profiles_bounded_opaque_optimizer 300
-)
-shadowspill_add_public_api_test(
-  shadowspill/pytorch/api/test_01_public_training.py
-  test_public_training_sets_a_model_buffer_each_step 300
 )
 shadowspill_add_public_api_test(
   shadowspill/execution/test_shared_plans.py
@@ -207,8 +202,8 @@ shadowspill_add_public_api_test(
   test_first_stochastic_update_is_independent_of_preparation_and_diagnostics 300
 )
 shadowspill_add_public_api_test(
-  shadowspill/pytorch/api/test_00_public_forward.py
-  test_public_forward_profiling_preserves_random_streams 300
+  shadowspill/execution/test_random.py
+  test_build_and_profile_preserve_rng_and_cold_execution_replays_it 300
 )
 
 shadowspill_add_public_api_test(

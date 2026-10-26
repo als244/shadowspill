@@ -112,7 +112,8 @@ passed [physical admission](physical-admission.md), not only the simulator.
 
 ## Where it plugs in
 
-`plan_program(problem, search_options=...)` is the seam, and
+`shadowspill.plan_program(profiled_program, search_options=..., ...)` is the public
+entry point, and
 `SearchOptions.algorithm` is where a search goes. It is the search itself, not
 a name to look up: an instance holding its own options. `None` runs the one
 that ships, so a call that does not care reads as if there were no seam at
@@ -124,11 +125,11 @@ used, which is the whole test of whether the seam is real. Defining it does
 record its `name`, which is how a plan read back from an archive can be
 given the search that made it.
 
-The PyTorch frontend's `plan_step` builds and plans in one call and takes the
-same argument, using the shipped search throughout when it is not given
-another -- including for the capacity preflight. A search supplied there
-applies to every point it plans; one supplied to `plan_program` applies to the
-problem the frontend already built.
+`sweep_programs` calls the same planner for each supplied ProfiledProgram and
+memory budget, retaining successful Plans and failure diagnostics. Both APIs are
+CPU-only: they neither build nor measure tasks. They take `memory_budgets` and
+`communication_info` separately from the profiled computation. See the
+[phase API guide](offline-pipeline.md) for the complete workflow.
 
 ## Writing one
 

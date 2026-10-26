@@ -1,5 +1,10 @@
 # Errors, failures, and cleanup
 
+The detailed callable/store lifecycle below covers the model-based frontend
+still used by some integrations. For saved-plan execution and its ownership
+boundaries, see [Trainer and Executor](api/training.md) and the
+[phase API guide](../architecture/offline-pipeline.md).
+
 ShadowSpill fails closed at the boundary that can still explain the problem.
 Capture, compilation, profiling, planning, admission, input validation, and
 execution therefore have distinct exception types. A failed allocator request

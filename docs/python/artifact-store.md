@@ -1,7 +1,13 @@
 # Artifact store
 
+The public phase APIs persist their results with explicit `save`/`load`; see
+[phase artifacts](api/artifacts.md#persistence-and-reports). They do not require
+ArtifactStore. This page describes the cache used by the model-based frontend
+and the lower-level planner during the remaining caller migration.
+
 One content-addressed store, shared by `plan_step()`, `plan_forward()`,
-`build_step_programs()`, and `plan_program()`. It holds two independent trees:
+`build_step_programs()`, and `shadowspill.planner.plan_program()`. It holds two
+independent trees:
 
 ```text
 artifact_store/
@@ -10,7 +16,6 @@ artifact_store/
     ├── README.md
     ├── build/            what a run pays for, and another run can reuse
     │   ├── exports/      normalized Export archives and manifests
-    │   ├── inductor/     PyTorch Inductor and Triton caches
     │   ├── graph_pairs/  structural AOT graph pairs
     │   ├── optimizers/   traced optimizer updates
     │   └── profiling/

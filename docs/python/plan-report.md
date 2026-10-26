@@ -1,5 +1,10 @@
 # Interpreting a PlanReport
 
+For saved phase results, inspect `Plan.summary`, `Plan.timeline` and
+`Plan.diagnostics`, or call `write_report(plan, directory)`; see
+[phase artifacts](api/artifacts.md#plan). This page describes the PlanReport
+returned by the model-based frontend still used by some integrations.
+
 Every field of every record is listed in the
 [PlanReport field reference](plan-report-fields.md); this page is how to read
 them together.

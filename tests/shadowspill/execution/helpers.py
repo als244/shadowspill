@@ -1,4 +1,4 @@
-"""Save measured optimizer Plans and run them with no model or compiler access."""
+"""Save measured Plans and launch cold execution workers with isolated caches."""
 
 import os
 import subprocess
@@ -14,8 +14,9 @@ from shadowspill import (
 )
 
 
-def save_plan(program, directory):
-    profiles = measure_program(program, warmup_seconds=0.001, measure_seconds=0.002)
+def save_plan(program, directory, *, profiles=None):
+    if profiles is None:
+        profiles = measure_program(program, warmup_seconds=0.001, measure_seconds=0.002)
     plan = plan_program(
         apply_profiles(program, profiles),
         memory_budgets=MemoryBudgets(2 << 30, 64 << 20),
@@ -25,12 +26,12 @@ def save_plan(program, directory):
     return plan
 
 
-def run_worker(directory):
+def run_worker(directory, script="_execute.py"):
     result = subprocess.run(
         [
             sys.executable,
             "-S",
-            str(Path(__file__).parents[1] / "_execute.py"),
+            str(Path(__file__).with_name(script)),
             str(directory),
         ],
         env={

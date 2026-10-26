@@ -1,23 +1,12 @@
 """Caller outputs may view inputs or parameters; subsequent calls must preserve them."""
 
-import os
-import subprocess
-import sys
-from pathlib import Path
-
 import pytest
 import torch
 from torch import nn
 from torch.utils._pytree import tree_map
 
-from shadowspill import (
-    CommunicationInfo,
-    MemoryBudgets,
-    apply_profiles,
-    build_forward,
-    measure_program,
-    plan_program,
-)
+from shadowspill import build_forward
+from tests.shadowspill.execution.helpers import run_worker, save_plan
 
 
 class Aliases(nn.Module):
@@ -44,15 +33,7 @@ def test_alias_outputs_survive_repeated_calls(tmp_path):
     with torch.device("meta"):
         template = Aliases()
     program = build_forward(template, example_args=(x,), partition="whole")
-    profiles = measure_program(program, warmup_seconds=0.001, measure_seconds=0.002)
-    plan = plan_program(
-        apply_profiles(program, profiles),
-        memory_budgets=MemoryBudgets(2 << 30, 64 << 20),
-        communication_info=CommunicationInfo(
-            fetch_bytes_per_second=1e10, evict_bytes_per_second=1e10
-        ),
-    )
-    plan.save(tmp_path / "plan.ssp")
+    save_plan(program, tmp_path)
     outputs = tree_map(lambda t: t.detach().clone(), model(x))
     state = {"weight": model.weight.detach().clone()}
     for source in program.bindings["root_sources"]:
@@ -69,16 +50,4 @@ def test_alias_outputs_survive_repeated_calls(tmp_path):
         ),
         tmp_path / "oracle.pt",
     )
-    worker = subprocess.run(
-        [
-            sys.executable,
-            "-S",
-            str(Path(__file__).with_name("_execute.py")),
-            str(tmp_path),
-        ],
-        env=os.environ,
-        capture_output=True,
-        text=True,
-        timeout=180,
-    )
-    assert worker.returncode == 0, worker.stdout + worker.stderr
+    run_worker(tmp_path)

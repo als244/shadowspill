@@ -6,7 +6,7 @@ import pytest
 import torch
 
 from shadowspill import build_step
-from tests.shadowspill.execution.optimizers.common import run_worker, save_plan
+from tests.shadowspill.execution.helpers import run_worker, save_plan
 from tests.shadowspill.execution.optimizers.reference import Network, objective, oracle
 
 

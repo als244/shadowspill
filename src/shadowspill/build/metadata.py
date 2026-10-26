@@ -25,10 +25,17 @@ def model_registrations(
 ) -> list[dict[str, Any]]:
     """Keep logical trainability alongside names, including ties and components."""
     parameters = dict(model.named_parameters(remove_duplicate=False))
+    persistent_buffers = {
+        f"{path}.{name}".lstrip(".")
+        for path, module in model.named_modules(remove_duplicate=False)
+        for name in module._buffers
+        if name not in module._non_persistent_buffers_set
+    }
     return [
         {
             **asdict(item),
             "trainable": item.parameter and parameters[item.name].requires_grad,
+            "persistent": item.parameter or item.name in persistent_buffers,
         }
         for item in registrations
     ]
