@@ -62,7 +62,7 @@ def ensure(group, *, engine, python, world_size, timeout):
     )
     artifact = root / "artifact"
     published = root / "prepared.json"
-    if published.exists() and (artifact / "training.json").exists():
+    if published.exists() and (artifact / "planning/sweep.ssp").exists():
         result = json.loads(published.read_text())
         if result.get("status") == "completed" and result.get("budgets") == [
             list(b) for b in budgets
@@ -71,8 +71,7 @@ def ensure(group, *, engine, python, world_size, timeout):
     settings = max(
         (settings for _, settings in group["members"]), key=lambda s: s.execution_gib
     )
-    # This runtime is only for profiling/preparation. It exits before a case
-    # opens the smaller physical pool the case's result will report.
+    # Ordinary-allocator profiling exits before a case opens its execution pool.
     attempts = list(root.glob("attempt-*"))
     number = max((int(p.name.split("-")[-1]) for p in attempts), default=0) + 1
     worker = root / f"attempt-{number:03d}"

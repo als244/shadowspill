@@ -70,8 +70,6 @@ class Outcome:
     #: The geometry the engine ran, for one that chose it, such as a
     #: microbatch size its own search picked; the case's otherwise.
     geometry: Mapping[str, Any] | None = None
-    #: A preparation worker publishes artifacts, never a measured case row.
-    preparation_only: bool = False
 
 
 class Tokens:
@@ -372,16 +370,6 @@ def finish(case: Case, clock: Clock, outcome: Outcome, source_paths) -> None:
     import torch.distributed as dist
 
     clock.close()
-    if outcome.preparation_only:
-        write_json(
-            case.output / "preparation-result.json",
-            {
-                "status": "completed",
-                **outcome.result,
-                "total_wall_seconds": time.perf_counter() - case.started,
-            },
-        )
-        return
     if case.standalone:
         forbidden = [
             name

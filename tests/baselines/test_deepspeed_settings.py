@@ -41,7 +41,10 @@ def test_flags_round_trip_every_setting():
     add_arguments(parser)
     assert from_namespace(parser.parse_args(settings.arguments())) == settings
     assert engine_module("deepspeed").ENVIRONMENT == "baselines"
-    assert command("deepspeed", "py", 2, settings, "out")[11:] == settings.arguments()
+    assert (
+        command("deepspeed", "py", 2, settings, "out")[-len(settings.arguments()) :]
+        == settings.arguments()
+    )
     assert "zero_stage" in settings.describe(2)["configuration"]
 
 

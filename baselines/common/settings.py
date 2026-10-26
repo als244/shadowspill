@@ -15,7 +15,7 @@ import dataclasses
 import json
 import math
 from pathlib import Path
-from typing import Any
+from typing import Any, Self
 
 from baselines.common import geometry as geometry_flags
 from baselines.common import models as model_flags
@@ -63,7 +63,7 @@ class Settings:
     # The geometry of one update.
     sequence_length: int = geometry_flags.SEQUENCE_LENGTH
     tokens_per_step: int | None = None
-    tokens_per_microbatch: int = 4096
+    tokens_per_microbatch: int | None = 4096
     # The precision contract.
     model_dtype: str = "bfloat16"
     master_dtype: str | None = "float32"
@@ -77,7 +77,7 @@ class Settings:
     checkpoint: str | None = None
     seed: int = 0
     # Recomputation and the allocator.
-    recompute: float = 1.0
+    recompute: float | None = 1.0
     allocator_cap_gib: float | None = None
     # The run.
     warmup_steps: int = 3
@@ -98,7 +98,7 @@ class Settings:
         return value
 
     @classmethod
-    def from_dict(cls, value):
+    def from_dict(cls, value: dict[str, Any]) -> Self:
         unknown = set(value) - cls.field_names()
         if unknown:
             raise ValueError(f"unknown {cls.__name__} fields: {sorted(unknown)}")
@@ -128,6 +128,8 @@ class Settings:
     def geometry(self, world_size) -> Geometry:
         if self.tokens_per_step is None:
             raise ValueError("a case names its tokens_per_step")
+        if self.tokens_per_microbatch is None:
+            raise ValueError("this engine requires tokens_per_microbatch")
         return Geometry(
             self.sequence_length,
             self.tokens_per_step,
@@ -282,7 +284,7 @@ def add_arguments(
         parser.add_argument(f"--{name.replace('_', '-')}", **options)
 
 
-def from_namespace(settings_type: type[Settings], arguments) -> Settings:
+def from_namespace[T: Settings](settings_type: type[T], arguments) -> T:
     """The settings a parsed trainer command line describes."""
     names = settings_type.field_names()
     return settings_type.from_dict(

@@ -1,28 +1,15 @@
-"""The settings of one ShadowSpill case, shared by the trainer and the sweep.
+"""Baseline geometry, precision and phase settings shared by launcher and sweep.
 
-On top of what every engine takes (``baselines.common.settings``), the
-budgets ShadowSpill plans within: the execution pool on the device and the
-spill pool in pinned host memory, with the headrooms the runtime keeps
-beside them, the artifact store its builds and plans persist in (the
-library's own by default), the resolution options the planner searches, and the
-microbatch search. One case plans every split of the update into
-microbatches within ``min_tokens_per_microbatch`` and
-``max_tokens_per_microbatch`` (both optional), each under the
-``orderings`` it tries, and runs the fastest that fits; a
-``tokens_per_microbatch`` pins one size instead. ShadowSpill honors the
-whole precision contract. There is no recompute fraction here: the planner
-decides what to keep, recompute or spill, so ``recompute`` is none and any
-value is refused; the resolution options are the shares of the flexible
-groups it may recompute, of which it plans each and keeps the best.
-
-Compatible single-rank sweep cases share explicit preparation artifacts across
-execution budgets. The store alone does not bypass objective capture.
+Build fixes the computation for each microbatch size. CPU planning chooses its
+ordering and save/recompute alternatives for each budget. Compatible single-rank
+cases share saved Programs and profiles; execution always starts in a fresh worker.
 """
 
 from __future__ import annotations
 
 import dataclasses
 import math
+from argparse import Namespace
 
 from baselines.common import settings as common
 from baselines.common.geometry import Geometry
@@ -38,6 +25,12 @@ SOURCE_PATHS = (
     "workloads/lora",
     "workloads/full_model.py",
     "workloads/recipes/text/geometry.py",
+    "workloads/recipes/text/initialization.py",
+    "benchmarking/quickstart/phases",
+    "benchmarking/quickstart/orchestrate.py",
+    "benchmarking/quickstart/launch.py",
+    "benchmarking/processes.py",
+    "benchmarking/device_worker.py",
     "src/shadowspill",
 )
 
@@ -74,14 +67,13 @@ class Settings(common.Settings):
     spill_gib: float = 64.0
     external_headroom_gib: float = 0.5
     host_headroom_gib: float = 2.0
-    #: Where builds and plans persist: ``default``, the library's own store;
-    #: ``none``, a store of the case's own that ends with it; or a directory.
+    #: Phase artifacts beside the case, no sharing, or a custom output parent.
     artifact_store: str = "default"
     #: The shares of the flexible groups the planner may recompute, as the
     #: quickstart's ``--resolution-options`` spells them.
     resolution_options: str = "quarters"
 
-    def microbatch_candidates(self, world_size) -> tuple[int, ...]:
+    def microbatch_candidates(self, world_size: int) -> tuple[int, ...]:
         """The tokens per microbatch the search plans, largest first: the
         one a case pins, or every split of a replica's update into whole
         sequences within the bounds."""
@@ -105,12 +97,14 @@ class Settings(common.Settings):
             raise ValueError("no microbatch size lies within the bounds")
         return tuple(sequences * self.sequence_length for sequences, _ in admitted)
 
-    def geometry(self, world_size) -> Geometry:
+    def geometry(self, world_size: int) -> Geometry:
         """The case's geometry; while the search is to choose the microbatch,
         it names the largest candidate, and the row names the one chosen."""
 
         if self.tokens_per_microbatch is not None:
             return super().geometry(world_size)
+        if self.tokens_per_step is None:
+            raise ValueError("a case names its tokens_per_step")
         return Geometry(
             self.sequence_length,
             self.tokens_per_step,
@@ -176,10 +170,9 @@ HELP = {
     " for allocations outside the pool",
     "host_headroom_gib": "host memory reserved per process beside the pinned spill"
     " pool",
-    "artifact_store": "where builds and plans persist, read where they hit and"
-    " written where they miss: 'default', the library's own store"
-    " (~/.cache/shadowspill); 'none', a store of the case's own that ends with"
-    " it; or a directory",
+    "artifact_store": "phase artifact location: 'default' saves beside the case"
+    " or shared preparation; 'none' disables sharing; a path chooses a parent"
+    " directory. Compiler caches remain separate",
     "resolution_options": "the shares of the flexible groups the planner may"
     " recompute, each planned and the best kept: 'quarters' (its default),"
     " 'eighths', 'halves', or comma-separated exact fractions such as 0,1/2,1",
@@ -207,7 +200,7 @@ def add_arguments(parser):
     )
 
 
-def from_namespace(arguments) -> Settings:
+def from_namespace(arguments: Namespace) -> Settings:
     return common.from_namespace(Settings, arguments)
 
 

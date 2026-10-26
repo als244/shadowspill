@@ -8,10 +8,9 @@ from shadowspill import (
     ProfiledProgram,
     write_report,
 )
-from shadowspill.planner import SearchOptions
 
 from .common import paths, plan_identity, write
-from .search import search
+from .search import search, search_options
 
 
 def run(request):
@@ -39,7 +38,8 @@ def run(request):
             for budget in request["search_budgets"]
         ],
         communication,
-        SearchOptions(workers=request["search_workers"]),
+        search_options(request),
+        ordering=request.get("orderings", "factors"),
     )
     result.save(root / "planning" / "sweep.ssp")
     write_report(result, root / "report", plots=request["plots"])

@@ -11,8 +11,9 @@ work of a step counted from the catalog model built on ``meta``, a summary
 of what was built, whatever the engine's ``Settings.resolve`` adds (a
 recipe engine's Hugging Face configuration), and the environment variables
 the case's settings decide (``Settings.environment``). The case is written to
-``DIR/case.json`` and torchrun replaces this process, running the engine's
-trainer in its own interpreter with ``--output DIR --case DIR/case.json``,
+``DIR/case.json``. The engine starts in its own interpreter: ShadowSpill
+orchestrates preparation before launching fresh execution workers; other engines
+start their trainer under torchrun, with ``--output DIR --case DIR/case.json``,
 in this process's environment with the case's variables set or unset.
 That interpreter is ``--python``, or the environment the engine names
 (``ENVIRONMENT``) beside the running one.
@@ -102,6 +103,7 @@ def command(engine, python, world_size, settings, output):
 
     return [
         sys.executable,
+        *(["-S"] if sys.flags.no_site else []),
         "-m",
         "baselines.common.launch",
         "--engine",
@@ -117,7 +119,20 @@ def command(engine, python, world_size, settings, output):
 
 
 def trainer_command(engine, python, world_size, output):
-    """The torchrun command line of the engine's trainer."""
+    """ShadowSpill orchestrates phases; other engines start directly under torchrun."""
+
+    if engine == "shadowspill":
+        return [
+            str(python),
+            *(["-S"] if sys.flags.no_site else []),
+            "-u",
+            "-m",
+            "baselines.engines.shadowspill.train",
+            "--output",
+            str(output),
+            "--case",
+            str(output / "case.json"),
+        ]
 
     return [
         str(python),

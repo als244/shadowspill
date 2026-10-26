@@ -37,7 +37,10 @@ def test_flags_round_trip_every_setting():
     add_arguments(parser)
     assert from_namespace(parser.parse_args(settings.arguments())) == settings
     assert engine_module("fsdp2").ENVIRONMENT == "baselines"
-    assert command("fsdp2", "py", 2, settings, "out")[11:] == settings.arguments()
+    assert (
+        command("fsdp2", "py", 2, settings, "out")[-len(settings.arguments()) :]
+        == settings.arguments()
+    )
 
 
 def test_gradients_default_to_float32_where_the_shared_default_is_the_model_dtype():

@@ -6,13 +6,13 @@ from shadowspill.errors import PlanInfeasibleError, PlanSearchExhaustedError
 from shadowspill.step import StepDataOrdering
 
 
-def search(programs, entries, budgets, communication, options):
+def search(programs, entries, budgets, communication, options, *, ordering="factors"):
     cases, choices = [], {}
     for budget in budgets:
         for entry in entries:
             name = entry["name"]
-            for ordering in orderings(entry.get("num_examples")):
-                label = "default" if ordering is None else ordering.label
+            for choice in orderings(entry.get("num_examples"), ordering):
+                label = "default" if choice is None else choice.label
                 case_name = f"{name}: {label}"
                 choices[case_name] = {"candidate": name, "ordering": label}
                 if "failure" in entry:
@@ -28,7 +28,7 @@ def search(programs, entries, budgets, communication, options):
                         memory_budgets=budget,
                         communication_info=communication,
                         search_options=options,
-                        ordering=ordering,
+                        ordering=choice,
                     )
                 except (PlanInfeasibleError, PlanSearchExhaustedError) as error:
                     cases.append(
@@ -38,6 +38,7 @@ def search(programs, entries, budgets, communication, options):
                             failure={
                                 "type": type(error).__name__,
                                 "message": str(error),
+                                "kind": getattr(error, "kind", None),
                                 "diagnostics": [
                                     item.to_dict()
                                     if hasattr(item, "to_dict")
@@ -52,11 +53,34 @@ def search(programs, entries, budgets, communication, options):
     return SweepResult(tuple(cases)), choices
 
 
-def orderings(count):
+def orderings(count, mode="factors"):
+    if mode not in {"factors", "depth-first"}:
+        raise ValueError("ordering must be factors or depth-first")
     if count is None:
         return [None]
+    if mode == "depth-first":
+        return [StepDataOrdering.depth_first(count)]
     return [
         StepDataOrdering(depth=depth, breadth=count // depth)
         for depth in range(1, count + 1)
         if count % depth == 0
     ]
+
+
+def search_options(request):
+    from fractions import Fraction
+
+    from shadowspill.planner import SearchOptions
+    from shadowspill.planner.search.algorithms.pressurefit import PressureFit
+    from shadowspill.planner.search.algorithms.pressurefit.options import (
+        PressureFitOptions,
+    )
+    from shadowspill.planner.search.toolkit.resolution import named_resolution_options
+
+    shares = named_resolution_options(request.get("resolution_options", "quarters"))
+    return SearchOptions(
+        workers=request["search_workers"],
+        algorithm=PressureFit(
+            PressureFitOptions(resolution_options=tuple(Fraction(v) for v in shares))
+        ),
+    )

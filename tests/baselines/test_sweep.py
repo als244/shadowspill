@@ -136,6 +136,8 @@ def test_a_engine_is_its_settings_module_launched_through_the_launcher():
     module = engine_module("fsdp2")
     assert module.Settings is Settings
     line = command("fsdp2", "py", 2, Settings(**TINY), "out")
+    if sys.flags.no_site:
+        assert line.pop(1) == "-S"
     assert line[:11] == [
         sys.executable,
         "-m",

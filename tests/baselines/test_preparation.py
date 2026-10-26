@@ -74,7 +74,8 @@ def test_preparation_resumes_and_preserves_requests_when_extending_budgets(
         request = json.loads((worker / "request.json").read_text())
         artifact = group["directory"] / "artifact"
         artifact.mkdir(exist_ok=True)
-        (artifact / "training.json").write_text("{}")
+        (artifact / "planning").mkdir(exist_ok=True)
+        (artifact / "planning/sweep.ssp").write_text("test archive")
         (worker / "preparation-result.json").write_text(
             json.dumps(
                 {

@@ -61,9 +61,9 @@ def test_the_command_line_reproduces_the_case():
     add_arguments(parser)
     assert from_namespace(parser.parse_args(settings.arguments())) == settings
     assert engine_module("megatron_core").ENVIRONMENT == "nvidia-training"
-    assert command("megatron_core", "py", 1, settings, "out")[11:] == (
-        settings.arguments()
-    )
+    assert command("megatron_core", "py", 1, settings, "out")[
+        -len(settings.arguments()) :
+    ] == (settings.arguments())
 
 
 def test_a_replica_is_tensor_pipeline_and_context_ranks():

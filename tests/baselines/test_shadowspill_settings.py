@@ -5,12 +5,12 @@ import argparse
 import pytest
 
 from baselines.common.launch import command, engine_module
+from baselines.engines.shadowspill.precision import optimizer_arguments
 from baselines.engines.shadowspill.settings import (
     Settings,
     add_arguments,
     from_namespace,
 )
-from baselines.engines.shadowspill.train import optimizer_arguments
 
 BASE = {
     "model": "llama3-tiny",
@@ -38,7 +38,10 @@ def test_flags_round_trip_every_setting():
     assert from_namespace(parser.parse_args(settings.arguments())) == settings
     assert "--recompute" not in settings.arguments()
     assert engine_module("shadowspill").ENVIRONMENT == "shadowspill"
-    assert command("shadowspill", "py", 2, settings, "out")[11:] == settings.arguments()
+    assert (
+        command("shadowspill", "py", 2, settings, "out")[-len(settings.arguments()) :]
+        == settings.arguments()
+    )
     configuration = settings.describe(2)["configuration"]
     assert configuration["execution_gib"] == 2
     assert configuration["recompute"] is None
@@ -95,7 +98,7 @@ def test_an_unnamed_rounding_is_rounding_to_nearest():
     assert optimizer_arguments(named)["opt_state_rounding"] == "stochastic"
 
 
-def test_every_case_shares_the_librarys_store_unless_it_names_another():
+def test_artifact_location_and_sharing_options_round_trip():
     assert Settings.from_dict(BASE).artifact_store == "default"
     for store in ("default", "none", "/tmp/store"):
         settings = Settings.from_dict({**BASE, "artifact_store": store})

@@ -156,7 +156,7 @@ class Access:
     #: The kinds of value this access exposes, of the four the check knows;
     #: an engine that consumes its gradients inside its step leaves that
     #: one out, and the moments the first update makes are the gradient's.
-    exposes = ("gradient", "first_moment", "second_moment", "master")
+    exposes: tuple[str, ...] = ("gradient", "first_moment", "second_moment", "master")
 
     def __init__(self, optimizer, device):
         self.optimizer = optimizer
@@ -198,8 +198,10 @@ class Reference:
         world,
         access=None,
         cast_pinned=False,
+        group=None,
     ):
         self.world = world
+        self.group = group
         self.device = device
         self.access = access or Access(None, device)
         self.stepped = getattr(torch, precision.stepped_dtype)
@@ -324,7 +326,7 @@ class Reference:
                 )
                 gradient = parameter.grad.detach().to(dtype)
                 if self.world > 1:
-                    dist.all_reduce(gradient)
+                    dist.all_reduce(gradient, group=self.group)
                     gradient /= self.world
                 if name in accumulated:
                     accumulated[name].add_(gradient)

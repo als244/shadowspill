@@ -67,7 +67,10 @@ def test_the_command_line_reproduces_the_case():
     add_arguments(parser)
     assert from_namespace(parser.parse_args(settings.arguments())) == settings
     assert engine_module("automodel").ENVIRONMENT == "nvidia-training"
-    assert command("automodel", "py", 1, settings, "out")[11:] == settings.arguments()
+    assert (
+        command("automodel", "py", 1, settings, "out")[-len(settings.arguments()) :]
+        == settings.arguments()
+    )
     assert settings.describe(1)["model"]["implementation"] == IMPLEMENTATION
 
 
