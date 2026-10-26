@@ -47,6 +47,7 @@ def train(case, clock):
             Trainer(
                 plan,
                 device=case.local_rank,
+                rank_map={rank: rank for rank in range(case.world)},
                 external_headroom_bytes=int(
                     case.settings.external_headroom_gib * (1 << 30)
                 ),

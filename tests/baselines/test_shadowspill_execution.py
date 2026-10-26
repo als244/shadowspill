@@ -15,18 +15,19 @@ from benchmarking.quickstart.phases.common import write
 
 @pytest.mark.cuda
 @pytest.mark.parametrize("mode", ["full", "lora"])
-def test_saved_baseline_matches_reference_in_fresh_worker(tmp_path, mode):
+@pytest.mark.parametrize("world", [1, 2])
+def test_saved_baseline_matches_reference_in_fresh_worker(tmp_path, mode, world):
     import torch
 
-    if not torch.cuda.is_available():
-        pytest.skip("requires CUDA")
+    if torch.cuda.device_count() < world:
+        pytest.skip(f"requires {world} CUDA devices")
     settings = Settings(
         model="llama3-tiny",
         mode=mode,
         lora={} if mode == "full" else {"rank": 32},
         model_config={"n_layers": 1},
         sequence_length=32,
-        tokens_per_step=128,
+        tokens_per_step=128 * world,
         tokens_per_microbatch=64,
         execution_gib=3,
         spill_gib=0.25,
@@ -38,7 +39,7 @@ def test_saved_baseline_matches_reference_in_fresh_worker(tmp_path, mode):
         orderings="depth-first",
         resolution_options="0,1",
     )
-    case = resolve("shadowspill", settings, 1)
+    case = resolve("shadowspill", settings, world)
     write(tmp_path / "case.json", case)
     # The controller must tolerate a caller that already initialized CUDA.
     before = torch.ones(1, device="cuda")
@@ -53,7 +54,7 @@ def test_saved_baseline_matches_reference_in_fresh_worker(tmp_path, mode):
                 "--engine",
                 "shadowspill",
                 "--gpus",
-                "1",
+                str(world),
                 "--python",
                 sys.executable,
                 "--output",
@@ -67,13 +68,14 @@ def test_saved_baseline_matches_reference_in_fresh_worker(tmp_path, mode):
         )
     assert child.returncode == 0, log.read_text()[-16000:]
     assert before.item() == 1 and torch.cuda.get_allocator_backend() == "native"
-    result = json.loads((tmp_path / "rank-00000/result.json").read_text())
-    assert len(result["reference_checks"]) == 3
-    assert result["simulation_comparison"]["median_measured_step_seconds"] > 0
+    for rank in range(world):
+        result = json.loads((tmp_path / f"rank-{rank:05d}/result.json").read_text())
+        assert len(result["reference_checks"]) == 3
+        assert result["simulation_comparison"]["median_measured_step_seconds"] > 0
     assert (tmp_path / "phases/planning/sweep.ssp").is_file()
     assert (tmp_path / "phases/report/index.html").is_file()
     assert (tmp_path / "row.json").is_file()
-    if mode == "full":
+    if mode == "full" and world == 1:
         # Adding a budget reuses profiles and preserves the original executable.
         artifacts = {
             path: path.read_bytes()

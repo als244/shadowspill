@@ -554,8 +554,9 @@ are conservative, and every selected plan is admitted locally. A mismatch falls
 back to independent searches. `--no-symmetric-planning` disables the optimization;
 omitting both flags preserves the factory's `Distributed` setting. The Python
 runner accepts the same override as `run(..., symmetric_planning=True)`.
-See [verified symmetric planning](../docs/python/api/distributed.md#verified-symmetric-planning)
-for the checks, work assignment, and artifact records.
+This is the older per-rank preparation workflow. The current
+[distributed phase API](../docs/python/api/distributed.md) builds/profiles DP
+compute on a representative device and calibrates communication separately.
 
 The distributed path uses the same model-independent planner as `Trainer`.
 Launch one process per GPU, with each process seeing its GPU as logical device 0:
@@ -711,7 +712,7 @@ owns its process groups. Unsupported or duplicate arguments fail explicitly.
 Spill pools remain per rank: four `--spill-gib 128` pools need 512 GiB of host
 memory, plus setup and runtime headroom. See the
 [GLM distributed example](../workloads/models/glm53_flash/README.md#generic-quickstart-and-training-sweeps)
-and [ownership API](../docs/python/api/distributed.md#computation-weight-and-gradient-spill-sharding).
+and the [ownership migration boundary](../docs/python/api/distributed.md#remaining-callers-on-the-older-api).
 
 `--ssd-spill DIRECTORY` selects an ordinary temporary SSD pool instead of pinned
 host memory. The directory must already exist on the intended local SSD;

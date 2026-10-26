@@ -2,6 +2,7 @@
 
 from dataclasses import replace
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 import torch
@@ -62,6 +63,38 @@ def test_controller_is_not_launched_once_per_gpu():
     assert "torch.distributed.run" in trainer_command(
         "fsdp2", "python", 8, Path("/run")
     )
+
+
+def test_execution_supplies_the_complete_rank_assignment(monkeypatch):
+    from baselines.engines.shadowspill import execute
+    from shadowspill.communication.binding.ranks import RankAssignment
+
+    settings = Settings(model="llama3-tiny", sequence_length=32, tokens_per_step=256)
+    case = SimpleNamespace(
+        world=2,
+        local_rank=1,
+        settings=settings,
+        geometry=settings.geometry(2),
+        resolved={
+            "phase_execution": {"selected": {"candidate": "128"}, "plan": "plan.ssp"}
+        },
+    )
+    opened = []
+    monkeypatch.setattr(execute, "Plan", SimpleNamespace(load=lambda _: object()))
+    monkeypatch.setattr(execute, "preflight", lambda *args: None)
+    monkeypatch.setattr(execute.dist, "init_process_group", opened.append)
+
+    class ReachedAdmission(Exception):
+        pass
+
+    def admit(plan, *, rank_map, device, **kwargs):
+        assert opened == ["gloo"] and device == 1
+        assert RankAssignment.resolve(2, rank_map).logical_by_worker == (0, 1)
+        raise ReachedAdmission
+
+    monkeypatch.setattr(execute, "Trainer", admit)
+    with pytest.raises(ReachedAdmission):
+        execute.train(case, None)
 
 
 def test_baseline_planning_controls_use_existing_planner_policies():
