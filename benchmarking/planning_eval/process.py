@@ -13,7 +13,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import TextIO
 
-from .storage import read_active_point, utc_now
+from benchmarking.journals import utc_now
+from benchmarking.planning_eval.active import read_active_point
 
 
 @dataclass(frozen=True, slots=True)

@@ -8,14 +8,15 @@ import sys
 import pytest
 
 from benchmarking.program_collection.artifacts import load_program
+from benchmarking.program_collection.journal import load_case_status
 from benchmarking.program_collection.matrix import expand_program_requests
+from benchmarking.program_collection.paths import CollectionPaths
 from benchmarking.program_collection.settings import (
     CollectionConfig,
     GeometryAxes,
     ModelSpec,
     ProfilingSpec,
 )
-from benchmarking.program_collection.state import CollectionPaths, load_case_status
 
 
 @pytest.mark.cuda

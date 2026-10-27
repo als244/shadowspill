@@ -9,10 +9,11 @@ from pathlib import Path
 from typing import Any
 
 from benchmarking._serialization import atomic_json, atomic_text
+from benchmarking.journals import read_object, utc_now
+from benchmarking.planning_eval.manifest import BaselinePaths
 from shadowspill.schema import artifact_schema
 
 from .matrix import FrontierPointRequest
-from .storage import BaselinePaths, read_object, utc_now
 
 _CSV_FIELDS = (
     "case_id",

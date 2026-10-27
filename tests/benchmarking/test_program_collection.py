@@ -15,22 +15,22 @@ from benchmarking.program_collection.controller import (
 from benchmarking.program_collection.corpus import (
     ProgramCaseIdentity,
 )
+from benchmarking.program_collection.journal import (
+    begin_attempt,
+    finish_attempt,
+    load_case_status,
+)
 from benchmarking.program_collection.matrix import (
     ProgramRequest,
     expand_program_requests,
 )
+from benchmarking.program_collection.paths import CollectionPaths
+from benchmarking.program_collection.resume import completed_artifact
 from benchmarking.program_collection.settings import (
     CollectionConfig,
     GeometryAxes,
     ModelSpec,
     ProfilingSpec,
-)
-from benchmarking.program_collection.state import (
-    CollectionPaths,
-    begin_attempt,
-    completed_artifact,
-    finish_attempt,
-    load_case_status,
 )
 from tests.benchmarking._fixtures import _fixture
 

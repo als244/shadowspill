@@ -14,9 +14,10 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import TextIO
 
+from benchmarking.journals import utc_now
+
 from .artifacts import load_program
 from .matrix import ProgramRequest
-from .state import utc_now
 
 
 @dataclass(frozen=True, slots=True)

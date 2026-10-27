@@ -46,3 +46,7 @@ Archives are self-contained and published atomically. They can be loaded with
 [planning evaluator](../planning_eval/README.md) also reads them directly and
 supplies budgets and transfer rates on CPU. Existing JSON corpora remain
 readable; they are not rewritten. The collector currently targets one GPU.
+
+`paths.py` owns directories and controller locking. `journal.py` records attempts;
+`resume.py` validates completed artifacts before reuse. `summary.py` derives the
+collection report from those journals without changing their state.

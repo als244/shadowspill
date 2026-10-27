@@ -159,3 +159,8 @@ If the controller was interrupted while a point was running, that attempt
 stays in the journal with status `interrupted` but does not consume the
 point's attempt budget. Timeouts, worker failures, and completed planner
 errors remain charged and are never silently retried.
+
+`manifest.py` owns baseline identities and paths; `journal.py` owns point attempts
+and completion evidence. `active.py` records the controller's active point.
+`summary.py` derives comparison tables from the saved point records without
+changing attempt state.

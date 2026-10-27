@@ -6,13 +6,13 @@ import traceback
 from pathlib import Path
 
 from benchmarking._serialization import atomic_json
+from benchmarking.journals import utc_now
 from shadowspill import apply_profiles, measure_program
 
 from .artifacts import save_profiled_program
 from .config import load_collection_config
 from .corpus import ProgramCaseIdentity
 from .matrix import ProgramRequest, select_program_request
-from .state import utc_now
 from .workload import build_program
 
 

@@ -17,8 +17,11 @@ _HARNESS_ONLY_RESUME_PATHS = frozenset(
         "benchmarking/planning_eval/controller.py",
         "benchmarking/planning_eval/process.py",
         "benchmarking/planning_eval/provenance.py",
-        "benchmarking/planning_eval/storage.py",
+        "benchmarking/planning_eval/active.py",
+        "benchmarking/planning_eval/journal.py",
+        "benchmarking/planning_eval/manifest.py",
         "benchmarking/planning_eval/summary.py",
+        "benchmarking/journals.py",
         "tests/benchmarking/test_planning_eval.py",
     }
 )
