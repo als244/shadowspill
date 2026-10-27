@@ -33,11 +33,11 @@ from shadowspill.planner.admission.indexing import (
     evaluate_schedule_admission,
     index_admission_facts,
 )
+from shadowspill.planner.admission.simulation import simulation_admission_from_replay
 from shadowspill.planner.search.algorithms.pressurefit import PressureFit
 from shadowspill.planner.search.algorithms.pressurefit.options import (
     PressureFitOptions,
 )
-from shadowspill.pytorch.planning.admission import simulation_admission_from_replay
 from shadowspill.schema import artifact_schema
 from shadowspill.simulator import SimulationConfig
 from shadowspill.simulator.indexing import index_simulation_template

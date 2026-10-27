@@ -170,10 +170,9 @@ contract. Memory outside the framework allocator is covered by external headroom
 A process-global cache must not retain a task-scoped allocation after its Plan
 releases it.
 
-The saved Executor currently uses GPU execution storage and pinned-host spill.
-Pool import and SSD/remote pool-image tools have model-based interfaces described
-in the [frontend reference](../python/api/frontend.md#persistent-state). Their
-initialization and `torch.load` checkpoints are separate from the saved-Plan
-interface. Saved Executor does not yet support those backing stores.
+Executor uses pinned-host spill by default and also accepts `SSDPool` or
+`RemotePool`. Every worker owns its spill pool. The same bounded tensor loader
+and checkpoint interface serves each backend; model-based pool import is not
+part of the public workflow.
 
 Previous: [The step artifacts](step.md). Next: [The optimizer](optimizer.md).

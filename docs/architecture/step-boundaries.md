@@ -83,13 +83,14 @@ completion unavailable rather than making its copies appear instantaneous.
 **Whole-cycle time** is a separate throughput measurement: one invocation's
 origin to the next origin, or the final cycle marker. It includes caller and
 instrumentation work between invocations as well as required terminal work.
-Three always-on events partition it into `entry_delay_seconds`,
-`selected_span_seconds`, and `exposed_tail_seconds`.
+The internal recorder can divide a cycle into `entry_delay_seconds`,
+`selected_span_seconds` and `exposed_tail_seconds`. Saved Executor runtime traces
+close each invocation separately; caller work between invocations belongs in the
+benchmark's end-to-end measurement.
 
-Detailed tracing is optional. Call `prepare_runtime_trace()` before a measured
-loop to allocate its buffers in advance; quickstart does this automatically.
-Calling it repeatedly is harmless. Lazy preparation remains available when a
-caller first requests `runtime_trace=True`.
+Detailed tracing is opt-in with `runtime_trace=True`; Executor prepares and
+releases its buffers for that invocation. An untraced call uses a completion
+marker but does not collect the detailed task/transfer ledger.
 
 See [timelines](timelines.md), [the timing API](../python/api/timing.md), and
 [step diagnostics](../python/step-diagnostics.md) for the recorded fields.

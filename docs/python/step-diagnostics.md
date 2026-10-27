@@ -1,42 +1,18 @@
-# Interpreting StepResult diagnostics
+# Interpreting execution diagnostics
 
-A normal `PlannedTrainStep` call returns a `StepResult` without detailed
-runtime evidence. Pass `runtime_trace=True` for one debugging or qualification
-step:
+Both forward and training Plans use `Executor.run(..., runtime_trace=True)`.
+The returned handle's `.result()` waits for completion; `.diagnostics` exposes
+`StepDiagnostics` (or `None` when tracing is off). Repeated reads reuse the same
+result, including the original failure if completion failed.
 
-```python
-result = train_step(inputs, runtime_trace=True)
-assert result.diagnostics is not None
-
-diagnostics = result.diagnostics.result()
-```
-
-`DiagnosticsHandle.result()` (also available as `wait()`) resolves once and
-may wait for the instants it measured between. Resolve a traced step before
-launching another traced step. Collection consumes the measurement whether it
-succeeds or not, so a collection that raises keeps its error and raises it
-again on every later call rather than collecting a second time; the handle
-then counts as resolved, and the next traced call may begin.
-
-`runtime_trace=False` is the default: the runtime appends nothing to its trace
-buffers and records no instants, so none of the measurement below runs in an
-untraced step.
-
-Every instant here is recorded by the runtime, on the same clock as the
-transfers it times on its own lanes -- so a step's compute intervals and its
-transfer intervals are comparable without correcting between two clocks.
-
-`profiler_annotations=True` is independent. It emits ranges for the backend's
-own profiler but does not create `StepDiagnostics`.
+Tracing records runtime task and transfer events on a common clock. It defaults
+off. `profiler_annotations=True` independently emits external-profiler ranges.
 
 ## Structure
 
-| Field | Meaning |
-|---|---|
-| `objectives` | Detached scalar objective tensor for each accumulation round. |
-| `metrics` | Reconstructed nondifferentiated objective metrics for each round. |
-| `step_number` | Completed optimizer-step count. |
-| `diagnostics` | `None`, or a deferred `DiagnosticsHandle` for a traced call. |
+The execution payload is the native model output for forward Plans and a
+`TrainingResult` with `losses`, `metrics` and `parameter_metrics` for training.
+The diagnostic record stays on the invocation handle, separate from that payload.
 
 The resolved `StepDiagnostics` has seven views, in two tiers. The first tier
 is the reference for reading the step against its plan:
@@ -81,9 +57,8 @@ StepDiagnostics
     └── records[]                    CollectiveRecord
 ```
 
-The planning-side equivalent is the
-[PlanReport field reference](plan-report-fields.md), a separate page because
-it describes a different object measured on different clocks.
+The planning-side evidence is described in [Plan inspection](plan-report.md).
+It is simulated from profiles rather than measured during this invocation.
 
 ### Field names
 
@@ -187,7 +162,7 @@ selected-task span = sum of selected task-event durations
 | `real_invocation_seconds` | Measured origin through the last required compute or transfer completion; `None` without all transfer timestamps. |
 | `real_terminal_tail_seconds` | Measured last computation through that completion; `None` without all transfer timestamps. |
 | `simulator_terminal_tail_seconds` | Simulated work after the last selected compute task. |
-| `cycle_seconds` | The step on the device clock: this invocation's origin on the compute stream to the next invocation's origin, or to the end marker `mark_cycle_end()` records; `None` when the trace was resolved before anything closed the cycle. Includes caller and instrumentation work between invocations. See [timing](api/timing.md). |
+| `cycle_seconds` | The step on the device clock: this invocation's origin on the compute stream to the next invocation's origin, or to the completion marker of an isolated invocation; `None` when the trace was resolved before anything closed the cycle. Includes caller and instrumentation work between invocations. See [timing](api/timing.md). |
 | `entry_delay_seconds` | Origin to the first task's compute start: the first task's readiness waits and frontend preparation. |
 | `exposed_tail_seconds` | Last task's compute end to the cycle's end: terminal work the stream itself still did. `None` with `cycle_seconds`. |
 | `call_seconds` | The whole planned call on the host clock. |

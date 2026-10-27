@@ -160,15 +160,6 @@ src/shadowspill/
     │   └── training/       the training step's, ordering and all
     ├── optimizer/         optimizer graph capture and ordering, by concern:
     │                      discovery, sandbox, bindings, trace, tasks, opaque
-    ├── planning/          forward/training orchestration and physical admission
-    │   ├── admission/     what a plan needs physically, and whether it fits
-    │   ├── forward/       the forward plan by phase, as the training plan is
-    │   └── training/      the training plan by phase: capture, materialize, profile,
-    │                      programs, plan, admit, report; build and steps compose them
-    ├── materialization/   selected callable and runtime state publication
-    ├── execution/         before/compiled/after task skeletons
-    │   └── training/      the training executor by concern: admission, boundary,
-    │                      publication, timing, optimizer state
     ├── accelerator.py     the device PyTorch drives, named once
     ├── bindings.py        who holds a range, in PyTorch's terms, and detaching them
     ├── frontend.py        PyTorch's answers to what the runtime cannot do itself
@@ -178,8 +169,7 @@ src/shadowspill/
     ├── spill.py           a CPU tensor's bytes, as the runtime takes them
     ├── diagnostics/       PlanReport and StepDiagnostics
     │   └── builders/      each record built where its own consumer reads it
-    ├── sharing/           runtime-owned TensorRef handles
-    └── state/             persistent model/optimizer import
+    └── state/             tensor serialization and allocator qualification
 ```
 
 High-level modules expose small orchestration functions. Detailed algorithms

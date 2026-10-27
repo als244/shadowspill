@@ -2,12 +2,12 @@
 
 The public phase APIs persist their results with explicit `save`/`load`; see
 [phase artifacts](api/artifacts.md#persistence-and-reports). They do not require
-ArtifactStore. This page describes the cache used by the model-based frontend
-and the lower-level planner during the remaining caller migration.
+ArtifactStore. This page describes the internal compiler/profile caches and
+the lower-level planner cache. Applications pass saved phase artifacts, not
+cache directories, between preparation and execution.
 
-One content-addressed store, shared by `plan_step()`, `plan_forward()`,
-`build_step_programs()`, and `shadowspill.planner.plan_program()`. It holds two
-independent trees:
+The content-addressed cache used by compiler adapters and
+`shadowspill.planner.plan_program()` holds two independent trees:
 
 ```text
 artifact_store/
@@ -190,10 +190,9 @@ paid for while each searches every point itself rather than reading back a
 plan another run found. A plan store gets its own `layout.json` naming the
 artifact store it was searched over.
 
-`build_step_programs()` takes only `artifact_store` and `build_store`: it
-produces programs and plans nothing. `plan_program()` takes only
-`artifact_store` and `plan_store`: it plans a program it is given and builds
-nothing.
+The lower-level `shadowspill.planner.plan_program()` takes `artifact_store`
+and `plan_store`; it plans a problem it is given and builds nothing. Public
+phase builders and `shadowspill.plan_program()` return independently saved archives.
 
 Long-running or reproducible work should pass an explicit artifact directory.
 Compiler caches stay on node-local temporary storage by default, separately from
@@ -296,23 +295,6 @@ the measurement was taken under.
 A record this build cannot read is one it has not got: the entry is measured
 again and written over, rather than failing the run. The envelope is what has
 to be this build's, and an envelope that disagrees is corruption.
-
-**Step archive** files a `StepProgram` under the identity its build had before
-any capture, which is what lets a build with an export bypass key answer
-without exporting:
-
-```text
-manifest.json:      schema, key_digest, step_program_digest, identity
-step_program.json:  the StepProgram, as build_step_programs() returned it
-```
-
-`identity` is the key's components in the clear -- the bypass key, the model's
-modules, parameters and buffers by name and geometry, the inputs' signature
-digests, the optimizer's type, step code and hyperparameters, the request's
-settings, the machine and the profiling environment, and the data ordering --
-so a reader can see why two builds were the same step. The archive is keyed by
-nothing the program contains: it is a second name for the same content, and
-the program's own digest in the manifest says which content.
 
 **Selection request** is the question a search was put:
 

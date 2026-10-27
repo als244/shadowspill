@@ -1,9 +1,8 @@
 # PyTorch allocator integration
 
-What happens underneath a planned callable, between PyTorch's allocator and the
+What happens underneath Executor, between PyTorch's allocator and the
 neutral C runtime. The API this page describes is not called directly: it is
-reached by constructing a [`Runtime`](api/frontend.md#runtime) and running a
-planned callable. Read it to understand a failure, a trace, or a profiler
+reached when [Executor](api/training.md) creates its runtime and runs a Plan. Read it to understand a failure, a trace, or a profiler
 timeline. The adapter boundary itself is specified in [the PyTorch adapter C
 API](../c/pytorch-adapter.md).
 

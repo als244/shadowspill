@@ -13,12 +13,7 @@ from workloads.models.glm53.implementations.mlops import Model
 from workloads.models.shared.glm.checkpoint import physical_state
 
 
-@pytest.mark.parametrize("use_writer", [False, True])
-def test_normal_checkpoint_streams_all_layers_and_preserves_fp8_bytes(
-    tmp_path, use_writer
-):
-    from shadowspill.pytorch import initialize_storage_
-
+def test_normal_checkpoint_streams_all_layers_and_preserves_fp8_bytes(tmp_path):
     config = Config.tiny()
     experts, original = _write(
         tmp_path,
@@ -37,9 +32,7 @@ def test_normal_checkpoint_streams_all_layers_and_preserves_fp8_bytes(
                 lora_factor_dtype=torch.bfloat16,
             )
         )
-        source.load_into(
-            model, write_tensor=initialize_storage_ if use_writer else None
-        )
+        source.load_into(model)
         assert source.inventory["converted_expert_banks"] == 0
         assert model.config.indexer_types == config.indexer_types
         assert model.layers[1].self_attn.indexer is None

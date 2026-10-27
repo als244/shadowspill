@@ -4,13 +4,11 @@ import pytest
 import torch
 import torch.nn as nn
 
-from shadowspill.errors import CaptureError, PlanningError
+from shadowspill.errors import CaptureError
 from shadowspill.pytorch.capture.artifacts import (
     GraphArtifact,
     TaskInputProvenance,
 )
-from shadowspill.pytorch.contracts import TensorSpec
-from shadowspill.pytorch.materialization import representative_cpu_inputs
 from shadowspill.pytorch.profiling.inputs import materialize_representative_inputs
 from shadowspill.task.inputs import TaskInputRole
 
@@ -28,41 +26,6 @@ class _ThreeInputs(nn.Module):
         control: torch.Tensor,
     ) -> torch.Tensor:
         return state + activation + control[0].to(state.dtype)
-
-
-@pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA is required")
-def test_representative_inputs_preserve_exact_alias_views() -> None:
-    owner = torch.arange(32, dtype=torch.float32)
-    left = owner[2:18].view(4, 4)
-    right = owner[4:20].view(4, 4)
-    artifact = GraphArtifact.capture(
-        kind="inference",
-        graph_module=torch.fx.symbolic_trace(_Add()),
-        example_inputs=(left, right),
-        input_provenance=(
-            TaskInputProvenance(
-                TaskInputRole.PARAMETER,
-                "left",
-                representative_value=left,
-            ),
-            TaskInputProvenance(
-                TaskInputRole.PARAMETER,
-                "right",
-                representative_value=right,
-            ),
-        ),
-    )
-
-    result = materialize_representative_inputs(artifact, device_ordinal=0)
-    actual_left, actual_right = result.arguments
-    assert isinstance(actual_left, torch.Tensor)
-    assert isinstance(actual_right, torch.Tensor)
-    assert actual_left.untyped_storage()._cdata == actual_right.untyped_storage()._cdata
-    assert actual_left.storage_offset() == 2
-    assert actual_right.storage_offset() == 4
-    torch.testing.assert_close(actual_left.cpu(), left)
-    torch.testing.assert_close(actual_right.cpu(), right)
-    assert {item.value_policy for item in result.summaries} == {"authentic"}
 
 
 @pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA is required")
@@ -223,24 +186,6 @@ def test_allocator_failure_is_checked_before_representative_population() -> None
 
     assert len(operations) == 1
     assert "alias group" in operations[0]
-
-
-def test_tensor_spec_float_values_are_nonzero_and_deterministic() -> None:
-    floating = TensorSpec((4096,), torch.float32)
-    (first_float,) = representative_cpu_inputs((floating,))
-    (second_float,) = representative_cpu_inputs((floating,))
-    torch.testing.assert_close(first_float, second_float, rtol=0, atol=0)
-    assert abs(float(first_float.mean())) < 0.06
-    assert abs(float(first_float.std()) - 1.0) < 0.06
-
-
-def test_integer_tensor_spec_requires_authentic_caller_value() -> None:
-    with pytest.raises(PlanningError, match="caller-supplied tensor values"):
-        representative_cpu_inputs((TensorSpec((32,), torch.int64),))
-
-    authentic = torch.tensor([13, 19, 32], dtype=torch.int64)
-    (observed,) = representative_cpu_inputs((authentic,))
-    assert observed is authentic
 
 
 def _one_input_artifact(

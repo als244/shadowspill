@@ -1447,7 +1447,7 @@ def test_an_update_over_masters_owns_them_and_writes_the_weights(
 
 @pytest.mark.cuda
 def test_unconsumed_input_gradient_is_backward_workspace():
-    # The objective differentiates its input, but plan_step returns parameter
+    # The objective differentiates its input, but training returns parameter
     # updates, not a gradient for the caller's batch. The discarded dX must
     # still fit inside each backward task's admitted allocation envelope.
     ordinary = _lowered(microbatches=1)

@@ -632,7 +632,7 @@ class StepTimingSummary:
 class StepDiagnostics:
     """Resolved, immutable detailed evidence for one real training call.
 
-    The unresolved :class:`DiagnosticsHandle` is asynchronous. Resolving it is
+    The invocation result handle is asynchronous. Resolving it is
     explicitly synchronizing because callback and device-event records must have
     completed before they can be copied safely.
     """

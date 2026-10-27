@@ -83,17 +83,12 @@ residency policies an alias group may declare — `SHARED_READ_ONLY`,
 `SHARED_WRITABLE_CAUSAL`, `SHARED_WRITABLE_UNORDERED` — and which mutations each
 permits are in [the program](program.md#what-it-holds).
 
-## Declaring it from PyTorch
+## Sharing through Executor
 
-`shared_input(reference, require_in=..., consistency=..., profiling_value=...)`
-binds an existing runtime-backed `TensorRef` at one input position instead of
-copying a tensor in, and names the pool that reference must be resident in.
-`shared_output(*path, retain_in=...)` names an output pytree leaf that stays
-runtime-owned, with the pool or pools it must be retained in. A `TensorRef` is
-public view metadata over an `ObjectRef` — dtype, shape, stride, offset,
-generation — captured without retaining a tensor address, and a `StateRef` is a
-mapping of them. [Concurrent callables](../examples/concurrent-callables.md) is
-the worked example.
+`Executor(training_plan, plans={"evaluation": forward_plan})` binds compatible
+model tensors once. Invocations use these admitted Plans sequentially. The
+executor owns persistent storage; returned outputs belong to the caller and
+remain valid across subsequent calls. See [execution](../python/api/training.md).
 
 ## What it means for cleanup
 

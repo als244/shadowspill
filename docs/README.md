@@ -162,14 +162,14 @@ Task-oriented pages: how to do something, and how to read what comes back.
   its build and planning trees, and what each mode does with them.
 - [PyTorch allocator integration](python/allocator.md) — how the ShadowSpill
   allocator sits under PyTorch and what it accounts for.
-- [Interpreting a PlanReport](python/plan-report.md) — planning time, task and
+- [Interpreting a Plan](python/plan-report.md) — planning time, task and
   graph-pair selection, profiles, search diagnostics, store use, and physical
   admission.
 - [PlanReport field reference](python/plan-report-fields.md) — every field of
   every record the planning report carries, and what it holds.
 - [PressureFit cut traces](python/pressurefit-trace.md) — record and replay
   residency cuts, compare ranked alternatives, and render their trajectory.
-- [Interpreting StepResult diagnostics](python/step-diagnostics.md) — task and
+- [Interpreting execution diagnostics](python/step-diagnostics.md) — task and
   transfer instants, host boundaries, allocator evidence, and simulator
   reconciliation, with a complete field reference.
 - [program and annotated-plan JSON](python/planning-json.md) — canonical program,
@@ -237,12 +237,10 @@ Complete, runnable workflows built from the public API, one per page. The
   then train and checkpoint in a fresh worker.
 - [Forward-only execution](examples/forward-only.md) — plan and run a forward
   pass without an optimizer.
-- [Concurrent planned callables](examples/concurrent-callables.md) — model-based
-  frontend calls; saved Executor invocations remain sequential.
 - [Reusable planning and budget sweeps](examples/reusable-planning.md) — plan
   once, then re-plan across budgets from the same artifacts.
-- [Diagnosing a plan and real step](examples/diagnostics.md) — model-based frontend
-  trace diagnostics; use saved-Plan Nsight capture for phase execution.
+- [Diagnosing a plan and real step](examples/diagnostics.md) — saved-Plan simulation and
+  optional Executor trace diagnostics.
 - [Custom stage partitioning](examples/custom-partitioning.md) — override the
   automatic partition when the module structure does not repeat.
 

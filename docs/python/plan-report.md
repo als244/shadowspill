@@ -1,394 +1,80 @@
-# Interpreting a PlanReport
+# Interpreting a Plan
 
-For saved phase results, inspect `Plan.summary`, `Plan.timeline` and
-`Plan.diagnostics`, or call `write_report(plan, directory)`; see
-[phase artifacts](api/artifacts.md#plan). This page describes the PlanReport
-returned by the model-based frontend still used by some integrations.
-
-Every field of every record is listed in the
-[PlanReport field reference](plan-report-fields.md); this page is how to read
-them together.
-
-Every successful `plan_step()` or `plan_forward()` returns a callable whose
-`plan_report` explains what was captured, measured, selected, admitted, and
-published. Planning diagnostics are always collected; `verbose=False` only
-suppresses console progress.
-
-```python
-report = train_step.plan_report
-
-print(report.mode)
-print(report.program.digest)
-print(report.predicted_makespan_ns / 1e9)
-print(report.predicted_device_peak_bytes)
-print(report.predicted_spill_peak_bytes)
-```
-
-`PlanReport` is the in-memory report attached to a callable. It is distinct
-from the portable `StepProgram`, `ShadowSpillPlanningProblem`, and
-`AnnotatedProgramPlan` JSON artifacts described in [program and annotated-plan
-JSON](planning-json.md).
+`plan_program` returns a `Plan`. Load it with `Plan.load(path)` to inspect it on
+CPU; use `write_report(plan, directory)` for simulated timelines and tables.
+The archive includes its Program and applied profiles. It requires no source
+artifact folders or live model for inspection.
 
 ## Structure
 
-The table below groups the top-level fields: the plan's identity, the
-selected plans and their prediction, the capacities and transfer assumptions
-planning worked under, the profiling and selection evidence, and the detailed
-`diagnostics`.
+| Field | Purpose |
+| --- | --- |
+| `program` | Task definitions, objects, alternatives and semantic source metadata |
+| `profiled_program` | Applied task durations and memory evidence |
+| `memory_budgets` | Total GPU allowance and spill capacity per worker |
+| `communication_info` | Topology, supplied rates and measured communication evidence |
+| `schedule`, `selections` | Selected task alternatives and transfer actions |
+| `timeline` | Simulated tasks, transfers, makespan and memory peaks |
+| `memory_layout` | Certified physical allocation layout, when available |
+| `diagnostics` | Search evidence, candidates and counters |
+| `summary` | Concise timing, memory and traffic totals |
 
-Its `summary` is a derived `PlanSummary`, the plan's promise in a dozen
-numbers, and the fastest way to read a plan. Its five time components
-identify:
+```python
+from shadowspill import Plan, write_report
 
-```text
-simulated_step_seconds = unconstrained_step_seconds     the compute floor
-                       + recomputation_overhead_seconds paid to recompute
-                       + task_contention_seconds        added inside task intervals
-                       + idle_seconds                   waiting outside task intervals
-                       + terminal_writeback_seconds     the tail after it
+plan = Plan.load("training.ssp")
+print(plan.summary)
+print(plan.simulation_only_reasons)
+write_report(plan, "reports/training")
 ```
-
-Beside them it carries how many task-alternative groups recompute out of how
-many, the traffic the simulation ran in each direction, the per-direction
-bandwidths it planned against, per-phase planning wall time, and
-`selected_candidate` — the winning candidate's residency strategy, fetch rule,
-the repairs it had spent when it placed the plan it answers with,
-and what placing cost: the fastest plan it simulated whose layout did not fit,
-how many such plans it measured, and the answer over that plan. One means
-placing cost nothing; well above one means the search gave up plans it liked
-because no layout of them fit. The
-[field reference](plan-report-fields.md#plansummary) defines each.
-
-The bandwidths are worth one note: they are the calibrated transfer
-capabilities coarsened by their own magnitude, so two slightly different
-calibrations of the same machine reuse one stored plan. A bandwidth at or above
-5 GB/s rounds to the nearest 0.5 GB/s; from 0.5 to below 5 GB/s, to the
-nearest 0.25 GB/s; below 0.5 GB/s, to the nearest 0.1 GB/s. These are decimal
-GB/s, and values below one quantum stay exact. A latency rounds to the nearest
-five microseconds, to the microsecond below five, and to coarser steps as it grows: fifty microseconds
-above a hundred, a hundred above five hundred, two hundred and fifty above a
-millisecond, a millisecond above ten. Latency remains metadata and does not
-contribute to simulated transfer timing. The raw calibration stays on
-`report.transfer_capabilities`.
-
-## Read the report from the outside in
-
-The most useful inspection order is:
-
-1. Confirm pools, budgets, device, and calibrated transfer rates.
-2. Check the predicted makespan and physical peaks.
-3. Inspect planning phase time and cache behavior.
-4. Inspect the selected task sequence by chronological execution ID.
-5. Compare each selected task with its unique stage and graph-pair options.
-6. Inspect the search evidence and physical-layout admission.
-7. Drill into a structural graph profile only when timing or byte accounting
-   needs explanation.
-
-The top-level fields are grouped below.
-
-| Area | Important fields | Meaning |
-|---|---|---|
-| Identity | `mode`, `capture_identity`, `program.digest` | Planning mode and content identities. |
-| Selected plan | `execution_plan` | The plan every call runs. |
-| Prediction | `predicted_makespan_ns`, `predicted_device_peak_bytes`, `predicted_spill_peak_bytes` | Simulator result after physical admission. |
-| Promise | `summary` | The derived `PlanSummary` described above: the simulated step split into its five parts, the graph-pair selection counts, the scheduled traffic and the bandwidths behind it, planning wall time by phase, and the winning candidate. |
-| Capacity | `execution_pool`, `spill_pool`, public and callable budgets, shared bytes, `fixed_slab_bytes`, `requested_dynamic_scratch_reserve_bytes` | Pool selection, runtime-global sharing, process-persistent deductions, and requested scratch floor. |
-| Transfers | `fetch_profile`, `evict_profile`, `transfer_actions`, `transfer_bytes_fetched`, `transfer_bytes_evicted` | Calibration consumed by planning and selected traffic. |
-| Profiling | `task_profiles`, profile hit/miss counts, allocation-probe counts | Deduplicated structural measurements and their provenance. |
-| Selection | `search_result` | The winning plan, its schedule, selections and search evidence, plus the simulated timeline: `search_result.simulation.task_intervals` (ready, start, and end per task) and `transfer_intervals` (ready, start, end, and bytes per transfer). |
-| Detailed evidence | `diagnostics` | Phase, cache, stage, graph-pair, profile, search, and layout records. |
-
-Training and forward planning each have one plan, which `report.program` and
-`report.search_result` refer to.
 
 ## Transfer assumptions and budgets
 
-Always verify these before interpreting a predicted makespan:
+`summary["duration_seconds"]` is the simulated makespan.
+`execution_peak_bytes` includes fixed device memory; `spill_peak_bytes` describes
+spill occupancy. `fetch_bytes` and `evict_bytes` include host traffic and
+collective payloads, which also appear separately as `*_host_bytes` and
+`*_collective_bytes`. Inspect `communication_info` before comparing predictions
+made for different backends or machines.
 
-```python
-print(report.execution_pool, report.execution_budget_bytes)
-print(report.spill_pool, report.spill_budget_bytes)
-print(report.shared_aliases)
-print(report.shared_execution_bytes, report.shared_spill_bytes)
-print(report.callable_execution_budget_bytes, report.callable_spill_budget_bytes)
-
-print(report.fetch_profile)
-print(report.evict_profile)
-print(report.transfer_capabilities)
-```
-
-`fetch_profile` is the measured spill-to-execution direction;
-`evict_profile` is execution-to-spill. Runtime initialization measures each
-direction alone and during simultaneous bidirectional traffic. Planning uses
-the solo rate while the opposite lane is idle and the concurrent rate while
-both move bytes. Latency retained in `transfer_capabilities` is metadata;
-the simulator adds no per-transfer latency.
-
-The predicted device peak is the simulator's admitted physical peak, not just
-the sum of logical objects. `fixed_slab_bytes` is process-persistent
-fixed runtime reserves and persistent in-pool memory removed before callable admission; it is not the
-callable's `fixed_slice_bytes`. The physical-layout diagnostics explain how
-the remaining pool is divided among logical object capacity, the fixed
-callable slice, terminal dynamic outputs, and bounded dynamic scratch.
-
-Shared aliases are runtime-global objects that may be bound by several
-callables. Their physical bytes are charged once against the public pool
-budgets and excluded from each callable's movable schedule. The
-`callable_*_budget_bytes` properties expose the residual capacities used for
-that callable's search and physical-layout admission.
-
-## Planning wall time and cache use
-
-`report.diagnostics.phases` contains mutually exclusive frontend planning
-intervals. Their sum is `measured_wall_time_ns`. The difference from
-`total_wall_time_ns` is the remainder spent between measured intervals and
-building the immutable report; it is a subtraction rather than a stored field,
-so the two can never disagree.
-
-```python
-diagnostics = report.diagnostics
-
-for phase in diagnostics.phases:
-    print(phase.name, phase.duration_seconds)
-
-print(diagnostics.measured_wall_time_ns)
-print(diagnostics.total_wall_time_ns - diagnostics.measured_wall_time_ns)
-print(diagnostics.total_wall_time_ns)
-```
-
-The other planning-cost views are:
-
-| Field | Interpretation |
-|---|---|
-| `compiler_phase_timings_ns` | Aggregate compiler phases across structural contracts. |
-| `compiler_profiles` | Per-structural-contract compiler phase breakdown. |
-| `profile_unique_keys` | Number of structural profiles needed by the call. |
-| `profile_cache_hits`, `profile_cache_misses` | Measurement reuse versus fresh profiling. |
-| `aot_graph_pair_cache_hits`, `aot_graph_pair_cache_misses` | Reuse versus construction of differentiated graph pairs. |
-| `planned_program_cache_hits`, `planned_program_cache_misses` | Whether each planned program -- the complete answer to a request, its resolved program and memory schedule -- was read from the artifact store instead of searched. |
-| `store_directories` | The roots this call used, as name/path pairs: `root`, `build`, `build.inductor`, `planning`, and `plan_store`. |
-| `cache_artifacts` | Every artifact this call touched, with its access disposition and dependency digests. |
-
-An artifact with `access="matched"` agreed with a freshly produced in-memory
-value but was not read as planning authority. `managed` identifies a directory
-owned by another component, such as the compiler cache. The [artifact store
-guide](artifact-store.md) defines the directory and identity contract and
-lists every disposition.
-
-## Tasks are keyed by execution ID
-
-`execution_XXXXXX` is the primary runtime and diagnostics identity. It is a
-contiguous chronological ordinal after graph-pair selection. The canonical IR
-task ID remains available as `task_id` for stable program lookup.
-
-```python
-tasks = report.diagnostics.tasks
-
-task = tasks["execution_000017"]
-print(task.execution_ordinal)
-print(task.semantic_name)
-print(task.phase, task.microbatch)
-print(task.task_id)
-print(task.unique_stage_id)
-print(task.structural_contract_key)
-print(task.chosen_graph_pair_variant)
-```
-
-`report.diagnostics.task(execution_task_id)` performs the same primary lookup.
-Use `task_by_ir_id(task_id)` only when starting from a canonical program task.
-
-`task_stage_map` contains both selected and unselected task variants. Its
-`selected` flag and optional `execution_task_id` distinguish the chosen
-projection. This is useful when answering why one save/recompute alternative
-was absent from execution.
+A Plan with estimated memory remains simulation-only. `simulation_only_reasons`
+also identifies missing executable code, allocation evidence or communication
+qualification. An aggregate workspace peak cannot certify allocation lifetimes.
 
 ## Unique stages and graph pairs
 
-`unique_stages` deduplicates repeated model positions with the same structural
-contract. Each `PlanUniqueStage` records module targets, occurrence count, and all
-legal `PlanGraphPair` alternatives.
-
-```python
-stage = next(
-    item
-    for item in report.diagnostics.unique_stages
-    if item.unique_stage_id == task.unique_stage_id
-)
-
-for pair in stage.graph_pairs:
-    print(
-        pair.variant,
-        pair.memory_budget,
-        pair.regenerated_operators,
-        pair.saved_value_count,
-        pair.forward.runtime_ns,
-        None if pair.backward is None else pair.backward.runtime_ns,
-    )
-```
-
-A graph pair records the partition budget it was captured under, the
-threshold at or under which its forward operators were regenerated in the
-backward and which operators those were, the custom operators no flop formula
-priced, saved-value categories and bytes, and forward/backward physical
-profiles. The task record's `chosen_graph_pair_variant` is the direct bridge
-from an execution ID to the chosen alternative.
-
-## Interpreting a graph profile
-
-`PlanGraphProfile` separates semantic identity from compiled physical
-behavior.
-
-| Group | Fields | Question answered |
-|---|---|---|
-| Semantic contract | `semantic_contract_digest`, `semantic_roots`, `semantic_output_views`, `semantic_mutations` | What aliases, views, and mutations does the graph mean? |
-| Executable contract | `executable_contract_digest`, `executable_roots`, `executable_output_views`, `executable_mutations` | What storage relationships must the callable expose? |
-| Compiled layout | `compiled_layout_digest`, `compiled_roots`, `compiled_output_views` | Which compiled allocations back returned roots and views? |
-| Values | `representative_inputs`, `provenance` | Which initialized, caller-supplied, producer-derived, or deterministic synthetic values were profiled? |
-| Timing | `runtime_ns`, `samples_ns`, `timing_relative_mad`, `timing_half_drift`, `timing_unstable` | How stable is the task-duration estimate? |
-| Object bytes | `inputs`, `mutations`, `outputs` and logical/allocation totals | Which named values create pressure? |
-| Temporary bytes | workspace fields and extent lists | How much anonymous task memory was live? |
-| Allocation behavior | `allocation_contract_digest`, `allocation_contract`, `allocation_timeline` | Which pointer-free allocator operations and observed lifetime events were admitted? |
-
-Logical bytes describe tensor views; allocation bytes describe the containing
-storage extents. Do not add input, mutation, and output totals blindly: a view
-may share an alias group, and a mutation may replace an existing generation.
-Use the alias-group/object model in the canonical program when computing a
-physical inventory.
-
-`timing_unstable=True` means the profiling sampler did not converge within its
-configured limit. A material unstable task should be investigated before its
-simulator prediction is used as a performance authority.
+`program.tasks` carries the built task alternatives, including save/recompute
+forms. `profiled_program.task_profiles` holds their applied timing and workspace
+records. Task compatibility identities allow reuse across stage occurrences;
+semantic names and source metadata connect those identities to model modules.
+Planning chooses among the built alternatives; it does not compile or measure.
 
 ## Search diagnostics
 
-`report.diagnostics.search_runs` contains one entry for each selected
-planning role and refinement run. Each run has this hierarchy:
+`diagnostics` is a `PlanningDiagnostics` tree. It records the candidates visited,
+search counters, resolution outcomes and failures. PressureFit may also produce
+[cut traces](pressurefit-trace.md) for stepwise replay of its decisions.
+The lower-level [field reference](plan-report-fields.md) describes these neutral
+records alongside internal compilation/report records.
 
-```text
-search invocation
-└── resolved program (one complete task-alternative selection)
-    ├── incumbent (the plan to beat, when one was handed in)
-    └── candidate-policy evaluation
-        ├── residency strategy
-        ├── fetch-trigger rule
-        ├── outcome
-        ├── repair counts
-        ├── work counts and section timing
-        └── reduction trajectory (when recorded)
-```
-
-A candidate policy combines a residency strategy and fetch rule. PressureFit
-searches eight policies per resolution by default: two residency strategies
-and four fetch rules. Every candidate uses the same fixed split eviction/fetch
-exposure score and `E, writeback, -slack, -size` ranking. A transfer strategy
-omits the leading exposure term.
-A resolved program is a complete selection of one option
-from every task-alternative group. One policy can therefore be evaluated in many
-problems.
-
-A resolved program handed a plan to beat — one for the same program found
-elsewhere, at a smaller budget say — carries an `incumbent` saying what became
-of it here. The search measures it before any candidate runs and answers with
-it unless a candidate does strictly better; when it does answer with it,
-`selected_candidate_id` is `incumbent`.
-
-Start with the invocation's selected selection/candidate IDs and makespan,
-then inspect:
-
-- the derived counts on the run and each problem —
-  `resolved_program_count`, `candidate_policy_count`,
-  `candidate_evaluation_count`, `valid_candidate_evaluation_count`, and
-  `candidate_status_counts`;
-- `repairs` to see whether admission, simulation or a layout that overran
-  repeatedly moved fetches or pressure boundaries;
-- `evict_ineligible_aliases` and `evict_ineligible_bytes` for what
-  `minimum_object_bytes_evict_eligible` held resident in this problem;
-- `work.simulation_calls`, `work.simulation_cache_hits`, and
-  `work.admission_calls` to count compiled calls and cache reuse;
-- `work.sections` to see where the time went;
-- each failed candidate's `failure_kind` and `failure_detail`.
-
-`work.sections` is the same shape at every level of that hierarchy: disjoint
-spans named for the stage that produced them, plus `residual_ns` for whatever
-the orchestrator's span held that no stage claimed. They add up exactly:
-`total_ns` equals their sum. `admit_ns` is the one exception, nested inside
-`simulate_ns` because admission runs as part of simulating, and so excluded
-from that sum. The sections are listed in the [field
-reference](plan-report-fields.md#planningsectiontiming); what the stages do is
-walked through in
-[PressureFit](../architecture/pressurefit.md#current-algorithm).
-
-Invocation-level work includes shared setup and result materialization, so it
-need not equal the sum of candidate work. Section times are summed work, not
-necessarily elapsed wall time when independent problems run concurrently.
-
-`steps` is present on a candidate only when planning was asked for a
-trajectory. Each step is one plan the candidate held — its makespan, the bytes
-its layout needed, the capacity it was built against, the objects the reducer
-cut to reach it, and whether it was simulated, measured, placed, triggered a
-refinement, was best at the time, or is the answer. Read in order, the steps
-are the search rather than a summary of it.
+A feasible result and an exhausted search are different: failure diagnostics
+say whether a constraint was violated or the search stopped without an answer.
+A sweep retains each case's Plan or failure and a best-per-budget lookup.
 
 ## Physical-layout diagnostics
 
-Each `PlanPhysicalLayout` describes one admitted role.
+`memory_layout` records fixed offsets, charged extents, lifetimes and the replay
+certificate. Its identity must match the costed program, selected schedule and
+admission evidence. Executor validates these again before execution.
 
-| Field | Meaning |
-|---|---|
-| `strategy` and `layout_digest` | Placement strategy and certificate identity. |
-| `pool_capacity_bytes` | Callable-attributable physical execution-pool capacity. |
-| `original_object_capacity_bytes` | Logical object capacity the search started against. |
-| `effective_object_capacity_bytes` | Object capacity the accepted plan was certified at. Subtracting it from `original_object_capacity_bytes` gives the capacity ceded to make physical placement feasible. |
-| `fixed_slice_bytes` | Reusable fixed range required by admitted lifetimes, the resident slice included. |
-| `resident_slice_bytes` | The slice at the end of the fixed range where every lease of an object `minimum_object_bytes_evict_eligible` kept resident has a static home; zero when it kept none. |
-| `dynamic_reserve_bytes` | Terminal outputs that may outlive the reusable slice. |
-| `scratch_reserve_bytes` | Bounded optional dynamic task allocations. |
-| `required_bytes` | Total admitted bytes. The slack is `pool_capacity_bytes` minus this; it is a subtraction rather than a field. |
-| `reuse_dependency_count` | Cross-lane causal edges required for safe range reuse. |
-| `attempts` | Certification history. One entry, unless the certificate disagreed with the search's own layout measurement. |
-| `task_memory_envelopes` | Per-task allocator limits, fail-closed: maximum and live, requested and charged, with the dynamic-scratch pair beside them. |
+Logical simulated peaks alone do not establish a physical layout. Fragmentation,
+alignment, overlapping lifetimes, outputs and provider scratch all matter. See
+[physical admission](../architecture/physical-admission.md).
 
-For every accepted layout, `required_bytes <= pool_capacity_bytes`. Capacity is
-given back inside the search, per candidate, so the reduction that made a plan
-placeable is reported there as `capacity_refinements`; a rejected attempt at
-this level means the certificate disagreed with the search's own measurement,
-which is a bug rather than a tight fit. Use [Physical admission and offset
-handling](../architecture/physical-admission.md) to interpret the certificate.
+## Execution comparison
 
-## Exporting diagnostic evidence
-
-`PlanDiagnostics.as_dict()` returns a JSON-friendly value with schema
-`shadowspill.plan_diagnostics/v1`:
-
-```python
-import json
-
-payload = report.diagnostics.as_dict()
-with open("plan-diagnostics.json", "w", encoding="utf-8") as stream:
-    json.dump(payload, stream, indent=2, sort_keys=True)
-```
-
-This dictionary is diagnostic evidence, not the portable planning input or
-selected-plan artifact. Use `StepProgram.to_json()` or
-`AnnotatedProgramPlan.to_json()` when the value must be loaded back into a
-planning workflow.
-
-## Common investigations
-
-| Symptom | Look here first |
-|---|---|
-| Planning is slow | `diagnostics.phases`, compiler profiles, cache hits/misses, then the search's work counts. |
-| Predicted step is slow | Selected resolved program, candidate policy, transfer bytes, task profiles, and simulator makespan. |
-| One task is unexpectedly large | Execution task → unique stage → chosen graph pair → forward/backward graph profile byte fields. |
-| Save and recompute look identical | Graph-pair saved-value counts/bytes, `regenerated_operators` and `unknown_operators`, active tasks, and semantic root/output contracts. |
-| Plan repeatedly refines capacity | Physical-layout attempts, required bytes against pool capacity, dynamic/scratch reserves, and search repairs. |
-| Cache reuse is surprising | `cache_artifacts`, dependency digests, profiling metadata, export bypass key, and allocation-probe policy. |
-| Real execution disagrees with the plan | Resolve a traced step and use the [Step diagnostics guide](step-diagnostics.md). |
-
-### External memory policy
-
-`execution_plan.admission.external_headroom_bytes` records the reservation used
-to size the pool (default 512 MiB). `execution_plan.admission.reject_overbudget`
-records whether external and whole-process overruns cause failure (default
-`False`). A declared physical budget alone therefore does not imply enforcement.
-Pool capacity remains bounded in either mode.
+`executor.run(..., runtime_trace=True)` returns a result handle whose
+`diagnostics` exposes measured tasks and transfers. Compare those records with
+`timeline`; [the worked example](../examples/diagnostics.md) shows the join.
+Keep simulated prediction, measured device intervals and host dispatch time
+separate. Diagnostic collection is opt-in and can add measured overhead.

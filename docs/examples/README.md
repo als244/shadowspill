@@ -31,12 +31,10 @@ lists model dimensions, precisions and available implementations.
 - Save phase archives wherever convenient. Inductor/Triton caches remain separate
   from those archives and use their normal temporary/cache locations.
 
-## Lower-level tools
+## Diagnostics
 
-[Concurrent planned callables](concurrent-callables.md) and
-[plan/step diagnostics](diagnostics.md) currently describe the model-based
-frontend. Their behavior has not yet migrated to the saved Executor API; in
-particular, one Executor runs its admitted Plans sequentially. Use
-[the saved-Plan capture tool](../../benchmarking/quickstart.md#nsight-captures-of-saved-winners)
-for current Nsight capture. Error propagation is described in
-[failures and cleanup](../python/failures.md).
+[Plan and execution diagnostics](diagnostics.md) compares simulated timelines
+with a saved Executor's runtime trace. The
+[saved-Plan capture tool](../../benchmarking/quickstart.md#nsight-captures-of-saved-winners)
+collects Nsight reports. One Executor runs its admitted Plans sequentially.
+See [failures and cleanup](../python/failures.md) for error handling.

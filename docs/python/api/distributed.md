@@ -277,16 +277,6 @@ assume unchanged topology and do not reshard a checkpoint automatically.
 See [Trainer checkpoints](training.md) for loop/source state and frozen-base
 partial checkpoints.
 
-## Retained low-level state import
-
-For older `import_model_state` callers only, `initialize_storage_(destination,
-fill)` fills a physical CPU tensor. Whole sharded storages allocate scratch on
-the host-group leader and scatter its contents; the callback must fill it fully,
-contain no collectives and not require running on every rank. Partial/nonsharded
-views use ordinary copy semantics. Initial replica synchronization applies to
-the imported pool storage, leaving the caller's checkpoint-backed tensors alone.
-New loaders instead fill the bounded Executor buffers described above.
-
 ## Qualification scope
 
 Saved-plan two-H100 checks cover common sharded DP, reversed logical-rank maps,

@@ -128,29 +128,15 @@ class GLMCheckpoint:
         model,
         *,
         progress=None,
-        adopted=frozenset(),
-        write_tensor=None,
         on_tensor=None,
     ):
-        """Fill supplied state in place; retain no tensor payload between copies.
-
-        ``adopted`` names state a pool image already holds; those copies are
-        skipped and the rest, LoRA factors included, is written as usual.
-        ``write_tensor(destination, fill)`` may execute a physical checkpoint
-        read only on a storage's owner and distribute it. The default writes
-        ordinary tensors without requiring a runtime. LoRA initialization keeps
-        its existing RNG sequence; representation conversions use the ordinary
-        per-expert path. ``on_tensor(name)`` reports each destination after
-        its bytes have been published, including distributed shard copies.
-        """
+        """Fill ordinary model tensors, retaining no payload between copies."""
         if self.inventory is None:
             raise RuntimeError("Call build_model() before loading")
         targets = physical_state(model)
-        initialize_lora(self, targets, adopted, on_tensor)
-        done, total = load_copies(
-            self, targets, adopted, progress, write_tensor, on_tensor
-        )
-        load_conversions(self, targets, adopted, progress, on_tensor, done, total)
+        initialize_lora(self, targets, on_tensor)
+        done, total = load_copies(self, targets, progress, on_tensor)
+        load_conversions(self, targets, progress, on_tensor, done, total)
 
     def close(self):
         self.weights.close()

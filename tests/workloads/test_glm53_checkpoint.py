@@ -144,12 +144,11 @@ def _materialized(model):
 
 
 def _load(directory, **options):
-    writer = options.pop("write_tensor", None)
     with GLMCheckpoint(
         directory, expert_storage=options.pop("storage", None)
     ) as source:
         model = _materialized(source.build_model(**options))
-        source.load_into(model, write_tensor=writer)
+        source.load_into(model)
         return model, source.inventory
 
 
@@ -172,19 +171,12 @@ def test_a_dense_checkpoint_loads_exactly_into_bf16_banks(tmp_path):
         assert torch.equal(mlp.w13.float(), w13) and torch.equal(mlp.w2.float(), w2)
 
 
-@pytest.mark.parametrize("use_writer", [False, True])
-def test_an_fp8_checkpoint_keeps_its_blocks_byte_for_byte_by_default(
-    tmp_path, use_writer
-):
+def test_an_fp8_checkpoint_keeps_its_blocks_byte_for_byte_by_default(tmp_path):
     from mlops.block_fp8 import BlockFP8Weight
-
-    from shadowspill.pytorch import initialize_storage_
 
     experts, _ = _write(tmp_path, fp8_experts=True)
     # One copy by default: no second, transposed copy of a compressed base.
-    model, inventory = _load(
-        tmp_path, write_tensor=initialize_storage_ if use_writer else None
-    )
+    model, inventory = _load(tmp_path)
     assert inventory["expert_storage"] == "fp8_block"
     assert inventory["checkpoint_expert_format"] == "fp8"
     assert inventory["converted_expert_banks"] == 0

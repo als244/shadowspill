@@ -2,23 +2,11 @@
 
 from __future__ import annotations
 
-from pathlib import Path
-
 import pytest
 import torch
 from torch import nn
 
-from shadowspill.memory import device, transfer_route
-from shadowspill.pytorch import (
-    Runtime,
-    import_model_state,
-    import_model_state_from_file,
-    initialize_storage_,
-    read_model_state,
-    release_model_state,
-)
-from shadowspill.pytorch.state.storage import persistent_state
-from tests.spill_pool import spill_pool
+from shadowspill.pytorch.state.initialization import initialize_storage_
 
 
 def test_storage_initializer_preserves_untouched_bytes_of_a_strided_view():
@@ -102,124 +90,6 @@ class _Initializer(nn.Module):
             self.weight.mul_(2)
             self.window.add_(3)
             self.count.fill_(7)
-
-
-@pytest.mark.cuda
-@pytest.mark.fresh_process
-def test_meta_initialization_and_checkpoint_import_preserve_values_and_ties(
-    tmp_path: Path,
-) -> None:
-    torch.manual_seed(29)
-    reference = _Initializer()
-    checkpoint = tmp_path / "weights.pt"
-    torch.save(dict(reference.state_dict()), checkpoint)
-    with Runtime(
-        pools={
-            "execution": device(physical_capacity=2 << 30),
-            "spill": spill_pool(512 << 20),
-        },
-        routes={
-            "fetch": transfer_route(source="spill", destination="execution"),
-            "evict": transfer_route(source="execution", destination="spill"),
-        },
-        calibrate=False,
-    ) as runtime:
-        for from_file in (False, True):
-            with torch.device("meta"):
-                model = _Initializer()
-            if from_file:
-                import_model_state_from_file(
-                    model, checkpoint, runtime=runtime, pool="spill"
-                )
-            else:
-                torch.manual_seed(29)
-                model = import_model_state(model, runtime=runtime, pool="spill")
-            try:
-                state = persistent_state(runtime, model)
-                assert state is not None
-                assert len(state.storages) == 2
-                assert model.weight is model.tied
-                assert model.window.untyped_storage()._cdata == (
-                    model.weight.untyped_storage()._cdata
-                )
-                values = read_model_state(model, runtime=runtime)
-                for name, expected in reference.state_dict().items():
-                    torch.testing.assert_close(values[name], expected, rtol=0, atol=0)
-                del values
-                if runtime.pools["spill"].addressable:
-                    roots = {item.pool_pointer for item in state.storages}
-                    assert model.weight.untyped_storage().data_ptr() in roots
-                else:
-                    with pytest.raises(RuntimeError, match="non-addressable"):
-                        model.weight.sum()
-            finally:
-                release_model_state(model, runtime=runtime)
-            assert runtime.pool_statistics("spill").allocated_bytes == 0
-
-        class Broken(_Initializer):
-            def reset_parameters(self) -> None:
-                super().reset_parameters()
-                if not self.weight.is_meta:
-                    raise ValueError("initializer failed")
-
-        with torch.device("meta"):
-            broken = Broken()
-        with pytest.raises(ValueError, match="initializer failed"):
-            import_model_state(broken, runtime=runtime, pool="spill")
-        assert persistent_state(runtime, broken) is None
-        assert runtime.pool_statistics("spill").allocated_bytes == 0
-
-
-@pytest.mark.cuda
-@pytest.mark.fresh_process
-def test_a_wrapped_weight_in_an_unreadable_pool_is_read_component_by_component(
-    tmp_path: Path,
-) -> None:
-    """A wrapper owns no storage of its own; its components are what a pool
-    holds. Reading its value for profiling, from a pool the host cannot read,
-    reads each component through the runtime and rebuilds the wrapper."""
-
-    from shadowspill.pytorch.representations import detached_representation
-    from shadowspill.pytorch.state.initialization import pool_values
-    from shadowspill.pytorch.state.storage import read_tensor_value
-    from shadowspill.ssd import ssd
-
-    from .representations import ScaledWeight, model
-
-    reference = model()
-    with Runtime(
-        pools={
-            "execution": device(physical_capacity=2 << 30),
-            "spill": ssd(capacity=512 << 20, directory=tmp_path),
-        },
-        routes={
-            "fetch": transfer_route(source="spill", destination="execution"),
-            "evict": transfer_route(source="execution", destination="spill"),
-        },
-        calibrate=False,
-    ) as runtime:
-        assert not runtime.pools["spill"].addressable
-        imported = import_model_state(model(), runtime=runtime, pool="spill")
-        try:
-            with pytest.raises(RuntimeError, match="non-addressable"):
-                imported.weight.payload.sum()
-            value = read_tensor_value(runtime, detached_representation(imported.weight))
-            assert isinstance(value, ScaledWeight)
-            torch.testing.assert_close(
-                value.dense(), reference.weight.dense(), rtol=0, atol=0
-            )
-            del value
-            replacement = torch.arange(32.0).reshape(4, 8) / 32
-            with torch.no_grad(), pool_values(runtime):
-                assert imported.weight.copy_(replacement) is imported.weight
-                actual = imported.weight.to("cuda")
-            with torch.no_grad():
-                reference.weight.copy_(replacement)
-            torch.testing.assert_close(actual.dense().cpu(), reference.weight.dense())
-            del actual
-        finally:
-            release_model_state(imported, runtime=runtime)
-        assert runtime.pool_statistics("spill").allocated_bytes == 0
 
 
 def test_persistent_state_indexes_owners_once(monkeypatch):

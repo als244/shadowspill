@@ -75,27 +75,11 @@ _PUBLIC_C_REFERENCES = {
 
 _REQUIRED_SIGNATURES = {
     "src/shadowspill/ssd.py:ssd",
-    "src/shadowspill/pytorch/api.py:build_step_programs",
-    "src/shadowspill/pytorch/api.py:plan_forward",
-    "src/shadowspill/pytorch/api.py:plan_step",
     "src/shadowspill/planner/plan.py:plan_program",
     "src/shadowspill/planner/plan.py:summarize_plan",
     "src/shadowspill/planner/search/algorithms/pressurefit/__init__.py:PressureFit.__call__",
-    "src/shadowspill/pytorch/callables.py:PlannedForward.__call__",
-    "src/shadowspill/pytorch/callables.py:PlannedForward.submit",
-    "src/shadowspill/pytorch/callables.py:PlannedTrainStep.__call__",
-    "src/shadowspill/pytorch/callables.py:PlannedTrainStep.submit",
     "src/shadowspill/pytorch/runtime.py:Runtime.__init__",
     "src/shadowspill/runtime/core.py:Runtime.__init__",
-    "src/shadowspill/pytorch/state/model.py:export_model_state",
-    "src/shadowspill/pytorch/state/model.py:import_model_state",
-    "src/shadowspill/pytorch/state/model.py:import_model_state_from_file",
-    "src/shadowspill/pytorch/state/model.py:read_model_state",
-    "src/shadowspill/pytorch/state/model.py:release_model_state",
-    "src/shadowspill/pytorch/state/optimizer.py:export_optimizer_state",
-    "src/shadowspill/pytorch/state/optimizer.py:import_optimizer_state",
-    "src/shadowspill/pytorch/state/optimizer.py:import_optimizer_state_from_file",
-    "src/shadowspill/pytorch/state/optimizer.py:read_optimizer_state",
 }
 
 
@@ -343,7 +327,6 @@ def test_documentation_index_exposes_reading_paths() -> None:
         "examples/reusable-planning.md",
         "examples/diagnostics.md",
         "examples/custom-partitioning.md",
-        "examples/concurrent-callables.md",
         "c/README.md",
         "development/README.md",
     ):
@@ -420,7 +403,7 @@ def test_examples_cover_complete_public_workflows() -> None:
             "trainer.step(",
         ),
         "diagnostics.md": (
-            "report.diagnostics.task(",
+            "pending.diagnostics",
             "step.transfers.fetch",
         ),
         "custom-partitioning.md": (
@@ -428,7 +411,6 @@ def test_examples_cover_complete_public_workflows() -> None:
             "build_step(",
             "partition=EveryNNodes(",
         ),
-        "concurrent-callables.md": (".submit(", ".close()"),
     }
     for name, required in expected.items():
         reference = (examples / name).read_text()
@@ -641,13 +623,13 @@ def test_pressurefit_architecture_covers_the_algorithm_contract() -> None:
 def test_diagnostic_and_serialization_guides_cover_runtime_schemas() -> None:
     plan_report = (DOCS / "python" / "plan-report.md").read_text()
     for required in (
-        "## Tasks are keyed by execution ID",
+        "## Structure",
+        "## Transfer assumptions and budgets",
         "## Unique stages and graph pairs",
-        "## Interpreting a graph profile",
         "## Search diagnostics",
         "## Physical-layout diagnostics",
-        artifact_schema("plan_diagnostics"),
-        "chosen_graph_pair_variant",
+        "## Execution comparison",
+        "simulation_only_reasons",
     ):
         assert required in plan_report
 

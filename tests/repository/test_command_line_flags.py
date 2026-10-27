@@ -166,24 +166,24 @@ def test_declared_flags_are_read(path: Path) -> None:
 
 
 def test_no_caller_passes_a_keyword_a_public_entry_point_does_not_accept() -> None:
-    """A deleted argument is silent at the call site until the call runs.
-
-    `plan_step(deterministic=...)` was accepted, ignored, and then removed; two
-    callers kept passing it and only a gate run found them, because nothing
-    imports those harnesses at test time. Compare every call's keywords against
-    the real signature instead of waiting for the call.
-    """
-
-    import ast
+    """Check imported public phase calls, not similarly named internal helpers."""
     import inspect
 
-    from shadowspill.pytorch import api
+    import shadowspill
 
-    entry_points = {
-        "plan_step": api.plan_step,
-        "plan_forward": api.plan_forward,
-        "build_step_programs": api.build_step_programs,
+    names = {
+        "build_forward",
+        "build_forward_backward",
+        "build_step",
+        "measure_program",
+        "apply_profiles",
+        "measure_communication",
+        "plan_program",
+        "sweep_programs",
+        "write_report",
     }
+    entry_points = {name: getattr(shadowspill, name) for name in names}
+
     offences: list[str] = []
     roots = ("src", "tests", "benchmarking", "reference", "workloads", "training")
     for path in _repository_python_files():
@@ -193,14 +193,27 @@ def test_no_caller_passes_a_keyword_a_public_entry_point_does_not_accept() -> No
             tree = ast.parse(path.read_text())
         except SyntaxError:
             continue
+        imported = {}
+        modules = set()
+        for node in ast.walk(tree):
+            if isinstance(node, ast.ImportFrom) and node.module == "shadowspill":
+                imported.update({a.asname or a.name: a.name for a in node.names})
+            elif isinstance(node, ast.Import):
+                modules.update(
+                    a.asname or a.name for a in node.names if a.name == "shadowspill"
+                )
         for node in ast.walk(tree):
             if not isinstance(node, ast.Call):
                 continue
             called = (
-                node.func.attr
-                if isinstance(node.func, ast.Attribute)
-                else getattr(node.func, "id", None)
+                imported.get(node.func.id) if isinstance(node.func, ast.Name) else None
             )
+            if (
+                isinstance(node.func, ast.Attribute)
+                and isinstance(node.func.value, ast.Name)
+                and node.func.value.id in modules
+            ):
+                called = node.func.attr
             function = entry_points.get(called)
             if function is None:
                 continue

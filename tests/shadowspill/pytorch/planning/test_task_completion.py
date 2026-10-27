@@ -21,7 +21,7 @@ from shadowspill.planner.admission.indexing import (
     evaluate_schedule_admission,
     index_admission_facts,
 )
-from shadowspill.pytorch.planning.admission import build_fixed_layout_admission
+from shadowspill.planner.admission.layout import build_fixed_layout_admission
 from shadowspill.runtime.admission_capi import NO_ID
 from shadowspill.runtime.fixed_layout import RuntimePlacementKind
 from shadowspill.simulator import SimulationConfig

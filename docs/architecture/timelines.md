@@ -93,13 +93,11 @@ Control tasks remain in the task inventory but not in model-compute totals.
 
 ## The step: origin to origin
 
-Every invocation records three timing events on the compute stream: origin,
-first computational task start, and last computational task end. The next
-origin is recorded after the previous invocation's terminal work has drained.
-The cycle runs from one origin to the next, so repeated cycles account for
-required transfers once and also include caller work between invocations.
-`mark_cycle_end()` waits for the same terminal work and records an end marker
-when no next invocation follows.
+The internal recorder can measure a cycle between successive invocation origins.
+Saved Executor traces are isolated: each trace records origin, first computation
+and last computation, then closes at that invocation's completion. They do not
+include caller work before the next run. End-to-end benchmark measurements must
+wait on the result handle and record their own interval.
 
 ```text
 cycle = entry delay + selected span + exposed tail
@@ -115,15 +113,11 @@ event. See the [timing API](../python/api/timing.md) and
 
 ## What an untraced step pays
 
-Three event records: the origin, the span start and the span end above, each
-one enqueue on the stream and one host call. The task markers and the stream
-intervals are recorded only while a trace is armed. The one instruction an
-untraced transfer dispatch spends on any of this is the acquire load of the
-trace's active flag, which is the same gate the runtime's trace appends
-already pay. Timing events come from the runtime's timing pool, reserved when
-the trace is prepared and kept apart from the dependency pool
-([events](events.md#the-timing-pool)), so a traced step cannot exhaust the
-events an untraced step relies on.
+Untraced Executor calls retain only the completion dependency needed by the
+result handle; detailed timing and task/transfer ledgers are disabled. A transfer
+dispatch checks whether tracing is active before recording diagnostic events.
+Timing events for a trace come from a separate pool, keeping them apart from the
+readiness dependencies required for correctness ([events](events.md#the-timing-pool)).
 
 The step-level result of all this is described field by field in
 [StepResult diagnostics](../python/step-diagnostics.md); the event and stream

@@ -2,7 +2,7 @@
 
 `shadowspill.runtime.Runtime` is framework-neutral and is opened with a
 `RuntimeFrontend`. This is that call with PyTorch's frontend supplied, and is
-what `plan_step`, `plan_forward` and the planned callables are given.
+what Executor uses when admitting and running saved Plans.
 """
 
 from __future__ import annotations
@@ -37,7 +37,7 @@ class Runtime(NeutralRuntime):
     Accelerator allocator selection is process-global and irreversible after
     PyTorch initializes the accelerator, so construct exactly one of these
     before any accelerator tensor allocation, then pass it to every
-    ``plan_step`` or ``plan_forward`` call.
+    Executor construction.
 
     By default, initialization discovers the device's host NUMA node, narrows
     existing process-thread CPU masks to permitted local CPUs, and prefers

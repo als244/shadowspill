@@ -3,7 +3,10 @@
 from shadowspill.diagnostics.step import (
     AllocatorTrace,
     LaneSummary,
+    PhaseTimingComparison,
     RuntimeTrace,
+    StepDiagnostics,
+    StepTimingSummary,
     TaskRecord,
     Timelines,
     TransferQueue,
@@ -36,17 +39,8 @@ from shadowspill.planner.diagnostics.plan import (
     PlanUniqueStage,
 )
 
-from .step import (
-    DiagnosticsHandle,
-    PhaseTimingComparison,
-    StepDiagnostics,
-    StepResult,
-    StepTimingSummary,
-)
-
 __all__ = [
     "AllocatorTrace",
-    "DiagnosticsHandle",
     "InvocationTiming",
     "LaneSummary",
     "PhaseTimingComparison",
@@ -74,7 +68,6 @@ __all__ = [
     "PlanUniqueStage",
     "RuntimeTrace",
     "StepDiagnostics",
-    "StepResult",
     "StepTimingSummary",
     "TaskRecord",
     "Timelines",

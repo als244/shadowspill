@@ -46,12 +46,12 @@ does not depend on doing so.
 The planning exceptions are framework-free and live in `shadowspill.errors`,
 because the planner raises and catches them without importing a framework.
 `InputGuardError` lives there too, though it is raised at a call rather than
-during planning. The two runtime exceptions come from `shadowspill.pytorch`.
+during planning. The runtime exceptions come from `shadowspill.runtime`.
 
 | Boundary | Exception | Meaning |
 |---|---|---|
 | Runtime construction or lifecycle | `RuntimeConfigurationError` | Pool configuration, allocator installation, calibration, ownership, or close is invalid. |
-| Planning | `PlanningError` | Base class for failures before a callable is published. |
+| Preparation | `PlanningError` | Base class for build, measurement and planning failures. |
 | Capture | `CaptureError` | Export, AOTAutograd, partitioning, or semantic-contract extraction cannot represent the requested fixed graph. |
 | One task in one phase | `TaskPhaseError` | Base class for the two failures that name the task they happened on. |
 | Compilation | `CompilationError` | A captured structural task cannot be compiled into the required executable contract. |
@@ -89,36 +89,25 @@ a capture or compilation failure.
 
 ## Planning failures
 
-The public planning functions classify a failure according to the phase that
-owned the rejected contract:
+The phases have independent ownership:
 
 ```text
-runtime resolution
-  -> capture and partition
-  -> structural compilation
-  -> isolated profiling
-  -> ShadowSpillProgram construction and plan search
-  -> physical admission
-  -> callable publication
+build -> Program
+measure_program -> Profiles
+apply_profiles -> ProfiledProgram
+plan_program -> Plan
+Executor -> admitted runtime resources
 ```
 
-If any phase fails, `plan_step()`, `plan_forward()`, or `build_step_programs()`:
+Build and profiling use no runtime pools. CPU planning cannot leave a partially
+admitted runtime behind. Each function either returns its complete artifact or
+raises; an unsuccessful sweep case records its diagnostics and continues.
+Executor construction creates and admits resources in its fresh worker and
+cleans up partial setup on failure.
 
-1. retains the original exception and traceback;
-2. records any allocator failure already latched by the C adapter;
-3. aborts a partially admitted runtime plan, first taking back any workspace
-   its own scopes left behind and reporting it as a `RuntimeWarning`;
-4. restores persistent object identities; and
-5. attaches independent cleanup failures as exception notes instead of
-   replacing the primary cause.
-
-A planning failure therefore never returns a partial callable. The same
-`Runtime` can be reused only when rollback succeeds and the runtime has not
-marked itself unusable.
-
-`PlanInfeasibleError` and `PlanSearchExhaustedError` are intentionally
-different. The former is a negative feasibility result; the latter means the
-configured bounded search did not establish either result.
+`PlanInfeasibleError` is a negative feasibility result. `PlanSearchExhaustedError`
+means a bounded search did not establish a result. Neither returns a partial
+executable Plan. Estimated memory permits simulation only, not execution.
 
 ## Runtime failure diagnostics
 
@@ -199,58 +188,23 @@ bad kernel as an allocator OOM.
 
 ## Execution rollback
 
-An exception from `PlannedForward` or `PlannedTrainStep` triggers callable
-cleanup before the exception reaches the caller. Cleanup:
+A dispatch or completion failure makes Executor unusable for subsequent calls.
+The original exception remains available from the result handle. This does not
+roll back partially executed weight updates; restart from a known checkpoint.
 
-- records and, when safe, synchronizes the first failure the C runtime latched;
-- resolves or cancels pending diagnostics;
-- stops profiler annotations;
-- clears transient gradients for training;
-- releases optimizer state with the plan, because a failed step publishes no
-  optimizer update, and restores model bindings to their pre-plan ownership
-  state;
-- releases the compiled executor, reclaims any workspace this plan's own scopes
-  left behind -- reporting what it took as a `RuntimeWarning` rather than
-  raising -- and releases the admitted runtime plan; and
-- restores persistent object identities.
-
-Every independent cleanup action is attempted. A cleanup failure is appended
-to the original exception as a note; it does not mask the task, allocator, or
-kernel failure that caused cleanup.
-
-No-progress recovery exists only to make synchronized teardown possible. It
-does not silently retry the failed task, relax a budget, or publish a partial
-optimizer update.
+`close()` attempts to release admitted paths, provider resources, completion
+markers and distributed bindings before closing the runtime. A context manager
+adds cleanup failures as exception notes instead of masking the original error.
+Allocator failures are not silently retried with a relaxed budget.
 
 ## Normal close order
 
-Successful workflows close owners in reverse ownership order:
+Wait for the invocation, export any required checkpoint, release caller-owned GPU
+outputs and close Executor or Trainer. Closing copies no model tensors. The
+runtime rejects shutdown while live outputs still own device storage; release
+them and retry close. Completed outputs remain valid until explicitly released.
 
-```text
-planned callable
-  -> export imported state with release_runtime=True
-     (or release_model_state() when the state is no longer needed)
-  -> Runtime
-```
-
-Closing copies nothing. A planned training callable points the model's
-parameters back at the spill-pool storage they were imported into, which
-already holds their updates, and releases optimizer state along with the plan
-that owns it. So a training callable's `state_dict()` and `load_state_dict()`
-answer only while it is open; take the checkpoint before the close. See the
-[frontend API](api/frontend.md).
-
-`Runtime.close()` rejects an active callable, an in-progress plan, persistent
-imported state, a live public object reference, or caller-owned device output.
-This makes ownership leaks visible rather than invalidating live tensor
-storage. It then stops and joins the worker and closes every route and pool
-backend. The selected PyTorch allocator shim is process-global and cannot be
-uninstalled; it remains installed in a permanently closed state and rejects
-future allocations. Registered process-exit cleanup invokes the same
-idempotent teardown only as a last resort.
-
-See the [framework-neutral API](api/neutral.md) for the planning exception
-classes, the [frontend API](api/frontend.md) for the runtime ones, the
-[allocator guide](allocator.md) for callback behavior, and the [memory runtime
-architecture](../architecture/memory-runtime.md) for C-side ownership and
-teardown.
+The allocator shim is process-global. After runtime teardown it stays closed,
+so further GPU work belongs in another fresh worker. See the
+[execution reference](api/training.md), [allocator guide](allocator.md) and
+[memory runtime](../architecture/memory-runtime.md#failure-and-teardown).

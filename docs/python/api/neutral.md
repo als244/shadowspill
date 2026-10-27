@@ -149,7 +149,7 @@ it went wrong.
 The `ShadowSpillPlanningProblem` a captured step lowered to, with the
 provenance that says what produced it: the ordering, the
 measured profiles, and the digests that identify the content rather than the
-run. `build_step_programs()` returns one per ordering; `to_json()` and `from_json()` round it
+run. Low-level tooling constructs this record directly; `to_json()` and `from_json()` round it
 through a file, and `digest` identifies what it would plan as. Its fields are
 documented in [reusable artifacts](artifacts.md#stepprogram).
 
@@ -215,8 +215,7 @@ ArtifactStore.resolve(
 `build_store` and `plan_store` root one tree elsewhere; the two modes say what
 this run may do with each tree; `export_bypass_key` is the caller's name for
 the code the artifacts were produced from, under which they are filed. Every entry point's store
-arguments reach this one call, and [the frontend
-page](frontend.md#store-arguments) defines them. `initialize()` creates the
+arguments are resolved here; the [cache guide](../artifact-store.md) defines them. `initialize()` creates the
 tree, `artifacts()` returns the `PlanningArtifact` records this call touched,
 and `record(...)` adds one.
 
@@ -267,11 +266,9 @@ simulated or placed; when it holds a refusal, that refusal is raised again.
 it keeps beside a certified plan, for a caller that compares many plans and
 runs one.
 
-Building a program is the frontend's job:
-[`build_step_programs()`](frontend.md#build_step_programs) captures, compiles,
-profiles and lowers them, and takes only build-store arguments. `plan_program()`
-plans one and takes only plan-store arguments. Nothing on this page needs a
-device or a model.
+The application workflow uses the [public phase APIs](../../architecture/offline-pipeline.md).
+This lower-level planner accepts an already constructed ShadowSpillPlanningProblem;
+it performs no model capture, compilation or profiling.
 
 ### `plan_program()`
 
@@ -301,7 +298,7 @@ plan_program(
 
 | argument | type | default | meaning |
 |---|---|---|---|
-| `problem` | `ShadowSpillPlanningProblem` | required | The question to answer, normally `build_step_programs(...)[0].problem` or a value read back with `ShadowSpillPlanningProblem.from_value()`. |
+| `problem` | `ShadowSpillPlanningProblem` | required | The question to answer, normally a constructed problem or a value read with `ShadowSpillPlanningProblem.from_value()`. |
 | `execution_budget` | `int` \| `None` | `None` | Device bytes to plan for; the problem's own budget when `None`, and never more than the capacity it was compiled and profiled under. |
 | `spill_budget` | `int` \| `None` | `None` | Spill bytes to plan for, with the same bound. |
 | `transfer_bandwidths` | `TransferBandwidths` \| `None` | `None` | Fetch and evict rates to price copies at; the problem's embedded calibration when `None`. |
@@ -315,8 +312,7 @@ plan_program(
 | `keep_resolutions` | `bool` | `False` | Files every resolved program's best plan beside the answer, certified like it, when the search runs: what each way of fixing the alternatives found, to read against the answer. Each is as large as the answer, and a resolution the search bounded away before it placed a plan has none; `deterministic` search options make every resolution report the plan it found. |
 
 Raises `TypeError` when `search_options` is neither a `SearchOptions` nor
-`None`. The store arguments mean exactly what [the frontend
-page](frontend.md#store-arguments) says; there are no build-store arguments
+`None`. The store arguments follow the [cache guide](../artifact-store.md); there are no build-store arguments
 here, because planning writes nothing under `build/`.
 
 `incumbent` is the plan to beat. It reaches the search as a bound, and the
@@ -899,7 +895,7 @@ recalibrating.
 | `RuntimeFailureDiagnostics` | what the runtime latched about the first and most recent failure |
 | `ExecutionTaskIdentity` | which task a latched failure belongs to |
 
-[The frontend page](frontend.md#exceptions) shows what raises them.
+[Failures and cleanup](../failures.md) shows what raises them.
 
 The production-memory-pool replay interface is `AdmissionReplayOperation` and
 `AdmissionReplayOperationKind` (the script), `AdmissionReplayLeaseState`,
@@ -911,5 +907,5 @@ logical object. Object identity is independent of its current pool lease or
 residency generation. Framework integrations layer their own view metadata on
 this handle and call `ObjectRef.close()` to release public ownership.
 `ObjectConsistency` selects causal generation/readiness ordering or an
-explicitly unordered cross-plan view for a plan binding; [the frontend
-page](frontend.md#plan_forward) shows it in use.
+explicitly unordered cross-plan view for a native plan binding. These are
+low-level runtime contracts; saved Executor invocations are sequential.

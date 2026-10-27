@@ -18,8 +18,8 @@ from shadowspill.ir import (
 from shadowspill.planner import GenericPlanningOptions
 from shadowspill.planner.search.algorithms.pressurefit import PressureFit
 from shadowspill.planner.search.algorithms.pressurefit.options import PressureFitOptions
-from shadowspill.pytorch.planning.admission import build_admission_facts
-from shadowspill.pytorch.planning.admission.bindings import TaskOutputBinding
+from shadowspill.planning.admission.facts import build_admission_facts
+from shadowspill.planning.admission.outputs import TaskOutputBinding
 from shadowspill.pytorch.profiling import (
     TaskAllocationEvent,
     TaskAllocationOperation,

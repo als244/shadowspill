@@ -13,13 +13,16 @@ class Aliases(nn.Module):
     def __init__(self):
         super().__init__()
         self.weight = nn.Parameter(torch.randn(8, 8))
+        self.tied = self.weight
+        self.register_buffer("weight_view", self.weight.detach().view(4, 16))
 
     def forward(self, x):
         return {
             "input": x,
             "view": x[:, ::2],
             "weight": self.weight,
-            "computed": x @ self.weight,
+            "computed": x @ self.tied,
+            "stored_view": self.weight_view,
             "constant": torch.tensor([1.25, 2.5, 0.75], device=x.device),
         }
 

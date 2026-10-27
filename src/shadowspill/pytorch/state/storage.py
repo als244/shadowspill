@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import ctypes
 import os
-from collections.abc import Callable, Iterable, Iterator, Mapping
+from collections.abc import Callable, Iterable, Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass
 from typing import Any
@@ -31,7 +31,6 @@ from shadowspill.runtime.abi import (
 )
 from shadowspill.runtime.objects import (
     register_object,
-    register_placed_object,
     require_state_operation_allowed,
     reserve_persistent_object_ids,
 )
@@ -58,17 +57,13 @@ def import_tensors(
     pool: str,
     release_source: bool,
     owning_plan: int | None = None,
-    placements: Mapping[str, int] | None = None,
     _allow_in_progress_plan: bool = False,
     _initialize: bool = True,
 ) -> PersistentState:
     """Copy unique CPU storages into authoritative runtime-pool objects.
 
     ``owning_plan`` names the plan whose close releases the result. Leave it
-    None for state the caller owns, which outlives every plan. ``placements``
-    maps state names to pool offsets whose bytes already are the state: those
-    roots are bound where they lie instead of being copied (see
-    :mod:`shadowspill.pytorch.state.image`).
+    None for state the caller owns, which outlives every plan.
     """
 
     selected_pool = _validate_pool(
@@ -86,7 +81,6 @@ def import_tensors(
             tensors,
             runtime=runtime,
             pool=pool,
-            placements=placements,
             _allow_in_progress_plan=_allow_in_progress_plan,
             _initialize=_initialize,
         )
@@ -204,7 +198,6 @@ def import_then_fill(
     runtime: Runtime,
     pool: str,
     owning_plan: int | None = None,
-    placements: Mapping[str, int] | None = None,
     _allow_in_progress_plan: bool = False,
 ) -> PersistentState:
     """Allocate pool state first, then initialize through ordinary tensor ops.
@@ -228,7 +221,6 @@ def import_then_fill(
             pool=pool,
             release_source=True,
             owning_plan=owning_plan,
-            placements=placements,
             _allow_in_progress_plan=_allow_in_progress_plan,
             _initialize=False,
         )
@@ -292,16 +284,12 @@ def register_tensor_storages(
     *,
     runtime: Runtime,
     pool: str,
-    placements: Mapping[str, int] | None = None,
     _allow_in_progress_plan: bool = False,
     _initialize: bool = True,
 ) -> tuple[PersistentStorage, ...]:
     """Register the unique source storages as runtime objects.
 
-    Every root is ordinary memory the caller owns, so every root is copied,
-    except one whose name ``placements`` gives a pool offset for: its bytes
-    already lie there, in a range the pool reserved for its lifetime, so it is
-    bound in place and nothing is written.
+    Each ordinary storage root is copied into its runtime-owned object.
     """
 
     selected_pool = _validate_pool(
@@ -330,7 +318,11 @@ def register_tensor_storages(
             selected = {}
             for view in views:
                 name = parameter_names.get(view.name)
-                if bound is not None and name in bound.transfer_sharding:
+                if (
+                    bound is not None
+                    and name is not None
+                    and name in bound.transfer_sharding
+                ):
                     selected[name] = bound.transfer_sharding[name]
             sharding = None
             if selected:
@@ -348,59 +340,40 @@ def register_tensor_storages(
                     size_bytes,
                     max(view.tensor.element_size() for view in views),
                 )
-            placed = _placement(views, placements)
-            if sharding is not None and placed is not None:
-                raise ValueError(
-                    "full-tensor pool images cannot bind transfer sharding"
-                )
-            if placed is not None:
-                _require_status(
-                    register_placed_object(
-                        runtime,
-                        object_id,
-                        size_bytes,
-                        pool_id=selected_pool.pool_id,
-                        offset=placed,
-                    ),
-                    f"adopt persistent object {object_id} at offset {placed}",
-                )
-            else:
-                descriptor = 0 if sharding is None else sharding.descriptor()
-                source = anchor
-                try:
-                    if sharding is not None and _initialize:
-                        full = (
-                            torch.empty(0, dtype=torch.uint8)
-                            .set_(anchor.untyped_storage(), 0, (size_bytes,), (1,))
-                            .clone()
-                        )
-                        dist.broadcast(
-                            full,
-                            src=dist.get_process_group_ranks(sharding.host_group)[0],
-                            group=sharding.host_group,
-                        )
-                        source = sharding.owned(full)
-                    status = register_object(
-                        runtime,
-                        object_id,
-                        size_bytes if sharding is None else sharding.execution_bytes,
-                        pool_id=selected_pool.pool_id,
-                        retain_spill_copy=True,
-                        initially_resident=True,
-                        source_address=(
-                            int(source.untyped_storage().data_ptr())
-                            if _initialize
-                            else 0
-                        ),
-                        transfer_address=descriptor,
-                        source_size_bytes=None
-                        if sharding is None
-                        else sharding.shard_bytes,
+            descriptor = 0 if sharding is None else sharding.descriptor()
+            source = anchor
+            try:
+                if sharding is not None and _initialize:
+                    full = (
+                        torch.empty(0, dtype=torch.uint8)
+                        .set_(anchor.untyped_storage(), 0, (size_bytes,), (1,))
+                        .clone()
                     )
-                    _require_status(status, f"import persistent object {object_id}")
-                finally:
-                    if descriptor:
-                        torch.ops.shadowspill._close_sharded_transfer(descriptor)
+                    dist.broadcast(
+                        full,
+                        src=dist.get_process_group_ranks(sharding.host_group)[0],
+                        group=sharding.host_group,
+                    )
+                    source = sharding.owned(full)
+                status = register_object(
+                    runtime,
+                    object_id,
+                    size_bytes if sharding is None else sharding.execution_bytes,
+                    pool_id=selected_pool.pool_id,
+                    retain_spill_copy=True,
+                    initially_resident=True,
+                    source_address=(
+                        int(source.untyped_storage().data_ptr()) if _initialize else 0
+                    ),
+                    transfer_address=descriptor,
+                    source_size_bytes=None
+                    if sharding is None
+                    else sharding.shard_bytes,
+                )
+                _require_status(status, f"import persistent object {object_id}")
+            finally:
+                if descriptor:
+                    torch.ops.shadowspill._close_sharded_transfer(descriptor)
             snapshot = _object_location_snapshot(
                 runtime._runtime_handle, object_id, selected_pool.pool_id
             )
@@ -426,25 +399,6 @@ def register_tensor_storages(
     except BaseException:
         unregister_tensor_storages(created, runtime=runtime)
         raise
-
-
-def _placement(
-    views: tuple[TensorView, ...], placements: Mapping[str, int] | None
-) -> int | None:
-    """The pool offset a root's views were given, when every one agrees."""
-
-    if not placements:
-        return None
-    offsets = {placements[view.name] for view in views if view.name in placements}
-    if not offsets:
-        return None
-    if len(offsets) > 1 or any(view.name not in placements for view in views):
-        names = ", ".join(view.name for view in views)
-        raise RuntimeConfigurationError(
-            f"the views {names} share one storage but the image places them "
-            "differently or only in part"
-        )
-    return offsets.pop()
 
 
 def own_persistent_state(

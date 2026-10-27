@@ -50,9 +50,6 @@ shadowspill_add_pytorch_canary(allocator_oom 60)
 shadowspill_add_pytorch_canary(allocation_contract_failure 20)
 shadowspill_add_pytorch_canary(invalid_access 60)
 shadowspill_add_pytorch_canary(profiler 60)
-shadowspill_add_pytorch_canary(forward 90)
-shadowspill_add_pytorch_canary(state_import_export 90)
-shadowspill_add_pytorch_canary(planning_residue 120)
 
 # Older tests install the allocator in pytest; saved-phase tests launch their
 # own fresh execution workers. Select the named case explicitly so both forms
@@ -177,14 +174,6 @@ shadowspill_add_public_api_test(
   test_quantized_training_evaluation_and_cold_checkpoint[recompute] 300
 )
 shadowspill_add_public_api_test(
-  shadowspill/pytorch/state/test_pool_initialization.py
-  test_meta_initialization_and_checkpoint_import_preserve_values_and_ties 180
-)
-shadowspill_add_public_api_test(
-  shadowspill/pytorch/state/test_pool_initialization.py
-  test_a_wrapped_weight_in_an_unreadable_pool_is_read_component_by_component 180
-)
-shadowspill_add_public_api_test(
   shadowspill/execution/test_packed_gradients.py
   test_packed_parameter_gradients_in_cold_worker 300
 )
@@ -221,17 +210,4 @@ shadowspill_add_public_api_test(
 shadowspill_add_public_api_test(
   shadowspill/training/test_partial_trainer.py
   test_partial_trainer_preserves_masters_mutations_evaluation_and_resume 300
-)
-
-shadowspill_add_public_api_test(
-  shadowspill/pytorch/api/test_pool_image.py
-  test_an_image_is_written_once_and_adopted_without_a_copy 300
-)
-shadowspill_add_public_api_test(
-  shadowspill/pytorch/api/test_pool_image.py
-  test_an_image_refuses_state_it_does_not_describe 300
-)
-shadowspill_add_public_api_test(
-  shadowspill/pytorch/api/test_pool_image.py
-  test_an_image_pool_needs_an_image_to_adopt 300
 )

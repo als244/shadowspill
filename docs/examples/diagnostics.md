@@ -1,40 +1,24 @@
 # Diagnosing a plan and real step
 
-The stable join key between planning and execution is
-`execution_XXXXXX`. This recipe reads the traced step's summary, finds the
-tasks contributing the most real selected-span time beside their selected
-graph-pair variant, and reads the transfer lanes to separate task-duration
-error from transfer drift.
+A saved Plan supplies the prediction. The result handle supplies optional measured
+execution evidence. Use the same interface for forward and training Plans:
 
 ```python
-result = train_step(inputs, runtime_trace=True)
-step = result.diagnostics.result()
-report = train_step.plan_report
+from shadowspill import write_report
+
+print(plan.summary)
+write_report(plan, "reports/simulated")
+pending = executor.run(args=examples, runtime_trace=True)
+outputs = pending.result()
+step = pending.diagnostics
+assert step is not None
+assert step.summary.trace_complete
 ```
 
-A planned forward call is traced the same way, and its handle is on the
-callable rather than on a returned result:
+Sort measured tasks by duration. Each record also contains its expected profile
+cost and task identity, so no separate callable report is needed:
 
 ```python
-output = run_forward(inputs, runtime_trace=True)
-step = run_forward.diagnostics.result()
-report = run_forward.plan_report
-```
-
-Everything below reads the same fields from either.
-
-```python
-
-summary = step.summary
-print("profiled task sum", summary.profiled_task_seconds)
-print("real task-event sum", summary.real_task_event_seconds)
-print("simulated inter-task idle", summary.simulated_inter_task_idle_seconds)
-print("real inter-task idle", summary.real_inter_task_idle_seconds)
-print("  waiting for inputs", summary.real_inter_task_readiness_wait_seconds)
-print("  stream had nothing to run", summary.real_inter_task_exposed_overhead_seconds)
-print("simulated selected span", summary.simulated_selected_span_seconds)
-print("real selected span", summary.real_selected_span_seconds)
-
 largest = sorted(
     step.tasks.values(),
     key=lambda record: record.compute_finished_at_seconds
@@ -42,46 +26,17 @@ largest = sorted(
     reverse=True,
 )
 for record in largest[:10]:
-    planned = report.diagnostics.task(record.execution_task_id)
-    print(
-        record.execution_task_id,
-        planned.semantic_name,
-        planned.chosen_graph_pair_variant,
-        record.expected_profile_seconds,
-        record.compute_finished_at_seconds - record.compute_started_at_seconds,
-        record.before_task_exited_at_seconds - record.before_task_entered_at_seconds,
-        record.after_task_exited_at_seconds - record.after_task_entered_at_seconds,
-    )
+    print(record.execution_task_id, record.expected_profile_seconds,
+          record.compute_finished_at_seconds - record.compute_started_at_seconds)
 
-timelines = step.timelines
-summary = report.summary
-planned_rates = {
-    "fetch": (summary.fetch_solo_bandwidth_bytes_per_second,
-              summary.fetch_concurrent_bandwidth_bytes_per_second),
-    "evict": (summary.evict_solo_bandwidth_bytes_per_second,
-              summary.evict_concurrent_bandwidth_bytes_per_second),
-}
-for lane in (timelines.fetch, timelines.evict):
-    print(
-        lane.summary.direction,
-        "effective", lane.summary.effective_bandwidth_bytes_per_second,
-        "planned solo/concurrent", planned_rates[lane.summary.direction],
-        "largest drift", lane.summary.largest_start_delta_seconds,
-        "at", lane.summary.largest_start_delta_transfer_id,
-    )
+for transfer in step.transfers.fetch.values():
+    print(transfer)
 ```
 
-Interpret the first-level result before inspecting raw events:
+Compare `step.summary.profiled_task_seconds` with `real_task_event_seconds`, then
+inspect inter-task waits and the `fetch`/`evict` lanes. A slow task calls for a
+kernel trace; a transfer delay calls for the lane's readiness, queue and completion
+evidence. Check trace completeness before drawing conclusions from missing events.
 
-| Observation | Next evidence |
-|---|---|
-| Real task-event sum is high | Sort `step.tasks` by measured kernel time minus `expected_profile_seconds`, then inspect that task's allocator events. |
-| Real inter-task gaps are high | Sort `step.tasks` by `after_task_exited_at_seconds` minus `before_task_entered_at_seconds`, and read each record's waits and its lead, `compute_reached_at_seconds` minus `before_task_exited_at_seconds`. |
-| Simulated waiting exceeds real waiting | Compare each lane's effective bandwidth with the bandwidth the plan summary assumed. |
-| Transfer timing diverges | Walk the lane's `order` through `step.transfers.fetch` or `.evict`: read the record's simulated start against its stream start, then its host queued, reserved, and dispatched times and the records before it. |
-| Physical memory differs | Check charged allocator events, peak bytes, pending retirements, largest free range, fragmentation, and each transfer's `next_access`. |
-| Evidence appears incomplete | Require `summary.trace_complete` and both overflow flags to be clean. |
-
-The [PlanReport](../python/plan-report.md) and [StepResult
-diagnostics](../python/step-diagnostics.md) guides define every field and the
-corresponding serialization APIs.
+[Plan inspection](../python/plan-report.md) and
+[execution trace fields](../python/step-diagnostics.md) define the records.

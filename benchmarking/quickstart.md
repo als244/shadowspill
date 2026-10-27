@@ -64,9 +64,9 @@ the complete route, including staging, in a bounded scratch pool. Executor uses
 bounded buffers for initialization, controls and checkpoint I/O on every backend.
 To change backend, rerun communication calibration and planning before execution.
 
-Single-GPU SSD and RDMA execution are qualified. Compound sharded fetch/evict
-collectives currently require pinned-host spill. SSD pool-image adoption remains
-with the low-level image tools; saved Executor plans currently use tensor loaders.
+Single-GPU SSD and RDMA execution are qualified. Compound sharded transfers
+use the same spill backend interface; their multi-GPU qualification is tracked
+separately. Saved Executor plans use bounded tensor loaders.
 See [SSD storage](../docs/python/api/ssd.md) for configuration and lifetime details.
 
 ## One phase at a time

@@ -1,7 +1,7 @@
 # PlanReport field reference
 
 Every field of every record a `PlanReport` carries, with what it holds. The
-narrative guide is [Interpreting a PlanReport](plan-report.md); this page is
+public Plan guide is [Interpreting a Plan](plan-report.md); this page is
 the lookup table behind it, and it is checked against the source so that a
 field added without an entry here fails the documentation tests. The
 execution-side equivalent is [step diagnostics](step-diagnostics.md), which

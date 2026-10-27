@@ -97,7 +97,7 @@ class Runtime:
     Accelerator allocator selection is process-global and irreversible after
     the framework initializes the accelerator. Construct exactly one ``Runtime``
     before any device allocation the framework makes, then pass it to every
-    ``plan_step`` or ``plan_forward`` call.
+    Executor construction.
 
     The current backend supports one device pool plus configured spill pools
     (pinned host, remote memory or SSD). Pools and directed routes have explicit

@@ -25,7 +25,7 @@ unless `lora_head=true`.
 
 The shared checkpoint reader supports `copy_chunk(name, shape, offset, destination)`
 after meta-model declaration, matching the bounded loading interface used by
-other families. See [checkpoint loading](../glm53_flash/README.md#direct-checkpoint-import)
+other families. See [checkpoint loading](../glm53_flash/README.md#checkpoints-and-execution)
 for byte preservation and the scope of this direct-copy path.
 
 The normal model's quickstart preserves intermediate BF16 casts during
@@ -56,7 +56,7 @@ ranks for communication calibration and execution.
 
 Weights, gradients and optimizer data use the common logical parallelism
 specification. See the [phase API](../../../docs/architecture/offline-pipeline.md) and the
-[shared recipe arguments](../glm53_flash/README.md#generic-quickstart-and-training-sweeps).
+[shared recipe arguments](../glm53_flash/README.md#quickstart-configuration).
 `tiny=true` selects a small random fixture explicitly; `layer_limit` selects a
 checkpoint prefix. Omit both for all 78 layers.
 

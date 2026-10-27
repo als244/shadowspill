@@ -10,8 +10,8 @@ from torch.export.graph_signature import InputKind
 from shadowspill.pytorch.capture.artifacts import capture_forward_stage_artifacts
 from shadowspill.pytorch.capture.export import capture_forward
 from shadowspill.pytorch.capture.fake import fake_device_inputs, fake_device_model
+from shadowspill.pytorch.capture.inputs import flat_runtime_arguments
 from shadowspill.pytorch.lowering.forward import lower_partitioned_forward_program
-from shadowspill.pytorch.materialization.forward import flat_runtime_arguments
 from shadowspill.pytorch.partition import partition_export
 from tests.shadowspill.pytorch.lowering.test_lowering import _measurement
 

@@ -1,16 +1,12 @@
 from __future__ import annotations
 
-from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
-import torch
-import torch.nn as nn
 
 from shadowspill.errors import (
     AdmissionError,
     PlanInfeasibleError,
-    PlanningError,
     PlanSearchExhaustedError,
 )
 from shadowspill.pipeline.admission.physical import physical_admission
@@ -21,7 +17,6 @@ from shadowspill.pipeline.common import (
     public_infeasible_plan_error,
     public_search_exhausted_error,
     simulation_capacity,
-    validate_budgets,
     workspace_reserve,
 )
 from shadowspill.planner import (
@@ -30,16 +25,7 @@ from shadowspill.planner import (
 )
 from shadowspill.planner.program_inputs import TransferBandwidths
 from shadowspill.profiling.wall_times import ProfilingWallTimes
-from shadowspill.pytorch import (
-    TensorSpec,
-)
-from shadowspill.pytorch.materialization import representative_cpu_inputs
-from shadowspill.pytorch.planning.common import (
-    estimate_spill_reservation,
-    validate_cpu_model,
-)
 from shadowspill.pytorch.profiling import TaskMeasurement
-from shadowspill.runtime.configuration import adapter_path
 from shadowspill.runtime.topology import TransferProfile
 
 
@@ -79,48 +65,6 @@ def test_phase_timer_annotates_nested_planning_failures() -> None:
         "ShadowSpill planning phase 'inner' failed after 0.000 seconds",
         "ShadowSpill planning phase 'outer' failed after 0.000 seconds",
     ]
-
-
-def test_planning_admission_helpers_reject_invalid_values() -> None:
-    model = nn.Linear(2, 2)
-    with pytest.raises(TypeError, match="model"):
-        validate_cpu_model(object())  # type: ignore[arg-type]
-    with pytest.raises(TypeError, match="execution_budget"):
-        validate_budgets(True, 1 << 30)
-    with pytest.raises(TypeError, match="spill_budget"):
-        validate_budgets(1 << 30, True)
-    with pytest.raises(AdmissionError, match="positive"):
-        validate_budgets(0, 1 << 30)
-    with pytest.raises(AdmissionError, match="spill_budget"):
-        validate_budgets(1 << 30, 0)
-    with pytest.raises(PlanningError, match="CPU resident"):
-        validate_cpu_model(nn.Linear(2, 2, device="meta"))
-    with pytest.raises(AdmissionError, match="spill-pool budget"):
-        estimate_spill_reservation(model, [torch.ones(2)], 1)
-
-
-def test_spill_admission_counts_shards_and_shared_input_storage_once(monkeypatch):
-    from shadowspill.pytorch.state import registry
-
-    model = nn.Module()
-    model.weight = nn.Parameter(torch.empty(2 << 30, device="meta"))
-    model.tied = model.weight
-    identity = model.weight.untyped_storage()._cdata
-    registered = SimpleNamespace(sharding=SimpleNamespace(shard_bytes=2 << 30))
-    monkeypatch.setattr(
-        registry,
-        "registry_for",
-        lambda _: SimpleNamespace(
-            storage=lambda key: registered if key == identity else None
-        ),
-    )
-    inputs = torch.empty(16 << 20, dtype=torch.uint8, device="meta")
-    requested = estimate_spill_reservation(
-        model, (inputs, inputs[8:]), 3 << 30, runtime=object()
-    )
-    assert requested == (2 << 30) + (16 << 20) + (256 << 20)
-    with pytest.raises(AdmissionError, match="spill-pool budget"):
-        estimate_spill_reservation(model, (inputs,), 3 << 30)
 
 
 def test_pressurefit_infeasibility_is_structured_for_plan_callers() -> None:
@@ -216,25 +160,6 @@ def test_plan_reservation_can_be_smaller_than_runtime_spill_pool() -> None:
 
     assert admission.spill_budget_bytes == 100
     assert admission.spill_reservation_bytes == 90
-
-
-def test_representatives_and_adapter_path_contract(tmp_path: Path) -> None:
-    values = representative_cpu_inputs(
-        [TensorSpec((2, 3), torch.float32), torch.empty(4, device="meta"), "x"]
-    )
-    assert values[0].device.type == "cpu" and values[0].shape == (2, 3)
-    assert values[1].device.type == "cpu" and values[1].shape == (4,)
-    assert values[2] == "x"
-
-    try:
-        configured = adapter_path(None)
-    except RuntimeError:
-        configured = None
-    missing = tmp_path / "missing.so"
-    with pytest.raises(RuntimeError, match="not found"):
-        adapter_path(missing)
-    if configured is not None:
-        assert adapter_path(configured) == configured
 
 
 def _profile(source: str, destination: str, **measured: int) -> TransferProfile:

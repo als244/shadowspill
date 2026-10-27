@@ -16,10 +16,7 @@ from tests.workloads.test_glm53_checkpoint import (
 from workloads.models.glm53_flash.checkpoint import GLMCheckpoint
 from workloads.models.glm53_flash.quickstart import experiment
 from workloads.models.shared.glm.checkpoint import physical_state
-from workloads.models.shared.glm.initialization import (
-    InitializationProgress,
-    initialize_random,
-)
+from workloads.models.shared.glm.recipe.initialize import Initialize
 
 
 @pytest.fixture
@@ -103,29 +100,19 @@ def test_random_default_uses_only_metadata_and_keeps_physical_storage(
     assert model.layers[0].self_attn.conv1d.weight.dtype == torch.bfloat16
 
 
-@pytest.mark.parametrize("device", ["cpu", "cuda"])
-def test_random_seed_is_stable_with_adopted_state_and_writer(mixed_checkpoint, device):
-    if device == "cuda" and not torch.cuda.is_available():
-        pytest.skip("CUDA required")
-    from shadowspill.pytorch import initialize_storage_
-
+def test_random_seed_is_reproducible(mixed_checkpoint):
     with GLMCheckpoint(mixed_checkpoint) as source:
         model = _materialized(source.build_model(lora_rank=8))
-    initialize_random(model, seed=123, device=device)
+    initializer = Initialize(model, seed=123)
+    spec = {"fill_tensor": initializer}
+    fill_recipe(spec, model)
     state = physical_state(model)
     expected = {name: value.detach().clone() for name, value in state.items()}
-    adopted = next(iter(state))
-    initialize_random(
-        model,
-        seed=123,
-        device=device,
-        adopted={adopted},
-        write_tensor=initialize_storage_,
-    )
+    fill_recipe(spec, model)
     for name, value in state.items():
         assert torch.equal(value.float(), expected[name].float()), name
-    initialize_random(model, seed=124, device=device, adopted={adopted})
-    assert torch.equal(state[adopted].float(), expected[adopted].float())
+    initializer.seed = 124
+    fill_recipe(spec, model)
     assert not torch.equal(
         model.layers[1].mlp.w13._data.float(),
         expected["layers.1.mlp.w13._data"].float(),
@@ -133,7 +120,7 @@ def test_random_seed_is_stable_with_adopted_state_and_writer(mixed_checkpoint, d
 
 
 def test_checkpoint_mode_loads_actual_weights_and_reports_every_tensor(
-    mixed_checkpoint, capsys
+    mixed_checkpoint,
 ):
     spec = experiment(
         device="cpu",
@@ -149,15 +136,13 @@ def test_checkpoint_mode_loads_actual_weights_and_reports_every_tensor(
         fill_recipe(spec, model)
     with GLMCheckpoint(mixed_checkpoint) as source:
         expected = _materialized(source.build_model(lora_rank=8))
-        progress = InitializationProgress(expected, mode="checkpoint")
-        source.load_into(expected, on_tensor=progress)
+        completed = []
+        source.load_into(expected, on_tensor=completed.append)
         state = physical_state(expected)
-        assert progress.done == len(state)
-        assert progress.bytes == progress.total
+        assert sorted(completed) == sorted(state)
     for name, value in physical_state(model).items():
         if "lora" not in name:
             assert torch.equal(value.float(), state[name].float()), name
-    assert "initialization[checkpoint]" in capsys.readouterr().out
 
 
 @pytest.mark.parametrize("family", ["glm53", "glm53_flash"])

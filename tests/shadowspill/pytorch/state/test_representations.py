@@ -172,36 +172,6 @@ def test_optimizer_placeholder_preserves_component_storage_views():
     assert target.payload.data_ptr() != source.payload.data_ptr()
 
 
-def test_step_cache_identity_distinguishes_logical_and_physical_weights():
-    from shadowspill.pytorch.planning.identity import step_identity
-
-    def objective(net, data):
-        return net(data).sum()
-
-    options = {
-        "objective": objective,
-        "build_optimizer": lambda parameters: torch.optim.SGD(parameters, lr=0.01),
-        "hyperparams": (),
-        "example_inputs": ((torch.ones(3, 8),),),
-        "partition": "whole",
-        "profiling_metadata": None,
-        "optimizer_ordering": "interleaved",
-        "allocation_probe_seeds": 1,
-        "allocation_probe_repetitions": 1,
-        "export_bypass_key": "same-model",
-        "machine": {},
-        "environment": {},
-    }
-    quantized = model()
-    ordinary = torch.nn.Linear(8, 4, bias=False)
-    first, second = (step_identity(net, **options) for net in (quantized, ordinary))
-    assert first["model"]["parameters"] == second["model"]["parameters"]
-    assert first != second
-    before = first
-    quantized.weight.payload.add_(1)
-    assert step_identity(quantized, **options) == before  # Values are not structure.
-
-
 def test_meta_initialization_preserves_representation_and_ties():
     from shadowspill.training._model import initialize_model
 
@@ -265,46 +235,6 @@ def test_mutable_buffer_is_functional_with_logical_weight_gradients():
         gradients = pair.backward.graph_module(*saved)
         torch.testing.assert_close(gradients[0], expected_gradient)
         torch.testing.assert_close(net.total, baseline)
-
-
-def test_nested_representation_copy_uses_physical_storage_roots():
-    from shadowspill.libraries import resolve_library
-    from shadowspill.pytorch.state.model_copy import copy_model_with_runtime_storages
-    from shadowspill.pytorch.state.records import PersistentStorage
-
-    net = model()
-    net.weight = torch.nn.Parameter(
-        ScaledWeight(net.weight.detach(), torch.tensor(2.0))
-    )
-    net.tied = net.weight
-    net.register_buffer("scale_alias", net.weight.payload.scale)
-    net.register_buffer("empty", torch.empty(0, 3))
-    roots = _storage_roots(
-        [
-            NamedTensor(name, value)
-            for name, value in (
-                *net.named_parameters(remove_duplicate=False),
-                *net.named_buffers(),
-            )
-        ]
-    )
-    assert sum(owner.numel() for owner, _ in roots) == 40
-    storages = tuple(
-        PersistentStorage(i, i, 0, owner.numel(), 0, owner, views, True)
-        for i, (owner, views) in enumerate(roots)
-    )
-    torch.ops.load_library(str(resolve_library("libshadowspill_pytorch.so")))
-    copied, _ = copy_model_with_runtime_storages(net, storages, addressable=False)
-    assert copied.weight is copied.tied
-    assert copied.weight.payload.scale is copied.scale_alias
-    assert copied.empty is not net.empty
-    assert copied.empty.shape == net.empty.shape
-    assert isinstance(copied.weight.payload, ScaledWeight)
-    assert copied.weight.payload.payload.shape == net.weight.payload.payload.shape
-    assert all(item.unbacked for item in storages)
-    with pytest.raises(RuntimeError, match="non-addressable ShadowSpill pool"):
-        copied.weight.payload.payload.data_ptr()
-    assert torch.isfinite(net.weight.dense()).all()
 
 
 def test_optimizer_publishes_all_components_from_dense_master():

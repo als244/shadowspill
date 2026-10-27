@@ -210,5 +210,8 @@ with pytest.raises(Exception, match="caller-owned device outputs"):
     executor.close()
 del pending, result, actual_outputs, previous
 executor.close()
+executor.close()
+with pytest.raises(RuntimeError, match="closed"):
+    executor.run(input_loader=lambda i: oracle["examples"][i])
 assert set(compiled_kernels) - norm_kernels == lazy_kernels, compiled_kernels
 print("Qualified three saved-plan invocations", flush=True)
