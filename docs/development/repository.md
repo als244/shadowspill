@@ -21,7 +21,7 @@ shadowspill/
 ```
 
 `qualification/` owns the complete gate implementation and its documentation.
-There is no forwarding package under `src/tools/`. `qualification/gates.py`
+There is no forwarding package under `src/tools/`. `qualification/gates/`
 runs the selected gates; each gate's `matrix.py` launches its cases, and its
 `run.py` implements the single-case command. Product behavior remains under
 `src/shadowspill/`. The numerical gate is a package,

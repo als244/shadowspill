@@ -282,7 +282,7 @@ These pages live beside the code they describe, outside `docs/`.
   gate in order and reports what each found.
 - [Numerical qualification](../qualification/numerical/README.md) — planned
   steps checked against PyTorch alone, compiled fullgraph without ShadowSpill.
-- [SSD numerical qualification](../qualification/README.md#ssd-numerical-qualification)
+- [SSD numerical qualification](../qualification/numerical/ssd.md)
   — the same cases and references using the SSD pool; opt-in.
 - [Full-model performance qualification](../qualification/performance/README.md)
   — throughput floors and simulator error on the large models.

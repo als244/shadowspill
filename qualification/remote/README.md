@@ -1,5 +1,9 @@
 # The remote gate
 
+Saved-phase migration is pending: configured remote runs currently reject
+non-host spill. A missing peer still produces an explicit skip. The protocol
+below describes the retained gate, not a completed current-branch qualification.
+
 The numerical gate's matrix with one substitution: the spill pool is a region a
 daemon holds on another machine instead of pinned host memory. Same programs,
 same references, same tolerances, same routes, same cells, same spill budget.

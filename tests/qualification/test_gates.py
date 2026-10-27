@@ -10,13 +10,9 @@ from typing import Any
 
 import pytest
 
-from qualification.gates import (
-    ALL_GATES,
-    GATE_ORDER,
-    _commands,
-    _suite_report,
-    run_gates,
-)
+from qualification.gates.config import ALL_GATES, GATE_ORDER, _commands
+from qualification.gates.report import _suite_report
+from qualification.gates.run import run_gates
 
 
 class _FakeProcess:
@@ -257,7 +253,7 @@ def test_tests_run_under_ctest_are_not_reported_as_excluded(tmp_path: Path) -> N
 def test_a_run_is_named_for_the_commit_it_measured(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    from qualification import gates
+    from qualification.gates import environment as gates
 
     def fake_git(command: list[str], **kwargs: Any) -> Any:
         class _Result:
@@ -274,7 +270,7 @@ def test_a_run_is_named_for_the_commit_it_measured(
 def test_a_modified_tree_says_so_in_the_run_name(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    from qualification import gates
+    from qualification.gates import environment as gates
 
     def fake_git(command: list[str], **kwargs: Any) -> Any:
         class _Result:
@@ -290,7 +286,7 @@ def test_a_modified_tree_says_so_in_the_run_name(
 def test_naming_no_gate_runs_them_all(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    from qualification import gates
+    from qualification.gates import __main__ as gates
 
     monkeypatch.chdir(tmp_path)
     calls = _record(monkeypatch)
@@ -301,7 +297,7 @@ def test_naming_no_gate_runs_them_all(
 
 
 def test_cpu_threads_default_uses_affinity_over_shell(monkeypatch):
-    from qualification.gates import _cpu_environment
+    from qualification.gates.environment import _cpu_environment
 
     monkeypatch.setattr(os, "sched_getaffinity", lambda pid: {2, 4, 6, 8})
     monkeypatch.setenv("OMP_NUM_THREADS", "1")
@@ -315,7 +311,7 @@ def test_cpu_threads_default_uses_affinity_over_shell(monkeypatch):
 
 
 def test_cpu_threads_override_and_validation():
-    from qualification.gates import _cpu_environment
+    from qualification.gates.environment import _cpu_environment
 
     assert _cpu_environment(3)[1]["MKL_NUM_THREADS"] == "3"
     with pytest.raises(ValueError, match="positive"):
@@ -323,7 +319,7 @@ def test_cpu_threads_override_and_validation():
 
 
 def test_cpu_threads_fallback(monkeypatch):
-    from qualification.gates import _cpu_environment
+    from qualification.gates.environment import _cpu_environment
 
     monkeypatch.delattr(os, "sched_getaffinity")
     monkeypatch.setattr(os, "cpu_count", lambda: None)
@@ -339,7 +335,7 @@ def test_gate_child_receives_cpu_thread_environment(monkeypatch, tmp_path):
         return _FakeProcess(0)
 
     monkeypatch.setattr(subprocess, "Popen", popen)
-    monkeypatch.setattr("qualification.gates._host_state", lambda: "host")
+    monkeypatch.setattr("qualification.gates.run._host_state", lambda: "host")
     run_gates(["suite"], run="threads", cpu_threads=6)
     assert observed[0]["OMP_NUM_THREADS"] == "6"
     assert observed[0]["MKL_NUM_THREADS"] == "6"

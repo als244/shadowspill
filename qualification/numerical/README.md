@@ -18,8 +18,8 @@ rest of its life, and both arms must be readers of the same cached choices.
 What the gate asserts is that planning a step does not change what that step
 computes.
 
-The phase runner currently qualifies pinned-host spill. SSD and remote execution
-have not been migrated to this path.
+The default matrix uses pinned-host spill. SSD/remote qualification still needs
+saved-phase wiring; see [SSD status](ssd.md).
 
 Pure PyTorch is the default and formal numerical authority. The optional
 external implementation is selected explicitly:
@@ -29,13 +29,13 @@ python -m qualification.numerical.run run llama3 qualification/results/numerical
   --model-implementation mlops
 ```
 
-Both modes build `mlops.optim.AdamW`, naming the learning rate in `hyperparams`
-at planning and supplying it on every step. On SM80+ they retain BF16 weights,
+Both modes use `mlops.optim.AdamW`. Build records its host hyperparameters;
+execution supplies the learning rate on each invocation. On SM80+ they retain BF16 weights,
 gradients and moments with no masters; below SM80 they use FP16 weights and
 gradients with FP32 moments. Independent `--model-dtype`, `--master-dtype`,
 `--grad-dtype`, and `--opt-state-dtype` flags override that policy and travel to
 both arms. The case banner and artifacts show their resolved values. See
-[the precision options](../README.md#hardware-defaults-and-dtype-overrides).
+[the precision options](../hardware.md).
 Custom factories configure their model and optimizer with `--case-option`.
 The original default reference root remains
 `qualification/results/references/approximately_1b/`; below SM80 the default
@@ -83,7 +83,7 @@ uninterrupted run within the same per-tensor tolerance the reference
 comparison uses, real EVICT/FETCH traffic, numerical tolerances, and the
 physical device cap.
 
-A disagreement is reported as one of two kinds, and the structural kind is
+A disagreement is reported in three categories, and the structural kind is
 reported first because it decides whether the other means anything.
 `structure_failures` names states that do not have the same shape as the
 reference -- a tensor of a different geometry, a mapping with different keys, a
@@ -152,3 +152,43 @@ external allowance. It does not change model or reference identity.
 Whole-process and external memory overruns fail qualification. The obsolete
 `--reject-overbudget`/`--no-reject-overbudget` switches are removed; the execution
 API always enforces its admitted budget.
+
+## Determinism and comparison criteria
+
+The numerical gate runs every case with mlops's `deterministic_kernels`
+in effect, which asks each operation that offers the choice for the kernel
+whose accumulation order is fixed. Without it a kernel that sums with atomics
+returns a slightly different answer each run, across most of a step's gradient
+tensors, and no comparison against a reference or against a replay can mean
+anything. The ordered kernels cost
+throughput, so they are not the default outside this gate. The request covers
+reference generation as well as the planned run, so a regenerated reference is
+itself reproducible.
+
+The request is baked into a compiled graph without a guard, so a graph cached
+from a run without it would be reused rather than recompiled. The matrix gives
+each case its own compile cache and deletes it afterwards, which is what makes
+that safe here; a tool that reuses a cache across the boundary would need to
+key it on the setting.
+
+The planned arm also accumulates as the reference arm's PyTorch step does: a
+later microbatch's weight gradient narrower than float32 is written at its
+dtype by its multiply and added after it
+(`fuse_narrow_gradient_accumulation=False`), where ShadowSpill by default adds
+it inside the multiply. Float32 gradients are added inside the multiply either
+way.
+
+Against the reference, every weight must agree within a relative L2 of
+2.5 % (cosine at least 0.999, sign agreement at least 99 %); an optimizer
+moment gets 5 %, because it is an accumulator whose reduction order follows the
+plan, so the same arithmetic in two orders moves it further than it moves a
+weight. A weight that is still nothing but its optimizer steps -- every
+element of the reference within `steps` learning rates of zero, as a bias
+started at zero is after a few steps -- has no scale of its own for a relative
+bound to measure, so it is held to an absolute one instead: no element may be
+further from the reference than two learning rates, which is one step whose
+gradient sign the two runs' roundings disagreed on. The gate also requires a checkpoint replay to agree with the
+uninterrupted run within tolerance, and records whether it agreed bit for bit
+besides.
+
+Use the [nondeterminism probe](../nondeterminism/README.md) to locate a divergence.

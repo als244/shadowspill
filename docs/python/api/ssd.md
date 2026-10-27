@@ -1,7 +1,7 @@
 # SSD spill storage
 
 For model-scale correctness checks, use the opt-in
-[`numerical_ssd` qualification gate](../../../qualification/README.md#ssd-numerical-qualification).
+[`numerical_ssd` qualification gate](../../../qualification/numerical/ssd.md).
 
 `shadowspill.ssd.ssd()` configures an SSD-backed spill pool, temporary unless it
 is opened on a pool image (below). It uses
