@@ -20,8 +20,11 @@ import torch
         ("step", "save", "sharded"),
         ("step", "recompute", "sharded"),
         ("step", "save", "replicated"),
+        ("step", "recompute", "cutoff"),
         ("step", "recompute", "local_experts"),
         ("step", "recompute", "diagnostics"),
+        ("step", "auto", "fp8"),
+        ("step", "auto", "fp8_cutoff"),
     ],
 )
 def test_distributed_saved_executor(tmp_path, kind, variant, ownership):

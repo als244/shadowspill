@@ -592,6 +592,25 @@ the Program. `ranks_per_replica` describes a group collectively owning the whole
 model; `num_replicas` repeats that group. Simple DP defaults to sharded weights,
 gradients and optimizer tensors, with masters following optimizer ownership.
 
+An optional `min_shard_bytes` cutoff avoids storage collectives for tiny tensors:
+
+```python
+parallelism = Parallelism.dp(ranks_per_replica=8, min_shard_bytes=2 << 20)
+```
+
+The default is zero, preserving sharding at every size. The cutoff compares
+unpadded physical weight bytes **before sharding**, not the resulting shard size;
+equality still shards. Smaller parameters keep weights, gradients, masters and
+optimizer data replicated. Gradients still SUM across copies of the same logical
+parameter, using all-reduce before the local update. Frozen wrapper components
+are checked independently, so FP8 scales can be replicated while the payload
+stays sharded. This changes neither model partitioning nor logical parameter
+identity. Planning accounts for the increased per-rank storage and the changed
+communication. A `ParameterStorage(min_shard_bytes=0)` per-name override disables
+the cutoff for that parameter; other fields inherit their defaults as usual.
+For now this option supports forward/full-step builds; a forward/backward-only
+build still rejects configurations requiring replicated reduced gradients.
+
 `Parallelism`, `ParameterStorage`, `Replicated`, `Sharded` and `GroupRef` are
 framework-neutral. Advanced declarations use named ordered groups plus separate
 `parameter_placements` and `parameter_storage` maps. Exact names take precedence

@@ -29,6 +29,8 @@ def objective(model, x, *, labels):
 
 
 def parallelism(mode):
+    if mode == "cutoff":
+        return Parallelism.dp(ranks_per_replica=2, min_shard_bytes=100)
     if mode == "diagnostics":
         return Parallelism.dp(ranks_per_replica=2)
     replicated = mode == "replicated"

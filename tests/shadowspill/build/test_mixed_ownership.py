@@ -31,6 +31,8 @@ class Network(nn.Module):
 
 
 def parallelism(mode):
+    if mode == "cutoff":
+        return Parallelism.dp(ranks_per_replica=2, min_shard_bytes=100)
     replicas = mode == "replicated"
     storage = ParameterStorage(
         group="all_ranks",
@@ -50,7 +52,7 @@ def parallelism(mode):
 
 
 @pytest.mark.cuda
-@pytest.mark.parametrize("mode", ["replicated", "local_experts"])
+@pytest.mark.parametrize("mode", ["replicated", "local_experts", "cutoff"])
 def test_mixed_ownership_builds_and_profiles_without_groups(
     tmp_path, monkeypatch, mode
 ):
@@ -79,13 +81,22 @@ def test_mixed_ownership_builds_and_profiles_without_groups(
         for row in completions.values():
             assert row["source"] != row["stored"] == row["padding"]["output"]
             assert [phase["operation"] for phase in row["phases"]] == ["all_reduce"]
-    else:
+    elif mode == "local_experts":
         local = completions["local"]
         assert local["source"] == local["stored"] and not local["phases"]
         assert local["padding"] is None
         assert len(program.bindings["gradient_shards"]) == 1
         assert [phase["operation"] for phase in completions["shared"]["phases"]] == [
             "reduce_scatter"
+        ]
+    else:
+        assert len(program.bindings["weight_shards"]) == 1
+        assert len(program.bindings["gradient_shards"]) == 1
+        assert [p["operation"] for p in completions["shared"]["phases"]] == [
+            "reduce_scatter"
+        ]
+        assert [p["operation"] for p in completions["local"]["phases"]] == [
+            "all_reduce"
         ]
     profiles = measure_program(program, warmup_seconds=0.001, measure_seconds=0.002)
     profiled = apply_profiles(program, profiles)

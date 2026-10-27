@@ -91,6 +91,7 @@ class Parallelism:
         weights: StorageMode = "sharded",
         gradients: StorageMode = "sharded",
         optimizer: StorageMode = "sharded",
+        min_shard_bytes: int = 0,
     ) -> Parallelism:
         return cls(
             ranks_per_replica=ranks_per_replica,
@@ -100,6 +101,7 @@ class Parallelism:
                 weights=weights,
                 gradients=gradients,
                 optimizer=optimizer,
+                min_shard_bytes=min_shard_bytes,
             ),
         )
 

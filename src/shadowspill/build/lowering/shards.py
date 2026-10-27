@@ -17,15 +17,26 @@ def weight_shards(
     sizes = {item.alias_group_id: item.size_bytes for item in program.alias_groups}
     registered_sizes = model_storage_bytes(program)
     geometry = program.bindings["model_tensor_geometry"]
+    entries = []
+    for entry in program.bindings["registrations"]:
+        parameter = by_name[entry["name"]]
+        object_id = entry["object_id"]
+        groups = parameter.weights.groups
+        # A frozen representation has independently stored physical components:
+        # keep tiny scales replicated even when its payload remains sharded.
+        if (
+            not parameter.trainable
+            and registered_sizes[aliases[object_id]] < parameter.min_shard_bytes
+        ):
+            groups = tuple((rank,) for rank in sorted(r for g in groups for r in g))
+        entries.append((parameter, object_id, groups))
     # Model storage must have the same extent in forward and training Programs.
     # Even replicated weights need padding when shard-local optimizers publish
     # equal-sized updated slices into that allocation.
     alignments: dict[str, int] = {}
-    for entry in program.bindings["registrations"]:
-        parameter = by_name[entry["name"]]
-        object_id = entry["object_id"]
+    for parameter, object_id, groups in entries:
         alias = aliases[object_id]
-        count = len(parameter.weights.groups[0])
+        count = len(groups[0])
         if parameter.trainable:
             count = lcm(count, len(parameter.optimizer.groups[0]))
         alignment = geometry[object_id]["element_size"] * count
@@ -33,11 +44,8 @@ def weight_shards(
     for alias, alignment in alignments.items():
         sizes[alias] = (sizes[alias] + alignment - 1) // alignment * alignment
     shards: dict[str, Any] = {}
-    for entry in program.bindings["registrations"]:
-        parameter = by_name[entry["name"]]
-        groups = parameter.weights.groups
+    for _, object_id, groups in entries:
         count = len(groups[0])
-        object_id = entry["object_id"]
         alias = aliases[object_id]
         width = geometry[object_id]["element_size"]
         chunk = (sizes[alias] + width * count - 1) // (width * count) * width

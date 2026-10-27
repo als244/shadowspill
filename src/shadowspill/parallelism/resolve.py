@@ -17,12 +17,17 @@ class ParameterGeometry:
     names: tuple[str, ...]
     shape: tuple[int, ...]
     trainable: bool
+    storage_bytes: int | None = None
 
     def __post_init__(self) -> None:
         if not self.names or len(set(self.names)) != len(self.names):
             raise ValueError("parameter geometry needs unique registered names")
         if any(type(size) is not int or size < 0 for size in self.shape):
             raise ValueError("parameter shapes must contain nonnegative integers")
+        if self.storage_bytes is not None and (
+            type(self.storage_bytes) is not int or self.storage_bytes < 0
+        ):
+            raise ValueError("parameter storage bytes must be a nonnegative integer")
 
 
 def resolve_parameters(
@@ -65,6 +70,10 @@ def _resolve(spec: Parallelism, item: ParameterGeometry) -> ParameterOwnership:
         # instances. Distinct parameters must have distinct registered names.
         copies = (tuple(range(spec.world_size)),)
     by_rank = {rank: members for members in copies for rank in members}
+    cutoff = storage.min_shard_bytes or 0
+    if cutoff and item.storage_bytes is None:
+        raise ValueError(f"{item.names[0]}: min_shard_bytes requires physical sizes")
+    small = item.storage_bytes is not None and item.storage_bytes < cutoff
 
     def ownership(component: Component) -> StorageOwnership:
         groups = spec.group(storage.group_for(component)).groups
@@ -74,7 +83,7 @@ def _resolve(spec: Parallelism, item: ParameterGeometry) -> ParameterOwnership:
                     f"{item.names[0]} {component}: storage group combines different "
                     "logical parameter shards"
                 )
-        if getattr(storage, component) == "replicated":
+        if small or getattr(storage, component) == "replicated":
             groups = tuple((rank,) for rank in range(spec.world_size))
         return StorageOwnership(prod(item.shape), groups)
 
@@ -88,4 +97,5 @@ def _resolve(spec: Parallelism, item: ParameterGeometry) -> ParameterOwnership:
         ownership("weights"),
         ownership("gradients"),
         ownership("optimizer"),
+        cutoff,
     )

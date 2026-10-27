@@ -106,9 +106,18 @@ try:
             seen.add(request.name)
             wanted = expected["state"][request.name].reshape(-1)
             try:
+                wanted = wanted[request.offset : request.offset + chunk.numel()]
+                if request.name in fixture.get("exact_names", ()):
+                    torch.testing.assert_close(
+                        chunk.view(torch.uint8),
+                        wanted.view(torch.uint8),
+                        rtol=0,
+                        atol=0,
+                    )
+                    return
                 torch.testing.assert_close(
                     chunk,
-                    wanted[request.offset : request.offset + chunk.numel()],
+                    wanted,
                     **tolerance(request.name),
                 )
             except AssertionError as error:
@@ -120,7 +129,10 @@ try:
                 )
 
         executor.export_tensors(compare, chunk_bytes=28)
-        assert seen == expected["state"].keys(), (seen, expected["state"].keys())
+        nonempty = expected["state"].keys() - set(
+            fixture.get("empty_by_rank", {}).get(logical, ())
+        )
+        assert seen == nonempty, (seen, nonempty)
         all_failures = [None] * dist.get_world_size()
         dist.all_gather_object(all_failures, failures)
         assert not any(all_failures), all_failures

@@ -23,7 +23,15 @@ def build(path, kind, ownership="sharded"):
     fixture = oracle(kind, dtype) if ownership == "sharded" else None
     template = Network(dtype=dtype, device="meta")
     parallelism = Parallelism.dp(ranks_per_replica=2)
-    if ownership != "sharded":
+    if ownership in {"fp8", "fp8_cutoff"}:
+        from tests.shadowspill.execution import _fp8_fixture as quantized
+
+        cutoff = 1024 if ownership == "fp8_cutoff" else 0
+        fixture = quantized.oracle(min_shard_bytes=cutoff)
+        template = quantized.Network(device="meta")
+        parallelism = Parallelism.dp(ranks_per_replica=2, min_shard_bytes=cutoff)
+        objective = quantized.objective
+    elif ownership != "sharded":
         from tests.shadowspill.execution import _ownership_fixture as case
 
         assert kind == "step"

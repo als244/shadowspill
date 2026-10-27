@@ -42,6 +42,7 @@ class ParameterOwnership:
     weights: StorageOwnership
     gradients: StorageOwnership
     optimizer: StorageOwnership
+    min_shard_bytes: int = 0
 
     def copies(self, logical_rank: int) -> tuple[int, ...]:
         return GroupRef(self.name, self.copy_groups).members(logical_rank)

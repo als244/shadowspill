@@ -8,6 +8,7 @@ from shadowspill.artifacts.program import Program
 from shadowspill.parallelism import Parallelism
 from shadowspill.parallelism.ownership import ParameterOwnership
 from shadowspill.parallelism.resolve import ParameterGeometry, resolve_parameters
+from shadowspill.pytorch.representations import tensor_components
 
 
 def model_parallelism(
@@ -26,7 +27,17 @@ def model_parallelism(
         names.setdefault(id(value), []).append(name)
         values[id(value)] = value
     geometry = tuple(
-        ParameterGeometry(tuple(names[key]), tuple(value.shape), value.requires_grad)
+        ParameterGeometry(
+            tuple(names[key]),
+            tuple(value.shape),
+            value.requires_grad,
+            sum(
+                {
+                    leaf.untyped_storage()._cdata: leaf.untyped_storage().nbytes()
+                    for _, leaf in tensor_components(value)
+                }.values()
+            ),
+        )
         for key, value in values.items()
     )
     return spec, resolve_parameters(spec, geometry)
