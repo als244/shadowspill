@@ -3,7 +3,6 @@
 Calculations, rendering and the per-plan CLI are separate modules.
 """
 
-from .cli import main
 from .clock import Clock
 from .execution import (
     LeaseClock,
@@ -50,7 +49,6 @@ __all__ = [
     "cheapest_selections",
     "describe_plan",
     "execution_occupancy",
-    "main",
     "page_data",
     "placement_rows",
     "program_path_for",
