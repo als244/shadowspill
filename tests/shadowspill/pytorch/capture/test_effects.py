@@ -9,8 +9,10 @@ import torch
 from torch import nn
 from torch._higher_order_ops.effects import _EffectType, _register_effectful_op
 
+from shadowspill.build.compilation import compile_task
 from shadowspill.pytorch.capture.export import capture_forward, inference_artifact
 from shadowspill.pytorch.capture.objective import capture_training
+from shadowspill.pytorch.executable import restore_executable
 from shadowspill.pytorch.graph_pairs.serialization import CachedAotGraphPair
 
 _EVENTS: list[tuple[str, int]] = []
@@ -115,13 +117,16 @@ def test_graph_pair_keeps_effect_order_and_correct_gradients(variant, ordered_ba
     assert pair.forward.argument_count == 2
     assert pair.backward.argument_count == pair.saved_value_count
     assert all(value.numel() > 0 for value in pair.backward.example_arguments)
+    # The saved executable must retain the effect chain as well as the FX pair.
+    forward = restore_executable(compile_task(pair.forward).payload)
+    backward = restore_executable(compile_task(pair.backward).payload)
 
     _EVENTS.clear()
-    outputs = pair.forward.graph_module(model.weight, x)
+    outputs = forward(model.weight, x)
     torch.testing.assert_close(outputs[0], expected)
     assert _EVENTS == [("forward", 1), ("forward", 2)]
     _EVENTS.clear()
-    actual_grads = pair.backward.graph_module(*outputs[1:])
+    actual_grads = backward(*outputs[1:])
     for actual, reference in zip(actual_grads, expected_grads, strict=True):
         torch.testing.assert_close(actual, reference)
     expected_events = [("forward", 1), ("forward", 2)] if variant == "recompute" else []

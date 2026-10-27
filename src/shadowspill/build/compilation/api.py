@@ -116,7 +116,19 @@ def compile_task(
         )
         return _package(compiled, artifact.storage_contract, input_offsets)
 
-    with torch.no_grad(), config.patch({"shape_padding": False}):
+    with (
+        torch.no_grad(),
+        config.patch({"shape_padding": False}),
+        torch._functorch.config.patch(
+            {
+                # Ordered effects cannot use AOT's reusable graph cache key.
+                # Its precompile fallback gives these tasks a unique key while
+                # retaining the full effect chain and bundled serialization.
+                "bypass_autograd_cache_key": True,
+                "strict_autograd_cache": True,
+            }
+        ),
+    ):
         result = invoke()
         if result is None:
             # Preserve AOT bundling: force_disable_caches also disables the
