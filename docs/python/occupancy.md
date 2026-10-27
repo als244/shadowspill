@@ -16,8 +16,8 @@ where the digest is the selection's `program_digest`. A certified plan's
 admitted layout is in `certificate.npz` beside its selection, and the tool
 reads the two together; a selection with no certificate beside it is read as
 it stands. The tool finds the program from the selection; `--program` names
-one explicitly. The quickstart writes both under a run's `plan_store/`, and
-`steps/<budget>gib.json` beside them is the traced step for `--step`.
+one explicitly. These are low-level planner artifacts. For current phase archives and
+quickstart results, use `write_report(plan_or_sweep, path)`.
 
 Some entries under `results/` name a plan without carrying its evidence (no
 `simulation_result`); the tool refuses those and says so.
@@ -26,8 +26,6 @@ Some entries under `results/` name a plan without carrying its evidence (no
 python -m shadowspill.diagnostics.occupancy <selection.json>
     [--program program.json] [--step steps/12gib.json] [--tokens-per-step N]
     [--by category|role] [--at 5.46,11.05] [--html DIRECTORY] [--json]
-
-python -m shadowspill.diagnostics.occupancy --run <run directory> [--html DIRECTORY]
 ```
 
 | argument | meaning |
@@ -40,9 +38,8 @@ python -m shadowspill.diagnostics.occupancy --run <run directory> [--html DIRECT
 | `--by` | Group by the tool's categories (the default) or by the program's object roles. |
 | `--at` | Seconds into the step to add as columns beside the peak. |
 | `--tokens-per-step` | The step's tokens, for the tokens-per-second figure in the page's summary. |
-| `--html` | A directory to write the pages into: one page per view, `simulated.html` and `traced.html`, and an `index.html` that links them and carries the tables. Each page names its pool capacities under the title; a run's pages (below) name the whole plan. |
+| `--html` | A directory to write the pages into: one page per view, `simulated.html` and `traced.html`, and an `index.html` that links them and carries the tables. Each page names its pool capacities under the title. |
 | `--json` | The snapshots as JSON instead of tables. |
-| `--run` | A quickstart run directory instead of one selection: pages for every plan it made, under its `timelines/` (or `--html`). See below. |
 
 ## What the tables say
 
@@ -193,74 +190,11 @@ contrast a budgeted plan's page is read against. Two floors differ in
 whose alternatives they are taken at.
 
 - **`--unconstrained`**, the plan's own: its alternatives as the plan fixed
-  them, recomputation included, so the compute is what that plan does. A
-  run's `timelines/` carries one beside every plan and every kept
-  resolution.
+  them, recomputation included, so the compute is what that plan does.
 - **`--all-save`**, the program's: every alternative at its cheapest option
   by the profiles, which for a save-or-recompute choice is `save`. This is
   the compute floor the planner reports as the unconstrained step and the
-  figures draw as the ceiling. A run's `timelines/` carries one per
-  geometry, under `all_save/`.
-
-## A whole run
-
-`--run` takes a quickstart run directory (the one holding `search.json`,
-`steps/` and `plan_store/`) and writes its `timelines/`, which every
-quickstart run also writes as it closes:
-
-```text
-timelines/
-  index.html                       the table of contents for everything
-  summary.csv                      one row per page: the summary its cards show
-  <budget>/index.html              the budget: each geometry's choice and resolutions
-  <budget>/traced.html             the step that ran at this budget, on the device's
-                                   clock: a copy of the one in its plan's folder
-  <budget>/<geometry>_<walk>/index.html     the plan the search chose there, and what it kept
-  <budget>/<geometry>_<walk>/recompute_<share>/   one resolution: simulated.html,
-                                            unconstrained.html (its own floor), and
-                                            traced.html in the chosen one's, when it ran
-  all_save/index.html              every geometry at its cheapest alternatives
-  all_save/<geometry>_<walk>/all_save.html  that floor, which no budget bounds
-```
-
-Budget first, since a budget is what a run is asked for and geometry and
-resolution are what the search chose under it. A plan's folder is named by
-the share of the program's flexible groups it recomputes, by the planner's
-own rule (`recompute_share`), as the plan store names a kept resolution:
-`recompute_0` is all save, `recompute_3of4` three groups in four. The
-search's choice sits under its share like the others kept beside it, and is
-marked as the choice in every index; when the search kept no resolutions
-the choice is the only folder. Every folder's `index.html` links its own
-pages, carries their tables, and points to the folders around it: the
-choice's names the resolutions kept beside it, its geometry's all-save
-floor, its budget and the root; a resolution's names the choice. The root
-index lists every budget that ran with its traced step, then every budget
-with a row per geometry, the share chosen, its pages and the resolutions
-beside it, then the all-save floors.
-
-A stored plan names its program and its capacities but not the geometry
-the search called it, so the two are matched by the simulated makespan a
-search point and its stored plan share, and, where several budgets share
-one plan, by the program digest, which is one geometry walked one way. A
-budget that ran is matched to its plan by the makespan its traced step
-records, and the traced page lands in that plan's folder, with a copy at
-the budget's own level, `<budget>/traced.html`, since one geometry runs per
-budget. Tokens per second come from the run's `request.json`.
-
-`summary.csv` has one row per page, the summary the page's cards show
-beside what identifies the plan, in the order `SUMMARY_COLUMNS` names:
-`kind` (`chosen`, `resolution`, `all_save`), `geometry`, `budget`,
-`resolution` (the share recomputed), `selected` (whether the search chose
-it), `view`, `page` (the path under
-`timelines/`), then `step_seconds`, `tokens_per_second`, `spill_peak_gib`,
-`execution_peak_gib`, `idle_percent`, `recompute_percent`, the two lanes'
-utilisation, bytes and achieved rate, the assumed rates, and
-`untimed_transfers`, `interpolated_leases`, `pool_capacity_gib` and
-`spill_capacity_gib`. A traced page's row holds the device's numbers, the
-simulated page's the simulator's, so the two rows of one plan read
-against each other; the budget-level copy of a traced page has no row of
-its own.
-
+  figures draw as the ceiling.
 
 ## From Python
 
@@ -280,6 +214,4 @@ returns a `PlanOccupancy` with `spill` and `execution` (`Occupancy` objects
 with `at`, `peak`, `peaks_by` and `series`), the `tasks` and `transfers` as
 spans, the `facts` the attribution rests on and, on the device's clock,
 `interpolated_leases`, the lease instants no traced event named;
-`write_pages` and `table` take those. `write_run_timelines(run_root,
-out=None, progress=None)` writes a run's tree and tells `progress` when it
-starts and as each geometry finishes.
+`write_pages` and `table` take those.

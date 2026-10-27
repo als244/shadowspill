@@ -1,8 +1,6 @@
 from __future__ import annotations
 
-import json
 import tempfile
-import traceback
 from dataclasses import replace
 from datetime import timedelta
 from pathlib import Path
@@ -30,21 +28,17 @@ from shadowspill.ir import (
     TransferPhase,
     TransferSpec,
 )
-from shadowspill.planner import GenericPlanningOptions, SearchOptions
+from shadowspill.planner import plan_program
 from shadowspill.planner.admission import (
     AdmissionFacts,
     TaskAdmissionSpec,
     TaskAllocationStep,
     TaskAllocationStepKind,
 )
-from shadowspill.planner.annotated_plan import AnnotatedProgramPlan
 from shadowspill.planner.program_inputs import ShadowSpillPlanningProblem
 from shadowspill.pytorch.distributed import Distributed
-from shadowspill.pytorch.distributed._control import PreparationError
 from shadowspill.pytorch.distributed._plan_exchange import pack
-from shadowspill.pytorch.distributed._search import DistributedPlanner
 from shadowspill.pytorch.distributed._symmetry import Symmetry, verify
-from shadowspill.search.planner import _Planner
 from shadowspill.simulator import SimulationConfig
 
 
@@ -233,8 +227,12 @@ def test_received_plan_uses_normal_admission_for_shared_residency(
             value.admission_facts, pool_capacity_bytes=192, object_capacity_bytes=128
         ),
     )
-    selected = _Planner(None, None, tmp_path, None, "contribute", False).plan(
-        value, 288, 1024
+    selected = plan_program(
+        value,
+        execution_budget=288,
+        spill_budget=1024,
+        artifact_store=tmp_path,
+        verbose=False,
     )
     received = contract(value).receive(pack(selected, compact_facts=compact_facts))
     assert received.facts == selected.effective_facts
@@ -244,8 +242,12 @@ def test_received_plan_uses_normal_admission_for_shared_residency(
 @pytest.mark.parametrize("difference", ["workspace", "alignment", "pool", "capacity"])
 def test_compact_received_plan_rejects_changed_allocation_facts(tmp_path, difference):
     value = problem()
-    selected = _Planner(None, None, tmp_path, None, "contribute", False).plan(
-        value, 288, 1024
+    selected = plan_program(
+        value,
+        execution_budget=288,
+        spill_budget=1024,
+        artifact_store=tmp_path,
+        verbose=False,
     )
     payload = pack(selected, compact_facts=True)
     local = contract(value)
@@ -272,8 +274,12 @@ def test_compact_received_plan_rejects_changed_allocation_facts(tmp_path, differ
 
 def test_compact_plan_keeps_persisted_facts_self_contained(tmp_path):
     value = problem()
-    selected = _Planner(None, None, tmp_path, None, "contribute", False).plan(
-        value, 288, 1024
+    selected = plan_program(
+        value,
+        execution_budget=288,
+        spill_budget=1024,
+        artifact_store=tmp_path,
+        verbose=False,
     )
     compact = pack(selected, compact_facts=True)
     assert "tasks" not in compact["facts"]
@@ -282,82 +288,27 @@ def test_compact_plan_keeps_persisted_facts_self_contained(tmp_path):
     assert AdmissionFacts.from_dict(full["facts"]) == selected.effective_facts
 
 
-def distributed_worker(rank, root, failure):
-    torch.set_num_threads(1)
+def distributed_worker(rank, root):
     dist.init_process_group(
         "gloo",
         init_method="file://" + str(Path(root, "rendezvous")),
         rank=rank,
         world_size=2,
-        timeout=timedelta(seconds=50),
+        timeout=timedelta(seconds=30),
     )
-    bound = Distributed(dist.group.WORLD, symmetric_planning=True, timeout=30)._bind(
+    bound = Distributed(dist.group.WORLD, symmetric_planning=True, timeout=20)._bind(
         torch.nn.Linear(1, 1), dist.group.WORLD, namespace="symmetric"
     )
-    options = SearchOptions(
-        workers=1,
-        generic=GenericPlanningOptions(
-            minimum_object_bytes_evict_eligible=0, deterministic=True
-        ),
-    )
-    planner = DistributedPlanner(
-        None, options, Path(root, f"rank-{rank}"), None, "contribute", False, True
-    )
-    calls = 0
-    original_plan = _Planner.plan
-
-    def counted(self, *args, **kwargs):
-        nonlocal calls
-        calls += 1
-        if failure and rank == 0:
-            raise RuntimeError("injected CPU search failure")
-        return original_plan(self, *args, **kwargs)
-
-    _Planner.plan = counted
     try:
-        if failure:
-            with (
-                pytest.raises(
-                    (RuntimeError, PreparationError),
-                    match="injected CPU search failure",
-                ),
-                bound.activate(),
-            ):
-                planner.prepare_geometry(
-                    (problem(rank),), ((288, 1024),), incumbents=True
-                )
-            return
         with bound.activate():
             local = problem(rank)
-            selected = planner.plan(local, 288, 1024)
-            assert calls == 1  # two alternatives, exactly one searched per rank
-            assert len(selected.result.resolutions) == 2
-            assert selected.result.program.devices == local.program.devices
-            assert [
-                p.compatibility_digest for p in selected.result.program.profiles
-            ] == [p.compatibility_digest for p in local.program.profiles]
-            assert [p.runtime_ns for p in selected.result.program.profiles] == [
-                0,
-                30,
-                50,
-            ]
+            shared, evidence = verify(contract(local))
+            assert shared is not None and evidence["mode"] == "symmetric"
+            assert [p.runtime_ns for p in shared.program.profiles] == [0, 30, 50]
             assert (
-                selected.transfer_bandwidths.fetch_solo_bytes_per_second == 500_000_000
+                shared.config.devices[0].fetch_solo_bandwidth_bytes_per_second
+                == 500_000_000
             )
-            assert (
-                selected.fixed_layout.required_bytes
-                <= selected.effective_facts.pool_capacity_bytes
-            )
-            restored = AnnotatedProgramPlan.from_json(selected.to_json())
-            assert restored.simulation.makespan_ns == selected.simulation.makespan_ns
-            bound.control.agree(
-                "test/selection",
-                [item.to_dict() for item in selected.result.selections],
-            )
-
-            # Different capacities reject sharing before the candidate search.
-            # Local shard groups have independent collective calibrations;
-            # the shared plan must use the slowest matching phase everywhere.
             transferred = replace(
                 local.program.alias_groups[0],
                 transfer=TransferSpec(
@@ -376,31 +327,15 @@ def distributed_worker(rank, root, failure):
             )
             phased = replace(
                 contract(local),
-                program=replace(
-                    local.program,
-                    alias_groups=(transferred,),
-                ),
+                program=replace(local.program, alias_groups=(transferred,)),
             )
-            shared, evidence = verify(phased)
+            shared, _ = verify(phased)
             assert shared is not None
             assert shared.program.alias_groups[0].transfer.fetch[1].duration_ns == 20
-            assert evidence["mode"] == "symmetric"
-
-            # Autotuned kernels can use different temporary sizes without
-            # changing outputs, allocation order, or the task's peak workspace.
             task = local.admission_facts.tasks[-1]
             varied = replace(
-                local,
-                program=replace(
-                    local.program,
-                    profiles=tuple(
-                        replace(profile, runtime_ns=500)
-                        if profile.profile_id == "save"
-                        else profile
-                        for profile in local.program.profiles
-                    ),
-                ),
-                admission_facts=replace(
+                contract(local),
+                facts=replace(
                     local.admission_facts,
                     tasks=(
                         *local.admission_facts.tasks[:-1],
@@ -417,111 +352,20 @@ def distributed_worker(rank, root, failure):
                     ),
                 ),
             )
-            shared, evidence = verify(contract(varied))
+            shared, evidence = verify(varied)
             assert shared is not None
             assert shared.facts.tasks[-1].allocation_steps[0].charged_bytes == 2
             assert evidence["allocation_policy"].startswith("max_anonymous")
-            varied_plan = planner.plan(varied, 288, 1024)
-            assert varied_plan.result.selections[0].option_id == "recompute"
-            assert (
-                varied_plan.effective_facts.tasks[-1].allocation_steps[0].charged_bytes
-                == 2
-            )
-            planner.prepare_geometry((varied,), ((288, 1024),), incumbents=True)
-            shared_answer = planner.answer(varied, 288, 1024, None)
-            assert shared_answer.plan is not None
-            assert (
-                shared_answer.plan.effective_facts.tasks[-1]
-                .allocation_steps[0]
-                .charged_bytes
-                == 2
-            )
-
-            # Different capacities reject sharing before the candidate search.
-            unequal = replace(contract(local), scratch=rank)
-            shared, evidence = verify(unequal)
+            shared, evidence = verify(replace(contract(local), scratch=rank))
             assert shared is None and "scratch_reserve" in evidence["reason"]
-
-            unequal_problem = replace(local, dynamic_scratch_reserve_bytes=rank)
-            calls = 0
-            planner.prepare_geometry(
-                (unequal_problem,), ((288, 1024),), incumbents=True
-            )
-            assert not planner._prepared_answers
-            fallback = planner.answer(unequal_problem, 288, 1024, None)
-            assert fallback.plan is not None and calls == 2
-
-            second = replace(
-                local,
-                program=replace(
-                    local.program,
-                    profiles=tuple(
-                        replace(p, runtime_ns=p.runtime_ns * 2)
-                        for p in local.program.profiles
-                    ),
-                ),
-            )
-            calls = 0
-            earlier = set(Path(root, f"rank-{rank}").rglob("distributed/plans/*.json"))
-            budgets = ((288, 1024), (352, 1024))
-            planner.prepare_geometry((local, second, local), budgets, incumbents=True)
-            assert calls == 2  # one ordering, both budgets, on each rank
-            for value in (local, second, local):
-                prior = None
-                for budget in budgets:
-                    answer = planner.answer(value, *budget, None)
-                    assert answer.plan is not None
-                    assert len(answer.plan.result.resolutions) == 2
-                    if prior is not None:
-                        assert answer.makespan_ns <= prior
-                    prior = answer.makespan_ns
-                    bound.control.agree(
-                        "test/batched_choice",
-                        [item.to_dict() for item in answer.plan.result.selections],
-                    )
-            assert calls == 2
-            saved = (
-                set(Path(root, f"rank-{rank}").rglob("distributed/plans/*.json"))
-                - earlier
-            )
-            assert len(saved) == 4
-            for path in saved:
-                assert len(json.loads(path.read_text())["plan"]["resolutions"]) == 2
-
-            # Resume with warm owner caches. Every rank must still receive all
-            # retained resolutions, even if its earlier sidecars were lost.
-            for path in saved:
-                path.unlink()
-            planner.prepare_geometry((local, second, local), budgets, incumbents=True)
-            for value in (local, second, local):
-                for budget in budgets:
-                    answer = planner.answer(value, *budget, None)
-                    assert len(answer.plan.result.resolutions) == 2
-            rebuilt = (
-                set(Path(root, f"rank-{rank}").rglob("distributed/plans/*.json"))
-                - earlier
-            )
-            assert rebuilt
-            for path in rebuilt:
-                assert len(json.loads(path.read_text())["plan"]["resolutions"]) == 2
-    except BaseException:
-        Path(root, f"failure-rank-{rank}.txt").write_text(traceback.format_exc())
-        traceback.print_exc()
-        raise
     finally:
-        _Planner.plan = original_plan
         bound.close()
         dist.destroy_process_group()
 
 
-@pytest.mark.parametrize("failure", [False, True])
-def test_shared_search_with_real_cpu_processes(failure):
+def test_rank_profiles_reconcile_with_real_cpu_processes():
     with tempfile.TemporaryDirectory() as root:
-        try:
-            mp.spawn(distributed_worker, args=(root, failure), nprocs=2, join=True)
-        finally:
-            for path in Path(root).glob("failure-rank-*.txt"):
-                print(path.read_text())
+        mp.spawn(distributed_worker, args=(root,), nprocs=2, join=True)
 
 
 def test_reconciliation_rejects_combined_workspace_peak():

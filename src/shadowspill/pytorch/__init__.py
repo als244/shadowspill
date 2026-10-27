@@ -23,7 +23,6 @@ if TYPE_CHECKING:
     from .api import build_step_programs as build_step_programs
     from .api import plan_forward as plan_forward
     from .api import plan_step as plan_step
-    from .api import prepare_step as prepare_step
     from .callables import PlannedForward as PlannedForward
     from .callables import PlannedTrainStep as PlannedTrainStep
     from .contracts import ObjectiveResult as ObjectiveResult
@@ -62,9 +61,6 @@ if TYPE_CHECKING:
     from .invocation import InvocationResult as InvocationResult
     from .partition import PartitionPolicy as PartitionPolicy
     from .partition import PartitionSpec as PartitionSpec
-    from .prepared import PreparedStep as PreparedStep
-    from .prepared_api import admit_step as admit_step
-    from .prepared_api import search_prepared_steps as search_prepared_steps
     from .profiling import ProfilingOptions as ProfilingOptions
     from .runtime import Runtime as Runtime
     from .sharing import ObjectConsistency as ObjectConsistency
@@ -87,11 +83,6 @@ if TYPE_CHECKING:
     from .state import read_optimizer_state as read_optimizer_state
     from .state import release_model_state as release_model_state
     from .state import write_pool_image as write_pool_image
-    from .step_search import GraphPairOutcome as GraphPairOutcome
-    from .step_search import StepSearchGeometryBuild as StepSearchGeometryBuild
-    from .step_search import StepSearchPoint as StepSearchPoint
-    from .step_search import StepSearchReport as StepSearchReport
-    from .step_search import plan_step_search as plan_step_search
 
 _GROUPS = {
     "shadowspill.runtime": (
@@ -105,7 +96,7 @@ _GROUPS = {
         "RuntimeExecutionError",
         "RuntimeFailureDiagnostics",
     ),
-    ".api": ("build_step_programs", "plan_forward", "plan_step", "prepare_step"),
+    ".api": ("build_step_programs", "plan_forward", "plan_step"),
     ".callables": ("PlannedForward", "PlannedTrainStep"),
     ".contracts": ("ObjectiveResult", "TensorSpec"),
     ".diagnostics": (
@@ -141,8 +132,6 @@ _GROUPS = {
     ),
     ".invocation": ("InvocationResult",),
     ".partition": ("PartitionPolicy", "PartitionSpec"),
-    ".prepared": ("PreparedStep",),
-    ".prepared_api": ("admit_step", "search_prepared_steps"),
     ".profiling": ("ProfilingOptions",),
     ".runtime": ("Runtime",),
     ".sharing": (
@@ -166,13 +155,6 @@ _GROUPS = {
         "read_optimizer_state",
         "release_model_state",
         "write_pool_image",
-    ),
-    ".step_search": (
-        "GraphPairOutcome",
-        "StepSearchGeometryBuild",
-        "StepSearchPoint",
-        "StepSearchReport",
-        "plan_step_search",
     ),
     ".distributed": ("Distributed", "TransferSharding"),
 }

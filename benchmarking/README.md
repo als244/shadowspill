@@ -13,9 +13,6 @@ benchmarking/
 ├── quickstart/                         plan and run one model, story told
 ├── quickstart.md                       its guide: flags, phases, terms
 ├── bandwidth_frontier/                 CPU sweeps from ProfiledProgram archives
-├── quickstart_timeline.py               export existing timelines for slides
-├── quickstart_tradeoff.py               export throughput/overhead comparison slides
-├── quickstart_timeline.md               shared figure and slide export guide
 ├── quickstart_reports/                 one directory per quickstart run
 ├── program_collection/
 │   ├── collect.py                      the launcher
@@ -37,9 +34,9 @@ it searches microbatch geometries across execution budgets, optionally
 renders figures, and runs the winning plan. It is the tour, and the fastest
 way to see the whole system work.
 
-[**Quickstart slides**](quickstart_timeline.md) exports memory/compute/transfer
-timelines or memory-budget/throughput comparisons as PNG/SVG/PDF and optional
-PowerPoint slides. Both exporters use saved results and need no GPU.
+Quickstart uses `write_report` for saved-Plan summaries, plots and timelines.
+The [video tools](../src/tools/pressurefit_trace/README.md#completed-quickstart-winners)
+render completed winners directly from their saved Plans.
 
 [**Bandwidth frontier**](bandwidth_frontier/README.md) replans saved
 `ProfiledProgram` candidates across memory budgets and communication rates.

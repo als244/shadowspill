@@ -1,7 +1,6 @@
 """Pool occupancy and timelines for stored plans and traced steps.
 
-Calculations, rendering, stored-run discovery and the CLI are separate modules.
-The functions re-exported here retain the existing API.
+Calculations, rendering and the per-plan CLI are separate modules.
 """
 
 from .cli import main
@@ -27,16 +26,13 @@ from .intervals import (
 )
 from .page import describe_plan, page_data, table, write_pages
 from .plan import PlanOccupancy, all_save, attribute, cheapest_selections, unconstrained
-from .run.records import SUMMARY_COLUMNS
-from .run.write import recompute_share_of, write_run_timelines
 from .spill import spill_occupancy
-from .stored import StoredPlan, program_path_for, stored_plans
+from .stored import program_path_for
 from .summary import summarize
 
 __all__ = [
     "CATEGORY_ORDER",
     "ROLE_PRIORITY",
-    "SUMMARY_COLUMNS",
     "UNATTRIBUTED",
     "WORKSPACE",
     "Clock",
@@ -46,7 +42,6 @@ __all__ = [
     "Occupancy",
     "PlanOccupancy",
     "ProgramFacts",
-    "StoredPlan",
     "TaskSpan",
     "TransferSpan",
     "all_save",
@@ -59,15 +54,12 @@ __all__ = [
     "page_data",
     "placement_rows",
     "program_path_for",
-    "recompute_share_of",
     "selected_task_ids",
     "spill_occupancy",
     "storage_handoffs",
-    "stored_plans",
     "summarize",
     "table",
     "task_spans",
     "unconstrained",
     "write_pages",
-    "write_run_timelines",
 ]

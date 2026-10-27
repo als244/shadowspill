@@ -174,9 +174,6 @@ Task-oriented pages: how to do something, and how to read what comes back.
   reconciliation, with a complete field reference.
 - [program and annotated-plan JSON](python/planning-json.md) — canonical program,
   ShadowSpillPlanningProblem, StepProgram, and AnnotatedProgramPlan schemas.
-- [Figures over a step search](python/plots.md) — the figure tree, what each
-  plot represents, the conventions they share, and how `raw_data/` redraws
-  them.
 - [Errors, failures, and cleanup](python/failures.md) — exception taxonomy,
   structured runtime evidence, rollback, and teardown.
 
@@ -196,7 +193,7 @@ and the contract behind it.
   diagnostics classes and how they are requested.
 - [Framework-neutral Python API](python/api/neutral.md) — `shadowspill.ir`,
   `shadowspill.planner`, `shadowspill.simulator`, `shadowspill.runtime`,
-  `shadowspill.search`, and the frontend interface, for tooling and independent
+  `shadowspill.planning`, and the frontend interface, for tooling and independent
   planning.
 - [Timing: the step on the device clock](python/api/timing.md) — the events
   every invocation records, the cycle they define, and the API that reads
@@ -278,9 +275,6 @@ These pages live beside the code they describe, outside `docs/`.
 - [Quickstart script](../benchmarking/quickstart.md) — one model end to end:
   geometry search over execution budgets, figures, and a run of the winning
   plan.
-- [Quickstart plots for slides](../benchmarking/quickstart_timeline.md) — export
-  memory/compute/transfer timelines, summary statistics, and budget/throughput
-  comparison slides from saved reports.
 - [Program collection](../benchmarking/program_collection/README.md) — the
   harness that saves profiled-program archives and runs no planner.
 - [Planning evaluation](../benchmarking/planning_eval/README.md) — the

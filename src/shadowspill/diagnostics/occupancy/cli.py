@@ -6,11 +6,13 @@ import argparse
 import json
 from collections.abc import Sequence
 from pathlib import Path
+from typing import Any
+
+from shadowspill.planner.plan_store import read_stored_selection
 
 from .page import describe_plan, table, write_pages
 from .plan import all_save, attribute, unconstrained
-from .run.write import write_run_timelines
-from .stored import _stored_selection, program_path_for
+from .stored import program_path_for
 
 
 def _parser() -> argparse.ArgumentParser:
@@ -24,14 +26,6 @@ def _parser() -> argparse.ArgumentParser:
         type=Path,
         nargs="?",
         help="a plan store's planning/results/<..>/selection.json",
-    )
-    parser.add_argument(
-        "--run",
-        type=Path,
-        metavar="RUN",
-        help="a quickstart run directory (holding search.json, steps/ and"
-        " plan_store/): write pages for every plan it made under its timelines/"
-        " (or --html), the budgets that ran on both clocks",
     )
     parser.add_argument(
         "--program",
@@ -86,17 +80,12 @@ def _parser() -> argparse.ArgumentParser:
 
 def main(argv: Sequence[str] | None = None) -> int:
     arguments = _parser().parse_args(argv)
-    if arguments.run is not None:
-        index = write_run_timelines(arguments.run, arguments.html)
-        print(f"timelines: {index}")
-        return 0
     if arguments.selection is None and not (arguments.program and arguments.all_save):
-        raise SystemExit(
-            "give a selection.json, --run with a run directory, or --program"
-            " with --all-save"
-        )
-    selection = (
-        {} if arguments.selection is None else _stored_selection(arguments.selection)
+        raise SystemExit("give a selection.json or --program with --all-save")
+    selection: dict[str, Any] = (
+        {}
+        if arguments.selection is None
+        else read_stored_selection(arguments.selection)
     )
     program_path = arguments.program or program_path_for(arguments.selection, selection)
     program = json.loads(program_path.read_text())

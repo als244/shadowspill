@@ -2,7 +2,7 @@ from dataclasses import replace
 
 import pytest
 
-from shadowspill import MemoryBudgets, apply_profiles, plan_program, sweep_programs
+from shadowspill import MemoryBudgets, apply_profiles, plan_program
 from shadowspill.errors import PlanInfeasibleError
 from shadowspill.ir import MemoryLocation, ResidencySpec
 from tests.shadowspill.planner._examples import recomputation_program
@@ -71,21 +71,6 @@ def test_budget_failure_has_diagnostics(budget):
             search_options=options(),
         )
     assert error.value.kind
-
-
-def test_sweep_retains_failures_and_each_success():
-    budgets = [MemoryBudgets(99, 64), MemoryBudgets(100, 64), MemoryBudgets(200, 64)]
-    result = sweep_programs(
-        {"update": profiled()},
-        memory_budgets=budgets,
-        communication_info=communication(),
-        search_options=options(),
-    )
-    assert len(result.cases) == 3
-    assert result.cases[0].failure["type"] == "PlanInfeasibleError"
-    assert result.cases[0].plan is None
-    assert len(result.best_per_budget) == 2
-    assert result.best_per_budget[budgets[1]] is result.cases[1].plan
 
 
 def test_save_recompute_alternatives_remain_available():

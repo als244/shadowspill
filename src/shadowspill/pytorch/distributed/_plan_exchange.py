@@ -8,90 +8,20 @@ from __future__ import annotations
 
 import hashlib
 import json
-import time
 from dataclasses import replace
+from typing import Any
 
 from shadowspill.planner.admission.refinement import FixedLayoutSelection
 from shadowspill.planner.annotated_plan import AnnotatedProgramPlan
 from shadowspill.planner.plan_store import certified_result
-from shadowspill.planner.program_inputs import MemoryBudgets, TransferBandwidths
 from shadowspill.planner.serialization import _simulation_config_to_dict
 from shadowspill.planner.serialization.simulation_result import simulation_result_value
-from shadowspill.store import atomic_text
-
-from . import current
-from ._symmetry import Symmetry, verify
-
-
-def shared_problem(
-    problem, execution_budget, spill_budget, transfer, *, extra=None, incumbent=None
-):
-    bound = current()
-    assert bound is not None
-    config, facts = bound.control.run(
-        "symmetry/machine_contract",
-        lambda: problem.machine_inputs(
-            execution_budget_bytes=execution_budget,
-            spill_budget_bytes=spill_budget,
-            transfer_bandwidths=transfer,
-        ),
-    )
-    shared, evidence = verify(
-        Symmetry(
-            problem.program,
-            config,
-            facts,
-            problem.initial_residency,
-            problem.final_residency,
-            problem.dynamic_scratch_reserve_bytes,
-        ),
-        extra=extra,
-        incumbent=incumbent,
-    )
-    if shared is None:
-        return problem, transfer, None, evidence
-    device = shared.config.devices[0]
-    transfer = TransferBandwidths(
-        device.fetch_solo_bandwidth_bytes_per_second,
-        device.fetch_concurrent_bandwidth_bytes_per_second,
-        device.evict_solo_bandwidth_bytes_per_second,
-        device.evict_concurrent_bandwidth_bytes_per_second,
-        fetch_latency_ns=device.fetch_latency_ns,
-        evict_latency_ns=device.evict_latency_ns,
-    )
-    return (
-        replace(
-            problem,
-            program=shared.program,
-            admission_facts=replace(problem.admission_facts, tasks=shared.facts.tasks),
-        ),
-        transfer,
-        shared,
-        evidence,
-    )
-
-
-def received_plan(shared, payload, problem, budgets, transfer):
-    started = time.perf_counter_ns()
-    local = shared.receive(payload)
-    return AnnotatedProgramPlan(
-        program=problem,
-        memory_budgets=MemoryBudgets(*budgets),
-        transfer_bandwidths=transfer or problem.transfer_bandwidths,
-        result=local.result,
-        effective_facts=local.facts,
-        fixed_layout=local.admission.layout,
-        simulation_admission=local.admission.simulator_input,
-        simulation=local.admission.simulation,
-        attempts=local.attempts,
-        plan_from_store=False,
-        wall_time_ns=time.perf_counter_ns() - started,
-    )
+from shadowspill.store import ArtifactStore, atomic_text
 
 
 def pack(
     record: FixedLayoutSelection | AnnotatedProgramPlan, *, compact_facts: bool = False
-) -> dict:
+) -> dict[str, Any]:
     """Portable schedules; verified peers can reference their local facts.
 
     Persisted records remain self-contained. On the wire, the capacity and a
@@ -144,7 +74,9 @@ def pack(
     }
 
 
-def record_plan(store, record) -> str | None:
+def record_plan(
+    store: ArtifactStore, record: FixedLayoutSelection | AnnotatedProgramPlan
+) -> str | None:
     """Keep received schedules, including every retained resolution, per rank."""
     if not store.plan_policy.write_enabled:
         return None

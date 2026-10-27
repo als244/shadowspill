@@ -159,69 +159,16 @@ without its two event ledgers, which `write_step_diagnostics` writes beside it
 as columns and `read_step_events` reads back
 ([exporting diagnostics](../step-diagnostics.md#exporting-diagnostics)).
 
-## Figures
+## Reports
 
-`shadowspill.plots` draws figures from artifacts that already exist. Every
-function returns the paths it wrote.
+`write_report(plan_or_sweep, directory, plots=True)` consumes an existing `Plan`
+or `SweepResult` on CPU. It writes an HTML index, numeric task/transfer tables,
+summaries and simulated timeline figures. Each sweep case keeps its own Plan or
+failure; winners remain inspectable through `SweepResult.best_per_budget`.
 
-```text
-plot_step_search(report, directory) -> tuple[Path, ...]
-plot_step_run(entries, directory, *, tokens_per_step) -> tuple[Path, ...]
-plot_bandwidth_frontier(path, budgets_gib, lines, *, title, subtitle=None,
-                        measured=(), unconstrained_tokens_per_second=None,
-                        faded_lines=False) -> Path
-```
-
-| argument | type | default | meaning |
-|---|---|---|---|
-| `report` | `StepSearchReport` | required | What `plan_step_search()` answered with. Must hold a single spill budget; the execution budget is the x axis throughout, and a budget with no winning geometry is omitted from every line. |
-| `entries` | `Sequence[RunBudgetOutcome]` | required | The executed budgets to draw, at least one. |
-| `directory` | `str` \| `Path` | required | Where the tree is written. The caller owns it and what distinguishes it. |
-| `tokens_per_step` | `int` | required | Tokens one optimizer step consumes, which is what turns a step time into throughput. |
-
-`plot_step_search()` writes the plan-side tree; `plot_step_run()` writes the
-measured one. `RunBudgetOutcome` is one executed budget: its
-`execution_budget_bytes`, the simulated and measured step seconds, the same
-split of the step on both clocks -- task compute, idle, and what falls outside
-the task window -- and `step_seconds`, every measured step in order, so a
-difference can be attributed rather than only reported. `recomputation_seconds`
-is the part of task compute the chosen recomputation costs over the save-only
-floor; it is a counterfactual rather than a measurement, so the same figure
-stands on both clocks. Entry and terminal work are also measured on both clocks:
-`simulated_entry_delay_seconds`, `real_entry_delay_seconds`,
-`terminal_tail_seconds`, and `real_terminal_tail_seconds`. Their five disjoint
-components sum to the corresponding invocation. The fidelity plot uses the
-traced invocation; throughput uses the median untraced cycle, which also
-includes caller work.
-
-`write_run_tables(entries, directory, *, tokens_per_step)` writes the raw-data
-tables alone, without drawing anything. `plot_step_run()` calls it as its last
-step, and a caller that runs budgets one at a time calls it after each so the
-record stays current: figures are worth rendering once at the end, but the
-tables behind them are worth having after every budget, because a run that stops
-early should still leave what it measured and the figures can be redrawn from
-the tables.
-
-`plot_bandwidth_frontier()` draws one figure rather than a tree: throughput
-against execution budget with a line per transfer calibration, for comparing
-searches of one program under interconnects a machine does not have. A
-`FrontierLine` is one calibration's answer -- its legend label, the two
-bandwidths, and the tokens per second it reached at each budget, holding
-`None` where no plan existed, so a line keeps its place on the axis. The axis
-begins at the first budget any line could answer, because below that no
-residency fits at any bandwidth.
-
-`unconstrained_tokens_per_second` draws the compute ceiling, the step with
-every task-alternative group charged its cheapest option and nothing waiting,
-annotated on the line rather than listed in the legend. `measured` is a
-sequence of `MeasuredPoints`, each a label, the budgets a machine actually
-reached, and the `line` whose colour they take, so a measurement sits on the
-calibration it ran under. `faded_lines` puts the simulated lines into the
-background and joins the measured points instead, for the figure whose
-subject is what a machine did.
-
-The [figures guide](../plots.md) describes the tree, what each figure
-represents, and the conventions they share.
+Artifact saving is separate from report generation. See the
+[phase API guide](../../architecture/offline-pipeline.md) for build, profile,
+planning and execution examples.
 
 ## Runtime failures
 

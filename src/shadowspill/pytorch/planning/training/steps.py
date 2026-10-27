@@ -89,7 +89,6 @@ def make_training_programs(
     fuse_narrow_gradient_accumulation: bool = True,
     memory_bound_flops_per_byte: float = MEMORY_BOUND_FLOPS_PER_BYTE,
     graph_pair_variants: tuple[str, ...] = GRAPH_PAIR_VARIANTS,
-    capture_sink: Callable[[TrainingCaptureArtifacts], None] | None = None,
 ) -> tuple[StepProgram, ...]:
     """Build one self-contained step artifact per ordering, before any search.
 
@@ -107,7 +106,7 @@ def make_training_programs(
     identity: dict[str, object] | None = None
     found: dict[StepDataOrdering, StepProgram] = {}
     bypass_key = artifacts.store.export_bypass_key
-    if bypass_key is not None and capture_sink is None:
+    if bypass_key is not None:
         with timer.measure("step_lookup"):
             identity = step_identity(
                 model,
@@ -181,7 +180,6 @@ def make_training_programs(
                 fuse_narrow_gradient_accumulation=fuse_narrow_gradient_accumulation,
                 memory_bound_flops_per_byte=memory_bound_flops_per_byte,
                 graph_pair_variants=graph_pair_variants,
-                capture_sink=capture_sink,
             )
         )
     return tuple(found[item] for item in orderings)
@@ -213,7 +211,6 @@ def _build_training_step_programs(
     fuse_narrow_gradient_accumulation: bool = True,
     memory_bound_flops_per_byte: float = MEMORY_BOUND_FLOPS_PER_BYTE,
     graph_pair_variants: tuple[str, ...] = GRAPH_PAIR_VARIANTS,
-    capture_sink: Callable[[TrainingCaptureArtifacts], None] | None = None,
 ) -> dict[StepDataOrdering, StepProgram]:
     """Capture, profile and lower once, and publish one program per ordering.
 
@@ -238,8 +235,6 @@ def _build_training_step_programs(
         memory_bound_flops_per_byte=memory_bound_flops_per_byte,
         graph_pair_variants=graph_pair_variants,
     )
-    if capture_sink is not None:
-        capture_sink(captured)
     materialized = materialize_training_state(
         model,
         captured,

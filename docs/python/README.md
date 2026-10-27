@@ -19,7 +19,6 @@ How to use the system and how to read what it produces.
 - [PressureFit cut traces](pressurefit-trace.md)
 - [Interpreting StepResult diagnostics](step-diagnostics.md)
 - [program and annotated-plan JSON](planning-json.md)
-- [Figures over a step search](plots.md)
 - [Pool occupancy over a step](occupancy.md)
 - [Practical examples](../examples/README.md)
 
@@ -44,7 +43,7 @@ repository caller migration. `shadowspill.training` supplies training-loop tools
 `shadowspill.ssd` and `shadowspill.network` configure additional spill storage.
 The lower-level packages `shadowspill.ir`,
 `shadowspill.step`, `shadowspill.task`, `shadowspill.store`,
-`shadowspill.planner`, `shadowspill.search`,
+`shadowspill.planner`, `shadowspill.planning`, `shadowspill.reporting`,
 `shadowspill.simulator`, `shadowspill.diagnostics` and `shadowspill.runtime`
 are public for tooling, experiments, and independent planning. None of them
 imports a framework, so any of them can be read without one.

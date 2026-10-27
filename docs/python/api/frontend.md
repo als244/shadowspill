@@ -608,7 +608,6 @@ that line:
 | `build_step_programs()` | Captures, compiles, profiles and lowers a step, one program per ordering. Runs no search, returns no callable. | build-store arguments only |
 | `plan_program()` | Plans a program that has already been built. Captures nothing. Lives in [`shadowspill.planner`](neutral.md), because it needs no frontend. | plan-store arguments only |
 | `plan_step()`, `plan_forward()` | Both: build, then plan, then return a live callable. | both sets |
-| `plan_step_search()` | Builds every geometry once and plans each under every budget. Executes nothing. | both sets |
 
 Under `plan_program()` sits one layer, on the [framework-neutral
 page](neutral.md): the search. Which one runs is
@@ -652,8 +651,7 @@ the modes do to PyTorch's own compilation caches.
 ### Arguments the entry points share
 
 `plan_forward()`, `plan_step()` and `build_step_programs()` take these with
-identical meaning. `plan_step_search()` derives most of them per geometry; the
-ones it does take are listed in [its own section](#plan_step_search).
+identical meaning.
 
 | argument | type | default | what it must be |
 |---|---|---|---|
@@ -671,7 +669,7 @@ ones it does take are listed in [its own section](#plan_step_search).
 | `profiling_metadata` | `Sequence[object]` \| `None` | `None` | One JSON-compatible entry per example microbatch, distinguishing value-sensitive measurements that tensor geometry does not express. It reaches profile and plan identity, and is never passed to the model, objective, or runtime. |
 | `allocation_probe_seeds` | `int` | `1` | Independent randomized activation probes per structural contract. |
 | `allocation_probe_repetitions` | `int` | `2` | Identical repeats per probe seed, which is what separates a real first-use reservation from noise. |
-| `profiling_options` | `ProfilingOptions` \| `None` | `None` | Warmup, conditioning, measurement, and stability policy; `None` selects the defaults below. Also accepted by `plan_step_search()`. |
+| `profiling_options` | `ProfilingOptions` \| `None` | `None` | Warmup, conditioning, measurement, and stability policy; `None` selects the defaults below.  |
 
 What any search is told -- the evict-eligibility floor and whether the search
 must reproduce exactly at any worker count -- is `search_options.generic`, a
@@ -686,8 +684,7 @@ every process; calibrated bandwidths and latencies are rounded the same way, as
 ### `ProfilingOptions`
 
 `ProfilingOptions` is exported from `shadowspill.pytorch`. The same policy is
-accepted by `plan_forward()`, `plan_step()`, `build_step_programs()`, and
-`plan_step_search()`. Initialization warmups run the exact task before timing.
+accepted by `plan_forward()`, `plan_step()` and `build_step_programs()`. Initialization warmups run the exact task before timing.
 Conditioning then repeats that task under load before collecting samples.
 Duration targets use device-event time; wall limits bound extra repetitions
 between invocations. The minimum sample count is always honored. A profile
@@ -899,8 +896,6 @@ plan_step(
     memory_bound_flops_per_byte=MEMORY_BOUND_FLOPS_PER_BYTE,
     graph_pair_variants=GRAPH_PAIR_VARIANTS,
     keep_resolutions=False,
-    prepared_step=None,
-    selected_plan=None,
 )
 ```
 
@@ -919,7 +914,7 @@ Beyond the shared and store arguments:
 | `pair_loss` | `bool` | `True` | Runs each microbatch's last stage forward and backward together. Vacuous at `breadth=1`. |
 | `search_options` | `SearchOptions` \| `None` | `None` | What the planner is told about searching: `generic` for what any search understands, `algorithm` for the search itself carrying its own options, and `workers`. `None` runs the search that ships with its defaults. |
 | `incumbent` | `AnnotatedProgramPlan` \| `None` | `None` | A plan already in hand for this same program; the search measures it at this budget and never answers with worse. |
-| `transfer_bandwidths` | `TransferBandwidths` \| `None` | `None` | As for `plan_forward()`. A step that runs what `plan_step_search()` chose is planned against the report's `planned_lanes`, so it asks the store the search's question and executes the plan the search chose. |
+| `transfer_bandwidths` | `TransferBandwidths` \| `None` | `None` | As for `plan_forward()`. |
 | `master_dtype` | `torch.dtype` \| `None` | `None` | Gives every weight the step trains at another dtype a master copy at this one, and builds `optimizer` over the masters; the update writes each weight from its master. See [the optimizer](../../architecture/optimizer.md#master-copies-and-the-dtype-gradients-are-kept-at). |
 | `grad_dtype` | `torch.dtype` \| `None` | `None` | The dtype gradients are created and accumulated at, the weights' own when `None`. The update casts a gradient only where its parameter is at another dtype. |
 | `fuse_narrow_gradient_accumulation` | `bool` | `True` | Permits a matrix multiply to add into running gradients kept narrower than its accumulator, such as BF16, avoiding a separate product buffer and addition; `False` writes such a gradient at its dtype and adds it after, as PyTorch's own step does. The BLAS kernel controls rounding; the option does not guarantee a single rounding or equality with a separate multiply and add. Gradients kept at the multiply's own dtype are added inside it either way. See [accumulating onto gradients](../../architecture/graph-pair-construction.md#accumulating-onto-gradients-that-already-exist). |
@@ -956,7 +951,7 @@ optimizer](../../architecture/optimizer.md).
 
 ### Parameter and gradient observations
 
-`plan_step`, `build_step_programs`, and `plan_step_search` accept
+`plan_step` and `build_step_programs` accept
 `parameter_metrics=None` or a pure `(compute_weight, accumulated_gradient) ->
 tensor pytree` callback. Its reductions run once per updated parameter, after
 all gradient contributions and before optimizer casts or writes. The first
@@ -1036,117 +1031,6 @@ returned that could own it. The budgets and the ordering are recorded in each
 program: they describe the machine the step was profiled against and the walk
 it was lowered with, and a different walk is a different program.
 
-### `plan_step_search()`
-
-Plans caller-named candidates under every requested budget pair. Each
-candidate supplies a sequence of positional microbatch inputs for the same
-normalized update; no text geometry is inferred. Capture, materialization and
-profiling happen once per candidate, and lowering once per ordering. Saved
-build and planning artifacts can be reused independently. The result is a
-`StepSearchReport`; searching does not execute optimizer updates.
-
-<!-- source-signature: src/shadowspill/pytorch/step_search/__init__.py:plan_step_search -->
-```text
-plan_step_search(
-    model,
-    *,
-    objective,
-    optimizer,
-    hyperparams=(),
-    candidates,
-    budgets,
-    runtime,
-    distributed=None,
-    shard_optimizer=True,
-    execution,
-    spill,
-    transfer_bandwidths=None,
-    metadata=None,
-    partition='auto',
-    execution_device=None,
-    optimizer_ordering='stage_interleaved',
-    orderings=None,
-    search_options=None,
-    incumbents=True,
-    artifact_store=None,
-    build_store=None,
-    plan_store=None,
-    build_store_mode='contribute',
-    plan_store_mode='contribute',
-    verbose=False,
-    progress=None,
-    export_bypass_key=None,
-    master_dtype=None,
-    grad_dtype=None,
-    parameter_metrics=None,
-    fuse_narrow_gradient_accumulation=True,
-    memory_bound_flops_per_byte=MEMORY_BOUND_FLOPS_PER_BYTE,
-    graph_pair_variants=GRAPH_PAIR_VARIANTS,
-    keep_resolutions=False,
-    profiling_options=None,
-)
-```
-
-`model`, `objective`, `optimizer`, `hyperparams`, `runtime`, `execution`,
-`spill`, `optimizer_ordering`, `master_dtype`, `grad_dtype`,
-`parameter_metrics`, `fuse_narrow_gradient_accumulation`,
-`memory_bound_flops_per_byte`, `graph_pair_variants` and the store arguments
-mean what they mean for `plan_step()`. The rest are:
-
-| argument | type | default | what it must be |
-|---|---|---|---|
-| `candidates` | `Mapping[str, Sequence[Sequence[Any]]]` | required | Nonempty names mapped to representative positional microbatches. Each candidate represents the same caller-normalized update. |
-| `metadata` | `Mapping[str, Any]` \| `None` | `None` | Optional report metadata, such as `units_per_step` and `unit_label` for throughput. No model semantics are inferred from it. |
-| `budgets` | `Sequence[tuple[int, int]]` | required | `(execution, spill)` byte pairs, at least one. |
-| `execution_device` | device/index \| `None` | `None` | The local execution device, as for `plan_step()`. |
-| `partition` | `PartitionSpec` | `'auto'` | The shared partition policy for every candidate. |
-| `transfer_bandwidths` | `TransferBandwidths` \| `None` | `None` | Explicit transfer calibration; the report records its effective `planned_lanes`. |
-| `orderings` | `(accumulation) -> Sequence[StepDataOrdering]` \| `None` | `None` | Candidate microbatch walks; the default tries every factor pair. |
-| `search_options` | `SearchOptions` \| `None` | `None` | The policy used for every point. |
-| `incumbents` | `bool` | `True` | Use smaller-budget plans as plans to beat at larger budgets. |
-| `verbose`, `progress` | `bool`, `(str) -> None` \| `None` | `False`, `None` | Phase output and per-candidate/per-point progress. |
-| `keep_resolutions` | `bool` | `False` | Save every resolved program's certified plan. |
-
-`StepSearchReport` contains `budgets`, optional `metadata`, `geometries`
-(`StepSearchGeometryBuild` entries), `points` (`StepSearchPoint` entries), the
-search options and calibration, and each budget's `winner_plans`. Builds and
-points identify their `candidate` by name and their microbatch ordering.
-Build times charge shared work only once. A point records status, makespan,
-summary, search time, any incumbent budget and `GraphPairOutcome` records
-for graph-pair selections.
-
-
-`orderings` lowers each ordering into its own program, sharing the geometry's
-capture and profiles, and plans it under every budget; the report's points and
-builds carry the ordering, and the winner at a budget may be any ordering of
-any geometry. The default is every `depth x breadth` factor pair of the
-accumulation count with the flags at their defaults; the search never toggles
-`reverse_breadth` or `pair_loss`.
-
-### Candidate enumeration
-
-The caller constructs candidate inputs. Optional text enumeration is provided
-by `workloads.recipes.text.geometry`; it is not a planning dependency.
-`default_orderings`, `StepSearchReport`, `StepSearchPoint` and
-`StepSearchGeometryBuild` are documented on
-[the neutral page](neutral.md#shadowspillsearch).
-
-Running a winner afterward is one warm `plan_step()` call at the chosen
-geometry, taking that budget's `winner_plans` entry as `incumbent` so it
-executes what the search chose even when its calibration or facts differ.
-
-Failures are outcomes rather than errors. A point that proves infeasible or
-exhausts its search budget carries that status while the search continues.
-Because profiling runs a task's real kernels, the largest geometries can
-exhaust the device before any plan exists; such a geometry reports every one
-of its budgets `infeasible`, with the exhaustion as the point's error, and
-contributes no build to the report because it produced no program. Its
-progress line says what the allocator was asked for against what was free,
-and the largest free range. A build that runs out of memory releases
-everything its plan registered; one that leaves state behind raises
-`PlanningError` naming the geometry and what remained, because the runtime
-cannot close while it remains. Any other build failure is raised.
-
 ## Inputs, objectives, and partitioning
 
 `TensorSpec` is storage-free fixed tensor geometry for planning. It records
@@ -1190,7 +1074,7 @@ Use deterministic structural rules and a stable configuration representation.
 Subclassing the protocol is optional: implementing the method is sufficient.
 
 Pass the same policy as `partition=policy` to `plan_forward`, `plan_step`,
-`build_step_programs`, or `plan_step_search`. A quickstart factory supplies it
+`build_step_programs`. A quickstart factory supplies it
 in `plan_options={"partition": policy}`; those options reach both search and
 execution planning. Direct API calls do not infer policy from a model name.
 
@@ -1493,60 +1377,3 @@ identity that also covers the model and precision configuration. Omitting the
 argument preserves full-model checkpoints. `weights="master"|"compute"` retains
 its existing meaning. The [Trainer](training.md#checkpoints) exposes the same
 policy through `Trainer(frozen_state_id=...)`, including periodic saving and resume.
-
-## Persistent training computation
-
-`prepare_step` captures and profiles a training objective once, returning a
-`PreparedStep` rather than an executable. It accepts the runtime, objective,
-optimizer, input, precision, store and ordering arguments of
-`build_step_programs`, except `export_bypass_key`. Its `programs` contain one
-planning problem per requested ordering; `save(directory)` and
-`PreparedStep.load(directory)` also retain the captured objective templates and
-position bindings needed for later admission. The artifact contains no initialized
-model state and owns no pool memory. Metadata and exports are trusted local build
-artifacts. Loading checks the schema, PyTorch version and file checksums.
-The artifact records the defining modules of Python `torch.library.custom_op`
-operators used in its graph. Admission imports those providers before loading
-the exports, so lazy registration does not require running the objective again.
-The providers must register their operators when imported. External native or
-dynamically registered operators still need their normal registration setup.
-`PreparedStep.load(directory, ordering=...)` reads only the requested ordering
-when the artifact will be used for admission rather than another full search.
-
-The prepared API uses whole-process execution budgets consistently: the
-`execution_budget` passed to `prepare_step`, each search budget, and admission's
-budget all include the runtime baseline and external allowance. Search retains
-those fixed reservations; admission converts the selected physical budget to the
-live runtime's usable pool capacity and validates the exact layout again.
-
-`search_prepared_steps(candidates, budgets=...)` accepts a mapping of names to
-prepared steps and execution/spill byte pairs. It searches without a runtime or
-GPU, accepts `search_options`, transfer calibration and plan-store options, and
-returns a `StepSearchReport` with one complete plan per feasible budget in
-`winner_plans`. Every plan exposes `summary` estimates and serializes them in its
-JSON. Candidate names do not alter computation identity.
-
-`admit_step(model, prepared_step, selected_plan, **bindings)` binds the selected
-artifact to fresh model state, optimizer and representative inputs. `bindings`
-supply `plan_step`'s runtime, pool names, optimizer, example inputs, precision,
-partition and store options. The selected plan supplies its computation, budgets
-and calibration. The captured objective comes from the artifact. Admission
-checks model-state geometry/aliasing, exact input signatures, capture options,
-optimizer/lowered-program identity and the current physical layout. It performs
-no objective export or plan search. It still creates runtime bindings and loads
-or builds the selected task implementations in the current process. Reuse the
-same build store to retain graph pairs, profiles and compiler artifacts.
-If several prepared orderings lower to the same computation, admission uses the
-first equivalent ordering. Pass `data_ordering=winner.ordering` to preserve the
-search winner's explicit ordering, as Trainer does.
-
-A saved artifact explicitly selects a computation; it is not a source-code cache
-stamp. Python objective changes are not detected by loading it. Build a new
-artifact when changing the computation. The baseline sweep separately fingerprints
-source and environment before choosing an artifact. `plan_step` also accepts
-`prepared_step` and `selected_plan`; the latter requires the former. Use
-`admit_step` when the intention is to admit an exact selected plan, and the
-[Trainer API](training.md#reuse-preparation-across-budgets-and-processes) when
-runtime ownership should remain with the backend. Persistent preparation currently
-supports single-rank training; distributed `plan_step` and `plan_step_search`
-retain their coordinated path.

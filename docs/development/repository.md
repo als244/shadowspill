@@ -12,7 +12,7 @@ shadowspill/
 ├── tests/                 fast tests mirroring product/tool boundaries
 ├── workloads/             model and data clients
 ├── reference/             executable reference implementations
-├── benchmarking/          the quickstart tour, StepProgram corpora, and planning evaluation
+├── benchmarking/          quickstart, profiled-program corpora, and planning evaluation
 ├── qualification/         gate commands, implementations, configurations, and docs
 ├── docs/                  architecture, Python, C, and development
 ├── scripts/               one-command setup
@@ -38,10 +38,9 @@ acceptance rules live under `qualification/`. Build accepts ordinary user models
 and call examples. `shadowspill.training.Trainer` drives an Executor from saved
 Plans and iterable inputs, without importing recipes.
 
-`benchmarking/quickstart/` composes the public phase APIs; the older factory
-runner remains while its model-specific callers migrate. The
+`benchmarking/quickstart/` composes the public phase APIs in separate workers. The
 `bandwidth_frontier/` package consumes `ProfiledProgram` archives and runs CPU
-planning/plotting only. Older corpus collection/evaluation harnesses remain
+planning/plotting only. Corpus collection/evaluation remain
 separate: collection builds and profiles, while evaluation reads the saved
 corpus and plans budgets and transfer assumptions.
 
@@ -136,14 +135,8 @@ src/shadowspill/
 │   ├── plan/              one plan on the runtime: the bridge, its objects, its
 │   │                      admission, what it reports, and its lifecycle
 │   └── timing.py          an instant recorded on a stream, and the time between two
-├── search/                a step planned at every geometry, budget and walk:
-│                          the geometries, the rule one point is answered by,
-│                          the refusals it records, and the report
 ├── training/              saved-Plan training loops, schedules and checkpoints
 │   ├── diagnostics/       no-update startup calls, state preservation and reports
-│   └── backends/          model-based backends awaiting caller migration
-├── plots/                 step-run and step-search figures
-│   └── step_search/       one module per figure family, over shared series and axes
 └── pytorch/
     ├── distributed/       replica ownership, coordinated preparation and local execution
     ├── capture/           Export/AOT capture and semantic storage contracts
@@ -185,8 +178,6 @@ src/shadowspill/
     ├── spill.py           a CPU tensor's bytes, as the runtime takes them
     ├── diagnostics/       PlanReport and StepDiagnostics
     │   └── builders/      each record built where its own consumer reads it
-    ├── step_search/       the sweep that builds what shadowspill.search plans:
-    │                      it takes a model and an optimizer
     ├── sharing/           runtime-owned TensorRef handles
     └── state/             persistent model/optimizer import
 ```

@@ -324,9 +324,8 @@ answer is held to it here: the incumbent's schedule is replayed on the
 requested machine after the search returns, and answered with when it is
 strictly faster and its layout still fits. A plan that fits in less memory fits
 in more, which is what lets a budget sweep hand each budget the best plan found
-below it and never plan worse with more memory; `plan_step_search()` does
-exactly that, and the guarantee is the planner's, so it holds whichever search
-runs. The plan report's diagnostics say what became of it under each resolved
+below it and never plan worse with more memory. This guarantee applies when
+the caller explicitly supplies that incumbent. The plan report's diagnostics say what became of it under each resolved
 program, and a plan that won is reported as candidate `incumbent`. The planning
 store treats it as provenance rather than identity: a request reads back the
 plan its search chose, whatever that search was handed, so a run that replans
@@ -339,8 +338,7 @@ question is the one `plan_program()` would ask -- the same key -- and the
 answer is the summary the store writes beside a plan when it certifies it.
 Nothing but that summary is read, so a caller that compares many plans and
 runs one reads kilobytes per question and fetches a whole plan, through
-`plan_program()`, only for the one it will run; `plan_step_search()` is that
-caller.
+`plan_program()`, only for the one it will run.
 
 <!-- source-signature: src/shadowspill/planner/plan.py:summarize_plan -->
 ```text
@@ -738,24 +736,6 @@ standalone physical-admission helper derives an allowance. The runtime's
 `DevicePool.external_headroom` is an explicit reservation, defaulting to
 512 MiB; its separate `reject_overbudget` flag defaults to `False`.
 Persistent allocations inside the pool are accounted for separately.
-
-## `shadowspill.search`
-
-A step planned at every geometry, budget and walk, and the report that answers.
-Framework-neutral: planning named candidates and reading the answers back
-need no model or input-domain knowledge. Building the programs a
-point is planned from does, so `shadowspill.pytorch.plan_step_search()` drives
-this package and is documented on [the frontend page](frontend.md#plan_step_search).
-
-| Name | Is |
-|---|---|
-| `default_orderings(accumulation)` | Every `depth x breadth` factor pair of the accumulation count, depth-first first. |
-| `StepSearchReport` | What a search answered: its points, its builds, and the winner at each budget. `load()` reads one back. |
-| `StepSearchPoint` | One geometry-ordering-budget point: what it planned, or the refusal it hit. |
-| `StepSearchGeometryBuild` | What one geometry cost to build, once, before any point was planned. |
-
-A refusal is recorded rather than raised, so a search answers with the points it
-could plan and the reasons for the rest.
 
 ## `shadowspill.simulator`
 

@@ -377,8 +377,7 @@ makespan_ns, answered_with_incumbent, summary, graph_pair_outcomes
 `graph_pair_outcomes` one record per graph-pair selection the search
 evaluated, and `answered_with_incumbent` whether the search answered with the
 plan it was handed to beat. `summarize_plan()` reads it, checking the two
-digests and trusting the rest, and `plan_step_search()` answers every point
-from it that it can. It is written when the certificate is, by the same call,
+digests before returning the stored summary. It is written when the certificate is, by the same call,
 and dropped whenever the plan beside it is rewritten, so a record written
 before summaries were kept has none: the first summary read of such a record
 builds it from the plan and its certificate and keeps it when the store's mode

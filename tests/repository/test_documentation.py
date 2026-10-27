@@ -32,7 +32,7 @@ _C_FUNCTION = re.compile(r"\b(shadowspill_[A-Za-z0-9_]+)\s*\(")
 _MEMORY_MODULE = ROOT / "src" / "shadowspill" / "memory.py"
 _PYTORCH_MODULE = ROOT / "src" / "shadowspill" / "pytorch" / "__init__.py"
 _TRAINING_MODULE = ROOT / "src" / "shadowspill" / "training" / "__init__.py"
-_PLOTS_MODULE = ROOT / "src" / "shadowspill" / "plots" / "__init__.py"
+_REPORTING_MODULE = ROOT / "src" / "shadowspill" / "reporting" / "__init__.py"
 _CORE_PYTHON_MODULES = (
     ROOT / "src" / "shadowspill" / "errors.py",
     ROOT / "src" / "shadowspill" / "ir" / "__init__.py",
@@ -44,7 +44,7 @@ _PUBLIC_PYTHON_MODULES = (
     _MEMORY_MODULE,
     *_CORE_PYTHON_MODULES,
     _PYTORCH_MODULE,
-    _PLOTS_MODULE,
+    _REPORTING_MODULE,
     _TRAINING_MODULE,
 )
 
@@ -76,7 +76,6 @@ _PUBLIC_C_REFERENCES = {
 _REQUIRED_SIGNATURES = {
     "src/shadowspill/ssd.py:ssd",
     "src/shadowspill/pytorch/api.py:build_step_programs",
-    "src/shadowspill/pytorch/step_search/__init__.py:plan_step_search",
     "src/shadowspill/pytorch/api.py:plan_forward",
     "src/shadowspill/pytorch/api.py:plan_step",
     "src/shadowspill/planner/plan.py:plan_program",
@@ -170,7 +169,7 @@ def _python_page_expectations() -> dict[Path, set[str]]:
         PYTHON_API / "frontend.md": set(_all_exports(_MEMORY_MODULE)),
         PYTHON_API / "artifacts.md": set(),
         PYTHON_API / "training.md": set(_all_exports(_TRAINING_MODULE)),
-        PYTHON_API / "diagnostics.md": set(_all_exports(_PLOTS_MODULE)),
+        PYTHON_API / "diagnostics.md": set(_all_exports(_REPORTING_MODULE)),
         PYTHON_API / "neutral.md": set(),
     }
     for path in _CORE_PYTHON_MODULES:
@@ -186,7 +185,7 @@ def _python_page_expectations() -> dict[Path, set[str]]:
             # A name the frontend re-exports from the neutral tree is documented
             # where it lives, on the neutral page.
             module = node.module or ""
-            if not module.startswith(("shadowspill.runtime", "shadowspill.search")):
+            if not module.startswith("shadowspill.runtime"):
                 continue
             page = PYTHON_API / "neutral.md"
         elif node.level == 1:

@@ -683,38 +683,14 @@ configuration, videos, cache, indexes, and generated results outside Git (for
 example under `runs/` or a Desktop library). Only the generic generator belongs
 in the repository.
 
-## Executed winners and hypothetical host bandwidth
+## Completed quickstart winners
 
-For distributed quickstart runs, opt in to the observers before starting the
-search. Each process uses its own directory; install the search-input observer
-only on the reporting rank:
-
-```python
-from tools.pressurefit_trace.winner_capture import install as capture_winners
-from tools.pressurefit_trace.search_capture import install as capture_search
-
-capture_winners(rank_output / "winners")
-if rank == 0:
-    capture_search(rank_output / "search-inputs")
-```
-
-The winner observer saves the exact admitted program, schedule, physical layout,
-semantic names and the native search input. The search observer saves the
-verified distributed problems, including conservative cross-rank profiles,
-collective timing and allocation requirements. Both write outside measured
-training steps. Export errors are recorded and must be resolved before using
-the export; they do not change benchmark feasibility.
-
-The launcher also records actually executed plans in `executed/<budget>bytes.json`
-(candidate, ordering, capture identity, physical/logical budgets and completed
-step times), archives `report.winner_plans` in `search-winners/`, and writes
-`search-inputs/metadata.json` after search with `complete: true`, an optional
-`physical_to_execution_bytes` mapping, and `global_tokens_per_step`.
-The rank directory is the source argument for offline replanning below.
-
-Prepare only the plans that actually completed the benchmark, then render all
-three views. The cuts show the answering reduction; all timings and example
-selection remain configurable through the batch renderer:
+Read the saved Plans and completed results directly, then render all three views.
+The collector checks that every logical rank completed the same Plan. Execution
+and placement videos use its exact schedule and physical certificate; cut videos
+replay its selected search candidate on CPU. No export hooks or model imports are
+needed. The cut replay must reproduce the saved schedule and timing; a mismatch
+stops the export. `--rank` labels a representative rank of the symmetric program.
 
 ```sh
 python -m tools.pressurefit_trace.winners RUN/quickstart \
@@ -724,14 +700,13 @@ python -m tools.pressurefit_trace.matrix render RUN/winner-videos-inputs \
   --resolution 4k --quality best --jobs 2
 ```
 
-For a current phase quickstart, capture separate Nsight Systems reports of its
+Capture separate Nsight Systems reports of the same
 already executed winners. Each fresh worker loads the exact portable Plan from
 `plans/`, initializes with the factory's bounded loader and runs warmup/captured
 updates. It does not build, measure, calibrate or replan. The complete archive
 identity must agree with both the planning index and the completed result;
 memory admission remains unchanged. Each rank retains an `exact-plan.json`.
-Profiler timings are not throughput measurements. Older runtime-first quickstart
-folders must be regenerated with the phase quickstart to use this command.
+Profiler timings are not throughput measurements.
 
 ```sh
 python -m tools.pressurefit_trace.profile_winners RUN/quickstart \
@@ -756,29 +731,11 @@ collection end. This avoids a documented multi-context profiler-stop hang
 without changing the captured schedule or excluding GPU metrics. Validation
 also requires every requested captured step from every rank.
 
-Repeat the entire saved planning search without importing PyTorch or executing
-training:
-
-```sh
-python -m tools.pressurefit_trace.replan RUN/quickstart/rank-00000 \
-  --output RUN/simulated-300GBps --host-gbps 300 --jobs 3 --workers 4 --plots
-```
-
-`--host-gbps` is decimal GB/s **per direction**, both alone and during simultaneous
-fetch/evict. Only copy rates change. Shard sizes, GPU memory sizes, calibrated
-collective durations/resources, task profiles, overlap costs and launch latencies
-stay unchanged. All saved microbatches, orderings, budgets, resolutions and
-policies are searched again, carrying smaller-budget incumbents as in quickstart.
-Uncaptured geometries retain their capture failure. Missing or unverified
-distributed inputs fail explicitly. Separate plan/artifact stores, `search.json`,
-`winners.json`, self-contained winner plans and `RESULTS.md` make the experiment
-reproducible. A different bandwidth requires a different output directory.
-`--plots` also saves the normal search figures and their raw plotting data.
-`--jobs` runs independent geometry/ordering searches in separate CPU processes
-(default 1). Each process uses `--workers` planner workers and walks budgets in
-order, preserving smaller-budget incumbents. Parallel runs keep resumable stores
-under `geometry-search/`; their results merge in the original search order, so
-completion order does not change winner tie-breaking.
+For CPU planning with other memory budgets or communication rates, load a
+`ProfiledProgram`, supply `MemoryBudgets` and `CommunicationInfo`, then call
+`plan_program` or `sweep_programs`. Use `write_report` for simulated timelines.
+The saved-profile `dump` / `plan` / `trace` workflow above also supports host-copy
+bandwidth overrides for detailed PressureFit analysis.
 
 ## Code map and validation
 
@@ -788,11 +745,8 @@ pressurefit_trace/
   collect/                    saved-profile inputs / CPU planning / trace / export
   matrix.py                   retain and trace each resolution's best policy
   render_batch.py             resumable matrix rendering and verified copies
-  winner_capture.py           opt-in exact admitted-plan export
-  search_capture.py           opt-in verified distributed search input export
-  winners.py                  prepare executed winners for the three video types
+  winners/                    saved-Plan projection and completed-winner videos
   profile_winners/            saved-Plan Nsight replay, selection and evidence checks
-  replan.py                   CPU-only search with hypothetical host-copy rates
   library.py                  indexed results, configuration pages, live progress
   library_html.py             offline HTML views
   library_assets/             local stylesheet and search/player controls
