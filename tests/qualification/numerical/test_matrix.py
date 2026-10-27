@@ -9,10 +9,10 @@ from pathlib import Path
 import pytest
 
 from qualification.numerical.cases import DEFAULT_DEVICE_BUDGETS
-from qualification.numerical.matrix import (
-    _DEFAULT_IMPLEMENTATIONS,
-    _budget_overrides,
-    _parse_bytes,
+from qualification.numerical.matrix.arguments import (
+    DEFAULT_IMPLEMENTATIONS,
+    parse_budget_overrides,
+    parse_bytes,
 )
 from qualification.numerical.references import (
     DEFAULT_REFERENCE_DIRECTORY,
@@ -33,17 +33,17 @@ from qualification.numerical.request import CaseRequest
     ],
 )
 def test_parse_bytes(value: str, expected: int) -> None:
-    assert _parse_bytes(value) == expected
+    assert parse_bytes(value) == expected
 
 
 @pytest.mark.parametrize("value", ["", "0", "-1", "1GB", "1.5GiB"])
 def test_parse_bytes_rejects_invalid_values(value: str) -> None:
     with pytest.raises(argparse.ArgumentTypeError):
-        _parse_bytes(value)
+        parse_bytes(value)
 
 
 def test_family_budget_overrides_are_independent() -> None:
-    assert _budget_overrides(
+    assert parse_budget_overrides(
         ["llama3=10GiB", "qwen35=12GiB"],
         valid_models={"llama3", "qwen35"},
     ) == {
@@ -53,8 +53,8 @@ def test_family_budget_overrides_are_independent() -> None:
 
 
 def test_default_gate_is_five_cells_with_olmoe_under_pressure() -> None:
-    assert sum(len(values) for values in _DEFAULT_IMPLEMENTATIONS.values()) == 5
-    assert _DEFAULT_IMPLEMENTATIONS["olmoe"] == ("mlops",)
+    assert sum(len(values) for values in DEFAULT_IMPLEMENTATIONS.values()) == 5
+    assert DEFAULT_IMPLEMENTATIONS["olmoe"] == ("mlops",)
     assert DEFAULT_DEVICE_BUDGETS["olmoe"] == 8 << 30
 
 
@@ -67,7 +67,7 @@ def test_default_gate_reads_the_repo_local_reference_set() -> None:
 
 def test_budget_override_rejects_unknown_family() -> None:
     with pytest.raises(argparse.ArgumentTypeError):
-        _budget_overrides(["unknown=10GiB"], valid_models={"llama3"})
+        parse_budget_overrides(["unknown=10GiB"], valid_models={"llama3"})
 
 
 def test_case_identity_covers_model_and_data_configuration() -> None:

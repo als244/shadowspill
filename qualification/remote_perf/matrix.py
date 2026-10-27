@@ -110,7 +110,7 @@ def main() -> int:
 
     # Imported here rather than at module scope: the performance matrix pulls in
     # the frontend and a framework, and a skip should not pay for that.
-    from qualification.performance import matrix as performance_matrix
+    from qualification.performance.matrix.run import main as run_matrix
 
     # Every cell runs, even after one misses, so a run records all three
     # numbers rather than one. `--keep-going` is the matrix's own flag; naming
@@ -126,7 +126,7 @@ def main() -> int:
     # No cell list of its own, for the same reason the remote numerical gate has
     # none: the claim is that nothing differs but where the pool lives, so it
     # runs that matrix's cells by not choosing. `--cells` still narrows by hand.
-    return performance_matrix.main_with_spill(spill)
+    return run_matrix(spill)
 
 
 if __name__ == "__main__":

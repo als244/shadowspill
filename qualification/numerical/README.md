@@ -144,6 +144,8 @@ and per-family `--budget` values take precedence on every device.
 For repeatable matrices and configurable/custom model cases, use
 `python -m qualification.numerical.matrix`; the parent
 [`qualification/README.md`](../README.md) documents the launcher.
+The `matrix/` package separates selection/arguments, worker commands, execution
+and reporting. Remote qualification calls the same `matrix.run.main` entry.
 
 The numerical and performance launchers accept `--external-headroom-mib`
 (default **512 MiB on every GPU**). This allowance is subtracted, together with
@@ -166,11 +168,10 @@ throughput, so they are not the default outside this gate. The request covers
 reference generation as well as the planned run, so a regenerated reference is
 itself reproducible.
 
-The request is baked into a compiled graph without a guard, so a graph cached
-from a run without it would be reused rather than recompiled. The matrix gives
-each case its own compile cache and deletes it afterwards, which is what makes
-that safe here; a tool that reuses a cache across the boundary would need to
-key it on the setting.
+The request is baked into a compiled graph without a guard. The integrated gates
+pass `--empty-caches`, giving each worker fresh Inductor/Triton caches removed
+afterwards. A standalone matrix invocation uses the existing caches unless that
+flag is set; do not reuse caches across deterministic/nondeterministic settings.
 
 The planned arm also accumulates as the reference arm's PyTorch step does: a
 later microbatch's weight gradient narrower than float32 is written at its

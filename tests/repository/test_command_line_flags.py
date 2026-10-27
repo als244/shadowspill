@@ -125,7 +125,7 @@ def _readers(path: Path) -> list[Path]:
         ROOT / "qualification/performance/run.py",
     }
     if (
-        path.name not in ("__init__.py", "__main__.py", "cli.py")
+        path.name not in ("__init__.py", "__main__.py", "cli.py", "arguments.py")
         and path not in package_commands
     ):
         return [path]

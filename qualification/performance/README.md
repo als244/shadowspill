@@ -28,6 +28,10 @@ Executor. Full-size remote qualification is separate from the default gate.
 
 ## Runner and artifacts
 
+`matrix/` separates argument/manifest selection, worker command construction,
+case execution, failure evidence and console reporting. Remote qualification
+calls the same `matrix.run.main` entry; there is no second matrix implementation.
+
 `run.py` prepares the request and launches four short phases:
 
 | Process | Input | Output |

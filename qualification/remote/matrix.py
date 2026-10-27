@@ -83,7 +83,7 @@ def main() -> int:
 
     # Imported here rather than at module scope: the numerical matrix pulls in
     # the frontend and a framework, and a skip should not pay for that.
-    from qualification.numerical import matrix as numerical
+    from qualification.numerical.matrix.run import main as run_matrix
     from qualification.numerical.tolerances import SPILL_BUDGET
 
     # The peer is asked for the numerical gate's own spill budget, named once
@@ -97,7 +97,7 @@ def main() -> int:
     # in step, and the whole claim this gate makes is that nothing differs from
     # the numerical run but where the spill pool lives -- so it runs that
     # matrix's cells by not choosing. `--models` still narrows a run by hand.
-    return numerical.main_with_spill(spill)
+    return run_matrix(spill)
 
 
 if __name__ == "__main__":

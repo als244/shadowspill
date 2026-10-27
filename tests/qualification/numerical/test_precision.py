@@ -151,7 +151,9 @@ def test_hardware_defaults_preserve_or_reduce_model_and_budget(bf16) -> None:
         numerical_defaults,
         performance_defaults,
     )
-    from qualification.performance.matrix import _parser as performance_parser
+    from qualification.performance.matrix.arguments import (
+        create_parser as performance_parser,
+    )
 
     options = _parser().parse_args(["run", "llama3", "out"])
     budgets = numerical_defaults(options, hardware={"bf16": bf16})
@@ -173,7 +175,9 @@ def test_explicit_model_and_budget_overrides_win_on_a_smaller_gpu() -> None:
         numerical_defaults,
         performance_defaults,
     )
-    from qualification.performance.matrix import _parser as performance_parser
+    from qualification.performance.matrix.arguments import (
+        create_parser as performance_parser,
+    )
 
     options = _parser().parse_args(
         [

@@ -61,7 +61,8 @@ def test_execution_budget_and_model_precision_override_the_recorded_manifest() -
 def test_performance_defaults_and_all_dtype_overrides_reach_the_case() -> None:
     from pathlib import Path
 
-    from qualification.performance.matrix import _cell_command, _parser
+    from qualification.performance.matrix.arguments import create_parser
+    from qualification.performance.matrix.command import cell_command
 
     default = _manifest_with_overrides("llama3", "mlops", spill_budget_gib=None)
     assert default.spill_budget_bytes == 112 << 30
@@ -80,8 +81,8 @@ def test_performance_defaults_and_all_dtype_overrides_reach_the_case() -> None:
         grad_dtype="float32",
         opt_state_dtype="bfloat16",
     )
-    command = _cell_command(
-        changed, _parser().parse_args([]), Path("out"), Path("out/cell.json"), {}
+    command = cell_command(
+        changed, create_parser().parse_args([]), Path("out/cell.json"), {}
     )
     for field, value in changed.dtypes.as_dict().items():
         assert command[command.index("--" + field.replace("_", "-")) + 1] == value
@@ -90,10 +91,11 @@ def test_performance_defaults_and_all_dtype_overrides_reach_the_case() -> None:
 def test_a_cell_keeps_artifacts_beside_result_and_compiler_caches_separate() -> None:
     from pathlib import Path
 
-    from qualification.performance.matrix import _cell_command, _parser
+    from qualification.performance.matrix.arguments import create_parser
+    from qualification.performance.matrix.command import cell_command
 
     manifest = _manifest_with_overrides("llama3", "mlops", spill_budget_gib=None)
-    arguments = _parser().parse_args(["--empty-caches"])
-    command = _cell_command(manifest, arguments, Path("out"), Path("out/cell.json"), {})
+    arguments = create_parser().parse_args(["--empty-caches"])
+    command = cell_command(manifest, arguments, Path("out/cell.json"), {})
     assert "out/cell.json" in command
     assert not any("store" in arg for arg in command)

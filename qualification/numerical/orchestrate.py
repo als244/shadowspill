@@ -90,7 +90,7 @@ def orchestrate(
         options.extend(("--case-option", value))
     environment = dict(os.environ)
     # The warm-up process tunes and compiles first, so neither arm is the
-    # process that tuned (matrix._case_commands says why).
+    # process that tuned (matrix.commands.case_commands says why).
     subprocess.run(
         [
             *base,

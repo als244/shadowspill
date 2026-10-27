@@ -1,9 +1,9 @@
 from __future__ import annotations
 
 from qualification.performance.cases import manifests
-from qualification.performance.matrix import (
-    _active_planning_phases,
-    _termination_signal,
+from qualification.performance.matrix.failures import (
+    active_planning_phases,
+    termination_signal,
 )
 
 
@@ -72,14 +72,14 @@ def test_full_model_launcher_recovers_killed_phase_worker() -> None:
             "[2026-10-27T16:00:00+00:00] plan: starting",
         )
     )
-    assert _active_planning_phases(log) == ("plan",)
-    assert _termination_signal(-9) == "SIGKILL"
+    assert active_planning_phases(log) == ("plan",)
+    assert termination_signal(-9) == "SIGKILL"
 
 
 def test_performance_gate_preserves_the_three_default_mlops_workloads() -> None:
     """Hardware-aware judging does not change the default workload matrix."""
 
-    from qualification.performance.matrix import default_cells
+    from qualification.performance.matrix.arguments import default_cells
 
     assert [item.identity for item in default_cells()] == [
         "mlops_llama3",
@@ -95,13 +95,14 @@ def test_a_smaller_spill_pool_reaches_the_cell_that_runs_it() -> None:
     from pathlib import Path
 
     from qualification.performance.cases import manifest_for
-    from qualification.performance.matrix import _cell_command, _parser
+    from qualification.performance.matrix.arguments import create_parser
+    from qualification.performance.matrix.command import cell_command
 
     manifest = manifest_for("llama3", "mlops")
-    arguments = _parser().parse_args([])
+    arguments = create_parser().parse_args([])
 
     def command(item: object) -> list[str]:
-        return _cell_command(item, arguments, Path("out"), Path("out/cell.json"), {})  # type: ignore[arg-type]
+        return cell_command(item, arguments, Path("out/cell.json"), {})  # type: ignore[arg-type]
 
     assert "--spill-budget-gib" not in command(manifest)
     smaller = command(replace(manifest, spill_budget_bytes=80 << 30))

@@ -10,7 +10,9 @@ from qualification.device_defaults import numerical_defaults, performance_defaul
 from qualification.numerical.run import _parser as numerical_parser
 from qualification.numerical.verdict import _budget_checks
 from qualification.performance.manifest import _manifest_with_overrides
-from qualification.performance.matrix import _parser as performance_parser
+from qualification.performance.matrix.arguments import (
+    create_parser as performance_parser,
+)
 from shadowspill.memory import device
 
 

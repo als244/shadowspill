@@ -4,14 +4,15 @@ from dataclasses import replace
 
 import pytest
 
-from qualification.numerical.matrix import _case_commands, _CaseOptions, _parser
+from qualification.numerical.matrix.arguments import create_parser
+from qualification.numerical.matrix.commands import CaseOptions, case_commands
 from qualification.numerical.spill import configured_spill, spill_arguments
 from qualification.numerical.tolerances import SPILL_BUDGET
 from shadowspill.ssd import SSDPool
 
 
 def test_ssd_changes_only_the_planned_arm(tmp_path):
-    parser = _parser()
+    parser = create_parser()
     arguments = parser.parse_args(
         [
             "--spill-pool",
@@ -30,7 +31,7 @@ def test_ssd_changes_only_the_planned_arm(tmp_path):
     assert isinstance(pool, SSDPool)
     assert pool.capacity == SPILL_BUDGET
     assert configured_spill(parser, parser.parse_args(spill_arguments(pool))) == pool
-    options = _CaseOptions(
+    options = CaseOptions(
         environment={},
         reference_directory=tmp_path,
         regenerate_reference=True,
@@ -47,7 +48,7 @@ def test_ssd_changes_only_the_planned_arm(tmp_path):
     )
 
     def commands(option):
-        return _case_commands(
+        return case_commands(
             "llama3",
             "pytorch",
             6 << 30,
@@ -68,7 +69,7 @@ def test_ssd_changes_only_the_planned_arm(tmp_path):
 
 def test_ssd_requires_explicit_storage_and_checks_configuration(tmp_path, monkeypatch):
     monkeypatch.delenv("SHADOWSPILL_SSD_DIRECTORY", raising=False)
-    parser = _parser()
+    parser = create_parser()
     assert configured_spill(parser, parser.parse_args([])) is None
     with pytest.raises(SystemExit):
         configured_spill(parser, parser.parse_args(["--spill-pool", "ssd"]))
@@ -92,7 +93,7 @@ def test_ssd_requires_explicit_storage_and_checks_configuration(tmp_path, monkey
                 ),
             )
     monkeypatch.setenv("SHADOWSPILL_SSD_DIRECTORY", str(tmp_path))
-    parser = _parser()
+    parser = create_parser()
     assert isinstance(
         configured_spill(parser, parser.parse_args(["--spill-pool", "ssd"])),
         SSDPool,

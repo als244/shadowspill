@@ -96,6 +96,7 @@ python -m qualification.gap_report qualification/results/performance_my_check
 | `gates/` | CLI/configuration, serial process execution, environment and summaries |
 | `pipeline/` | Shared phase launching, saved inputs, bounded loading/export and observations |
 | `numerical/`, `performance/` | Case definitions, phase workers, verdicts and matrix launchers |
+| `numerical/matrix/`, `performance/matrix/` | Argument parsing, case commands/execution, failure evidence and reports |
 | `remote/`, `remote_perf/` | Optional remote matrix selection |
 | `tests/qualification/` | Runner and acceptance-rule tests |
 
