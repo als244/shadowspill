@@ -19,9 +19,11 @@ The migrated path supports single-GPU training and single-node sharded DP,
 including examples with different shapes and static arguments within one update.
 The [catalog factory](../workloads/recipes/text/benchmark/README.md) supplies
 ordinary text models, precision and LoRA settings. The GLM families use this
-same runner with their own model/input/initialization helpers. Model-owned EP
-resources still use the old `python -m benchmarking.quickstart.cli` path until
-migrated; its [migration reference](quickstart_legacy.md) is separate.
+same runner with their own model/input/initialization helpers. The
+[EP recipe](../workloads/recipes/text/expert_parallel/README.md) declares generic
+provider resources and uses distributed build/profiling when its tasks communicate.
+Its SM90 transport qualification remains pending; ordinary DP qualification does
+not certify it. The old CLI's [migration reference](quickstart_legacy.md) is separate.
 The core APIs can be used directly without quickstart; see the
 [public phase guide](../docs/architecture/offline-pipeline.md).
 
@@ -83,7 +85,9 @@ phase writes this index automatically.
 Typed device out-of-memory failures during build or profiling are recorded for
 that candidate; the sweep continues with the others. The saved sweep and HTML/CSV
 report retain each failure at every requested budget and ordering. Other errors
-stop the phase. A profile rerun retries built candidates, and an interrupted
+stop the phase. Communicating build/profile workers stop together on any failure;
+a single rank cannot safely skip a task while its peers remain inside it.
+A profile rerun retries built candidates, and an interrupted
 build/profile pass cannot leave its old completion index eligible for planning.
 
 ## Factory inputs
@@ -114,7 +118,8 @@ remain available. Runtime hyperparameters must be declared during build—for
 example, construct the optimizer with a tensor-valued learning rate to change it
 at execution time. There is no automatic alias from `lr` to an optimizer group.
 
-The factory runs separately for build and execution. It should return a lazy
+The launcher reads the factory's declarations before build to select its worker
+count; build and execution also reconstruct the setup. It should return a lazy
 model factory, or declare only meta tensors when the initializer needs their
 geometry. It must not allocate a complete model's payload in its own body. Execution
 never calls `model_factory` or `optimizer`. Initializers must fill supplied chunks;
@@ -125,10 +130,12 @@ from the same contents when the initializer is deterministic.
 
 The factory can declare `Parallelism` through `build_options`. Build and task
 profiling still launch one representative GPU process for ordinary DP.
-Communication calibration and execution launch the Program's worker count
-using `torchrun`; they create actual process groups only there. The launcher
-supports one node and symmetric DP tasks. Model-owned distributed operators
-still need their own resource binding and qualification.
+Communication calibration and execution launch the Program's worker count using
+`torchrun`. If `build_options.resources` names participant groups, build and
+profiling also use that worker count and recreate the described resources.
+Only launcher rank zero writes the shared archives. Ordinary DP still needs no
+process group for build/profiling. The launcher supports one node and symmetric
+tasks; each model-owned distributed backend requires its own qualification.
 
 Distributed factories accept `logical_rank=0`. Execution passes each worker's
 logical rank so inputs can differ while state initialization stays identical for

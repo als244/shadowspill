@@ -4,7 +4,7 @@ import pytest
 
 from benchmarking.processes import worker_command
 from benchmarking.quickstart.phases.common import write
-from benchmarking.quickstart.phases.distributed import workers
+from benchmarking.quickstart.phases.distributed import preparation_size, workers
 from benchmarking.quickstart.phases.execute import aggregate_steps
 
 
@@ -20,6 +20,20 @@ def test_worker_commands_use_one_process_until_distributed_execution():
         "phase",
         "request",
     ]
+
+
+def test_only_communicating_resources_require_distributed_preparation():
+    from shadowspill import Parallelism, Resource
+
+    parallelism = Parallelism.dp(ranks_per_replica=4, num_replicas=2)
+    setup = {"build_options": {"parallelism": parallelism}}
+    assert preparation_size(setup) == 1
+    setup["build_options"]["resources"] = {"local": Resource("backend:initialize")}
+    assert preparation_size(setup) == 1
+    setup["build_options"]["resources"]["collective"] = Resource(
+        "backend:initialize", groups={"group": parallelism.group("all_ranks")}
+    )
+    assert preparation_size(setup) == 8
 
 
 def test_execution_uses_slowest_rank_and_retains_global_loss():

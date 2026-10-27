@@ -179,6 +179,8 @@ class Model(nn.Module):
     model parameters remain distinct. EP hidden activations are BF16, with
     configurable expert compute/gradient/transport precision. The EP router
     defaults to FP32. Local construction retains PyTorch-reference state keys.
+    ``expert_factory`` can instead supply portable expert leaf modules without
+    constructing their communication resources inside the model.
     """
 
     SUPPORTS_PACKED = True
@@ -200,6 +202,7 @@ class Model(nn.Module):
         compute_precision="bf16",
         weight_grad_dtype=torch.bfloat16,
         activation_transport="bf16",
+        expert_factory=None,
     ) -> None:
         super().__init__()
         self.config = config
@@ -216,6 +219,7 @@ class Model(nn.Module):
             compute_precision=compute_precision,
             weight_grad_dtype=weight_grad_dtype,
             activation_transport=activation_transport,
+            expert_factory=expert_factory,
         ) as experts:
             self.embed = nn.Embedding(config.vocab_size, config.d_model)
             self.rotary = RotaryEmbedding(

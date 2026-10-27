@@ -44,6 +44,8 @@ class QwenMoE(nn.Module):
     the expert publication banks. ``expert_parameters()`` identifies rank-unique
     parameters; all others are replicas. Communication resources are released
     by ``close()``. CPU/meta construction without EP needs no GPU dependencies.
+    Alternatively, ``expert_factory`` supplies independently owned leaf modules,
+    such as portable Quack layers with resources initialized by the caller.
     """
 
     SUPPORTS_PACKED = True
@@ -63,6 +65,7 @@ class QwenMoE(nn.Module):
         weight_grad_dtype=torch.bfloat16,
         activation_transport="bf16",
         expert_backend="quack",
+        expert_factory=None,
     ):
         super().__init__()
         self.config = config
@@ -81,6 +84,7 @@ class QwenMoE(nn.Module):
             weight_grad_dtype=weight_grad_dtype,
             activation_transport=activation_transport,
             expert_backend=expert_backend,
+            expert_factory=expert_factory,
         ) as experts:
             self.embed = Embedding(
                 config.vocab_size, config.d_model, std=config.initializer_range

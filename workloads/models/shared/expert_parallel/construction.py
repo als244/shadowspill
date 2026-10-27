@@ -63,6 +63,7 @@ def expert_construction(
     weight_grad_dtype=torch.bfloat16,
     activation_transport="bf16",
     expert_backend="quack",
+    expert_factory=None,
 ):
     """Set construction defaults and optionally share one EP buffer across layers.
 
@@ -75,6 +76,10 @@ def expert_construction(
     buffer; on failure all resources created here are released, including
     incomplete blocks. A supplied buffer always remains caller-owned.
     """
+    if expert_factory is not None and any(
+        value is not None for value in (ep_group, token_capacity, buffer)
+    ):
+        raise ValueError("expert_factory cannot be combined with live EP resources")
     if expert_backend not in {"quack", "te"}:
         raise ValueError("expert_backend must be quack or te")
     if expert_backend == "te" and activation_transport != "bf16":
@@ -142,7 +147,7 @@ def expert_construction(
 
                 buffer = create_buffer(options, token_capacity, ep_group)
                 cleanup.callback(buffer.destroy)
-            factory = _ExpertFactory(
+            factory = expert_factory or _ExpertFactory(
                 options,
                 ep_group,
                 buffer,
@@ -168,20 +173,3 @@ def close_experts(layers, *, destroy_buffer):
             cleanup.callback(layers[0].communication_buffer.destroy)
         for layer in layers:
             cleanup.callback(layer.close)
-
-
-def parallel_forward(experts, hidden):
-    """Routed output, assignment counts, and probability sums without host reads."""
-    from mlops.expert_parallel.quack.router import route_op
-    from mlops.kernels.router import routed_logits
-
-    c = experts.config
-    flat = hidden.reshape(-1, c.model_dim)
-    logits = routed_logits(
-        flat,
-        experts.router_weight,
-        weight_grad_dtype=c.router_weight_grad_dtype,
-    )
-    weights, ids, counts = route_op(logits, c.top_k, c.renormalize_topk)
-    routed = experts(flat, expert_ids=ids, routing_weights=weights)
-    return routed.reshape_as(hidden), counts, logits.softmax(-1).sum(0)

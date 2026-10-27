@@ -1,4 +1,4 @@
-"""Rendezvous for calibration/execution only; compute profiling stays local."""
+"""Rendezvous only for phases that require multiple participants."""
 
 import os
 from contextlib import contextmanager
@@ -6,6 +6,15 @@ from dataclasses import dataclass
 from datetime import timedelta
 
 from shadowspill.communication.binding.ranks import RankAssignment
+from shadowspill.resources.description import resource_groups
+
+
+def preparation_size(setup):
+    """DP compute is local; model-owned communicating resources require peers."""
+    options = setup.get("build_options", {})
+    if not resource_groups(options.get("resources", {})):
+        return 1
+    return options["parallelism"].world_size
 
 
 @dataclass(frozen=True)

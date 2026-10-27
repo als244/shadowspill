@@ -276,20 +276,21 @@ The same keyword arguments work with the two Qwen MoE families' `Model`:
 | `weight_grad_dtype` | EP expert gradients: BF16 default, or FP32 |
 | `activation_transport` | EP activation communication: `"bf16"` default, or `"fp8"` with FP8 compute |
 | `expert_backend` | Qwen EP experts: `"quack"` default, or `"te"` for Transformer Engine's TEMoE with BF16 compute and activation transport; OLMoE always uses QuackMoE |
+| `expert_factory` | Alternative callable constructing expert leaves; portable layers need no live group or buffer during model construction |
 
 With EP, supply exactly one of `token_capacity` and `buffer`. A single buffer
 and its expert publication/reduction banks are reused across every model layer;
 model parameters remain distinct. Capacity fixes the supported local microbatch
 token count. Construct each planning candidate with its own capacity.
 
-Construct after entering the runtime and creating the process group.
-Borrowed buffers remain caller-owned. Close compiled callables before
+The live-group form requires an existing group and device. Borrowed buffers
+remain caller-owned. Close compiled callables before
 `model.close()`; this releases layer runtimes and any model-owned buffer.
 Failed construction releases the resources it created. Ordinary CPU/meta model
 construction does not load MoonEP or Quack kernels.
 
 The optional EP setup is shared in
-[models/shared/expert_parallel.py](models/shared/expert_parallel.py); it is temporary
+[models/shared/expert_parallel](models/shared/expert_parallel/); it is temporary
 construction state, not part of the model or the generic training API. Routing
 normalization, shared experts, and auxiliary-loss definitions remain properties
 of each architecture. In local mode, ordinary model dtype controls the router
@@ -307,21 +308,18 @@ constructors do not use.
 
 `model.expert_parameters()` identifies unique home expert shards. Attention,
 routers, shared experts, normalization, embeddings, and output heads are
-replicated across the EP group. For the generic distributed trainer, declare:
-
-```python
-from shadowspill.pytorch import Distributed
-
-distributed = Distributed(
-    group,
-    replica_overrides=[(model.expert_parameters(), None)],
-    groups={"ep": group},
-)
-```
+replicated across the EP group. Saved-phase callers use `expert_factory` to
+construct portable leaves and pass their provider descriptions through the
+builders' generic `resources` argument. The central `Parallelism` specifies
+expert-bank names as `Sharded` and dense parameters as replicated, with separate
+storage settings. The [EP recipe](recipes/text/expert_parallel/README.md) composes
+these declarations without creating a communicator in the model.
 
 The caller defines global loss normalization and any replication across EP
 groups. See the [distributed API](../docs/python/api/distributed.md). Model
-implementations contain no ShadowSpill imports.
+implementations contain no ShadowSpill imports. The portable resource path still
+needs its own distributed qualification; existing live-module checks do not
+qualify a saved Plan.
 
 ## Inputs, outputs, and loss
 
@@ -409,7 +407,7 @@ phase migration is completed.
 | [models/](models/) | One package per family: `config.py`, its `checkpoint.py` reading a local Hugging Face checkpoint, a README and `implementations/` with one module per implementation |
 | [models/shared/](models/shared/) | Code families share: reference decoder math, rotary tables, packing metadata and loss helpers, the mlops norm containers, the Gated DeltaNet mixer, EP construction, the Qwen mixture blocks and the GLM building blocks |
 | [models/shared/qwen_moe/](models/shared/qwen_moe/) | Initialization, mixers, experts and the decoder shared by the two Qwen MoE families |
-| [models/shared/expert_parallel.py](models/shared/expert_parallel.py) | Shared EP construction, ownership and routing helpers for all MLOps MoE models |
+| [models/shared/expert_parallel](models/shared/expert_parallel/) | Shared EP construction and routing helpers for all MLOps MoE models |
 | [lora/](lora/) | Model-family LoRA targeting over the reusable projections in MLOps |
 | [recipes/](recipes/) | Caller-side model construction, objectives and data composition |
 | [precision.py](precision.py) | Supplied workload precision configuration |

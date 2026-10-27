@@ -1,7 +1,8 @@
 > Migration reference for the old runtime-first implementation. Single-GPU and
 > common sharded-DP callers, including the GLM families, use the
-> [phase quickstart](quickstart.md). Model-owned EP resources and SSD/remote
-> storage options remain on `benchmarking.quickstart.cli` until their migration.
+> [phase quickstart](quickstart.md). SSD/remote storage options remain on
+> `benchmarking.quickstart.cli` until their migration. The EP recipe has also
+> moved to saved phases; its new distributed qualification remains pending.
 
 # Quickstart
 
@@ -611,36 +612,10 @@ field can manage factory-created groups/resources. The factory is called after
 Runtime installation. `--distributed` initializes only the CPU control group for
 a custom factory; that factory owns its accelerator communication groups and mathematical scaling.
 
-The [Quack EP text factory](../workloads/recipes/text/expert_parallel.py) supports
-`qwen3moe`, `qwen35moe`, and `olmoe` with full-model training. It defaults to BF16
-compute and FP32 masters, gradients, and optimizer moments. Precision settings
-for this factory belong in `--factory-args` under `model_dtype`, `master_dtype`,
-`grad_dtype`, and `opt_state_dtype`.
-
-```bash
-torchrun --standalone --nproc-per-node=8 -m benchmarking.quickstart.cli \
-  --distributed --factory workloads.recipes.text.expert_parallel:experiment \
-  --factory-args '{"model":"qwen3moe","sequence_length":4096,"sequences_per_step":64,"sequences_per_microbatch":16}' \
-  --search-budget-gib 20,30,40,50,60,77 --spill-gib 96 \
-  --orderings factors --resolution-options quarters --search-workers 4 \
-  --plots --timelines --output-dir runs/qwen_ep8_t64k_search
-```
-
-This example searches one 64K-token microbatch geometry at 2M global tokens per
-step. Quack/MoonEP's communication buffer requires an exact microbatch token
-count. Run a separate search for each `sequences_per_microbatch`, compare the
-best simulated plans at each requested physical budget across those reports,
-then execute only the overall winners. `--run-budget-gib` selects execution
-budgets; omitting it when search budgets are given performs search only.
-
-All ranks process distinct input sequences. Expert parameters are unique to
-their owning EP rank, while attention, router, and other nonexpert parameters
-remain replicas. The objective is normalized once by the global token count.
-Masters and optimizer moments follow each parameter's replica ownership.
-Computation-weight/gradient transfer sharding is disabled for this factory;
-do not combine it with `--transfer-shard-size` or `--shard-gradients`.
-`config_overrides` accepts model configuration fields for small qualification
-cases; full-size GPU qualification should precede a benchmark campaign.
+The [Quack EP text recipe](../workloads/recipes/text/expert_parallel/README.md)
+now uses the phase quickstart and generic provider resources. It no longer accepts
+this runtime-first factory protocol. See its guide for geometry, precision and
+qualification limits.
 
 The Python interface accepts an already-created Gloo group:
 

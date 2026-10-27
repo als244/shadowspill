@@ -1,127 +1,115 @@
-"""EP quickstart geometry, replica ownership, precision, and objective scaling."""
-
-from types import SimpleNamespace
+"""EP recipe geometry, portable resources, ownership and bounded initialization."""
 
 import pytest
 import torch
 
-from workloads.recipes.text import expert_parallel as recipe
-
-
-@pytest.fixture
-def environment(monkeypatch):
-    state = SimpleNamespace(rank=0, groups=[], destroyed=[], models=[])
-    monkeypatch.setattr(recipe.dist, "is_initialized", lambda: True)
-    monkeypatch.setattr(recipe.dist, "get_world_size", lambda: 2)
-    monkeypatch.setattr(recipe.dist, "get_rank", lambda: state.rank)
-
-    def new_group(**kwargs):
-        group = object()
-        state.groups.append((group, kwargs))
-        return group
-
-    monkeypatch.setattr(recipe.dist, "new_group", new_group)
-    monkeypatch.setattr(recipe.dist, "destroy_process_group", state.destroyed.append)
-    monkeypatch.setattr(recipe.Precision, "apply", lambda self: None)
-
-    class Model(torch.nn.Module):
-        def __init__(self, config, **kwargs):
-            super().__init__()
-            self.expert = torch.nn.Parameter(torch.randn(2, 3))
-            self.replica = torch.nn.Parameter(torch.randn(3, 3))
-            self.closed = False
-            state.models.append((config, kwargs, self))
-
-        def expert_parameters(self):
-            yield self.expert
-
-        def close(self):
-            self.closed = True
-
-    from workloads.models.qwen3moe.implementations import mlops as qwen3moe
-
-    monkeypatch.setattr(qwen3moe, "Model", Model)
-    return state
+from shadowspill import Resource
+from shadowspill.artifacts.tensors import TensorChunk
+from shadowspill.build.parallelism import model_parallelism
+from workloads.recipes.text.expert_parallel import experiment
 
 
 def factory(**kwargs):
-    return recipe.experiment(
+    return experiment(
         device="cuda:0",
         sequence_length=16,
         sequences_per_step=8,
-        sequences_per_microbatch=2,
-        config_overrides={"vocab_size": 512, "n_experts": 16},
+        sequences_per_example=2,
+        ranks=2,
+        config_overrides={
+            "n_layers": 2,
+            "d_model": 128,
+            "n_heads": 4,
+            "n_kv_heads": 2,
+            "head_dim": 32,
+            "d_ff_expert": 128,
+            "vocab_size": 512,
+            "n_experts": 16,
+        },
         **kwargs,
     )
 
 
-def test_exact_geometry_and_only_experts_are_unique(environment):
-    experiment = factory()
-    assert list(experiment["candidates"]) == ["2"]
-    batches = experiment["candidates"]["2"]
+@pytest.fixture(autouse=True)
+def no_live_resources(monkeypatch):
+    def forbidden(*args, **kwargs):
+        raise AssertionError("recipe construction opened a live GPU/group")
+
+    monkeypatch.setattr(torch.cuda, "current_device", forbidden)
+    monkeypatch.setattr(torch.distributed, "new_group", forbidden)
+    monkeypatch.setattr(torch.distributed, "init_process_group", forbidden)
+    monkeypatch.setattr(torch.distributed, "get_world_size", forbidden)
+
+
+def test_portable_recipe_preserves_geometry_and_ownership():
+    setup = factory()
+    batches = setup["candidates"]["2"]["args"]
     assert len(batches) == 4
     assert all(x.shape == (1, 32) and lengths == (16, 16) for x, _, lengths in batches)
-    with experiment["context"]():
-        model = experiment["model_factory"]()
-        second = experiment["model_factory"]()
-        torch.testing.assert_close(model.expert, second.expert)
-        torch.testing.assert_close(model.replica, second.replica)
-        _, options, _ = environment.models[0]
-        assert options["token_capacity"] == 32
-        assert options["parameter_device"] == "cpu"
-        assert options["weight_grad_dtype"] == torch.float32
-        assert options["dtype"] == torch.bfloat16
-        ownership = experiment["distributed"](model)
-        assert ownership.replica_group is environment.groups[0][0]
-        assert ownership.replica_overrides == (((model.expert,), None),)
-        assert ownership.transfer_sharding is None and not ownership.shard_gradients
-        assert experiment["plan_options"]["master_dtype"] == torch.float32
-        assert experiment["plan_options"]["grad_dtype"] == torch.float32
-        assert experiment["plan_options"]["shard_optimizer"] is True
-        assert experiment["optimizer"].keywords["opt_state_dtype"] == torch.float32
-        experiment["cleanup_model"](model)
-        experiment["cleanup_model"](second)
-        assert model.closed and second.closed
-    assert environment.destroyed == [environment.groups[0][0]]
-
-
-def test_data_is_shared_between_geometries_but_distinct_between_ranks(environment):
-    first = factory()
-    second = recipe.experiment(
-        device="cuda:0",
-        sequence_length=16,
-        sequences_per_step=8,
-        sequences_per_microbatch=4,
-        config_overrides={"vocab_size": 512, "n_experts": 16},
+    module = setup["model_factory"]()
+    assert all(p.is_meta for p in module.parameters())
+    options = setup["build_options"]
+    resource = options["resources"]["experts"]
+    assert Resource.from_dict(resource.to_dict()) == resource
+    assert resource.groups["exchange"] == options["parallelism"].group("all_ranks")
+    assert len(resource.options["layers"]) == 2
+    _, ownership = model_parallelism(module, options["parallelism"])
+    local = {id(p) for p in module.expert_parameters()}
+    for row in ownership:
+        expert = id(module.get_parameter(row.name)) in local if row.trainable else False
+        assert row.copy_groups == (((0,), (1,)) if expert else ((0, 1),))
+        assert row.optimizer.groups == (((0,), (1,)) if expert else ((0, 1),))
+    assert options["master_dtype"] == options["grad_dtype"] == torch.float32
+    assert (
+        setup["units_per_step"] == 256 and setup["metadata"]["units_scope"] == "global"
     )
-    environment.rank = 1
-    other = factory()
+    module.to_empty(device="cpu")
+    from tests.shadowspill.execution.expert_parallel.reference import payloads
 
-    def joined(exp):
-        batches = next(iter(exp["candidates"].values()))
-        return torch.cat([x for x, _, _ in batches], dim=1)
+    for name, tensor in payloads(module):
+        setup["fill_tensor"](
+            TensorChunk(name, tuple(tensor.shape), tensor.dtype, 0, tensor.numel()),
+            tensor.reshape(-1),
+        )
+        assert torch.isfinite(tensor).all(), name
+    module.close()
 
-    assert torch.equal(joined(first), joined(second))
-    assert not torch.equal(joined(first), joined(other))
+
+def test_rank_local_data_and_shared_dense_initialization():
+    first, second = factory(), factory(logical_rank=1)
+    assert not torch.equal(
+        first["candidates"]["2"]["args"][0][0],
+        second["candidates"]["2"]["args"][0][0],
+    )
+    for name, equal in (
+        ("blocks.0.moe.experts.router_weight._data", True),
+        ("blocks.0.moe.experts.gate_up_weight._data", False),
+        ("embed.weight", True),
+    ):
+        request = TensorChunk(name, (16, 128), torch.bfloat16, 0, 2048)
+        values = []
+        for setup in (first, second):
+            data = torch.empty(2048, dtype=torch.bfloat16)
+            setup["fill_tensor"](request, data)
+            assert torch.isfinite(data).all()
+            values.append(data)
+        assert torch.equal(*values) == equal
 
 
-def test_ep_objective_normalizes_global_tokens_once(environment, monkeypatch):
-    experiment = factory()
-    from workloads.recipes.text import quickstart
+def test_ep_objective_normalizes_global_tokens_once(monkeypatch):
+    from workloads.recipes.text.benchmark import factory as common
 
+    setup = factory()
     parameter = torch.tensor(2.0, requires_grad=True)
 
     def objective(manifest, model, tokens, *_):
         return parameter.square() * tokens.numel() / manifest.tokens_per_step
 
-    monkeypatch.setattr(quickstart, "full_model_objective", objective)
-    for batch in experiment["candidates"]["2"]:
-        loss, _ = experiment["objective"](None, *batch)
+    monkeypatch.setattr(common, "full_model_objective", objective)
+    for batch in setup["candidates"]["2"]["args"]:
+        loss, _ = setup["objective"](None, *batch)
         loss.backward()
-    # Each of two replicas contributes half of the global gradient sum.
     torch.testing.assert_close(parameter.grad, torch.tensor(2.0))
-    assert experiment["metadata"]["global_tokens_per_step"] == 256
-    assert experiment["units_per_step"] == 128
 
 
 @pytest.mark.parametrize(
@@ -130,10 +118,8 @@ def test_ep_objective_normalizes_global_tokens_once(environment, monkeypatch):
         ({"model": "llama3-8b"}, "model must be"),
         ({"model_dtype": "float32"}, "BF16"),
         ({"grad_dtype": "float16"}, "gradients"),
-        ({"preparation_timeout": 0}, "positive"),
     ],
 )
-def test_bad_requests_fail_before_group_creation(environment, kwargs, match):
+def test_bad_requests_fail_before_live_resources(kwargs, match):
     with pytest.raises(ValueError, match=match):
         factory(**kwargs)
-    assert not environment.groups

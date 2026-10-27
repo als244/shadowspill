@@ -5,12 +5,19 @@ import subprocess
 
 from benchmarking.processes import worker_command
 
-from .phases.common import read
+from .phases.common import experiment, read
+from .phases.distributed import preparation_size
 
 
 def launch(phase, request_file, selection=None):
     request = read(request_file)
     ranks = 1
+    if phase == "build":
+        ranks = preparation_size(experiment(request))
+    elif phase == "profile":
+        ranks = read(request_file.parent / "programs/index.json").get(
+            "preparation_world_size", 1
+        )
     if phase == "execute" or (
         phase == "communicate" and not request.get("communication_info")
     ):
@@ -18,7 +25,7 @@ def launch(phase, request_file, selection=None):
         ranks = index.get("world_size", 1)
     if ranks > 1 and request["device"] != "cuda:0":
         raise ValueError(
-            "distributed quickstart builds for cuda:0; "
+            "distributed quickstart uses process-local cuda:0; "
             "select GPUs with CUDA_VISIBLE_DEVICES"
         )
     suffix = "" if selection is None else f"-{selection:04d}"
@@ -48,6 +55,7 @@ def launch(phase, request_file, selection=None):
         ) as worker,
     ):
         try:
+            assert worker.stdout is not None
             for line in worker.stdout:
                 log.write(line)
                 log.flush()
