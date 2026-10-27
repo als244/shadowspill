@@ -5,7 +5,6 @@ from pathlib import Path
 
 import pytest
 
-from shadowspill.runtime import failures as failures_module
 from shadowspill.runtime.abi import (
     AdapterCapabilities,
     AdapterConfig,
@@ -39,14 +38,12 @@ from shadowspill.runtime.abi import (
 )
 from shadowspill.runtime.abi.signatures import _RUNTIME_SIGNATURES
 from shadowspill.runtime.bootstrap import (
-    InstalledRuntime,
     PoolBootstrap,
     RouteBootstrap,
     RuntimeInstallError,
     _bootstrap_refusal,
     _function_pointer,
     install_runtime,
-    validate_dynamic_execution_reservation,
 )
 
 
@@ -275,65 +272,6 @@ def test_runtime_signatures_are_configured_together() -> None:
         ctypes.c_uint64,
         ctypes.POINTER(ObjectBinding),
     ]
-
-
-def test_execution_reservation_accepts_fragmented_dynamic_capacity(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    monkeypatch.setattr(failures_module, "runtime_library", _IdleRuntime)
-
-    class _StatisticsLibrary:
-        allocated = 16
-        free = 112
-        free_prefix = 112
-        largest = 112
-
-        def shadowspill_pytorch_allocator_statistics(self, output: object) -> int:
-            statistics = ctypes.cast(output, ctypes.POINTER(AdapterStatistics))[0]
-            statistics.allocator_pool.allocated_bytes = self.allocated
-            statistics.allocator_pool.free_bytes = self.free
-            statistics.allocator_pool.free_prefix_bytes = self.free_prefix
-            statistics.allocator_pool.largest_free_range_bytes = self.largest
-            return 0
-
-    admission = PhysicalAdmission()
-    admission.allocator_pool_bytes = 128
-    library = _StatisticsLibrary()
-    installed = InstalledRuntime(
-        library=library,
-        path=Path("/adapter"),
-        admission=admission,
-        fixed_execution_bytes=16,
-    )
-
-    from shadowspill.runtime.bootstrap import existing_execution_reserve
-
-    assert existing_execution_reserve(installed) == 0
-    assert validate_dynamic_execution_reservation(installed, reserved_bytes=16) == 16
-    with pytest.raises(ValueError, match="smaller"):
-        validate_dynamic_execution_reservation(installed, reserved_bytes=15)
-    # Dynamic admission may consume all compatible ranges.  Persistent state
-    # can split the free capacity without requiring one range as large as the
-    # complete planning capacity.
-    library.allocated = 20
-    library.free = 108
-    library.free_prefix = 96
-    library.largest = 96
-    assert existing_execution_reserve(installed) == 4
-    installed.admitted_layout_bytes[7] = 3
-    assert existing_execution_reserve(installed) == 1
-    installed.lent_slabs.add(7)
-    assert existing_execution_reserve(installed) == 4
-    installed.lent_slabs.clear()
-    installed.admitted_layout_bytes.clear()
-    assert validate_dynamic_execution_reservation(installed, reserved_bytes=32) == 20
-    with pytest.raises(RuntimeInstallError, match="exceed"):
-        validate_dynamic_execution_reservation(installed, reserved_bytes=16)
-    library.largest = 64
-    assert validate_dynamic_execution_reservation(installed, reserved_bytes=32) == 20
-    library.free = 100
-    with pytest.raises(RuntimeInstallError, match="accounting"):
-        validate_dynamic_execution_reservation(installed, reserved_bytes=32)
 
 
 def test_missing_callback_symbol_has_field_specific_error() -> None:

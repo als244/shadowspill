@@ -1,7 +1,7 @@
-"""Plan-time admission: tasks, the fixed layout, action batches, acquisitions.
+"""Worker admission: tasks, the fixed layout, and output acquisitions.
 
 Before a plan runs, every task it will execute, the fixed physical layout its
-objects are placed in, lifecycle action batches and the public
+objects are placed in, and the public
 object sets a caller may acquire are described to the neutral runtime once,
 through the plan handle, and answered with the handles the boundaries use.
 `encode_task` is the ctypes description of one task and the buffers that keep it
@@ -37,7 +37,6 @@ from .common import (
     plan_local_id,
     runtime_action,
 )
-from .lending import require_lent_slabs_back
 from .report import describe_pool_occupants, statistics
 
 if TYPE_CHECKING:
@@ -122,7 +121,7 @@ def admit_task(
 def admit_fixed_layout(bridge: RuntimeBridge, layout: RuntimeFixedLayout) -> None:
     """Copy one indexed physical-layout certificate into the C runtime."""
 
-    if bridge._admitted_task_handles or bridge._admitted_action_batches:
+    if bridge._admitted_task_handles:
         raise RuntimeExecutionError(
             "fixed layout must be admitted before execution tasks"
         )
@@ -162,7 +161,6 @@ def admit_fixed_layout(bridge: RuntimeBridge, layout: RuntimeFixedLayout) -> Non
     )
     # The slabs planning borrowed go back where they were before anything is
     # reserved for good -- this layout's own slab, or a place in another's.
-    require_lent_slabs_back(bridge.runtime, "admit a fixed layout")
     if bridge.slab_owner is None:
         status = int(
             bridge.runtime_library.shadowspill_plan_admit_fixed_layout(
@@ -193,77 +191,6 @@ def admit_fixed_layout(bridge: RuntimeBridge, layout: RuntimeFixedLayout) -> Non
             f"{describe_pool_occupants(bridge)}"
         )
     bridge._fixed_layout_installed = True
-    # A layout in another plan's slice holds no bytes of its own: they are
-    # counted once, for the plan that reserved them.
-    installed = bridge.runtime._installed
-    installed.admitted_layout_bytes[bridge.plan_handle] = (
-        0 if bridge.slab_owner is not None else layout.slice_bytes
-    )
-    if bridge.slab_owner is not None:
-        installed.slab_owners[bridge.plan_handle] = installed.slab_owners.get(
-            bridge.slab_owner, bridge.slab_owner
-        )
-
-
-def admit_initial_actions(
-    bridge: RuntimeBridge,
-    actions: tuple[MemoryAction, ...],
-    *,
-    task_number: int,
-    action_trace_labels: tuple[str, ...] | None = None,
-) -> int:
-    """Admit one reusable lifecycle action batch."""
-
-    labels = action_labels(actions, action_trace_labels)
-    action_pairs = _runtime_actions(bridge, actions, labels)
-    expected = tuple(
-        (action.alias_group_id, action.kind) for action, _label in action_pairs
-    )
-    existing = bridge._admitted_action_batches.get(task_number)
-    if existing is not None:
-        existing_handle, admitted = existing
-        if admitted != expected:
-            raise RuntimeExecutionError(
-                "initial action admission changed for an existing task: "
-                f"task={task_number}, expected={admitted}, observed={expected}"
-            )
-        return existing_handle
-    for action, _label in action_pairs:
-        bridge.objects.register_placeholder(action.alias_group_id)
-    bridge.objects.bind(action.alias_group_id for action, _label in action_pairs)
-    encoded_labels = tuple(
-        label.encode("utf-8") if label else None for _action, label in action_pairs
-    )
-    runtime_actions = (RuntimeAction * len(action_pairs))(
-        *(
-            runtime_action(
-                plan_local_id(action.alias_group_id, "alias_"),
-                ACTION_KIND[action.kind],
-                trace_label=encoded,
-            )
-            for (action, _label), encoded in zip(
-                action_pairs, encoded_labels, strict=True
-            )
-        )
-    )
-    action_batch_handle = ctypes.c_size_t()
-    bridge.require(
-        bridge.runtime_library.shadowspill_plan_admit_action_batch(
-            bridge.plan_handle,
-            task_number,
-            runtime_actions if action_pairs else None,
-            len(action_pairs),
-            ctypes.byref(action_batch_handle),
-        ),
-        f"admit initial action batch {task_number}",
-    )
-    if action_batch_handle.value == 0:
-        raise RuntimeExecutionError(
-            "runtime returned a null initial action batch handle"
-        )
-    resolved = int(action_batch_handle.value)
-    bridge._admitted_action_batches[task_number] = (resolved, expected)
-    return resolved
 
 
 def admit_caller_acquisition(bridge: RuntimeBridge, alias_ids: tuple[str, ...]) -> int:
@@ -320,11 +247,8 @@ def clear_tasks(bridge: RuntimeBridge) -> None:
         "clear plan tasks",
     )
     bridge._admitted_task_handles.clear()
-    bridge._admitted_action_batches.clear()
     bridge._admitted_acquisitions.clear()
     bridge._fixed_layout_installed = False
-    bridge.runtime._installed.admitted_layout_bytes.pop(bridge.plan_handle, None)
-    bridge.runtime._installed.slab_owners.pop(bridge.plan_handle, None)
 
 
 def _runtime_inputs(
@@ -493,7 +417,6 @@ __all__ = [
     "EncodedTask",
     "admit_caller_acquisition",
     "admit_fixed_layout",
-    "admit_initial_actions",
     "admit_task",
     "clear_tasks",
     "encode_task",

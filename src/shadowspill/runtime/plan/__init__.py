@@ -23,13 +23,11 @@ from .bridge import (
     actions_by_task,
     admit_caller_acquisition,
     admit_fixed_layout,
-    admit_initial_actions,
     admit_task,
     begin_runtime_trace,
     clear_tasks,
     describe_object_state,
     describe_pool_occupants,
-    describe_refused_action,
     encode_task,
     end_and_read_runtime_trace,
     input_failure_states,
@@ -42,7 +40,6 @@ from .bridge import (
     statistics,
     trace_capacities,
 )
-from .lending import take_back_lent_slabs
 from .lifecycle import (
     PlanMemory,
     abort_plan,
@@ -66,7 +63,6 @@ __all__ = [
     "actions_by_task",
     "admit_caller_acquisition",
     "admit_fixed_layout",
-    "admit_initial_actions",
     "admit_task",
     "adopt_plan",
     "begin_plan",
@@ -74,7 +70,6 @@ __all__ = [
     "clear_tasks",
     "describe_object_state",
     "describe_pool_occupants",
-    "describe_refused_action",
     "encode_task",
     "end_and_read_runtime_trace",
     "input_failure_states",
@@ -86,7 +81,6 @@ __all__ = [
     "seal_fixed_layout",
     "set_profiler_annotations",
     "statistics",
-    "take_back_lent_slabs",
     "trace_capacities",
     "wait_plan_idle",
 ]

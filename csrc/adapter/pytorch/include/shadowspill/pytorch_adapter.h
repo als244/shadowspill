@@ -277,7 +277,7 @@ shadowspill_pytorch_allocation_for_pointer(
  * for a stream, and handing one to the caller and taking it back.
  */
 
-/* Validate one CPU-addressable pool lease before rebinding CPU storage. */
+/* Validate one CPU-addressable pool lease before creating a CPU storage view. */
 SHADOWSPILL_PYTORCH_API ShadowSpillStatus
 shadowspill_pytorch_validate_object_binding(
     uint32_t pool_id,

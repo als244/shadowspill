@@ -5,7 +5,7 @@ from typing import Any
 
 from torch.utils._pytree import tree_unflatten, treespec_loads
 
-from shadowspill.pytorch.runtime_adapter.boundaries import (
+from shadowspill.pytorch.runtime_adapter.outputs import (
     acquire_for_caller,
     transfer_outputs_to_caller,
 )

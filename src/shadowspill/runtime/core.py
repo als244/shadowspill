@@ -47,18 +47,7 @@ from .topology import (
 
 
 def _announce(message: str) -> None:
-    """Say where construction has got to, when asked.
-
-    Runtime construction is silent and can take minutes: it registers pools,
-    which for a remote one means a peer pinning tens of gibibytes, and then
-    calibrates every route, which moves real bytes. A run that appears to hang
-    before the first planning phase is somewhere in here, and without this the
-    only way to find out is a debugger.
-
-    Off unless ``SHADOWSPILL_RUNTIME_PROGRESS`` is set, because a library that
-    prints during normal construction is a library that prints in someone
-    else's logs.
-    """
+    """Opt-in progress for pool registration and optional route calibration."""
 
     if os.environ.get("SHADOWSPILL_RUNTIME_PROGRESS"):
         print(f"shadowspill runtime: {message}", file=sys.stderr, flush=True)
@@ -162,7 +151,7 @@ class Runtime:
             self._unusable_reason: str | None = None
             self._last_failure: RuntimeFailureDiagnostics | None = None
             self._active_plan_handles: set[int] = set()
-            self._planning_plan_handle: int | None = None
+            self._pending_plan_handle: int | None = None
             self._active_object_references = 0
             self._next_persistent_object_id = 1 << 62
             self._pools = topology.pools(int(installed.admission.allocator_pool_bytes))
@@ -191,11 +180,7 @@ class Runtime:
                     f"of its image: status={status}"
                 )
         if calibrate:
-            # Announced because it is the one part of construction whose cost
-            # is a property of the hardware rather than of the code, and the
-            # only part that moves bytes. A run that appears to hang between
-            # "runtime created" and the first planning phase is almost always
-            # in here, and silence made that a guess.
+            # Low-level callers may calibrate here; Executor uses saved evidence.
             _announce("calibrating transfer routes")
             started = time.perf_counter()
             self._calibrate(routes=None, provenance=INITIALIZATION_PROVENANCE)
@@ -245,12 +230,7 @@ class Runtime:
         return statistics
 
     def next_plan_id(self) -> int:
-        """Take an id no other plan on this runtime will be given.
-
-        Taken before the plan is created, so the same id can name the allocation
-        scopes opened for it -- profiling runs under the plan but outside any of
-        its tasks, so the runtime cannot infer the plan there.
-        """
+        """Take an id no other plan on this runtime will be given."""
 
         plan_id = ctypes.c_uint64()
         status = int(
@@ -334,9 +314,9 @@ class Runtime:
         with self._lock:
             if self._closed:
                 return
-            if self._active_plan_handles or self._planning_plan_handle is not None:
+            if self._active_plan_handles or self._pending_plan_handle is not None:
                 raise RuntimeConfigurationError(
-                    "cannot close Runtime while a callable or in-progress plan owns it"
+                    "cannot close Runtime while an active plan or plan setup owns it"
                 )
             if self._active_object_references != 0:
                 raise RuntimeConfigurationError(
@@ -382,9 +362,9 @@ class Runtime:
     ) -> TransferCapabilities:
         with self._lock:
             self._require_open()
-            if self._active_plan_handles or self._planning_plan_handle is not None:
+            if self._active_plan_handles or self._pending_plan_handle is not None:
                 raise RuntimeConfigurationError(
-                    "transfer calibration requires no callable or in-progress plan"
+                    "transfer calibration requires no active plan or plan setup"
                 )
             calibrate(
                 self._runtime_handle,

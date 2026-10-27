@@ -13,11 +13,9 @@ from shadowspill.ir import (
 from shadowspill.pytorch.runtime_adapter.boundaries import (
     after_task_and_update,
     before_task_and_acquire,
-    submit_initial_actions,
 )
 from shadowspill.runtime.plan import (
     abort_task,
-    admit_initial_actions,
     admit_task,
     clear_tasks,
 )
@@ -35,7 +33,13 @@ def roundtrips(state, groups):
         inputs=(value,),
         mutations=(MutationSpec(value),),
     )
-    admit_initial_actions(bridge, fetch, task_number=0)
+    fetch_handle = admit_task(
+        bridge,
+        TaskSpec("task_000000", task.resource, "fetch"),
+        (),
+        fetch,
+        trace_label="gradient-fetch",
+    )
     handle = admit_task(bridge, task, (alias,), evict, trace_label="gradient-add")
     region = state.regions[value]
     dtype = getattr(torch, region.geometry["dtype"].removeprefix("torch."))
@@ -55,9 +59,10 @@ def roundtrips(state, groups):
             end = region.offset + region.length
             if replicas.index(groups.logical_rank) == 0:
                 before[region.offset : end] = expected[region.offset : end]
-            submit_initial_actions(bridge, fetch, task_number=0)
+            before_task_and_acquire(fetch_handle, state.device.index, ())
+            after_task_and_update(fetch_handle, state.device.index, (), ())
             owner = state.owner(alias)
-            before_task_and_acquire(bridge, handle, state.device.index, (owner,))
+            before_task_and_acquire(handle, state.device.index, (owner,))
             active = True
             gradient = state.argument(value, state.geometry[value])
             observed.copy_(gradient, non_blocking=True)
@@ -66,7 +71,7 @@ def roundtrips(state, groups):
                 gradient.add_((groups.logical_rank + 1) * (step + 1) * contribution)
                 expected[:15].add_(sum(range(1, world + 1)) * (step + 1) * contribution)
             del gradient
-            after_task_and_update(bridge, handle, state.device.index, (), (), (owner,))
+            after_task_and_update(handle, state.device.index, (), (owner,))
             active = False
             bridge.wait_until_idle()
             torch.testing.assert_close(observed, before, rtol=0, atol=0)

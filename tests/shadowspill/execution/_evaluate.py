@@ -67,8 +67,6 @@ executor = (
 )
 executor.initialize(fill, chunk_bytes=40)
 joint = shared_memory(plan, {"evaluation": evaluation})
-installed = executor.runtime._installed
-assert sum(installed.admitted_layout_bytes.values()) == joint.fixed_slice_bytes
 slices = plan_slices(executor.runtime)
 assert len(slices) == 2
 assert len({item.offset for item in slices}) == 1
@@ -143,7 +141,6 @@ if trainer:
 else:
     del pending
     executor.close()
-assert not installed.admitted_layout_bytes
 executor.close()
 with pytest.raises(RuntimeError, match="closed"):
     executor.run(plan="evaluation")

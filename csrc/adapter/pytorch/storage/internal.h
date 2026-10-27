@@ -3,8 +3,8 @@
 
 /*
  * PyTorch storages over runtime leases. objects.c holds the C primitives --
- * validate a CPU view against its lease, acquire objects for a stream, hand
- * one to the caller and take it back -- and cpu.cpp and device.cpp are the
+ * validate a CPU view against its lease, hand an acquired object to the caller
+ * and take it back -- and cpu.cpp and device/ are the
  * torch operators over them, compiled when libtorch is found. Both halves
  * include this header, so it carries nothing C++ cannot parse.
  */

@@ -46,11 +46,7 @@ def exercise(runtime, kind):
         runtime,
         execution="execution",
         spill="spill",
-        execution_budget=None,
-        spill_budget=None,
-        dynamic_scratch_reserve_bytes=0,
         execution_device=0,
-        require_calibration=False,
     )
     ir = ShadowSpillProgram(
         devices=(DeviceSpec("cuda_0", "worker", "cuda", 0),),
@@ -123,8 +119,8 @@ def exercise(runtime, kind):
                 zip(streams, handles, strict=True)
             ):
                 with torch.cuda.stream(stream):
-                    before_task_and_acquire(bridge, handle, 0, ())
-                    wait_task_allocations(bridge, handle, 0)
+                    before_task_and_acquire(handle, 0, ())
+                    wait_task_allocations(handle, 0)
                     value = torch.empty(size // 4, device="cuda")
                     addresses.append(value.data_ptr())
                     if index == 0:
@@ -132,7 +128,7 @@ def exercise(runtime, kind):
                     value.fill_(iteration * 2 + index)
                     observed[index].copy_(value, non_blocking=True)
                     del value
-                    after_task_and_update(bridge, handle, 0, (), (), ())
+                    after_task_and_update(handle, 0, (), ())
                     finished[index].record()
             bridge.wait_until_idle()
             for stream in streams:

@@ -27,15 +27,13 @@ _NOT_A_DEVICE: Final = (
 #: The storage operations the adapter library registers with PyTorch. A library
 #: that registered none of them is the usual symptom of a stale build.
 REQUIRED_STORAGE_OPERATIONS: Final = (
-    "_import_cpu_storages",
-    "_export_cpu_storages",
     "_make_runtime_cpu_storage",
-    "_make_unbacked_cpu_storage",
-    "_release_cpu_storages",
+    "_make_unbacked_cuda_storage",
     "_acquire_storages",
     "_before_task_storages",
     "_dematerialize_storages",
     "_before_task_boundary",
+    "_wait_task_allocations",
     "_after_task_storages",
     "_after_task_boundary",
     "_transfer_acquired_storage_to_caller",
@@ -123,7 +121,7 @@ class PyTorchFrontend:
 
         PyTorch obtains its cuBLAS handle lazily, and obtaining it does not force
         cuBLAS to create its retained workspace. A first GEMM later, while a
-        large profiling input is live, can split an otherwise empty slab and
+        large input is live, can split an otherwise empty slab and
         prevent a large fixed-layout arena from being reserved despite ample
         aggregate capacity. Exercising the provider here gives its retained state
         deterministic low-address placement.

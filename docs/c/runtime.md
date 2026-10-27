@@ -317,14 +317,13 @@ runtime's pool, route, event, and object owners:
   admitted into its slice. See [sharing a
   slab](../architecture/physical-admission.md#sharing-a-slab).
 - `shadowspill_plan_lend_fixed_layout()` lends the slice a plan reserved back
-  to its pool between calls, so planning another plan can allocate in it;
+  to its pool between calls for low-level callers that need temporary access;
   refused unless nothing a call placed is live or retiring in the pool. While
   the slice is lent, no call of the plan or of one sharing its slice places
   anything, nothing is admitted into it, and no slice is reserved in the pool.
   `shadowspill_plan_reclaim_fixed_layout()` takes it back at the offset it had,
-  and refuses while anything allocated in the meantime still lies in it. See
-  [planning between
-  calls](../architecture/physical-admission.md#planning-between-calls).
+  and refuses while anything allocated in the meantime still lies in it.
+  Saved-plan Executor setup keeps its arenas reserved and does not use these calls.
 - `shadowspill_plan_clear_tasks()` discards admitted records and bindings.
 - `shadowspill_plan_wait_idle()` actively waits for only that plan's claimed
   task scopes, submitted actions, and task-owned retirements. Other plans on

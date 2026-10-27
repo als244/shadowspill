@@ -471,52 +471,21 @@ pointer reaches a backend kernel.
 
 ## Sharing a slab
 
-A plan's layout holds its slice for as long as the plan is admitted, whether or
-not it is running. Plans that run in turn -- a training step and the forward
-that evaluates it -- need not each hold one: a plan made with
-`share_slab_with=` another is admitted into that plan's slice instead of a
-range of its own (`shadowspill_plan_admit_fixed_layout_in()`), at the same
-offset, and must fit inside it. Its execution budget is at most the slab's
-size, and is that size when not given. The smallest workspace allowance any
-plan is given is checked against it like any budget, so a slab smaller than
-that allowance cannot be shared.
+`Executor(training_plan, plans={"evaluation": evaluation_plan})` admits the saved
+layouts into one arena. The joint memory calculation reserves the largest
+required slice, charges shared model tensors once, and includes each plan's
+private tensors and workspace. The C runtime validates every layout against that
+arena through `shadowspill_plan_admit_fixed_layout_in()`.
 
-The bytes are counted once, for the plan that reserved them: a sharing plan
-records no layout bytes of its own, and none of the process's persistent
-in-pool bytes are charged against its budget, since they lie outside the
-shared layout slice and its owner counted them already.
+Plans execute sequentially. Each invocation waits for the previous invocation
+and requires an empty execution layout before placing values into it. The plan
+that owns the arena closes after the plans sharing it. `plan_slices()` reports
+the actual layouts and their shared owner.
 
-Taking turns is what makes this sound, and it needs nothing new: every call
-begins only once the whole runtime has drained, and only if nothing is live in
-its layout ([step boundaries](step-boundaries.md#repeated-execution)),
-so whatever the other plan placed in the shared bytes is gone before this one
-places anything. The plan that reserved the slab cannot be cleared while
-another is admitted into it; it closes last. `plan_slices()` lists each
-admitted layout with the plan whose slab it lies in.
-
-## Planning between calls
-
-Planning runs a plan's tasks on real tensors -- profiling measures them, and
-compilation runs them to choose kernels -- and those tensors are allocated in
-the execution pool. A pool whose slabs stayed reserved while it planned would
-leave a plan made after another only what they do not cover: once a training
-step has planned itself into the whole pool, nothing, and the forward that is
-to share its slab could not be planned at all.
-
-Planning happens between calls, when no plan is using its slab, so a planning
-call borrows them. When it begins, the runtime drains and every slab an
-admitted plan reserved is lent back to its pool
-(`shadowspill_plan_lend_fixed_layout()`), where planning allocates in it like
-any free range. Each is taken back at the offset it had
-(`shadowspill_plan_reclaim_fixed_layout()`) before a layout is admitted -- the
-new plan's own slab, or its place in another's -- and before any call begins.
-Taking a slab back is refused while anything allocated since still lies in
-it, and while any slab is lent the runtime refuses what would use it: a call of
-a plan placing into it, a layout admitted into it, and a slab reserved in the
-pool, which could land where the lent one has to go back. A planning call that
-fails gives the slabs back once its tensors are released, or, failing that,
-the next call takes them back. Planning order therefore does not matter, and
-the budget still bounds what planning uses.
+Build, profiling and planning happen before worker setup. They do not use runtime
+pools or borrow admitted arenas. The worker only binds the saved layouts, tensor
+contracts and executable payloads, then checks physical capacity. Communication
+calibration is a separate phase; worker setup does not repeat it.
 
 ## Capacity refinement
 

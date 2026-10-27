@@ -3,9 +3,7 @@
 Nothing a plan's own scopes allocated outlives the plan. `plan_scoped_residue`
 names what still does -- the range, the scope that made it, the object occupying
 it and where that object is referenced from -- and `force_release_plan_scope`
-reclaims it; `reclaim_plan_scoped_residue` is the two together as a closing
-plan runs them -- a callable's close, or the end of a planning call that left
-no callable -- reporting rather than raising.
+reclaims it. `reclaim_plan_scoped_residue` combines them during worker teardown.
 """
 
 from __future__ import annotations
@@ -56,8 +54,8 @@ def _unclaimed_by_plan(
 def plan_scoped_residue(runtime: Runtime, plan_handle: int) -> tuple[str, ...]:
     """Which of one plan's own ranges are still occupied, and by what.
 
-    A plan that closes owes the pool every range its tasks and its profiling
-    probes made, so anything still here is residue. Ranges carrying no plan -- a
+    A plan that closes owes the pool every range its tasks made, so anything
+    still here is residue. Ranges carrying no plan -- a
     provider taking its own workspace between tasks -- belong to no plan and are
     not counted.
 

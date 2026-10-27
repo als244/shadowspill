@@ -1,11 +1,4 @@
-"""What a caller asked of the runtime, checked against what the runtime has.
-
-Two moments ask these questions. Construction checks the pools and routes a
-runtime is built from, and finds the adapter library to load. Plan resolution
-turns a requested budget, scratch reserve and device into the figures a plan
-is priced and admitted against. Every refusal here is a
-:class:`RuntimeConfigurationError`, which is what this module is named for.
-"""
+"""Validate runtime pools, transfer routes, and execution-device bindings."""
 
 from __future__ import annotations
 
@@ -14,7 +7,6 @@ from dataclasses import dataclass
 from pathlib import Path
 from types import MappingProxyType
 
-from shadowspill.errors import AdmissionError
 from shadowspill.frontend import RuntimeFrontend
 from shadowspill.libraries import resolve_library
 from shadowspill.memory import (
@@ -236,108 +228,6 @@ def configure_topology(
     return Topology(normalized, normalized_routes)
 
 
-def resolve_budget(value: int | None, pool: MemoryPool, name: str) -> int:
-    """A requested byte budget against the pool it will be taken from."""
-
-    if value is None:
-        return pool.capacity
-    if isinstance(value, bool) or not isinstance(value, int):
-        raise TypeError(f"{name} must be an integer byte count or None")
-    if value <= 0:
-        raise AdmissionError(f"{name} must be positive")
-    if value > pool.capacity:
-        raise AdmissionError(
-            f"{name}={value} exceeds pool {pool.name!r} capacity={pool.capacity}"
-        )
-    return value
-
-
-def execution_overhead_bytes(pool: MemoryPool) -> int:
-    """Physical budget reserved outside the runtime's suballocatable pool."""
-    physical = pool.physical_capacity
-    return 0 if physical is None else physical - pool.capacity
-
-
-def resolve_physical_execution_budget(value: int | None, pool: MemoryPool) -> int:
-    """Translate a whole-process cap to a logical pool budget, even for subplans.
-
-    Prepared artifacts consistently price physical budgets. Unlike the legacy
-    mixed-domain resolver below, a smaller physical cap still includes the
-    process baseline and external allowance.
-    """
-    if value is None:
-        return pool.capacity
-    if isinstance(value, bool) or not isinstance(value, int):
-        raise TypeError("execution_budget must be an integer byte count or None")
-    return resolve_budget(
-        value - execution_overhead_bytes(pool), pool, "usable execution_budget"
-    )
-
-
-def resolve_execution_budget(value: int | None, pool: MemoryPool) -> int:
-    """The execution budget a plan against `pool` is actually given.
-
-    Runtime initialization subtracts the one-time accelerator problem and
-    provider allowance from ``physical_capacity`` before creating the
-    execution pool. Users naturally repeat that same physical cap at the
-    planning boundary, so a budget equal to the cap is the spelling for "the
-    whole pool" -- the same thing ``None`` means -- and resolves to the derived
-    capacity rather than charging those fixed bytes twice. Values at or below
-    ``pool.capacity`` keep the per-plan logical limit semantics. A value
-    strictly between the derived capacity and the physical cap is ambiguous and
-    is rejected rather than pretending the process slab became smaller.
-
-    Planning calls this, so the figure a plan is priced against is not always
-    the figure that was asked for. A caller reporting what it planned against
-    asks here rather than repeating the arithmetic, and asking is also the only
-    way to see the reduction *before* planning.
-    """
-
-    if value is None:
-        return pool.capacity
-    if isinstance(value, bool) or not isinstance(value, int):
-        raise TypeError("execution_budget must be an integer byte count or None")
-    if value <= 0:
-        raise AdmissionError("execution_budget must be positive")
-    physical_capacity = pool.physical_capacity
-    if physical_capacity is not None and value == physical_capacity:
-        return pool.capacity
-    if value <= pool.capacity:
-        return value
-    if physical_capacity is not None and value < physical_capacity:
-        raise AdmissionError(
-            "execution_budget falls between the initialized execution-pool "
-            "capacity and its complete physical cap; pass the runtime physical "
-            "cap for the full pool, or a value no larger than the derived pool "
-            f"capacity={pool.capacity}"
-        )
-    limit = physical_capacity if physical_capacity is not None else pool.capacity
-    raise AdmissionError(
-        f"execution_budget={value} exceeds pool {pool.name!r} physical capacity={limit}"
-    )
-
-
-def resolve_dynamic_scratch_reserve(
-    requested: int | None,
-    *,
-    execution_budget: int,
-) -> int:
-    """Validate an optional minimum for bounded task-path insertions."""
-
-    if requested is None:
-        return 0
-    if isinstance(requested, bool) or not isinstance(requested, int):
-        raise TypeError("dynamic_scratch_reserve_bytes must be an integer byte count")
-    if requested < 0:
-        raise AdmissionError("dynamic_scratch_reserve_bytes must be non-negative")
-    if requested > execution_budget:
-        raise AdmissionError(
-            "dynamic_scratch_reserve_bytes exceeds execution_budget: "
-            f"reserve={requested}, budget={execution_budget}"
-        )
-    return requested
-
-
 def resolve_execution_device(
     frontend: RuntimeFrontend, value: object | None, pool: MemoryPool
 ) -> int:
@@ -394,9 +284,6 @@ __all__ = [
     "Topology",
     "adapter_path",
     "configure_topology",
-    "resolve_budget",
-    "resolve_dynamic_scratch_reserve",
-    "resolve_execution_budget",
     "resolve_execution_device",
     "validate_topology",
 ]

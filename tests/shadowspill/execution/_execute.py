@@ -18,6 +18,7 @@ forbid_preparation(
 )
 from qualification.runtime_evidence import adapter_statistics  # noqa: E402
 from shadowspill import Executor, load_checkpoint, save_checkpoint  # noqa: E402
+from shadowspill.runtime.occupancy import plan_slices  # noqa: E402
 from tests.shadowspill.execution._stream_checks import StreamChecks  # noqa: E402
 from tests.shadowspill.execution._trace_checks import check_trace  # noqa: E402
 from tests.spill_pool import spill_pool  # noqa: E402
@@ -99,7 +100,7 @@ executor.initialize(fill, chunk_bytes=40, restore=oracle["restore"])
 if "initial_state" in oracle:
     assert_state(executor, oracle["initial_state"])
 assert (
-    sum(executor.runtime._installed.admitted_layout_bytes.values())
+    sum({s.slab_plan_id: s.slab_bytes for s in plan_slices(executor.runtime)}.values())
     == plan.memory_layout.fixed_slice_bytes
 )
 with pytest.raises(ValueError, match="unknown runtime hyperparameters"):

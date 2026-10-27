@@ -1,36 +1,11 @@
-"""The step's boundaries on the adapter: what happens while a plan runs.
+"""Rebind task inputs, publish results, and retire views at admitted boundaries."""
 
-Publishing the cold materialization, acquiring the caller's outputs, submitting
-the initial actions, the before- and after-task boundaries, handing outputs to
-the caller and waiting for the plan or the runtime to go idle. The task
-boundaries themselves run inside the adapter's storage operators, so the tensors
-cross into C once; the rest are the adapter's handle calls.
-"""
-
-from __future__ import annotations
-
-import ctypes
 from collections.abc import Sequence
 from dataclasses import dataclass
-from typing import TYPE_CHECKING
 
 import torch
 
-from shadowspill.ir import MemoryAction
-from shadowspill.runtime.abi import ObjectBinding
-from shadowspill.runtime.failures import (
-    RuntimeExecutionError,
-    generic_runtime_error,
-    read_allocator_failure,
-)
-from shadowspill.runtime.plan.common import plan_local_id
-from shadowspill.runtime.plan.report import describe_refused_action
-
-if TYPE_CHECKING:
-    from shadowspill.pytorch.runtime_adapter.replacements import (
-        ReplacementStorageViews,
-    )
-    from shadowspill.runtime.plan import RuntimeBridge
+from shadowspill.runtime.failures import RuntimeExecutionError
 
 
 @dataclass(frozen=True, slots=True)
@@ -42,268 +17,70 @@ class PublishedStorage:
     publication_ordinal: int
 
 
-def publish_initial_tensor(
-    bridge: RuntimeBridge, alias_id: str, tensor: torch.Tensor
-) -> ObjectBinding:
-    """Publish cold materialization through the plan-local object record."""
+@dataclass(frozen=True, slots=True)
+class ReplacementStorageViews:
+    alias_id: str
+    tensors: tuple[torch.Tensor, ...]
 
-    if not bridge.objects.requires_storage(alias_id):
-        bridge.objects.register_placeholder(alias_id)
-        return bridge.objects.zero_binding(alias_id)
-    binding = ObjectBinding()
-    storage = tensor.untyped_storage()
-    bridge.require(
-        bridge.runtime_library.shadowspill_plan_publish_initial_allocation(
-            bridge.plan_handle,
-            plan_local_id(alias_id, "alias_"),
-            storage.data_ptr(),
-            ctypes.byref(binding),
-        ),
-        "publish initial plan allocation",
-    )
-    return binding
-
-
-def acquire_for_caller(
-    bridge: RuntimeBridge,
-    alias_ids: tuple[str, ...],
-    tensors: tuple[torch.Tensor, ...],
-    *,
-    acquisition_handle: int,
-) -> tuple[ObjectBinding, ...]:
-    """Acquire an admitted public-object set without opening a task."""
-
-    if len(alias_ids) != len(tensors):
-        raise RuntimeExecutionError("caller output binding count differs")
-    runtime_aliases = tuple(
-        alias_id for alias_id in alias_ids if bridge.objects.requires_storage(alias_id)
-    )
-    if not runtime_aliases:
-        if acquisition_handle != 0:
-            raise RuntimeExecutionError(
-                "zero-byte caller outputs must not own an acquisition handle"
-            )
-        return bridge.objects.expand_bindings(alias_ids, (), ())
-    admitted = bridge._admitted_acquisitions.get(runtime_aliases)
-    if admitted != acquisition_handle or acquisition_handle == 0:
-        raise RuntimeExecutionError(
-            "caller output acquisition does not match its admitted object set"
-        )
-    stream = torch.cuda.current_stream()
-    bindings = (ObjectBinding * len(runtime_aliases))()
-    bridge.require(
-        bridge.runtime_library.shadowspill_acquire_objects_handle(
-            bridge.runtime._runtime_handle,
-            acquisition_handle,
-            stream.cuda_stream,
-            bindings if runtime_aliases else None,
-            len(runtime_aliases),
-        ),
-        "acquire caller outputs",
-    )
-    expanded = bridge.objects.expand_bindings(alias_ids, runtime_aliases, bindings)
-    for alias_id, tensor, binding in zip(alias_ids, tensors, expanded, strict=True):
-        rebind(bridge, tensor, alias_id, binding)
-    return expanded
-
-
-def submit_initial_actions(
-    bridge: RuntimeBridge,
-    actions: tuple[MemoryAction, ...],
-    *,
-    task_number: int,
-) -> None:
-    runtime_actions_values = tuple(
-        item for item in actions if bridge.objects.requires_storage(item.alias_group_id)
-    )
-    if not runtime_actions_values:
-        return
-    stream = torch.cuda.current_stream()
-    admitted = bridge._admitted_action_batches.get(task_number)
-    if admitted is None:
-        raise RuntimeExecutionError(
-            f"initial action batch {task_number} was not admitted"
-        )
-    handle, expected = admitted
-    observed = tuple(
-        (action.alias_group_id, action.kind) for action in runtime_actions_values
-    )
-    if observed != expected:
-        raise RuntimeExecutionError(
-            "initial action batch changed after admission: "
-            f"task={task_number}, expected={expected}, observed={observed}"
-        )
-    status = int(
-        bridge.runtime_library.shadowspill_submit_action_batch_handle(
-            bridge.runtime._runtime_handle, handle, stream.cuda_stream
-        )
-    )
-    if status != 0:
-        # The runtime refuses one action, for the state of the object it names,
-        # and reports that object as a runtime identifier. Resolve it to its
-        # alias and read the residency back before raising: an opening fetch is
-        # the first thing a plan does, so this is where a model whose state does
-        # not match its plan says so, and a bare identifier makes that the
-        # reader's problem.
-        operation = "submit admitted initial actions"
-        diagnostics = read_allocator_failure(bridge.library, operation)
-        if diagnostics is not None:
-            raise generic_runtime_error(
-                describe_refused_action(bridge, diagnostics, runtime_actions_values)
-            )
-        raise RuntimeExecutionError(f"{operation} failed with status {status}")
-
-
-def transfer_outputs_to_caller(
-    bridge: RuntimeBridge,
-    alias_ids: tuple[str, ...],
-    tensors: tuple[torch.Tensor, ...],
-    bindings: tuple[ObjectBinding, ...],
-    *,
-    acquisition_handle: int,
-) -> None:
-    if not (len(alias_ids) == len(tensors) == len(bindings)):
-        raise RuntimeExecutionError("caller output lease count differs")
-    seen: set[str] = set()
-    # The admitted handle excludes CPU/zero-byte roots but retains duplicate
-    # device entries. Count every device entry, handing off each root once.
-    object_ordinal = 0
-    for alias_id, tensor, binding in zip(alias_ids, tensors, bindings, strict=True):
-        owns_storage = bridge.objects.requires_storage(alias_id)
-        if alias_id not in seen:
-            if owns_storage:
-                torch.ops.shadowspill._transfer_acquired_storage_to_caller(
-                    tensor,
-                    acquisition_handle,
-                    object_ordinal,
-                    binding.generation,
-                    binding.allocation_id,
-                )
-            else:
-                bridge.objects.release_zero_generation(alias_id)
-            seen.add(alias_id)
-        if owns_storage:
-            object_ordinal += 1
-
-
-def rebind(
-    bridge: RuntimeBridge, tensor: torch.Tensor, alias_id: str, binding: ObjectBinding
-) -> None:
-    if not bridge.objects.requires_storage(alias_id):
-        return
-    torch.ops.shadowspill._acquire_storages([tensor], [binding.pointer])
-
-
-def rebind_many(
-    bridge: RuntimeBridge,
-    items: Sequence[tuple[torch.Tensor, str, ObjectBinding]],
-) -> None:
-    """Install bindings already validated by the runtime task boundary."""
-
-    materialized = tuple(
-        item for item in items if bridge.objects.requires_storage(item[1])
-    )
-    if not materialized:
-        return
-    torch.ops.shadowspill._acquire_storages(
-        [tensor for tensor, _, _ in materialized],
-        [binding.pointer for _, _, binding in materialized],
-    )
+    def __post_init__(self) -> None:
+        if not self.alias_id or not self.tensors:
+            raise ValueError("replacement must name an alias and its frontend views")
 
 
 def before_task_and_acquire(
-    bridge: RuntimeBridge,
     task_handle: int,
     device_ordinal: int,
     tensors: Sequence[torch.Tensor],
 ) -> None:
     """Acquire one predecoded storage-only input vector."""
 
-    if not tensors:
-        # As at the other boundary: PyTorch takes its dispatch key from the
-        # tensors it is given, and a task that acquires no storage gives it
-        # none. A fused sampler has such a task, one that builds a value out
-        # of nothing.
+    if tensors:
+        torch.ops.shadowspill._before_task_storages(
+            tensors, task_handle, device_ordinal
+        )
+    else:
+        # Tensor-free tasks have no tensor dispatch key.
         torch.ops.shadowspill._before_task_boundary(task_handle, device_ordinal)
-        return
-    torch.ops.shadowspill._before_task_storages(
-        tensors,
-        task_handle,
-        device_ordinal,
-    )
 
 
-def wait_task_allocations(
-    bridge: RuntimeBridge,
-    task_handle: int,
-    device_ordinal: int,
-) -> None:
+def wait_task_allocations(task_handle: int, device_ordinal: int) -> None:
     """Resolve the range-reuse dependencies of this task's allocations."""
 
-    torch.ops.shadowspill._wait_task_allocations(
-        task_handle,
-        device_ordinal,
-    )
+    torch.ops.shadowspill._wait_task_allocations(task_handle, device_ordinal)
 
 
 def after_task_and_update(
-    bridge: RuntimeBridge,
     task_handle: int,
     device_ordinal: int,
     adopted: Sequence[PublishedStorage],
-    publication_ordinals: Sequence[int],
     dematerialized: Sequence[torch.Tensor],
     *,
     replacements: Sequence[ReplacementStorageViews] = (),
 ) -> None:
     """Overwrite logical objects and publish one admitted task boundary."""
 
-    if len(adopted) != len(publication_ordinals):
-        raise RuntimeExecutionError(
-            "task publication tensors and ordinals have different lengths"
-        )
     if not (adopted or dematerialized or replacements):
-        # PyTorch picks a dispatch key from the tensors it is given, and a
-        # task that adopts no storage and dematerializes nothing gives it
-        # none, so the boundary is published through the operator whose
-        # arguments are handles. A stage can have nothing to publish: a
-        # UNet's does.
         torch.ops.shadowspill._after_task_boundary(task_handle, device_ordinal)
         return
-    if not replacements:
-        torch.ops.shadowspill._after_task_storages(
-            tuple(item.tensor for item in adopted),
-            publication_ordinals,
-            (),
-            (),
-            dematerialized,
-            task_handle,
-            device_ordinal,
-        )
-        return
-    materialized = tuple(enumerate(adopted))
-    replacement_by_alias = {item.alias_id: item for item in replacements}
-    if len(replacement_by_alias) != len(replacements):
-        raise RuntimeExecutionError("task replacement aliases are not unique")
-    replacement_aliases = frozenset(replacement_by_alias)
-    adopted_aliases = {item.alias_id for item in adopted}
-    unknown_replacements = replacement_aliases - adopted_aliases
-    if unknown_replacements:
-        raise RuntimeExecutionError(
-            f"task replacement has no adopted output: {sorted(unknown_replacements)}"
-        )
     replacement_tensors: list[torch.Tensor] = []
     replacement_target_indices: list[int] = []
-    for target_index, (_index, item) in enumerate(materialized):
-        replacement = replacement_by_alias.get(item.alias_id)
-        if replacement is None:
-            continue
-        for tensor in replacement.tensors:
-            replacement_tensors.append(tensor)
-            replacement_target_indices.append(target_index)
+    if replacements:
+        replacement_by_alias = {item.alias_id: item for item in replacements}
+        if len(replacement_by_alias) != len(replacements):
+            raise RuntimeExecutionError("task replacement aliases are not unique")
+        unknown = replacement_by_alias.keys() - {item.alias_id for item in adopted}
+        if unknown:
+            raise RuntimeExecutionError(
+                f"task replacement has no adopted output: {sorted(unknown)}"
+            )
+        for index, item in enumerate(adopted):
+            replacement = replacement_by_alias.get(item.alias_id)
+            if replacement is not None:
+                replacement_tensors.extend(replacement.tensors)
+                replacement_target_indices.extend([index] * len(replacement.tensors))
     torch.ops.shadowspill._after_task_storages(
-        tuple(item.tensor for _, item in materialized),
-        publication_ordinals,
+        tuple(item.tensor for item in adopted),
+        tuple(item.publication_ordinal for item in adopted),
         replacement_tensors,
         replacement_target_indices,
         dematerialized,

@@ -13,11 +13,9 @@ from shadowspill.ir import (
 from shadowspill.pytorch.runtime_adapter.boundaries import (
     after_task_and_update,
     before_task_and_acquire,
-    submit_initial_actions,
 )
 from shadowspill.runtime.plan import (
     abort_task,
-    admit_initial_actions,
     admit_task,
     clear_tasks,
 )
@@ -35,7 +33,13 @@ def roundtrips(state, groups=None):
         inputs=(value,),
         mutations=(MutationSpec(value),),
     )
-    admit_initial_actions(bridge, fetch, task_number=0)
+    fetch_handle = admit_task(
+        bridge,
+        TaskSpec("task_000000", task.resource, "fetch"),
+        (),
+        fetch,
+        trace_label="shard-fetch",
+    )
     handle = admit_task(bridge, task, (alias,), evict, trace_label="shard-update")
     region = state.regions[value]
     # Inspection must not introduce pageable copies or CPU waits inside a task.
@@ -43,9 +47,10 @@ def roundtrips(state, groups=None):
     active = False
     try:
         for step in range(3):
-            submit_initial_actions(bridge, fetch, task_number=0)
+            before_task_and_acquire(fetch_handle, state.device.index, ())
+            after_task_and_update(fetch_handle, state.device.index, (), ())
             owner = state.owner(alias)
-            before_task_and_acquire(bridge, handle, state.device.index, (owner,))
+            before_task_and_acquire(handle, state.device.index, (owner,))
             active = True
             weights = state.argument(value, state.geometry[value])
             if groups is not None:
@@ -73,7 +78,7 @@ def roundtrips(state, groups=None):
             observed.copy_(weights, non_blocking=True)
             weights.add_(2)
             del weights
-            after_task_and_update(bridge, handle, state.device.index, (), (), (owner,))
+            after_task_and_update(handle, state.device.index, (), (owner,))
             active = False
             bridge.wait_until_idle()
             torch.testing.assert_close(observed, expected)

@@ -7,7 +7,6 @@ from pathlib import Path
 
 import pytest
 
-from shadowspill.errors import AdmissionError
 from shadowspill.memory import (
     PinnedHostPool,
     SpillPool,
@@ -15,13 +14,9 @@ from shadowspill.memory import (
     pinned_host,
     transfer_route,
 )
-from shadowspill.runtime import MemoryPool
 from shadowspill.runtime.configuration import (
     RuntimeConfigurationError,
     Topology,
-    resolve_dynamic_scratch_reserve,
-    resolve_execution_budget,
-    resolve_physical_execution_budget,
     validate_topology,
 )
 
@@ -76,51 +71,6 @@ def test_topology_rejects_a_route_with_no_device_endpoint() -> None:
                 "copy": transfer_route(source="spill", destination="archive"),
             },
         )
-
-
-def test_execution_budget_accepts_runtime_physical_cap_without_double_charge() -> None:
-    physical = 16 << 30
-    derived = physical - (1280 << 20) - (256 << 20)
-    pool = MemoryPool("execution", 0, "device", derived, physical, 0)
-
-    assert resolve_execution_budget(None, pool) == derived
-    assert resolve_execution_budget(physical, pool) == derived
-    assert resolve_execution_budget(10 << 30, pool) == 10 << 30
-    with pytest.raises(AdmissionError, match="falls between"):
-        resolve_execution_budget(derived + 1, pool)
-    with pytest.raises(AdmissionError, match="physical capacity"):
-        resolve_execution_budget(physical + 1, pool)
-
-
-def test_physical_budget_retains_runtime_reservations_at_every_cap() -> None:
-    physical = 16 << 30
-    overhead = (1280 << 20) + (256 << 20)
-    pool = MemoryPool("execution", 0, "device", physical - overhead, physical, 0)
-    assert resolve_physical_execution_budget(None, pool) == pool.capacity
-    for requested in (10 << 30, physical - 1, physical):
-        assert (
-            resolve_physical_execution_budget(requested, pool) == requested - overhead
-        )
-    with pytest.raises(AdmissionError, match="positive"):
-        resolve_physical_execution_budget(overhead, pool)
-    with pytest.raises(AdmissionError, match="exceeds"):
-        resolve_physical_execution_budget(physical + 1, pool)
-    with pytest.raises(TypeError, match="integer"):
-        resolve_physical_execution_budget(True, pool)
-
-
-def test_dynamic_scratch_reserve_is_an_optional_bounded_minimum() -> None:
-    budget = 16 << 30
-    assert resolve_dynamic_scratch_reserve(None, execution_budget=budget) == 0
-    assert resolve_dynamic_scratch_reserve(1 << 30, execution_budget=budget) == (
-        1 << 30
-    )
-    with pytest.raises(TypeError, match="integer byte count"):
-        resolve_dynamic_scratch_reserve(True, execution_budget=budget)
-    with pytest.raises(AdmissionError, match="non-negative"):
-        resolve_dynamic_scratch_reserve(-1, execution_budget=budget)
-    with pytest.raises(AdmissionError, match="exceeds"):
-        resolve_dynamic_scratch_reserve(budget + 1, execution_budget=budget)
 
 
 class _ThirdPartyPool(SpillPool):

@@ -1,11 +1,4 @@
-"""A plan's life on the runtime: begun, adopted by a callable, released.
-
-Planning begins a plan -- pools, routes, budgets and the device resolved, the
-C plan created -- and hands back a `PlanMemory`; a planned callable adopts it
-and releases it when it closes; a failed planning call aborts it. The runtime
-owns at most one plan in progress and any number adopted, and these are the
-only functions that move a plan between those states.
-"""
+"""Create, admit, and close worker-local handles for already planned execution."""
 
 from __future__ import annotations
 
@@ -13,21 +6,10 @@ import ctypes
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
-from shadowspill.errors import AdmissionError
-
 from ..abi import PlanDescription, runtime_library
-from ..bootstrap import InstalledRuntime
-from ..calibration import read_transfer_capabilities
-from ..configuration import (
-    RuntimeConfigurationError,
-    resolve_budget,
-    resolve_dynamic_scratch_reserve,
-    resolve_execution_budget,
-    resolve_execution_device,
-)
+from ..configuration import RuntimeConfigurationError, resolve_execution_device
 from ..residue import reclaim_plan_scoped_residue
-from ..topology import MemoryPool, RuntimeRoute, TransferCapabilities
-from .lending import lend_reserved_slabs, require_lent_slabs_back, take_back_lent_slabs
+from ..topology import MemoryPool
 
 if TYPE_CHECKING:
     from ..core import Runtime
@@ -35,26 +17,12 @@ if TYPE_CHECKING:
 
 @dataclass(frozen=True, slots=True)
 class PlanMemory:
-    """Resolved pool roles and capacities consumed by one planning call."""
+    """Worker-local pool bindings and handle; costs and budgets belong to Plan."""
 
-    runtime: Runtime
-    installed: InstalledRuntime
     execution: MemoryPool
     spill: MemoryPool
-    fetch: RuntimeRoute
-    evict: RuntimeRoute
-    execution_budget: int
-    spill_budget: int
-    dynamic_scratch_reserve_bytes: int
     execution_device: int
-    transfers: TransferCapabilities
     plan_handle: int
-    #: This plan's identity for the life of the runtime. Every lease its tasks
-    #: make records it, and the allocation scopes opened for it name it too.
-    plan_id: int
-    #: The plan whose slab this plan's layout is admitted into, when it shares
-    #: one (`share_slab_with`); None when it reserves its own.
-    slab_owner: int | None = None
 
 
 def begin_plan(
@@ -62,19 +30,14 @@ def begin_plan(
     *,
     execution: str,
     spill: str,
-    execution_budget: int | None,
-    spill_budget: int | None,
-    dynamic_scratch_reserve_bytes: int | None,
     execution_device: object | None,
-    slab_owner: int | None = None,
-    require_calibration: bool = True,
 ) -> PlanMemory:
+    """Bind pool routes without profiling, calibrating, or borrowing other arenas."""
+
     with runtime._lock:
         runtime._require_open()
-        if runtime._planning_plan_handle is not None:
-            raise RuntimeConfigurationError(
-                "this Runtime already has an in-progress planning call"
-            )
+        if runtime._pending_plan_handle is not None:
+            raise RuntimeConfigurationError("this Runtime already has a plan in setup")
         if execution == spill:
             raise RuntimeConfigurationError(
                 "execution and spill must select distinct pools"
@@ -90,140 +53,50 @@ def begin_plan(
             raise RuntimeConfigurationError(
                 "the frontend requires an accelerator execution pool"
             )
-        resolved_device = resolve_execution_device(
+        device = resolve_execution_device(
             runtime.frontend, execution_device, execution_pool
         )
-        resolved_execution = resolve_execution_budget(execution_budget, execution_pool)
-        if slab_owner is not None:
-            resolved_execution = _within_shared_slab(
-                runtime, execution, slab_owner, execution_budget, resolved_execution
-            )
-        resolved_spill = resolve_budget(spill_budget, spill_pool, "spill_budget")
-        resolved_scratch = resolve_dynamic_scratch_reserve(
-            dynamic_scratch_reserve_bytes,
-            execution_budget=resolved_execution,
-        )
-        transfers = read_transfer_capabilities(
-            runtime._runtime_handle, runtime._pool_names
-        )
         try:
-            fetch_route = runtime._route_by_pair[(spill, execution)]
-            evict_route = runtime._route_by_pair[(execution, spill)]
+            fetch = runtime._route_by_pair[(spill, execution)]
+            evict = runtime._route_by_pair[(execution, spill)]
         except KeyError as exc:
             source, destination = exc.args[0]
             raise RuntimeConfigurationError(
                 f"runtime has no directed route {source!r} -> {destination!r}"
             ) from exc
-        fetch_profile = transfers.route(spill, execution)
-        evict_profile = transfers.route(execution, spill)
-        if not fetch_profile.available or (
-            require_calibration and not fetch_profile.calibrated
-        ):
-            raise RuntimeConfigurationError(
-                f"route {spill!r} -> {execution!r} is not calibrated"
-            )
-        if not evict_profile.available or (
-            require_calibration and not evict_profile.calibrated
-        ):
-            raise RuntimeConfigurationError(
-                f"route {execution!r} -> {spill!r} is not calibrated"
-            )
-        plan_handle_value = ctypes.c_size_t()
-        plan_id = runtime.next_plan_id()
+        handle = ctypes.c_size_t()
         status = int(
             runtime_library().shadowspill_plan_create(
                 runtime._runtime_handle,
                 ctypes.byref(
                     PlanDescription(
-                        plan_id=plan_id,
+                        plan_id=runtime.next_plan_id(),
                         execution_pool_id=execution_pool.pool_id,
                         spill_pool_id=spill_pool.pool_id,
-                        fetch_route_id=fetch_route.route_id,
-                        evict_route_id=evict_route.route_id,
+                        fetch_route_id=fetch.route_id,
+                        evict_route_id=evict.route_id,
                     )
                 ),
-                ctypes.byref(plan_handle_value),
+                ctypes.byref(handle),
             )
         )
-        if status != 0 or plan_handle_value.value == 0:
+        if status != 0 or handle.value == 0:
             raise RuntimeConfigurationError(
-                "handle plan creation failed: "
-                f"status={status}, execution={execution!r}, spill={spill!r}"
+                f"handle plan creation failed: status={status}, "
+                f"execution={execution!r}, spill={spill!r}"
             )
-        plan_handle = int(plan_handle_value.value)
-        memory = PlanMemory(
-            runtime=runtime,
-            installed=runtime._installed,
-            execution=execution_pool,
-            spill=spill_pool,
-            fetch=fetch_route,
-            evict=evict_route,
-            execution_budget=resolved_execution,
-            spill_budget=resolved_spill,
-            dynamic_scratch_reserve_bytes=resolved_scratch,
-            execution_device=resolved_device,
-            transfers=transfers,
-            plan_handle=plan_handle,
-            plan_id=plan_id,
-            slab_owner=slab_owner,
-        )
-        runtime._planning_plan_handle = plan_handle
-    try:
-        lend_reserved_slabs(runtime)
-    except BaseException:
-        take_back_lent_slabs(runtime)
-        abort_plan(runtime, plan_handle)
-        raise
-    return memory
-
-
-def _within_shared_slab(
-    runtime: Runtime,
-    execution: str,
-    slab_owner: int,
-    requested: int | None,
-    resolved: int,
-) -> int:
-    """The budget of a plan whose layout shares another plan's slab.
-
-    Its layout is placed inside that slab, so the slab's size is the most it
-    can plan against: the budget when none is given, and a ceiling on one that
-    is. The slab is the range the named plan's layout lies in -- its own, or
-    the one it shares in turn.
-    """
-
-    from ..occupancy import plan_slices
-
-    owner_id = int(runtime_library().shadowspill_plan_id(slab_owner))
-    slabs = [
-        item.slab_bytes
-        for item in plan_slices(runtime, execution)
-        if item.plan_id == owner_id
-    ]
-    if not slabs:
-        raise AdmissionError(
-            "the plan to share a slab with holds none in pool "
-            f"{execution!r}: plan it first, and share it while it is open"
-        )
-    if requested is None:
-        return slabs[0]
-    if resolved > slabs[0]:
-        raise AdmissionError(
-            f"execution_budget={resolved} exceeds the {slabs[0]}-byte slab this "
-            "plan shares; a plan sharing a slab plans within it"
-        )
-    return resolved
+        runtime._pending_plan_handle = handle.value
+        return PlanMemory(execution_pool, spill_pool, device, handle.value)
 
 
 def adopt_plan(runtime: Runtime, plan_handle: int) -> None:
-    require_lent_slabs_back(runtime, "finish planning")
     with runtime._lock:
         runtime._require_open()
-        if runtime._planning_plan_handle != plan_handle:
+        if runtime._pending_plan_handle != plan_handle:
             raise RuntimeConfigurationError(
                 "Runtime does not own this in-progress plan"
             )
-        runtime._planning_plan_handle = None
+        runtime._pending_plan_handle = None
         runtime._active_plan_handles.add(plan_handle)
 
 
@@ -238,29 +111,16 @@ def release_plan(runtime: Runtime, plan_handle: int) -> None:
             raise
         finally:
             runtime._active_plan_handles.discard(plan_handle)
-            runtime._installed.admitted_layout_bytes.pop(plan_handle, None)
-            runtime._installed.slab_owners.pop(plan_handle, None)
-            # A closed plan's lent slab went back to the pool with it.
-            runtime._installed.lent_slabs.discard(plan_handle)
 
 
 def abort_plan(runtime: Runtime, plan_handle: int | None = None) -> None:
-    """End a planning call's plan: after a build that leaves no callable, or
-    after a failed planning call.
-
-    The ranges the plan's own scopes made come back first, as they do when a
-    callable closes. A kernel may keep a value it made while a task ran -- a
-    cache of its last results, keyed by its arguments -- and nothing evicts it
-    until the kernel is called again with other arguments. A plan that closed
-    without taking such a range back would leave it in the device pool, owned
-    by no plan, where a later plan's layout cannot have that part of the pool.
-    """
+    """Roll back worker setup, reclaiming any allocations owned by this plan."""
 
     with runtime._lock:
-        target = runtime._planning_plan_handle if plan_handle is None else plan_handle
-        if target is None or runtime._planning_plan_handle != target:
-            raise RuntimeError("Runtime planning ownership underflow")
-    # Outside the lock, as a callable's close does: naming what occupies a range
+        target = runtime._pending_plan_handle if plan_handle is None else plan_handle
+        if target is None or runtime._pending_plan_handle != target:
+            raise RuntimeError("Runtime plan setup ownership underflow")
+    # Outside the lock: naming what occupies a range
     # walks the frontend's objects. A failure here must not keep the plan open,
     # so it is raised once the plan is closed.
     residue_error: BaseException | None = None
@@ -269,8 +129,8 @@ def abort_plan(runtime: Runtime, plan_handle: int | None = None) -> None:
     except BaseException as error:
         residue_error = error
     with runtime._lock:
-        if runtime._planning_plan_handle != target:
-            raise RuntimeError("Runtime planning ownership underflow")
+        if runtime._pending_plan_handle != target:
+            raise RuntimeError("Runtime plan setup ownership underflow")
         try:
             _close_and_destroy_plan(target)
         except BaseException as error:
@@ -279,12 +139,7 @@ def abort_plan(runtime: Runtime, plan_handle: int | None = None) -> None:
                 error.add_note(f"Reclaiming the plan's residue failed: {residue_error}")
             raise
         finally:
-            runtime._planning_plan_handle = None
-            runtime._installed.admitted_layout_bytes.pop(target, None)
-            runtime._installed.slab_owners.pop(target, None)
-    # What the failed planning still holds keeps a slab lent until the next
-    # call or admission takes it back.
-    take_back_lent_slabs(runtime)
+            runtime._pending_plan_handle = None
     if residue_error is not None:
         raise residue_error
 

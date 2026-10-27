@@ -117,11 +117,7 @@ def worker(index, rendezvous, archive, mode):
                 runtime,
                 execution="execution",
                 spill="spill",
-                execution_budget=None,
-                spill_budget=None,
-                dynamic_scratch_reserve_bytes=0,
                 execution_device=device,
-                require_calibration=False,
             )
             shard_bytes = description["shard_bytes"]
             ir = ShadowSpillProgram(

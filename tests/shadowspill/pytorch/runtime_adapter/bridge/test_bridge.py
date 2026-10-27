@@ -8,9 +8,9 @@ from dataclasses import replace
 import torch
 
 from shadowspill.ir import AliasGroupSpec, ObjectRole, ObjectSpec
-from shadowspill.pytorch.runtime_adapter.boundaries import (
-    publish_initial_tensor,
-    rebind_many,
+from shadowspill.pytorch.runtime_adapter.outputs import (
+    acquire_for_caller,
+    transfer_outputs_to_caller,
 )
 from shadowspill.runtime.plan import (
     RuntimeBridge,
@@ -149,9 +149,13 @@ def test_zero_size_alias_uses_no_physical_runtime_operation() -> None:
     tensor = torch.empty(0)
 
     bridge.objects.register_placeholder("alias_000099")
-    binding = publish_initial_tensor(bridge, "alias_000099", tensor)
-    rebind_many(bridge, ((tensor, "alias_000099", binding),))
+    aliases, tensors = ("alias_000099",), (tensor,)
+    bindings = acquire_for_caller(bridge, aliases, tensors, acquisition_handle=0)
+    transfer_outputs_to_caller(
+        bridge, aliases, tensors, bindings, acquisition_handle=0
+    )
 
     assert not bridge.objects.requires_storage("alias_000099")
+    (binding,) = bindings
     assert binding.pointer is None
     assert binding.generation == 0

@@ -3,7 +3,7 @@
 A failure is latched once, as `RuntimeFailureDiagnostics`, and a runtime that
 cannot be trusted after it is marked unusable with the reason; `close` and every
 later call read both. `prepare_failure_cleanup` is the step every failing
-planning call and callable runs before rolling back: record the failure, drain
+worker setup or invocation runs before rolling back: record the failure, drain
 the device, recover the no-progress latch where that is the failure.
 """
 

@@ -6,7 +6,6 @@ import pytest
 
 from shadowspill.ir import MemoryLocation, ResidencySpec
 from shadowspill.runtime.failures import RuntimeExecutionError
-from shadowspill.runtime.plan import bridge as bridge_module
 from shadowspill.runtime.plan.bridge import RuntimeBridge
 
 
@@ -20,14 +19,11 @@ from shadowspill.runtime.plan.bridge import RuntimeBridge
     ),
 )
 def test_declared_device_copy_must_exist_and_be_current(
-    monkeypatch: pytest.MonkeyPatch,
     pointer: int,
     version: int,
     unexpected: bool,
     valid: bool,
 ) -> None:
-    monkeypatch.setattr(bridge_module, "require_lent_slabs_back", lambda *args: None)
-
     def snapshot(runtime: int, object_id: str, target: object) -> int:
         value = target._obj
         value.execution_pointer = (

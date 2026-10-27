@@ -9,11 +9,11 @@ from torch.utils._pytree import tree_flatten
 from shadowspill.ir import MemoryActionKind
 from shadowspill.pytorch.runtime_adapter.boundaries import (
     PublishedStorage,
+    ReplacementStorageViews,
     after_task_and_update,
     before_task_and_acquire,
     wait_task_allocations,
 )
-from shadowspill.pytorch.runtime_adapter.replacements import ReplacementStorageViews
 from shadowspill.runtime.plan import abort_task
 from shadowspill.runtime.plan.annotations import TaskBoundaryAnnotations
 
@@ -62,11 +62,11 @@ def _dispatch(
     tensors = [
         state.owner(a) for a in bound.inputs if bridge.objects.requires_storage(a)
     ]
-    before_task_and_acquire(bridge, bound.handle, device, tensors)
+    before_task_and_acquire(bound.handle, device, tensors)
     try:
         if timing is not None:
             timing.record_task_inputs_ready(task, stream)
-        wait_task_allocations(bridge, bound.handle, device)
+        wait_task_allocations(bound.handle, device)
         if timing is not None:
             assert trace is not None
             if bound.entry.task_id == trace.first:
@@ -175,11 +175,9 @@ def _run(
     state.outputs = {o: value for o, value in state.outputs.items() if o in public}
     del leaves, arguments
     after_task_and_update(
-        state.bridge,
         bound.handle,
         state.device.index,
         adopted,
-        tuple(range(len(adopted))),
         dematerialized,
         replacements=replacements,
     )

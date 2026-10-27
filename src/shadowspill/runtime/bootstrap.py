@@ -15,7 +15,7 @@ from __future__ import annotations
 
 import ctypes
 import sys
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Final
 
@@ -66,18 +66,6 @@ class InstalledRuntime:
     #: runtime call the neutral library with this directly.
     runtime_handle: int = 0
     fixed_execution_bytes: int = 0
-    #: The fixed layout each admitted plan holds in the allocator pool, in
-    #: bytes, by plan handle. A plan holds its layout for as long as it is
-    #: admitted; only while another plan is being planned, between calls, is
-    #: it lent back to the pool (`lent_slabs`).
-    admitted_layout_bytes: dict[int, int] = field(default_factory=dict)
-    #: The plan that reserved the slab each sharing plan's layout lies in, both
-    #: by plan handle. That plan closes last.
-    slab_owners: dict[int, int] = field(default_factory=dict)
-    #: Plans, by handle, whose slabs are lent back to their pools for a
-    #: planning call; each is taken back before a layout is admitted and
-    #: before any call begins.
-    lent_slabs: set[int] = field(default_factory=set)
 
 
 _installed: InstalledRuntime | None = None
@@ -341,100 +329,6 @@ def _initialize_persistent_state(
         // _PERSISTENT_RESERVATION_GRANULARITY
         * _PERSISTENT_RESERVATION_GRANULARITY
     )
-
-
-def existing_execution_reserve(installed: InstalledRuntime) -> int:
-    """Reserve live setup allocations beyond bootstrap before profiling starts.
-
-    A caller may construct accelerator resources after entering the runtime.
-    This snapshot conservatively keeps those bytes out of plan capacity. Task
-    warmup growth is measured separately; task inputs have not been allocated
-    yet. Other plans' currently held layouts are already accounted elsewhere.
-    """
-    message = wait_allocator_idle(
-        installed.library, installed.runtime_handle, problem="pre-profiling allocations"
-    )
-    if message is not None:
-        raise RuntimeInstallError(message)
-    statistics = AdapterStatistics()
-    status = int(
-        installed.library.shadowspill_pytorch_allocator_statistics(
-            ctypes.byref(statistics)
-        )
-    )
-    if status != 0:
-        raise RuntimeInstallError(
-            f"setup allocation accounting failed (status {status})"
-        )
-    held = sum(
-        size
-        for plan, size in installed.admitted_layout_bytes.items()
-        if plan not in installed.lent_slabs
-    )
-    return max(
-        0,
-        int(statistics.allocator_pool.allocated_bytes)
-        - held
-        - installed.fixed_execution_bytes,
-    )
-
-
-def validate_dynamic_execution_reservation(
-    installed: InstalledRuntime,
-    *,
-    reserved_bytes: int,
-) -> int:
-    """Verify persistent allocations fit inside the capacity excluded by planning.
-
-    Dynamic admission consumes every compatible free range in the execution
-    pool.  It therefore requires sufficient aggregate unreserved capacity, not
-    one contiguous range as large as the complete planning capacity.
-
-    The plans already admitted hold their fixed layouts in the same pool, and
-    a plan is checked here before it admits its own, so every layout admitted
-    is another plan's and is excluded as well.
-    """
-
-    if reserved_bytes < installed.fixed_execution_bytes:
-        raise ValueError("fixed execution reservation is smaller than bootstrap")
-    message = wait_allocator_idle(
-        installed.library,
-        installed.runtime_handle,
-        problem="fixed execution reservation",
-    )
-    if message is not None:
-        raise RuntimeInstallError(message)
-    statistics = AdapterStatistics()
-    status = int(
-        installed.library.shadowspill_pytorch_allocator_statistics(
-            ctypes.byref(statistics)
-        )
-    )
-    if status != 0:
-        raise RuntimeInstallError(
-            f"fixed execution reservation accounting failed (status {status})"
-        )
-    pool = statistics.allocator_pool
-    allocated = int(pool.allocated_bytes)
-    free = int(pool.free_bytes)
-    capacity = int(installed.admission.allocator_pool_bytes)
-    admitted = sum(installed.admitted_layout_bytes.values())
-    if allocated > reserved_bytes + admitted:
-        raise RuntimeInstallError(
-            "persistent in-pool allocations exceed the admitted slab reserve: "
-            f"observed={allocated}, reserved={reserved_bytes}, "
-            f"admitted layouts={admitted}"
-        )
-    largest = int(pool.largest_free_range_bytes)
-    usable_capacity = capacity - reserved_bytes - admitted
-    if allocated + free != capacity or free < usable_capacity:
-        raise RuntimeInstallError(
-            "live execution allocation accounting is incompatible with the "
-            "admitted dynamic capacity: "
-            f"observed={allocated}, reserved={reserved_bytes}, free={free}, "
-            f"required_free={usable_capacity}, largest={largest}, capacity={capacity}"
-        )
-    return allocated
 
 
 def _validate_install_request(

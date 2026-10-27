@@ -68,7 +68,9 @@ csrc/
     ├── failure/           what a failed call latches, and the report it makes
     ├── tasks/             the task boundary a planned task runs between,
     │                      the thread's task range, and the scopes outside one
-    └── storage/           PyTorch storages over runtime leases
+    └── storage/           validated CPU views and sharded transfer callbacks
+        └── device/        device views, task acquisition/publication, replacement
+                           views and caller-owned outputs
 ```
 
 Everything under `src/` compiles into one shared object. The simulator, the

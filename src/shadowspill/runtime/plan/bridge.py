@@ -4,7 +4,7 @@
 libraries, the plan handle, the pools the plan chose, the plan's object
 registry (`objects`) and the records of what was admitted. The work is in the
 modules beside it, as functions over the bridge: `admission` describes tasks,
-the fixed layout, action batches and acquisitions to the runtime before the
+the fixed layout, and output acquisitions to the runtime before the
 plan runs; `boundaries` is what happens at each boundary while it runs;
 `report` is what the bridge can say about the plan without changing it;
 `objects` is the registry of plan-local aliases bound to runtime objects; and
@@ -25,7 +25,6 @@ from .admission import (
     EncodedTask,
     admit_caller_acquisition,
     admit_fixed_layout,
-    admit_initial_actions,
     admit_task,
     clear_tasks,
     encode_task,
@@ -37,14 +36,12 @@ from .common import (
     actions_by_task,
     require_status,
 )
-from .lending import require_lent_slabs_back
 from .objects import PlanObjects
 from .report import (
     TraceCapacities,
     begin_runtime_trace,
     describe_object_state,
     describe_pool_occupants,
-    describe_refused_action,
     end_and_read_runtime_trace,
     input_failure_states,
     prepare_runtime_trace,
@@ -93,9 +90,6 @@ class RuntimeBridge:
             spill_pool_id=spill_pool_id,
         )
         self._admitted_task_handles: set[int] = set()
-        self._admitted_action_batches: dict[
-            int, tuple[int, tuple[tuple[str, Any], ...]]
-        ] = {}
         self._admitted_acquisitions: dict[tuple[str, ...], int] = {}
         self._fixed_layout_installed = False
         self._owned_aliases = tuple(
@@ -127,11 +121,9 @@ class RuntimeBridge:
 
         Asked at the start of a call, once every plan placing into the layout
         has drained: whatever an earlier call placed there is gone by then, so
-        a survivor is something this call would overwrite. A slab lent to a
-        planning call is taken back first.
+        a survivor is something this call would overwrite.
         """
 
-        require_lent_slabs_back(self.runtime, "begin a call")
         self.require(
             self.runtime_library.shadowspill_plan_require_empty_layout(
                 self.plan_handle
@@ -151,7 +143,6 @@ class RuntimeBridge:
         if not expected:
             self.require_empty_layout()
             return
-        require_lent_slabs_back(self.runtime, "begin a call")
         for alias in self._owned_aliases:
             snapshot = ObjectSnapshot()
             self.require(
@@ -198,13 +189,11 @@ __all__ = [
     "actions_by_task",
     "admit_caller_acquisition",
     "admit_fixed_layout",
-    "admit_initial_actions",
     "admit_task",
     "begin_runtime_trace",
     "clear_tasks",
     "describe_object_state",
     "describe_pool_occupants",
-    "describe_refused_action",
     "encode_task",
     "end_and_read_runtime_trace",
     "input_failure_states",

@@ -80,12 +80,7 @@ def open_path(
         runtime,
         execution="execution",
         spill="spill",
-        execution_budget=None,
-        spill_budget=None,
-        dynamic_scratch_reserve_bytes=0,
         execution_device=device,
-        slab_owner=slab_owner,
-        require_calibration=False,
     )
     bridge = RuntimeBridge(
         runtime,

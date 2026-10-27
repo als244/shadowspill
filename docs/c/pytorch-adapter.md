@@ -150,8 +150,8 @@ the frontend calls those with the handle from
 - `shadowspill_plan_publish_initial_allocation()` and
   `shadowspill_task_publish_allocation()` publish initial and repeated task
   storages through immutable plan/task records.
-- `shadowspill_pytorch_validate_object_binding()` rejects stale imported CPU
-  storage views. Device storage acquisition is validated by its admitted task
+- `shadowspill_pytorch_validate_object_binding()` validates each non-owning CPU
+  view of a current pool lease. Device storage acquisition is validated by its admitted task
   or object-acquisition handle before the adapter installs the returned
   address.
 - `shadowspill_write_object()` and `shadowspill_read_object()` move persistent
