@@ -17,6 +17,9 @@ One daemon serves concurrent connections in independent workers. Each connection
 owns its device handle, protection domain, registered regions and queue pairs;
 disconnecting releases only that client's resources. Distributed ranks can use
 one endpoint without serializing pool initialization.
+Each rank still owns a separate spill pool with its own capacity and leases.
+The daemon needs memory for the sum of those capacities; its address identifies
+the service, not a shared pool.
 
 There is **no authentication**, which is a decision rather than an oversight:
 this is a development daemon for a lab segment, and it is the first thing to

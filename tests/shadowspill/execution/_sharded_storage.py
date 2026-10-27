@@ -149,7 +149,7 @@ def worker(index, rendezvous, archive, mode):
             )
             try:
                 plan = SimpleNamespace(
-                    program=replace(source, alias_groups=ir.alias_groups),
+                    program=source,
                     _costed_program=ir,
                     selections=(),
                     schedule=SimpleNamespace(

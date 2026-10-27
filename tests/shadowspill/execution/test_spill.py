@@ -7,6 +7,38 @@ from shadowspill.execution.tensor_spans import spans
 from tests.shadowspill.execution._spill import MemorySpill
 
 
+def test_storage_uses_resolved_plan_shard_sizes():
+    from dataclasses import replace
+    from types import SimpleNamespace
+
+    from shadowspill.execution.storage import Storage
+    from shadowspill.ir import TransferPhase, TransferSpec
+    from tests.shadowspill.execution._sharded_storage import program
+
+    source = program(shard_ranks=2, world_size=2)
+    copy = (TransferPhase("copy", bytes=16),)
+    resolved = replace(source.alias_groups[0], transfer=TransferSpec(16, copy, copy))
+    plan = SimpleNamespace(
+        program=source,
+        _costed_program=SimpleNamespace(
+            alias_groups=(resolved,),
+            selected_tasks=lambda selections: (),
+        ),
+        selections=(),
+        schedule=SimpleNamespace(initial_residency=()),
+    )
+    bridge = SimpleNamespace(
+        objects=SimpleNamespace(registered_aliases=lambda: set()),
+        spill_pool_id=1,
+        runtime=SimpleNamespace(
+            pools={"spill": SimpleNamespace(pool_id=1, addressable=False)}
+        ),
+    )
+    state = Storage(plan, bridge, torch.device("cuda:0"), logical_rank=0)
+    assert state.sizes == {"alias_000001": 32}
+    assert state.spill.sizes == {"alias_000001": 16}
+
+
 def test_chunks_preserve_neighbors_and_abort_unfinished_write():
     owner = torch.arange(33, dtype=torch.int16)
     spill = MemorySpill({"a": owner})

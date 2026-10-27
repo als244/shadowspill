@@ -52,6 +52,10 @@ class RemotePool(SpillPool):
     the same suballocator that serves a local pool, because nothing in the
     memory subsystem reads through a pool's address.
 
+    Each execution worker creates its own pool, connection and remote region.
+    Workers may use the same daemon address; ``capacity`` remains per worker,
+    so the daemon must have enough memory for their combined reservations.
+
     Two things outside it do, and both go through this kind rather than around
     it: a lane, for the pools it was made to connect, and the object registry,
     when state is imported or exported -- which is what ``write`` and ``read``

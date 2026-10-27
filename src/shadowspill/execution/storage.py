@@ -43,7 +43,7 @@ class Storage:
                 a.alias_group_id: a.size_bytes
                 if a.spill_size_bytes is None
                 else a.spill_size_bytes
-                for a in plan.program.alias_groups
+                for a in plan._costed_program.alias_groups
             },
         )
         if logical_rank is None:
