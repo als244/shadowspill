@@ -24,9 +24,8 @@ updates. Input data differs across logical ranks, while matching dense tensors
 start identically. Loss normalization and throughput use the global token count.
 Masters, gradients and moments default to FP32; compute weights are BF16.
 
-The provider currently requires SM90 and fixed GEMM policies. Use the MLOps
-portable-resource implementation (`codex/offline-pipeline-resources`) until that
-dependency merges. Local metadata/construction tests pass; saved EP transport
+The provider currently requires SM90 and fixed GEMM policies. MLOps master
+includes the portable-resource implementation. Local metadata/construction tests pass; saved EP transport
 and numerical qualification on two H100s remain pending. Run:
 
 ```bash
