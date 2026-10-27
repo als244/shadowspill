@@ -10,6 +10,7 @@ from pathlib import Path
 import torch
 from torch._subclasses.fake_tensor import FakeTensorMode
 
+from benchmarking._serialization import atomic_json
 from shadowspill.pytorch.capture.export import _flatten_inputs
 from shadowspill.pytorch.capture.fake import fake_device_model
 from shadowspill.pytorch.capture.objective import capture_training_objective
@@ -20,14 +21,6 @@ from shadowspill.pytorch.representations import materialize_meta_state
 
 from .api import resolve
 from .inputs import policy
-
-
-def write_json(path, value):
-    path = Path(path)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    temporary = path.with_suffix(path.suffix + ".tmp")
-    temporary.write_text(json.dumps(value, indent=2) + "\n")
-    temporary.replace(path)
 
 
 def registration_modules(pair):
@@ -182,7 +175,7 @@ def capture(
         "skipped": skipped,
         "elapsed_seconds": time.monotonic() - started,
     }
-    write_json(output / "manifest.json", manifest)
+    atomic_json(output / "manifest.json", manifest)
     print(
         f"Saved {len(stages)} unique non-embedding stage pairs in {output}", flush=True
     )

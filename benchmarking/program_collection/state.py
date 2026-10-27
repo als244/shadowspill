@@ -5,14 +5,14 @@ from __future__ import annotations
 import fcntl
 import json
 import os
-import tempfile
 from collections.abc import Iterable, Mapping
-from contextlib import AbstractContextManager, suppress
+from contextlib import AbstractContextManager
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
+from benchmarking._serialization import atomic_json
 from benchmarking.program_collection.corpus import (
     ProgramCaseIdentity,
 )
@@ -400,25 +400,6 @@ def append_log(path: Path, message: str) -> None:
         handle.flush()
 
 
-def atomic_json(path: Path, value: Mapping[str, object]) -> None:
-    atomic_text(path, json.dumps(dict(value), indent=2, sort_keys=True) + "\n")
-
-
-def atomic_text(path: Path, payload: str) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    descriptor, temporary = tempfile.mkstemp(prefix=f".{path.name}.", dir=path.parent)
-    try:
-        with os.fdopen(descriptor, "w", encoding="utf-8") as handle:
-            handle.write(payload)
-            handle.flush()
-            os.fsync(handle.fileno())
-        os.replace(temporary, path)
-    except BaseException:
-        with suppress(FileNotFoundError):
-            os.unlink(temporary)
-        raise
-
-
 def utc_now() -> str:
     return datetime.now(UTC).isoformat(timespec="seconds")
 
@@ -448,7 +429,6 @@ __all__ = [
     "CollectionLock",
     "CollectionPaths",
     "append_log",
-    "atomic_json",
     "attempt_count",
     "begin_attempt",
     "completed_artifact",

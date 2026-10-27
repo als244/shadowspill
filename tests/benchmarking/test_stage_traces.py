@@ -6,9 +6,10 @@ import pytest
 import torch
 from torch._subclasses.fake_tensor import FakeTensorMode
 
+from benchmarking.stage_traces.discovery import describe_queue
+from benchmarking.stage_traces.process import visible_devices
 from benchmarking.stage_traces.report import verify
 from benchmarking.stage_traces.storage import materialize_example_arguments
-from benchmarking.stage_traces.sweep import describe_queue, visible_devices
 from shadowspill.pytorch.capture.fake import fake_device_model
 from shadowspill.pytorch.representations import materialize_meta_state
 from workloads.models.glm53_flash.stage_trace import workload

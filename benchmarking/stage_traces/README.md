@@ -42,3 +42,9 @@ competing subprocess pools. Independent workers must leave
 The `workloads.models.glm53_flash.stage_trace:workload` adapter accepts
 `{"tiny":true}` for protocol qualification with BF16 experts, and
 `{"tiny":true,"tiny_expert_storage":"fp8_block"}` for H100 FP8 qualification.
+
+The host controller is split by responsibility: `discovery.py` captures inventories,
+`queue.py` assigns/resumes attempts, and `nsys.py` records and verifies each trace.
+`process.py` owns device masks and subprocess cleanup. These modules do not import
+PyTorch; model capture and GPU compilation stay in the fresh `capture.py` and
+`worker.py` processes. Child processes preserve the parent's isolated Python mode.

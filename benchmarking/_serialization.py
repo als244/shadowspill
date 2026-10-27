@@ -144,7 +144,7 @@ def integer(value: object, path: str) -> int:
 
 
 def atomic_json(path: Path, value: Mapping[str, object]) -> None:
-    atomic_text(path, json.dumps(value, indent=2, sort_keys=True) + "\n")
+    atomic_text(path, json.dumps(dict(value), indent=2, sort_keys=True) + "\n")
 
 
 def atomic_text(path: Path, payload: str) -> None:

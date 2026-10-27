@@ -3,7 +3,7 @@
 Part of the shared [PressureFit tracing and video tools](../README.md).
 The cut renderer lives in the parent directory; emission/placement and execution
 have separate rendering modules here, with common fonts, colors, and drawing
-primitives. The previous `python -m tools.plan_video` command remains a CLI alias.
+primitives.
 
 Render a saved plan as two related explanations:
 
@@ -248,5 +248,5 @@ Validation:
 
 ```sh
 python -m pytest tests/tools/test_plan_video.py
-ruff check src/tools/pressurefit_trace/plan src/tools/plan_video tests/tools/test_plan_video.py
+ruff check src/tools/pressurefit_trace/plan tests/tools/test_plan_video.py
 ```

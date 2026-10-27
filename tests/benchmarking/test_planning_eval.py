@@ -8,6 +8,7 @@ from pathlib import Path
 
 import pytest
 
+from benchmarking._serialization import atomic_json
 from benchmarking.planning_eval.cli import _find_resume_baseline
 from benchmarking.planning_eval.config import (
     BandwidthScale,
@@ -33,7 +34,6 @@ from benchmarking.planning_eval.source import (
 )
 from benchmarking.planning_eval.storage import (
     BaselinePaths,
-    atomic_json,
     begin_point_attempt,
     finish_point_attempt,
     initialize_point,

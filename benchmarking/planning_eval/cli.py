@@ -9,6 +9,7 @@ import shlex
 import sys
 from pathlib import Path
 
+from benchmarking._serialization import atomic_text
 from shadowspill.schema import artifact_schema
 
 from .config import load_frontier_config
@@ -26,7 +27,6 @@ from .source import (
 from .storage import (
     BaselinePaths,
     append_log,
-    atomic_text,
     read_object,
     utc_now,
 )

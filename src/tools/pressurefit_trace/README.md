@@ -766,13 +766,12 @@ pressurefit_trace/
 ```
 
 The binary reader/replay implementation stays in
-`shadowspill.diagnostics.pressurefit_trace`. The old `tools.plan_video` command
-is a thin CLI alias to `tools.pressurefit_trace.plan`; all implementation is
-here. Both video guides document their complete CLI arguments and outputs.
+`shadowspill.diagnostics.pressurefit_trace`. Both video guides document their
+complete CLI arguments and outputs.
 
 ```sh
 python -m pytest tests/tools/test_pressurefit_trace.py tests/tools/test_plan_video.py
-ruff check src/tools/pressurefit_trace src/tools/plan_video tests/tools
+ruff check src/tools/pressurefit_trace tests/tools
 ```
 
 Tests use a fresh real planner trace, verify filters and ordering preserve

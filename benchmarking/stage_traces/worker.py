@@ -15,10 +15,10 @@ import torch
 from torch._subclasses.fake_tensor import FakeTensorMode
 from torch.utils._pytree import tree_flatten
 
+from benchmarking._serialization import atomic_json
 from shadowspill.build.compilation import compile_task
 from shadowspill.pytorch.executable import restore_executable
 
-from .capture import write_json
 from .inputs import materialize
 
 
@@ -207,7 +207,7 @@ def trace(args):
         "compiler_settings": {"deterministic": True, "reorder_for_peak_memory": False},
         "finite_outputs_and_gradients": True,
     }
-    write_json(args.output / "result.json", record)
+    atomic_json(args.output / "result.json", record)
     print(
         f"Completed {args.stage}/{payload['variant']}: {args.iterations} iterations",
         flush=True,
@@ -230,7 +230,7 @@ def main():
     try:
         run(args)
     except BaseException as error:
-        write_json(
+        atomic_json(
             args.output / "failure.json",
             {
                 "status": "out_of_memory"

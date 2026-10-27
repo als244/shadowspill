@@ -6,6 +6,7 @@ import argparse
 import time
 from pathlib import Path
 
+from benchmarking._serialization import atomic_json
 from benchmarking.program_collection.artifacts import load_program
 from benchmarking.program_collection.corpus import SavedProgramCase
 from shadowspill.artifacts.profiled_program import ProfiledProgram
@@ -32,7 +33,6 @@ from .plan_artifacts import save_annotated_plan
 from .source import CorpusProgramCase
 from .storage import (
     BaselinePaths,
-    atomic_json,
     begin_point_attempt,
     finish_point_attempt,
     initialize_point,

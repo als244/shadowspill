@@ -10,6 +10,7 @@ from contextlib import AbstractContextManager
 from dataclasses import dataclass
 from pathlib import Path
 
+from benchmarking._serialization import atomic_json
 from shadowspill.schema import artifact_schema
 
 from .config import FrontierConfig
@@ -19,7 +20,6 @@ from .source import CorpusProgramCase
 from .storage import (
     BaselinePaths,
     append_log,
-    atomic_json,
     read_active_point,
     read_object,
     recover_interrupted_attempt,

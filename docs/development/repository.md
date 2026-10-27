@@ -6,7 +6,7 @@
 shadowspill/
 ├── src/
 │   ├── shadowspill/       installed Python package
-│   └── tools/             naming checks and sanitizer support
+│   └── tools/             trace analysis/videos, naming checks and sanitizer support
 ├── csrc/                  the C library, its backends and public C headers,
 │                          the network extension, and the memory daemon
 ├── tests/                 fast tests mirroring product/tool boundaries
@@ -22,8 +22,8 @@ shadowspill/
 
 `qualification/` owns the complete gate implementation and its documentation.
 There is no forwarding package under `src/tools/`. `qualification/gates/`
-runs the selected gates; each gate's `matrix.py` launches its cases, and its
-`run.py` implements the single-case command. Product behavior remains under
+runs the selected gates; each gate's `matrix/` package selects and launches its
+cases; `run.py` implements the single-case command. Product behavior remains under
 `src/shadowspill/`. The numerical gate is a package,
 `qualification/numerical/`, holding one case end to end: the
 request and its identity, the reference arm, the planned run, the two
