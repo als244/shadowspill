@@ -1,9 +1,9 @@
 """Calibrate the union of saved candidates' communication, independently of compute."""
 
+from benchmarking.spill import resolve as spill_pool
 from shadowspill import CommunicationInfo, Program
 from shadowspill.communication.requests import collective_requests
 
-from ..spill import resolve as spill_pool
 from .common import paths
 from .distributed import workers
 

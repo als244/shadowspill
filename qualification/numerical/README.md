@@ -18,8 +18,9 @@ rest of its life, and both arms must be readers of the same cached choices.
 What the gate asserts is that planning a step does not change what that step
 computes.
 
-The default matrix uses pinned-host spill. SSD/remote qualification still needs
-saved-phase wiring; see [SSD status](ssd.md).
+The default matrix uses pinned-host spill. SSD/remote settings flow through the
+same saved phases to communication calibration and Executor; build/task profiling
+remain independent of the backend. See [SSD qualification](ssd.md).
 
 Pure PyTorch is the default and formal numerical authority. The optional
 external implementation is selected explicitly:

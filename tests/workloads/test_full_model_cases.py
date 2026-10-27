@@ -62,20 +62,6 @@ def test_predecessor_parity_is_not_silently_declared_reached() -> None:
         assert item.regression_tokens_per_second < item.predecessor_tokens_per_second
 
 
-def test_full_model_launcher_recovers_killed_planning_phase() -> None:
-    log = "\n".join(
-        (
-            "[shadowspill.plan +   0.001s] capture_lowering: started",
-            "[shadowspill.plan +   1.001s]   objective_export: started",
-            "[shadowspill.plan +   2.001s]   objective_export: finished in 1.000s",
-            "[shadowspill.plan +   2.002s] capture_lowering: finished in 2.001s",
-            "[shadowspill.plan +   2.003s] optimizer_capture: started",
-        )
-    )
-    assert _active_planning_phases(log) == ("optimizer_capture",)
-    assert _termination_signal(-9) == "SIGKILL"
-
-
 def test_full_model_launcher_recovers_killed_phase_worker() -> None:
     log = "\n".join(
         (
@@ -83,10 +69,11 @@ def test_full_model_launcher_recovers_killed_phase_worker() -> None:
             "build: completed in 5.000s",
             "profile: starting",
             "profile: completed in 2.000s",
-            "plan: starting",
+            "[2026-10-27T16:00:00+00:00] plan: starting",
         )
     )
     assert _active_planning_phases(log) == ("plan",)
+    assert _termination_signal(-9) == "SIGKILL"
 
 
 def test_performance_gate_preserves_the_three_default_mlops_workloads() -> None:

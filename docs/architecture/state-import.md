@@ -128,9 +128,11 @@ master's initial contents. After updates, the wrapper's traceable
 `wrapped.copy_(dense)` operation publishes every changed component. The tensor
 library owns that math; ShadowSpill does not choose or reinterpret it.
 
-Owned optimizer updates of sharded wrappers still require a representation-specific
-shard/copy contract and are rejected by the generic builder. Frozen wrappers, as
-used by LoRA, require no logical master.
+Owned optimizer updates support a single contiguous physical payload when the
+wrapper preserves its logical shape through reshape, slicing and copy. Its
+physical dtype still controls storage and publication. Packed or scaled wrappers
+that do not preserve that shard/copy relationship remain unsupported for sharded
+updates. Frozen wrappers, as used by LoRA, require no logical master.
 
 ## Export and checkpoints
 

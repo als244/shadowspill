@@ -2,10 +2,11 @@
 
 from pathlib import Path
 
+from benchmarking.spill import record as spill_record
+
 from .launch import launch as _launch
 from .phases.common import read, reference, write
 from .results import write_measurements
-from .spill import record as spill_record
 
 
 def run(

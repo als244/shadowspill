@@ -56,7 +56,9 @@ def run_planned_case(request: PlannedRequest, directory: Path) -> PlannedRun:
     with (
         deterministic_kernels(True),
         Executor(
-            plan, external_headroom_bytes=request.external_headroom_mib << 20
+            plan,
+            external_headroom_bytes=request.external_headroom_mib << 20,
+            spill=request.spill_pool,
         ) as executor,
     ):
         initialize(executor, inputs)

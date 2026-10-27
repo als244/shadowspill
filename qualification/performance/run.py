@@ -1,7 +1,7 @@
 """Run one full-model ShadowSpill-only throughput qualification cell.
 
-:mod:`.phases` runs the cell, :mod:`.verdict` judges what it produced, and
-``main`` below is the command line both are reached through.
+Separate workers build, profile, plan and execute the cell. :mod:`.verdict`
+judges the execution results.
 """
 
 from __future__ import annotations
@@ -9,8 +9,10 @@ from __future__ import annotations
 import argparse
 import json
 import traceback
+from dataclasses import replace
 from pathlib import Path
 
+from benchmarking.spill import parse_remote, record
 from qualification.device_defaults import (
     add_memory_budget_arguments,
     performance_defaults,
@@ -24,11 +26,15 @@ from .prepare import manifest_for_run
 
 
 def _run(arguments: argparse.Namespace) -> dict[str, object]:
-    if arguments.remote_spill is not None:
-        raise NotImplementedError(
-            "phase qualification currently supports host spill only"
-        )
     manifest = manifest_for_run(arguments)
+    budget = _planning_spill_budget(
+        manifest, planning_spill_budget_gib=arguments.planning_spill_budget_gib
+    )
+    spill = None
+    if arguments.remote_spill is not None:
+        spill = parse_remote(arguments.remote_spill)
+        budget = min(budget, spill.capacity)
+        spill = replace(spill, capacity=budget)
     print("DTYPES: " + manifest.dtypes.description(), flush=True)
     output = arguments.output.expanduser().resolve()
     directory = output.with_suffix(".phases")
@@ -43,10 +49,8 @@ def _run(arguments: argparse.Namespace) -> dict[str, object]:
             {
                 "execution_bytes": manifest.device_physical_capacity_bytes,
                 "external_headroom_bytes": manifest.external_headroom_bytes,
-                "spill_bytes": _planning_spill_budget(
-                    manifest,
-                    planning_spill_budget_gib=arguments.planning_spill_budget_gib,
-                ),
+                "spill_bytes": budget,
+                "spill": record(spill),
             },
             indent=2,
         )

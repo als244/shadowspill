@@ -4,6 +4,7 @@ import json
 import sys
 from pathlib import Path
 
+from benchmarking.spill import resolve
 from qualification.pipeline.observe import Observe
 from qualification.pipeline.state import initialize, load_inputs
 from qualification.runtime_evidence import check_physical_budget
@@ -20,12 +21,15 @@ def run(directory: Path) -> None:
     arguments, manifest = read_request(directory)
     plan = Plan.load(directory / "plan.ssp")
     inputs = load_inputs(directory)
+    settings = json.loads((directory / "settings.json").read_text())
     regression = regression_comparison(
         manifest, arguments, device_name=plan.program.setup["gpu"]
     )
     print("THROUGHPUT BASELINE: " + regression.reason, flush=True)
     with Executor(
-        plan, external_headroom_bytes=manifest.external_headroom_bytes
+        plan,
+        external_headroom_bytes=manifest.external_headroom_bytes,
+        spill=resolve(settings),
     ) as executor:
         if arguments.profiler_annotations:
             set_profiler_annotations(executor._paths[0].bridge, True)

@@ -22,8 +22,9 @@ python -m qualification.performance.matrix \
 
 The matrix defaults to the three MLOps cells with recorded throughput floors.
 The two PyTorch cells are also available through `--cells`. Cases run serially so
-GPU activity from another case cannot contaminate timings. Pinned-host spill is
-supported by this phase runner; SSD/remote execution migration is deferred.
+GPU activity from another case cannot contaminate timings. Pinned-host and remote
+spill use the same phase runner; remote configuration reaches calibration and
+Executor. Full-size remote qualification is separate from the default gate.
 
 ## Runner and artifacts
 
@@ -110,3 +111,7 @@ runtime, memory and simulator checks still apply. The result explains which
 fields differ. Building needs CPU memory for the model and saved initial values;
 execution memory-maps those values and fills Executor-owned storage in bounded
 chunks. The host must also accommodate the configured pinned spill pool.
+
+For remote runs, the Plan spill budget is the minimum of the requested peer
+capacity and the planning allowance. Calibration and execution receive that same
+capacity. The saved settings record it explicitly.

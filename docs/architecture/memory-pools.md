@@ -70,53 +70,32 @@ An allocation's pointer is assigned, compared, handed out, and **never
 dereferenced** by anything in the memory subsystem. Offsets are computed
 against the base; the base itself is never read through.
 
-That is what makes a region on another machine the same object as a local one,
-and it is the reason the kind lookup is affordable rather than a layer of
-indirection over a switch. It also stopped being a happy accident: the one
-routine that violated it -- pool growth, which copied the payload into a larger
-region -- was deleted rather than left to be the exception that would make a
-remote pool crash.
+Transfer [lanes](lanes.md) access the two pool kinds they connect. Bounded object
+read/write calls use the [pool-memory contract](../c/pool-memory.md), which routes
+non-addressable storage through the kind's callbacks. Executor's `SpillStorage`
+uses these calls for initialization and checkpoint I/O. The object registry
+tracks registrations and leases; it does not stage tensor payloads.
 
-Inside the runtime, two things read through a pool address, and each is narrow
-about it. A [lane](lanes.md) does, for the two pools it was made to connect.
-The object registry does when state is imported or exported -- but it asks the
-kind rather than dereferencing anything itself, through the `write` and `read`
-entries of the [pool-memory contract](../c/pool-memory.md); a kind whose region
-is not in this address space implements them, and one whose region is leaves
-them out and is copied through directly. An address handed *out* is another
-matter: a plan's execution pool exists precisely so a
-caller can read and write through what it is given. That is a difference
-between the two *roles* a plan assigns, not between kinds, and it is why a
-pool's kind constrains who may hold its addresses without changing anything
-about how the pool works.
+Execution-pool addresses are deliberately exposed to compiled tasks. Their
+lifetimes follow the Plan's allocation and completion dependencies. A remote or
+SSD address is never exposed as a local tensor pointer.
 
-## Memory a plan will own is imported into the pool that will own it
+## Execution owns tensor values
 
-Planning creates state the plan will keep, and the largest of it is an
-optimizer's: several times the model for an ordinary adaptive optimizer. It is
-imported into the spill pool before it holds any values and filled there by
-the caller, so the host is never asked for the whole of it beside the pool about
-to hold it. That is the import a checkpoint takes, and the reason there is no
-second mechanism here to describe.
+Build and planning record geometry, dependencies and memory requirements without
+creating runtime pools. Executor creates the pools, reserves the declared initial
+storage, then fills it through bounded tensor requests. Checkpoint loading and
+random initialization use the same interface; see [initialization](state-import.md).
 
-Addressable pools are filled in place. For non-addressable pools, such as
-remote memory and SSD, the PyTorch adapter keeps checked tensor metadata and
-stages the storage roots touched by each initialization operation. Writes are
-published through the pool's `write` entry, then scratch is reused. It does not
-retain a complete host copy. An initializer that touches every parameter at
-once can still need large scratch; in-place, per-module initialization bounds
-that cost by the tensors used together.
+Addressable spill pools are filled in place. For remote memory and SSD, each
+request uses a bounded host buffer and publishes it through the backend's write
+operation. Scratch is reused for the next chunk. No model-sized staging copy is
+required, including for optimizer tensors and distributed shards.
 
-Explicit exports produce CPU copies when the caller asks for them. Releasing
-imported state does not export it. Checkpoint save streams objects into a
-separate file; the temporary SSD pool itself is not a checkpoint.
-
-Everything else a plan owns is created in a pool and never leaves it.
-Gradients, activations and workspaces are runtime objects created in a pool,
-and the tensors a program is lowered from are fake and cost nothing. Model and
-optimizer state is the part that comes from outside, by one of the paths in
-[importing state](state-import.md), which is also where what each of them costs
-on the way in is set out.
+Export uses bounded read buffers. Checkpoint helpers stream those buffers to a
+separate archive; the temporary spill pool itself is not a checkpoint. Releasing
+storage does not implicitly export its values. Gradients, activations and
+workspaces acquire their planned runtime storage when produced.
 
 ## A pool answers for itself
 
@@ -130,13 +109,14 @@ numbers named for those roles would belong to the plan, not here.
 
 ## Construction order
 
-Runtime construction precedes workload-state construction: the runtime first
-creates every configured pool and calibrates each route using ranges from
-those actual pools, then workload state is allocated in those pools and
-initialized, or imported from existing values. Metadata-only model construction
-may precede import. That
-keeps a large spill pool's physical pages, and the DMA mapping a pinned one
-takes, independent of earlier anonymous model allocations, and gives planning a
-transfer profile measured on the memory the step will use.
+Communication calibration is an optional phase before planning. It measures the
+selected spill backend using temporary pools and saves `CommunicationInfo`;
+callers can also supply rates directly. Model/task profiling uses the ordinary
+framework allocator and needs no runtime pool.
+
+A fresh execution worker installs the allocator, admits the saved Plan and
+creates its pools before initializing tensor values. It uses the saved costs and
+layout without recalibrating or replanning. This keeps large spill allocations
+independent of anonymous full-model initialization and preserves the phase boundary.
 
 Previous: [Backends](backends.md). Next: [Lanes](lanes.md).

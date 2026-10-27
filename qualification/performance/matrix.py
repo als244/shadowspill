@@ -40,14 +40,14 @@ from ..matrix_logging import MatrixConsole, format_bytes, utc_now
 
 # Cell logs may carry one leading "[<utc>] " stamp added by the matrix tee.
 _PLAN_PROGRESS = re.compile(
-    r"^(?:\[[^\]]*\] )?(?:\[shadowspill\.plan \+\s*[0-9.]+s\]\s+)?"
+    r"^(?:\[[^\]]*\] )?"
     r"(?P<phase>[A-Za-z0-9_]+): "
-    r"(?P<state>started|finished|failed|starting|completed)(?:\s+in\s+.*)?$"
+    r"(?P<state>failed|starting|completed)(?:\s+in\s+.*)?$"
 )
 
 
 def _active_planning_phases(log_text: str) -> tuple[str, ...]:
-    """Recover unfinished phases from current or earlier qualification logs."""
+    """Recover unfinished saved-phase workers from the current cell log."""
 
     active: list[str] = []
     for line in log_text.splitlines():
@@ -55,7 +55,7 @@ def _active_planning_phases(log_text: str) -> tuple[str, ...]:
         if match is None:
             continue
         phase = match.group("phase")
-        if match.group("state") in {"started", "starting"}:
+        if match.group("state") == "starting":
             active.append(phase)
             continue
         for index in range(len(active) - 1, -1, -1):

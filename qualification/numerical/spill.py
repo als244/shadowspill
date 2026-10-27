@@ -6,6 +6,7 @@ import argparse
 import os
 from pathlib import Path
 
+from benchmarking.spill import parse_remote
 from shadowspill.memory import SpillPool
 from shadowspill.network import RemotePool
 from shadowspill.ssd import SSDPool, ssd
@@ -61,11 +62,7 @@ def configured_spill(
                 raise ValueError(
                     "--remote-spill cannot be combined with --spill-pool ssd"
                 )
-            host, _, rest = arguments.remote_spill.partition(":")
-            port, _, size = rest.partition(":")
-            if not host or not port.isdigit() or not size.isdigit():
-                raise ValueError("--remote-spill must read HOST:PORT:BYTES")
-            return RemotePool(capacity=int(size), host=host, port=int(port))
+            return parse_remote(arguments.remote_spill)
         if arguments.spill_pool == "host":
             return None
         if arguments.ssd_directory is None:

@@ -6,6 +6,7 @@ from pathlib import Path
 
 from mlops.dispatch import deterministic_kernels
 
+from benchmarking.spill import resolve
 from shadowspill import Program, apply_profiles, measure_communication, measure_program
 
 
@@ -25,7 +26,9 @@ def run(directory: Path) -> None:
         )
     profiles.save(directory / "profiles.ssp")
     apply_profiles(program, profiles).save(directory / "profiled.ssp")
-    measure_communication(**timing).save(directory / "communication.ssp")
+    measure_communication(spill=resolve(settings), **timing).save(
+        directory / "communication.ssp"
+    )
 
 
 if __name__ == "__main__":

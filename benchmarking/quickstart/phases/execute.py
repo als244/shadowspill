@@ -3,9 +3,9 @@
 import statistics
 from contextlib import nullcontext
 
+from benchmarking.spill import resolve as spill_pool
 from shadowspill import Plan, Trainer
 
-from ..spill import resolve as spill_pool
 from .common import experiment, paths, plan_identity, read, write
 from .distributed import workers
 

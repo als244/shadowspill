@@ -73,12 +73,14 @@ The launcher uses all CPUs available by affinity and sets OpenMP/MKL/OpenBLAS
 thread counts accordingly. `--cpu-threads 8` overrides that count. Host load and
 GPU tenants are recorded at gate start and on failure.
 
-The default matrix qualifies pinned-host spill. The optional `numerical_ssd`,
-`remote` and `remote_perf` commands are retained, but their saved-phase plumbing
-is not yet migrated: configured runs currently reject non-host spill. Remote
-gates skip when no peer is configured. Core Executor backend support does not
-establish qualification of these runners. See [SSD status](numerical/ssd.md),
-[remote correctness](remote/README.md) and [remote throughput](remote_perf/README.md).
+The default matrix uses pinned-host spill. Optional `numerical_ssd`, `remote` and
+`remote_perf` use the same saved phases: their pool configuration is passed to
+communication calibration and Executor, while model build/task measurement stay
+backend-independent. Remote gates skip when no peer is configured. Full-size
+SSD/remote matrices still require target validation after this migration; core
+Executor backend tests and configuration checks are separate evidence. See
+[SSD qualification](numerical/ssd.md), [remote correctness](remote/README.md) and
+[remote throughput](remote_perf/README.md).
 
 [The nondeterminism probe](nondeterminism/README.md) locates the first divergent
 module. For measured-versus-simulated step breakdowns:

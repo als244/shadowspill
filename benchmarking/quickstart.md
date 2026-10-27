@@ -202,8 +202,6 @@ With `--plots`, the execution comparison uses matching measured runs only.
 Per-step `loss` honors the metric reducer's display override; `objective_loss`
 always retains the differentiated objective. Detailed reducer metrics live in
 each attempt's `metrics.jsonl`, copied to host before the reducer is called.
-The numerical report exporters for the old quickstart format remain under the
-private migration path until updated.
 
 ## Nsight captures of saved winners
 

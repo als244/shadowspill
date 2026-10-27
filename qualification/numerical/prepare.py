@@ -2,10 +2,12 @@
 
 import json
 import sys
-from dataclasses import asdict
+from dataclasses import asdict, replace
 from pathlib import Path
 
 import torch
+
+from benchmarking.spill import record, resolve
 
 from .metrics import state_digest
 from .references import reference_artifact_exists, reference_inputs_path
@@ -14,18 +16,21 @@ from .tolerances import SPILL_BUDGET
 
 
 def save_request(request: PlannedRequest, directory: Path) -> None:
-    if request.spill_pool is not None:
-        raise NotImplementedError(
-            "phase qualification currently supports host spill only"
-        )
     directory.mkdir(parents=True, exist_ok=True)
+    value = {
+        **asdict(replace(request, spill_pool=None)),
+        "spill_pool": record(request.spill_pool),
+    }
     (directory / "request.json").write_text(
-        json.dumps(asdict(request), default=str, indent=2) + "\n"
+        json.dumps(value, default=str, indent=2) + "\n"
     )
     settings = {
         "execution_bytes": request.device_budget,
         "external_headroom_bytes": request.external_headroom_mib << 20,
-        "spill_bytes": SPILL_BUDGET,
+        "spill_bytes": (
+            SPILL_BUDGET if request.spill_pool is None else request.spill_pool.capacity
+        ),
+        "spill": record(request.spill_pool),
         "optimizer_ordering": request.case.optimizer_ordering,
         "data_ordering": request.case.data_ordering,
         "deterministic": True,
@@ -36,6 +41,7 @@ def save_request(request: PlannedRequest, directory: Path) -> None:
 def load_request(directory: Path) -> PlannedRequest:
     value = json.loads((directory / "request.json").read_text())
     value["case"] = CaseRequest(**value["case"])
+    value["spill_pool"] = resolve({"spill": value["spill_pool"]})
     for name in ("reference_path", "result_path"):
         if value.get(name) is not None:
             value[name] = Path(value[name])
