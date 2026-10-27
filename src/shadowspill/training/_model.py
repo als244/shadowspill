@@ -2,12 +2,11 @@
 
 from __future__ import annotations
 
-from collections.abc import Collection, Iterable, Iterator, Mapping
+from collections.abc import Callable, Collection, Iterable, Iterator, Mapping
 from contextlib import contextmanager
-from dataclasses import dataclass
 from functools import partial
 from itertools import groupby
-from typing import Any, Self
+from typing import Any
 
 import torch
 from torch import nn
@@ -15,7 +14,7 @@ from torch import nn
 from shadowspill.pytorch.representations import materialize_meta_state
 from shadowspill.pytorch.state.serialization import decode_tensor_state
 
-from ._types import Initializer, OptimizerConstructor, ParameterGroups
+type Initializer = Callable[[nn.Module], None]
 
 
 def validate_initialization(
@@ -90,60 +89,8 @@ def model_mode(model: nn.Module, training: bool) -> Iterator[None]:
             module.training = previous
 
 
-@dataclass(frozen=True)
-class OptimizerFactory:
-    constructor: OptimizerConstructor
-    arguments: Mapping[str, Any]
-    parameter_names: tuple[str, ...]
-    groups: tuple[Mapping[str, Any], ...] | None
-
-    @classmethod
-    def bind(
-        cls,
-        model: nn.Module,
-        constructor: OptimizerConstructor,
-        arguments: Mapping[str, Any],
-        parameter_groups: ParameterGroups | None = None,
-    ) -> Self:
-        if isinstance(constructor, torch.optim.Optimizer):
-            raise TypeError(
-                "pass an optimizer constructor; live optimizers use plan_step"
-            )
-        named = dict(model.named_parameters())
-        names = {id(value): name for name, value in named.items()}
-        groups = None
-        if parameter_groups is not None:
-            resolved = []
-            for original in parameter_groups(model):
-                group = dict(original)
-                try:
-                    group["params"] = tuple(names[id(p)] for p in group["params"])
-                except KeyError as error:
-                    raise ValueError(
-                        "parameter_groups must select registered model parameters"
-                    ) from error
-                resolved.append(group)
-            groups = tuple(resolved)
-        return cls(constructor, dict(arguments), tuple(named), groups)
-
-    def __call__(self, parameters: Iterable[torch.Tensor]) -> torch.optim.Optimizer:
-        named = dict(zip(self.parameter_names, parameters, strict=True))
-        values: list[Any]
-        if self.groups is None:
-            values = list(named.values())
-        else:
-            values = [
-                {**group, "params": [named[name] for name in group["params"]]}
-                for group in self.groups
-            ]
-        optimizer = build_optimizer(self.constructor, values, self.arguments)
-        if not isinstance(optimizer, torch.optim.Optimizer):
-            raise TypeError("optimizer constructor must return torch.optim.Optimizer")
-        return optimizer
-
-
 def build_optimizer(
-    constructor: OptimizerConstructor,
+    constructor: Callable[..., torch.optim.Optimizer],
     parameters: Iterable[Any],
     arguments: Mapping[str, Any],
 ) -> torch.optim.Optimizer:

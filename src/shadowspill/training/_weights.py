@@ -2,14 +2,13 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from typing import Any
 
 import torch
 from torch import nn
 
 from shadowspill.pytorch.representations import is_wrapper
-
-from ._types import ParameterObserver
 
 
 class Weights:
@@ -51,7 +50,9 @@ class Weights:
                 self.sums[name] = gradient
 
     @torch.no_grad()
-    def observe(self, observer: ParameterObserver | None) -> dict[str, Any]:
+    def observe(
+        self, observer: Callable[[torch.Tensor, torch.Tensor], Any] | None
+    ) -> dict[str, Any]:
         if observer is None:
             return {}
         return {

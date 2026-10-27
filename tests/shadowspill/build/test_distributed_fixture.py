@@ -15,15 +15,48 @@ from tests.shadowspill.offline._communication import estimated_communication
 
 
 @pytest.mark.cuda
-@pytest.mark.parametrize("kind", ["forward_backward", "step"])
+@pytest.mark.parametrize(
+    "kind,ownership",
+    [
+        ("forward_backward", "sharded"),
+        ("step", "sharded"),
+        ("step", "matrix"),
+        ("step", "fp16"),
+        ("step", "diagnostics"),
+    ],
+)
 def test_distributed_variants_keep_terminal_save_and_recompute_earlier_stages(
-    tmp_path, kind
+    tmp_path, kind, ownership
 ):
     if not torch.cuda.is_available():
         pytest.skip("requires one representative GPU")
-    build(tmp_path, kind)
+    build(tmp_path, kind, ownership)
     profile(tmp_path)
     profiled = ProfiledProgram.load(tmp_path / "profiled.ssp")
+    bindings = {
+        b["name"]: b for b in profiled.program.bindings.get("optimizer_bindings", ())
+    }
+    if ownership in {"diagnostics", "fp16"}:
+        counters = [b for name, b in bindings.items() if name.endswith(".step")]
+        assert counters and all(
+            b["device"] == "cpu" and b["object_id"] is None for b in counters
+        )
+        fixture = torch.load(tmp_path / "oracle.pt", weights_only=True)
+        state = (
+            fixture["expected"][0].get("state") or fixture["expected"][0]["states"][0]
+        )
+        assert state.keys() >= {
+            name
+            for name in bindings
+            if bindings[name]["role"] in {"state", "hyperparameter"}
+        }
+    if ownership == "matrix":
+        assert bindings["optimizer.shared.weight.column_energy"]["shape"] == (7,)
+        assert bindings["optimizer.shared.weight.velocity"]["shape"] == (5, 7)
+        assert not profiled.program.bindings["owned_parameter_views"]
+    if ownership == "fp16":
+        assert bindings["layers.0.weight"]["dtype"] == "torch.float32"
+        assert bindings["compute.layers.0.weight"]["dtype"] == "torch.float16"
     for variant in ("save", "recompute"):
         selected = select_variants(profiled, variant)
         result = plan_program(

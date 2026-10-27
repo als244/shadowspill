@@ -23,6 +23,10 @@ buffers; `chunk` identifies a tensor name, dtype, local storage geometry and fla
 chunk offset. Initialization streams bounded chunks and creates optimizer defaults
 without assembling a full model on the device.
 
+For ordinary eager models, `shadowspill.training.reset_parameters(model)` calls
+each submodule's `reset_parameters` method when present. Saved execution uses
+the bounded `fill_tensor` interface above.
+
 An optional existing `executor=` must belong to the same Plan. Trainer closes
 only an Executor it created. `close()` and context-manager exit wait for work and
 release owned resources. By default, Executor inherits the external-memory
@@ -220,14 +224,7 @@ task, allocation and transfer records; `.result()` retains its normal output.
 Untraced calls return `None` for diagnostics and allocate no trace resources.
 Unlike `Trainer.diagnose`, tracing alone does not preserve training state.
 
-## Callers still being migrated
-
-`DataParallel`, `Distributed`, `TransferSharding`, `Forward`, `PreparedTraining`
-and `reset_parameters` remain importable for repository callers using the older
-preparation/backend path. They are not arguments to the saved-plan Trainer.
-`Forward` and `PreparedTraining` will be removed after those callers migrate;
-new code should use `build_forward`, saved artifacts and Executor. The private
-compatibility Trainer is not the public Trainer documented above.
+## Custom optimizers
 
 Custom optimizers must expose a tensor-only, capturable update. Python control
 flow that reads tensor values and Python step hooks are rejected during build;

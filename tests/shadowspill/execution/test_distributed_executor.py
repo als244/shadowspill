@@ -20,6 +20,8 @@ import torch
         ("step", "save", "sharded"),
         ("step", "recompute", "sharded"),
         ("step", "save", "replicated"),
+        ("step", "save", "matrix"),
+        ("step", "recompute", "fp16"),
         ("step", "recompute", "cutoff"),
         ("step", "recompute", "local_experts"),
         ("step", "recompute", "diagnostics"),
@@ -45,13 +47,10 @@ def test_distributed_saved_executor(tmp_path, kind, variant, ownership):
                 sys.executable,
                 "-S",
             ]
-        script = (
-            "_distributed_execute.py"
-            if phase == "execute"
-            else "_distributed_phases.py"
-        )
+        execution = phase in {"execute", "resume"}
+        script = "_distributed_execute.py" if execution else "_distributed_phases.py"
         command += [str(directory / script)]
-        if phase != "execute":
+        if not execution:
             command += [phase]
         command += [str(tmp_path), *extra]
         environment = {**os.environ, "OMP_NUM_THREADS": "1"}
@@ -79,3 +78,5 @@ def test_distributed_saved_executor(tmp_path, kind, variant, ownership):
     run("communicate", True)
     run("plan", False, variant)
     run("execute", True)
+    if kind == "step":
+        run("resume", True, "resume")

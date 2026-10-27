@@ -20,9 +20,11 @@ from tests.shadowspill.execution._cold import forbid_preparation  # noqa: E402
 
 forbid_preparation("shadowspill.communication.measure")
 from shadowspill import Executor, Plan, load_checkpoint, save_checkpoint  # noqa: E402
+from shadowspill.runtime.occupancy import live_allocations  # noqa: E402
 from tests.spill_pool import spill_pool  # noqa: E402
 
 directory = Path(sys.argv[1])
+resume = len(sys.argv) > 2 and sys.argv[2] == "resume"
 fixture = torch.load(directory / "oracle.pt", weights_only=True)
 plan = Plan.load(directory / "plan.ssp")
 evaluation = directory / "evaluation-plan.ssp"
@@ -62,8 +64,14 @@ try:
         parameter_norms=plan.program.bindings["kind"] == "step",
         spill=spill_pool(plan.memory_budgets.spill_bytes),
     )
-    executor.initialize(fill, chunk_bytes=40)
+    checkpoint = directory / f"checkpoint-rank-{logical}.ssp"
+    if resume:
+        assert load_checkpoint(executor, checkpoint, chunk_bytes=28) == {"completed": 1}
+    else:
+        executor.initialize(fill, chunk_bytes=40)
     for index, expected in enumerate(fixture["expected"]):
+        if resume and index == 0:
+            continue
         calls = fixture["examples"][logical]
         if fixture.get("diagnostics") and index in {0, 1}:
             from tests.shadowspill.execution._distributed_diagnostics import check
@@ -139,7 +147,6 @@ try:
         dist.all_gather_object(all_failures, failures)
         assert not any(all_failures), all_failures
         if index == 0:
-            checkpoint = directory / f"checkpoint-rank-{logical}.ssp"
             save_checkpoint(
                 executor, checkpoint, metadata={"completed": 1}, chunk_bytes=40
             )
@@ -157,6 +164,11 @@ try:
                 evaluated.cpu(), expected["evaluation"][logical], atol=0.008, rtol=0.025
             )
             del evaluated
+        executor.synchronize()
+        assert all(
+            item.object_id is None
+            for item in live_allocations(executor.runtime, "execution")
+        ), "an invocation retained a named execution-pool object"
         print(
             f"logical rank {logical}: invocation {index} values/shards passed",
             flush=True,

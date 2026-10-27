@@ -436,8 +436,8 @@ per storage rather than once per rank; `fill` must therefore contain no
 collectives and must not rely on running on every rank. Nonsharded tensors and
 partial views keep ordinary copy semantics, and a failed fill is reported to
 every group member before any shard is published. The
-[distributed page](distributed.md#initial-replica-synchronization-and-mapped-checkpoints)
-shows it inside a sharded checkpoint loader.
+[distributed page](distributed.md#retained-low-level-state-import)
+describes the retained low-level initialization boundary.
 
 <!-- source-signature: src/shadowspill/pytorch/state/model.py:import_model_state_from_file -->
 ```text

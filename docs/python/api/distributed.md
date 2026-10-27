@@ -277,17 +277,7 @@ assume unchanged topology and do not reshard a checkpoint automatically.
 See [Trainer checkpoints](training.md) for loop/source state and frozen-base
 partial checkpoints.
 
-## Remaining callers on the older API
-
-`DataParallel`, `Distributed`, `TransferSharding`, `Forward` and `PreparedTraining`
-belong to the older preparation path, retained for unmigrated integration tests
-and tools. They are not arguments to `Trainer(plan)` or the new builders.
-Saved-plan [startup diagnostics](training.md#startup-diagnostics) retain the
-explicit optimizer no-update guarantee and write one directory per logical rank.
-Single-GPU state/RNG preservation is qualified; distributed trace collection
-still needs its own multi-GPU check.
-
-### Initial replica synchronization and mapped checkpoints
+## Retained low-level state import
 
 For older `import_model_state` callers only, `initialize_storage_(destination,
 fill)` fills a physical CPU tensor. Whole sharded storages allocate scratch on

@@ -1,8 +1,8 @@
 """The checkpoint format both backends write.
 
 A checkpoint contains ``model``, ``step`` and, by default, ``optimizer``: the
-model's state dict, completed updates and optional optimizer state. A weight trained over
-a master copy at another precision is written as its master, under the weight's
+model's state dict, completed updates and optional optimizer state. A weight
+trained over a master copy at another precision is written under the weight's
 name by default. With weights="compute", only the compute representation is
 saved and restored masters take its upcast values. Either choice stores weights
 once and loads into a plain model of either precision

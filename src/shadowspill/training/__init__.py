@@ -1,4 +1,4 @@
-"""Training over saved plans; legacy helpers load only for unmigrated callers."""
+"""Training loops over saved Plans, with lazy imports for CPU-only tooling."""
 
 from importlib import import_module
 from typing import Any
@@ -6,11 +6,6 @@ from typing import Any
 _PUBLIC = {
     "Trainer": ".trainer",
     "StepResult": ".results",
-    "DataParallel": ".parallel",
-    "Distributed": "shadowspill.pytorch.distributed",
-    "TransferSharding": "shadowspill.pytorch.distributed",
-    "Forward": ".forward",
-    "PreparedTraining": ".preparation",
     "reset_parameters": "._model",
 }
 

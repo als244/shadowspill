@@ -19,8 +19,13 @@ def build(path, kind, ownership="sharded"):
         oracle,
     )
 
-    dtype = torch.bfloat16 if kind == "step" else torch.float32
-    fixture = oracle(kind, dtype) if ownership == "sharded" else None
+    masters = ownership in {"sharded", "fp16"}
+    dtype = (
+        torch.float16
+        if ownership == "fp16"
+        else (torch.bfloat16 if kind == "step" else torch.float32)
+    )
+    fixture = oracle(kind, dtype) if masters else None
     template = Network(dtype=dtype, device="meta")
     parallelism = Parallelism.dp(ranks_per_replica=2)
     if ownership in {"fp8", "fp8_cutoff"}:
@@ -31,13 +36,12 @@ def build(path, kind, ownership="sharded"):
         template = quantized.Network(device="meta")
         parallelism = Parallelism.dp(ranks_per_replica=2, min_shard_bytes=cutoff)
         objective = quantized.objective
-    elif ownership != "sharded":
+    elif not masters:
         from tests.shadowspill.execution import _ownership_fixture as case
 
         assert kind == "step"
         fixture, template = case.oracle(ownership), case.Network(device="meta")
         objective, parallelism = case.objective, case.parallelism(ownership)
-    torch.save(fixture, path / "oracle.pt")
     args, kwargs = fixture["examples"][0][0]
     common = dict(
         example_args=args,
@@ -57,26 +61,51 @@ def build(path, kind, ownership="sharded"):
             optimizer = torch.optim.AdamW(
                 template.parameters(), lr=0.001, foreach=False
             )
-            if ownership == "diagnostics":
+            if ownership == "matrix":
+                from tests.shadowspill.execution.optimizers.matrix import (
+                    MatrixNormalizedMomentum,
+                )
+
+                optimizer = MatrixNormalizedMomentum(template.parameters())
+            elif ownership in {"diagnostics", "fp16"}:
                 from mlops.optim import AdamW
 
-                optimizer = AdamW(template.parameters(), lr=torch.tensor(0.001))
+                from tests.shadowspill.execution.optimizers.reference import (
+                    optimizer_controls,
+                )
+
+                optimizer = AdamW(
+                    template.parameters(),
+                    lr=torch.tensor(0.001),
+                    gradient_dtype=torch.float32,
+                    opt_state_dtype=torch.float32,
+                )
+                for expected in fixture["expected"]:
+                    states = (
+                        expected["states"]
+                        if "states" in expected
+                        else [expected["state"]]
+                    )
+                    for state in states:
+                        state.update(optimizer_controls(optimizer))
+                        for name in state:
+                            if name.endswith(".step"):
+                                state[name] = state[name].to(torch.int64)
             program = build_step(
                 template,
                 optimizer=optimizer,
-                master_dtype=torch.float32 if ownership == "sharded" else None,
+                master_dtype=torch.float32 if masters else None,
                 **common,
             )
         else:
             program = build_forward_backward(template, **common)
     program.save(path / "program.ssp")
+    torch.save(fixture, path / "oracle.pt")
     if kind == "step":
         build_forward(
             template,
             example_args=args,
-            forward_fn=(
-                None if ownership == "sharded" else lambda model, x: model.predict(x)
-            ),
+            forward_fn=(None if masters else lambda model, x: model.predict(x)),
             parallelism=common["parallelism"],
             partition="auto",
         ).save(path / "evaluation-program.ssp")

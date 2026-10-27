@@ -13,14 +13,15 @@ def objective(model, features):
 
 
 @pytest.mark.cuda
-def test_mlops_adamw_cold_worker_matches_independent_torch_updates(tmp_path):
+@pytest.mark.parametrize("dtype", [torch.bfloat16, torch.float16])
+def test_mlops_adamw_cold_worker_matches_independent_torch_updates(tmp_path, dtype):
     if not torch.cuda.is_available():
         pytest.skip("requires CUDA")
     AdamW = pytest.importorskip("mlops.optim").AdamW
     rates = [0.001, 0.0005, 0.00025]
-    examples = [((torch.ones(4, 8, dtype=torch.bfloat16),), {})]
+    examples = [((torch.ones(4, 8, dtype=dtype),), {})]
     with torch.device("meta"):
-        template = nn.Sequential(nn.Linear(8, 8, dtype=torch.bfloat16))
+        template = nn.Sequential(nn.Linear(8, 8, dtype=dtype))
     program = build_step(
         template,
         optimizer=AdamW(
@@ -36,7 +37,7 @@ def test_mlops_adamw_cold_worker_matches_independent_torch_updates(tmp_path):
     )
     save_plan(program, tmp_path)
 
-    reference = nn.Sequential(nn.Linear(8, 8, dtype=torch.bfloat16))
+    reference = nn.Sequential(nn.Linear(8, 8, dtype=dtype))
     with torch.no_grad():
         for parameter in reference.parameters():
             parameter.fill_(0.125)

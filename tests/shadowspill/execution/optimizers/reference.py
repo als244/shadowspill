@@ -62,8 +62,14 @@ def snapshot(model, stepped, optimizer):
                 for key, value in optimizer.state[parameter].items()
             }
         )
-    for key in ("lr", "betas", "eps", "weight_decay", "rounding_salts"):
-        value = optimizer.param_groups[0][key]
+    result.update(optimizer_controls(optimizer))
+    return result
+
+
+def optimizer_controls(optimizer):
+    """Captured host settings; numerical update expectations remain independent."""
+    result = {}
+    for key, value in optimizer.param_groups[0].items():
         entries = enumerate(value) if isinstance(value, tuple) else [(None, value)]
         for index, tensor in entries:
             if isinstance(tensor, torch.Tensor):

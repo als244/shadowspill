@@ -160,8 +160,8 @@ shadowspill_add_public_api_test(
 )
 
 shadowspill_add_public_api_test(
-  shadowspill/pytorch/api/test_07_distributed_training.py
-  test_distributed_training_matches_combined_reference 1200
+  shadowspill/execution/test_distributed_executor.py
+  test_distributed_saved_executor 1800
 )
 
 shadowspill_add_public_api_test(

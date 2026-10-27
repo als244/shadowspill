@@ -2,8 +2,7 @@
 
 from __future__ import annotations
 
-import math
-from collections.abc import Iterator, Mapping
+from collections.abc import Callable
 from typing import Any
 
 import torch
@@ -11,55 +10,6 @@ from torch import nn
 from torch.utils._pytree import tree_map
 
 from shadowspill.pytorch.contracts import normalize_objective_result
-
-from ._types import Microbatches, Objective
-
-
-def single_microbatch(data: Any) -> Iterator[tuple[Any, float]]:
-    yield data, 1.0
-
-
-def candidate_functions(
-    value: Microbatches | Mapping[str, Microbatches] | None,
-) -> dict[str, Microbatches]:
-    if value is None:
-        return {"default": single_microbatch}
-    if callable(value):
-        return {"default": value}
-    if not isinstance(value, Mapping) or not value:
-        raise ValueError("microbatches must be a function or a nonempty named mapping")
-    if any(
-        not isinstance(name, str) or not name or not callable(fn)
-        for name, fn in value.items()
-    ):
-        raise TypeError("each microbatch candidate needs a nonempty name and function")
-    return dict(value)
-
-
-def make_microbatches(fn: Microbatches, data: Any) -> list[tuple[Any, torch.Tensor]]:
-    result = []
-    for position, item in enumerate(fn(data)):
-        if not isinstance(item, (tuple, list)) or len(item) != 2:
-            raise TypeError(f"microbatch {position} must be (data, loss_scale)")
-        batch, scale = item
-        if isinstance(scale, torch.Tensor):
-            if scale.ndim != 0 or scale.requires_grad or scale.device.type != "cpu":
-                raise ValueError(
-                    "loss_scale must be a scalar CPU tensor without gradients"
-                )
-            if not torch.isfinite(scale).item():
-                raise ValueError("loss_scale must be finite")
-            scale = scale.detach().clone()
-        else:
-            if isinstance(scale, bool) or not isinstance(scale, (int, float)):
-                raise TypeError("loss_scale must be a number or scalar CPU tensor")
-            if not math.isfinite(scale):
-                raise ValueError("loss_scale must be finite")
-            scale = torch.tensor(scale, dtype=torch.float32)
-        result.append((batch, scale))
-    if not result:
-        raise ValueError("an update must contain at least one microbatch")
-    return result
 
 
 def on_device(value: Any, device: torch.device) -> Any:
@@ -81,9 +31,9 @@ def unpack_objective(value: Any) -> tuple[torch.Tensor, Any]:
 
 
 class ScaledObjective:
-    """Both backends capture exactly this tensor-only objective."""
+    """Apply the text recipe's explicit per-example loss scale."""
 
-    def __init__(self, objective: Objective) -> None:
+    def __init__(self, objective: Callable[[nn.Module, Any], Any]) -> None:
         self.objective = objective
 
     def __call__(

@@ -24,8 +24,10 @@ class Network(nn.Module):
         return self.local(self.shared(x).relu())
 
 
-def objective(model, x, *, labels):
-    return (model(x) - labels).square().mean(), {}
+def objective(model, x, *, labels, sample_weights=None):
+    errors = (model(x) - labels).square()
+    loss = errors.mean() if sample_weights is None else (errors * sample_weights).sum()
+    return loss, {}
 
 
 def parallelism(mode):
@@ -33,7 +35,7 @@ def parallelism(mode):
         return Parallelism.dp(ranks_per_replica=2, min_shard_bytes=100)
     if mode == "diagnostics":
         return Parallelism.dp(ranks_per_replica=2)
-    replicated = mode == "replicated"
+    replicated = mode in {"replicated", "matrix"}
     return Parallelism(
         ranks_per_replica=2,
         groups={"all_ranks": ((0, 1),), "local": ((0,), (1,))},
@@ -56,6 +58,8 @@ def oracle(mode):
     torch.manual_seed(318)
     models = [Network()]
     models.append(copy.deepcopy(models[0]))
+    for rank, model in enumerate(models):
+        model.counter.fill_(17 + rank)
     if mode == "local_experts":
         with torch.no_grad():
             models[1].local.weight.normal_(std=0.1)
@@ -68,6 +72,30 @@ def oracle(mode):
         torch.optim.AdamW(model.parameters(), lr=0.001, foreach=False)
         for model in models
     ]
+    if mode == "matrix":
+        from tests.shadowspill.execution.optimizers.matrix import (
+            MatrixNormalizedMomentum,
+        )
+
+        # Same physical shape, unequal numbers of valid samples. Global SUM
+        # normalization must not become a mean of the two rank-local means.
+        calls = [
+            [
+                (
+                    (torch.randn(6, 7),),
+                    {
+                        "labels": torch.randn(6, 3),
+                        "sample_weights": (torch.arange(6) < 4 + 2 * rank)
+                        .float()
+                        .reshape(6, 1)
+                        / 30,
+                    },
+                )
+                for _ in range(2)
+            ]
+            for rank in range(2)
+        ]
+        optimizers = [MatrixNormalizedMomentum(model.parameters()) for model in models]
     expected = []
     for invocation in range(3):
         outputs = []
@@ -99,11 +127,6 @@ def oracle(mode):
                 **copy.deepcopy(model.state_dict()),
                 **optimizer_values(model, optimizer),
             }
-            if mode == "diagnostics":
-                state["optimizer_group.0.lr"] = torch.tensor(0.001)
-                for key in state:
-                    if key.endswith(".step"):
-                        state[key] = state[key].to(torch.int64)
             states.append(state)
         expected.append(
             dict(

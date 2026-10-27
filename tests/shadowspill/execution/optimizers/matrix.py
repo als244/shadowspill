@@ -8,7 +8,7 @@ import torch
 
 
 class MatrixNormalizedMomentum(torch.optim.Optimizer):
-    def __init__(self, parameters, lr=0.005, **ignored):
+    def __init__(self, parameters, lr=0.005):
         super().__init__(parameters, dict(lr=lr, momentum=0.8))
 
     @torch.no_grad()
