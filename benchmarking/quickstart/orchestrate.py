@@ -5,6 +5,7 @@ from pathlib import Path
 from .launch import launch as _launch
 from .phases.common import read, reference, write
 from .results import write_measurements
+from .spill import record as spill_record
 
 
 def run(
@@ -25,6 +26,7 @@ def run(
     external_headroom_gib=0.5,
     plots=True,
     phase="all",
+    spill=None,
 ):
     """Compose public phases; factories provide metadata, inputs and a bounded loader.
 
@@ -59,6 +61,7 @@ def run(
         "search_workers": search_workers,
         "plots": plots,
         "external_headroom_bytes": int(external_headroom_gib * (1 << 30)),
+        "spill": spill_record(spill),
     }
     return run_request(request, phase)
 
@@ -102,5 +105,10 @@ def _validate(request, phase):
         raise ValueError("run budgets must be search budgets")
     if request["warmup_seconds"] < 0 or request["measure_seconds"] <= 0:
         raise ValueError("invalid measurement durations")
+    if (
+        request.get("spill")
+        and request["spill"]["arguments"]["capacity"] != request["spill_bytes"]
+    ):
+        raise ValueError("spill capacity must match spill_gib")
     if not request["device"].startswith("cuda:") or not request["device"][5:].isdigit():
         raise ValueError("device must name a CUDA ordinal, for example cuda:0")

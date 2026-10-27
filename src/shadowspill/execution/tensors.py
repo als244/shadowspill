@@ -131,25 +131,38 @@ def visit_tensors(
             raise ValueError(f"missing tensor geometry for {name}")
         geometry = state.geometry[object_id]
         dtype = dtype_of(geometry)
-        owner = state.host(alias).view(dtype)
+        capacity = state.spill.sizes[alias] // dtype.itemsize
         region = state.regions.get(object_id)
-        if region is not None and owner.numel() != region.capacity:
+        if region is not None and capacity != region.capacity:
             raise ValueError(f"spill lease does not match the declared shard: {name}")
-        length = owner.numel() if region is None else region.length
+        length = capacity if region is None else region.length
         offset = 0 if region is None else region.offset
         if region is not None:
             geometry = region.geometry
-        if initialize:
-            owner[length:].zero_()
-        width = max(1, chunk_bytes // dtype.itemsize)
-        for start in range(0, length, width):
-            destination = owner[start : min(start + width, length)]
+        if initialize and length < capacity:
+            for _, padding in state.spill.chunks(
+                alias,
+                dtype=dtype,
+                start=length,
+                chunk_bytes=chunk_bytes,
+                read=False,
+                write=True,
+            ):
+                padding.zero_()
+        for start, destination in state.spill.chunks(
+            alias,
+            dtype=dtype,
+            length=length,
+            chunk_bytes=chunk_bytes,
+            read=not initialize,
+            write=initialize,
+        ):
             request = TensorChunk(
                 prefix + name,
                 tuple(geometry["shape"]),
                 dtype,
                 offset + start,
-                owner.numel() if region is None else region.storage_elements,
+                capacity if region is None else region.storage_elements,
                 tuple(geometry["stride"]),
                 geometry.get("storage_offset", 0),
                 offset,

@@ -32,7 +32,8 @@ static void context_noop(void *context) { (void)context; }
 static int enqueue(
     void *context, const ShadowSpillBackend *backend,
     ShadowSpillBackendStream stream, uint8_t fetch,
-    void *destination, const void *source
+    void *destination, const void *source,
+    ShadowSpillTransferCopy copy, void *copy_context
 ) {
     Transfer *transfer = context;
     if (fetch == transfer->delayed_direction) {
@@ -40,11 +41,8 @@ static int enqueue(
         (void)nanosleep(&delay, NULL);
     }
     record(transfer->log, transfer->id * 10U + (fetch ? 0U : 1U));
-    return fetch
-        ? backend->copy_host_to_device(
-              backend->state, destination, source, 8U, stream)
-        : backend->copy_device_to_host(
-              backend->state, destination, source, 8U, stream);
+    (void)backend; (void)stream;
+    return copy(copy_context, destination, source, 8U);
 }
 
 static int ordered_submission(uint8_t delayed_direction) {

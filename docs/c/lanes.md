@@ -67,6 +67,7 @@ runtime reads them out of the base. Nothing copies them anywhere.
 int  (*wait)(ShadowSpillLane *lane, ShadowSpillBackendEvent event);
 int  (*copy)(ShadowSpillLane *lane, void *destination, const void *source,
              uint64_t bytes, uint64_t *handle);
+int  (*join)(ShadowSpillLane *lane); /* optional: compound transfers */
 int  (*signal)(ShadowSpillLane *lane, uint64_t handle,
                ShadowSpillBackendEvent event);
 int  (*synchronize)(ShadowSpillLane *lane);
@@ -91,6 +92,11 @@ int  (*timing)(const ShadowSpillLane *lane, ShadowSpillLaneTiming *timing);
   has landed. Downstream sees an ordinary backend event whatever the lane did,
   which is what keeps completion tracking and retirement in one form. A lane
   whose ordering already covers everything issued needs nothing from `handle`.
+- **`join`** orders subsequent work on the lane stream after previously submitted
+  storage I/O. It enqueues dependencies without a CPU wait. Representation
+  conversions (such as shard gather/reduction) require this entry; ordinary
+  transfers do not. Pinned copies are already stream-ordered; SSD and remote lanes
+  insert waits for their I/O completion words.
 - **`transfer`** is NULL-able, and reports what one transfer did. It is asked
   **once**, after that transfer's event has completed, and only for a handle
   `copy` returned nonzero. **The query retires the handle**: a lane may release
@@ -105,6 +111,14 @@ it fills, under [what a lane has moved](#what-a-lane-has-moved).
 
 An event is a `ShadowSpillBackendEvent`, one opaque word, and never the
 runtime's event lease.
+
+`ShadowSpillObjectTransfer.enqueue` receives a borrowed physical-copy callback.
+It may invoke it once, for exactly `spill_size_bytes`; an owned-zero reload can
+omit it. The callback uses this lane's `copy` and `join`. The conversion must
+enqueue all work on, or join it to, the supplied stream before returning. Runtime
+readiness and buffer reuse wait for the final `signal`, covering both transport
+and conversion. Traces retain that complete interval, while lane byte counts
+describe the physical spill payload. This contract is native ABI version 3.
 
 **There is no entry for the runtime to drive a lane with.** A lane makes the
 event given to `signal` complete when the bytes have landed, by whatever means

@@ -4,7 +4,6 @@ from dataclasses import replace
 
 import pytest
 
-from benchmarking.quickstart.options import _transfer_bandwidths
 from shadowspill.planner.plan_store import PlanStore
 from shadowspill.planner.program_inputs import TransferBandwidths
 from tests.shadowspill.planner.test_annotated_plan import _pressurefit_program
@@ -52,26 +51,3 @@ def test_every_rate_changes_identity_and_reaches_simulation(tmp_path, field):
     restored = resolve(updated)
     assert restored.from_store
     assert restored.result.simulation_config == updated
-
-
-def test_cli_preserves_explicit_rates_and_constant_rate_shorthand():
-    assert _transfer_bandwidths("40,26,56,25,4,5") == TransferBandwidths(
-        40_000_000_000,
-        26_000_000_000,
-        56_000_000_000,
-        25_000_000_000,
-        fetch_latency_ns=4000,
-        evict_latency_ns=5000,
-        provenance="quickstart --transfer-bandwidths 40,26,56,25,4,5",
-    )
-    fixed = _transfer_bandwidths("26,24")
-    assert (
-        fixed.fetch_solo_bytes_per_second
-        == fixed.fetch_concurrent_bytes_per_second
-        == 26_000_000_000
-    )
-    assert (
-        fixed.evict_solo_bytes_per_second
-        == fixed.evict_concurrent_bytes_per_second
-        == 24_000_000_000
-    )

@@ -361,6 +361,21 @@ _RUNTIME_SIGNATURES: tuple[tuple[str, list[object], object], ...] = (
         [ctypes.c_size_t, ctypes.c_uint64, ctypes.POINTER(ctypes.c_size_t)],
         ctypes.c_uint32,
     ),
+    *(
+        (
+            f"shadowspill_{direction}_object_range",
+            [
+                ctypes.c_size_t,
+                ctypes.c_uint64,
+                ctypes.c_uint32,
+                ctypes.c_uint64,
+                ctypes.c_uint64,
+                ctypes.c_uint64,
+            ],
+            ctypes.c_uint32,
+        )
+        for direction in ("read", "write")
+    ),
     (
         "shadowspill_plan_create",
         [

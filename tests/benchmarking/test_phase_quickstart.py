@@ -42,6 +42,10 @@ def test_plan_worker_consumes_saved_profiles_without_torch_or_factory(tmp_path):
         "search_workers": 1,
         "communication_info": None,
         "plots": False,
+        "spill": {
+            "type": "shadowspill.network:RemotePool",
+            "arguments": {"capacity": 64, "host": "unavailable", "port": 19426},
+        },
     }
     path = tmp_path / "request.json"
     write(path, request)
@@ -55,6 +59,7 @@ def test_plan_worker_consumes_saved_profiles_without_torch_or_factory(tmp_path):
                         'shadowspill.build', 'shadowspill.profiling.measure',
                         'shadowspill.execution', 'shadowspill.runtime',
                         'shadowspill.store',
+                        'shadowspill.network', 'shadowspill.ssd',
                     )
                 ):
                     raise AssertionError('plan worker imported ' + fullname)
@@ -185,6 +190,7 @@ def test_quickstart_process_pipeline_and_offline_replanning(tmp_path, factory):
     import torch
 
     from benchmarking.quickstart import main, run
+    from tests.spill_pool import spill_pool
 
     if not torch.cuda.is_available():
         pytest.skip("requires CUDA")
@@ -198,11 +204,11 @@ def test_quickstart_process_pipeline_and_offline_replanning(tmp_path, factory):
             factory_args={"rows": 8, "width": 8, "outputs": 8},
             search_budget_gib=[2, 2.25],
             spill_gib=0.125,
+            spill=spill_pool(128 << 20),
             steps=3,
             output_dir=root,
             warmup_seconds=0.001,
             measure_seconds=0.002,
-            communication_info=communication(),
             plots=False,
         )
         == 0

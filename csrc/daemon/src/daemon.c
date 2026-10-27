@@ -15,6 +15,7 @@
 #include <errno.h>
 #include <inttypes.h>
 #include <netinet/in.h>
+#include <pthread.h>
 #include <signal.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -39,8 +40,9 @@
 #define SELECTOR_SCAN "%" STRINGIFY(SELECTOR_WIDTH) "s"
 
 /*
- * One connection at a time, so every region here belongs to the connection
- * being served and there is nothing to lock. A list rather than a single slot
+ * Each connection owns its regions, endpoint and protection domain. Its worker
+ * alone accesses them, so no shared region registry needs a lock. A list rather
+ * than a single slot
  * because a runtime may hold more than one remote pool on one daemon in a
  * future that costs nothing to allow: allocate appends, free unlinks, and
  * closing the connection walks what is left.
@@ -709,6 +711,31 @@ static void serve_connection(Daemon *daemon, int socket) {
     release_all(daemon);
 }
 
+typedef struct Connection {
+    int socket;
+    const char *device_name;
+    int gid_index;
+} Connection;
+
+static void *serve_client(void *argument) {
+    Connection *connection = argument;
+    Daemon daemon = {.gid_index = connection->gid_index};
+    daemon.device = open_device(connection->device_name);
+    if (daemon.device != NULL) {
+        daemon.protection_domain = ibv_alloc_pd(daemon.device);
+        if (daemon.protection_domain != NULL) {
+            serve_connection(&daemon, connection->socket);
+            (void)ibv_dealloc_pd(daemon.protection_domain);
+        } else {
+            fprintf(stderr, "daemon: could not allocate a protection domain\n");
+        }
+        (void)ibv_close_device(daemon.device);
+    }
+    (void)close(connection->socket);
+    free(connection);
+    return NULL;
+}
+
 /* ----------------------------------------------------------------- main */
 
 static int listening_socket(const char *host, uint16_t port) {
@@ -730,7 +757,7 @@ static int listening_socket(const char *host, uint16_t port) {
         return -1;
     }
     if (bind(listener, (struct sockaddr *)&address, sizeof(address)) != 0 ||
-        listen(listener, 1) != 0) {
+        listen(listener, SOMAXCONN) != 0) {
         perror("daemon: bind");
         (void)close(listener);
         return -1;
@@ -806,8 +833,16 @@ int main(int argc, char **argv) {
         return 1;
     }
     fprintf(stderr, "daemon: listening on port %ld\n", port);
-    /* One connection at a time, served to completion, then the next. That is
-       what keeps this process stateless and lock-free. */
+    /* Validate the device at startup; workers own independent verbs resources.
+       A slow/live client must not prevent another rank from initializing. */
+    (void)ibv_dealloc_pd(daemon.protection_domain);
+    (void)ibv_close_device(daemon.device);
+    pthread_attr_t attributes;
+    if (pthread_attr_init(&attributes) != 0) {
+        (void)close(listener);
+        return 1;
+    }
+    (void)pthread_attr_setdetachstate(&attributes, PTHREAD_CREATE_DETACHED);
     for (;;) {
         const int connection = accept(listener, NULL, NULL);
         if (connection < 0) {
@@ -816,11 +851,20 @@ int main(int argc, char **argv) {
             }
             break;
         }
-        serve_connection(&daemon, connection);
-        (void)close(connection);
+        Connection *client = malloc(sizeof(*client));
+        if (client == NULL) {
+            (void)close(connection);
+            continue;
+        }
+        *client = (Connection){connection, device_name, requested_gid};
+        pthread_t thread;
+        if (pthread_create(&thread, &attributes, serve_client, client) != 0) {
+            fprintf(stderr, "daemon: could not start client worker\n");
+            (void)close(connection);
+            free(client);
+        }
     }
+    (void)pthread_attr_destroy(&attributes);
     (void)close(listener);
-    (void)ibv_dealloc_pd(daemon.protection_domain);
-    (void)ibv_close_device(daemon.device);
     return 0;
 }

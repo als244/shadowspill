@@ -63,6 +63,7 @@ static void destroy_actions(ShadowSpillRuntime *runtime) {
             action->object, action
         );
         pthread_mutex_unlock(&action->object->lock);
+        shadowspill_stream_interval_discard(runtime, &action->compound_interval);
         if (action->has_completion_event) {
             (void)shadowspill_event_lease_release(
                 runtime, action->completion_event

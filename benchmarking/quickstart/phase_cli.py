@@ -6,6 +6,7 @@ from pathlib import Path
 
 from .orchestrate import run, run_request
 from .phases.common import read
+from .spill import add_arguments, from_arguments
 
 
 def main(argv=None):
@@ -30,6 +31,7 @@ def main(argv=None):
     parser.add_argument("--external-headroom-gib", type=float)
     parser.add_argument("--search-workers", type=int)
     parser.add_argument("--plots", action=argparse.BooleanOptionalAction, default=None)
+    add_arguments(parser)
     args = parser.parse_args(argv)
     if args.phase == "all" or (
         args.phase == "build" and not (args.output_dir / "request.json").exists()
@@ -39,7 +41,24 @@ def main(argv=None):
             and (args.search_budget_gib is None or args.spill_gib is None)
         ):
             parser.error("all requires --factory, --search-budget-gib and --spill-gib")
-        values = {k: v for k, v in vars(args).items() if v is not None and k != "phase"}
+        storage_flags = {
+            "ssd_spill",
+            "remote_spill",
+            "ssd_staging_mib",
+            "ssd_chunk_mib",
+            "ssd_queue_depth",
+        }
+        values = {
+            k: v
+            for k, v in vars(args).items()
+            if v is not None and k not in {"phase", *storage_flags}
+        }
+        try:
+            values["spill"] = from_arguments(
+                args, int((args.spill_gib or 0) * (1 << 30))
+            )
+        except argparse.ArgumentTypeError as error:
+            parser.error(str(error))
         if args.communication_info is not None:
             from shadowspill import CommunicationInfo
 
@@ -84,6 +103,14 @@ def main(argv=None):
         if value is not None:
             request[key] = int(value * (1 << 30))
     request["output_dir"] = str(args.output_dir.resolve())
+    try:
+        selected = from_arguments(args, request["spill_bytes"])
+    except argparse.ArgumentTypeError as error:
+        parser.error(str(error))
+    if selected is not None:
+        request["spill"] = selected
+    elif request.get("spill"):
+        request["spill"]["arguments"]["capacity"] = request["spill_bytes"]
     if args.communication_info is not None:
         request["communication_info"] = str(args.communication_info.resolve())
     return run_request(request, args.phase)

@@ -157,6 +157,16 @@ rates. Raw medians, sample counts, variability and fit errors are retained.
 Neither planning nor execution triggers this probe. Copy buffer use is bounded
 by twice the largest requested size on each of host and GPU.
 
+`spill=SSDPool(...)` or `spill=RemotePool(...)` selects an external backend for
+calibration and for Executor/Trainer construction. Measurement uses bounded native
+probe pools and the real transfer lanes, including staging and completion; it does
+not install the execution allocator. Its memory bound also includes backend staging
+and alignment slack. Build, task profiling and planning have no spill setting.
+Pool capacity must equal the saved Plan's spill budget at execution. Initializers,
+controls and checkpoint export use bounded byte-range access on every backend.
+Compound weight/gradient-shard transfers currently require pinned-host spill;
+SSD image adoption is still limited to the low-level image tools.
+
 `measure_communication(program=program, rank_map=..., device=...)` derives
 collective probes from saved transfer geometry. With multiple workers, initialize
 distributed rendezvous first and call on every worker with the same complete

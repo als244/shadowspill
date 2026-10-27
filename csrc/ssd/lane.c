@@ -122,16 +122,24 @@ static int lane_copy(ShadowSpillLane *base, void *destination, const void *sourc
     return 0;
 }
 
+static int lane_join(ShadowSpillLane *base) {
+    SSDLane *lane = (SSDLane *)base;
+    const ShadowSpillBackend *backend = base->backend;
+    if (backend->wait_value(backend->state, base->stream, lane->signals,
+                           SSD_DONE, lane->accepted) != 0) {
+        ssd_lane_fail(lane);
+        return -1;
+    }
+    return 0;
+}
+
 static int lane_signal(ShadowSpillLane *base, uint64_t handle,
                        ShadowSpillBackendEvent event) {
     (void)handle;
-    SSDLane *lane = (SSDLane *)base;
-    const ShadowSpillBackend *backend = base->backend;
     shadowspill_lane_counted(&base->signals, 1U);
-    if (backend->wait_value(backend->state, base->stream, lane->signals,
-                            SSD_DONE, lane->accepted) != 0 ||
-        backend->record_event(backend->state, event, base->stream) != 0) {
-        ssd_lane_fail(lane);
+    if (lane_join(base) != 0 || base->backend->record_event(
+            base->backend->state, event, base->stream) != 0) {
+        ssd_lane_fail((SSDLane *)base);
         return -1;
     }
     return 0;
@@ -257,7 +265,7 @@ fail:
 }
 
 static const ShadowSpillLaneOperations operations = {
-    .wait = lane_wait, .copy = lane_copy, .signal = lane_signal,
+    .wait = lane_wait, .copy = lane_copy, .join = lane_join, .signal = lane_signal,
     .synchronize = lane_synchronize, .transfer = lane_transfer, .destroy = lane_destroy,
 };
 

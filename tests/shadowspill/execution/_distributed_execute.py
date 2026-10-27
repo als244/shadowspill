@@ -20,6 +20,7 @@ from tests.shadowspill.execution._cold import forbid_preparation  # noqa: E402
 
 forbid_preparation("shadowspill.communication.measure")
 from shadowspill import Executor, Plan, load_checkpoint, save_checkpoint  # noqa: E402
+from tests.spill_pool import spill_pool  # noqa: E402
 
 directory = Path(sys.argv[1])
 fixture = torch.load(directory / "oracle.pt", weights_only=True)
@@ -59,6 +60,7 @@ try:
         device=0,
         rank_map={0: 1, 1: 0},
         parameter_norms=plan.program.bindings["kind"] == "step",
+        spill=spill_pool(plan.memory_budgets.spill_bytes),
     )
     executor.initialize(fill, chunk_bytes=40)
     for index, expected in enumerate(fixture["expected"]):

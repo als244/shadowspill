@@ -12,6 +12,7 @@ import torch
 from shadowspill.artifacts.plan import Plan
 from shadowspill.checkpoint.frozen import validate_identity
 from shadowspill.execution import Executor, TensorChunk, TrainingResult
+from shadowspill.memory import SpillPool
 
 from . import _loop, _resume
 from .observations import MetricSummary, StepObservations, to_host
@@ -43,6 +44,7 @@ class Trainer:
         external_headroom_bytes: int | None = None,
         frozen_state_id: str | None = None,
         parameter_norms_every: int = 0,
+        spill: SpillPool | None = None,
     ) -> None:
         if not isinstance(plan, Plan) or plan.program.bindings.get("kind") != "step":
             raise TypeError("Trainer requires a Plan produced from build_step")
@@ -87,6 +89,10 @@ class Trainer:
             ):
                 raise ValueError("supplied Executor has a different evaluation Plan")
         validate_identity(frozen_state_id)
+        if executor is not None and spill is not None:
+            raise ValueError(
+                "supply spill when creating Executor, not alongside an existing one"
+            )
         self.frozen_state_id = frozen_state_id
         self.plan = plan
         self.executor = executor or Executor(
@@ -96,6 +102,7 @@ class Trainer:
             external_headroom_bytes=external_headroom_bytes,
             plans=None if evaluation_plan is None else {"evaluation": evaluation_plan},
             parameter_norms=parameter_norms_every > 0,
+            spill=spill,
         )
         self.evaluation_plan = self.executor.plans.get("evaluation")
         self._owns_executor = executor is None

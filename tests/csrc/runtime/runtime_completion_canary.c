@@ -84,6 +84,9 @@ int main(void) {
     mock.statistics(mock.state, &batch_statistics);
     if (batch_statistics.event_queries >
             COMPLETION_COUNT + MAX_HEAD_POLL_QUERIES) {
+        fprintf(stderr, "completion query bound exceeded: %llu > %u\n",
+                (unsigned long long)batch_statistics.event_queries,
+                COMPLETION_COUNT + MAX_HEAD_POLL_QUERIES);
         return EXIT_FAILURE;
     }
 

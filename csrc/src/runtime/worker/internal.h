@@ -21,6 +21,11 @@ int shadowspill_action_handle(
     ShadowSpillQueuedAction *action
 );
 
+int shadowspill_compound_transfer(
+    ShadowSpillRuntime *runtime, ShadowSpillQueuedAction *action,
+    void *destination, const void *source
+);
+
 /* The in-flight half: commit a completed transfer, or leave it queued. */
 int shadowspill_action_finish_locked(
     ShadowSpillRuntime *runtime,

@@ -290,9 +290,9 @@ Dict end() {
 
 } // namespace
 
-int shadowspill_pytorch_copy_host_device(
-    const ShadowSpillBackend* backend, ShadowSpillBackendStream stream,
-    bool fetch, void* destination, const void* source, uint64_t bytes) {
+int shadowspill_pytorch_copy_spill(
+    ShadowSpillTransferCopy copy, void* copy_context,
+    void* destination, const void* source, uint64_t bytes) {
   auto owner = std::atomic_load(&session);
   HostCopyRecord* record = nullptr;
   if (owner) {
@@ -317,9 +317,7 @@ int shadowspill_pytorch_copy_host_device(
       ++owner->copy_errors;
     }
   }
-  const int status = fetch
-      ? backend->copy_host_to_device(backend->state, destination, source, bytes, stream)
-      : backend->copy_device_to_host(backend->state, destination, source, bytes, stream);
+  const int status = copy(copy_context, destination, source, bytes);
   if (record) {
     try {
       record->stop->record(c10::cuda::getCurrentCUDAStream());

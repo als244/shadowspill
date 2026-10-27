@@ -102,6 +102,7 @@ def measure_host_copies(
         **values,
         metadata={
             "source": "ordinary CUDA event measurements of pinned-host copies",
+            "spill_kind": "pinned_host",
             "measured_at": datetime.now(UTC).isoformat(),
             "device": str(target),
             "gpu": torch.cuda.get_device_name(target),

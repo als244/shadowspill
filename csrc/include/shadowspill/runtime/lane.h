@@ -172,12 +172,13 @@ SHADOWSPILL_API uint64_t shadowspill_lane_origin_instant(
  * rate the loop happens to turn, and a poll would be paid on every turn while
  * doing nothing on most.
  *
- * `transfer` and `timing` may be NULL; everything else is required. The
+ * `transfer`, `timing` and `join` may be NULL; everything else is required. The
  * rule is the one the backend table already follows for its profiler entries:
  * required when the runtime cannot proceed without it, optional when its
  * absence costs nothing the runtime needs. A lane that reports neither moves
  * bytes exactly as well as one that reports both, and a reader sees a transfer
- * with no numbers rather than one with wrong ones.
+ * with no numbers rather than one with wrong ones. A lane without `join` supports
+ * plain copies but cannot participate in representation conversions.
  */
 /*
  * What a lane has moved, and what it cost.
@@ -256,15 +257,13 @@ typedef struct ShadowSpillLaneOperations {
         uint64_t *handle
     );
 
-    /* Optional representation conversion on this lane's stream. A lane that
-       omits this entry cannot serve objects with a transfer descriptor. */
-    int (*copy_transformed)(
-        ShadowSpillLane *lane,
-        const ShadowSpillObjectTransfer *transfer,
-        void *destination,
-        const void *source,
-        uint64_t *handle
-    );
+    /* Optional stream completion join for compound representation transfers.
+       Enqueue a dependency on all previously submitted I/O on lane->stream,
+       without waiting on the CPU or publishing an external readiness event.
+       Ordinary stream copies use a no-op; SSD/RDMA enqueue completion-word
+       waits. The runtime then composes I/O with conversion/collectives on the
+       same stream, and signal still covers the entire compound transfer. */
+    int (*join)(ShadowSpillLane *lane);
 
     /*
      * Make `event` complete once everything issued on this lane so far has

@@ -77,6 +77,9 @@ void shadowspill_action_complete(
     ShadowSpillEventLease *trigger_event = action->trigger_event;
     ShadowSpillEventLease *completion_event = action->completion_event;
     ShadowSpillEventLease *dependency_event = action->dependency_event;
+    ShadowSpillStreamInterval compound = action->compound_interval;
+    action->compound_interval = (ShadowSpillStreamInterval){0};
+    action->compound_issued_ns = 0U;
     const uint8_t had_completion_event = action->has_completion_event;
     action->trigger_event = NULL;
     action->completion_event = NULL;
@@ -95,6 +98,7 @@ void shadowspill_action_complete(
     action->caller_handoff_lease = NULL;
     action->caller_handoff_generation = 0U;
     pthread_mutex_unlock(&object->lock);
+    shadowspill_stream_interval_discard(runtime, &compound);
     pthread_mutex_lock(&runtime->actions.lock);
     unlink_action_locked(runtime, action);
     pthread_mutex_unlock(&runtime->actions.lock);
@@ -387,6 +391,17 @@ int shadowspill_action_finish_locked(
             }
         }
         action->lane_handle = 0U;
+        if (object->has_transfer) {
+            /* Transport-only timing would omit gather/reduce/conversion work. */
+            lane_issued_at_ns = shadowspill_lane_origin_instant(
+                runtime, action->compound_issued_ns
+            );
+            lane_started_at_ns = lane_finished_at_ns = SHADOWSPILL_TRACE_NO_STREAM_TIME;
+            (void)shadowspill_stream_interval_read(
+                runtime, &action->compound_interval, runtime->trace_origin_event,
+                &lane_started_at_ns, &lane_finished_at_ns
+            );
+        }
         shadowspill_append_stamped_trace_event_locked(
             runtime,
             SHADOWSPILL_TRACE_TRANSFER_COMPLETED,

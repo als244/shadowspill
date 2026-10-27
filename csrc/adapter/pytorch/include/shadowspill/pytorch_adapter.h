@@ -23,6 +23,20 @@ extern "C" {
 
 #define SHADOWSPILL_PYTORCH_ADAPTER_ABI_VERSION 1U
 
+/* Independent calibration session using real pool kinds/lanes. Does not install
+ * the allocator or bind the process-global Runtime. The session owns bounded
+ * probe pools and must be destroyed before execution. Each direction returns
+ * latency_ns, solo_Bps, concurrent_Bps, solo_ns and concurrent_ns. */
+SHADOWSPILL_PYTORCH_API ShadowSpillStatus shadowspill_pytorch_spill_probe_create(
+    const char *backend_path, int32_t device, const char *library_path,
+    uint8_t kind, void *configuration, uint64_t capacity, void **out
+);
+SHADOWSPILL_PYTORCH_API ShadowSpillStatus shadowspill_pytorch_spill_probe_measure(
+    void *handle, uint64_t small, uint64_t large,
+    uint32_t warmup, uint32_t measured, uint64_t *values
+);
+SHADOWSPILL_PYTORCH_API void shadowspill_pytorch_spill_probe_destroy(void *handle);
+
 /* Ids the frontend synthesises for work that is not a planned task: the
    profiling allocation scopes, and the pre-task placement batch. The
    failure report decodes them, so both sides read one definition. */

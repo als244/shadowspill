@@ -1,4 +1,4 @@
-"""Fresh workers bind native descriptors and fill only their pinned host shards."""
+"""Fresh workers bind native descriptors and fill only their owned spill shards."""
 
 from dataclasses import replace
 from datetime import timedelta
@@ -33,6 +33,7 @@ def program(shard_ranks=2, world_size=4):
                     "dtype": "torch.bfloat16",
                     "shape": (15,),
                     "stride": (1,),
+                    "device_type": "cuda",
                 }
             },
             "weight_shards": {
@@ -64,11 +65,12 @@ def worker(index, rendezvous, archive, mode):
         TransferPhase,
         TransferSpec,
     )
-    from shadowspill.memory import DevicePool, PinnedHostPool, TransferRoute
+    from shadowspill.memory import DevicePool, TransferRoute
     from shadowspill.pytorch.frontend import PyTorchFrontend
     from shadowspill.runtime import Runtime
     from shadowspill.runtime.plan import RuntimeBridge
     from shadowspill.runtime.plan.lifecycle import abort_plan, begin_plan
+    from tests.spill_pool import spill_pool
 
     source = Program.load(archive)
     world_size = source.parallelism.world_size
@@ -90,7 +92,7 @@ def worker(index, rendezvous, archive, mode):
                 "execution": DevicePool(
                     2 << 30, device=device, external_headroom=512 << 20
                 ),
-                "spill": PinnedHostPool(1 << 20),
+                "spill": spill_pool(1 << 20),
             },
             routes={
                 "fetch": TransferRoute("spill", "execution"),
@@ -147,7 +149,9 @@ def worker(index, rendezvous, archive, mode):
             )
             try:
                 plan = SimpleNamespace(
-                    program=source,
+                    program=replace(source, alias_groups=ir.alias_groups),
+                    _costed_program=ir,
+                    selections=(),
                     schedule=SimpleNamespace(
                         initial_residency=(
                             ResidencySpec("alias_000001", MemoryLocation.SPILL),
@@ -164,15 +168,14 @@ def worker(index, rendezvous, archive, mode):
                 # Registration retained the native descriptor independently.
                 transfers.close()
                 assert not transfers.descriptors
-                host = state.host("alias_000001")
-                assert host.numel() == shard_bytes and host.is_pinned()
+                assert state.spill.sizes["alias_000001"] == shard_bytes
                 region = state.regions["object_000001"]
                 dtype = getattr(torch, region.geometry["dtype"].removeprefix("torch."))
                 calls = []
 
                 def fill(request, destination):
                     calls.append(request.offset)
-                    assert destination.is_pinned() and destination.numel() <= 3
+                    assert destination.device.type == "cpu" and destination.numel() <= 3
                     destination.copy_(
                         torch.arange(
                             request.offset, request.offset + destination.numel()
@@ -187,16 +190,16 @@ def worker(index, rendezvous, archive, mode):
                 expected[: region.length] = (
                     torch.arange(region.offset, region.offset + region.length) + 1
                 )
-                torch.testing.assert_close(host.view(dtype), expected)
+                with state.spill.buffer("alias_000001", 0, shard_bytes) as host:
+                    torch.testing.assert_close(host.view(dtype), expected)
+                    values = host.view(dtype).tolist()
+                del host
                 assert calls[0] == region.offset
-                rows = bound.gather(
-                    (bound.logical_rank, host.view(dtype).tolist())
-                )
+                rows = bound.gather((bound.logical_rank, values))
                 by_rank = dict(rows)
                 width = source.parallelism.ranks_per_replica
                 for rank in range(width, world_size):
                     assert by_rank[rank] == by_rank[rank % width]
-                del host
                 if mode != "host":
                     if gradient:
                         from tests.shadowspill.execution._gradient_roundtrips import (

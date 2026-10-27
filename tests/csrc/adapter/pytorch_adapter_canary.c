@@ -363,9 +363,11 @@ static void release_shard(void *context) { --*(int *)context; }
 static int unused_shard_transfer(
     void *context, const ShadowSpillBackend *backend,
     ShadowSpillBackendStream stream, uint8_t fetch,
-    void *destination, const void *source
+    void *destination, const void *source,
+    ShadowSpillTransferCopy copy, void *copy_context
 ) {
     (void)context; (void)backend; (void)stream; (void)fetch;
+    (void)copy; (void)copy_context;
     (void)destination; (void)source;
     return -1; /* This test never fetches or evicts. */
 }

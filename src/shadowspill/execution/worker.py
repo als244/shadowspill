@@ -7,6 +7,7 @@ from typing import TYPE_CHECKING
 import torch
 
 from shadowspill.artifacts.plan import Plan
+from shadowspill.memory import SpillPool
 from shadowspill.planning.shared import shared_memory
 from shadowspill.pytorch.resource_streams import ResourceStreams
 from shadowspill.resources.description import resource_groups
@@ -31,6 +32,7 @@ def create_paths(
     plans: Mapping[str, Plan] | None = None,
     rank_map: Mapping[int, int] | None = None,
     parameter_norms: bool = False,
+    spill: SpillPool | None = None,
 ) -> tuple[
     Runtime,
     tuple[ExecutionPath, ...],
@@ -78,7 +80,7 @@ def create_paths(
         )
         failure = None
         try:
-            runtime = open_worker(plan, device, headroom)
+            runtime = open_worker(plan, device, headroom, spill)
         except Exception as error:
             if distributed is None:
                 raise

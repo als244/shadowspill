@@ -148,6 +148,12 @@ structured no-progress status.
   where it is not. They are how state enters and leaves a pool outside a plan,
   and no route is involved -- a route carries a *planned* transfer between two
   pools, which is a different question.
+- `shadowspill_write_object_range()` and `shadowspill_read_object_range()` use
+  byte offsets within that pool payload (the local shard for sharded objects).
+  They permit bounded initialization/export without allocating a full object
+  copy. Full-payload APIs still require an exact size. Range writes require an
+  idle spill-only object and are not transactional; finish all chunks before
+  scheduling readers. Reads require a current authoritative pool copy.
 - `shadowspill_object_snapshot()` returns a lock-consistent diagnostic view as
   a `ShadowSpillObjectSnapshot`, whose `residency` is a
   `ShadowSpillObjectResidency`: spill-only, execution-ready, fetching,

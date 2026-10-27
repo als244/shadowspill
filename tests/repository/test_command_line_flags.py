@@ -99,14 +99,6 @@ def _readers(path: Path) -> list[Path]:
     a flag nothing reads, which is what this checks.
     """
 
-    # This CLI composes a generic package and an optional text recipe. Follow
-    # both explicit consumers when its parser is in a dedicated options module.
-    if path == ROOT / "benchmarking/quickstart/options.py":
-        return [
-            *sorted(path.parent.glob("*.py")),
-            ROOT / "workloads/recipes/text/quickstart.py",
-            ROOT / "workloads/recipes/text/precision.py",
-        ]
     recipe_packages = {
         ROOT / "workloads/recipes/text/train_llama3.py": ("llama3",),
         ROOT / "workloads/recipes/text/train_qwen3_distributed.py": ("qwen3",),

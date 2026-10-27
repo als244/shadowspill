@@ -3,6 +3,7 @@
 from shadowspill import CommunicationInfo, Program
 from shadowspill.communication.requests import collective_requests
 
+from ..spill import resolve as spill_pool
 from .common import paths
 from .distributed import workers
 
@@ -49,6 +50,7 @@ def run(request):
             device=request["device"],
             warmup_seconds=request["warmup_seconds"],
             measure_seconds=request["measure_seconds"],
+            spill=spill_pool(request),
         )
         if group.rank == 0:
             communication.save(root / "communication.ssp")

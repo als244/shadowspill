@@ -442,12 +442,15 @@ static int unexpected_transfer(
     ShadowSpillBackendStream stream,
     uint8_t fetch,
     void *destination,
-    const void *source
+    const void *source,
+    ShadowSpillTransferCopy copy,
+    void *copy_context
 ) {
     (void)context;
     (void)backend;
     (void)stream;
     (void)fetch;
+    (void)copy; (void)copy_context;
     (void)destination;
     (void)source;
     return -1;

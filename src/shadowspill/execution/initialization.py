@@ -52,10 +52,18 @@ def _copy_parameter(
     )
     if any(geometry[key] != source_geometry[key] for key in ("shape", "stride")):
         raise ValueError("parameter initializer requires matching storage layouts")
-    values = state.host(state.aliases[source]).view(dtype_of(source_geometry))
+    dtype = dtype_of(source_geometry)
+    alias = state.aliases[source]
     global_start = start + (0 if target_region is None else target_region.offset)
     source_start = global_start - (0 if source_region is None else source_region.offset)
-    source_length = values.numel() if source_region is None else source_region.length
+    source_length = (
+        state.spill.sizes[alias] // dtype.itemsize
+        if source_region is None
+        else source_region.length
+    )
     if source_start < 0 or source_start + destination.numel() > source_length:
         raise ValueError("parameter initializer requires the matching local shard")
-    destination.copy_(values[source_start : source_start + destination.numel()])
+    with state.spill.buffer(
+        alias, source_start * dtype.itemsize, destination.numel() * dtype.itemsize
+    ) as values:
+        destination.copy_(values.view(dtype))

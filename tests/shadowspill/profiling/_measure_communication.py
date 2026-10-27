@@ -29,12 +29,15 @@ import torch  # noqa: E402
 from shadowspill import CommunicationInfo, measure_communication  # noqa: E402
 from shadowspill.pytorch.toolchain import build_setup  # noqa: E402
 from tests.shadowspill.offline._example import program  # noqa: E402
+from tests.spill_pool import spill_pool  # noqa: E402
 
 baseline = torch.cuda.memory_allocated()
+spill = spill_pool(64 << 20)
 info = measure_communication(
     sizes_bytes=(1024, 1 << 20, 16 << 20),
     warmup_seconds=0.001,
     measure_seconds=0.005,
+    spill=spill,
 )
 assert torch.cuda.memory.get_allocator_backend() == "native"
 assert torch.cuda.memory_allocated() == baseline
@@ -42,7 +45,8 @@ for direction in ("fetch", "evict"):
     assert 1e6 < getattr(info, f"{direction}_bytes_per_second") < 1e12
     assert 0 <= getattr(info, f"{direction}_latency_seconds") < 0.01
     assert getattr(info, f"{direction}_concurrent_bytes_per_second") > 1e6
-assert len(info.metadata["observations"]) == 8
+assert len(info.metadata["observations"]) == (8 if spill.addressable else 4)
+assert info.metadata["spill_kind"] == spill.kind_name
 info.save(sys.argv[1])
 assert CommunicationInfo.load(sys.argv[1]).to_dict() == info.to_dict()
 # The Program form never restores compiled tasks or creates runtime pools.
@@ -61,6 +65,7 @@ derived = measure_communication(
     sizes_bytes=(1024, 1 << 20, 16 << 20),
     warmup_seconds=0.001,
     measure_seconds=0.005,
+    spill=spill,
 )
 assert derived.measurements[0]["duration_seconds"] == 0
 assert not torch.distributed.is_initialized()

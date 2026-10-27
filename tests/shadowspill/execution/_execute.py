@@ -20,6 +20,7 @@ from qualification.runtime_evidence import adapter_statistics  # noqa: E402
 from shadowspill import Executor, load_checkpoint, save_checkpoint  # noqa: E402
 from tests.shadowspill.execution._stream_checks import StreamChecks  # noqa: E402
 from tests.shadowspill.execution._trace_checks import check_trace  # noqa: E402
+from tests.spill_pool import spill_pool  # noqa: E402
 
 directory = Path(sys.argv[1])
 plan = Plan.load(directory / "plan.ssp")
@@ -80,7 +81,9 @@ def assert_state(executor, state):
         )
 
 
-executor = Executor(plan, parameter_norms=bool(norms))
+executor = Executor(
+    plan, parameter_norms=bool(norms), spill=spill_pool(plan.memory_budgets.spill_bytes)
+)
 annotations_enabled = executor._paths[
     0
 ].bridge.runtime_library.shadowspill_profiler_annotations_enabled

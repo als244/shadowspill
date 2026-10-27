@@ -8,6 +8,7 @@ import torch
 
 from .buffer_controls import BufferControls
 from .storage import Storage, dtype_of
+from .tensor_spans import spans
 from .tensors import TensorChunk
 
 
@@ -131,11 +132,16 @@ class Controls:
                 self.host[name].copy_(value)
             else:
                 alias = self.storage.aliases[object_id]
-                destination = (
-                    self.storage.host(alias)
-                    .view(dtype_of(binding))
-                    .as_strided(binding["shape"], binding["stride"])
-                )
-                destination.copy_(value)
-        for destination, value in buffers:
-            destination.fill_(value)
+                flat = value.reshape(-1)
+                for logical, start, count in spans(binding["shape"], binding["stride"]):
+                    for offset, destination in self.storage.spill.chunks(
+                        alias,
+                        dtype=value.dtype,
+                        start=start,
+                        length=count,
+                        read=False,
+                        write=True,
+                    ):
+                        at = logical + offset - start
+                        destination.copy_(flat[at : at + destination.numel()])
+        self.buffers.apply(buffers)

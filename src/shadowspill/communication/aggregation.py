@@ -20,7 +20,8 @@ def combine_host(
         values[name] = max(row[name] for row in rows)
     values["topology"] = bindings.topology
     values["metadata"] = {
-        "source": "simultaneous per-worker pinned-host copies",
+        "source": "simultaneous per-worker spill transfers",
+        "spill_kind": local.metadata.get("spill_kind", "pinned_host"),
         "scope": "minimum observed rates and maximum fitted latency across workers",
         "per_rank": sorted(rows, key=lambda row: row["logical_rank"]),
     }

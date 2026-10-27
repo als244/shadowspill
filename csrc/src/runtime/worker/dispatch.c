@@ -24,11 +24,7 @@ static int submit_transfer_copy(
     );
     shadowspill_trace_action_context(action);
     const int status = action->object->has_transfer
-        ? (route->operations->copy_transformed == NULL ? -1
-           : route->operations->copy_transformed(
-               route->lane, &action->object->transfer,
-               destination, source, &action->lane_handle
-           ))
+        ? shadowspill_compound_transfer(runtime, action, destination, source)
         : route->operations->copy(
             route->lane, destination, source, bytes, &action->lane_handle
         );
@@ -38,14 +34,14 @@ static int submit_transfer_copy(
 }
 
 /*
- * A traced transfer is measured by the lane that moves it, not here.
+ * A plain transfer is measured by the lane that moves it.
  *
  * `copy` hands back a handle naming the transfer, or 0 when the lane kept
  * nothing -- which is what every lane answers when no trace is running. The
  * handle rides the action to completion, where the one query that reads it
- * also retires it. The worker brackets nothing and knows nothing about how a
- * lane measures, which is what let a lane whose bytes never touch a stream
- * report anything at all.
+ * also retires it. Compound transfers additionally bracket the conversion on
+ * the lane stream, so their readiness interval includes collectives as well
+ * as the lane's physical copy.
  */
 
 static ShadowSpillRouteState *route_for_action(

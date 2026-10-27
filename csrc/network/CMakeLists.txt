@@ -93,6 +93,6 @@ target_include_directories(
 )
 target_link_libraries(
   shadowspill_memory_daemon
-  PRIVATE ${SHADOWSPILL_VERBS_LIBRARY} shadowspill_build_options
+  PRIVATE ${SHADOWSPILL_VERBS_LIBRARY} Threads::Threads shadowspill_build_options
 )
 install(TARGETS shadowspill_memory_daemon RUNTIME DESTINATION shadowspill/bin)

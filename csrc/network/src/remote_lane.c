@@ -643,23 +643,26 @@ static int remote_transfer(
  * arrange -- which could not, see the header -- and it covers every piece
  * planned so far, so the handle says nothing this does not already know.
  */
+static int remote_join(ShadowSpillLane *lane) {
+    RemoteLane *self = (RemoteLane *)lane;
+    const ShadowSpillBackend *backend = lane->backend;
+    pthread_mutex_lock(&self->lock);
+    const uint64_t planned = self->chunks_planned;
+    pthread_mutex_unlock(&self->lock);
+    return planned == 0U ? 0 : backend->wait_value(
+        backend->state, lane->stream, self->signals, SIGNAL_NIC, planned
+    );
+}
+
 static int remote_signal(
     ShadowSpillLane *lane, uint64_t handle, ShadowSpillBackendEvent event
 ) {
     (void)handle;
-    RemoteLane *self = (RemoteLane *)lane;
-    const ShadowSpillBackend *const backend = lane->backend;
     shadowspill_lane_counted(&lane->signals, 1U);
-    pthread_mutex_lock(&self->lock);
-    const uint64_t planned = self->chunks_planned;
-    pthread_mutex_unlock(&self->lock);
-    if (planned != 0U && backend->wait_value(
-            backend->state, lane->stream, self->signals, SIGNAL_NIC, planned
-        ) != 0) {
-        return -1;
-    }
-    return backend->record_event(backend->state, event, lane->stream) == 0
-        ? 0 : -1;
+    if (remote_join(lane) != 0) return -1;
+    return lane->backend->record_event(
+        lane->backend->state, event, lane->stream
+    ) == 0 ? 0 : -1;
 }
 
 /*
@@ -785,6 +788,7 @@ static void remote_destroy(ShadowSpillLane *base_lane) {
 static const ShadowSpillLaneOperations remote_operations = {
     .wait = remote_wait,
     .copy = remote_copy,
+    .join = remote_join,
     .signal = remote_signal,
     .synchronize = remote_synchronize,
     .transfer = remote_transfer,

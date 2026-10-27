@@ -103,6 +103,7 @@ def communicate(path):
     import torch.distributed as dist
 
     from shadowspill import Program, measure_communication
+    from tests.spill_pool import spill_pool
 
     dist.init_process_group("gloo", timeout=timedelta(seconds=90))
     try:
@@ -113,6 +114,7 @@ def communicate(path):
             sizes_bytes=(1024, 1 << 20),
             warmup_seconds=0.003,
             measure_seconds=0.006,
+            spill=spill_pool(64 << 20),
         )
         if dist.get_rank() == 0:
             info.save(path / "communication.ssp")

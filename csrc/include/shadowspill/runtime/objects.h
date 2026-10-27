@@ -136,6 +136,19 @@ SHADOWSPILL_API ShadowSpillStatus shadowspill_read_object(
     uint64_t bytes
 );
 
+/* Bounded host I/O within one object's physical pool payload. Offsets are
+ * object-relative, including for sharded representations. The same idle/current
+ * copy requirements as full-payload I/O apply. Range writes are not a transaction:
+ * callers must finish initialization before admitting any readers. */
+SHADOWSPILL_API ShadowSpillStatus shadowspill_write_object_range(
+    ShadowSpillRuntime *runtime, uint64_t object_id, uint32_t pool_id,
+    const void *source, uint64_t offset, uint64_t bytes
+);
+SHADOWSPILL_API ShadowSpillStatus shadowspill_read_object_range(
+    ShadowSpillRuntime *runtime, uint64_t object_id, uint32_t pool_id,
+    void *destination, uint64_t offset, uint64_t bytes
+);
+
 #ifdef __cplusplus
 }
 #endif

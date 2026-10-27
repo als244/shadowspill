@@ -78,6 +78,7 @@ add_library(
   src/runtime/worker/worker.c
   src/runtime/worker/actions.c
   src/runtime/worker/dispatch.c
+  src/runtime/worker/compound_transfer.c
   src/runtime/worker/completion.c
   src/runtime/memory/allocation_scope.c
   src/runtime/memory/allocations/index.c
@@ -98,6 +99,7 @@ add_library(
   src/runtime/objects/object_actions.c
   src/runtime/objects/object_table.c
   src/runtime/objects/object_registry.c
+  src/runtime/objects/object_io.c
   src/runtime/objects/object_owners.c
   src/runtime/objects/object_allocations.c
   src/runtime/objects/object_transfers.c

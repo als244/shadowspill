@@ -29,6 +29,12 @@ release owned resources. By default, Executor inherits the external-memory
 headroom recorded during profiling and included in the Plan's total GPU budget.
 An `external_headroom_bytes` override cannot exceed that planned reservation.
 
+`spill=SSDPool(...)` or `spill=RemotePool(...)` selects storage when Trainer creates
+its Executor; pass it directly to an existing Executor instead. Pinned-host storage
+is the default. Capacity must equal the Plan's spill budget, and its communication
+costs must describe the selected backend. Build/profile/planning open no spill pool.
+See [SSD storage](ssd.md) for setup, bounded I/O and current sharded-transfer limits.
+
 ## Inputs, objectives and results
 
 `step(args=..., kwargs=...)` takes sequences of positional tuples and keyword

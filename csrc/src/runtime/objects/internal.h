@@ -109,13 +109,15 @@ struct ShadowSpillQueuedAction {
     ShadowSpillEventLease *trigger_event;
     ShadowSpillEventLease *completion_event;
     ShadowSpillEventLease *dependency_event;
-    /* The copy's interval on its lane, open only while a trace measures it.
-       This one really is the lane: it times what moved the bytes. */
+    /* A compound operation includes conversion/collectives beyond physical I/O.
+       Its interval encloses both on the lane stream, only while tracing. */
+    ShadowSpillStreamInterval compound_interval;
+    uint64_t compound_issued_ns;
     /*
      * What the lane called this transfer, from `copy`, or 0 when the lane kept
      * nothing about it. Read once at completion, which retires it -- so this
-     * is the whole of what the runtime holds for a lane's own measurements,
-     * where it used to hold the timing events itself.
+     * is the lane's own physical-I/O measurement, separate from a compound
+     * transfer's enclosing interval.
      */
     uint64_t lane_handle;
     const char *trace_label;

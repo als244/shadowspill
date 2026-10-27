@@ -11,6 +11,7 @@ from shadowspill.artifacts.tensors import tensor_geometry
 from shadowspill.execution.tensor_regions import tensor_regions
 from shadowspill.execution.tensors import tensor_entries, visit_tensors
 from shadowspill.ir import AliasGroupSpec, DeviceSpec, ObjectSpec
+from tests.shadowspill.execution._spill import MemorySpill
 
 
 def fixture(elements=15, kind="step"):
@@ -129,7 +130,7 @@ def host_storage(program, rank):
         dtype = getattr(torch, region.geometry["dtype"].removeprefix("torch."))
         values.setdefault(alias, torch.full((region.capacity,), -9, dtype=dtype))
     state.initial = set(values)
-    state.host = lambda alias: values[alias].view(torch.uint8)
+    state.spill = MemorySpill(values)
     return state, values
 
 
@@ -191,7 +192,7 @@ def test_backward_initializes_and_exports_reduced_shard_not_local_contribution()
 
 def test_wrong_host_capacity_rejected_before_loading():
     state, _ = host_storage(fixture(), 0)
-    state.host = lambda _: torch.empty(32, dtype=torch.uint8)
+    state.spill.sizes["weight"] = 32
     with pytest.raises(ValueError, match="declared shard"):
         visit_tensors(
             state, lambda *_: pytest.fail("must reject first"), 12, initialize=True

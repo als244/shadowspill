@@ -9,6 +9,7 @@ import torch.distributed as dist
 
 from shadowspill.artifacts._values import digest, plain
 from shadowspill.artifacts.program import Program
+from shadowspill.memory import PinnedHostPool, SpillPool
 from shadowspill.pytorch.accelerator import resolve_device
 from shadowspill.pytorch.toolchain import build_setup
 from shadowspill.task.profiling import ProfilingOptions
@@ -33,8 +34,9 @@ def measure_communication(
     sizes_bytes: Sequence[int] = (1024, 1 << 20, 16 << 20, 64 << 20),
     warmup_seconds: float = 0.05,
     measure_seconds: float = 0.18,
+    spill: SpillPool | None = None,
 ) -> CommunicationInfo:
-    """Calibrate copies and optionally a Program's lowered collectives.
+    """Calibrate spill copies and optionally a Program's lowered collectives.
 
     Without Program/overrides/rank_map, measure only this GPU's host copies.
     Distributed calls run on every worker after caller-owned rendezvous, with
@@ -47,6 +49,9 @@ def measure_communication(
     collectives replaces derived requests; [] selects host copies only. Each
     entry has operation, ordered logical ranks, tensor_bytes and dtype. Bytes
     mean full gathered output/scatter input, or each all-reduce tensor.
+    spill selects an existing pool configuration; None uses ordinary pinned-host
+    copies. External backends use bounded native probe pools without installing
+    the execution allocator. Build and compute profiling need no spill setting.
     """
     coordinated = program is not None or collectives is not None or rank_map is not None
     distributed = coordinated and dist.is_initialized() and dist.get_world_size() > 1
@@ -56,6 +61,8 @@ def measure_communication(
     bindings = None
     memory = None
     try:
+        if spill is not None and not isinstance(spill, SpillPool):
+            raise TypeError("spill must be a SpillPool configuration")
         sizes = tuple(sorted(set(sizes_bytes)))
         if len(sizes) < 2 or any(type(size) is not int or size <= 0 for size in sizes):
             raise ValueError(
@@ -98,6 +105,7 @@ def measure_communication(
                 "warmup": warmup_seconds,
                 "measure": measure_seconds,
                 "setup": setup,
+                "spill_kind": "pinned_host" if spill is None else spill.kind_name,
             }
         )
     except Exception as error:
@@ -118,12 +126,23 @@ def measure_communication(
         with torch.cuda.device(target), torch.no_grad():
             host, failure = None, None
             try:
-                host = measure_host_copies(
-                    device=target,
-                    sizes=sizes,
-                    options=options,
-                    bindings=bindings,
-                )
+                if spill is None or type(spill) is PinnedHostPool:
+                    host = measure_host_copies(
+                        device=target,
+                        sizes=sizes,
+                        options=options,
+                        bindings=bindings,
+                    )
+                else:
+                    from .spill import measure_spill
+
+                    host = measure_spill(
+                        spill,
+                        device=target,
+                        sizes=sizes,
+                        options=options,
+                        bindings=bindings,
+                    )
             except Exception as error:
                 if bindings is None:
                     raise

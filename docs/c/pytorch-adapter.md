@@ -269,3 +269,13 @@ active-poll boundary used for callable recurrence and teardown, and ignores
 unrelated plans. `shadowspill_pytorch_recover_no_progress()` performs the one
 documented recovery: the frontend synchronizes the execution device first,
 and only a latched NO_PROGRESS failure can be cleared.
+
+## Independent spill calibration
+
+`shadowspill_pytorch_spill_probe_create()`,
+`shadowspill_pytorch_spill_probe_measure()` and
+`shadowspill_pytorch_spill_probe_destroy()` own a bounded native
+runtime with the selected spill extension and its fetch/evict lanes. They never
+install or modify the adapter's global PyTorch allocator. The Python public entry
+point is `measure_communication(spill=...)`; returned rates and latencies include
+backend staging/completion and can be saved independently of execution pools.

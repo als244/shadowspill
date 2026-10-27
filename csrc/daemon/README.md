@@ -13,9 +13,10 @@ owns a registered region and answers two questions about it.
 shadowspill_memory_daemon --port 7654 [--host 0.0.0.0] [--device mlx5_1]
 ```
 
-One daemon serves **one connection at a time**, which makes it stateless and
-lock-free: everything it holds belongs to the connection it is holding it for.
-Two remote pools on a box is two daemons on two ports.
+One daemon serves concurrent connections in independent workers. Each connection
+owns its device handle, protection domain, registered regions and queue pairs;
+disconnecting releases only that client's resources. Distributed ranks can use
+one endpoint without serializing pool initialization.
 
 There is **no authentication**, which is a decision rather than an oversight:
 this is a development daemon for a lab segment, and it is the first thing to

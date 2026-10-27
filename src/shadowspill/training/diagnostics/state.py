@@ -40,11 +40,22 @@ def learning_rates(path: ExecutionPath) -> tuple[str, ...]:
 
 def buffer_aliases(path: ExecutionPath, controls: Mapping[str, Any]) -> set[str]:
     storage = path.storage
+    # Publishing unchanged optimizer-owned shards only restores their model
+    # representation. It is covered by the optimizer's explicit zero-LR promise.
+    publications = {
+        (item["profile_key"], item["destination"])
+        for component in path.plan.program.bindings.get("optimizer_templates", ())
+        for item in component.get("publications", ())
+    }
     mutated = {
         storage.aliases[mutation.object_id]
         for bound in path.tasks
         if bound.task.phase != "optimizer"
         for mutation in bound.task.mutations
+        if not (
+            bound.task.phase == "weight_communication"
+            and (bound.task.profile_id, mutation.object_id) in publications
+        )
     }
     registrations = path.plan.program.bindings["registrations"]
     parameters = {
@@ -74,7 +85,7 @@ def preserve(
     directory: Path,
     chunk_bytes: int = 64 << 20,
 ) -> Iterator[int]:
-    """Keep only affected model buffers on disk, using existing CPU spill views.
+    """Keep only affected model buffers on disk, using bounded spill reads/writes.
 
     Parameters, masters, moments and optimizer counters rely on the explicit
     optimizer guarantee. Gradients are recreated by the next training invocation.
@@ -89,10 +100,9 @@ def preserve(
     with preserve_rng(executor.device), TemporaryFile(dir=directory) as snapshot:
         sizes = []
         for alias in sorted(aliases):
-            value = storage.host(alias)
-            sizes.append((alias, value.numel()))
-            for start in range(0, value.numel(), chunk_bytes):
-                snapshot.write(memoryview(value[start : start + chunk_bytes].numpy()))
+            sizes.append((alias, storage.spill.sizes[alias]))
+            for _, value in storage.spill.chunks(alias, chunk_bytes=chunk_bytes):
+                snapshot.write(memoryview(value.numpy()))
         try:
             yield sum(size for _, size in sizes)
         finally:
@@ -101,10 +111,11 @@ def preserve(
                 executor.synchronize()
                 # Restoration uses host storage only; never materialize a model copy.
                 snapshot.seek(0)
-                for alias, size in sizes:
-                    value = storage.host(alias)
-                    for start in range(0, size, chunk_bytes):
-                        target = memoryview(value[start : start + chunk_bytes].numpy())
+                for alias, _size in sizes:
+                    for _, value in storage.spill.chunks(
+                        alias, chunk_bytes=chunk_bytes, read=False, write=True
+                    ):
+                        target = memoryview(value.numpy())
                         if snapshot.readinto(target) != len(target):
                             raise RuntimeError("incomplete diagnostic buffer snapshot")
                 with torch.no_grad():

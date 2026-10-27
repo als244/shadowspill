@@ -64,6 +64,43 @@ def test_diagnostics_require_explicit_optimizer_guarantee_and_host_rates():
     assert learning_rates(path) == ("lr0", "lr1")
 
 
+def test_diagnostics_allow_only_declared_optimizer_publications():
+    from shadowspill.training.diagnostics.state import buffer_aliases
+
+    def task(phase, profile, target):
+        return SimpleNamespace(
+            task=SimpleNamespace(
+                phase=phase,
+                profile_id=profile,
+                mutations=(SimpleNamespace(object_id=target),),
+            )
+        )
+
+    bindings = {
+        "optimizer_templates": [
+            {"publications": [{"profile_key": "gather", "destination": "weight"}]}
+        ],
+        "registrations": [
+            {"object_id": "weight", "name": "weight", "parameter": True},
+            {"object_id": "counter", "name": "counter", "parameter": False},
+        ],
+    }
+    path = SimpleNamespace(
+        storage=SimpleNamespace(aliases={"weight": "w", "counter": "c"}),
+        plan=SimpleNamespace(program=SimpleNamespace(bindings=bindings)),
+        tasks=[
+            task("forward", "compute", "counter"),
+            task("weight_communication", "gather", "weight"),
+        ],
+    )
+    assert buffer_aliases(path, {}) == {"c"}
+    # A matching destination alone must not exempt arbitrary model writes.
+    for phase, profile in (("forward", "gather"), ("weight_communication", "other")):
+        path.tasks[-1] = task(phase, profile, "weight")
+        with pytest.raises(ValueError, match="mutated outside optimizer"):
+            buffer_aliases(path, {})
+
+
 @pytest.mark.cuda
 @pytest.mark.parametrize("stochastic", [False, True])
 def test_saved_startup_diagnostics_preserve_state_and_rng(tmp_path, stochastic):

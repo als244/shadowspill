@@ -75,4 +75,4 @@ def stage_inputs(
             raw = torch.empty(0, dtype=torch.uint8).set_(
                 value.untyped_storage(), 0, (value.untyped_storage().nbytes(),), (1,)
             )
-            state.host(alias).copy_(raw)
+            state.spill.copy_from(alias, raw)

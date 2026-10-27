@@ -1,4 +1,4 @@
-"""Per-call scalar fills of named model buffers, directly in their host shards."""
+"""Per-call scalar fills of named model buffers, through bounded spill access."""
 
 from collections.abc import Mapping
 from math import prod
@@ -7,6 +7,7 @@ from typing import Any
 import torch
 
 from .storage import Storage, dtype_of
+from .tensor_spans import spans
 
 
 class BufferControls:
@@ -20,9 +21,9 @@ class BufferControls:
             and not item.get("component_path")
         }
 
-    def prepare(self, values: Mapping[str, Any]) -> list[tuple[torch.Tensor, Any]]:
+    def prepare(self, values: Mapping[str, Any]) -> list[tuple[str, Any]]:
         """Validate all fills before the caller writes any runtime controls."""
-        prepared: list[tuple[torch.Tensor, Any]] = []
+        prepared: list[tuple[str, Any]] = []
         seen: dict[str, torch.Tensor] = {}
         for name, binding in self.bindings.items():
             if name not in values:
@@ -37,14 +38,12 @@ class BufferControls:
             if object_id in seen and not torch.equal(scalar, seen[object_id]):
                 raise ValueError(f"conflicting values for tied model buffer {name}")
             seen[object_id] = scalar
-            destination = self._destination(object_id)
-            prepared.append((destination, scalar.item()))
+            self._geometry(object_id)
+            prepared.append((object_id, scalar.item()))
         return prepared
 
-    def _destination(self, object_id: str) -> torch.Tensor:
+    def _geometry(self, object_id: str) -> Mapping[str, Any]:
         geometry = self.storage.geometry[object_id]
-        alias = self.storage.aliases[object_id]
-        host = self.storage.host(alias).view(dtype_of(geometry))
         region = self.storage.regions.get(object_id)
         if region is not None:
             shape, stride = geometry["shape"], geometry["stride"]
@@ -60,7 +59,21 @@ class BufferControls:
                 raise ValueError(
                     "sharded buffer controls require a dense full-storage view"
                 )
-            return host[: region.length]  # Leave alignment padding unchanged.
-        return host.as_strided(
-            geometry["shape"], geometry["stride"], geometry.get("storage_offset", 0)
-        )
+            return {**geometry, "shape": (region.length,), "stride": (1,)}
+        return geometry
+
+    def apply(self, prepared: list[tuple[str, Any]]) -> None:
+        for object_id, value in prepared:
+            geometry = self._geometry(object_id)
+            for _, start, count in spans(
+                geometry["shape"], geometry["stride"], geometry.get("storage_offset", 0)
+            ):
+                for _, destination in self.storage.spill.chunks(
+                    self.storage.aliases[object_id],
+                    dtype=dtype_of(geometry),
+                    start=start,
+                    length=count,
+                    read=False,
+                    write=True,
+                ):
+                    destination.fill_(value)

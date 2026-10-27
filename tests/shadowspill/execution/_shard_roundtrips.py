@@ -15,7 +15,12 @@ from shadowspill.pytorch.runtime_adapter.boundaries import (
     before_task_and_acquire,
     submit_initial_actions,
 )
-from shadowspill.runtime.plan import admit_initial_actions, admit_task, clear_tasks
+from shadowspill.runtime.plan import (
+    abort_task,
+    admit_initial_actions,
+    admit_task,
+    clear_tasks,
+)
 
 
 def roundtrips(state, groups=None):
@@ -35,11 +40,13 @@ def roundtrips(state, groups=None):
     region = state.regions[value]
     # Inspection must not introduce pageable copies or CPU waits inside a task.
     observed = torch.empty(15, dtype=torch.bfloat16, pin_memory=True)
+    active = False
     try:
         for step in range(3):
             submit_initial_actions(bridge, fetch, task_number=0)
             owner = state.owner(alias)
             before_task_and_acquire(bridge, handle, state.device.index, (owner,))
+            active = True
             weights = state.argument(value, state.geometry[value])
             if groups is not None:
                 # The native fetch and this explicit task use the same ordered
@@ -67,16 +74,19 @@ def roundtrips(state, groups=None):
             weights.add_(2)
             del weights
             after_task_and_update(bridge, handle, state.device.index, (), (), (owner,))
+            active = False
             bridge.wait_until_idle()
             torch.testing.assert_close(observed, expected)
-            host = state.host(alias).view(torch.bfloat16)
             expected_shard = torch.zeros(region.capacity, dtype=torch.bfloat16)
             expected_shard[: region.length] = (
                 torch.arange(region.offset, region.offset + region.length)
                 + 1
                 + 2 * (step + 1)
             )
-            torch.testing.assert_close(host, expected_shard)
+            with state.spill.buffer(alias, 0, state.spill.sizes[alias]) as host:
+                torch.testing.assert_close(host.view(torch.bfloat16), expected_shard)
             del host
     finally:
+        if active:
+            abort_task(bridge, handle)
         clear_tasks(bridge)

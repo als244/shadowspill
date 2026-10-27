@@ -10,6 +10,7 @@ import torch
 
 from shadowspill.artifacts.plan import Plan
 from shadowspill.communication.binding.ranks import RankAssignment
+from shadowspill.memory import SpillPool
 from shadowspill.pytorch.invocation import InvocationResult, ReusableCompletionEvent
 from shadowspill.runtime.plan.annotations import TaskBoundaryAnnotations
 
@@ -33,6 +34,7 @@ class Executor:
         rank_map: Mapping[int, int] | None = None,
         external_headroom_bytes: int | None = None,
         parameter_norms: bool = False,
+        spill: SpillPool | None = None,
     ) -> None:
         self.parameter_norms = parameter_norms
         world_size = (
@@ -62,7 +64,13 @@ class Executor:
             self._observations,
             self._providers,
         ) = create_paths(
-            plan, device, external_headroom_bytes, self.plans, rank_map, parameter_norms
+            plan,
+            device,
+            external_headroom_bytes,
+            self.plans,
+            rank_map,
+            parameter_norms,
+            spill,
         )
         if self._distributed is not None:
             self._assignment = self._distributed.groups.assignment

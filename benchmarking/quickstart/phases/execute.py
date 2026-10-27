@@ -5,6 +5,7 @@ from contextlib import nullcontext
 
 from shadowspill import Plan, Trainer
 
+from ..spill import resolve as spill_pool
 from .common import experiment, paths, plan_identity, read, write
 from .distributed import workers
 
@@ -44,7 +45,9 @@ def _execute(request, selection, root, index, group):
 
     # Install Executor before the user factory can create live CUDA resources.
     device = int(request["device"].split(":")[-1])
-    with Trainer(plan, device=device, rank_map=group.rank_map) as trainer:
+    with Trainer(
+        plan, device=device, rank_map=group.rank_map, spill=spill_pool(request)
+    ) as trainer:
         setup = experiment(
             request, logical_rank=None if group.count == 1 else group.logical_rank
         )

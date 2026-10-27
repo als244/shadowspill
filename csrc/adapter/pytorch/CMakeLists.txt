@@ -13,6 +13,7 @@ add_library(
   lifecycle/close.c
   lifecycle/library.c
   lifecycle/physical.c
+  profiling/spill.c
   tasks/boundaries.c
   tasks/scopes.c
   storage/objects.c

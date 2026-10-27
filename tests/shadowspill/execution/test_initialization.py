@@ -7,6 +7,7 @@ import torch
 
 from shadowspill.execution.controls import Controls
 from shadowspill.execution.tensors import verify_initialization, visit_tensors
+from tests.shadowspill.execution._spill import MemorySpill
 
 
 def storage(bindings, geometry, values):
@@ -19,7 +20,7 @@ def storage(bindings, geometry, values):
         sizes={
             name: value.numel() * value.element_size() for name, value in values.items()
         },
-        host=lambda name: values[name].view(torch.uint8),
+        spill=MemorySpill(values),
     )
 
 
@@ -110,9 +111,7 @@ def test_lifted_constants_from_distinct_examples_have_distinct_export_names():
         {
             "kind": "step",
             "registrations": [],
-            "root_inputs": [
-                [{"leaf_index": 0, "object_id": name}] for name in data
-            ],
+            "root_inputs": [[{"leaf_index": 0, "object_id": name}] for name in data],
             "example_root_sources": sources,
         },
         {

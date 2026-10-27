@@ -17,17 +17,17 @@ def test_only_consumed_nonempty_inputs_are_staged_but_all_inputs_are_guarded():
     target = torch.empty(args[0].nbytes, dtype=torch.uint8)
     calls = []
 
-    def host(alias):
+    def copy(alias, value):
         calls.append(alias)
         assert alias == "a0"
-        return target
+        target.copy_(value)
 
     state = SimpleNamespace(
         aliases={f"o{i}": f"a{i}" for i in range(3)},
         geometry={f"o{i}": {"device_type": "cuda"} for i in range(3)},
         sizes={f"a{i}": value.nbytes for i, value in enumerate(args)},
         initial={"a0", "a2"},
-        host=host,
+        spill=SimpleNamespace(copy_from=copy),
         plan=SimpleNamespace(
             program=SimpleNamespace(
                 bindings={

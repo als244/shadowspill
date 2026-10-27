@@ -9,6 +9,30 @@ from workloads.recipes.text.benchmark.factory import experiment
 
 
 @pytest.mark.parametrize(
+    "options,rank,alpha",
+    [({}, 32, 32.0), ({"rank": 4, "alpha": 8.0, "head": "lora"}, 4, 8.0)],
+)
+def test_lora_is_selected_before_initialization(options, rank, alpha):
+    setup = experiment(
+        device="cuda:0",
+        model="llama3-tiny",
+        sequence_length=8,
+        sequences_per_step=2,
+        lora=options,
+    )
+    model = setup["model_factory"]()
+    trainable = [(name, p) for name, p in model.named_parameters() if p.requires_grad]
+    assert trainable and all("lora" in name.lower() for name, _ in trainable)
+    assert all(p.is_meta and p.dtype == torch.bfloat16 for _, p in trainable)
+    assert not model.get_parameter("lm_head.weight").requires_grad
+    assert any(rank in p.shape for _, p in trainable)
+    layers = [layer for layer in model.modules() if hasattr(layer, "lora_a")]
+    assert layers and all(layer.lora_config.scale == alpha / rank for layer in layers)
+    if options.get("head") == "lora":
+        assert any(name.startswith("lm_head.") for name, _ in trainable)
+
+
+@pytest.mark.parametrize(
     "family", ["llama3", "qwen3", "qwen35", "olmoe", "qwen3moe", "qwen35moe"]
 )
 @pytest.mark.parametrize("lora", [None, {}])

@@ -14,6 +14,7 @@ from shadowspill.parallelism.views import owned_view_offsets
 from shadowspill.runtime.plan import RuntimeBridge
 
 from .host_values import HostValues
+from .spill import SpillStorage
 from .tensor_regions import tensor_regions
 from .views import StorageViews
 
@@ -36,6 +37,15 @@ class Storage:
         transfer_descriptors: Mapping[str, int] | None = None,
     ):
         self.plan, self.bridge, self.device = plan, bridge, device
+        self.spill = SpillStorage(
+            bridge,
+            {
+                a.alias_group_id: a.size_bytes
+                if a.spill_size_bytes is None
+                else a.spill_size_bytes
+                for a in plan.program.alias_groups
+            },
+        )
         if logical_rank is None:
             if (
                 plan.program.parallelism is not None
@@ -107,22 +117,6 @@ class Storage:
             geometry.get("storage_offset", 0) + self.owned_offsets.get(object_id, 0),
             geometry["shape"],
             geometry["stride"],
-        )
-
-    def host(self, alias: str) -> torch.Tensor:
-        location = self.bridge.objects.spill_location(alias)
-        if location is None:
-            raise RuntimeError(f"no addressable spill lease for {alias}")
-        address, size = location
-        return cast(
-            torch.Tensor,
-            torch.ops.shadowspill._make_runtime_cpu_storage(
-                torch.empty(0, dtype=torch.uint8),
-                self.bridge.spill_pool_id,
-                address,
-                self.bridge.objects.runtime_object_id(alias),
-                size,
-            ),
         )
 
     def clear_views(self) -> None:

@@ -31,37 +31,40 @@ the directory and settings; Runtime later allocates and releases the storage.
 `SSDPool.addressable` is `False`: its pool addresses are opaque tokens.
 
 ```python
-from pathlib import Path
-from shadowspill.memory import device, transfer_route
-from shadowspill.pytorch import Runtime
-from shadowspill.ssd import ssd
+from shadowspill import measure_communication, plan_program
+from shadowspill.ssd import SSDPool
 
-spill_directory = Path("/local-nvme/shadowspill")
-spill_directory.mkdir(parents=True, exist_ok=True)
-
-with Runtime(
-    pools={
-        "execution": device(physical_capacity=8 << 30),
-        "spill": ssd(
-            capacity=64 << 30,
-            directory=spill_directory,
-            staging_bytes=256 << 20,
-            chunk_bytes=2 << 20,
-            queue_depth=16,
-        ),
-    },
-    routes={
-        "fetch": transfer_route(source="spill", destination="execution"),
-        "evict": transfer_route(source="execution", destination="spill"),
-    },
-    calibrate=False,
-) as runtime:
-    # Small, initialized probes avoid a large SSD write benchmark during setup.
-    runtime.calibrate_transfer_capabilities(
-        large_copy_bytes=32 << 20, warmup_copies=1, measured_copies=3,
-    )
-    # Import model state, then plan and execute as with any spill pool.
+spill = SSDPool(capacity=64 << 30, directory="/local-nvme")
+communication = measure_communication(spill=spill)
+plan = plan_program(profiled_program, memory_budgets=budgets,
+                    communication_info=communication)
+plan.save("training.ssp")
 ```
+
+In a **fresh execution worker**, reuse that configuration:
+
+```python
+from shadowspill import Plan, Trainer
+from shadowspill.ssd import SSDPool
+
+with Trainer(Plan.load("training.ssp"),
+             spill=SSDPool(64 << 30, directory="/local-nvme")) as trainer:
+    trainer.initialize(fill_tensor)
+    result = trainer.step(args=examples)
+```
+
+`Executor(plan, spill=...)` exposes the same setting. Capacity must equal the
+Plan's spill budget. Build and task profiling use ordinary allocation and do not
+open the SSD pool. Planning only reads CommunicationInfo; it needs neither the
+drive nor the SSD extension. Measurement creates a bounded scratch pool using the
+real transfer lanes, without installing the execution allocator. A Plan measured
+for another spill kind must be replanned before execution.
+
+The phase [quickstart](../../../benchmarking/quickstart.md#spill-storage) accepts
+`--ssd-spill /local-nvme`. Pinned host memory remains the default. Sharded
+fetches read the owned payload through the selected backend before all-gather;
+gradient evictions reduce before writing the owned payload. One completion event
+covers storage I/O and collectives for pinned-host, SSD and remote storage.
 
 | Argument | Default | Meaning |
 |---|---|---|
@@ -80,71 +83,26 @@ not allocate more slots. An insufficient cap fails at setup. Small control
 counters, Python metadata, model initializer scratch and compiler/profiling
 workspace are separate from this payload cap.
 
-`ShadowSpill`'s training backend accepts the same configuration:
-
-```python
-from shadowspill.training.backends import ShadowSpill
-
-with ShadowSpill(
-    execution_gib=8,
-    spill_pool=ssd(capacity=64 << 30, directory=spill_directory),
-    calibrate=False,
-) as backend:
-    backend.runtime.calibrate_transfer_capabilities(
-        large_copy_bytes=32 << 20, warmup_copies=1, measured_copies=3,
-    )
-    # Trainer(..., backend=backend) or Forward(..., backend=backend)
-```
-
-`spill_gib`, if also supplied, is the planner's limit within the configured pool.
-Otherwise it uses the pool's capacity. Existing `spill_gib=N` callers continue to
-use pinned host memory.
-
 ## A pool image: import frozen state once
 
-A model's frozen state is imported once into a pool created with
-`create_image=True`; the pool file is the image, and
-`write_pool_image(model, runtime=..., pool=..., path=..., frozen_state_id=...)`
-writes `<image>.manifest.json`, which records every storage root's offset and
-size and the tensors viewing it. After the runtime closes, `PoolImage.trim()`
-cuts the file to the bytes the state reaches.
+Pool images remain a low-level facility while their adoption into saved Executor
+plans is pending. `ssd(..., create_image=True, image=...)` creates the persistent
+pool file. The image manifest describes named tensors and storage offsets;
+`ssd(..., image=...)` opens those bytes read-only, with new state in a separate
+scratch file. The existing GLM conversion tool uses this facility. Saved-plan
+workers currently use bounded checkpoint loaders instead of adopting pool images.
 
-Every later runtime opens the pool on that image, `ssd(..., image=path)`, and
-imports the model with `image=PoolImage.read(path)`: the tensors the manifest
-names are verified by name, geometry and dtype and bound where they lie,
-without a copy; the rest of the model, LoRA factors and all, is allocated and
-initialized in the scratch file behind the image, as are optimizer state and
-evicted activations. The initializer takes `adopted`, the names it must leave
-alone, and a write into adopted state fails. The GLM-5.3-Flash workload's
-`python -m workloads.models.glm53_flash.convert` is such a conversion, and the
-quickstart's `--ssd-image` opens its result.
+## Bounded initialization and checkpoints
 
-## Initialize without a complete host model
+`fill_tensor(chunk, destination)` fills Executor-provided CPU buffers. Pinned
+memory exposes the pool view directly; SSD and remote memory use bounded staging
+and byte-range I/O. Master-weight initialization reads only the matching source
+chunk. Model controls and checkpoint export use this same path, preserving tensor
+dtypes, padding and local shard offsets without a full host model copy.
 
-Construct on `meta`, then initialize after import. With the low-level API:
-
-```python
-import torch
-from shadowspill.pytorch import import_model_state, release_model_state
-
-with torch.device("meta"):
-    model = make_model()
-model = import_model_state(model, runtime=runtime, pool="spill")
-# After every plan using the model has closed:
-release_model_state(model, runtime=runtime)
-```
-
-Modules must support in-place `reset_parameters()`, or pass `initialize=fn` to
-`import_model_state`. Trainer and Forward accept the initializer through
-`prepare(..., initialize=fn)`. Checkpoint inputs can be memory-mapped. These
-paths work for pinned-host and remote pools too; see
-[state import](../../architecture/state-import.md).
-
-Non-addressable pool tensors carry checked CPU metadata without a retained host
-payload. Direct CPU arithmetic on them is invalid outside controlled setup.
-Use an admitted callable to execute the model. Explicit state reads/exports
-produce CPU copies; use `release_model_state` when those copies are unwanted.
-`PlannedTrainStep.save()` streams pool objects to a separate checkpoint file.
+Checkpoint files are independent of temporary spill storage. Use Trainer's
+checkpoint helpers or Executor's bounded tensor export. Never dereference an SSD
+pool address as a CPU tensor: addresses are opaque tokens meaningful to the pool.
 
 ## Pipeline and lifetime
 
@@ -183,7 +141,7 @@ fetch them before recomputation. There is no activation-write prohibition or
 LoRA-specific rule in the pool or lanes. Trainable LoRA weights, optimizer
 moments and counters still require writes.
 
-Runtime owns calibration and measures the complete SSD/host/GPU route, both alone and with the
+`measure_communication(spill=...)` measures the complete SSD/host/GPU route, both alone and with the
 opposite direction active. Short write measurements describe cache-assisted
 behavior; they do not establish sustained write throughput. For read-dominant
 LoRA, emphasize initialized direct-read measurements and actual step traces.
@@ -191,8 +149,8 @@ Do not infer bandwidth from unwritten file extents, which may return zeros
 without reading the drive.
 
 The simulator prices solo and overlapping portions using their respective
-calibrated bandwidths. Request latency remains diagnostic metadata and does
-not add simulated transfer time. Smaller probe sizes reduce calibration writes
+calibrated bandwidths and explicit request latency. The saved communication
+artifact records the probe sizes, raw rates and measurement method. Smaller probe sizes reduce calibration writes
 and can affect the estimate; they do not change production transfers.
 
 A Chicago RTX 5090 / Samsung 990 PRO validation measured about 7.09 GB/s for

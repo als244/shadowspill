@@ -23,7 +23,7 @@ same runner with their own model/input/initialization helpers. The
 [EP recipe](../workloads/recipes/text/expert_parallel/README.md) declares generic
 provider resources and uses distributed build/profiling when its tasks communicate.
 Its SM90 transport qualification remains pending; ordinary DP qualification does
-not certify it. The old CLI's [migration reference](quickstart_legacy.md) is separate.
+not certify it.
 The core APIs can be used directly without quickstart; see the
 [public phase guide](../docs/architecture/offline-pipeline.md).
 
@@ -48,6 +48,26 @@ names, using underscores and numeric lists instead of CLI syntax. The factory
 must be importable (a module function or `module:function` string), because
 workers reconstruct setup independently. Closures returned *by* that factory
 are fine; no callback pickle or model object is sent between workers.
+
+## Spill storage
+
+Pinned host memory is the default. Select SSD with `--ssd-spill /local-nvme`,
+or an RDMA peer with `--remote-spill HOST:PORT`. The corresponding Python argument
+is `spill=SSDPool(...)` or `spill=RemotePool(...)`, with capacity equal to
+`spill_gib`. SSD tuning flags are `--ssd-staging-mib`, `--ssd-chunk-mib` and
+`--ssd-queue-depth`; defaults are 256 MiB, 2 MiB and 16.
+
+Only communication calibration and execution open the selected backend.
+Build/profile use ordinary allocation; CPU planning reads CommunicationInfo
+without importing SSD/network code or contacting the peer. Calibration measures
+the complete route, including staging, in a bounded scratch pool. Executor uses
+bounded buffers for initialization, controls and checkpoint I/O on every backend.
+To change backend, rerun communication calibration and planning before execution.
+
+Single-GPU SSD and RDMA execution are qualified. Compound sharded fetch/evict
+collectives currently require pinned-host spill. SSD pool-image adoption remains
+with the low-level image tools; saved Executor plans currently use tensor loaders.
+See [SSD storage](../docs/python/api/ssd.md) for configuration and lifetime details.
 
 ## One phase at a time
 

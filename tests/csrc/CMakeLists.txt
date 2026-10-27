@@ -193,7 +193,7 @@ add_test(
   COMMAND shadowspill_admission_replay_canary
 )
 
-foreach(runtime_test IN ITEMS abandon blocking calibration completion failure telemetry transitions)
+foreach(runtime_test IN ITEMS abandon blocking calibration completion failure telemetry transitions object_io)
   add_executable(
     shadowspill_runtime_${runtime_test}_canary
     runtime/runtime_${runtime_test}_canary.c

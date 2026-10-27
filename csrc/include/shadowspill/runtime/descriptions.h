@@ -132,6 +132,14 @@ typedef struct ShadowSpillAllocation {
     void *pointer;
 } ShadowSpillAllocation;
 
+/* Enqueue one physical spill copy and join its completion to the supplied
+   lane stream. The callback is borrowed for enqueue only; never retain it.
+   Call at most once, with spill_size_bytes; an owned-zero fetch may omit it.
+   A conversion may use the copy's device result immediately on that stream. */
+typedef int (*ShadowSpillTransferCopy)(
+    void *context, void *destination, const void *source, uint64_t bytes
+);
+
 /* Adapter-owned representation conversion. The runtime copies this descriptor
    and retains its context until the object is destroyed. enqueue must submit
    every phase on, or joined back to, the supplied lane stream before returning.
@@ -151,7 +159,8 @@ typedef struct ShadowSpillObjectTransfer {
     int (*enqueue)(
         void *context, const ShadowSpillBackend *backend,
         ShadowSpillBackendStream stream, uint8_t fetch,
-        void *destination, const void *source
+        void *destination, const void *source,
+        ShadowSpillTransferCopy copy, void *copy_context
     );
 } ShadowSpillObjectTransfer;
 
