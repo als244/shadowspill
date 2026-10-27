@@ -37,7 +37,6 @@ _NO_SCOPE = (1 << 64) - 1
 _SYNTHETIC_SCOPES: tuple[tuple[int, str], ...] = (
     (RUNTIME_OBJECT_SCOPE_ID, "runtime object"),
     (PROFILING_SCOPE_BASE, "profiling scope"),
-    (1 << 61, "materialization task"),
     (INITIAL_ACTIONS_TASK_ID, "initial actions"),
 )
 

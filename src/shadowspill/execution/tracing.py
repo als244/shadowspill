@@ -11,7 +11,7 @@ from shadowspill.execution.recording.spec import (
     alias_accesses,
 )
 from shadowspill.execution.recording.timing import ExecutionTiming
-from shadowspill.runtime.plan import trace_capacities
+from shadowspill.runtime.plan.tracing import trace_capacities
 
 from .paths import ExecutionPath
 

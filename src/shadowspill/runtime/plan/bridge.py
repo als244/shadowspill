@@ -1,15 +1,4 @@
-"""The bridge: one plan's program on the adapter, from admission to close.
-
-`RuntimeBridge` holds what every part needs -- the runtime and its two
-libraries, the plan handle, the pools the plan chose, the plan's object
-registry (`objects`) and the records of what was admitted. The work is in the
-modules beside it, as functions over the bridge: `admission` describes tasks,
-the fixed layout, and output acquisitions to the runtime before the
-plan runs; `boundaries` is what happens at each boundary while it runs;
-`report` is what the bridge can say about the plan without changing it;
-`objects` is the registry of plan-local aliases bound to runtime objects; and
-`common` the values and helpers they share.
-"""
+"""Worker-local plan handles, bindings, and residency checks."""
 
 from __future__ import annotations
 
@@ -21,37 +10,8 @@ from shadowspill.runtime import Runtime
 from shadowspill.runtime.abi import ObjectSnapshot, runtime_library
 from shadowspill.runtime.failures import RuntimeExecutionError
 
-from .admission import (
-    EncodedTask,
-    admit_caller_acquisition,
-    admit_fixed_layout,
-    admit_task,
-    clear_tasks,
-    encode_task,
-    seal_fixed_layout,
-)
-from .common import (
-    TaskMemoryEnvelope,
-    TaskPublication,
-    actions_by_task,
-    require_status,
-)
+from .common import require_status
 from .objects import PlanObjects
-from .report import (
-    TraceCapacities,
-    begin_runtime_trace,
-    describe_object_state,
-    describe_pool_occupants,
-    end_and_read_runtime_trace,
-    input_failure_states,
-    prepare_runtime_trace,
-    profile_range_begin,
-    profile_range_end,
-    raise_if_allocator_failed,
-    set_profiler_annotations,
-    statistics,
-    trace_capacities,
-)
 
 
 class RuntimeBridge:
@@ -175,34 +135,3 @@ def abort_task(bridge: RuntimeBridge, task_handle: int) -> None:
         bridge.library.shadowspill_pytorch_abort_task_handle(task_handle),
         "abort admitted task",
     )
-
-
-__all__ = [
-    "EncodedTask",
-    "PlanObjects",
-    "RuntimeBridge",
-    "RuntimeExecutionError",
-    "TaskMemoryEnvelope",
-    "TaskPublication",
-    "TraceCapacities",
-    "abort_task",
-    "actions_by_task",
-    "admit_caller_acquisition",
-    "admit_fixed_layout",
-    "admit_task",
-    "begin_runtime_trace",
-    "clear_tasks",
-    "describe_object_state",
-    "describe_pool_occupants",
-    "encode_task",
-    "end_and_read_runtime_trace",
-    "input_failure_states",
-    "prepare_runtime_trace",
-    "profile_range_begin",
-    "profile_range_end",
-    "raise_if_allocator_failed",
-    "seal_fixed_layout",
-    "set_profiler_annotations",
-    "statistics",
-    "trace_capacities",
-]

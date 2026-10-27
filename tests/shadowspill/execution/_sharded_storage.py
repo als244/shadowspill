@@ -68,7 +68,7 @@ def worker(index, rendezvous, archive, mode):
     from shadowspill.memory import DevicePool, TransferRoute
     from shadowspill.pytorch.frontend import PyTorchFrontend
     from shadowspill.runtime import Runtime
-    from shadowspill.runtime.plan import RuntimeBridge
+    from shadowspill.runtime.plan.bridge import RuntimeBridge
     from shadowspill.runtime.plan.lifecycle import abort_plan, begin_plan
     from tests.spill_pool import spill_pool
 

@@ -340,7 +340,7 @@ for lane, records in (
 | `direction`, `transfers`, `bytes` | The lane and its scheduled traffic. |
 | `simulated_busy_seconds` | Lane time the simulator priced for these transfers. |
 | `measured_transfers`, `lane_busy_seconds` | How many transfers carry a stream interval, and the lane time those intervals add up to. |
-| `effective_bandwidth_bytes_per_second` | Measured bytes over `lane_busy_seconds`; compare with the assumed bandwidth in the plan summary. `None` when nothing was measured. |
+| `effective_bandwidth_bytes_per_second` | Host payload bytes over the full measured lane time. For sharded transfers this includes collective time, so it is not host-copy bandwidth. Use the per-operation transfer summary to compare copy and collective rates separately. `None` when nothing was measured. |
 | `largest_start_delta_seconds`, `largest_start_delta_transfer_id` | The signed start delta furthest from zero on the lane, and the transfer that reached it: where the lane had drifted furthest from the simulation. |
 | `lane_statistics` | What the lane itself counted, over its whole life. Below. |
 
@@ -435,7 +435,7 @@ step end is not a healthy steady state.
 | `events` | Raw bounded runtime-event records, including the transfer events the lanes were built from. |
 
 Trace storage is preallocated and bounded, and each executor sizes it from its
-plan (`shadowspill.runtime.plan.trace_capacities`). Most of a step's records
+plan (`shadowspill.runtime.plan.tracing.trace_capacities`). Most of a step's records
 are certain -- the session opens and closes, each task is entered and left,
 each action is queued, each copy reserves its destination, is dispatched and
 completes -- and the rest are bounded from the plan: a task waits at most once

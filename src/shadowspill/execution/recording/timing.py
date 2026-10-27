@@ -30,8 +30,8 @@ from shadowspill.diagnostics.timing import (
     InvocationTimelines,
     InvocationTiming,
 )
-from shadowspill.runtime.plan import (
-    RuntimeBridge,
+from shadowspill.runtime.plan.bridge import RuntimeBridge
+from shadowspill.runtime.plan.tracing import (
     TraceCapacities,
     begin_runtime_trace,
     end_and_read_runtime_trace,

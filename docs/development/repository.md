@@ -60,7 +60,7 @@ src/shadowspill/
 ├── communication/         calibration and reusable communication information
 │   └── binding/           resolve logical groups into calibration participants
 ├── execution/             saved-plan workers, initialization and bounded tensor export
-│   ├── recording/         opt-in task/transfer recording, shared by retained frontends
+│   ├── recording/         opt-in task/transfer recording for Executor
 │   ├── distributed/       collective and shard-storage execution bindings
 │   └── observations/      optional bounded runtime norm collection
 ├── checkpoint/            streamed checkpoint format over Executor tensor access
@@ -81,7 +81,7 @@ src/shadowspill/
 │   │                      is read against
 │   ├── timing.py          what one invocation measures about itself: the
 │   │                      markers, the armed records, the invocation timelines
-│   ├── collection.py      resolving one traced step into that evidence
+│   ├── collection/        task/transfer joins, native evidence and timing summaries
 │   ├── transfer_phases/   event matching, lane regions and payload throughput
 │   └── occupancy/         pool attribution, clocks and timeline rendering
 │       └── run/           stored-run discovery, trace matching and report indexes
@@ -127,7 +127,7 @@ src/shadowspill/
 │   ├── abi/               the ctypes projection of the C API, one module per
 │   │                      record kind
 │   ├── objects/           runtime objects: the reference, and how one is made
-│   ├── plan/              one plan on the runtime: bindings, admission and lifecycle
+│   ├── plan/              worker bindings, admission, lifecycle and optional tracing
 │   │   └── layout/        certified offsets and completion dependencies
 │   └── timing.py          an instant recorded on a stream, and the time between two
 ├── training/              saved-Plan training loops, schedules and checkpoints

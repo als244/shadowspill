@@ -6,7 +6,7 @@ from typing import cast
 
 import torch
 
-from shadowspill.runtime.plan import RuntimeBridge
+from shadowspill.runtime.plan.bridge import RuntimeBridge
 from shadowspill.runtime.plan.common import require_status
 
 CHUNK_BYTES = 64 << 20

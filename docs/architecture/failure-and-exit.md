@@ -1,9 +1,9 @@
 # Failure, abort, and process exit
 
 Four things can go wrong at four different scopes, and they are handled
-differently on purpose. A task can fail while a thread is inside it. A planned
-callable can fail and has to give the model its storage back. A runtime can
-fail and has to stay closable. And the process itself can end while any of
+differently. A task can fail while a thread is inside it. An Executor invocation
+can fail after updating part of its tensors. A runtime can fail and must remain
+closable. And the process itself can end while any of
 that is in flight, including because something outside ShadowSpill decided so.
 
 The first three assume the program continues. The fourth assumes it does not,
@@ -28,11 +28,16 @@ with `abort_task`, which publishes nothing; [task
 boundaries](task-boundaries.md#shadowspill_abort_task_handle) says what it
 finalizes and which cases reach it.
 
-## A failure in a planned callable
+## A failure in an Executor invocation
 
-A callable owns admitted execution state, so closing it is what returns the
-model's storage. Its close is ordinary program work: it may wait, because the
-program is still running and the worker is still able to make progress.
+A dispatch or completion failure makes Executor unusable for later invocations.
+The result handle preserves the original error. Closing Executor releases admitted
+paths and provider resources; it may wait while outstanding work completes. Use
+a context manager or explicitly close it after handling the failure.
+
+Cleanup does not undo weight updates that already ran. Persistent tensors belong
+to Executor, not the original model used during build. Resume training from a
+known checkpoint in a fresh worker.
 
 ## A failure in the runtime
 

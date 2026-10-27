@@ -1,20 +1,8 @@
-"""One runtime in this process: opening it, driving it, and closing it.
+"""Low-level runtime ownership, pool configuration, diagnostics, and C bindings.
 
-This package is framework-neutral. `bootstrap` installs a runtime over a
-frontend's process allocator; `core` is the `Runtime` itself, owning the pools,
-routes, counters and the close; `configuration` checks what a caller asks of it;
-`plan` moves one plan through its life on the runtime; `objects` names,
-registers and references runtime objects; `occupancy` and `residue` read what a
-pool holds and what a closing plan left behind; `calibration` measures the
-transfer routes; `teardown` latches what a failed call left and makes cleanup
-safe; `admission_replay` checks a planned allocation script against the exact
-policy the real pool applies. `abi` is the ctypes projection all of them call
-through. What a plan needs *physically* is decided before any runtime exists, so
-that policy is `shadowspill.planner.admission.physical`.
-
-A framework appears only as a :mod:`shadowspill.frontend` protocol the caller
-passes to `Runtime`. Everything outside this package reaches a runtime through
-the names below.
+Executor creates one runtime per fresh worker and binds saved plans through
+``plan/``. The runtime stays framework-neutral; a RuntimeFrontend supplies the
+allocator/storage integration. Offline physical planning belongs to ``planner``.
 """
 
 from .admission_replay import (

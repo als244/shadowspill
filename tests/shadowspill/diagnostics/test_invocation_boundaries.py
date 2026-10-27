@@ -5,7 +5,8 @@ from types import SimpleNamespace
 
 import pytest
 
-from shadowspill.diagnostics.collection import _build_step_summary, _transfer_lanes
+from shadowspill.diagnostics.collection.summary import build_step_summary
+from shadowspill.diagnostics.collection.transfers import transfer_lanes
 from shadowspill.runtime.trace import RuntimeTraceEventKind
 
 from .test_idle_composition import _task
@@ -52,7 +53,7 @@ def test_summary_components_include_entry_and_terminal_once(contention_ns: int) 
         collectives=SimpleNamespace(complete=True),
     )
     runtime = SimpleNamespace(event_overflow=False, allocation_event_overflow=False)
-    summary = _build_step_summary(
+    summary = build_step_summary(
         timing,
         SimpleNamespace(makespan_ns=400_000_000),
         tasks,
@@ -91,7 +92,7 @@ def test_summary_components_include_entry_and_terminal_once(contention_ns: int) 
     assert {item.phase for item in summary.phase_comparisons} == {"forward"}
 
     lanes["evict"].records = (_record(0, simulated=(0, 400_000_000), stream=None),)
-    incomplete = _build_step_summary(
+    incomplete = build_step_summary(
         timing,
         SimpleNamespace(makespan_ns=400_000_000),
         tasks,
@@ -143,9 +144,9 @@ def test_every_runtime_transfer_must_match_the_schedule(extra: bool) -> None:
     timing, simulation, evidence, bridge = _one_fetch(events)
     if extra:
         with pytest.raises(RuntimeError, match="transfer count mismatch"):
-            _transfer_lanes(timing, simulation, evidence, bridge, _ORIGIN_NS)  # type: ignore[arg-type]
+            transfer_lanes(timing, simulation, evidence, bridge, _ORIGIN_NS)  # type: ignore[arg-type]
     else:
-        lanes = _transfer_lanes(timing, simulation, evidence, bridge, _ORIGIN_NS)  # type: ignore[arg-type]
+        lanes = transfer_lanes(timing, simulation, evidence, bridge, _ORIGIN_NS)  # type: ignore[arg-type]
         (record,) = lanes["fetch"].records
         assert record.triggered_by == "execution_000000"
         assert record.start_delta_seconds == 0.0
@@ -163,7 +164,7 @@ def test_an_overflowed_trace_joins_no_transfer() -> None:
         RuntimeTraceEventKind.TRANSFER_DISPATCHED, timestamp_ns=_ORIGIN_NS
     )
     timing, simulation, evidence, bridge = _one_fetch((dispatch,), overflow=True)
-    lanes = _transfer_lanes(timing, simulation, evidence, bridge, _ORIGIN_NS)  # type: ignore[arg-type]
+    lanes = transfer_lanes(timing, simulation, evidence, bridge, _ORIGIN_NS)  # type: ignore[arg-type]
 
     (record,) = lanes["fetch"].records
     assert record.triggered_by == "execution_000000"
@@ -176,7 +177,7 @@ def test_an_overflowed_trace_joins_no_transfer() -> None:
     assert (summary.transfers, summary.measured_transfers) == (1, 0)
     assert summary.effective_bandwidth_bytes_per_second is None
 
-    step = _build_step_summary(
+    step = build_step_summary(
         SimpleNamespace(
             timeline=None,
             dispatch_call_started_ns=0,

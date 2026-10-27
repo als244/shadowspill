@@ -457,6 +457,17 @@ def _diagnostics() -> dict:
             "lane_finished_at_seconds": finished,
         }
 
+    def transfer(sequence: int, started: float, finished: float) -> dict:
+        interval = _selection()["simulation_result"]["transfer_intervals"][sequence]
+        return {
+            "sequence": sequence,
+            "alias_group_id": interval["alias_group_id"],
+            "transfer_id": f"{interval['direction']}_{sequence}",
+            "triggered_by": interval["trigger_task_id"],
+            "bytes": interval["bytes"],
+            "lane": lane(started, finished),
+        }
+
     return {
         "summary": {"simulator_makespan_seconds": 10.0},
         "tasks": {
@@ -479,11 +490,11 @@ def _diagnostics() -> dict:
         },
         "transfers": {
             "fetch": {
-                "fetch_0": {"sequence": 0, "lane": lane(0.0, 0.8)},
-                "fetch_1": {"sequence": 1, "lane": lane(0.0, 0.7)},
-                "fetch_3": {"sequence": 3, "lane": lane(3.0, 3.9)},
+                "fetch_0": transfer(0, 0.0, 0.8),
+                "fetch_1": transfer(1, 0.0, 0.7),
+                "fetch_3": transfer(3, 3.0, 3.9),
             },
-            "evict": {"evict_2": {"sequence": 2, "lane": lane(2.0, 2.6)}},
+            "evict": {"evict_2": transfer(2, 2.0, 2.6)},
         },
     }
 

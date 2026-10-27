@@ -24,8 +24,7 @@ How to use the system and how to read what it produces.
 
 ## API reference
 
-Every public symbol, its arguments and its result, one page per layer,
-ordered outward from the framework-neutral layer to the PyTorch frontend.
+Entry points and contracts, grouped by responsibility.
 
 - [Framework-neutral Python APIs](api/neutral.md)
 - [Reusable planning artifacts](api/artifacts.md)
@@ -37,9 +36,10 @@ ordered outward from the framework-neutral layer to the PyTorch frontend.
 - [Timing: the step on the device clock](api/timing.md)
 
 The phase entrypoints are imported from `shadowspill`: builders, measurement,
-profile application, planning, artifact classes, Executor and Trainer. The older
-entrypoints in `shadowspill.memory` and `shadowspill.pytorch` remain during
-repository caller migration. `shadowspill.training` supplies training-loop tools.
+profile application, planning, artifact classes, Executor and Trainer.
+`shadowspill.memory` supplies pool configurations; `shadowspill.pytorch` supplies
+build policies and low-level integration. `shadowspill.training` supplies
+training-loop tools.
 `shadowspill.ssd` and `shadowspill.network` configure additional spill storage.
 The lower-level packages `shadowspill.ir`,
 `shadowspill.step`, `shadowspill.task`, `shadowspill.store`,

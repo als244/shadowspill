@@ -8,7 +8,8 @@ import torch
 from shadowspill.artifacts.device import require_compiled_device
 from shadowspill.artifacts.plan import Plan
 from shadowspill.runtime import Runtime
-from shadowspill.runtime.plan import RuntimeBridge, clear_tasks
+from shadowspill.runtime.plan.admission import clear_tasks
+from shadowspill.runtime.plan.bridge import RuntimeBridge
 from shadowspill.runtime.plan.lifecycle import (
     PlanMemory,
     abort_plan,

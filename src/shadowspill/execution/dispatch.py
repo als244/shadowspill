@@ -14,8 +14,8 @@ from shadowspill.pytorch.runtime_adapter.boundaries import (
     before_task_and_acquire,
     wait_task_allocations,
 )
-from shadowspill.runtime.plan import abort_task
 from shadowspill.runtime.plan.annotations import TaskBoundaryAnnotations
+from shadowspill.runtime.plan.bridge import abort_task
 
 from .admission import BoundTask
 from .controls import Controls

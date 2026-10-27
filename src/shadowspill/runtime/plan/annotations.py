@@ -1,9 +1,8 @@
-"""Default-off task ranges shared by saved and older execution paths."""
+"""Optional backend ranges for saved-plan execution."""
 
 from contextlib import AbstractContextManager, nullcontext
 
 from .bridge import RuntimeBridge
-from .report import profile_range_begin, profile_range_end, set_profiler_annotations
 
 
 class TaskBoundaryAnnotations:
@@ -53,3 +52,32 @@ class _EnabledRange(AbstractContextManager[None]):
 
     def __exit__(self, *exc: object) -> None:
         profile_range_end(self._bridge, self._range_id)
+
+
+def profile_range_begin(bridge: RuntimeBridge, name: str) -> int:
+    """Open one optional backend-backed profiling range."""
+
+    return int(
+        bridge.runtime_library.shadowspill_profiler_range_begin(
+            bridge.runtime._runtime_handle, name.encode("utf-8")
+        )
+    )
+
+
+def profile_range_end(bridge: RuntimeBridge, range_id: int) -> None:
+    """Close a range returned by :meth:`profile_range_begin`."""
+
+    bridge.runtime_library.shadowspill_profiler_range_end(
+        bridge.runtime._runtime_handle, range_id
+    )
+
+
+def set_profiler_annotations(bridge: RuntimeBridge, enabled: bool) -> None:
+    """Toggle backend annotations without changing runtime tracing."""
+
+    bridge.require(
+        bridge.runtime_library.shadowspill_profiler_annotations_set(
+            bridge.runtime._runtime_handle, enabled
+        ),
+        f"{'enable' if enabled else 'disable'} profiler annotations",
+    )

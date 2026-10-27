@@ -1,8 +1,7 @@
 """Separate measured host copies, collectives, and unresolved transfer time.
 
-A composite lane interval is not a memcpy measurement. Historical captures
-can locate NCCL work, but their remaining time stays unresolved. New captures
-also bracket the host copy inside transformed transfers with device events.
+A composite lane interval is not a memcpy measurement. Device events bracket
+host copies and collectives separately; missing times remain unresolved.
 """
 
 from collections.abc import Mapping
@@ -15,7 +14,7 @@ from .timeline import copy_only, match_parts, regions
 
 def transfer_phase_data(
     program: Mapping[str, Any], diagnostics: Mapping[str, Any]
-) -> dict[str, Any] | None:
+) -> dict[str, Any]:
     """Return timeline regions and payload/rate summaries on the device clock.
 
     Parent bytes are context, never added to individual operation totals. A
@@ -23,12 +22,11 @@ def transfer_phase_data(
     explicit copy events. Missing events remain a gray, unpriced region.
     """
 
-    # Older/minimal diagnostics may retain only sequence and lane clocks.
-    # Keep the original composite view rather than inventing ownership/bytes.
     for direction in ("fetch", "evict"):
         for transfer in diagnostics.get("transfers", {}).get(direction, {}).values():
-            if not {"alias_group_id", "transfer_id", "bytes"} <= transfer.keys():
-                return None
+            missing = {"alias_group_id", "transfer_id", "bytes"} - transfer.keys()
+            if missing:
+                raise ValueError(f"{direction} transfer is missing {sorted(missing)}")
     aliases = {a["alias_group_id"]: a for a in program.get("alias_groups", ())}
     ledger = diagnostics.get("collectives") or {}
     copy_ledger = ledger.get("host_copies") or {}

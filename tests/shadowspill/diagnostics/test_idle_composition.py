@@ -12,7 +12,7 @@ from dataclasses import fields
 
 import pytest
 
-from shadowspill.diagnostics.collection import _idle_composition
+from shadowspill.diagnostics.collection.summary import _idle_composition
 from shadowspill.diagnostics.step import TaskRecord
 
 

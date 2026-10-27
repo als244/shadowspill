@@ -102,13 +102,12 @@ PyTorch or install the execution allocator.
 | `execution/` | Saved-plan setup, storage, bounded initialization/export and dispatch. |
 | `training/`, `checkpoint/` | Trainer, schedules and checkpoint helpers above Executor. |
 | `reporting/` | CPU reports from saved planning results. |
-| `pytorch/` | Retained PyTorch compiler/adapter internals, including export, AOT graph pairs, storage contracts and saved-code restoration. |
+| `pytorch/` | PyTorch capture, AOT graph pairs, storage contracts, kernel choices, saved-code restoration and runtime adapters. |
 | `ir/`, `planner/`, `simulator/`, `runtime/` | Framework-neutral IR and native-library interfaces. |
 
-Caller migration is still in progress. Some older preparation APIs and Trainer
-backends remain for their unmigrated callers. They are removal targets, not a
-second recommended public pipeline. Detailed older compiler/runtime pages may
-name those internal artifacts; the phase API page is the current entry point.
+Recipes, quickstart and qualification runners compose the same public phases.
+Low-level IR and runtime APIs support tooling; they do not provide a separate
+model-preparation path.
 
 ## Planning and memory ownership
 

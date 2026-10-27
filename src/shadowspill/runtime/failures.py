@@ -468,17 +468,6 @@ def wait_allocator_idle(
     return f"the runtime did not become idle during {problem}: {detail}"
 
 
-def raise_if_allocator_failed(library: Any, operation: str) -> None:
-    """Raise a latched allocator failure before issuing dependent device work."""
-
-    diagnostics = read_allocator_failure(library, operation)
-    if diagnostics is None:
-        return
-    if diagnostics.is_allocator_oom:
-        raise allocator_oom_error(diagnostics)
-    raise generic_runtime_error(diagnostics)
-
-
 def _allocation_operation_name(value: int) -> str:
     return _ALLOCATION_OPERATIONS.get(value, f"unknown_{value}")
 
@@ -489,6 +478,5 @@ __all__ = [
     "RuntimeFailureDiagnostics",
     "allocator_oom_error",
     "generic_runtime_error",
-    "raise_if_allocator_failed",
     "read_allocator_failure",
 ]

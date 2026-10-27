@@ -10,7 +10,7 @@ from shadowspill.runtime.abi import ObjectBinding
 from shadowspill.runtime.failures import RuntimeExecutionError
 
 if TYPE_CHECKING:
-    from shadowspill.runtime.plan import RuntimeBridge
+    from shadowspill.runtime.plan.bridge import RuntimeBridge
 
 
 def acquire_for_caller(

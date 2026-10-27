@@ -11,7 +11,7 @@ from shadowspill.artifacts.plan import Plan
 from shadowspill.artifacts.tensors import tensor_geometry
 from shadowspill.ir import MemoryLocation
 from shadowspill.parallelism.views import owned_view_offsets
-from shadowspill.runtime.plan import RuntimeBridge
+from shadowspill.runtime.plan.bridge import RuntimeBridge
 
 from .host_values import HostValues
 from .spill import SpillStorage

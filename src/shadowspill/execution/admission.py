@@ -10,15 +10,17 @@ from shadowspill.communication.contracts import collective_measurement
 from shadowspill.planning.admission.outputs import output_bindings_for_entrypoints
 from shadowspill.profiling.records import measured_task
 from shadowspill.pytorch.executable import restore_executable
-from shadowspill.runtime.plan import (
-    RuntimeBridge,
-    TaskMemoryEnvelope,
-    TaskPublication,
-    actions_by_task,
+from shadowspill.runtime.plan.admission import (
     admit_caller_acquisition,
     admit_fixed_layout,
     admit_task,
     seal_fixed_layout,
+)
+from shadowspill.runtime.plan.bridge import RuntimeBridge
+from shadowspill.runtime.plan.common import (
+    TaskMemoryEnvelope,
+    TaskPublication,
+    actions_by_task,
 )
 from shadowspill.runtime.plan.envelopes import task_memory_envelope
 from shadowspill.runtime.plan.layout import project_runtime_fixed_layout

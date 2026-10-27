@@ -14,11 +14,8 @@ from shadowspill.pytorch.runtime_adapter.boundaries import (
     after_task_and_update,
     before_task_and_acquire,
 )
-from shadowspill.runtime.plan import (
-    abort_task,
-    admit_task,
-    clear_tasks,
-)
+from shadowspill.runtime.plan.admission import admit_task, clear_tasks
+from shadowspill.runtime.plan.bridge import abort_task
 
 
 def roundtrips(state, groups):

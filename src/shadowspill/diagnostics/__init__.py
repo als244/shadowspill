@@ -5,9 +5,8 @@ read against, what the allocator did, and what the runtime observed. Every
 number in it is seconds or bytes, so reading a step back needs no framework --
 the frontend measures, and this is what the measurement became.
 
-Reading the device's timing events *is* the frontend's, in
-the frontend's diagnostics, because the events are the framework's own
-objects and only it can ask them what they recorded.
+Executor records optional device markers and runtime events. `collection/` joins
+them with the selected simulation; it does not change task execution or costs.
 """
 
 from .step import StepDiagnostics, StepTimingSummary, Timelines

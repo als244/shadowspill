@@ -12,12 +12,9 @@ from shadowspill.pytorch.runtime_adapter.outputs import (
     acquire_for_caller,
     transfer_outputs_to_caller,
 )
-from shadowspill.runtime.plan import (
-    RuntimeBridge,
-    TaskMemoryEnvelope,
-    abort_task,
-    encode_task,
-)
+from shadowspill.runtime.plan.admission import encode_task
+from shadowspill.runtime.plan.bridge import RuntimeBridge, abort_task
+from shadowspill.runtime.plan.common import TaskMemoryEnvelope
 from shadowspill.task.profiles import (
     TaskAllocationContract,
     TaskAllocationEvent,

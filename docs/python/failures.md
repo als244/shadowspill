@@ -1,11 +1,9 @@
 # Errors, failures, and cleanup
 
-The detailed callable/store lifecycle below covers the model-based frontend
-still used by some integrations. For saved-plan execution and its ownership
-boundaries, see [Trainer and Executor](api/training.md). The saved-phase behavior
-is summarized first.
+Build, measurement, planning and execution have separate ownership and failure
+boundaries. See [Trainer and Executor](api/training.md) for normal usage.
 
-## Saved phase failures
+## Preparation failures
 
 The [phase APIs](../architecture/offline-pipeline.md) separate preparation from
 execution. Build and measurement use ordinary allocations, while planning uses
@@ -27,19 +25,6 @@ A valid build/profile/plan can follow a recoverable failure in the same process.
 Execution still starts in a fresh worker through `Executor`; a failed device
 context is not made reusable merely by catching an exception. Preparation does
 not transfer ownership of the caller's model tensors to an execution pool.
-
-## Model-based frontend lifecycle
-
-ShadowSpill fails closed at the boundary that can still explain the problem.
-Capture, compilation, profiling, planning, admission, input validation, and
-execution therefore have distinct exception types. A failed allocator request
-is never returned to a kernel as a null pointer.
-
-Normal applications do not need an exception wrapper merely to keep
-ShadowSpill safe. Planning rolls back partial state before it raises, and a
-planned callable closes itself when execution fails. Applications may still
-catch an exception when they have an operational recovery policy, but cleanup
-does not depend on doing so.
 
 ## Exception taxonomy
 
@@ -64,11 +49,10 @@ during planning. The runtime exceptions come from `shadowspill.runtime`.
 | Call input validation | `InputGuardError` | Runtime inputs differ from the fixed planning template. No task has run and no state was mutated. |
 | Planned execution | `RuntimeExecutionError` | The runtime, allocator, worker, or a task-specific execution contract rejected the step. |
 
-Everything from `CaptureError` down to `ObjectiveError` derives from
-`PlanningError`, so a caller that only wants "planning did not produce a plan"
-catches that one. Two nestings inside it are worth knowing: `CompilationError`
-and `ProfilingError` share `TaskPhaseError`, and `PlanInfeasibleError` derives
-from `AdmissionError`, so catching admission also catches infeasibility.
+`PlanningError` covers capture, compilation, measurement, admission, search
+and objective failures. `CompilationError` and `ProfilingError` share
+`TaskPhaseError`; `PlanInfeasibleError` derives from `AdmissionError`.
+Input validation, store misses and execution failures are outside this hierarchy.
 One admission failure is outside this table: `shadowspill.planner.admission.physical` raises `PhysicalAdmissionError`, a `ValueError`, when a budget's headroom leaves nothing to admit. That is the standalone helper documented on [the neutral API page](api/neutral.md#physical-admission); planning calls it and reports what it found as the `AdmissionError` above.
 
 `InputGuardError` is deliberately outside the hierarchy — it is a `ValueError`
@@ -83,27 +67,15 @@ when the failing task is known. `PlanInfeasibleError` retains the failure
 the search evidence behind the refusal. Both refusals are recorded in the
 planning store under the key the plan would have had, and the next request for
 that plan, made with no plan to beat in hand, raises the recorded refusal again
-without searching; see [the artifact store](artifact-store.md#internal-content-addressed-store). The original PyTorch exception remains
-the cause, so its traceback identifies the operator and model code that led to
-a capture or compilation failure.
+without searching; see [the artifact store](artifact-store.md#internal-content-addressed-store). Capture and task-phase failures preserve the original provider exception as
+the cause, so its traceback identifies the failing operation.
 
-## Planning failures
+## Planning and worker admission
 
-The phases have independent ownership:
-
-```text
-build -> Program
-measure_program -> Profiles
-apply_profiles -> ProfiledProgram
-plan_program -> Plan
-Executor -> admitted runtime resources
-```
-
-Build and profiling use no runtime pools. CPU planning cannot leave a partially
-admitted runtime behind. Each function either returns its complete artifact or
-raises; an unsuccessful sweep case records its diagnostics and continues.
-Executor construction creates and admits resources in its fresh worker and
-cleans up partial setup on failure.
+Each phase returns its complete artifact or raises. An unsuccessful sweep case
+records its diagnostics and continues. CPU planning admits no runtime resources;
+Executor construction creates and admits them in a fresh worker and cleans up
+partial setup on failure.
 
 `PlanInfeasibleError` is a negative feasibility result. `PlanSearchExhaustedError`
 means a bounded search did not establish a result. Neither returns a partial

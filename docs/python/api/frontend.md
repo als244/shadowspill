@@ -149,7 +149,7 @@ Unsupported pool or route combinations fail during runtime construction or
 plan resolution.
 
 `Runtime` owns the installed allocator, the initialized `MemoryPool` and
-route registries, transfer calibration, the active callable count, the
+route registries, transfer calibration, pending and admitted plan handles,
 registered runtime objects, and the latest failure. Its public properties are
 `pools` (name to `MemoryPool`), `routes` (name to `RuntimeRoute`),
 `transfer_capabilities` (a `TransferCapabilities` matrix of `TransferProfile`
@@ -185,8 +185,8 @@ publishes fixed effective rates for planning. Smaller probes reduce setup I/O
 but may change the estimate; they do not change lane chunk sizes. See
 [calibration](../../architecture/transfers.md#calibration).
 
-`Runtime.close()` verifies that no planning, callable, persistent imported
-state, public object reference, or caller-owned device output remains, then
+`Runtime.close()` verifies that no pending plan setup, admitted plan, public
+object reference, or caller-owned device output remains, then
 tears the runtime down as [memory
 runtime](../../architecture/memory-runtime.md#failure-and-teardown) describes.
 Release or copy ordinary device outputs before this call. PyTorch's
@@ -239,10 +239,11 @@ resolves `object_id` against it.
 `origin` names the scope rather than numbering it, and names the plan first,
 because a task id is plan-local -- task 1112 exists in every plan, so the pair is
 the identity and neither half is one on its own. It reads `plan 7 task 1112` for
-a task of the program; `plan 7 profiling scope #40`, `runtime object`,
-`materialization task` or `initial actions` for the synthetic scopes, whose ids
-sit far above any task and would read as noise as bare numbers; and `no scope`
-for a range no scope made.
+a task of the program, and `no scope` for an unscoped allocation. Low-level
+allocator probes and runtime objects also have named synthetic scopes
+(`profiling scope`, `runtime object`, `initial actions`). These support native
+allocator tests and direct runtime callers; ordinary `measure_program` does
+not use the execution allocator.
 
 `unclaimed_scope_workspace` is workspace a scope made that nobody took ownership
 of. Not every range a scope made is the scope's to reclaim: one promoted out to a
@@ -347,6 +348,6 @@ runtime trace. See [execution](training.md).
 ## Build and measurement policies
 
 `PartitionPolicy` supplies custom stage boundaries to the public builders;
-`PartitionSpec` describes the resulting stages. `measure_program` accepts
+`PartitionSpec` is the accepted partition policy type. `measure_program` accepts
 `warmup_seconds` and `measure_seconds` directly. These phases do not create
 runtime pools. See [the build phase](../../architecture/offline-pipeline.md).

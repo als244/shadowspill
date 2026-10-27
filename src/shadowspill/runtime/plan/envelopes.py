@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from shadowspill.runtime.plan import TaskMemoryEnvelope
+from shadowspill.runtime.plan.common import TaskMemoryEnvelope
 from shadowspill.task.allocations import TaskAllocationOperation
 from shadowspill.task.profiles import TaskMeasurement
 

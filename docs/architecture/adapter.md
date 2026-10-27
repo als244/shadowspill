@@ -19,14 +19,9 @@ policy: no planning, no pools, routes or lanes of its own, no provider code.
 Anything reachable with the runtime handle it publishes is called on the
 neutral library instead.
 
-**It is also the only C++ in the tree, and only barely.** ShadowSpill is C;
-libtorch's headers are C++, so a translation unit that includes them must be
-too. Three files in this directory do -- the allocator's exception wrapper and
-the two storage files -- and everything else here, including the bootstrap that
-builds the runtime's pools, routes and lanes, is C like the rest.
-
-That boundary is not free, because those three files include
-`shadowspill/runtime.h` and so compile every header the umbrella pulls in as
+The allocator exception wrapper and storage operators use C++ because libtorch
+requires it. Bootstrap, task scopes and the neutral runtime remain C. Public
+headers included through `shadowspill/runtime.h` must therefore also compile as
 C++. Anything in that set must therefore stay valid C++, which rules out
 `_Atomic`. Where a header's contents are of no use to a caller -- a layout only
 an implementation needs -- the answer is to keep it out of the umbrella rather
@@ -37,7 +32,7 @@ question, and the rule it set.
 
 ```text
 torch allocator hooks     objects and storage views     task boundaries
- (malloc / free /          (import, export, bindings,     (before_task,
+ (malloc / free /          (acquisition, publication,     (before_task,
   record_stream)            storage validation)            after_task, traces)
           \                        |                          /
            +------------  shadowspill_pytorch  ------------+
@@ -51,9 +46,9 @@ torch allocator hooks     objects and storage views     task boundaries
   runtime's device pool, so every tensor the framework creates on the
   accelerator is a runtime allocation with an identity the plan can reason
   about.
-- **Objects and storage** import model state into pools, publish bindings for
-  a plan, and validate that PyTorch storage views match the objects they
-  claim.
+- **Objects and storage** create views over runtime leases, acquire task inputs,
+  publish task outputs and validate storage identity. Executor fills persistent
+  tensor buffers through its bounded loading interface.
 - **Task boundaries** wrap each compiled task with the runtime's readiness and
   completion protocol, and open the runtime's profiler ranges and timing
   markers around it.
@@ -73,7 +68,9 @@ directory saying what it holds, one file per concern.
   allocations it made, and what actually releases one, is [what a scope owes
   when it ends](task-boundaries.md#what-a-scope-owes-when-it-ends).
 - `storage/` — PyTorch storages over runtime leases: the C primitives, and
-  the torch operators over them, one file per dispatch key.
+  the torch operators over them. `cpu.cpp` exposes bounded host views;
+  `device/` separates acquisition, publication, replacement views and caller
+  ownership. `sharded.cpp` supplies distributed transfer callbacks.
 - `internal.h` and `adapter.c` at the top: the one process-global instance
   PyTorch's callback signature forces, and the calls that describe the
   process. Profiler ranges are not here — the runtime owns them, and every

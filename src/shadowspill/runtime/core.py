@@ -85,14 +85,13 @@ class Runtime:
 
     Accelerator allocator selection is process-global and irreversible after
     the framework initializes the accelerator. Construct exactly one ``Runtime``
-    before any device allocation the framework makes, then pass it to every
-    Executor construction.
+    before any device allocation the framework makes. Executor performs this
+    setup and shares its runtime across its admitted Plans.
 
     The current backend supports one device pool plus configured spill pools
     (pinned host, remote memory or SSD). Pools and directed routes have explicit
-    identities; each admitted
-    callable independently selects its execution/spill pool pair and matching
-    routes.
+    identities; each admitted plan selects its execution/spill pool pair and
+    matching routes.
 
     By default, initialization discovers the device's host NUMA node, narrows
     existing process-thread CPU masks to permitted local CPUs, and prefers

@@ -8,7 +8,7 @@ from qualification.pipeline.observe import Observe
 from qualification.pipeline.state import initialize, load_inputs
 from qualification.runtime_evidence import check_physical_budget
 from shadowspill import Executor, Plan
-from shadowspill.runtime.plan import set_profiler_annotations
+from shadowspill.runtime.plan.annotations import set_profiler_annotations
 
 from .baseline import regression_comparison
 from .phases import measure_groups, optimizer_steps, warm_step

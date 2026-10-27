@@ -249,7 +249,7 @@ class LaneSummary:
     #: Lane time the simulator priced for the scheduled transfers.
     simulated_busy_seconds: float
     #: How many transfers carry a stream interval, and the lane time those
-    #: intervals add up to. This legacy effective-bandwidth field counts host
+    #: intervals add up to. The effective-bandwidth field counts host
     #: copy payload bytes over complete lane time, including collective phases
     #: in sharded transfers. It is not PCIe bandwidth or full-object throughput.
     measured_transfers: int

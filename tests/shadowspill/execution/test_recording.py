@@ -8,8 +8,8 @@ import pytest
 import shadowspill.execution.recording.timing as timing_module
 import shadowspill.runtime.plan.annotations as annotations_module
 from shadowspill.execution.recording.timing import ExecutionTiming
-from shadowspill.runtime.plan import TraceCapacities
 from shadowspill.runtime.plan.annotations import TaskBoundaryAnnotations
+from shadowspill.runtime.plan.tracing import TraceCapacities
 from tests.shadowspill.runtime._timing import TimingLibrary, install
 
 _CAPACITIES = TraceCapacities(events=1, allocation_events=1)

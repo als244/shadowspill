@@ -9,7 +9,7 @@ from shadowspill.memory import DevicePool, PinnedHostPool, SpillPool, TransferRo
 from shadowspill.pytorch.frontend import PyTorchFrontend
 from shadowspill.pytorch.toolchain import build_setup
 from shadowspill.runtime import Runtime
-from shadowspill.runtime.plan import RuntimeBridge
+from shadowspill.runtime.plan.bridge import RuntimeBridge
 from shadowspill.runtime.plan.lifecycle import PlanMemory, begin_plan
 
 

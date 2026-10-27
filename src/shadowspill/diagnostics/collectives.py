@@ -80,7 +80,7 @@ class CollectiveTrace:
     errors: int = 0
     missing_timings: int = 0
     records: tuple[CollectiveRecord, ...] = ()
-    # None distinguishes historical captures that did not measure copy phases.
+    # None means host-copy observation was not enabled for this capture.
     host_copies: HostCopyTrace | None = None
 
     @property

@@ -26,7 +26,7 @@ cache to replace an incompatible AOT entry, and removes that directory afterward
 
 ## Internal content-addressed store
 
-`shadowspill.store.ArtifactStore` supports lower-level capture/profiling adapters
+`shadowspill.store.ArtifactStore` supports reusable graph-pair/optimizer capture
 and planner experiments. It is an optional cache, not a phase handoff mechanism.
 The public phase APIs do not require an ArtifactStore.
 
@@ -44,8 +44,8 @@ artifact_store/v<N>/
 ```
 
 Entries use `<kind>/<digest[:2]>/<digest>/...`. Identity includes the inputs
-that affect the result: graph structure, compilation choices, measurement setup,
-or planning budgets and communication costs. Planner worker count affects wall
+that affect the result: graph structure, capture policies, task costs,
+planning budgets and communication assumptions. Planner worker count affects wall
 clock time, not the planning identity. Files use schema strings derived from
 `shadowspill.schema.ARTIFACT_VERSION`; incompatible schemas are rejected.
 

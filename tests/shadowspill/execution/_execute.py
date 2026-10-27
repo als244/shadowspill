@@ -7,7 +7,7 @@ from pathlib import Path
 import pytest
 import torch
 import triton
-from torch.utils._pytree import tree_map
+from torch.utils._pytree import tree_flatten, tree_map
 
 from shadowspill import Plan
 from tests.shadowspill.execution._cold import forbid_preparation
@@ -54,6 +54,17 @@ def fill(request, chunk):
 
 def cpu(value):
     return tree_map(lambda t: t.cpu() if isinstance(t, torch.Tensor) else t, value)
+
+
+def assert_outputs(actual, expected):
+    actual_leaves, actual_spec = tree_flatten(cpu(actual))
+    expected_leaves, expected_spec = tree_flatten(expected)
+    assert actual_spec == expected_spec
+    for value, reference in zip(actual_leaves, expected_leaves, strict=True):
+        if isinstance(reference, torch.Tensor):
+            torch.testing.assert_close(value, reference)
+        else:
+            assert type(value) is type(reference) and value == reference
 
 
 def assert_state(executor, state):
@@ -163,9 +174,9 @@ for index, (outputs, state) in enumerate(oracle["expected"]):
     )
     if oracle.get("host_metrics"):
         assert all(metric["bounds"].device.type == "cpu" for metric in result.metrics)
-    torch.testing.assert_close(cpu(actual_outputs), outputs)
+    assert_outputs(actual_outputs, outputs)
     if previous is not None:
-        torch.testing.assert_close(cpu(previous), previous_value)
+        assert_outputs(previous, previous_value)
     if isinstance(result, dict) and "view" in result:
         assert (
             result["input"].untyped_storage()._cdata
@@ -204,8 +215,8 @@ if plan.program.bindings["kind"] == "forward":
     second = executor.run(input_loader=lambda i: oracle["examples"][i])
     assert first.resolved
     queued = oracle.get("queued_outputs", [oracle["expected"][-1][0]] * 2)
-    torch.testing.assert_close(cpu(first.result()), queued[0])
-    torch.testing.assert_close(cpu(second.result()), queued[1])
+    assert_outputs(first.result(), queued[0])
+    assert_outputs(second.result(), queued[1])
     del first, second
 with pytest.raises(Exception, match="caller-owned device outputs"):
     executor.close()

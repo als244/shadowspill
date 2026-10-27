@@ -37,10 +37,11 @@ from .common import (
     plan_local_id,
     runtime_action,
 )
-from .report import describe_pool_occupants, statistics
+from .occupancy import describe_pool_occupants
+from .tracing import statistics
 
 if TYPE_CHECKING:
-    from . import RuntimeBridge
+    from .bridge import RuntimeBridge
 
 
 @dataclass(slots=True)
@@ -159,8 +160,7 @@ def admit_fixed_layout(bridge: RuntimeBridge, layout: RuntimeFixedLayout) -> Non
         dependencies=dependencies if layout.dependencies else None,
         dependency_count=len(layout.dependencies),
     )
-    # The slabs planning borrowed go back where they were before anything is
-    # reserved for good -- this layout's own slab, or a place in another's.
+    # Reserve the saved layout in its own arena or an admitted shared arena.
     if bridge.slab_owner is None:
         status = int(
             bridge.runtime_library.shadowspill_plan_admit_fixed_layout(

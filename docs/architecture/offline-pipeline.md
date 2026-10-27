@@ -1,8 +1,10 @@
 # Independent build, profile and planning phases
 
-The refactor is being implemented in phases. The CPU path, builders and
-ordinary-allocator GPU measurement and initial saved-plan execution work; caller
-migration is still in progress on `codex/offline-pipeline-refactor`.
+Build defines tasks, measurement supplies reusable evidence, CPU planning chooses
+a schedule, and a fresh Executor worker runs it. Saved artifacts connect these
+phases; Trainer and quickstart compose the same APIs.
+
+## CPU planning from saved artifacts
 
 ```python
 from shadowspill import (
@@ -38,8 +40,10 @@ plain numeric task durations and unresolved workspace sizes for one setup.
 An explicit zero is valid; a missing workspace or runtime/provider overhead is
 an error, not zero. Known compiler memory is retained as a lower bound.
 
-The forward builder already separates export, partition, compilation and lowering
-from timing and runtime pools:
+## Build
+
+The builders separate export, partition, compilation and lowering from task
+timing and runtime pools:
 
 ```python
 from shadowspill import build_forward
@@ -127,6 +131,8 @@ gradient conversion and write-back to compute weights, so those costs and
 allocations are profiled and planned. Build does not modify the supplied model
 or optimizer.
 
+## Profile overrides
+
 ```python
 from shadowspill import TaskProfile
 
@@ -142,6 +148,8 @@ so this timing override preserves existing memory information. Supplied values
 without classification metadata are estimates. Task compatibility and setup
 mismatches are errors. Changes to editable Profiles never alter an already
 created ProfiledProgram or Plan.
+
+## Communication
 
 Explicit latency is charged as a transfer phase. Concurrent fetch/evict rates
 default to independent full-duplex lanes; callers can provide different rates.
@@ -164,8 +172,10 @@ not install the execution allocator. Its memory bound also includes backend stag
 and alignment slack. Build, task profiling and planning have no spill setting.
 Pool capacity must equal the saved Plan's spill budget at execution. Initializers,
 controls and checkpoint export use bounded byte-range access on every backend.
-Compound weight/gradient-shard transfers currently require pinned-host spill;
-SSD image adoption is still limited to the low-level image tools.
+Compound weight/gradient-shard transfers use the selected spill backend;
+non-addressable storage uses bounded staging. Each distributed worker owns its
+own spill pool. Remote pools may share a server endpoint while owning separate
+server allocations.
 
 `measure_communication(program=program, rank_map=..., device=...)` derives
 collective probes from saved transfer geometry. With multiple workers, initialize
@@ -212,8 +222,6 @@ Derived requests cover lowered weight fetches, gradient completion and update
 publication tasks. Model-owned communication requires its own lowering before
 automatic derivation is supported. Exact observed collective timings do not infer
 a general scale-up/out rate or overlapping-group contention.
-CPU/Gloo coordination, single-GPU copies and two-H100 NCCL calibration have
-hardware checks. Calibration and saved-plan execution have separate tests.
 
 CommunicationInfo also owns communication memory evidence. Each collective row
 can contain a `memory` mapping with `workspace_bytes`, `memory_kind` and per-rank
@@ -259,10 +267,7 @@ execution.
 The runtime's existing task-boundary handshake acknowledges submission of queued
 collective transfers before the next explicit task is dispatched. Within a batch,
 collective evictions precede collective fetches, independent of event polling.
-This is a host submission-order guarantee, not a GPU completion wait. A native
-mock-backend test verifies interleaving under delayed callbacks while GPU work
-remains gated. Native two-H100 transfer tests cover FP32/BF16 gradient spill and
-restore; the saved Executor has a separate end-to-end test.
+This guarantees host submission order without waiting for GPU completion.
 
 Distributed workers initialize CPU rendezvous before constructing Executor. Each
 worker loads the same Plan and supplies the same complete launcher-to-logical-rank
@@ -287,9 +292,10 @@ finally:
     dist.destroy_process_group()
 ```
 
-The initial training integration uses symmetric DP with weights, gradients and
-optimizer data sharded over the same groups. Other ownership combinations and
-model-owned communication still require their lowering/binding implementation.
+Distributed execution requires symmetric local programs. Common DP supports
+sharded and replicated parameter storage; differing nontrivial storage groups
+require redistribution support. Model-owned communication requires compatible
+operators and resource bindings; declaring a group alone does not rewrite it.
 Tensor loaders/exporters see original tensor geometry, global element offsets,
 and the worker's owned region. Checkpoint helpers save one archive per logical
 rank; callers supply distinct paths. A checkpoint rejects the wrong logical rank
@@ -312,6 +318,8 @@ Profiling includes per-resource library capacity in fixed memory, and the saved
 setup records the BLAS backend and workspace settings. The cuBLAS/cuBLASLt bound
 is conservative when the libraries share a workspace.
 
+## Sweeps and persistence
+
 `sweep_programs({name: profiled_program, ...}, memory_budgets=[...],
 communication_info=...)` is an optional loop. It keeps every successful Plan,
 diagnostic failures, and a `best_per_budget` lookup. It does not construct or
@@ -325,6 +333,8 @@ directories are included. Reporting is explicit and separate from persistence.
 The native simulator currently records memory peaks rather than a complete
 allocation history. Reports therefore show peak-versus-capacity bars alongside
 the compute/transfer timeline; they do not invent a memory curve.
+
+## Task measurement
 
 `measure_program(program)` restores the finalized tasks on a representative GPU
 and returns a reusable Profiles collection. It uses PyTorch's ordinary native
@@ -367,8 +377,8 @@ remain an execution-qualification concern; they are not silently treated as zero
 
 Workspace totals permit logical simulation. They do **not** establish allocation
 order, storage handoffs, charged alignment, persistent provider allocations or
-the task code required for execution. Built Programs now contain packaged
-task code that has been tested in a fresh process with empty compiler caches.
+the task code required for execution. Built Programs contain packaged code
+for fresh workers; memory evidence must describe those exact implementations.
 With complete observed allocation evidence, planning also constructs a physical
 `memory_layout` entirely on CPU. It validates the saved traces against compiler
 storage contracts, allocates ranges, and includes dependencies needed for safe
@@ -378,12 +388,8 @@ Plan archive, with identities checked against its program and schedule.
 Estimated memory, missing code, or incomplete allocation evidence keep a Plan
 simulation-only, as reported by `simulation_only_reasons`. Inconsistent evidence
 is an error. Physical placement is necessary for execution but does not replace
-the worker's dependency, provider-resource and available-memory checks. The
-new saved-plan Executor now exercises these checks in a fresh worker. Its initial
-qualification covers small dense forward/backward/AdamW tasks, saved/recomputed
-stages, tied weights, bounded initialization/export and repeated calls. Runtime
-tensor hyperparameters and per-call gradient accumulation also work. General
-provider qualification and normal caller migration remain in progress.
+the worker's dependency, provider-resource and available-memory checks. Executor
+validates those requirements before using its admitted layout.
 
 Packaged tasks retain importable Python custom-op registration modules, their
 source digests and operator schemas. Measurement and execution restore/check
@@ -396,7 +402,7 @@ qualify these resources.
 Likewise, the registration digest is not a fingerprint of all transitive native
 libraries or proof that a provider's internal autotuning/resources are portable.
 
-For Python providers that use Triton's autotuner, build now runs each affected
+For Python providers that use Triton's autotuner, build runs each affected
 task with bounded representative inputs and records its selected configurations.
 Backward uses the corresponding forward's tensors. Kernel source, tuning keys
 and candidate configurations identify each selection, and selections contribute
@@ -410,29 +416,9 @@ Fixed kernels may compile lazily without selecting a different implementation.
 Other autotuner systems still need saved-choice support; resource initialization
 must not retune the finalized task. This does not certify arbitrary provider state.
 
-MLOps AdamW also passes cold-worker execution with BF16 compute weights, FP32
-gradients/masters/moments, CPU step counters, changing learning rates and
-checkpoint restore against independent PyTorch updates. Its fixed-block Triton
-kernel compiles lazily in an empty cache; this does not select a new algorithm,
-change the observed allocation requests, or recompile on subsequent updates.
-Such fixed provider compilation is allowed by the build contract. Separately,
-the tiny Qwen3.5 MoE LoRA recipe passes cold checkpoint resume with the FLA
-Triton choices finalized at build, including exact tensor and loss comparison.
-Neither check qualifies providers that recreate shared resources.
+See [repository structure](../development/repository.md) for implementation owners.
 
-Implementation ownership:
-
-- `artifacts/`: immutable phase results, editable profile collections, archive codec.
-- `build/`: model capture, finalized task packaging, static memory and lowering.
-- `profiling/apply.py`: CPU validation/application of supplied profiles.
-- `profiling/measure.py` and `profiling/observation/`: ordinary GPU measurement
-  and normalized allocator observations; separate from execution setup.
-- `planning/`: public CPU planning/sweep and capacity/cost conversion.
-- `communication/`: saved communication assumptions and standalone GPU calibration.
-- `reporting/`: semantic task/transfer tables and timeline/memory figures.
-- `ir/` and existing native planner/simulator: shared structural validation and engines.
-
-### Execution in a fresh worker
+## Execution in a fresh worker
 
 Load the saved Plan before constructing an Executor. The worker must not have
 initialized CUDA with another allocator. Build/measurement belong in a different
@@ -524,7 +510,7 @@ explicit model-side copies. TensorChunk includes stride and storage offset for
 loaders handling noncontiguous registrations; chunk offsets address physical
 storage rather than a flattened logical tensor.
 
-### Trainer over a saved Plan
+## Trainer over a saved Plan
 
 `Trainer(plan, ...)` runs in the same fresh execution worker as Executor. It does
 not accept a model, compile, profile, calibrate communication, or plan. The usual
@@ -590,11 +576,9 @@ model checkpoint conversion are separate from this full-resume path.
 
 Trainer runs saved `build_step` Plans and optional read-only evaluation sharing
 trained parameter storage. The [distributed regression recipe](../../workloads/recipes/regression/README.md)
-uses the same phase APIs, with separate collective calibration. Remaining
-model/prepare callers explicitly use the private preparation implementation until
-migrated; the public Trainer has only the saved-Plan API.
+uses the same phase APIs, with separate collective calibration.
 
-### Logical parallelism and distributed plans
+## Logical parallelism and distributed plans
 
 All builders accept `parallelism=Parallelism.dp(...)`. Omitting it describes one
 rank. The declaration contains no process groups or devices and survives saving
@@ -721,20 +705,17 @@ phase intervals. Summary `fetch_bytes`/`evict_bytes` include both legs, alongsid
 explicit host and collective byte totals. These totals count each direction's
 per-rank traffic, not a sum of both send and receive bandwidth.
 
-### Saved code and worker devices
+## Saved code and worker devices
 
 The current Inductor artifact format embeds a CUDA ordinal. Build records it;
 measurement and execution require the same process-local ordinal. In particular,
 setting `device=1` does not relocate code compiled for `cuda:0`. Device visibility
 can be arranged before CUDA initialization so separate workers each see their
-assigned physical GPU at ordinal zero. Older artifacts without the recorded
-binding can still be inspected/planned on CPU, but need rebuilding for execution.
-This limitation is separate from logical rank assignment.
+assigned physical GPU at ordinal zero. Execution requires the recorded compiler
+device binding. This limitation is separate from logical rank assignment.
 
 Worker-group binding preserves explicit logical membership order
 after applying the complete worker-to-logical-rank map and rejects inconsistent
-maps/Plan identities before backend group creation. CPU multi-process checks
-cover group ordering and SUM/reduce-scatter geometry. Separate two-GPU tests
-exercise complete build/profile/calibration/CPU-plan/fresh-execution paths,
-including odd-sized shards, repeated calls, checkpoint restore and shared
-evaluation. Primitive group checks alone do not establish runtime correctness.
+maps/Plan identities before backend group creation. Group validation alone does
+not establish provider correctness; each distributed backend needs qualification
+through complete build, measurement, calibration and fresh-worker execution.

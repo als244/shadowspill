@@ -1,4 +1,4 @@
-"""Phase exports, loaded only when requested during caller migration."""
+"""Low-level planning and search APIs, imported lazily for CPU tooling."""
 
 from importlib import import_module
 from typing import Any

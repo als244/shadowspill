@@ -26,13 +26,13 @@ from shadowspill.runtime.fixed_layout import (
     RuntimeFixedPlacement,
     RuntimePlacementKind,
 )
-from shadowspill.runtime.plan import (
-    RuntimeBridge,
-    TaskMemoryEnvelope,
+from shadowspill.runtime.plan.admission import (
     admit_fixed_layout,
     admit_task,
     seal_fixed_layout,
 )
+from shadowspill.runtime.plan.bridge import RuntimeBridge
+from shadowspill.runtime.plan.common import TaskMemoryEnvelope
 from shadowspill.runtime.plan.lifecycle import abort_plan, begin_plan
 from shadowspill.task.allocations import (
     TaskAllocationContract,

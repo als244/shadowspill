@@ -300,5 +300,5 @@ columns. `read_manifest` rejects recordings that did not complete.
 
 `resolution_recompute_fraction` is the exact recompute fraction among flexible
 groups, using the planner's resolution definition (for example `1/4`). The
-older `recompute_share` field counts all groups, including forced choices,
+`recompute_share` field counts all groups, including forced choices,
 and can therefore differ. Videos use the resolution fraction when available.

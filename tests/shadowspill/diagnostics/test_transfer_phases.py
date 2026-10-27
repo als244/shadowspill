@@ -166,10 +166,12 @@ def test_overlapping_collectives_report_sum_and_union_separately():
     assert result["summary"][0]["busy_ns"] == 700
 
 
-def test_legacy_records_without_payload_identity_retain_composite_view():
+@pytest.mark.parametrize("field", ["alias_group_id", "transfer_id", "bytes"])
+def test_transfer_records_require_payload_identity(field):
     program, diagnostics = fixture()
-    diagnostics["transfers"]["fetch"]["fetch_0"].pop("alias_group_id")
-    assert transfer_phase_data(program, diagnostics) is None
+    diagnostics["transfers"]["fetch"]["fetch_0"].pop(field)
+    with pytest.raises(ValueError, match=field):
+        transfer_phase_data(program, diagnostics)
 
 
 @pytest.mark.parametrize("operation,inputs,outputs", [

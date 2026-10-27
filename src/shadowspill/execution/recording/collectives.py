@@ -17,7 +17,7 @@ from shadowspill.diagnostics.collectives import (
 
 if TYPE_CHECKING:
     from shadowspill.diagnostics.timing import ArmedExecutionTiming
-    from shadowspill.runtime.plan import RuntimeBridge
+    from shadowspill.runtime.plan.bridge import RuntimeBridge
 
 
 _OPERATIONS = {

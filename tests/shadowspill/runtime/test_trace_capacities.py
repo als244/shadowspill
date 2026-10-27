@@ -10,11 +10,8 @@ from shadowspill.ir import (
     ResourceSpec,
     TaskSpec,
 )
-from shadowspill.runtime.plan import (
-    TaskMemoryEnvelope,
-    TraceCapacities,
-    trace_capacities,
-)
+from shadowspill.runtime.plan.common import TaskMemoryEnvelope
+from shadowspill.runtime.plan.tracing import TraceCapacities, trace_capacities
 from shadowspill.task.allocations import (
     TaskAllocationContract,
     TaskAllocationEvent,
