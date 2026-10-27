@@ -67,6 +67,7 @@ def test_joined_private_stream_work_retains_correct_lifetimes():
         side.wait_stream(current)
         with torch.cuda.stream(side):
             temporary.fill_(5)
+        temporary.record_stream(side)
         current.wait_stream(side)
         result = temporary.clone()
         del temporary
@@ -76,3 +77,39 @@ def test_joined_private_stream_work_retains_correct_lifetimes():
     assert observed.persistent_bytes == ()
     assert observed.workspace_requested_bytes == 37
     assert observed.workspace_bytes == 37
+
+
+@pytest.mark.cuda
+def test_recorded_stream_free_is_not_an_anonymous_retained_allocation():
+    if not torch.cuda.is_available():
+        pytest.skip("needs CUDA")
+    from shadowspill.task.allocations.contract import TaskAllocationContract
+
+    side = torch.cuda.Stream()
+    current = torch.cuda.current_stream()
+
+    def task(delay):
+        for _ in range(3):
+            temporary = torch.empty(32768, device="cuda")
+            side.wait_stream(current)
+            with torch.cuda.stream(side):
+                torch.cuda._sleep(delay)
+                temporary.fill_(7)
+            temporary.record_stream(side)
+            del temporary
+        current.wait_stream(side)
+
+    observations = [
+        observe_task(task, (delay,), device=torch.device("cuda", 0))
+        for delay in (0, 10_000_000, 0)
+    ]
+    assert all(item.persistent_bytes == () for item in observations)
+    assert (
+        len(
+            {
+                TaskAllocationContract.capture(o.trace).compatibility_digest
+                for o in observations
+            }
+        )
+        == 1
+    )

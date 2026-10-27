@@ -1,4 +1,4 @@
-"""Completed native lifetimes permit portable, same-stream slot reuse."""
+"""Logical requests are stable despite native retirement polling."""
 
 import pytest
 
@@ -44,9 +44,9 @@ def test_native_cache_addresses_do_not_constrain_fixed_placement():
     observed = decode_allocations(
         [
             event("allocate", address=4096),
-            event("free_completed", address=4096),
+            event("free_requested", address=4096),
             event("allocate", address=8192),
-            event("free_completed", address=8192),
+            event("free_requested", address=8192),
         ],
         {},
         (),
@@ -59,7 +59,7 @@ def test_different_extent_or_stream_does_not_imply_reuse(size, stream):
     observed = decode_allocations(
         [
             event("allocate"),
-            event("free_completed"),
+            event("free_requested"),
             event("allocate", size=size, stream=stream),
         ],
         {4096: [(0, 0)]},
@@ -69,20 +69,18 @@ def test_different_extent_or_stream_does_not_imply_reuse(size, stream):
     assert observed.trace[-1].output_leaf_indices == (0,)
 
 
-def test_reuse_requires_completed_retirement():
-    with pytest.raises(CaptureError, match="before retirement"):
-        decode_allocations(
-            [event("allocate"), event("free_requested"), event("allocate")], {}, ()
-        )
+def test_address_cannot_reappear_before_its_free_request():
+    with pytest.raises(CaptureError, match="before its free request"):
+        decode_allocations([event("allocate"), event("allocate")], {}, ())
 
 
 def test_only_last_generation_publishes_output():
     observed = decode_allocations(
         [
             event("allocate"),
-            event("free_completed"),
+            event("free_requested"),
             event("allocate"),
-            event("free_completed"),
+            event("free_requested"),
         ],
         {4096: [(0, 16)]},
         (),
@@ -101,7 +99,7 @@ def test_repeated_temporary_fits_one_fixed_slot():
     from tests.shadowspill.planner._examples import COMPUTE, DEVICE
 
     observed = decode_allocations(
-        [event(action) for _ in range(16) for action in ("allocate", "free_completed")],
+        [event(action) for _ in range(16) for action in ("allocate", "free_requested")],
         {},
         (),
     )
@@ -137,3 +135,34 @@ def test_repeated_temporary_fits_one_fixed_slot():
     )
     certified = build_fixed_layout_admission(selected, facts)
     assert certified.layout.required_bytes == 1024
+
+
+def test_retirement_notifications_do_not_change_contract_or_report_retention():
+    from shadowspill.task.allocations.contract import TaskAllocationContract
+
+    requests = [
+        event("allocate", address=4096),
+        event("free_requested", address=4096),
+        event("allocate", address=8192),
+        event("free_requested", address=8192),
+    ]
+    observations = [
+        decode_allocations(events, {}, ())
+        for events in (
+            requests,
+            [*requests[:2], event("free_completed"), *requests[2:]],
+            [*requests, event("free_completed", address=8192), event("free_completed")],
+        )
+    ]
+    assert (
+        len(
+            {
+                TaskAllocationContract.capture(o.trace).compatibility_digest
+                for o in observations
+            }
+        )
+        == 1
+    )
+    assert all(o.trace == observations[0].trace for o in observations)
+    assert all(o.persistent_bytes == () for o in observations)
+    assert observations[0].trace[2].reuses_ordinal == 0

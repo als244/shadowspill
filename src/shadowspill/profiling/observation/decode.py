@@ -1,4 +1,4 @@
-"""Convert native requests to pointer-free lifetimes with target charging."""
+"""Convert logical allocator requests to portable task lifetimes."""
 
 from collections import defaultdict
 from collections.abc import Mapping, Sequence
@@ -60,17 +60,16 @@ def decode_allocations(
         if action == "allocate":
             if address in live:
                 raise CaptureError(
-                    "native allocation reused an address before retirement"
+                    "native allocation reused an address before its free request"
                 )
             ordinal = len(allocation_positions)
             size = event["requested_bytes"]
             # Runtime extents retain the exact request. Address alignment is a
             # separate placement constraint, not per-allocation size rounding.
             charged = size
-            # Once native retirement completes, a same-stream request can use
-            # an equal-sized slot. The fixed allocator chooses its own addresses;
-            # copying native pointer choices would preserve cache fragmentation.
-            # Do not infer reuse across sizes or allocation streams.
+            # Plan equal-sized slots on one allocation stream. Executor joins
+            # any recorded private-stream uses at actual slot reuse. Native
+            # retirement polling is neither that dependency nor a task request.
             retired = available[event["stream"], charged]
             reuse = retired.pop() if retired else None
             value = TaskAllocationEvent(
@@ -86,7 +85,7 @@ def decode_allocations(
             live[address] = value
             allocation_positions[ordinal] = len(trace)
             trace.append(value)
-        elif action == "free_completed" and address in live:
+        elif action == "free_requested" and address in live:
             value = live.pop(address)
             available[streams[value.allocation_ordinal], value.charged_bytes].append(
                 value.allocation_ordinal

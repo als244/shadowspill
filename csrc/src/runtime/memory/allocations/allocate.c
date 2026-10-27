@@ -31,6 +31,15 @@ static ShadowSpillStatus take_lease_locked(
 ) {
     ShadowSpillStatus status = SHADOWSPILL_STATUS_OK;
     if (request->fixed_placement != NULL) {
+        const uint64_t offset = request->plan->fixed_layout.slice_offset +
+            request->fixed_placement->offset;
+        status = shadowspill_allocations_wait_fixed_reuse_locked(
+            runtime, pool, shadowspill_memory_pool_pointer(pool, offset),
+            request->stream
+        );
+        if (status != SHADOWSPILL_STATUS_OK) {
+            return status;
+        }
         status = shadowspill_create_fixed_execution_lease_locked(
             request->plan,
             request->fixed_placement,

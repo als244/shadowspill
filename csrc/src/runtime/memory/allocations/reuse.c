@@ -1,6 +1,57 @@
 /* Giving a pending allocation to the next caller that fits it. */
 #include "internal.h"
 
+/*
+ * A fixed slot can be reused within a task after its logical free. The task
+ * contract records that request, not the allocator worker's retirement timing.
+ * Same-stream reuse needs no wait; record_stream uses need their actual events
+ * joined before a new kernel can overwrite the slot. Cross-task reuse is
+ * already covered by the fixed layout's task/transfer completion dependencies.
+ */
+ShadowSpillStatus shadowspill_allocations_wait_fixed_reuse_locked(
+    ShadowSpillRuntime *runtime,
+    ShadowSpillMemoryPool *pool,
+    const void *pointer,
+    ShadowSpillBackendStream stream
+) {
+    const uint64_t bucket = shadowspill_allocations_mix_index(
+        (uint64_t)(uintptr_t)pointer, pool->allocation_index_bucket_count
+    );
+    for (ShadowSpillMemoryLease *prior = pool->leases_by_pointer[bucket];
+         prior != NULL; prior = prior->pointer_index_next) {
+        if (prior->pointer != pointer ||
+            prior->origin_plan_id != shadowspill_current_plan_id(runtime) ||
+            prior->origin_task_id != shadowspill_current_task_id(runtime) ||
+            prior->origin_task_invocation !=
+                shadowspill_current_task_invocation(runtime)) {
+            continue;
+        }
+        if (!prior->logical_freed || prior->retirement_preparing) {
+            return SHADOWSPILL_STATUS_PLAN_VIOLATION;
+        }
+        for (ShadowSpillLeaseUseRecord *use = prior->uses;
+             use != NULL; use = use->next) {
+            if (shadowspill_allocations_stream_equal(use->stream, stream)) {
+                continue;
+            }
+            if (use->event == NULL) {
+                return SHADOWSPILL_STATUS_PLAN_VIOLATION;
+            }
+            if (runtime->backend.wait_event(
+                    runtime->backend.state, stream, use->event->event
+                ) != 0) {
+                return SHADOWSPILL_STATUS_BACKEND_FAILURE;
+            }
+            (void)atomic_fetch_add_explicit(
+                &runtime->wait_events_inserted, 1U, memory_order_acq_rel
+            );
+        }
+        /* The newest lease already carries dependencies from earlier reuse. */
+        break;
+    }
+    return SHADOWSPILL_STATUS_OK;
+}
+
 ShadowSpillStatus shadowspill_allocations_reuse_pending_allocation_locked(
     ShadowSpillRuntime *runtime,
     ShadowSpillMemoryPool *pool,

@@ -8,7 +8,7 @@ import pytest
 
 
 @pytest.mark.cuda
-@pytest.mark.parametrize("kind", ["TASK_START", "TASK_ALLOCATION"])
+@pytest.mark.parametrize("kind", ["TASK_START", "TASK_ALLOCATION", "INTRA_TASK"])
 def test_cross_stream_fixed_reuse(kind):
     import torch
 

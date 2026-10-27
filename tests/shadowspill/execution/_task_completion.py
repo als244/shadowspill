@@ -41,7 +41,7 @@ from shadowspill.task.allocations.events import (
 )
 
 
-def exercise(runtime, kind):
+def new_plan(runtime):
     memory = begin_plan(
         runtime,
         execution="execution",
@@ -62,6 +62,11 @@ def exercise(runtime, kind):
         execution_pool_id=memory.execution.pool_id,
         spill_pool_id=memory.spill.pool_id,
     )
+    return memory, bridge
+
+
+def exercise(runtime, kind):
+    memory, bridge = new_plan(runtime)
     try:
         size = 16_384
         layout = RuntimeFixedLayout(
@@ -143,6 +148,83 @@ def exercise(runtime, kind):
         abort_plan(runtime, memory.plan_handle)
 
 
+def exercise_private_stream_reuse(runtime):
+    """Free on the host while a side stream still needs the old slot contents."""
+    memory, bridge = new_plan(runtime)
+    size = 16_384
+    try:
+        admit_fixed_layout(
+            bridge,
+            RuntimeFixedLayout(
+                size,
+                tuple(
+                    RuntimeFixedPlacement(
+                        1,
+                        ordinal,
+                        NO_ID,
+                        0,
+                        size,
+                        256,
+                        RuntimePlacementKind.TASK_ALLOCATION,
+                    )
+                    for ordinal in (0, 1)
+                ),
+                (),
+            ),
+        )
+        contract = TaskAllocationContract.capture(
+            [
+                TaskAllocationEvent(ordinal, operation, size, size)
+                for ordinal in (0, 1)
+                for operation in (
+                    TaskAllocationOperation.ALLOCATE,
+                    TaskAllocationOperation.FREE,
+                )
+            ]
+        )
+        handle = admit_task(
+            bridge,
+            TaskSpec(
+                "task_000001", ResourceSpec("cuda_0", ResourceKind.COMPUTE), "test"
+            ),
+            (),
+            (),
+            memory_envelope=TaskMemoryEnvelope(allocation_contract=contract),
+            trace_label="completion/private-stream-reuse",
+        )
+        seal_fixed_layout(bridge)
+        side = torch.cuda.Stream()
+        current = torch.cuda.current_stream()
+        observed = [torch.empty(size // 4, pin_memory=True) for _ in range(2)]
+        for iteration in range(24):
+            before_task_and_acquire(handle, 0, ())
+            wait_task_allocations(handle, 0)
+            first = torch.empty(size // 4, device="cuda")
+            pointer = first.data_ptr()
+            first.fill_(iteration * 2)
+            side.wait_stream(current)
+            with torch.cuda.stream(side):
+                torch.cuda._sleep(50_000_000 if iteration % 8 == 0 else 0)
+                observed[0].copy_(first, non_blocking=True)
+            first.record_stream(side)
+            del first
+            second = torch.empty(size // 4, device="cuda")
+            assert second.data_ptr() == pointer
+            second.fill_(iteration * 2 + 1)
+            observed[1].copy_(second, non_blocking=True)
+            del second
+            current.wait_stream(side)
+            after_task_and_update(handle, 0, (), ())
+            bridge.wait_until_idle()
+            torch.cuda.synchronize()
+            for index, result in enumerate(observed):
+                torch.testing.assert_close(
+                    result, torch.full_like(result, iteration * 2 + index)
+                )
+    finally:
+        abort_plan(runtime, memory.plan_handle)
+
+
 assert not torch.cuda.is_initialized()
 with Runtime(
     frontend=PyTorchFrontend(),
@@ -156,5 +238,8 @@ with Runtime(
         "evict": TransferRoute("execution", "spill"),
     },
 ) as runtime:
-    exercise(runtime, RuntimePlacementKind[sys.argv[1]])
+    if sys.argv[1] == "INTRA_TASK":
+        exercise_private_stream_reuse(runtime)
+    else:
+        exercise(runtime, RuntimePlacementKind[sys.argv[1]])
 print("task completion passed")

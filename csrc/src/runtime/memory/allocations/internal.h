@@ -21,6 +21,13 @@ int shadowspill_allocations_stream_equal(
     ShadowSpillBackendStream right
 );
 
+ShadowSpillStatus shadowspill_allocations_wait_fixed_reuse_locked(
+    ShadowSpillRuntime *runtime,
+    ShadowSpillMemoryPool *pool,
+    const void *pointer,
+    ShadowSpillBackendStream stream
+);
+
 void shadowspill_publish_pool_geometry_locked(ShadowSpillMemoryPool *pool);
 
 uint64_t shadowspill_allocations_mix_index(uint64_t value, uint64_t bucket_count);

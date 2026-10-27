@@ -381,18 +381,6 @@ ShadowSpillRetirementWork shadowspill_handle_retirements(
             continue;
         }
 
-        /* Retired event handles are backend resources, so release them before
-         * entering the pool. The immutable requirement records stay owned by
-         * this queue entry until the same reclamation critical section that
-         * frees the physical range. */
-        if (release_event_requirements(
-                runtime, record->requirements, record->allocation_id
-            ) != 0) {
-            append_retry(&retry_head, &retry_tail, record);
-            record = next;
-            continue;
-        }
-
         /*
          * Completion discovery never owns the memory pool.  Background
          * reclamation enters only through the pool's generic priority-aware
@@ -450,23 +438,10 @@ ShadowSpillRetirementWork shadowspill_handle_retirements(
                 allocation->retirement_event = NULL;
             }
         }
-        if (record->requirements != NULL) {
-            if (shadowspill_memory_pool_release_use_records_locked(
-                    pool, record->requirements
-                ) != 0) {
-                shadowspill_latch_pool_failure_locked(
-                    runtime,
-                    pool,
-                    SHADOWSPILL_STATUS_INVALID_STATE,
-                    SHADOWSPILL_FAILURE_REASON_USE_RECORD_RETURN_REJECTED,
-                    SHADOWSPILL_RUNTIME_NO_ID,
-                    record->allocation_id,
-                    0U
-                );
-            } else {
-                record->requirements = NULL;
-            }
-        }
+        /* Keep the queue-owned events alive until the lease is detached under
+         * the pool lock: a fixed-slot allocator may still need to enqueue a
+         * wait on them. destroy_retirement_record releases the events and use
+         * records after unlocking, without racing that foreground reader. */
         shadowspill_memory_pool_unlock_reclamation(pool);
 
         if (released && atomic_fetch_sub_explicit(

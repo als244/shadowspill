@@ -47,6 +47,18 @@ generation changed.
 
 ## Streams and readiness
 
+Profiling records logical allocation/free requests with PyTorch's native
+allocator. Its delayed `free_completed` notifications are bookkeeping, not
+part of the compiled task's request contract. A freed tensor is not retained
+provider state merely because that notification has not arrived.
+
+Within a task, fixed slots may reuse equal-sized requests on the same allocation
+stream. At reuse, Executor joins any other streams registered on the previous
+allocation through `record_stream`, using their retirement events. Ordinary
+same-stream reuse needs no wait; additional uses require neither host waiting
+nor a device-wide synchronization. Providers must register extra stream uses
+and join their work back to the task stream before task completion.
+
 Host code does not synchronize on normal transfer readiness. A fetch owns a
 completion event, and the compute stream waits on that event. Allocator
 capacity waits are permitted only when a known pending retirement or transfer
