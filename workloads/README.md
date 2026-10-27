@@ -63,6 +63,8 @@ and adds a separate communication-calibration phase. Build and task measurement
 use one GPU; only calibration and execution launch all ranks.
 
 The catalog separates its entry type, preset rows, and lookup functions.
+The [shared GLM recipes](recipes/text/glm/) own quickstart configuration,
+synthetic/real text inputs, bounded initialization and optional partitioning.
 The shared [GLM checkpoint reader](models/shared/glm/checkpoint/) separates meta
 model declaration, precision/coverage validation, expert conversion, and loading;
 family readers supply only names and configurations. Keep kernel implementations

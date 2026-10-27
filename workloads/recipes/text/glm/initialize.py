@@ -4,10 +4,9 @@ import math
 
 import torch
 
+from workloads.models.shared.glm.checkpoint import physical_state
+from workloads.models.shared.glm.initialization import _roles
 from workloads.models.shared.initialization import fill_generated, validate_chunk
-
-from ..checkpoint import physical_state
-from ..initialization import _roles
 
 
 class Initialize:

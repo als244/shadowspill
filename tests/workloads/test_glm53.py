@@ -15,7 +15,7 @@ from workloads.models.glm53.implementations.mlops.attention import (
     positions_for,
     rotate,
 )
-from workloads.models.glm53.quickstart import experiment
+from workloads.recipes.text.glm.quickstart import glm53 as experiment
 
 
 def test_normal_glm_architecture_and_lora_defaults_are_distinct_from_flash():

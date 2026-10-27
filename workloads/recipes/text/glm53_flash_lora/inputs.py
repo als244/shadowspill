@@ -1,7 +1,7 @@
 """Rank-local GLM calls, with KDA metadata and one global token normalizer."""
 
 from workloads.recipes.text.data.calls import Inputs as TextInputs
-from workloads.recipes.text.glm import GLMTokenUpdates, next_token_prediction
+from workloads.recipes.text.glm.data import GLMTokenUpdates, next_token_prediction
 
 
 class Inputs(TextInputs):

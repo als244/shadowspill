@@ -6,7 +6,7 @@ import numpy as np
 import pytest
 import torch
 
-from workloads.recipes.text.glm import GLMTokenUpdates, fixed_batch_learning_report
+from workloads.recipes.text.glm.data import GLMTokenUpdates, fixed_batch_learning_report
 
 
 def test_glm_updates_preserve_shift_rank_ownership_and_resume(tmp_path):

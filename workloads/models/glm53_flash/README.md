@@ -151,7 +151,7 @@ sequence packing. Output-head LoRA is enabled with `lora_head=True`.
 ## Partitioning
 
 By default the builder partitions GLM as it does any model. `GLMStages`
-([partition.py](../shared/glm/partition.py)) is an optional `PartitionPolicy`, kept apart
+([partition.py](../../recipes/text/glm/partition.py)) is an optional `PartitionPolicy`, kept apart
 from model mathematics, checkpoint conversion and MLOps kernels; the
 [generic architecture contract](../../../docs/architecture/partitioning.md)
 defines the terminology. It follows exported module scopes and creates these
@@ -173,7 +173,7 @@ Pass the policy to any of the three public builders:
 
 ```python
 from shadowspill import build_forward
-from workloads.models.shared.glm.partition import GLMStages
+from workloads.recipes.text.glm.partition import GLMStages
 
 program = build_forward(
     model,
@@ -189,7 +189,7 @@ the build API or GLM rule in the neutral planner.
 
 ## Quickstart configuration
 
-[quickstart.py](quickstart.py) supplies the model to the shared phase runner.
+[quickstart.py](../../recipes/text/glm/quickstart.py) supplies the model to the shared phase runner.
 Both GLM families use the same runner as other models. Factory arguments choose
 checkpoint, initialization (`"random"` by default or `"checkpoint"`), sequence
 length, examples per step, LoRA settings and DP storage. `tiny=True` selects the

@@ -15,7 +15,7 @@ parallel group is created.
 
 ## Training and precision
 
-The [shared GLM recipe](../shared/glm/recipe/factory.py) defaults to rank-32 BF16 LoRA factors,
+The [shared GLM recipe](../../recipes/text/glm/factory.py) defaults to rank-32 BF16 LoRA factors,
 alpha 32, FP32 accumulated gradients, and BF16 AdamW moments with stochastic
 rounding. The importer preserves the checkpoint's block-FP8 expert data and
 scales; expert GEMMs run in FP8. Compressed dense projections keep their stored
@@ -38,7 +38,7 @@ microbatch per rank:
 
 ```bash
 python -m benchmarking.quickstart \
-  --factory workloads.models.glm53.quickstart:experiment \
+  --factory workloads.recipes.text.glm.quickstart:glm53 \
   --factory-args '{"checkpoint":"/local/models/GLM-5.3","expert_storage":"fp8_block","ranks":8,"sequence_length":4096,"sequences_per_step":64,"sequences_per_example":[2]}' \
   --search-budget-gib 70 --run-budget-gib 70 --spill-gib "$SPILL_GIB" \
   --steps 7 --output-dir /local/results/glm53-dp-sharded

@@ -7,12 +7,11 @@ import hashlib
 import torch
 
 from benchmarking.stage_traces.api import TraceWorkload
+from workloads.models.glm53_flash.checkpoint import GLMCheckpoint
+from workloads.models.glm53_flash.config import Config
+from workloads.models.glm53_flash.implementations.mlops import Model
 from workloads.models.shared.glm.checkpoint import physical_state
 from workloads.models.shared.glm.initialization import _roles
-
-from .checkpoint import GLMCheckpoint
-from .config import Config
-from .implementations.mlops import Model
 
 
 def workload(

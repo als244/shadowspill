@@ -11,7 +11,7 @@ From an allocation, run for example:
 
 ```sh
 python -m benchmarking.stage_traces.sweep \
-  --factory workloads.models.glm53_flash.stage_trace:workload \
+  --factory workloads.recipes.text.glm.flash_trace:workload \
   --factory-args '{"checkpoint":"/path/to/GLM-5.3-Flash","lora_rank":32,"lora_alpha":32}' \
   --sequence-lengths 8192 --batch-sizes 1 2 4 8 \
   --variants save recompute --gpus all \
@@ -39,7 +39,7 @@ creates new attempts. Every worker uses one Inductor compile thread to avoid
 competing subprocess pools. Independent workers must leave
 `MLOPS_QUACK_TUNE_DISTRIBUTED` disabled.
 
-The `workloads.models.glm53_flash.stage_trace:workload` adapter accepts
+The `workloads.recipes.text.glm.flash_trace:workload` adapter accepts
 `{"tiny":true}` for protocol qualification with BF16 experts, and
 `{"tiny":true,"tiny_expert_storage":"fp8_block"}` for H100 FP8 qualification.
 

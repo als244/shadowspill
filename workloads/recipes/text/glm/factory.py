@@ -9,10 +9,10 @@ import torch
 from shadowspill import Parallelism
 from workloads.recipes.text.precision import Precision
 
-from ..partition import GLMStages
 from .initialize import Initialize
 from .inputs import candidates
 from .model import declare
+from .partition import GLMStages
 
 
 def experiment(

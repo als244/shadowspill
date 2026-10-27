@@ -7,8 +7,8 @@ from pathlib import Path
 import torch
 
 from workloads.models.glm53_flash.checkpoint import GLMCheckpoint
-from workloads.models.shared.glm.recipe.initialize import Initialize
 from workloads.recipes.text.data.tokenizer import tokenizer_identity
+from workloads.recipes.text.glm.initialize import Initialize
 
 
 @contextmanager

@@ -1,11 +1,9 @@
 """Building a model as structure only, and giving it its first values.
 
 A run can build its model on meta, declaring shapes and dtypes without values.
-ShadowSpill imports that structure into its pool before running the initializer.
-When a value is not directly addressable, including sharded CPU state, setup
-stages only the storage roots used by the current operation and writes mutations
-back to their owned pool ranges. Initializers should visit individual tensors
-instead of passing the whole model to a bulk operation.
+Ordinary reference engines materialize it and call ``initialize`` below.
+ShadowSpill builds from its metadata; the execution worker later fills its
+declared tensor shards through the bounded Executor initialization interface.
 """
 
 from __future__ import annotations
@@ -49,8 +47,7 @@ def build_on_meta(
 
 
 def initialize(module: nn.Module) -> None:
-    """Let every module fill the storage it owns, in module order -- the order
-    ShadowSpill's import initializes in, so both backends draw the same values."""
+    """Reset an ordinary materialized model in module order."""
 
     for submodule in module.modules():
         reset = getattr(submodule, "reset_parameters", None)

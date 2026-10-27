@@ -6,7 +6,7 @@ from statistics import fmean
 
 import torch
 
-from .data.fixed import TokenUpdates
+from ..data.fixed import TokenUpdates
 
 
 class GLMTokenUpdates(TokenUpdates):

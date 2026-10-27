@@ -6,7 +6,7 @@ import math
 import torch
 import torch.distributed as dist
 
-from workloads.recipes.text.glm import fixed_batch_learning_report
+from workloads.recipes.text.glm.data import fixed_batch_learning_report
 
 from .inputs import Inputs
 

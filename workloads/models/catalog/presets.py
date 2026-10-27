@@ -104,7 +104,7 @@ ENTRIES: tuple[Entry, ...] = (
         ),
         implementations=("mlops",),
         mixture=True,
-        factory="workloads.models.glm53.quickstart:experiment",
+        factory="workloads.recipes.text.glm.quickstart:glm53",
     ),
     *_family(
         "glm53_flash",
@@ -118,6 +118,6 @@ ENTRIES: tuple[Entry, ...] = (
         ),
         implementations=("mlops",),
         mixture=True,
-        factory="workloads.models.glm53_flash.quickstart:experiment",
+        factory="workloads.recipes.text.glm.quickstart:glm53_flash",
     ),
 )

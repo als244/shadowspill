@@ -14,9 +14,9 @@ from tests.workloads.test_glm53_checkpoint import (
     safetensors_torch,
 )
 from workloads.models.glm53_flash.checkpoint import GLMCheckpoint
-from workloads.models.glm53_flash.quickstart import experiment
 from workloads.models.shared.glm.checkpoint import physical_state
-from workloads.models.shared.glm.recipe.initialize import Initialize
+from workloads.recipes.text.glm.initialize import Initialize
+from workloads.recipes.text.glm.quickstart import glm53_flash as experiment
 
 
 @pytest.fixture
@@ -153,7 +153,7 @@ def test_factory_is_meta_only_and_uses_the_shared_phase_contract(family, monkeyp
         pytest.fail("factory construction must not initialize CUDA")
 
     monkeypatch.setattr(torch.cuda, "_lazy_init", no_cuda)
-    spec = import_module(f"workloads.models.{family}.quickstart").experiment(
+    spec = getattr(import_module("workloads.recipes.text.glm.quickstart"), family)(
         device="cuda:0",
         tiny=True,
         sequence_length=8,
