@@ -12,8 +12,8 @@ from shadowspill.ir import (
 )
 from shadowspill.runtime.plan.common import TaskMemoryEnvelope
 from shadowspill.runtime.plan.tracing import TraceCapacities, trace_capacities
-from shadowspill.task.allocations import (
-    TaskAllocationContract,
+from shadowspill.task.allocations.contract import TaskAllocationContract
+from shadowspill.task.allocations.events import (
     TaskAllocationEvent,
     TaskAllocationOperation,
 )

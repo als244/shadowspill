@@ -4,7 +4,7 @@ import pytest
 
 from shadowspill.errors import CaptureError
 from shadowspill.profiling.observation.decode import decode_allocations
-from shadowspill.task.allocations import TaskAllocationOperation
+from shadowspill.task.allocations.events import TaskAllocationOperation
 
 
 def event(action, address=4096, size=1024, stream=7):

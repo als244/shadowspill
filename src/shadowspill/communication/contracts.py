@@ -2,8 +2,8 @@
 
 from shadowspill.artifacts._values import plain
 from shadowspill.artifacts.program import Program
-from shadowspill.task.allocations import (
-    TaskAllocationContract,
+from shadowspill.task.allocations.contract import TaskAllocationContract
+from shadowspill.task.allocations.events import (
     TaskAllocationEvent,
     TaskAllocationOperation,
 )

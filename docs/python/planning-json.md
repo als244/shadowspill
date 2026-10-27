@@ -192,7 +192,7 @@ The capacity contract keys are:
 | `maximum_spill_budget_bytes` | The spill pool the source runtime held. A record, not a ceiling: a problem may be planned at any spill budget, because nothing measured depends on the pool's size. |
 | `fixed_execution_bytes` | Persistent in-pool allocations and fixed runtime reserves excluded from callable capacity. |
 | `object_reserve_bytes` | Capacity leeway: pool bytes withheld from the search's object capacity so a fixed layout whose extent exceeds the planner's instantaneous bound can still be admitted without capacity refinement. Not a workspace partition — task workspace is charged per boundary and placed inside the fixed slice. |
-| `dynamic_scratch_reserve_bytes` | Measured or user-raised optional dynamic scratch requirement. |
+| `dynamic_scratch_reserve_bytes` | Explicit optional dynamic scratch reservation, additional to measured allocations. |
 
 ## AnnotatedProgramPlan format
 

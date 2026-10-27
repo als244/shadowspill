@@ -50,6 +50,11 @@ models; `shadowspill.execution.Executor` executes saved Plans and
 `shadowspill.training.Trainer` manages training through it. Neither requires
 this directory.
 
+This boundary applies to every family, including GLM: `config.py`,
+`checkpoint.py`, `lora.py` and `implementations/` own model-specific behavior.
+Recipes supply those models to the shared phase APIs. A new architecture does
+not add a model-specific build, planner, profiler or executor to ShadowSpill.
+
 The standalone [Llama](recipes/text/llama3/) and
 [Qwen3.5 LoRA](recipes/text/qwen35_lora/) and
 [GLM checkpoint LoRA](recipes/text/glm53_flash_lora/) recipes separate build, profile, plan

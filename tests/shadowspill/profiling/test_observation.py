@@ -2,7 +2,7 @@ import pytest
 import torch
 
 from shadowspill.profiling.observation.observe import observe_task
-from shadowspill.task.allocations import TaskAllocationOperation
+from shadowspill.task.allocations.events import TaskAllocationOperation
 
 
 @pytest.mark.cuda

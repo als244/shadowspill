@@ -14,15 +14,14 @@ from dataclasses import dataclass
 
 from shadowspill.errors import CaptureError
 from shadowspill.schema import artifact_schema
+from shadowspill.task.allocations.events import (
+    TaskAllocationEvent,
+    TaskAllocationOperation,
+)
 from shadowspill.task.manifest import ExecutableRootAllocation
 
 from .geometry import TaskStorageGeometry
-from .profiles import (
-    TaskAllocationEvent,
-    TaskAllocationOperation,
-    TaskMeasurement,
-    TaskOutputInputBinding,
-)
+from .profiles import TaskMeasurement, TaskOutputInputBinding
 from .storage import (
     OutputView,
     StorageRoot,

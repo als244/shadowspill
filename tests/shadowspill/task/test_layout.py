@@ -6,14 +6,13 @@ from torch.fx.experimental.proxy_tensor import make_fx
 
 from shadowspill.errors import CaptureError
 from shadowspill.pytorch.capture.storage import capture_task_storage_contract
-from shadowspill.task.layout import reconcile_compiled_task_layout
-from shadowspill.task.manifest import ExecutableRootAllocation
-from shadowspill.task.profiles import (
+from shadowspill.task.allocations.events import (
     TaskAllocationEvent,
     TaskAllocationOperation,
-    TaskMeasurement,
-    TaskOutputInputBinding,
 )
+from shadowspill.task.layout import reconcile_compiled_task_layout
+from shadowspill.task.manifest import ExecutableRootAllocation
+from shadowspill.task.profiles import TaskMeasurement, TaskOutputInputBinding
 
 
 def _measurement(

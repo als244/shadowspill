@@ -1,4 +1,4 @@
-"""Immutable measurements and structural profile identities."""
+"""Validated task measurements and output/input storage bindings."""
 
 from __future__ import annotations
 
@@ -10,51 +10,13 @@ from shadowspill.ir.program.timing import (
     TaskResourcePhase,
     validate_task_timing,
 )
-from shadowspill.schema import artifact_schema
 
-from .allocations import (
-    TaskAllocationContract,
-    TaskAllocationEvent,
-    TaskAllocationOperation,
-    TaskAllocationPathObservation,
-)
+from .allocations.contract import TaskAllocationContract
+from .allocations.events import TaskAllocationEvent, TaskAllocationOperation
 from .inputs import (
     RepresentativeInputSummary,
 )
 from .profiling import ProfilingOptions, TimingWindow
-
-# A profile artifact is a strict snapshot of the measurement contract that
-# wrote it, and none is migrated. A stored record this build cannot read is
-# one this build has not got, so it is measured again and written over.
-PROFILE_SCHEMA = artifact_schema("pytorch.profile")
-
-_TASK_MEASUREMENT_FIELDS = frozenset(
-    {
-        "runtime_ns",
-        "resource_phases",
-        "overlap_costs",
-        "workspace_requested_bytes",
-        "workspace_charged_bytes",
-        "workspace_extent_bytes",
-        "samples_ns",
-        "provenance",
-        "allocation_trace",
-        "output_input_bindings",
-        "persistent_extent_bytes",
-        "profiling_wall_time_ns",
-        "representative_inputs",
-        "phase_timings_ns",
-        "timing_relative_mad",
-        "timing_half_drift",
-        "timing_unstable",
-        "profiling_options",
-        "conditioning",
-        "sampling",
-        "allocation_contract",
-        "allocation_path_observations",
-        "off_device_output_leaves",
-    }
-)
 
 
 @dataclass(frozen=True, slots=True)
@@ -129,7 +91,6 @@ class TaskMeasurement:
     conditioning: TimingWindow = field(default_factory=TimingWindow)
     sampling: TimingWindow = field(default_factory=TimingWindow)
     allocation_contract: TaskAllocationContract | None = None
-    allocation_path_observations: tuple[TaskAllocationPathObservation, ...] = ()
     #: Output leaves this task was observed to produce off the execution
     #: device. A storage contract is traced, and a trace can claim device
     #: memory for a result an operator really returns as a host scalar. No
@@ -139,46 +100,6 @@ class TaskMeasurement:
     off_device_output_leaves: tuple[int, ...] = ()
     resource_phases: tuple[TaskResourcePhase, ...] = ()
     overlap_costs: tuple[TaskOverlapCost, ...] = ()
-
-    @property
-    def dynamic_scratch_maximum_requested_bytes(self) -> int:
-        return max(
-            (
-                item.scratch_maximum_requested_bytes
-                for item in self.allocation_path_observations
-            ),
-            default=0,
-        )
-
-    @property
-    def dynamic_scratch_maximum_charged_bytes(self) -> int:
-        return max(
-            (
-                item.scratch_maximum_charged_bytes
-                for item in self.allocation_path_observations
-            ),
-            default=0,
-        )
-
-    @property
-    def dynamic_scratch_peak_requested_bytes(self) -> int:
-        return max(
-            (
-                item.scratch_peak_requested_bytes
-                for item in self.allocation_path_observations
-            ),
-            default=0,
-        )
-
-    @property
-    def dynamic_scratch_peak_charged_bytes(self) -> int:
-        return max(
-            (
-                item.scratch_peak_charged_bytes
-                for item in self.allocation_path_observations
-            ),
-            default=0,
-        )
 
     def __post_init__(self) -> None:
         validate_task_timing(self.runtime_ns, self.resource_phases, self.overlap_costs)
@@ -307,116 +228,8 @@ class TaskMeasurement:
         if output_leaves.intersection(donated_leaves):
             raise ValueError("task output has both allocated and donated storage")
 
-    def to_dict(self) -> dict[str, object]:
-        return {
-            "runtime_ns": self.runtime_ns,
-            "resource_phases": [item.to_dict() for item in self.resource_phases],
-            "overlap_costs": [item.to_dict() for item in self.overlap_costs],
-            "workspace_requested_bytes": self.workspace_requested_bytes,
-            "workspace_charged_bytes": self.workspace_charged_bytes,
-            "workspace_extent_bytes": list(self.workspace_extent_bytes),
-            "samples_ns": list(self.samples_ns),
-            "provenance": self.provenance,
-            "allocation_trace": [event.to_dict() for event in self.allocation_trace],
-            "output_input_bindings": [
-                item.to_dict() for item in self.output_input_bindings
-            ],
-            "persistent_extent_bytes": list(self.persistent_extent_bytes),
-            "profiling_wall_time_ns": self.profiling_wall_time_ns,
-            "representative_inputs": [
-                item.to_dict() for item in self.representative_inputs
-            ],
-            "phase_timings_ns": [list(item) for item in self.phase_timings_ns],
-            "timing_relative_mad": self.timing_relative_mad,
-            "timing_half_drift": self.timing_half_drift,
-            "timing_unstable": self.timing_unstable,
-            "profiling_options": self.profiling_options.to_dict(),
-            "conditioning": self.conditioning.to_dict(),
-            "sampling": self.sampling.to_dict(),
-            "allocation_contract": (
-                None
-                if self.allocation_contract is None
-                else self.allocation_contract.to_dict()
-            ),
-            "allocation_path_observations": [
-                item.to_dict() for item in self.allocation_path_observations
-            ],
-            "off_device_output_leaves": list(self.off_device_output_leaves),
-        }
-
-    @classmethod
-    def from_dict(cls, value: object) -> TaskMeasurement:
-        if not isinstance(value, dict):
-            raise ValueError("cached task measurement must be an object")
-        if frozenset(value) != _TASK_MEASUREMENT_FIELDS:
-            raise ValueError("cached task measurement has an invalid schema")
-        try:
-            return cls(
-                runtime_ns=int(value["runtime_ns"]),
-                resource_phases=tuple(
-                    TaskResourcePhase.from_value(item, "measurement.resource_phases")
-                    for item in value["resource_phases"]
-                ),
-                overlap_costs=tuple(
-                    TaskOverlapCost.from_value(item, "measurement.overlap_costs")
-                    for item in value["overlap_costs"]
-                ),
-                workspace_requested_bytes=int(value["workspace_requested_bytes"]),
-                workspace_charged_bytes=int(value["workspace_charged_bytes"]),
-                workspace_extent_bytes=tuple(
-                    int(item) for item in value["workspace_extent_bytes"]
-                ),
-                samples_ns=tuple(int(item) for item in value["samples_ns"]),
-                provenance=str(value["provenance"]),
-                allocation_trace=tuple(
-                    TaskAllocationEvent.from_dict(item)
-                    for item in value["allocation_trace"]
-                ),
-                output_input_bindings=tuple(
-                    TaskOutputInputBinding.from_dict(item)
-                    for item in value["output_input_bindings"]
-                ),
-                persistent_extent_bytes=tuple(
-                    int(item) for item in value["persistent_extent_bytes"]
-                ),
-                profiling_wall_time_ns=int(value["profiling_wall_time_ns"]),
-                representative_inputs=tuple(
-                    RepresentativeInputSummary.from_dict(item)
-                    for item in value["representative_inputs"]
-                ),
-                phase_timings_ns=tuple(
-                    (str(item[0]), int(item[1])) for item in value["phase_timings_ns"]
-                ),
-                timing_relative_mad=float(value["timing_relative_mad"]),
-                timing_half_drift=float(value["timing_half_drift"]),
-                timing_unstable=bool(value["timing_unstable"]),
-                profiling_options=ProfilingOptions.from_dict(
-                    value["profiling_options"]
-                ),
-                conditioning=TimingWindow.from_dict(value["conditioning"]),
-                sampling=TimingWindow.from_dict(value["sampling"]),
-                allocation_contract=(
-                    None
-                    if value["allocation_contract"] is None
-                    else TaskAllocationContract.from_dict(value["allocation_contract"])
-                ),
-                allocation_path_observations=tuple(
-                    TaskAllocationPathObservation.from_dict(item)
-                    for item in value["allocation_path_observations"]
-                ),
-                off_device_output_leaves=tuple(
-                    int(item) for item in value["off_device_output_leaves"]
-                ),
-            )
-        except (KeyError, TypeError) as exc:
-            raise ValueError("cached task measurement has an invalid schema") from exc
-
 
 __all__ = [
-    "PROFILE_SCHEMA",
-    "TaskAllocationContract",
-    "TaskAllocationEvent",
-    "TaskAllocationOperation",
     "TaskMeasurement",
     "TaskOutputInputBinding",
 ]

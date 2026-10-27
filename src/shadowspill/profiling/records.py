@@ -5,8 +5,8 @@ from typing import Any
 
 from shadowspill.artifacts._values import plain
 from shadowspill.artifacts.profiles import TaskProfile
-from shadowspill.task.allocations import (
-    TaskAllocationContract,
+from shadowspill.task.allocations.contract import TaskAllocationContract
+from shadowspill.task.allocations.events import (
     TaskAllocationEvent,
     TaskAllocationOperation,
 )

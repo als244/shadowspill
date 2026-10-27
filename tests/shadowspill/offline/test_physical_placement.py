@@ -17,8 +17,8 @@ from shadowspill.ir import (
 )
 from shadowspill.planning.admission.program import program_admission
 from shadowspill.planning.costs import simulation_inputs
-from shadowspill.task.allocations import (
-    TaskAllocationContract,
+from shadowspill.task.allocations.contract import TaskAllocationContract
+from shadowspill.task.allocations.events import (
     TaskAllocationEvent,
     TaskAllocationOperation,
 )

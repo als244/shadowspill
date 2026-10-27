@@ -158,9 +158,10 @@ that does not match what the task did is a refusal, not a warning.
 ### `shadowspill.task.allocations`
 
 What a task promised about its allocations, and what the profiled run observed.
-`TaskAllocationContract` is the promise, `TaskAllocationEvent` and
-`TaskAllocationOperation` are the timeline it implies, and
-`TaskAllocationPathObservation` is what the allocator actually saw.
+`contract.TaskAllocationContract` validates the stable geometry and ownership;
+`events.TaskAllocationEvent` and `events.TaskAllocationOperation` describe the
+observed allocator transitions. Ordinary profiling requires repeated warmed
+executions to agree on this contract.
 
 ### `shadowspill.task.profiles`
 
@@ -388,24 +389,19 @@ exists.
 
 ### Physical admission
 
-`shadowspill.planner.admission.physical` decides what a plan needs physically,
-before any runtime exists: the explicit reserves a budget must hold back, and
-whether the slab can actually hold the plan's allocations at some address. The
-runtime does not call it -- planning does, and then a runtime is opened against
-the budget it approved. Standalone, so tooling can reproduce or inspect the
-decision without a runtime:
+`plan_program` deducts measured fixed overhead and communication reservations
+from the total GPU budget, then checks task allocations and transfer lifetimes
+through the planner's native admission and placement code. `Plan.memory_layout`
+contains the resulting fixed offsets. See [physical admission](../../architecture/physical-admission.md).
 
-| Function | Returns | Purpose |
-|---|---|---|
-| `workspace_reserve_bytes(maximum_task_workspace_bytes, *, policy=None)` | `int` | The conservative contiguous-workspace allowance a budget must hold back. |
-| `plan_slab_layout(slab_bytes, events, *, dynamic_allocation_ids=frozenset())` | `SlabLayout` | One deterministic address per complete allocation lifetime, which online best-fit cannot always find. |
-| `replay_slab_timeline(slab_bytes, events)` | `SlabReplay` | Replays the production two-ended policy over an allocation timeline and rejects spatial infeasibility. |
-| `admit_physical_budget(*, device_budget_bytes, spill_budget_bytes, baseline_bytes, observed_external_bytes, maximum_task_workspace_bytes, predicted_spill_peak_bytes, allocation_timeline=(), policy=None)` | `(PhysicalAdmission, SlabReplay)` | Computes the explicit reserves and spatially validates the slab, raising `PhysicalAdmissionError`, a `ValueError` carrying `kind`, `required_bytes` and `capacity_bytes`, when the headroom leaves none. |
-| `run_admission_replay(capacity_bytes, operations, *, lease_count, dependency_count, minimum_alignment=256, large_request_threshold_bytes=0)` | `AdmissionReplayResult` | Replays an ordered script through the exact production memory-pool policy. |
-
-`AdmissionPolicy` is the tunable margin policy those take; `AllocationEvent`
-and `AllocationOperation` are the timeline they read; `SlabPlacement`,
-`SlabLayout` and `SlabReplay` are what the layout helpers answer with.
+For lower-level tools, `shadowspill.planner.admission.placement.place_lifetimes`
+places explicit byte/alignment/lifetime records. The runtime's
+`run_admission_replay(capacity_bytes, operations, *, lease_count,
+dependency_count, minimum_alignment=256, large_request_threshold_bytes=0)`
+replays ordered operations through the production memory-pool policy and returns
+an `AdmissionReplayResult`. Its `PhysicalAdmissionError` reports an infeasible
+operation, capacity, free ranges and live leases. Both operate without model
+execution; neither is a second budget-planning implementation.
 
 ### Results and diagnostics
 
@@ -711,13 +707,11 @@ leases](../../architecture/admission-leases.md).
 
 ### External memory terminology
 
-`AdmissionPolicy.minimum_external_headroom_bytes` defaults to 512 MiB.
-`external_growth_margin_bytes` (64 MiB) and `external_granularity_bytes`
-(64 MiB) determine how an observed external footprint is rounded when the
-standalone physical-admission helper derives an allowance. The runtime's
-`DevicePool.external_headroom` is an explicit reservation, defaulting to
-512 MiB; its separate `reject_overbudget` flag defaults to `False`.
-Persistent allocations inside the pool are accounted for separately.
+`measure_program(external_headroom_bytes=512 << 20)` includes the explicit
+external reservation in its fixed device memory evidence. Planning deducts this
+from the total GPU allowance. Executor uses the Plan's reservation; increasing
+it requires replanning. Persistent allocations inside the pool are accounted for
+separately.
 
 ## `shadowspill.simulator`
 

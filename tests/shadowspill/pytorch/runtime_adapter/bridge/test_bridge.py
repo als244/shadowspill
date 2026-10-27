@@ -15,8 +15,8 @@ from shadowspill.pytorch.runtime_adapter.outputs import (
 from shadowspill.runtime.plan.admission import encode_task
 from shadowspill.runtime.plan.bridge import RuntimeBridge, abort_task
 from shadowspill.runtime.plan.common import TaskMemoryEnvelope
-from shadowspill.task.profiles import (
-    TaskAllocationContract,
+from shadowspill.task.allocations.contract import TaskAllocationContract
+from shadowspill.task.allocations.events import (
     TaskAllocationEvent,
     TaskAllocationOperation,
 )
@@ -148,9 +148,7 @@ def test_zero_size_alias_uses_no_physical_runtime_operation() -> None:
     bridge.objects.register_placeholder("alias_000099")
     aliases, tensors = ("alias_000099",), (tensor,)
     bindings = acquire_for_caller(bridge, aliases, tensors, acquisition_handle=0)
-    transfer_outputs_to_caller(
-        bridge, aliases, tensors, bindings, acquisition_handle=0
-    )
+    transfer_outputs_to_caller(bridge, aliases, tensors, bindings, acquisition_handle=0)
 
     assert not bridge.objects.requires_storage("alias_000099")
     (binding,) = bindings

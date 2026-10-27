@@ -4,7 +4,8 @@ from collections.abc import Mapping, Sequence
 from typing import Any
 
 from shadowspill.artifacts._values import nonnegative_int, plain
-from shadowspill.task.allocations import TaskAllocationContract, TaskAllocationEvent
+from shadowspill.task.allocations.contract import TaskAllocationContract
+from shadowspill.task.allocations.events import TaskAllocationEvent
 from shadowspill.task.layout import _allocation_live_set_peak
 
 

@@ -53,7 +53,10 @@ during planning. The runtime exceptions come from `shadowspill.runtime`.
 and objective failures. `CompilationError` and `ProfilingError` share
 `TaskPhaseError`; `PlanInfeasibleError` derives from `AdmissionError`.
 Input validation, store misses and execution failures are outside this hierarchy.
-One admission failure is outside this table: `shadowspill.planner.admission.physical` raises `PhysicalAdmissionError`, a `ValueError`, when a budget's headroom leaves nothing to admit. That is the standalone helper documented on [the neutral API page](api/neutral.md#physical-admission); planning calls it and reports what it found as the `AdmissionError` above.
+The low-level `shadowspill.runtime.admission_replay` helper raises
+`PhysicalAdmissionError`, a `ValueError` with the failed operation's capacity,
+free-range and live-lease evidence. It directly probes the production memory-pool
+policy; see [the neutral API page](api/neutral.md#physical-admission).
 
 `InputGuardError` is deliberately outside the hierarchy — it is a `ValueError`
 raised at a call, not during planning. So is the `require` store's refusal: a

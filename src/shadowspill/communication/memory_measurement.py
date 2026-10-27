@@ -5,7 +5,7 @@ from typing import Any
 import torch
 
 from shadowspill.profiling.observation.observe import observe_task
-from shadowspill.task.allocations import TaskAllocationContract
+from shadowspill.task.allocations.contract import TaskAllocationContract
 
 from .binding.groups import GroupBindings
 from .probe import CollectiveProbe

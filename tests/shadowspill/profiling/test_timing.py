@@ -5,7 +5,6 @@ from dataclasses import replace
 import pytest
 
 from shadowspill.profiling.timing import collect_timing_samples, condition_task
-from shadowspill.task.profiles import TaskMeasurement
 from shadowspill.task.profiling import ProfilingOptions, TimingWindow
 
 
@@ -147,22 +146,6 @@ def test_invalid_duration_or_threshold(name, value) -> None:
 def test_invalid_iteration_count(name, value) -> None:
     with pytest.raises(ValueError, match=name):
         replace(ProfilingOptions(), **{name: value})
-
-
-def test_measurement_persists_policy_and_timing_evidence() -> None:
-    record = TaskMeasurement(
-        100,
-        0,
-        0,
-        (),
-        (100,),
-        "test",
-        profiling_options=ProfilingOptions(conditioning_seconds=0.5),
-        conditioning=TimingWindow(500_000_000, 600_000_000, 10, True),
-        sampling=TimingWindow(100, 200, 1, False),
-        timing_unstable=True,
-    )
-    assert TaskMeasurement.from_dict(record.to_dict()) == record
 
 
 def test_sampling_bursts_count_individual_device_samples_and_finish_the_burst():

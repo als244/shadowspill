@@ -6,7 +6,10 @@ from dataclasses import dataclass, replace
 from typing import Any
 
 from shadowspill.errors import CaptureError
-from shadowspill.task.allocations import TaskAllocationEvent, TaskAllocationOperation
+from shadowspill.task.allocations.events import (
+    TaskAllocationEvent,
+    TaskAllocationOperation,
+)
 from shadowspill.task.layout import _allocation_live_set_peak
 from shadowspill.task.profiles import TaskOutputInputBinding
 

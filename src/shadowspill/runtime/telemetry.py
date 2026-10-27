@@ -7,11 +7,11 @@ from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 from enum import IntEnum
 
-from shadowspill.task.profiles import (
+from shadowspill.task.allocations.events import (
     TaskAllocationEvent,
     TaskAllocationOperation,
-    TaskOutputInputBinding,
 )
+from shadowspill.task.profiles import TaskOutputInputBinding
 
 from .abi import AllocationEvent as CAllocationEvent
 from .abi import runtime_library

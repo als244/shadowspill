@@ -1,7 +1,10 @@
 """Project allocation events to physical placement lifetimes."""
 
 from shadowspill.planner.admission import TaskAllocationStep, TaskAllocationStepKind
-from shadowspill.task.allocations import TaskAllocationEvent, TaskAllocationOperation
+from shadowspill.task.allocations.events import (
+    TaskAllocationEvent,
+    TaskAllocationOperation,
+)
 
 from .outputs import TaskOutputBinding
 

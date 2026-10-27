@@ -9,7 +9,8 @@ import torch
 from shadowspill.artifacts._values import plain
 from shadowspill.artifacts.profiles import TaskProfile
 from shadowspill.errors import CaptureError
-from shadowspill.task.allocations import TaskAllocationContract, TaskAllocationOperation
+from shadowspill.task.allocations.contract import TaskAllocationContract
+from shadowspill.task.allocations.events import TaskAllocationOperation
 from shadowspill.task.layout import reconcile_compiled_task_layout
 from shadowspill.task.manifest import ExecutableRootAllocation
 from shadowspill.task.profiles import TaskMeasurement

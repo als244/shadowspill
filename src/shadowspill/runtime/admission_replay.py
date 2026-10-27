@@ -6,7 +6,6 @@ import ctypes
 from dataclasses import dataclass
 from enum import IntEnum
 
-from shadowspill.planner.admission.physical import PhysicalAdmissionError
 from shadowspill.status import ABI_VERSION, Status
 
 from .admission_capi import (
@@ -20,6 +19,33 @@ from .admission_capi import (
     admission_replay_api,
     optional_id,
 )
+
+
+class PhysicalAdmissionError(ValueError):
+    """Physical admission failure with machine-readable capacity evidence."""
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        kind: str,
+        required_bytes: int,
+        capacity_bytes: int,
+        position: int | None = None,
+        free_bytes: int | None = None,
+        largest_free_range_bytes: int | None = None,
+        live_lease_evidence: tuple[tuple[int, int, int, int, int], ...] = (),
+        free_range_evidence: tuple[tuple[int, int, str | None, str | None], ...] = (),
+    ) -> None:
+        super().__init__(message)
+        self.kind = kind
+        self.required_bytes = required_bytes
+        self.capacity_bytes = capacity_bytes
+        self.position = position
+        self.free_bytes = free_bytes
+        self.largest_free_range_bytes = largest_free_range_bytes
+        self.live_lease_evidence = live_lease_evidence
+        self.free_range_evidence = free_range_evidence
 
 
 class AdmissionReplayOperationKind(IntEnum):
@@ -238,5 +264,6 @@ __all__ = [
     "AdmissionReplayOperationKind",
     "AdmissionReplayResult",
     "AdmissionReuseDependency",
+    "PhysicalAdmissionError",
     "run_admission_replay",
 ]

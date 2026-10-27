@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from shadowspill.runtime.plan.common import TaskMemoryEnvelope
-from shadowspill.task.allocations import TaskAllocationOperation
+from shadowspill.task.allocations.events import TaskAllocationOperation
 from shadowspill.task.profiles import TaskMeasurement
 
 
@@ -39,40 +39,14 @@ def task_memory_envelope(
         allocation_contract = allocation_contract.for_retained_output_leaves(
             retained_output_leaves
         )
-    scratch_peak_requested = max(
-        measurement.dynamic_scratch_peak_requested_bytes,
-        minimum_scratch_reserve_bytes,
-    )
-    scratch_peak_charged = max(
-        measurement.dynamic_scratch_peak_charged_bytes,
-        minimum_scratch_reserve_bytes,
-    )
+    scratch = max(0, minimum_scratch_reserve_bytes)
     return TaskMemoryEnvelope(
-        maximum_requested_allocation_bytes=max(
-            maximum_requested,
-            measurement.dynamic_scratch_maximum_requested_bytes,
-            minimum_scratch_reserve_bytes,
-        ),
-        maximum_charged_allocation_bytes=max(
-            maximum_charged,
-            measurement.dynamic_scratch_maximum_charged_bytes,
-            minimum_scratch_reserve_bytes,
-        ),
-        live_requested_allocation_limit_bytes=_envelope_limit(
-            peak_requested + scratch_peak_requested
-        ),
-        live_charged_allocation_limit_bytes=_envelope_limit(
-            peak_charged + scratch_peak_charged
-        ),
-        dynamic_scratch_maximum_allocation_bytes=max(
-            measurement.dynamic_scratch_maximum_charged_bytes,
-            minimum_scratch_reserve_bytes,
-        ),
-        dynamic_scratch_live_limit_bytes=_envelope_limit(scratch_peak_charged),
-        allocation_path_digests=tuple(
-            item.compatibility_digest
-            for item in measurement.allocation_path_observations
-        ),
+        maximum_requested_allocation_bytes=max(maximum_requested, scratch),
+        maximum_charged_allocation_bytes=max(maximum_charged, scratch),
+        live_requested_allocation_limit_bytes=_envelope_limit(peak_requested + scratch),
+        live_charged_allocation_limit_bytes=_envelope_limit(peak_charged + scratch),
+        dynamic_scratch_maximum_allocation_bytes=scratch,
+        dynamic_scratch_live_limit_bytes=_envelope_limit(scratch),
         allocation_contract=allocation_contract,
     )
 

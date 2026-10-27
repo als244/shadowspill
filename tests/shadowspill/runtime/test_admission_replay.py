@@ -2,13 +2,13 @@ from __future__ import annotations
 
 import pytest
 
-from shadowspill.planner.admission.physical import PhysicalAdmissionError
 from shadowspill.runtime import (
     AdmissionReplayLeaseState,
     AdmissionReplayOperation,
     AdmissionReplayOperationKind,
     run_admission_replay,
 )
+from shadowspill.runtime.admission_replay import PhysicalAdmissionError
 
 
 def _operation(

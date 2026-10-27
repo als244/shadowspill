@@ -6,8 +6,8 @@ from dataclasses import replace
 import pytest
 
 from shadowspill import CommunicationInfo, MemoryBudgets, apply_profiles, plan_program
-from shadowspill.task.allocations import (
-    TaskAllocationContract,
+from shadowspill.task.allocations.contract import TaskAllocationContract
+from shadowspill.task.allocations.events import (
     TaskAllocationEvent,
     TaskAllocationOperation,
 )

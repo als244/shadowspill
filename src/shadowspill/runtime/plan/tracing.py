@@ -12,7 +12,7 @@ from shadowspill.runtime import trace
 from shadowspill.runtime.abi import AdapterStatistics
 from shadowspill.runtime.timing import Marker
 from shadowspill.runtime.trace import CapturedRuntimeTrace
-from shadowspill.task.allocations import TaskAllocationOperation
+from shadowspill.task.allocations.events import TaskAllocationOperation
 
 from .common import TaskMemoryEnvelope
 

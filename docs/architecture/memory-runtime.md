@@ -89,8 +89,10 @@ Two cases remain dynamic by design:
 - terminal caller-owned outputs use dynamic leases so they may outlive a
   later callable invocation.
 
-The scratch reserve is derived from profiling. A user may raise it with
-`dynamic_scratch_reserve_bytes`, but cannot reduce the measured requirement.
+Ordinary profiling requires stable allocation requests and models their complete
+lifetimes. The low-level planner also accepts an explicit
+`dynamic_scratch_reserve_bytes` allowance; it does not replace those measured
+allocations or make unresolved memory safe to execute.
 Runtime fixed-service headroom, external headroom and persistent in-pool allocations, task workspace, and
 dynamic scratch are distinct accounting categories.
 

@@ -56,7 +56,6 @@ NEUTRAL_FORBIDDEN = {
 #: may. See docs/internal/ for the deferred-rename list.
 FROZEN_LITERALS = (
     "pytorch.export",
-    "pytorch.profile",
     "build.inductor",
     "build/inductor/",
 )

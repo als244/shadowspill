@@ -8,7 +8,7 @@ from shadowspill.planner.admission import (
     StorageHandoff,
     TaskAdmissionSpec,
 )
-from shadowspill.task.allocations import TaskAllocationEvent
+from shadowspill.task.allocations.events import TaskAllocationEvent
 
 from .outputs import TaskOutputBinding
 from .traces import (

@@ -20,7 +20,7 @@ from shadowspill.runtime.telemetry import (
     stop_allocation_telemetry,
     summarize_task_workspace,
 )
-from shadowspill.task.allocations import TaskAllocationContract
+from shadowspill.task.allocations.contract import TaskAllocationContract
 from shadowspill.task.storage import TaskStorageContract
 from tests.integration.pytorch.runtime_helpers import two_pool_topology
 from tests.shadowspill.profiling._allocator import (

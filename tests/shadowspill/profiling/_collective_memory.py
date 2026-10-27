@@ -13,10 +13,8 @@ from shadowspill.communication.memory_session import CommunicationMemory
 from shadowspill.communication.probe import CollectiveProbe
 from shadowspill.communication.requests import CollectiveRequest
 from shadowspill.pytorch.toolchain import build_setup
-from shadowspill.task.allocations import (
-    TaskAllocationContract,
-    TaskAllocationOperation,
-)
+from shadowspill.task.allocations.contract import TaskAllocationContract
+from shadowspill.task.allocations.events import TaskAllocationOperation
 
 device = torch.device("cuda", 0)
 torch.cuda.set_device(device)

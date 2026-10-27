@@ -16,7 +16,7 @@ from shadowspill.runtime.failures import (
 )
 
 if TYPE_CHECKING:
-    from shadowspill.task.allocations import TaskAllocationContract
+    from shadowspill.task.allocations.contract import TaskAllocationContract
 
 #: How the runtime numbers each memory action kind.
 ACTION_KIND = {
@@ -37,7 +37,6 @@ class TaskMemoryEnvelope:
     live_charged_allocation_limit_bytes: int = 0
     dynamic_scratch_maximum_allocation_bytes: int = 0
     dynamic_scratch_live_limit_bytes: int = 0
-    allocation_path_digests: tuple[str, ...] = ()
     allocation_contract: TaskAllocationContract | None = None
 
     def __post_init__(self) -> None:
@@ -69,8 +68,6 @@ class TaskMemoryEnvelope:
             > self.dynamic_scratch_live_limit_bytes
         ):
             raise ValueError("scratch allocation maximum exceeds scratch live limit")
-        if any(len(value) != 64 for value in self.allocation_path_digests):
-            raise ValueError("allocation path digests must be SHA-256")
 
 
 @dataclass(frozen=True, slots=True)

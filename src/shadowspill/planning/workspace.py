@@ -4,7 +4,10 @@ from collections.abc import Mapping, Sequence
 from typing import Any
 
 from shadowspill.artifacts._values import plain
-from shadowspill.task.allocations import TaskAllocationEvent, TaskAllocationOperation
+from shadowspill.task.allocations.events import (
+    TaskAllocationEvent,
+    TaskAllocationOperation,
+)
 from shadowspill.task.layout import _allocation_live_set_peak
 
 

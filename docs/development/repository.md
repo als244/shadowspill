@@ -89,8 +89,7 @@ src/shadowspill/
 │   └── observation/       allocator observations and lifetime decoding
 ├── task/                  one task's shape and provenance, framework-free
 │   ├── storage.py         the storage contract: roots, output views, mutations
-│   ├── allocations.py     what a task promised about its allocations, and the
-│   │                      path the profiled run observed
+│   ├── allocations/      allocator events and the stable task contract
 │   ├── profiles.py        task timing, memory and allocation evidence
 │   ├── inputs.py          what a task argument is, and the value profiled for it
 │   ├── slots.py           where a task's objects sit in its contract
@@ -104,7 +103,7 @@ src/shadowspill/
 ├── planner/               the planning question and its C bindings
 │   ├── plan_store/        request identity, validated cache I/O and search reuse
 │   ├── admission/         neutral physical admission, after a search answers
-│   │   ├── physical.py    what a plan needs physically, before a runtime exists
+│   │   ├── placement.py   native byte/alignment/lifetime placement
 │   │   └── layout/        leases to fixed offsets, and the certificate
 │   ├── diagnostics/       search evidence, counters and plan summaries
 │   ├── search/            the search seam

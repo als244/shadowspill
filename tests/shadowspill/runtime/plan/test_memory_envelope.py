@@ -32,8 +32,8 @@ from shadowspill.runtime.budget import (
 from shadowspill.runtime.plan.envelopes import (
     task_memory_envelope,
 )
-from shadowspill.task.allocations import (
-    TaskAllocationContract,
+from shadowspill.task.allocations.contract import TaskAllocationContract
+from shadowspill.task.allocations.events import (
     TaskAllocationEvent,
     TaskAllocationOperation,
 )

@@ -34,8 +34,8 @@ from shadowspill.runtime.plan.admission import (
 from shadowspill.runtime.plan.bridge import RuntimeBridge
 from shadowspill.runtime.plan.common import TaskMemoryEnvelope
 from shadowspill.runtime.plan.lifecycle import abort_plan, begin_plan
-from shadowspill.task.allocations import (
-    TaskAllocationContract,
+from shadowspill.task.allocations.contract import TaskAllocationContract
+from shadowspill.task.allocations.events import (
     TaskAllocationEvent,
     TaskAllocationOperation,
 )

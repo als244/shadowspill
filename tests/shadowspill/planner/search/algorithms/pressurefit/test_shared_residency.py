@@ -21,7 +21,7 @@ from shadowspill.planner.search.algorithms.pressurefit.options import PressureFi
 from shadowspill.planning.admission.facts import build_admission_facts
 from shadowspill.planning.admission.outputs import TaskOutputBinding
 from shadowspill.simulator import SimulationConfig
-from shadowspill.task.profiles import (
+from shadowspill.task.allocations.events import (
     TaskAllocationEvent,
     TaskAllocationOperation,
 )

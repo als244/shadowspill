@@ -6,7 +6,8 @@ import pytest
 
 from shadowspill import CommunicationInfo
 from shadowspill.communication.contracts import collective_measurement
-from shadowspill.task.allocations import TaskAllocationContract, TaskAllocationEvent
+from shadowspill.task.allocations.contract import TaskAllocationContract
+from shadowspill.task.allocations.events import TaskAllocationEvent
 
 from .test_collective_tasks import collective_program
 from .test_communication_memory import measured_info

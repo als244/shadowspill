@@ -1,6 +1,6 @@
 from shadowspill.planning.workspace import transient_output_workspace
-from shadowspill.task.allocations import TaskAllocationEvent as Event
-from shadowspill.task.allocations import TaskAllocationOperation as Op
+from shadowspill.task.allocations.events import TaskAllocationEvent as Event
+from shadowspill.task.allocations.events import TaskAllocationOperation as Op
 
 
 def test_temporary_output_extents_are_deduplicated():
