@@ -8,13 +8,17 @@ from workloads.models.shared.initialization import fill_generated
 
 
 class Initialize:
-    def __init__(self, catalog_initializer, *, expert_rank, std):
+    def __init__(self, catalog_initializer, *, expert_rank, std, router_dtype):
         self.catalog = catalog_initializer
         self.expert_rank, self.std = expert_rank, std
+        self.router_dtype = router_dtype
 
     def __call__(self, request, destination):
         # Quack exposes physical BF16 payloads under logical FP32 parameters.
-        request = replace(request, name=request.name.removesuffix("._data"))
+        request = replace(
+            request,
+            name=request.name.removeprefix("master.").removesuffix("._data"),
+        )
         if ".moe.experts." not in request.name:
             self.catalog(request, destination)
             return
@@ -27,6 +31,11 @@ class Initialize:
         )
 
     def values(self, name, shape, start, stop, generator):
-        return torch.empty(stop - start, dtype=torch.float32).normal_(
+        values = torch.empty(stop - start, dtype=torch.float32).normal_(
             std=self.std, generator=generator
         )
+        # Packed compute weights require an explicit master initializer. Both
+        # requests use the same RNG name and payload rounding, even when their
+        # chunks differ, so the first update starts from the loaded weight.
+        dtype = self.router_dtype if name.endswith("router_weight") else torch.bfloat16
+        return values.to(dtype)

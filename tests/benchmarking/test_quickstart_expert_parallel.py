@@ -112,6 +112,22 @@ def test_ep_objective_normalizes_global_tokens_once(monkeypatch):
     torch.testing.assert_close(parameter.grad, torch.tensor(2.0))
 
 
+@pytest.mark.parametrize("logical_rank", [0, 1])
+def test_explicit_masters_match_packed_payloads_across_chunk_sizes(logical_rank):
+    loader = factory(logical_rank=logical_rank)["fill_tensor"]
+    for leaf in ("router_weight", "gate_up_weight", "down_weight"):
+        name = "blocks.0.moe.experts." + leaf
+        payload = torch.empty(35, dtype=torch.bfloat16)
+        master = torch.empty(35, dtype=torch.float32)
+        loader(TensorChunk(name + "._data", (5, 7), payload.dtype, 0, 35), payload)
+        for start in range(0, 35, 9):
+            chunk = master[start : start + 9]
+            loader(
+                TensorChunk("master." + name, (5, 7), master.dtype, start, 35), chunk
+            )
+        torch.testing.assert_close(master, payload.float(), rtol=0, atol=0)
+
+
 @pytest.mark.parametrize(
     "kwargs,match",
     [

@@ -93,6 +93,7 @@ def experiment(
         setup["fill_tensor"],
         expert_rank=logical_rank % ranks,
         std=options.init_std,
+        router_dtype=options.router_dtype,
     )
     setup["build_options"].update(
         parallelism=parallelism,
