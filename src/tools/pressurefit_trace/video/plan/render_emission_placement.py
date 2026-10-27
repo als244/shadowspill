@@ -5,7 +5,7 @@ from __future__ import annotations
 import numpy as np
 from matplotlib.patches import Rectangle
 
-from ..data import GIB, byte_label, short_task
+from ...data import GIB, byte_label, short_task
 from ..style import BG, GREEN, MUTED, RED, WHITE
 from .render_common import ROLE_COLOR, PlanCanvas, boxes, truncate
 

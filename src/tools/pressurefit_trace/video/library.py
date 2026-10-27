@@ -607,7 +607,9 @@ def build(config_path, root):
         "",
         "```sh",
         "PYTHONPATH=src python -m "
-        "tools.pressurefit_trace.library " + shlex.quote(str(config_path)) + " \\",
+        "tools.pressurefit_trace.video.library "
+        + shlex.quote(str(config_path))
+        + " \\",
         "  --output " + shlex.quote(str(root)) + " --watch 30",
         "```",
         "",

@@ -217,7 +217,7 @@ recorded alternatives.
 
 The same [tools directory](../../src/tools/pressurefit_trace/README.md) also
 contains separate renderers for emission/placement and simulated execution.
-Those [plan videos](../../src/tools/pressurefit_trace/plan/README.md) read the
+Those [plan videos](../../src/tools/pressurefit_trace/video/plan/README.md) read the
 saved `AnnotatedProgramPlan`, optionally joined with semantic labels. A cut
 trace by itself does not provide physical addresses or copy timings. Both
 guides list input formats, commands, timing controls, and encoding arguments.

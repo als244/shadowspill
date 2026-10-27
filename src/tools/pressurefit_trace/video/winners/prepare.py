@@ -9,10 +9,10 @@ from shadowspill import Plan
 from shadowspill.planner.search.algorithms.pressurefit.tracing import record_plan_trace
 from shadowspill.planner.search.toolkit.resolution import recompute_share
 
-from ..collect.inputs import labels
-from ..data import Trajectory, annotate_recompute
+from ...collect.inputs import labels
+from ...data import Trajectory, annotate_recompute
+from ...profile_winners.selection import completed
 from ..matrix import file_digest, write
-from ..profile_winners.selection import completed
 from .plan import diagnostic_plan
 
 

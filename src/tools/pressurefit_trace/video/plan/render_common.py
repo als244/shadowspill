@@ -19,8 +19,8 @@ from matplotlib.ticker import MaxNLocator
 
 from shadowspill.diagnostics.occupancy import WORKSPACE
 
-from ..data import GIB, ROLE_COLORS, byte_label, short_task
-from ..pressure import ROLE_GROUPS
+from ...data import GIB, ROLE_COLORS, byte_label, short_task
+from ...pressure import ROLE_GROUPS
 from ..style import BG, MUTED, PANEL, RECOMPUTE, RED, WHITE, duration_label
 
 ROLE_COLOR = {

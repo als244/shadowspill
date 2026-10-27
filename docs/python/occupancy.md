@@ -200,7 +200,7 @@ whose alternatives they are taken at.
 
 For animated views of these saved simulated timelines, including transfer
 backlog and physical placement construction, see the source-tree
-[plan video tools](../../src/tools/pressurefit_trace/plan/README.md). They reuse this
+[plan video tools](../../src/tools/pressurefit_trace/video/plan/README.md). They reuse this
 module's role attribution and interval accounting and accept the annotated
 plans written by the collection workflow.
 

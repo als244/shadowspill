@@ -35,7 +35,7 @@ renders figures, and runs the winning plan. It is the tour, and the fastest
 way to see the whole system work.
 
 Quickstart uses `write_report` for saved-Plan summaries, plots and timelines.
-The [video tools](../src/tools/pressurefit_trace/README.md#completed-quickstart-winners)
+The [video tools](../src/tools/pressurefit_trace/video/batch.md#completed-quickstart-winners)
 render completed winners directly from their saved Plans.
 
 [**Bandwidth frontier**](bandwidth_frontier/README.md) replans saved

@@ -140,9 +140,19 @@ def action_window(data, index, *, full_lifetime=False):
 
 
 def build_story(
-    data, replay, mode, *, timing=None, actions=None, placements=None, tasks=None
+    data,
+    replay,
+    mode,
+    *,
+    timing=None,
+    detailed=False,
+    actions=None,
+    placements=None,
+    tasks=None,
 ):
     timing = timing or Timing()
+    if not detailed and not any((actions, placements, tasks)):
+        return _finish_story(mode, timing, _continuous_scenes(data, mode, timing))
     scenes = []
 
     def add(kind, seconds, title, **kw):
@@ -322,6 +332,52 @@ def build_story(
         )
     else:
         raise ValueError("unknown video mode")
+    return _finish_story(mode, timing, scenes)
+
+
+def _continuous_scenes(data, mode, timing):
+    sweep = dict(cursor_start_ns=0, cursor_end_ns=data.end_ns, pan=True)
+    if mode == "emission-placement":
+        scenes = [
+            dict(
+                kind="emission-sweep",
+                seconds=timing.sweep,
+                title="Emitted residency actions",
+                **sweep,
+            ),
+            dict(
+                kind="placement-build",
+                seconds=timing.build,
+                title="Physical placement",
+                placed_start=0,
+                placed_end=len(data.leases),
+            ),
+            dict(
+                kind="placement-sweep",
+                seconds=timing.sweep,
+                title="Allocation lifetimes",
+                placed=len(data.leases),
+                **sweep,
+            ),
+        ]
+    elif mode == "execution":
+        scenes = [
+            dict(
+                kind="execution-sweep",
+                seconds=timing.sweep,
+                title="Simulated execution",
+                **sweep,
+            )
+        ]
+    else:
+        raise ValueError("unknown video mode")
+    return [
+        dict(window_ns=[0, data.end_ns], cursor_start_ns=0, cursor_end_ns=0) | scene
+        for scene in scenes
+    ]
+
+
+def _finish_story(mode, timing, scenes):
     elapsed = 0
     for scene in scenes:
         scene["video_start_seconds"] = elapsed

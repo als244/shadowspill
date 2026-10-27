@@ -34,7 +34,7 @@ def shell(title, content, root, directory, *, subtitle=""):
 <main><div class="eyebrow">ALGORITHM STUDIES · SAVED SIMULATIONS</div>
 <h1>{escape(title)}</h1><p class="subtitle">{escape(subtitle)}</p>{content}</main>
 <footer>Saved plans, raw traces, and original movie files stay linked to each configuration.
-<br>Simulated and measured throughput are labeled separately; video playback follows teaching pace.</footer>
+<br>Simulated and measured throughput are labeled separately; video playback follows the chosen animation pace.</footer>
 <script src="{js}"></script></body></html>"""
 
 

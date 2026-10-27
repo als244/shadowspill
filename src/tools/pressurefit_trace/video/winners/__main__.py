@@ -1,4 +1,4 @@
-"""Prepare saved quickstart winners for tools.pressurefit_trace.matrix render."""
+"""Prepare saved quickstart winners for tools.pressurefit_trace.video.batch."""
 
 import argparse
 from pathlib import Path

@@ -1,17 +1,20 @@
 # Plan videos
 
-Part of the shared [PressureFit tracing and video tools](../README.md).
-The cut renderer lives in the parent directory; emission/placement and execution
+Part of the shared [PressureFit tracing and video tools](../../README.md).
+The cut renderer lives in `../cuts/`; emission/placement and execution
 have separate rendering modules here, with common fonts, colors, and drawing
 primitives.
 
-Render a saved plan as two related explanations:
+Render a saved plan as two continuous animations:
 
 - **Emission + placement:** follow release, eviction, and fetch actions; then
   construct the physical address layout and sweep through its lifetimes.
-- **Execution:** explain why selected tasks cannot start, with their required
-  input transfers or storage-reuse dependencies highlighted on compute/fetch/
-  evict lanes. Show byte backlog and execution/spill occupancy on the same clock.
+- **Execution:** sweep the compute/fetch/evict timeline, with byte backlog and
+  execution/spill occupancy on the same clock.
+
+The default excludes story introductions, detailed examples and explanation
+holds. Add `--details` to include them. Explicit `--actions`, `--tasks` or
+`--placements` also opts into a detailed sequence.
 
 The tools accept any single-device `AnnotatedProgramPlan` JSON. They do not
 contain workload names, model-specific rules, or experiment paths. Everything
@@ -21,8 +24,8 @@ are project dependencies. MP4 rendering additionally requires `ffmpeg`.
 Run from a development checkout with the `shadowspill` environment active:
 
 ```sh
-python -m tools.pressurefit_trace.plan --help
-python -m tools.pressurefit_trace.plan render --help
+python -m tools.pressurefit_trace.video.plan --help
+python -m tools.pressurefit_trace.video.plan render --help
 ```
 
 If the source tree is not already importable, set `PYTHONPATH=src`. The tools
@@ -34,7 +37,7 @@ logs are ignored by git; the source and this guide are tracked.
 
 Save `plan_program(...).to_json()` to obtain an annotated plan, or use the
 `program_XXXX.plan.json` produced by
-[`tools.pressurefit_trace plan`](../README.md). A cut trace
+[`tools.pressurefit_trace plan`](../../README.md). A cut trace
 alone does not contain physical allocations or transfer intervals.
 
 Semantic annotations are optional, but recommended for real programs. Supply
@@ -54,19 +57,19 @@ PLAN=runs/example/program_0000.plan.json
 SEMANTICS=runs/example/semantic_labels.json
 
 # Verify every placement offset and export evidence for all actions.
-python -m tools.pressurefit_trace.plan analyze "$PLAN" --semantics "$SEMANTICS" \
+python -m tools.pressurefit_trace.video.plan analyze "$PLAN" --semantics "$SEMANTICS" \
     --output runs/example/analysis
 
 # Review scene compositions before spending time encoding a movie.
-python -m tools.pressurefit_trace.plan gallery "$PLAN" --semantics "$SEMANTICS" \
+python -m tools.pressurefit_trace.video.plan gallery "$PLAN" --semantics "$SEMANTICS" \
     --video emission-placement --resolution 1080p \
     --output runs/example/review
 
-python -m tools.pressurefit_trace.plan render "$PLAN" --semantics "$SEMANTICS" \
+python -m tools.pressurefit_trace.video.plan render "$PLAN" --semantics "$SEMANTICS" \
     --title 'Example model' --video emission-placement \
     --output runs/example/emission-placement.mp4
 
-python -m tools.pressurefit_trace.plan render "$PLAN" --semantics "$SEMANTICS" \
+python -m tools.pressurefit_trace.video.plan render "$PLAN" --semantics "$SEMANTICS" \
     --title 'Example model' --video execution \
     --output runs/example/execution.mp4
 ```
@@ -76,11 +79,11 @@ Both movies default to **3840 x 2160**, H.264 **CRF 14**, and 30 output FPS.
 compression, not dimensions or evidence. `--resolution 720p|1080p|1440p|4k`
 controls dimensions. Motion is sampled at 15 states/second by default and
 repeated into the output stream; `--motion-fps 30 --fps 30` gives 30 distinct
-states/second. Explanations hold for reading rather than moving continuously.
+states/second. Optional explanations hold for reading rather than moving continuously.
 
 ## Examples, timing, and camera
 
-Automatic emission examples show a clean release with a later fetch, an eviction,
+With `--details`, automatic emission examples show a clean release with a later fetch, an eviction,
 and a fetch trigger. Execution examples select **exposed compute stalls**:
 an input delayed by the fetch queue, evictions holding addresses needed by a task,
 or an eviction preventing a required prefetch. A queue wait that is entirely
@@ -115,9 +118,10 @@ Example selection, timing, and camera arguments:
 
 | Argument | Meaning | Default |
 |---|---|---|
-| `--actions 48,51,200` | Emission examples: schedule actions, 1-based, in presentation order | Automatic |
-| `--tasks 10,58,103` | Execution examples: selected task positions with recorded stalls, 1-based | Automatic |
-| `--placements 1,2,100` | Detailed insertion ranks in the verified placement order, 1-based | Automatic |
+| `--details` | Add introductions, detailed examples and explanation holds | Off |
+| `--actions 48,51,200` | Emission examples: schedule actions, 1-based, in presentation order | None; automatic with `--details` |
+| `--tasks 10,58,103` | Execution examples: selected task positions with recorded stalls, 1-based | None; automatic with `--details` |
+| `--placements 1,2,100` | Detailed insertion ranks in the verified placement order, 1-based | None; automatic with `--details` |
 | `--explain-seconds` | Hold each explanation | 12 |
 | `--motion-seconds` | Follow an emission example; execution examples use twice this | 10 |
 | `--build-seconds` | Final accelerated placement construction | 30 |
@@ -137,11 +141,11 @@ certificate's predicted allocation lifetimes.
 
 ```sh
 # One exact frame, halfway through storyboard scene 3.
-python -m tools.pressurefit_trace.plan frame "$PLAN" --semantics "$SEMANTICS" \
-    --video execution --scene 3 --at 0.5 --output runs/example/detail.png
+python -m tools.pressurefit_trace.video.plan frame "$PLAN" --semantics "$SEMANTICS" \
+    --video execution --details --scene 3 --at 0.5 --output runs/example/detail.png
 
-# Short preview using the identical plan and example selection.
-python -m tools.pressurefit_trace.plan render "$PLAN" --semantics "$SEMANTICS" \
+# Short continuous preview using the identical plan.
+python -m tools.pressurefit_trace.video.plan render "$PLAN" --semantics "$SEMANTICS" \
     --video execution --resolution 720p --quality preview \
     --explain-seconds 2 --motion-seconds 2 --sweep-seconds 5 --hold-seconds 1 \
     --output runs/example/preview.mp4
@@ -240,13 +244,11 @@ exact scene state/complete storyboard beside it.
 - `render_emission_placement.py`: release/evict/fetch scenes and placement construction.
 - `render_execution.py`: task stalls, compute/fetch/evict timelines, and byte backlog.
 - `render_common.py`: shared canvas, task strips, lanes, text spacing, and placement raster.
-- `render.py`: renderer selection and MP4 encoding; `../render.py` renders residency cuts.
+- `render.py`: renderer selection and MP4 encoding; `../cuts/` renders residency cuts.
 - `../style.py`: shared palette and duration labels for the three video types.
 - `__main__.py`: the public source-tree CLI.
 
 Validation:
 
-```sh
-python -m pytest tests/tools/test_plan_video.py
-ruff check src/tools/pressurefit_trace/plan tests/tools/test_plan_video.py
-```
+Render short review videos and inspect the frames and saved storyboards when
+changing these tools. Video tests are not part of the repository suite.

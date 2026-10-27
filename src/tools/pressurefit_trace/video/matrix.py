@@ -1,4 +1,4 @@
-"""Keep, trace, and render the best policy for every captured resolution."""
+"""Prepare video inputs for the best policy at every captured resolution."""
 
 from __future__ import annotations
 
@@ -20,7 +20,7 @@ from shadowspill.planner.result import certified_result
 from shadowspill.planner.search.algorithms.pressurefit.tracing import record_plan_trace
 from shadowspill.planner.search.toolkit.resolution import recompute_share
 
-from .data import Trajectory
+from ..data import Trajectory
 
 
 def write(path, value):
@@ -311,16 +311,10 @@ def main(argv=None):
     )
     command.add_argument("--output", type=Path, required=True)
     command.add_argument("--workers", type=int, default=4)
-    from .render_batch import add_parser, render_batch
-
-    add_parser(commands)
     args = parser.parse_args(argv)
-    if args.command == "prepare":
-        if args.workers < 1:
-            parser.error("workers must be positive")
-        prepare(args.planning, args.output, dump=args.dump, workers=args.workers)
-    else:
-        render_batch(args)
+    if args.workers < 1:
+        parser.error("workers must be positive")
+    prepare(args.planning, args.output, dump=args.dump, workers=args.workers)
 
 
 if __name__ == "__main__":

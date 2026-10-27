@@ -47,7 +47,7 @@ def parser():
         ("analyze", "Verify placement and export action/allocation evidence"),
         ("frame", "Render one scene state to PNG"),
         ("gallery", "Render a review still for every scene"),
-        ("render", "Render a teaching video to MP4"),
+        ("render", "Render a continuous plan animation to MP4"),
     ):
         command = commands.add_parser(
             name,
@@ -85,6 +85,11 @@ def parser():
             help="Chapters to keep in the emission-placement video",
         )
         command.add_argument("--title", help="Workload label in the header")
+        command.add_argument(
+            "--details",
+            action="store_true",
+            help="Add story introductions, detailed examples and explanation holds",
+        )
         command.add_argument(
             "--resolution",
             choices=("720p", "1080p", "1440p", "4k"),
@@ -221,6 +226,7 @@ def run(args):
         replay,
         args.video,
         timing=timing,
+        detailed=args.details,
         actions=args.actions,
         placements=placements,
         tasks=args.tasks,

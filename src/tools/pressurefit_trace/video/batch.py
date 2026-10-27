@@ -8,12 +8,13 @@ import math
 import os
 import shutil
 import subprocess
-import sys
 import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from urllib.parse import quote
+
+from benchmarking.processes import worker_command
 
 WIDTHS = {"720p": 1280, "1080p": 1920, "1440p": 2560, "4k": 3840}
 VIDEOS = ("cuts", "emission-placement", "execution")
@@ -31,10 +32,8 @@ def timing(value):
         ) from error
 
 
-def add_parser(commands):
-    parser = commands.add_parser(
-        "render", help="Render and verify a prepared matrix; resume completed movies"
-    )
+def build_parser():
+    parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("matrix", type=Path, help="Directory containing matrix.json")
     parser.add_argument("--output", required=True, type=Path)
     parser.add_argument(
@@ -47,6 +46,11 @@ def add_parser(commands):
         help="Workload title; individual geometry/ordering/resolution remain visible",
     )
     parser.add_argument("--videos", nargs="+", choices=VIDEOS, default=list(VIDEOS))
+    parser.add_argument(
+        "--details",
+        action="store_true",
+        help="Include story frames and detailed examples in all three videos",
+    )
     parser.add_argument("--resolution", choices=WIDTHS, default="4k")
     parser.add_argument(
         "--quality", choices=("preview", "high", "best"), default="best"
@@ -200,25 +204,27 @@ def movie_command(args, case, record, video, output):
         if "physical_budget_gib" in record:
             title += f" · {record['physical_budget_gib']:g} GiB"
         common += ["--title", title]
+    if args.details:
+        common += ["--details"]
     if video == "cuts":
         extra = []
         for key, value in json.loads(args.cut_options_json).items():
             extra.extend(["--" + key.replace("_", "-"), str(value)])
-        return [
-            sys.executable,
-            "-m",
-            "tools.pressurefit_trace",
-            "render",
-            str(case / record["trace"]),
-            "--reduction",
-            "answer",
-            "--axis",
-            "compute",
-            *extra,
-            *common,
-            "--output",
-            str(output),
-        ]
+        return worker_command(
+            "tools.pressurefit_trace.video",
+            [
+                "render",
+                str(case / record["trace"]),
+                "--reduction",
+                "answer",
+                "--axis",
+                "compute",
+                *extra,
+                *common,
+                "--output",
+                str(output),
+            ],
+        )
     options = []
     if record.get("semantics"):
         options += ["--semantics", str(case / record["semantics"])]
@@ -229,23 +235,23 @@ def movie_command(args, case, record, video, output):
         ("explain", "motion", "build", "sweep", "hold"), times, strict=True
     ):
         options += [f"--{flag}-seconds", str(value)]
-    return [
-        sys.executable,
-        "-m",
-        "tools.pressurefit_trace.plan",
-        "render",
-        str(case / record["plan"]),
-        "--metadata",
-        str(case / "metadata.json"),
-        "--video",
-        video,
-        *options,
-        *common,
-        "--motion-fps",
-        str(args.motion_fps),
-        "--output",
-        str(output),
-    ]
+    return worker_command(
+        "tools.pressurefit_trace.video.plan",
+        [
+            "render",
+            str(case / record["plan"]),
+            "--metadata",
+            str(case / "metadata.json"),
+            "--video",
+            video,
+            *options,
+            *common,
+            "--motion-fps",
+            str(args.motion_fps),
+            "--output",
+            str(output),
+        ],
+    )
 
 
 def render_batch(args):
@@ -267,11 +273,12 @@ def render_batch(args):
         published.mkdir(parents=True, exist_ok=True)
         (published / ".gitignore").write_text("*\n")
     # Include source hashes so a resume cannot silently mix renderer versions.
-    source = Path(__file__).resolve().parent
+    source = Path(__file__).resolve().parent.parent
     configuration = {
         "matrix_sha256": file_digest(root / "matrix.json"),
         "title": args.title,
         "videos": args.videos,
+        "details": args.details,
         "resolution": args.resolution,
         "quality": args.quality,
         "fps": args.fps,
@@ -465,3 +472,16 @@ def render_batch(args):
     write(
         output / "complete.json", {"movies": len(results), "finished_at": time.time()}
     )
+
+
+def main(argv=None):
+    parser = build_parser()
+    args = parser.parse_args(argv)
+    try:
+        render_batch(args)
+    except (ValueError, FileNotFoundError) as error:
+        parser.error(str(error))
+
+
+if __name__ == "__main__":
+    main()
