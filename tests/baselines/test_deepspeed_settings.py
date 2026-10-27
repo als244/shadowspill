@@ -115,8 +115,6 @@ def test_invalid_settings_are_refused(override):
     "override",
     [
         {"zero_stage": 1, "offload_optimizer": "cpu"},
-        {"zero_stage": 2, "grad_dtype": "float32"},
-        {"zero_stage": 3, "grad_dtype": "float32"},
         {"zero_stage": 2, "offload_param": "cpu"},
         {"opt_state_dtype": "bfloat16"},
         {"master_dtype": None, "opt_state_dtype": "float32"},
@@ -263,3 +261,15 @@ def test_a_float32_model_steps_its_weights():
         settings, Geometry(64, 1024, 128, 1), settings.precision()
     )
     assert "bf16" not in config and "fp16" not in config
+
+
+@pytest.mark.parametrize("zero_stage", [1, 2, 3])
+def test_float32_gradient_accumulation_and_reduction_under_bfloat16(zero_stage):
+    settings = Settings.from_dict(
+        {**BASE, "zero_stage": zero_stage, "grad_dtype": "float32"}
+    )
+    geometry = settings.validate(2)
+    config = deepspeed_config(settings, geometry, settings.precision())
+    assert config["bf16"] == {"enabled": True}
+    assert config["communication_data_type"] == "fp32"
+    assert config["data_types"]["grad_accum_dtype"] == "fp32"

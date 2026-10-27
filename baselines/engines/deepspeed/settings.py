@@ -236,15 +236,6 @@ class Settings(common.Settings):
             raise Unsupported(
                 "DeepSpeed reduces gradients in the model dtype or float32"
             )
-        if (
-            resolved_grad == "float32"
-            and precision.model_dtype != "float32"
-            and self.zero_stage > 1
-        ):
-            raise Unsupported(
-                "ZeRO stages two and three accumulate gradients in the model"
-                " dtype; float32 accumulation is stage one's"
-            )
         if self.verify_reference and precision.model_dtype == "float16":
             raise ValueError("the reference check does not model fp16 loss scaling")
 

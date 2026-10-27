@@ -191,6 +191,7 @@ class Clock:
         self.setup_seconds: float | None = None
         self.tick: float | None = None
         self.capturing = False
+        self.capture_group = None
         self.closed = False
 
     @property
@@ -229,8 +230,17 @@ class Clock:
             self.barrier()
             if self.reset_peaks:
                 torch.cuda.reset_peak_memory_stats()
-            if self.case.settings.nsys_capture and self.case.rank == 0:
-                torch.cuda.cudart().cudaProfilerStart()
+            if self.case.settings.nsys_capture:
+                import torch.distributed as dist
+
+                if self.case.world > 1 and dist.is_initialized():
+                    self.capture_group = dist.new_group(backend="gloo")
+                self._capture_boundary(torch.cuda.cudart().cudaProfilerStart)
+                # Nsight enables sibling-process NVTX collection asynchronously.
+                # Settle before any timed range or further CUDA collective.
+                time.sleep(1.0)
+                if self.capture_group is not None:
+                    dist.barrier(group=self.capture_group)
                 self.capturing = True
         torch.cuda.synchronize()
         self.barrier()
@@ -269,18 +279,31 @@ class Clock:
         return elapsed
 
     def close(self) -> None:
-        """After the last step: the capture ends and the device is idle."""
+        """After the last step: synchronize; Nsight finishes when workers exit."""
 
         import torch
 
         if self.closed:
             return
         self.closed = True
-        if self.case.settings.nsys_capture:
-            self.barrier()
-            if self.capturing:
-                torch.cuda.cudart().cudaProfilerStop()
+        if self.capturing:
+            torch.cuda.synchronize()
+            # cudaProfilerStop may block on multi-process report generation.
+            # The benchmark ends immediately after measured updates; let nsys
+            # finalize at normal process-tree exit and release the GPUs first.
+            self.capturing = False
         torch.cuda.synchronize()
+
+    def _capture_boundary(self, action) -> None:
+        """Keep peers off CUDA while rank zero starts process-tree capture."""
+        import torch.distributed as dist
+
+        if self.capture_group is not None:
+            dist.barrier(group=self.capture_group)
+        if self.case.rank == 0:
+            action()
+        if self.capture_group is not None:
+            dist.barrier(group=self.capture_group)
 
 
 def out_of_memory(error: BaseException) -> dict[str, Any]:

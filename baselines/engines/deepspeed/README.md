@@ -99,10 +99,10 @@ under DeepSpeed's dynamic loss scaling. A bfloat16 model with
 gradients instead, through DeepSpeed's `bf16_master_weights_and_grads` and
 `bf16_optimizer_states`: the ZeRO optimizer's partition of what it steps is
 bfloat16, and its CPU AdamW stores bfloat16 moments when the optimizer is
-offloaded. Gradients reduce and accumulate in the model dtype in stages 2
-and 3, so those stages take `--grad-dtype` equal to the model dtype; stage
-1's optimizer accumulates at float32 when `--grad-dtype float32` asks for
-it. A float32 model steps its weights themselves. Rounding choices, float32
+offloaded. `--grad-dtype float32` selects FP32 gradient accumulation and
+communication in ZeRO stages 1, 2 and 3 through `data_types.grad_accum_dtype`
+and `communication_data_type`; without it, the model dtype is used. In
+ZeRO-3, precision evidence checks the actual gradient partition buffer. A float32 model steps its weights themselves. Rounding choices, float32
 moments beside bfloat16 values, and a float16 model without float32
 masters are refused.
 

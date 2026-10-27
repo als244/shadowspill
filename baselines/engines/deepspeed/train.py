@@ -136,7 +136,46 @@ def precision_evidence(model, access, precision):
         mapping = parameter._hp_mapping
         return None if mapping is None else mapping.get_hp_fragment(key)
 
-    counts = {"parameters": 0, "moment_elements": 0}
+    expected_grad = getattr(torch, precision.grad_dtype or precision.model_dtype)
+    optimizer = access.engine.optimizer
+    accumulated_dtype = getattr(optimizer, "gradient_accumulation_dtype", None)
+    partition = getattr(optimizer, "grad_partitions_flat_buffer", None)
+    if partition is not None:
+        accumulated_dtype = partition.dtype
+    if accumulated_dtype is not None and accumulated_dtype != expected_grad:
+        raise ValueError(
+            f"gradient accumulation is {accumulated_dtype}, not {expected_grad}"
+        )
+    counts = {
+        "parameters": 0,
+        "moment_elements": 0,
+        "gradient_accumulation_dtype": str(accumulated_dtype),
+        "gradient_partition_elements": 0 if partition is None else partition.numel(),
+    }
+    partitions = getattr(optimizer, "fp32_partitioned_groups_flat", None)
+    if partitions is not None and not getattr(optimizer, "swap_optimizer", False):
+        # ZeRO-3 already owns the precise master and moment shards we need
+        # to inspect. Gathering entire expert tensors here can add several
+        # GiB per tensor after a training step that otherwise fits.
+        counts["parameter_count_scope"] = "local_partitions_including_padding"
+        for master in partitions:
+            if master.dtype != stepped:
+                raise ValueError(f"a master shard is {master.dtype}, not {stepped}")
+            counts["parameters"] += master.numel()
+            state = optimizer.optimizer.state.get(master, {})
+            for key in ("exp_avg", "exp_avg_sq"):
+                value = state.get(key)
+                if value is None or value.numel() != master.numel():
+                    raise ValueError(f"missing or incomplete {key} shard")
+                if value.dtype != moment_dtype:
+                    raise ValueError(
+                        f"an AdamW moment shard is {value.dtype}, not {moment_dtype}"
+                    )
+                counts["moment_elements"] += value.numel()
+        if not counts["parameters"] or not counts["moment_elements"]:
+            raise ValueError("optimizer evidence is empty")
+        return counts
+    counts["parameter_count_scope"] = "whole_parameters"
     for parameter in model.parameters():
         if not parameter.requires_grad:
             continue

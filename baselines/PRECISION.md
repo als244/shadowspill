@@ -96,7 +96,7 @@ fusion off.
 |---|---|---|---|
 | FSDP2 | Into the shard's gradient, at the shard's dtype (the stepped dtype) with `--gradient-sync per-microbatch`; with `last-microbatch`, each microbatch's unsharded gradient is cast to `reduce_dtype` and summed there | A reduce-scatter at `MixedPrecisionPolicy.reduce_dtype`, the gradient dtype; the parameters a model pins at float32 are averaged by hand | After every microbatch (`per-microbatch`), or once after the last (`last-microbatch`) |
 | DeepSpeed ZeRO-1 | In each weight's gradient at the model dtype; at float32 when `--grad-dtype float32` asks for it (`data_types.grad_accum_dtype`; under a bfloat16 model, DeepSpeed's BF16 optimizer) | At the model dtype; at float32 with `--grad-dtype float32` (`communication_data_type`) | Once, at the update's last microbatch |
-| DeepSpeed ZeRO-2, ZeRO-3 | In the gradient partitions, at the model dtype | A reduce-scatter at the model dtype, overlapped with backward in buckets (`--overlap-comm`, `--reduce-bucket-size`) | After every microbatch |
+| DeepSpeed ZeRO-2, ZeRO-3 | In the gradient partitions, at the model dtype or FP32 with `--grad-dtype float32` | A reduce-scatter at the requested gradient dtype, overlapped with backward in buckets (`--overlap-comm`, `--reduce-bucket-size`) | After every microbatch |
 | ShadowSpill | Into the step's running gradient at the gradient dtype; by default a multiply adds its product into a narrower running gradient as it writes it, and with `--no-fuse-narrow-gradient-accumulation` writes it at that dtype to be added after | A sum at the gradient dtype: an all-reduce, or a reduce-scatter onto the rank that owns each slice of the optimizer state | Once, after the last microbatch |
 | Megatron-Core | Into DDP's accumulation buffer, at float32 with `grad_reduce_in_fp32` (float32 gradients) or at the model dtype; under Megatron-FSDP, its main-gradient buffer at the gradient dtype | An all-reduce, or a reduce-scatter with the distributed optimizer, at the buffer's dtype | Once, after the last microbatch, or in buckets during the last backward with `overlap_grad_reduce` |
 | AutoModel | Into each weight's gradient at the weights' storage dtype (on one rank, the only one); under FSDP2's default `defer_fsdp_grad_sync`, the unsharded gradient across microbatches; under Megatron-FSDP, its main-gradient buffer, at float32 with `grad_reduce_in_fp32` | FSDP2: a reduce-scatter at `mp_policy.reduce_dtype`, the contract's gradient dtype; Megatron-FSDP: at its buffer's dtype | Once, after the last microbatch (`defer_fsdp_grad_sync`), or after every microbatch with `--no-defer-fsdp-grad-sync` |
@@ -105,8 +105,8 @@ fusion off.
 So the gradient dtype each engine accepts follows from where it sums.
 FSDP2 sums into the shard it steps, so the gradient dtype is the stepped
 dtype: float32 under float32 masters, the model dtype without masters.
-DeepSpeed's ZeRO-2 and 3 sum in the model dtype, so they take the model
-dtype; ZeRO-1 also takes float32. Megatron-Core's DDP accumulates into a
+DeepSpeed's ZeRO stages 1, 2 and 3 take either the model dtype or float32
+for gradient accumulation and communication. Megatron-Core's DDP accumulates into a
 buffer at the model dtype or at float32 (`grad_reduce_in_fp32`), so it
 takes those two; Megatron-FSDP keeps its main gradients at the gradient
 dtype, so it takes bfloat16 or float32 whatever the model dtype. AutoModel
