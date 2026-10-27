@@ -31,6 +31,7 @@ compile_commands.json
 
 # Qualification output is reproducible and intentionally local.
 /qualification/results/
+/validation/
 
 # An experiment's runs stay in its folder and are local; its published
 # summary, results/, is tracked. No trailing slash: output can be a symlink
