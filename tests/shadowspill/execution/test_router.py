@@ -3,12 +3,13 @@
 import pytest
 import torch
 
-from shadowspill import build_step
+from shadowspill import Parallelism, build_step, measure_program
 from tests.shadowspill.execution.helpers import run_worker, save_plan
 
 
 @pytest.mark.cuda
-def test_packed_router_training_from_saved_plan(tmp_path):
+@pytest.mark.parametrize("ranks", [1, 2])
+def test_packed_router_training_from_saved_plan(tmp_path, ranks):
     if not torch.cuda.is_available():
         pytest.skip("requires CUDA")
     router = pytest.importorskip("mlops.kernels.router")
@@ -35,7 +36,27 @@ def test_packed_router_training_from_saved_plan(tmp_path):
         partition="whole",
         master_dtype=torch.float32,
         grad_dtype=torch.float32,
+        parallelism=Parallelism.dp(ranks_per_replica=ranks),
     )
+    if ranks > 1:
+        # One representative GPU prepares a distributed router without NCCL.
+        copies = [
+            item
+            for item in program.bindings["optimizer_bindings"]
+            if item["role"] == "compute_copy"
+        ]
+        assert len(copies) == 1
+        assert copies[0]["name"] == "compute.weight._data"
+        assert copies[0]["dtype"] == "torch.bfloat16"
+        assert tuple(copies[0]["shape"]) == (24,)
+        gathers = [
+            item
+            for item in program.bindings["collective_tasks"].values()
+            if item["operation"] == "all_gather"
+        ]
+        assert gathers and all(item["dtype"] == "torch.bfloat16" for item in gathers)
+        measure_program(program, warmup_seconds=0.001, measure_seconds=0.002)
+        return  # Distinct-device execution is covered by the EP integration case.
     save_plan(program, tmp_path)
     payload = torch.arange(48, dtype=torch.bfloat16).reshape(3, 16) / 64
     initial = {"weight._data": payload.clone(), "master.weight": payload.float()}

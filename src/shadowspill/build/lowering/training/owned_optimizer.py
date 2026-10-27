@@ -29,11 +29,16 @@ def owned_optimizer(
     """
     by_name = {item.name: item for item in parameters}
     mastered = {
-        item.name.removeprefix("compute.")
+        item.logical_name.removeprefix("compute.")
         for item in update.captured.bindings
         if item.role is OptimizerTensorRole.COMPUTE_COPY
     }
     gradients = {item["name"]: item["stored"] for item in completions}
+    model_objects = {
+        (item.name, item.component_path): item.object_id
+        for item in objects.registrations
+        if item.parameter
+    }
     names = {f"gradient.{name}": value for name, value in gradients.items()}
     views, publications, added = {}, {}, []
     for binding in update.captured.bindings:
@@ -43,9 +48,9 @@ def owned_optimizer(
         if role is OptimizerTensorRole.COMPUTE_COPY or (
             role is OptimizerTensorRole.PARAMETER and binding.name not in mastered
         ):
-            name = binding.name.removeprefix("compute.")
+            name = binding.logical_name.removeprefix("compute.")
             parameter = by_name[name]
-            model_id = objects.parameter_objects[name]
+            model_id = model_objects[name, binding.component_path]
             if len(parameter.optimizer.groups[0]) == 1:
                 # Local experts and replicated optimizers update the original
                 # shape; no flattened shard view or publication is required.

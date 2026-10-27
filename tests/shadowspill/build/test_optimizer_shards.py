@@ -16,6 +16,8 @@ from shadowspill.pytorch.optimizer.sandbox import (
     copy_optimizer_to_meta,
     optimizer_parameters,
 )
+from shadowspill.pytorch.representations import is_wrapper
+from tests.shadowspill.pytorch.representation_fixtures import model as scaled_model
 
 
 def owned_parameters(model, optimizer, *, master_dtype):
@@ -69,9 +71,11 @@ def test_preexisting_optimizer_state_needs_executor_restore():
 
 @pytest.mark.cuda
 @pytest.mark.parametrize("backend", ["torch", "mlops"])
+@pytest.mark.parametrize("wrapped", [False, True])
 def test_one_compiled_local_update_matches_full_adam_over_four_owned_shards(
     monkeypatch,
     backend,
+    wrapped,
 ):
     if not torch.cuda.is_available():
         pytest.skip("requires representative GPU")
@@ -82,6 +86,15 @@ def test_one_compiled_local_update_matches_full_adam_over_four_owned_shards(
     monkeypatch.setattr(torch.distributed, "init_process_group", forbidden)
     monkeypatch.setattr(torch.distributed, "new_group", forbidden)
     model = nn.Linear(7, 5, bias=False, dtype=torch.bfloat16, device="meta")
+    if wrapped:
+        from mlops.expert_parallel.parameters import BF16ComputeWeight
+
+        class ComputeLinear(nn.Linear):
+            def forward(self, x):
+                return torch.nn.functional.linear(x, self.weight.to(x.dtype))
+
+        model = ComputeLinear(7, 5, bias=False, dtype=torch.bfloat16, device="meta")
+        model.weight = nn.Parameter(BF16ComputeWeight(model.weight.detach()))
     optimizer = (
         torch.optim.AdamW(model.parameters(), lr=0.001, foreach=False)
         if backend == "torch"
@@ -167,7 +180,12 @@ def test_one_compiled_local_update_matches_full_adam_over_four_owned_shards(
                 function(*(state[binding.name] for binding in update.captured.bindings))
         actual = torch.cat([state["weight"] for state in states])[:35]
         torch.testing.assert_close(actual, expected)
-        actual_compute = torch.cat([state["compute.weight"] for state in states])[:35]
+        actual_compute = torch.cat(
+            [
+                state["compute.weight._data" if wrapped else "compute.weight"]
+                for state in states
+            ]
+        )[:35]
         torch.testing.assert_close(actual_compute, expected.to(torch.bfloat16))
         for name in ("exp_avg", "exp_avg_sq"):
             actual = torch.cat([state[f"optimizer.weight.{name}"] for state in states])[
@@ -190,3 +208,32 @@ def test_one_compiled_local_update_matches_full_adam_over_four_owned_shards(
     assert measured.duration_seconds > 0
     assert measured.metadata["memory_kind"] == "measured"
     assert "allocation_contract" in measured.metadata
+
+
+def test_sharded_compute_copy_keeps_physical_dtype_and_local_storage():
+    from mlops.expert_parallel.parameters import BF16ComputeWeight
+
+    net = torch.nn.Module()
+    net.weight = torch.nn.Parameter(
+        BF16ComputeWeight(torch.empty(5, 7, dtype=torch.bfloat16, device="meta"))
+    )
+    optimizer, names, copies = owned_parameters(
+        net, torch.optim.AdamW(net.parameters()), master_dtype=torch.float32
+    )
+    master = optimizer.param_groups[0]["params"][0]
+    assert master.dtype == torch.float32 and master.shape == (9,)
+    assert names[id(master)] == "weight"
+    copy = copies["weight"]
+    assert is_wrapper(copy) and copy.dtype == torch.float32
+    assert copy._data.dtype == torch.bfloat16 and copy._data.shape == (9,)
+    assert copy._data.untyped_storage().nbytes() == 18
+    assert net.weight._data.shape == (5, 7)
+
+
+def test_scaled_wrapper_cannot_assume_elementwise_sharding():
+    with torch.device("meta"):
+        net = scaled_model()
+    with pytest.raises(NotImplementedError, match="packed/scaled wrappers"):
+        owned_parameters(
+            net, torch.optim.AdamW(net.parameters()), master_dtype=torch.float32
+        )
