@@ -19,7 +19,7 @@ from typing import Any, Literal
 import torch
 import torch.nn as nn
 
-from shadowspill.pytorch.state.serialization import (
+from shadowspill.checkpoint.representations import (
     decode_tensor_state,
     encode_tensor_state,
 )

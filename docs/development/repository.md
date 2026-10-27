@@ -42,7 +42,9 @@ Plans and iterable inputs, without importing recipes.
 `bandwidth_frontier/` package consumes `ProfiledProgram` archives and runs CPU
 planning/plotting only. Corpus collection/evaluation remain
 separate: collection builds and profiles, while evaluation reads the saved
-corpus and plans budgets and transfer assumptions.
+corpus and plans budgets and transfer assumptions. Shared benchmark host-memory
+preflight lives in `benchmarking/host_memory/`; it checks physical/cgroup limits
+before the baseline worker creates spill pools.
 
 ## Python package
 
@@ -80,14 +82,12 @@ src/shadowspill/
 │   └── occupancy/         pool attribution, clocks and timeline rendering
 │       └── run/           stored-run discovery, trace matching and report indexes
 ├── profiling/             ordinary-allocator timing and memory measurement
-│   ├── invariant.py       reconcile allocation paths into one contract
-│   ├── alignment.py       bounded sequence alignment
 │   └── observation/       allocator observations and lifetime decoding
 ├── task/                  one task's shape and provenance, framework-free
 │   ├── storage.py         the storage contract: roots, output views, mutations
 │   ├── allocations.py     what a task promised about its allocations, and the
 │   │                      path the profiled run observed
-│   ├── profiles.py        one measurement and the key it is filed under
+│   ├── profiles.py        task timing, memory and allocation evidence
 │   ├── inputs.py          what a task argument is, and the value profiled for it
 │   ├── slots.py           where a task's objects sit in its contract
 │   ├── layout.py          the compiled task's layout, and what a transition costs
@@ -129,7 +129,6 @@ src/shadowspill/
 ├── training/              saved-Plan training loops, schedules and checkpoints
 │   ├── diagnostics/       no-update startup calls, state preservation and reports
 └── pytorch/
-    ├── distributed/       replica ownership, coordinated preparation and local execution
     ├── capture/           Export/AOT capture and semantic storage contracts
     │   ├── artifacts/     graph records, geometry, identity and output schemas
     │   ├── gradients/     accumulation, precision and padded gradient storage
@@ -143,9 +142,6 @@ src/shadowspill/
     │                      contract, the alias views, the cache
     ├── tuning/            finalized provider choices, saved and replayed per task
     ├── operators/         runtime-importable task operations, independent of capture
-    ├── profiling/         representative inputs, timing, allocation contract, workspace
-    │   └── profiler/      one task measured: the allocator boundary, the warmup and
-    │                      timing, the workspace trace, the invariant path, the record
     ├── lowering/          ObjectCatalog and task binding into ShadowSpillProgram
     │   ├── forward/        the forward program's tasks and objects
     │   └── training/       the training step's, ordering and all
@@ -157,8 +153,7 @@ src/shadowspill/
     ├── runtime.py         a runtime opened with that frontend
     ├── runtime_adapter/   PyTorch's half of the task boundary: the operators
     │                      that rebind a plan's leases onto storages
-    ├── spill.py           a CPU tensor's bytes, as the runtime takes them
-    └── state/             tensor serialization and allocator qualification
+    └── representations.py physical components of wrapped tensors
 ```
 
 High-level modules expose small orchestration functions. Detailed algorithms
@@ -189,8 +184,8 @@ one that covers what it touches.
 ## Tests
 
 The test tree mirrors the boundary under test, all the way down: a test for
-`src/shadowspill/pytorch/profiling/` lives in
-`tests/shadowspill/pytorch/profiling/`.
+`src/shadowspill/profiling/` lives in
+`tests/shadowspill/profiling/`.
 
 ```text
 tests/

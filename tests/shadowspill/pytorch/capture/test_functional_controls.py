@@ -7,7 +7,7 @@ import torch
 from torch import nn
 
 from shadowspill.pytorch.capture.export import capture_forward
-from tests.shadowspill.pytorch.state.representations import model
+from tests.shadowspill.pytorch.representation_fixtures import model
 
 
 @torch.library.custom_op(

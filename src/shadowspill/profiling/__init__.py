@@ -1,13 +1,9 @@
-"""Phase exports, loaded only when requested during caller migration."""
+"""GPU measurement and CPU profile application, loaded on demand."""
 
 from importlib import import_module
 from typing import Any
 
 _PUBLIC = {
-    "derive_invariant_allocation_path": ".invariant",
-    "CompiledManifestStore": ".manifest_store",
-    "ProfilingMetadata": ".metadata",
-    "ProfileStore": ".store",
     "apply_profiles": ".apply",
     "measure_program": ".measure",
 }

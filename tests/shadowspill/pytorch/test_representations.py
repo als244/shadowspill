@@ -11,9 +11,8 @@ from shadowspill.pytorch.graph_pairs.artifacts import parameter_gradient_leaves
 from shadowspill.pytorch.graph_pairs.rebind import rebind_task_graph_pairs
 from shadowspill.pytorch.graph_pairs.serialization import CachedAotGraphPair
 from shadowspill.pytorch.representations import map_tensor, tensor_components
-from shadowspill.pytorch.state.storage import NamedTensor, _storage_roots
 
-from .representations import ScaledWeight, model
+from .representation_fixtures import ScaledWeight, model
 
 
 @pytest.fixture(autouse=True)
@@ -25,21 +24,10 @@ def clear_capture_caches():
     torch._dynamo.reset()
 
 
-def test_storage_inventory_uses_components_and_preserves_aliases():
+def test_fake_model_preserves_component_aliases():
     net = model()
     net.tied = net.weight
     net.register_buffer("window", net.weight.payload[1:])
-    roots = _storage_roots(
-        [
-            NamedTensor(n, t)
-            for n, t in (
-                *net.named_parameters(remove_duplicate=False),
-                *net.named_buffers(),
-            )
-        ]
-    )
-    assert sum(owner.numel() for owner, _ in roots) == 36
-    assert len(roots) == 2
     with FakeTensorMode(allow_non_fake_inputs=True) as mode:
         fake = fake_device_model(net, mode)
         assert isinstance(fake.weight, ScaledWeight)

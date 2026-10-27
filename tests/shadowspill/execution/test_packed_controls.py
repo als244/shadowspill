@@ -7,7 +7,7 @@ from torch import nn
 from shadowspill import build_forward
 from tests.shadowspill.execution._host_controls import host_control, read_host_control
 from tests.shadowspill.execution.helpers import run_worker, save_plan
-from tests.shadowspill.pytorch.state.representations import ScaledWeight
+from tests.shadowspill.pytorch.representation_fixtures import ScaledWeight
 
 
 class Block(nn.Module):

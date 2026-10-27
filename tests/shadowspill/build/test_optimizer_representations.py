@@ -6,7 +6,7 @@ import torch
 from shadowspill.build.optimizer_parameters import local_optimizer_parameters
 from shadowspill.pytorch.optimizer.sandbox import copy_optimizer_to_meta
 from shadowspill.pytorch.representations import is_wrapper
-from tests.shadowspill.pytorch.state.representations import model
+from tests.shadowspill.pytorch.representation_fixtures import model
 
 
 @pytest.mark.parametrize("master_dtype", [torch.float32, torch.float64])

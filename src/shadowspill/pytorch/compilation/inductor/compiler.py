@@ -47,22 +47,8 @@ _PINNED_OUTPUT_LAYOUT: Mapping[str, Any] = {"shape_padding": False}
 
 
 def task_compiler_patches() -> dict[str, Any]:
-    """Keep transfer-sharded tasks on a common instruction-order policy.
-
-    Independent peak-memory reordering can generate different temporary
-    allocation sequences for otherwise identical rank-local task graphs.
-    Shared transfer schedules require one verified allocation contract. Request
-    deterministic compiler decisions and disable peak-memory reordering in
-    that mode; these settings do not replace allocation-contract validation.
-    """
-    from shadowspill.pytorch.distributed import current
-
-    patches = dict(_PINNED_OUTPUT_LAYOUT)
-    bound = current()
-    if bound is not None and bound.transfer_sharding:
-        patches["reorder_for_peak_memory"] = False
-        patches["deterministic"] = True
-    return patches
+    """Preserve declared output geometry when compiling a task."""
+    return dict(_PINNED_OUTPUT_LAYOUT)
 
 
 _GRAPH_LOWERING_CAPTURE_LOCK = threading.Lock()

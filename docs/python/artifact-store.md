@@ -36,10 +36,7 @@ artifact_store/v<N>/
 ├── README.md
 ├── build/
 │   ├── graph_pairs/                 structural AOT graph pairs
-│   ├── optimizers/                  captured optimizer updates
-│   └── profiling/
-│       ├── compiled_manifests/      executable storage contracts
-│       └── measurements/            task measurements
+│   └── optimizers/                  captured optimizer updates
 └── planning/
     ├── programs/                   costed IR inputs
     ├── requests/                   search inputs and settings

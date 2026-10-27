@@ -49,7 +49,6 @@ shadowspill_add_pytorch_canary(pool_sizing_refusal 60)
 shadowspill_add_pytorch_canary(allocator_oom 60)
 shadowspill_add_pytorch_canary(allocation_contract_failure 20)
 shadowspill_add_pytorch_canary(invalid_access 60)
-shadowspill_add_pytorch_canary(profiler 60)
 
 # Older tests install the allocator in pytest; saved-phase tests launch their
 # own fresh execution workers. Select the named case explicitly so both forms
@@ -137,6 +136,10 @@ shadowspill_add_public_api_test(
 shadowspill_add_public_api_test(
   shadowspill/execution/test_shared_plans.py
   test_shared_evaluation_and_checkpoint_in_cold_workers 300
+)
+shadowspill_add_public_api_test(
+  shadowspill/profiling/test_measure_program.py
+  test_saved_training_program_measurement_without_runtime_pools 300
 )
 shadowspill_add_public_api_test(
   shadowspill/profiling/test_pair_lifetimes.py

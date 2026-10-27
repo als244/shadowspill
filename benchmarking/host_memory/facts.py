@@ -6,10 +6,8 @@ import socket
 from pathlib import Path
 
 import torch
-import torch.distributed as dist
 
-from ._control import Control
-from ._resources import Limit, Resources, validate_resources
+from .limits import Limit, Resources
 
 
 def _cgroup_available_memory(directory: Path, maximum: int, used: int) -> int:
@@ -105,36 +103,3 @@ def local_resources(
     return Resources(
         host, physical_device_id(device), spill_bytes, staging_bytes, host_limits()
     )
-
-
-def preflight(
-    control_group: dist.ProcessGroup,
-    device: torch.device,
-    spill_bytes: int,
-    *,
-    staging_bytes: int = 2 << 30,
-    namespace: str = "runtime/0",
-    timeout: float = 1800.0,
-) -> tuple[Resources, ...]:
-    if str(dist.get_backend(control_group)).lower() != "gloo":
-        raise ValueError(
-            "runtime host-memory preflight requires a caller-owned Gloo control group"
-        )
-    control = Control(control_group, namespace=namespace, timeout=timeout)
-    local = control.run(
-        "resource_facts", lambda: local_resources(device, spill_bytes, staging_bytes)
-    )
-    values = control.exchange("resource_reservations", local.record())
-    claims = tuple(
-        Resources(
-            item["host"],
-            item["device_id"],
-            item["spill_bytes"],
-            item["staging_bytes"],
-            tuple(Limit(**limit) for limit in item["limits"]),
-        )
-        for item in values
-    )
-    validate_resources(claims)
-    control.agree("resources_admitted", True)
-    return claims

@@ -11,8 +11,6 @@ from shadowspill.artifacts._values import plain
 from shadowspill.libraries import resolve_library
 from shadowspill.pytorch.executable import restore_executable
 from shadowspill.pytorch.frontend import PyTorchFrontend
-from shadowspill.pytorch.profiling.profiler.boundary import AllocatorBoundary
-from shadowspill.pytorch.profiling.profiler.workspace import output_allocation_views
 from shadowspill.pytorch.task_inputs import prepare_inputs
 from shadowspill.runtime.abi import runtime_library
 from shadowspill.runtime.bootstrap import install_runtime
@@ -25,6 +23,10 @@ from shadowspill.runtime.telemetry import (
 from shadowspill.task.allocations import TaskAllocationContract
 from shadowspill.task.storage import TaskStorageContract
 from tests.integration.pytorch.runtime_helpers import two_pool_topology
+from tests.shadowspill.profiling._allocator import (
+    AllocatorBoundary,
+    output_allocation_views,
+)
 
 
 def main():
@@ -48,11 +50,9 @@ def main():
         installed.library,
         runtime_handle=installed.runtime_handle,
         plan_id=plan_id.value,
-        device_ordinal=0,
-        telemetry_capacity=131072,
     )
     program, profiles = Program.load(sys.argv[1]), Profiles.load(sys.argv[2])
-    stream = boundary.stream()
+    stream = torch.cuda.current_stream(0)
     for key, payload in program.executables.items():
         function = restore_executable(
             payload,

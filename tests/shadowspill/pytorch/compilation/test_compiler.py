@@ -1,11 +1,13 @@
 from __future__ import annotations
 
+from types import SimpleNamespace
 from typing import Any
 
 import pytest
 import torch
 import torch.nn as nn
 
+from shadowspill.build.metadata import task_inputs
 from shadowspill.pytorch.capture.artifacts import GraphArtifact
 from shadowspill.pytorch.compilation.compiler import (
     CompiledTask,
@@ -18,7 +20,7 @@ from shadowspill.pytorch.compilation.inductor import (
 )
 from shadowspill.pytorch.compilation.inductor import compiler as inductor_compiler
 from shadowspill.pytorch.optimizer import capture_optimizer
-from shadowspill.pytorch.profiling.inputs import materialize_representative_inputs
+from shadowspill.pytorch.task_inputs import prepare_inputs
 from shadowspill.task.manifest import ExecutableRootAllocation, ExecutableTaskManifest
 
 
@@ -206,11 +208,12 @@ def test_optimizer_compilation_uses_no_grad_mutation_contract() -> None:
     assert captured.update is not None
 
     executable = compile_artifact(captured.update, device_ordinal=0)
-    representatives = materialize_representative_inputs(
-        captured.update, device_ordinal=0
+    program = SimpleNamespace(
+        bindings={"task_inputs": {"update": task_inputs(captured.update)}}
     )
+    arguments = prepare_inputs(program, "update", torch.device("cuda:0"))
     with torch.no_grad():
-        outputs = executable.function(*representatives.arguments)
+        outputs = executable.function(*arguments)
     assert isinstance(outputs, tuple | list)
     assert len(outputs) == len(captured.mutation_names)
 

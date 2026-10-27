@@ -288,53 +288,26 @@ code, runtimes, workspace, allocation paths, and mutation transition bytes.
 
 ## Compilation and profiling
 
-Graph-pair construction produces semantic graph artifacts; it does not assign
-task runtimes or workspace from AOT heuristics. The profiling pipeline later
-compiles and measures the forward and backward artifact of every unique
-variant contract.
+Build compiles each unique graph-pair variant, fixes its implementation and
+storage layout, and lowers the occurrences into an untimed `Program`.
+`measure_program` restores those finalized tasks and measures them with the
+ordinary device allocator. It does not create execution or spill pools.
 
-**A pair is measured as a pair.** A backward is not a task that can be
-measured on its own: its saved inputs are what its forward kept -- the
-activations it will need again, the statistics a fused operator needs to
-rebuild its result, the random state it drew from -- and they mean something
-only together. Inventing them one at a time asks a kernel to undo a forward
-pass that never happened, and a kernel entitled to assume its saved state
-came from somewhere is not obliged to survive state that did not.
+**Backward inputs come from the corresponding forward.** Measurement prepares
+forward inputs, runs that forward, and passes its actual saved tensors and aliases
+to backward. Only missing tangents and other supported inputs are synthesized;
+callers can override task inputs. Forward replay is outside the backward timing.
+One pair's temporary inputs and saved values are released before the next pair,
+so profiling does not retain snapshots for the whole model.
 
-So the forward runs on its own representative inputs and the backward runs
-on what came out of it, with only its tangents invented. Nothing decides
-which saved values may be invented, because none of them may. Each backward
-measurement replays its own forward occurrence when authentic saved inputs
-are missing. Cached backward entrypoints follow the same rule when warming.
-Ranks coordinate these replays during distributed profiling, since a producer
-may contain communication. Replay is outside the backward's measured runtime
-and workspace; its setup time is reported as preparation overhead.
+For each unique task, measurement records event timings, workspace, output/input
+aliases and an allocation contract. Three warmed observations must agree on
+allocation requests and aliases; retained anonymous allocations are rejected.
+First-use allocations are recorded separately. Applying the resulting `Profiles`
+produces a `ProfiledProgram`; execution still performs physical admission.
 
-The missing saved values are copied into the plan's spill pool and released
-immediately after that backward is measured or warmed. Forward recipes, rather
-than their activations, survive between measurements. Profiling therefore needs
-room for the largest single forward snapshot, rather than the sum of snapshots
-across layers and variants. Planning still fails when even that snapshot cannot
-fit. On a profiling failure, allocator recovery precedes snapshot release.
-
-What a saved value is worth belongs to the forward that made it; how it is
-laid out belongs to the backward that reads it, and the two need not agree.
-The value is written into the geometry its reader declares, through the
-locations that geometry actually has, so a broadcast is filled once and read
-many times rather than written many times to one place.
-
-Compilation/profiling records, for both halves of every pair:
-
-- semantic and executable storage-contract digests;
-- input, output, mutation, and replacement-transition bytes;
-- requested and charged workspace, including individual extents;
-- invariant allocation path and bounded dynamic-scratch behavior;
-- warmed backend-event runtime samples and stability diagnostics;
-- representative-input and profiling-metadata provenance.
-
-Equivalent artifact/profile keys are measured once. Different graph-pair
-variants remain distinct whenever their graph, input problem, executable
-storage, or profiling metadata differs.
+Both save and recompute alternatives are measured. Identical finalized task
+contracts share a profile; different implementations, shapes or layouts do not.
 
 ## Lowering into program alternatives
 
@@ -399,21 +372,26 @@ ConstructGraphPairs(partitioned_export):
 
     return stages
 
-CompileAndProfileGraphPairs(stages):
+BuildProgram(stages):
     artifacts = stable_unique(
         pair.forward and pair.backward
         for every structural variant
     )
-    return compile_and_profile_each_unique_artifact(artifacts)
+    executables = compile_each_unique_artifact(artifacts)
+    return Program(lower_occurrences(stages), executables)  # no task durations
 
-LowerOccurrence(stage, profiles):
+LowerOccurrence(stage):
     options = []
     for variant in stage.graph_pairs:
-        forward = bind_and_emit_forward_task(variant, profiles)
-        backward = bind_and_emit_backward_task(variant, profiles)
+        forward = bind_and_emit_forward_task(variant)
+        backward = bind_and_emit_backward_task(variant)
         retained = fresh_internal_saved_aliases(variant)
         options.append(TaskAlternativeOption(variant.name, [forward, backward], retained))
     return TaskAlternativeGroup(stage.occurrence_id, options)
+
+# Separate measurement and profile application; build is not repeated.
+profiles = measure_program(program)
+profiled_program = apply_profiles(program, profiles)
 ```
 
 ## Fail-closed conditions
@@ -442,7 +420,8 @@ from allocator pointers or FakeTensor storage identity.
 | `shadowspill.pytorch.graph_pairs.artifacts` | Immutable pair, variant, task-graph-pairs, and differentiated-stage records. |
 | `shadowspill.pytorch.graph_pairs.footprint` | Classify saved input, boundary, and internal storage roots. |
 | `shadowspill.pytorch.graph_pairs.store` | Structural cache identity, persistence, and occurrence rebinding. |
-| `shadowspill.pytorch.profiling` | Compile and measure each unique forward/backward artifact. |
+| `shadowspill.build` | Finalize each unique forward/backward artifact in a Program. |
+| `shadowspill.profiling` | Measure saved task implementations with the ordinary allocator. |
 | `shadowspill.pytorch.lowering.training` | Bind variants to canonical objects and emit program groups. |
 
 Previous: [PyTorch capture and lowering](lowering.md). Next: [The step

@@ -20,16 +20,14 @@ from .reporting import comparison, describe, failure, memory, pool_record
 
 
 def preflight(case, plan):
-    from shadowspill.pytorch.distributed._bootstrap import local_resources, preflight
-    from shadowspill.pytorch.distributed._resources import validate_resources
+    from benchmarking.host_memory import preflight
 
-    spill = plan.memory_budgets.spill_bytes
-    headroom = int(case.settings.host_headroom_gib * (1 << 30))
-    if case.world > 1:
-        assert dist.group.WORLD is not None
-        preflight(dist.group.WORLD, case.device, spill, staging_bytes=headroom)
-    else:
-        validate_resources((local_resources(case.device, spill, headroom),))
+    preflight(
+        case.device,
+        plan.memory_budgets.spill_bytes,
+        int(case.settings.host_headroom_gib * (1 << 30)),
+        group=dist.group.WORLD if case.world > 1 else None,
+    )
 
 
 def train(case, clock):

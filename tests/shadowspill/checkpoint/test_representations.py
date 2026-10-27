@@ -5,11 +5,11 @@ from __future__ import annotations
 import pytest
 import torch
 
-from shadowspill.pytorch.state.serialization import (
+from shadowspill.checkpoint.representations import (
     decode_tensor_state,
     encode_tensor_state,
 )
-from tests.shadowspill.pytorch.state.representations import ScaledWeight, model
+from tests.shadowspill.pytorch.representation_fixtures import ScaledWeight, model
 
 
 def test_weights_only_checkpoint_preserves_nested_component_bytes(tmp_path):

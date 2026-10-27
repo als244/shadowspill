@@ -21,12 +21,12 @@ from shadowspill.pytorch.lowering.forward import (
     lower_partitioned_forward_program,
 )
 from shadowspill.pytorch.partition import partition_export
-from shadowspill.pytorch.profiling import (
+from shadowspill.simulator import SimulationConfig
+from shadowspill.task.profiles import (
     TaskAllocationEvent,
     TaskAllocationOperation,
     TaskMeasurement,
 )
-from shadowspill.simulator import SimulationConfig
 
 
 class _ForwardNetwork(nn.Module):

@@ -1,6 +1,6 @@
 """What a store is allowed to do, in one place.
 
-Several stores hold different kinds of artifact -- profiles, graph pairs,
+Several stores hold different kinds of artifact -- graph pairs, optimizer captures,
 compiled manifests, optimizer captures, plans -- and serialize them
 differently. What they may *do* is the same for all of them, and comes from
 one `StoreMode` on the artifact store: read a hit, write a miss, overwrite

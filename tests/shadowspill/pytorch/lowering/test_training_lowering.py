@@ -26,13 +26,13 @@ from shadowspill.pytorch.lowering.training import (
 )
 from shadowspill.pytorch.optimizer import capture_optimizer
 from shadowspill.pytorch.optimizer.metrics import with_parameter_metrics
-from shadowspill.pytorch.profiling import (
+from shadowspill.simulator import SimulationConfig
+from shadowspill.task.profiles import (
     TaskAllocationEvent,
     TaskAllocationOperation,
     TaskMeasurement,
     TaskOutputInputBinding,
 )
-from shadowspill.simulator import SimulationConfig
 
 
 class _Model(nn.Module):

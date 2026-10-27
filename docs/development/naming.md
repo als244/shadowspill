@@ -19,10 +19,8 @@
   same four words mean the same four things on every surface.
 - `execution_XXXXXX` is the primary chronological task identity; semantic task
   name and canonical IR task ID are separate fields.
-- `profiling_metadata` is cache identity for value-sensitive task measurement,
-  not a runtime model argument.
-- `transfer_bandwidths` names the calibrated fetch/evict rates consumed by
-  planning and simulation.
+- `communication_info` supplies topology, transfer rates and measured timings
+  to planning and simulation; compute measurements belong to `Profiles`.
 - `export_bypass_key` is the caller's name for the code a build is made from
   (model, objective, optimizer); build artifacts are filed under it.
 

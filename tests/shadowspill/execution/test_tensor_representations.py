@@ -18,7 +18,7 @@ from shadowspill import (
     plan_program,
 )
 from shadowspill.ir import TaskAlternativeChoice
-from tests.shadowspill.pytorch.state.representations import model
+from tests.shadowspill.pytorch.representation_fixtures import model
 
 
 def objective(net, sample):

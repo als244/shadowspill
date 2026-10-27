@@ -11,8 +11,8 @@ from shadowspill.errors import CaptureError
 from shadowspill.ir import MemoryLocation, SharedResidencyPolicy
 from shadowspill.pytorch.capture.artifacts import GraphArtifact
 from shadowspill.pytorch.capture.storage import TaskStorageContract
-from shadowspill.pytorch.profiling import TaskMeasurement
 from shadowspill.task.manifest import ExecutableRootAllocation
+from shadowspill.task.profiles import TaskMeasurement
 
 from ...partition import PartitionedExport
 from ..profiles import TaskProfileCatalog

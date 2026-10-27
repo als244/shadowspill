@@ -19,7 +19,6 @@ from shadowspill.pytorch.capture.storage import (
     TaskStorageContract,
     capture_task_storage_contract,
 )
-from shadowspill.pytorch.distributed import current as current_preparation
 from shadowspill.pytorch.representations import (
     is_wrapper,
 )
@@ -72,8 +71,6 @@ class GraphArtifact:
     ) -> str:
         """Identify a graph/input contract without evaluating graph outputs."""
 
-        if (preparation := current_preparation()) is not None:
-            graph_module = preparation.groups.rewrite_collectives(graph_module)
         original_inputs = example_inputs
         graph_module, example_inputs, tensor_positions = _specialize_static_inputs(
             graph_module, example_inputs
@@ -142,8 +139,6 @@ class GraphArtifact:
         explicit_mutations: tuple[ExplicitMutation, ...] = (),
         input_provenance: tuple[TaskInputProvenance, ...] | None = None,
     ) -> GraphArtifact:
-        if (preparation := current_preparation()) is not None:
-            graph_module = preparation.groups.rewrite_collectives(graph_module)
         original_inputs = example_inputs
         graph_module, example_inputs, tensor_positions = _specialize_static_inputs(
             graph_module, example_inputs

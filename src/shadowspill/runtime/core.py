@@ -164,7 +164,6 @@ class Runtime:
             self._active_plan_handles: set[int] = set()
             self._planning_plan_handle: int | None = None
             self._active_object_references = 0
-            self._persistent_state_count = 0
             self._next_persistent_object_id = 1 << 62
             self._pools = topology.pools(int(installed.admission.allocator_pool_bytes))
             self._routes = topology.routes()
@@ -338,11 +337,6 @@ class Runtime:
             if self._active_plan_handles or self._planning_plan_handle is not None:
                 raise RuntimeConfigurationError(
                     "cannot close Runtime while a callable or in-progress plan owns it"
-                )
-            if self._persistent_state_count != 0:
-                raise RuntimeConfigurationError(
-                    "cannot close Runtime while persistent frontend state remains; "
-                    "export it with release_runtime=True or release model state first"
                 )
             if self._active_object_references != 0:
                 raise RuntimeConfigurationError(

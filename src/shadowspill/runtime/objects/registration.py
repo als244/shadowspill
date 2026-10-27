@@ -3,9 +3,8 @@
 A runtime object is a value the runtime moves between pools. These functions
 take the identities the frontend names them by, register them with the neutral
 runtime, hand out the public references (`ObjectRef`) that keep a runtime open
-until they close, and count the persistent state that does the same. The
-counters live on the runtime; the rules about when each operation is allowed
-live here.
+until they close. Reference counts live on the runtime; ownership checks live
+here.
 """
 
 from __future__ import annotations
@@ -20,23 +19,6 @@ from .references import ObjectRef
 
 if TYPE_CHECKING:
     from ..core import Runtime
-
-
-def reserve_persistent_object_ids(
-    runtime: Runtime,
-    count: int,
-    *,
-    allow_in_progress_plan: bool = False,
-) -> tuple[int, ...]:
-    """Reserve globally unique runtime object identities."""
-
-    if count < 0:
-        raise ValueError("persistent object count must be non-negative")
-    with runtime._lock:
-        require_state_operation_allowed(
-            runtime, allow_in_progress_plan=allow_in_progress_plan
-        )
-        return reserve_runtime_object_ids(runtime, count)
 
 
 def reserve_runtime_object_ids(runtime: Runtime, count: int) -> tuple[int, ...]:
@@ -70,8 +52,7 @@ def register_object(
 ) -> int:
     """Register one runtime object, and populate it when a source is given.
 
-    Two neutral calls, made here; the bridge and the state module both
-    register through this.
+    Registration and optional population share this neutral boundary.
     """
 
     description = ObjectDescription(
@@ -100,36 +81,6 @@ def register_object(
     )
 
 
-def register_placed_object(
-    runtime: Runtime,
-    object_id: int,
-    size_bytes: int,
-    *,
-    pool_id: int,
-    offset: int,
-) -> int:
-    """Register one object over the bytes already at ``offset`` of its pool.
-
-    The range was reserved for the runtime's lifetime with
-    :func:`reserve_pool_range`; nothing is written, and unregistering the
-    object leaves the range reserved. This is how state a pool image holds
-    is bound without a copy.
-    """
-
-    description = ObjectDescription(
-        object_id=object_id,
-        size_bytes=size_bytes,
-        initial_pool_id=pool_id,
-        retain_spill_copy=1,
-        initially_resident=1,
-    )
-    return int(
-        runtime_library().shadowspill_register_placed_object(
-            runtime._runtime_handle, ctypes.byref(description), offset
-        )
-    )
-
-
 def reserve_pool_range(
     runtime: Runtime, *, pool_id: int, offset: int, size_bytes: int
 ) -> int:
@@ -140,22 +91,6 @@ def reserve_pool_range(
             runtime._runtime_handle, pool_id, offset, size_bytes
         )
     )
-
-
-def pool_base_address(runtime: Runtime, pool_id: int) -> int:
-    """The address a pool's offset 0 presents; lease pointers are offsets from it."""
-
-    base = ctypes.c_void_p()
-    status = int(
-        runtime_library().shadowspill_memory_pool_base(
-            runtime._runtime_handle, pool_id, ctypes.byref(base)
-        )
-    )
-    if status != 0:
-        raise RuntimeExecutionError(
-            f"failed to read the base of pool {pool_id}: status={status}"
-        )
-    return int(base.value or 0)
 
 
 def acquire_object_reference(
@@ -258,46 +193,10 @@ def release_object_generation(
             )
 
 
-def retain_persistent_state(
-    runtime: Runtime, *, allow_in_progress_plan: bool = False
-) -> None:
-    with runtime._lock:
-        require_state_operation_allowed(
-            runtime, allow_in_progress_plan=allow_in_progress_plan
-        )
-        runtime._persistent_state_count += 1
-
-
-def release_persistent_state(runtime: Runtime) -> None:
-    with runtime._lock:
-        if runtime._persistent_state_count <= 0:
-            raise RuntimeError("persistent state ownership underflow")
-        runtime._persistent_state_count -= 1
-
-
-def require_state_operation_allowed(
-    runtime: Runtime, *, allow_in_progress_plan: bool = False
-) -> None:
-    with runtime._lock:
-        runtime._require_open()
-        if allow_in_progress_plan:
-            # A plan being made imports state of its own -- new objects that
-            # no admitted plan binds -- so the others may stay admitted.
-            return
-        if runtime._active_plan_handles or runtime._planning_plan_handle is not None:
-            raise RuntimeConfigurationError(
-                "persistent state import requires an idle Runtime"
-            )
-
-
 __all__ = [
     "acquire_object_reference",
     "register_object",
     "release_object_generation",
     "release_object_reference",
-    "release_persistent_state",
-    "require_state_operation_allowed",
-    "reserve_persistent_object_ids",
     "reserve_runtime_object_ids",
-    "retain_persistent_state",
 ]

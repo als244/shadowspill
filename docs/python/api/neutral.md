@@ -79,15 +79,11 @@ and clamps outside the measured size range. Neither byte accounting nor copy
 bandwidth changes. See the [native timing semantics](../../c/simulator.md#task-phases-and-measured-overlap)
 for shared resources and the limits of pairwise interference modeling.
 
-Both fields are serialized and included in program identity. PyTorch
-`TaskMeasurement` carries the same fields into lowering and its profile store.
-Symmetric planning uses the complete phase decomposition of the slowest task
-profile and the minimum measured progress rates across ranks. Measurements
-must come from independent preparation probes; there is no automatic
-step-duration multiplier or model-specific correction. Empty measurements
-retain isolated timing. The artifact schema and the native ABI carry this contract.
-The low-level transfer-sharding profiler can measure these costs. In the public
-phase pipeline, communication calibration is separate from `measure_program`;
+Both fields are serialized and included in program identity. The neutral
+`TaskMeasurement` record carries the same fields into lowering. Custom callers
+can supply this evidence explicitly; the public phase pipeline measures tasks
+and communications independently and does not measure pairwise interference.
+Empty overlap evidence retains isolated timing. For communication calibration,
 see [distributed phases](../../architecture/offline-pipeline.md#logical-parallelism-and-distributed-plans).
 
 Indexed compiled projections:
@@ -168,8 +164,9 @@ What a task promised about its allocations, and what the profiled run observed.
 
 ### `shadowspill.task.profiles`
 
-One measurement: what the task cost, filed under the key that identifies the code
-and the values it was measured with.
+`TaskMeasurement` carries task duration, memory observations and the allocation
+contract used by low-level layout validation. Public reusable measurements are
+`Profiles` collections; see the [artifact API](artifacts.md).
 
 ### `shadowspill.task.inputs`
 
@@ -182,7 +179,7 @@ profile recorded under an older one is not comparable.
 
 ## `shadowspill.store`
 
-Optional caches for captured graphs, task measurements and planner results,
+Optional caches for captured graphs and planner results,
 keyed by the inputs that affect each result. These support lower-level adapters
 and planner experiments; public phase artifacts use independent `save`/`load`
 archives. See [artifacts and caches](../artifact-store.md).
@@ -227,9 +224,8 @@ is where one digest's entry lives under a tree. `atomic_json(path, value)` and
 `atomic_text(path, value)` are the writers every record goes through, written
 beside their destination and renamed into place, so a reader never sees a
 partial record. `ArtifactRecorder` is the callback a store takes to publish
-each artifact it touched as a `PlanningArtifact`; the build store, the profile
-and manifest stores and the plan store all take this one
-protocol.
+each artifact it touched as a `PlanningArtifact`; the capture and plan caches
+use the same protocol.
 
 [The artifact store](../artifact-store.md) has the layout and what each digest
 covers.

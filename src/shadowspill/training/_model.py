@@ -11,8 +11,8 @@ from typing import Any
 import torch
 from torch import nn
 
+from shadowspill.checkpoint.representations import decode_tensor_state
 from shadowspill.pytorch.representations import materialize_meta_state
-from shadowspill.pytorch.state.serialization import decode_tensor_state
 
 type Initializer = Callable[[nn.Module], None]
 

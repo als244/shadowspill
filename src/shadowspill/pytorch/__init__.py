@@ -28,7 +28,6 @@ if TYPE_CHECKING:
     from .invocation import InvocationResult as InvocationResult
     from .partition import PartitionPolicy as PartitionPolicy
     from .partition import PartitionSpec as PartitionSpec
-    from .profiling import ProfilingOptions as ProfilingOptions
     from .runtime import Runtime as Runtime
 
 _GROUPS = {
@@ -46,7 +45,6 @@ _GROUPS = {
     ".contracts": ("ObjectiveResult", "TensorSpec"),
     ".invocation": ("InvocationResult",),
     ".partition": ("PartitionPolicy", "PartitionSpec"),
-    ".profiling": ("ProfilingOptions",),
     ".runtime": ("Runtime",),
 }
 _PUBLIC = {name: module for module, names in _GROUPS.items() for name in names}

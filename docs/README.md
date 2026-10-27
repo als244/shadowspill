@@ -224,7 +224,7 @@ rules, and platforms.
 - [Simulator C API](c/simulator.md) — deterministic replay of a program under
   a plan, and the diagnostics it returns.
 - [PyTorch adapter C API](c/pytorch-adapter.md) — the allocator, storage, and
-  profiler bridge between PyTorch and the runtime.
+  allocation observer and execution adapter between PyTorch and the runtime.
 - [The C tree](../csrc/README.md) — source layout and build dependencies.
 
 ## Examples

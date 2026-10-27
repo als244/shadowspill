@@ -5,9 +5,8 @@ from dataclasses import replace
 import pytest
 
 from shadowspill.profiling.timing import collect_timing_samples, condition_task
-from shadowspill.pytorch import ProfilingOptions
 from shadowspill.task.profiles import TaskMeasurement
-from shadowspill.task.profiling import TimingWindow
+from shadowspill.task.profiling import ProfilingOptions, TimingWindow
 
 
 class Clock:
@@ -178,9 +177,7 @@ def test_sampling_bursts_count_individual_device_samples_and_finish_the_burst():
     def batch():
         return tuple(clock.sample() for _ in range(3))
 
-    warm = condition_task(
-        clock.sample, options=options, clock=clock, sample_many=batch
-    )
+    warm = condition_task(clock.sample, options=options, clock=clock, sample_many=batch)
     assert warm == TimingWindow(60, 120, 6, True)
     measured = collect_timing_samples(
         clock.sample, options=options, clock=clock, sample_many=batch

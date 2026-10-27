@@ -356,8 +356,8 @@ Planned entry fetches use ordinary task handles and scheduled actions.
 
 ## Telemetry and failure
 
-Structural profiling attributes allocator activity through a dedicated,
-non-execution boundary:
+Isolated execution-allocator qualification attributes allocator activity through
+a dedicated boundary:
 
 - `shadowspill_allocation_scope_begin()` opens one allocator-attribution scope
   against an explicitly selected pool, for the live plan whose id it is given
@@ -367,11 +367,12 @@ non-execution boundary:
 - `shadowspill_allocation_scope_abort()` rolls back an interrupted scope.
 
 Allocation scopes do not resolve task records, publish object mutations,
-decode actions, or enter the task API. They exist only where isolated
-compilation/profiling needs the runtime allocator and its causal retirement
-rules.
+decode actions, or enter the task API. They let qualification compare the
+execution allocator's allocation and retirement behavior with ordinary GPU
+measurement. Public `measure_program` uses the ordinary device allocator and
+does not require a runtime or its pools.
 
-Allocation profiling uses:
+Execution-allocator telemetry uses:
 
 - `shadowspill_allocation_telemetry_start()`
 - `shadowspill_allocation_telemetry_stop()`

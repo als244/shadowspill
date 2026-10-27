@@ -130,15 +130,7 @@ class GraphPairStore:
             "objective_connected_outputs",
             validate_graph_pair_variants(variants),
         )
-        from shadowspill.pytorch.distributed import current
-
-        bound = current()
-        shards = dict(self._gradient_shards)
-        if bound is not None and bound.specification.shard_gradients:
-            shards.update(
-                (name, layout.group.size())
-                for name, layout in bound.transfer_sharding.items()
-            )
+        shards = self._gradient_shards
         padding = tuple(
             (position, shards[name])
             for position, provenance in enumerate(example.stage.input_provenance)

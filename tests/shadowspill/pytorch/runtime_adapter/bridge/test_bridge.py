@@ -8,11 +8,6 @@ from dataclasses import replace
 import torch
 
 from shadowspill.ir import AliasGroupSpec, ObjectRole, ObjectSpec
-from shadowspill.pytorch.profiling import (
-    TaskAllocationContract,
-    TaskAllocationEvent,
-    TaskAllocationOperation,
-)
 from shadowspill.pytorch.runtime_adapter.boundaries import (
     publish_initial_tensor,
     rebind_many,
@@ -22,6 +17,11 @@ from shadowspill.runtime.plan import (
     TaskMemoryEnvelope,
     abort_task,
     encode_task,
+)
+from shadowspill.task.profiles import (
+    TaskAllocationContract,
+    TaskAllocationEvent,
+    TaskAllocationOperation,
 )
 from tests.shadowspill.ir._examples import representative_program
 

@@ -6,8 +6,7 @@ The validation itself is independent of models, process-group backends or GPUs.
 from __future__ import annotations
 
 from collections.abc import Sequence
-from dataclasses import asdict, dataclass
-from typing import Any
+from dataclasses import dataclass
 
 
 @dataclass(frozen=True)
@@ -24,9 +23,6 @@ class Resources:
     spill_bytes: int
     staging_bytes: int
     limits: tuple[Limit, ...]
-
-    def record(self) -> dict[str, Any]:
-        return asdict(self)
 
 
 def validate_resources(records: Sequence[Resources]) -> None:

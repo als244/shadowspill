@@ -411,8 +411,10 @@ mutation allocations cannot be silently omitted or replaced by scratch.
 
 ### Dynamic scratch
 
-Optional anonymous allocation operations observed in some allocation paths may
-be inserted or omitted at runtime. They receive no fixed offset. Instead they
+The lower-level allocation contract can describe optional anonymous operations
+that may be inserted or omitted at runtime. Public `measure_program` requires a
+stable warmed allocation path and does not infer optional operations from
+inconsistent observations. They receive no fixed offset. Instead they
 use the ordinary dynamic range allocator outside the fixed slice and are
 bounded per task by:
 
@@ -422,9 +424,10 @@ bounded per task by:
 - maximum live dynamic-scratch bytes.
 
 The global scratch reserve is the maximum admitted need because execution
-tasks are sequential. It is derived from profiled path observations with 25%
-headroom rounded to 2 MiB, and may be increased by the public planning
-request. The request cannot reduce the measured minimum.
+tasks are sequential. For a contract with optional-path evidence, it is derived
+from those observations with 25% headroom rounded to 2 MiB. The lower-level
+planning request can increase this reserve but cannot reduce its required
+minimum.
 
 ### Terminal caller-owned outputs
 

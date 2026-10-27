@@ -102,45 +102,29 @@ passed between them; only the plan's memory has nothing to do with it.
 
 ## Allocation behavior
 
-Task allocation profiling is a physical contract, not a semantic lowering
-fallback. Each structural task is warmed and probed with representative
-inputs. Registered state and caller inputs keep their authentic values;
-floating and complex anonymous values are deterministic standard-normal
-samples, seeded per task, position and probe; optimizer state the step has yet
-to create is zero. An integer or boolean input has no synthetic form, so it
-must come from its caller or its producing task and profiling refuses the task
-when neither supplies one.
+Build derives compiler-visible storage structure. `measure_program` observes
+allocation requests and releases while running each finalized task on the
+ordinary device allocator. This supplies missing physical memory evidence;
+execution later validates it against the admitted layout.
 
-Taking it from its producing task means evaluating the slice that computes it,
-and what that slice needs is not always another such value: a model that
-chooses which tokens to attend to computes the choice from the activations of
-the layer that produces them. Those are resolved the same way and by the same
-code, recursively, back to the caller's roots, and a value needed twice is
-evaluated once. Only the slices the value depends on are run; a stage it does
-not depend on is never executed to manufacture an input.
+Automatic input preparation preserves tensor geometry and shared storage. It
+uses small deterministic floating-point samples, zero gradient/optimizer inputs,
+and known statistic values where supported. It does not load checkpoint weights.
+Callers can supply real task inputs when their semantics require them. Control
+values must be embedded in the Program, supplied by the caller, or obtained by
+replaying their recorded producer on the captured device. Backward saved tensors
+always come from the matching forward.
 
-The slices run on the device the graph was captured for, because a captured
-graph is specialized to that device's layouts. Export records a view wherever
-a reshape was legal as one, and whether it was legal depends on strides the
-two implementations of an operator need not agree about, so replaying such a
-graph anywhere but where it was traced is unsound. The alternative to deriving
-the value at all is a partition that puts every consumer of it in one task
-with its producer, which is the width a memory budget exists to avoid.
+Three warmed observations must have identical allocation contracts and
+output/input aliases. Retained anonymous allocations fail measurement rather
+than silently becoming unbudgeted state. First-use retained memory is recorded
+separately. The contract identifies required allocations, requested/charged bytes,
+alignment, ownership and lifetimes. Runtime rejects allocations that disagree
+with that contract or exceed the admitted task envelope.
 
-The resulting `TaskAllocationContract` contains an invariant allocation path
-and a bounded optional path:
-
-- required outputs and mutations must match their expected ordinal, size,
-  alignment, and ownership;
-- optional anonymous/provider operations may be inserted or omitted within a
-  measured dynamic-scratch allowance;
-- ambiguous paths fail during profiling or immediately at runtime;
-- a request exceeding its task envelope raises a task-attributed runtime
-  error before an invalid pointer reaches the backend.
-
-`allocation_probe_seeds` controls independent randomized activation probes.
-`allocation_probe_repetitions` repeats each seed to expose first-use paths.
-The defaults are one seed and two repetitions.
+The lower-level contract also supports explicitly supplied optional paths and
+bounded dynamic scratch. The public measurement phase does not infer such paths
+from inconsistent observations; it requires a stable warmed path.
 
 ## Cross-task lowering
 

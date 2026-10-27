@@ -9,7 +9,7 @@ from shadowspill.pytorch.capture.storage import (
     StorageRootKind,
     TaskStorageContract,
 )
-from shadowspill.pytorch.profiling import (
+from shadowspill.task.allocations import (
     TaskAllocationContract,
     TaskAllocationContractStep,
     TaskAllocationEvent,

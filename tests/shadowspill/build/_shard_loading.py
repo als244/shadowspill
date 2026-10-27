@@ -7,6 +7,7 @@ import torch
 from shadowspill.artifacts.tensors import tensor_geometry
 from shadowspill.execution.tensor_regions import TensorRegion, tensor_regions
 from shadowspill.execution.tensors import tensor_entries, visit_tensors
+from tests.shadowspill.execution._spill import MemorySpill
 
 
 def check_shard_loading(program):
@@ -42,7 +43,7 @@ def check_shard_loading(program):
                     torch.arange(region.offset, region.offset + region.length) + 1
                 )
         state.initial = set(values)
-        state.host = lambda alias, values=values: values[alias].view(torch.uint8)
+        state.spill = MemorySpill(values)
 
         def fill(request, tensor):
             assert tensor.numel() * tensor.element_size() <= 12
@@ -52,5 +53,6 @@ def check_shard_loading(program):
             )
 
         visit_tensors(state, fill, 12, initialize=True)
+        assert all(size <= 12 for _, _, size, _ in state.spill.transfers)
         for alias in values:
             torch.testing.assert_close(values[alias], expected[alias])

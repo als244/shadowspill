@@ -523,10 +523,6 @@ def register_model_state(
 
     registrations: list[RegistrationBinding] = []
     parameter_objects: dict[str, str] = {}
-    from shadowspill.pytorch.distributed import current
-    from shadowspill.pytorch.distributed._backing_storage import storage_layout
-
-    bound = current()
     checkpoint_names = set(model.state_dict(keep_vars=True))
     for name, parameter in model.named_parameters(remove_duplicate=False):
         for path, component in tensor_components(parameter):
@@ -538,17 +534,6 @@ def register_model_state(
             )
             registrations.append(RegistrationBinding(name, object_id, True, path))
             parameter_objects.setdefault(name, object_id)
-            if bound is not None and name in bound.transfer_sharding:
-                layout = storage_layout(
-                    bound,
-                    name,
-                    int(component.untyped_storage().nbytes()),
-                    component.element_size(),
-                )
-                if layout is not None:
-                    alias = catalog._record(object_id).alias_group_id
-                    catalog._alias_sizes[alias] = layout.execution_bytes
-                    catalog._alias_transfers[alias] = layout.transfer
     for name, buffer in model.named_buffers(remove_duplicate=False):
         for path, component in tensor_components(buffer):
             object_id = catalog.add(

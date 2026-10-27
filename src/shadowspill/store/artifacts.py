@@ -100,9 +100,9 @@ class _ArtifactLedger:
 
 @dataclass(frozen=True, slots=True)
 class ArtifactStore:
-    """Optional content-addressed caches for capture, profiling and planning.
+    """Optional content-addressed caches for capture and planning.
 
-    ``build`` holds graph pairs, optimizer captures and measurements;
+    ``build`` holds graph pairs and optimizer captures;
     ``planning`` holds costed IR inputs, search requests and results. Either
     tree can use its own root and read/write policy. Saved public phase
     artifacts are independent of these directories.
@@ -181,18 +181,6 @@ class ArtifactStore:
         return self.build / "optimizers"
 
     @property
-    def profiling(self) -> Path:
-        return self.build / "profiling"
-
-    @property
-    def profile_measurements(self) -> Path:
-        return self.profiling / "measurements"
-
-    @property
-    def compiled_manifests(self) -> Path:
-        return self.profiling / "compiled_manifests"
-
-    @property
     def programs_archive(self) -> Path:
         # In the planning tree, not the build tree. A planning call archives
         # the program it was given so a plan's lineage points at an immutable
@@ -242,13 +230,13 @@ class ArtifactStore:
         """Create the stable top-level layout and its human guide."""
 
         self.root.mkdir(parents=True, exist_ok=True)
-        for directory in (self.build, self.profiling, self.planning):
+        for directory in (self.build, self.planning):
             directory.mkdir(parents=True, exist_ok=True)
         _write_guides(
             self.root,
             False,
             {
-                "build": "graph pairs, optimizer captures and profiles",
+                "build": "graph pairs and optimizer captures",
                 "planning": "costed IR inputs, search requests and results",
             },
             _CACHE_README,
@@ -429,7 +417,6 @@ Optional content-addressed entries under a versioned root:
 
 - `build/graph_pairs/`: structural AOT graph pairs.
 - `build/optimizers/`: captured optimizer updates.
-- `build/profiling/`: executable storage manifests and task measurements.
 - `planning/programs/`: costed IR inputs.
 - `planning/requests/`: search inputs and settings.
 - `planning/results/`: selected schedules, diagnostics and certificates.

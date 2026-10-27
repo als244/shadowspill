@@ -1,40 +1,9 @@
 from __future__ import annotations
 
-import json
 from pathlib import Path
 
-import pytest
-
-from shadowspill.profiling.metadata import (
-    canonicalize_profiling_metadata,
-    repeated_profiling_metadata,
-)
 from shadowspill.schema import ARTIFACT_VERSION
 from shadowspill.store import ArtifactStore
-
-
-def test_profiling_metadata_is_canonical_and_position_aligned() -> None:
-    first = canonicalize_profiling_metadata(
-        {"sequence_lengths": [512, 512], "sequence_count": 2}
-    )
-    reordered = canonicalize_profiling_metadata(
-        {"sequence_count": 2, "sequence_lengths": [512, 512]}
-    )
-    different = canonicalize_profiling_metadata(
-        {"sequence_lengths": [1024], "sequence_count": 1}
-    )
-
-    assert first == reordered
-    assert first.digest != different.digest
-    assert json.loads(first.canonical_json)["value"]["sequence_count"] == 2
-    assert repeated_profiling_metadata([None, {"tokens": 8}], repetitions=2)
-
-    with pytest.raises(ValueError, match="one entry per repetition"):
-        repeated_profiling_metadata([None], repetitions=2)
-    with pytest.raises(ValueError, match="finite"):
-        canonicalize_profiling_metadata({"value": float("nan")})
-    with pytest.raises(TypeError, match="JSON-compatible"):
-        canonicalize_profiling_metadata({"value": object()})
 
 
 def test_planning_cache_has_stable_human_readable_layout(tmp_path: Path) -> None:
@@ -49,10 +18,7 @@ def test_planning_cache_has_stable_human_readable_layout(tmp_path: Path) -> None
     assert cache.build == root / "build"
     assert cache.planning == root / "planning"
     assert cache.graph_pairs == root / "build" / "graph_pairs"
-    assert cache.profile_measurements == root / "build" / "profiling" / "measurements"
-    assert cache.compiled_manifests == (
-        root / "build" / "profiling" / "compiled_manifests"
-    )
+
     assert cache.programs_archive == root / "planning" / "programs"
     assert cache.plan_requests == root / "planning" / "requests"
     assert cache.plan_selections == root / "planning" / "results"

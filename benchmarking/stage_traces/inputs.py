@@ -8,7 +8,6 @@ import torch
 from torch._subclasses.fake_tensor import FakeTensor
 
 from shadowspill.pytorch.compilation.compiler import materialize_example_arguments
-from shadowspill.pytorch.profiling.geometry import distinct_locations
 
 from .api import resolve
 
@@ -68,7 +67,7 @@ def materialize(artifact, policies, device=0):
                 raise ValueError(f"conflicting aliases at input {index}")
             continue
         filled[identity] = spec["source"]
-        destination = distinct_locations(target)
+        destination = _distinct_locations(target)
         if spec["kind"] == "literal":
             reference = spec["value"]
             for dimension, stride in enumerate(target.stride()):
@@ -83,3 +82,12 @@ def materialize(artifact, policies, device=0):
             generator = torch.Generator(device=target.device).manual_seed(spec["seed"])
             destination.normal_(std=spec["std"], generator=generator)
     return args
+
+
+def _distinct_locations(value):
+    """Initialize broadcast storage once, preserving its original view."""
+    shape = tuple(
+        1 if stride == 0 else size
+        for size, stride in zip(value.shape, value.stride(), strict=True)
+    )
+    return value.as_strided(shape, value.stride(), value.storage_offset())

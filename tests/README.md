@@ -15,8 +15,8 @@ tests/
 ```
 
 Inside `shadowspill/`, the mirror goes all the way down: a test for
-`src/shadowspill/pytorch/profiling/` lives in
-`tests/shadowspill/pytorch/profiling/`. A test that exercises two packages
+`src/shadowspill/profiling/` lives in
+`tests/shadowspill/profiling/`. A test that exercises two packages
 belongs to the one it is about, not the one it imports for a fixture.
 
 `tests/csrc/` mirrors `csrc/` the same way: `runtime/`, `simulator/`, `backends/`,
@@ -24,14 +24,10 @@ belongs to the one it is about, not the one it imports for a fixture.
 those libraries, and the two at its root, the ABI sizes and the build, are about
 the build as a whole.
 
-`tests/shadowspill/pytorch/api/` is the exception, and deliberately so.
-Installing ShadowSpill's allocator requires a process where the framework has
-not yet initialized its device runtime; PyTorch refuses to swap an allocator
-that has already been used. So exactly one of those tests can run per pytest
-process. They
-sort first, which gives one of them that slot, and each is also registered as
-its own CTest so all of them actually run. Do not add a package under
-`pytorch/` that sorts before `api`.
+Tests requiring the execution allocator run in fresh workers. Build/profile stay
+in ordinary PyTorch processes; each execution worker installs the allocator before
+creating device tensors. Shared helpers under `tests/shadowspill/execution/`
+exercise this boundary and keep process setup out of individual cases.
 
 Long-running numerical and throughput acceptance belongs in `qualification/`,
 not in the ordinary unit suite.

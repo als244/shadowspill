@@ -11,9 +11,9 @@ import torch.nn as nn
 from shadowspill.errors import CaptureError
 from shadowspill.pytorch.capture.storage import TaskStorageContract
 from shadowspill.pytorch.optimizer import OptimizerCapture
-from shadowspill.pytorch.profiling import TaskMeasurement
 from shadowspill.step import StepDataOrdering
 from shadowspill.task.manifest import ExecutableRootAllocation
+from shadowspill.task.profiles import TaskMeasurement
 
 from ...graph_pairs import PartitionedTrainingCapture
 from ..profiles import CompiledLayoutIndex, ProfileMeasurementKey, TaskProfileCatalog

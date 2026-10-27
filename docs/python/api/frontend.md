@@ -123,9 +123,6 @@ Runtime(
     worker_poll_nanoseconds=1000,
     background_transfer_window_bytes=DEFAULT_BACKGROUND_WINDOW_BYTES,
     backend=None,
-    control_group=None,
-    host_headroom_bytes=2 << 30,
-    preparation_timeout=1800.0,
 )
 ```
 
@@ -153,7 +150,7 @@ plan resolution.
 
 `Runtime` owns the installed allocator, the initialized `MemoryPool` and
 route registries, transfer calibration, the active callable count, the
-persistent state registry, and the latest failure. Its public properties are
+registered runtime objects, and the latest failure. Its public properties are
 `pools` (name to `MemoryPool`), `routes` (name to `RuntimeRoute`),
 `transfer_capabilities` (a `TransferCapabilities` matrix of `TransferProfile`
 entries) and `last_failure` (a `RuntimeFailureDiagnostics` or `None`).
@@ -350,6 +347,6 @@ runtime trace. See [execution](training.md).
 ## Build and measurement policies
 
 `PartitionPolicy` supplies custom stage boundaries to the public builders;
-`PartitionSpec` describes the resulting stages. `ProfilingOptions` controls
-warmup and timing in `measure_program`. These options do not create runtime
-pools. See [the build phase](../../architecture/offline-pipeline.md).
+`PartitionSpec` describes the resulting stages. `measure_program` accepts
+`warmup_seconds` and `measure_seconds` directly. These phases do not create
+runtime pools. See [the build phase](../../architecture/offline-pipeline.md).

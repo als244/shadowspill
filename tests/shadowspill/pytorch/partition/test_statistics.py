@@ -6,13 +6,9 @@ import pytest
 import torch
 from torch.fx.experimental.proxy_tensor import make_fx
 
-from shadowspill.errors import CaptureError
-from shadowspill.pytorch.capture.artifacts import TaskInputProvenance
 from shadowspill.pytorch.partition.artifacts import StageRecord, StageValueSource
 from shadowspill.pytorch.partition.split import SplitExportGraph
 from shadowspill.pytorch.partition.statistics import numeric_outputs
-from shadowspill.pytorch.profiling.inputs import _populate_value
-from shadowspill.task.inputs import TaskInputRole
 
 
 def chain(*functions):
@@ -87,16 +83,3 @@ def test_long_forwarding_chains_do_not_use_python_recursion():
         )
     actual = numeric_outputs(replace(split, stages=tuple(records)))
     assert actual == {(index, 0) for index in range(1500)}
-
-
-def test_only_proven_statistic_inputs_accept_generated_integer_values():
-    target = torch.empty(4, dtype=torch.int64)
-    settings = dict(structural_contract_key="statistics", position=0, probe_index=0)
-    policy = _populate_value(
-        target, TaskInputProvenance(TaskInputRole.STATISTIC), **settings
-    )
-    assert policy == "fixed_shape_numeric_one"
-    assert torch.equal(target, torch.ones_like(target))
-    for role in (TaskInputRole.CONTROL, TaskInputRole.ACTIVATION):
-        with pytest.raises(CaptureError, match="integer/boolean inputs require"):
-            _populate_value(target, TaskInputProvenance(role), **settings)

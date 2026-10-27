@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-import hashlib
-import json
 import math
 from dataclasses import dataclass, field
 
@@ -21,7 +19,6 @@ from .allocations import (
     TaskAllocationPathObservation,
 )
 from .inputs import (
-    REPRESENTATIVE_VALUE_POLICY,
     RepresentativeInputSummary,
 )
 from .profiling import ProfilingOptions, TimingWindow
@@ -100,38 +97,6 @@ class TaskOutputInputBinding:
             raise ValueError(
                 "cached output/input binding has an invalid schema"
             ) from exc
-
-
-@dataclass(frozen=True, slots=True)
-class ProfileEnvironment:
-    """Implementation identity that can change executable task cost."""
-
-    torch_version: str
-    provider_version: str | None
-    device_name: str
-    compute_capability: tuple[int, int]
-    compiler_id: str
-    provider_id: str
-    export_bypass_key: str | None = None
-    communication_timing_digest: str | None = None
-    timing_policy: str = "batched-events+batched-collective-phases+paired-progress/v3"
-
-    def identity(self) -> dict[str, object]:
-        return {
-            "torch_version": self.torch_version,
-            "provider_version": self.provider_version,
-            "device_name": self.device_name,
-            "compute_capability": self.compute_capability,
-            "compiler_id": self.compiler_id,
-            "provider_id": self.provider_id,
-            "export_bypass_key": self.export_bypass_key,
-            "timing_policy": self.timing_policy,
-            **(
-                {"communication_timing_digest": self.communication_timing_digest}
-                if self.communication_timing_digest is not None
-                else {}
-            ),
-        }
 
 
 @dataclass(frozen=True, slots=True)
@@ -447,65 +412,8 @@ class TaskMeasurement:
             raise ValueError("cached task measurement has an invalid schema") from exc
 
 
-@dataclass(frozen=True, slots=True)
-class ProfileKey:
-    """One profile belongs to (compiled contract, declared metadata).
-
-    Inputs are never inspected: values that shape a task are already in
-    the compiled contract through specialization, and cost-relevant
-    per-repetition structure must be declared through
-    ``profiling_metadata``.
-    """
-
-    graph_digest: str
-    environment: ProfileEnvironment
-    profiling_metadata_digest: str | None = None
-    allocation_probe_seeds: int = 1
-    allocation_probe_repetitions: int = 2
-    profiling_options: ProfilingOptions = field(default_factory=ProfilingOptions)
-
-    def __post_init__(self) -> None:
-        if self.allocation_probe_seeds < 1:
-            raise ValueError("allocation probe seed count must be positive")
-        if self.allocation_probe_repetitions < 2:
-            raise ValueError("allocation probe repetition count must be at least two")
-
-    @property
-    def digest(self) -> str:
-        payload = {
-            "schema": PROFILE_SCHEMA,
-            "representative_value_policy": REPRESENTATIVE_VALUE_POLICY,
-            "graph_digest": self.graph_digest,
-            "environment": self.environment.identity(),
-            "profiling_metadata_digest": self.profiling_metadata_digest,
-            "allocation_probe_seeds": self.allocation_probe_seeds,
-            "allocation_probe_repetitions": self.allocation_probe_repetitions,
-            "profiling_options": self.profiling_options.to_dict(),
-        }
-        encoded = json.dumps(payload, sort_keys=True, separators=(",", ":"))
-        return hashlib.sha256(encoded.encode()).hexdigest()
-
-
-@dataclass(frozen=True, slots=True)
-class ProfilingResult:
-    """Measurements scattered back to artifact positions with cache evidence."""
-
-    measurements: tuple[TaskMeasurement, ...]
-    unique_keys: int
-    cache_hits: int
-    cache_misses: int
-    fixed_slab_bytes: int
-    key_digests: tuple[str, ...] = ()
-    profiling_metadata_digests: tuple[str | None, ...] = ()
-    allocation_probe_seeds: int = 1
-    allocation_probe_repetitions: int = 2
-
-
 __all__ = [
     "PROFILE_SCHEMA",
-    "ProfileEnvironment",
-    "ProfileKey",
-    "ProfilingResult",
     "TaskAllocationContract",
     "TaskAllocationEvent",
     "TaskAllocationOperation",

@@ -13,7 +13,6 @@ from torch.utils._pytree import tree_map
 from shadowspill.errors import CaptureError
 from shadowspill.pytorch.accelerator import accelerator_device
 from shadowspill.pytorch.contracts import TensorSpec
-from shadowspill.pytorch.distributed import borrowed_group_memo
 from shadowspill.pytorch.representations import (
     is_wrapper,
     map_tensor,
@@ -47,7 +46,7 @@ def fake_device_model(
             tensor
         )
 
-    memo: dict[int, Any] = borrowed_group_memo()
+    memo: dict[int, Any] = {}
     device = accelerator_device(device_index)
     with mode:
         for (_identity, storage_bytes), tensors in groups.items():
