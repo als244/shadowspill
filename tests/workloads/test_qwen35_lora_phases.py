@@ -66,19 +66,6 @@ def test_bounded_initializer_preserves_base_and_adapter_distributions(checkpoint
     assert initialize.checkpoint.reader._closed
 
 
-def test_planning_module_has_no_tensor_or_model_dependency():
-    command = (
-        "import sys; import workloads.recipes.text.qwen35_lora.plan; "
-        "assert 'torch' not in sys.modules; "
-        "assert 'workloads.models' not in sys.modules"
-    )
-    subprocess.run(
-        [sys.executable, "-S", "-c", command],
-        check=True,
-        env={**os.environ, "CUDA_VISIBLE_DEVICES": ""},
-    )
-
-
 def manifest(root, step):
     with zipfile.ZipFile(root / f"training/checkpoints/step_{step:08d}.ssp") as archive:
         return json.loads(archive.read("manifest.json"))

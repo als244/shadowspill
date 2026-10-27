@@ -42,15 +42,15 @@ def test_reference_uses_shared_bounded_initializer_and_plan_schedule_names(tmp_p
     assert result.hyperparams["optimizer_group.0.lr"] == 0.01
 
 
-def test_reference_runs_without_legacy_preparation_or_execution(tmp_path):
+def test_reference_runs_without_preparation_or_executor(tmp_path):
     path = _config(tmp_path)
     script = """
 import importlib.abc
 import sys
 class Block(importlib.abc.MetaPathFinder):
     def find_spec(self, fullname, path=None, target=None):
-        for name in ('shadowspill.training._legacy_trainer',
-                     'shadowspill.training.backends', 'shadowspill.execution'):
+        for name in ('shadowspill.build', 'shadowspill.profiling.measure',
+                     'shadowspill.execution'):
             if fullname == name or fullname.startswith(name + '.'):
                 raise AssertionError('reference imported ' + fullname)
 sys.meta_path.insert(0, Block())

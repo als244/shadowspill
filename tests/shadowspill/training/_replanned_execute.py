@@ -1,42 +1,25 @@
 """Saved-plan worker cannot import its model, capture, profile or plan again."""
 
-import importlib.abc
 import sys
 from pathlib import Path
 
 import torch
 from torch._inductor.runtime.triton_heuristics import CachingAutotuner
 
-
-def forbidden(*args, **kwargs):
-    raise AssertionError("saved execution attempted Inductor tuning")
-
+from tests.shadowspill.execution._cold import forbid_preparation, forbidden
 
 CachingAutotuner.autotune_to_one_config = forbidden
-
-
-class Block(importlib.abc.MetaPathFinder):
-    def find_spec(self, fullname, path=None, target=None):
-        if any(
-            fullname == key or fullname.startswith(key + ".")
-            for key in (
-                "shadowspill.build",
-                "shadowspill.profiling.measure",
-                "shadowspill.planning",
-                "shadowspill.training._legacy_trainer",
-                "shadowspill.store",
-                "tests.shadowspill.training._replanned_model",
-                "workloads.models",
-            )
-        ):
-            raise AssertionError("execution imported " + fullname)
 
 
 # Executor's shared-plan admission uses static planning helpers. Import these
 # before blocking any re-entry to phase preparation during loading/execution.
 from shadowspill import Plan, Trainer  # noqa: E402
 
-sys.meta_path.insert(0, Block())
+forbid_preparation(
+    "shadowspill.planning",
+    "tests.shadowspill.training._replanned_model",
+    "workloads.models",
+)
 directory, gib, kind = Path(sys.argv[1]), sys.argv[2], sys.argv[3]
 provider = {
     "embedding": "mlops.providers.builtin.embedding",

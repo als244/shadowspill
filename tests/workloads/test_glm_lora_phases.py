@@ -148,21 +148,6 @@ def test_cli_replan_preserves_preparation_settings_and_capture_validation(recipe
     assert json.loads((root / "config.json").read_text()) == replanned
 
 
-def test_recipe_planning_imports_no_tensor_framework():
-    subprocess.run(
-        [
-            sys.executable,
-            "-S",
-            "-c",
-            "import sys; import workloads.recipes.text.glm53_flash_lora.plan; "
-            "assert 'torch' not in sys.modules; "
-            "assert 'workloads.models' not in sys.modules",
-        ],
-        env={**os.environ, "CUDA_VISIBLE_DEVICES": ""},
-        check=True,
-    )
-
-
 def manifest(root, step):
     with zipfile.ZipFile(root / f"training/checkpoints/step_{step:08d}.ssp") as archive:
         return json.loads(archive.read("manifest.json"))

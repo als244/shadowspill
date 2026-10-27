@@ -102,5 +102,4 @@ with Trainer(
 
 assert "shadowspill.build" not in sys.modules
 assert "shadowspill.profiling.measure" not in sys.modules
-assert "shadowspill.training._legacy_trainer" not in sys.modules
 print(f"Qualified partial Trainer {mode}", flush=True)

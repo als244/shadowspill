@@ -1,29 +1,14 @@
 """Fresh execution worker for fixed-window text training and resume checks."""
 
-import importlib.abc
 import json
 import sys
 from pathlib import Path
 
 import torch
 
+from tests.shadowspill.execution._cold import forbid_preparation
 
-class BlockPreparation(importlib.abc.MetaPathFinder):
-    def find_spec(self, fullname, path=None, target=None):
-        if any(
-            fullname == name or fullname.startswith(name + ".")
-            for name in (
-                "shadowspill.build",
-                "shadowspill.profiling.measure",
-                "shadowspill.planning.plan",
-                "shadowspill.training._legacy_trainer",
-                "shadowspill.training.backends",
-            )
-        ):
-            raise AssertionError("execution imported " + fullname)
-
-
-sys.meta_path.insert(0, BlockPreparation())
+forbid_preparation()
 
 from shadowspill import Plan, Trainer  # noqa: E402
 from shadowspill.training.schedules import WarmupCosine  # noqa: E402

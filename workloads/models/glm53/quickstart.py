@@ -4,7 +4,7 @@ from functools import partial
 
 from torch._inductor import config as inductor_config
 
-from workloads.models.shared.glm.recipe import experiment as lora_experiment
+from workloads.models.shared.glm.recipe.factory import experiment as lora_experiment
 
 from .checkpoint import GLMCheckpoint
 from .config import Config

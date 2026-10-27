@@ -77,5 +77,4 @@ with Trainer(
         torch.testing.assert_close(result.metrics, expected["metrics"])
         torch.testing.assert_close(result.parameter_metrics, expected["norms"])
 assert "shadowspill.build" not in sys.modules
-assert "shadowspill.training._legacy_trainer" not in sys.modules
 print("Qualified mixed-input Trainer")
