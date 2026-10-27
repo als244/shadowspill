@@ -207,7 +207,7 @@ plans written by the collection workflow.
 `shadowspill.diagnostics.occupancy.attribute(selection, program, diagnostics=None)`
 takes the three files' contents as mappings (`unconstrained(program,
 selections)` takes the program and a plan's choices, `all_save(program)` the
-program alone); `shadowspill.planner.plan_store.read_stored_selection(path)`
+program alone); `shadowspill.planner.plan_store.reader.read_stored_selection(path)`
 gives a stored selection with its certificate merged in under
 `admission_certificate`, which is the mapping `attribute` reads. `attribute`
 returns a `PlanOccupancy` with `spill` and `execution` (`Occupancy` objects

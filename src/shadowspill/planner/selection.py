@@ -12,18 +12,14 @@ from shadowspill.planner.admission.refinement import (
     placement_facts,
     resolve_fixed_layout_selection,
 )
-from shadowspill.planner.plan_store import (
-    certified_result,
-    open_plan_store,
-    resolve_plan,
-)
+from shadowspill.planner.plan_store.integration import open_plan_store, resolve_plan
 from shadowspill.planner.program import (
     AnnotatedProgramPlan,
     MemoryBudgets,
     ShadowSpillPlanningProblem,
     TransferBandwidths,
 )
-from shadowspill.planner.result import ProgramPlanResult
+from shadowspill.planner.result import ProgramPlanResult, certified_result
 from shadowspill.planner.search import SearchOptions
 from shadowspill.store import ArtifactStore
 

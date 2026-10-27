@@ -1,4 +1,4 @@
-"""Bridge host operations use physical shard bytes, not full execution capacity."""
+"""Spill leases use shard bytes while registrations keep execution capacity."""
 
 import ctypes
 import threading
@@ -23,14 +23,6 @@ class Library:
         record.pointer = 4096
         record.size_bytes = self.host_bytes
         record.has_lease = record.current = 1
-        return 0
-
-    def shadowspill_write_object(self, runtime, object_id, pool_id, address, size):
-        self.written = size
-        return 0
-
-    def shadowspill_read_object(self, runtime, object_id, pool_id, address, size):
-        self.read = size
         return 0
 
 
@@ -82,18 +74,11 @@ def test_reserve_and_host_views_keep_separate_physical_sizes(monkeypatch):
                 "pool_id": 1,
                 "retain_spill_copy": True,
                 "initially_resident": True,
-                "source_address": 0,
-                "source_size_bytes": 32,
                 "transfer_address": 123,
             },
         )
     ]
     assert state.spill_location("alias_000099") == (4096, 32)
-    state.write_spill_bytes("alias_000099", address=1, size=32)
-    state.read_spill_bytes("alias_000099", address=1, size=32)
-    assert library.written == library.read == 32
-    with pytest.raises(RuntimeExecutionError, match="requires 32"):
-        state.write_spill_bytes("alias_000099", address=1, size=256)
     library.host_bytes = 256
     with pytest.raises(RuntimeExecutionError, match="physical spill capacity"):
         state.spill_location("alias_000099")

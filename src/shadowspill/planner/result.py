@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING
 
 from shadowspill.errors import PlanInfeasibleError, PlanSearchExhaustedError
@@ -24,6 +24,7 @@ from .diagnostics import (
 
 if TYPE_CHECKING:
     from .admission import AdmissionFacts
+    from .admission.layout.model import FixedLayoutAdmission
     from .search import SearchOptions
 
 
@@ -161,3 +162,22 @@ __all__ = [
     "ResidentSlice",
     "ResolutionPlan",
 ]
+
+
+def certified_result(
+    result: ProgramPlanResult, certificate: FixedLayoutAdmission
+) -> ProgramPlanResult:
+    """The plan as its certificate re-simulated it: what a caller is handed.
+
+    The search's own simulation is logical. The certificate ran the same
+    schedule over the fixed layout, so the two agree on everything the
+    schedule decides, and the certified one is what the answer reports.
+    """
+
+    return replace(
+        result,
+        simulation=certificate.simulation,
+        diagnostics=result.diagnostics.replace_selected_makespan(
+            certificate.simulation.makespan_ns
+        ),
+    )

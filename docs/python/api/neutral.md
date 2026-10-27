@@ -338,16 +338,16 @@ summarize_plan(
 ```
 
 The arguments mean what they mean for `plan_program()`. It returns a
-`PlanSummaryLookup` (from `shadowspill.planner.plan_store`): the `key` the
+`PlanSummaryLookup` (from `shadowspill.planner.plan_store.records`): the `key` the
 plan is filed under, its `makespan_ns` as the certificate re-simulated it, its
 `summary` as a `PlanSummary`, the `graph_pair_outcomes` of every graph-pair
 selection the search evaluated, and `answered_with_incumbent`, whether the
 search answered with the plan it was handed to beat. It returns `None` when the
 store has no answer, or one nobody has certified yet; the caller then plans,
 and `plan_program()` applies the store's mode to the miss. A refusal the store
-recorded is raised as `plan_program()` would raise it. A store written before
-summaries were kept answers from the plan once and keeps the summary it built,
-when the mode allows writing.
+recorded is raised as `plan_program()` would raise it. If certification was
+interrupted after writing the certificate but before its summary, the next read
+reconstructs that summary and saves it when the mode permits writing.
 
 A plan to beat is not taken here. A plan in hand that claims to be faster than
 the stored answer is a question only a search settles, and `plan_program()`

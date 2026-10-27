@@ -33,7 +33,7 @@ from shadowspill.planner import (
 )
 from shadowspill.planner.admission.layout.build import build_fixed_layout_admission
 from shadowspill.planner.admission.layout.model import FixedLayoutAdmission
-from shadowspill.planner.plan_store import read_stored_selection
+from shadowspill.planner.plan_store.reader import read_stored_selection
 from shadowspill.planner.search import SearchOptions
 from shadowspill.planner.serialization.certificate_file import (
     CERTIFICATE_FILE,

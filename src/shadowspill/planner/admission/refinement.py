@@ -18,7 +18,7 @@ from shadowspill.planner.admission.layout.model import (
     FixedLayoutInfeasibleError,
 )
 from shadowspill.planner.diagnostics import PlanningDiagnostics
-from shadowspill.planner.plan_store import PlanLookup
+from shadowspill.planner.plan_store.records import PlanLookup
 from shadowspill.planner.result import ProgramPlanResult, ResolutionPlan
 from shadowspill.simulator import SimulationConfig
 

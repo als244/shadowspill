@@ -14,7 +14,7 @@ from shadowspill.planner import (
     TaskAdmissionSpec,
 )
 from shadowspill.planner.admission.refinement import resolve_fixed_layout_selection
-from shadowspill.planner.plan_store import PlanLookup
+from shadowspill.planner.plan_store.records import PlanLookup
 from shadowspill.simulator import SimulationConfig, simulate
 from tests.shadowspill.planner._examples import COMPUTE, DEVICE
 

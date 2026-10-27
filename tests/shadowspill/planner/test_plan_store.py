@@ -10,6 +10,7 @@ import pytest
 
 from shadowspill.ir import (
     AliasGroupSpec,
+    MemorySchedule,
     ShadowSpillProgram,
     TaskAlternativeGroup,
     TaskAlternativeOption,
@@ -22,7 +23,8 @@ from shadowspill.planner import (
 )
 from shadowspill.planner.admission import AdmissionFacts, TaskAdmissionSpec
 from shadowspill.planner.admission.refinement import resolve_fixed_layout_selection
-from shadowspill.planner.plan_store import PlanStore, read_stored_selection
+from shadowspill.planner.plan_store import PlanStore
+from shadowspill.planner.plan_store.reader import read_stored_selection
 from shadowspill.planner.search.algorithms.pressurefit import PressureFit
 from shadowspill.planner.search.algorithms.pressurefit.options import (
     PressureFitOptions,
@@ -199,7 +201,10 @@ def test_plan_store_ignores_only_fresh_work_timings(tmp_path: Path) -> None:
     )
 
 
-def test_pressurefit_cache_rejects_corrupt_evidence(tmp_path: Path) -> None:
+@pytest.mark.parametrize("missing_simulation", [False, True])
+def test_pressurefit_cache_rejects_corrupt_evidence(
+    tmp_path: Path, missing_simulation: bool
+) -> None:
     initial, final = exact_capacity_residency()
     cache = PlanStore(tmp_path)
     cache.resolve(
@@ -211,10 +216,15 @@ def test_pressurefit_cache_rejects_corrupt_evidence(tmp_path: Path) -> None:
     )
     path = next(cache.root.rglob("*.json"))
     value = json.loads(path.read_text())
-    value["diagnostics"]["selection"]["makespan_ns"] += 1
+    if missing_simulation:
+        del value["simulation_result"]
+        message = "simulation_result"
+    else:
+        value["diagnostics"]["selection"]["makespan_ns"] += 1
+        message = "invalid diagnostics"
     path.write_text(json.dumps(value))
 
-    with pytest.raises(ValueError, match="invalid diagnostics"):
+    with pytest.raises(ValueError, match=message):
         cache.resolve(
             exact_capacity_program(),
             initial_residency=initial,
@@ -252,8 +262,6 @@ def test_pressurefit_cache_validates_persisted_call_boundary(tmp_path: Path) -> 
 def test_the_plan_to_beat_is_provenance_not_identity(tmp_path: Path) -> None:
     """A request reads back the plan its search chose, whatever it was handed."""
 
-    from shadowspill.planner.plan_store import _key
-
     initial, final = exact_capacity_residency()
     program = exact_capacity_program()
     cache = PlanStore(tmp_path / "a")
@@ -277,15 +285,7 @@ def test_the_plan_to_beat_is_provenance_not_identity(tmp_path: Path) -> None:
     assert not first.from_store
     assert handed.from_store
     assert handed.result.schedule == first.result.schedule
-    key = _key(
-        program,
-        initial,
-        final,
-        config(),
-        None,
-        None,
-        FEW_CANDIDATES,
-    )
+    key = first.key
     assert json.loads(cache.path(key).read_text())["incumbent"] is None
 
     # a store that first sees the request with a plan in hand records which
@@ -644,7 +644,7 @@ def test_a_summary_is_written_with_the_certificate_and_read_without_the_plan(
 
     from shadowspill.planner.diagnostics import graph_pair_outcomes
     from shadowspill.planner.diagnostics.plan_summary import summarize_selected_plan
-    from shadowspill.planner.plan_store import certified_result
+    from shadowspill.planner.result import certified_result
 
     program = _placeable_program()
     cache = PlanStore(tmp_path)
@@ -668,7 +668,7 @@ def test_a_summary_is_written_with_the_certificate_and_read_without_the_plan(
     def refuse(*_args: object, **_kwargs: object) -> None:
         raise AssertionError("a summary read must not read the plan")
 
-    monkeypatch.setattr(PlanStore, "_read", refuse)
+    monkeypatch.setattr(MemorySchedule, "from_dict", refuse)
     lookup = cache.summary(program, **request)  # type: ignore[arg-type]
     assert lookup is not None
     assert lookup.key == first.key
@@ -683,9 +683,8 @@ def test_a_summary_is_written_with_the_certificate_and_read_without_the_plan(
     assert record["schedule_digest"] == first.result.schedule.digest
 
 
-def test_a_record_without_a_summary_learns_one_on_first_read(tmp_path: Path) -> None:
-    """A store written before summaries were kept answers from the plan once,
-    and keeps what it built when its mode allows writing."""
+def test_interrupted_certification_recovers_a_missing_summary(tmp_path: Path) -> None:
+    """A certificate can survive an interrupted summary write; recover on read."""
 
     cache, program, request, key = _certified_placeable(tmp_path)
     written = cache.summary(program, **request)  # type: ignore[arg-type]

@@ -67,13 +67,12 @@ class Storage:
         )
         if shared is not None:
             registered = shared.bridge.objects.registered_runtime_objects()
-            bridge.objects.adopt_registered(
+            bridge.objects.borrow(
                 {
                     alias: registered[source]
                     for alias, source in self.shared_aliases.items()
                     if source in registered
                 },
-                borrowed=True,
             )
         self.outputs: dict[str, torch.Tensor] = {}
         self.host_values = HostValues(plan)

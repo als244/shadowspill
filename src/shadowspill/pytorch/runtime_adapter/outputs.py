@@ -82,8 +82,6 @@ def transfer_outputs_to_caller(
                     binding.generation,
                     binding.allocation_id,
                 )
-            else:
-                bridge.objects.release_zero_generation(alias_id)
             seen.add(alias_id)
         if owns_storage:
             object_ordinal += 1

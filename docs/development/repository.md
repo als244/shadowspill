@@ -102,6 +102,7 @@ src/shadowspill/
 │   ├── artifacts.py       the store itself
 │   └── policy.py          StoreMode and the four gates it implies
 ├── planner/               the planning question and its C bindings
+│   ├── plan_store/        request identity, validated cache I/O and search reuse
 │   ├── admission/         neutral physical admission, after a search answers
 │   │   ├── physical.py    what a plan needs physically, before a runtime exists
 │   │   └── layout/        leases to fixed offsets, and the certificate

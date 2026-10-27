@@ -8,7 +8,7 @@ from collections.abc import Sequence
 from pathlib import Path
 from typing import Any
 
-from shadowspill.planner.plan_store import read_stored_selection
+from shadowspill.planner.plan_store.reader import read_stored_selection
 
 from .page import describe_plan, table, write_pages
 from .plan import all_save, attribute, unconstrained

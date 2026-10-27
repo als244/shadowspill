@@ -15,8 +15,8 @@ from shadowspill.planner import plan_program
 from shadowspill.planner.admission.layout.build import build_fixed_layout_admission
 from shadowspill.planner.admission.refinement import FixedLayoutAttempt, placement_facts
 from shadowspill.planner.annotated_plan import AnnotatedProgramPlan
-from shadowspill.planner.plan_store import certified_result
 from shadowspill.planner.program_inputs import ShadowSpillPlanningProblem
+from shadowspill.planner.result import certified_result
 from shadowspill.planner.search.algorithms.pressurefit.tracing import record_plan_trace
 from shadowspill.planner.search.toolkit.resolution import recompute_share
 

@@ -71,6 +71,8 @@ identity to adapters that consume it; it does not control compiler cache paths.
 | `refresh` | No | Yes | Recompute and replace |
 
 Entries are written atomically. A matching key with invalid content is an error,
-not a reason to accept stale evidence. Do not edit content-addressed entries.
+not a reason to accept stale evidence. A selected plan missing its simulation
+record is invalid; it is not silently recomputed as a cache miss. Do not edit
+content-addressed entries.
 A planning experiment can share build data while keeping its search results in a
 separate `plan_store`; this does not require copying compiler caches.

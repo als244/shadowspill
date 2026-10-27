@@ -34,7 +34,7 @@ from .program import (
 from .search import SearchOptions
 
 if TYPE_CHECKING:
-    from .plan_store import PlanSummaryLookup
+    from .plan_store.records import PlanSummaryLookup
 
 
 def validate_schedule_feasibility(
@@ -179,7 +179,7 @@ def summarize_plan(
     """
 
     from .admission.refinement import placement_facts
-    from .plan_store import open_plan_store
+    from .plan_store.integration import open_plan_store
 
     if search_options is not None and not isinstance(search_options, SearchOptions):
         raise TypeError("search_options must be SearchOptions or None")
