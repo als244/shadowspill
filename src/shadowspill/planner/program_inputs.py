@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 from dataclasses import dataclass, replace
 
+from shadowspill.artifacts.budgets import MemoryBudgets as MemoryBudgets
 from shadowspill.errors import PlanInfeasibleError
 from shadowspill.ir import ResidencySpec, ShadowSpillProgram, shared_residency_footprint
 from shadowspill.planner.admission import AdmissionFacts
@@ -20,7 +21,6 @@ from shadowspill.planner.serialization import (
     _simulation_config_to_dict,
     _string,
 )
-from shadowspill.planning.budgets import MemoryBudgets as MemoryBudgets
 from shadowspill.schema import artifact_schema
 from shadowspill.simulator import SimulationConfig
 

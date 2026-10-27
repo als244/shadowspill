@@ -5,6 +5,7 @@ from __future__ import annotations
 from dataclasses import replace
 from typing import TYPE_CHECKING, Literal
 
+from shadowspill.artifacts.budgets import MemoryBudgets
 from shadowspill.artifacts.plan import Plan
 from shadowspill.artifacts.profiled_program import ProfiledProgram
 from shadowspill.communication import CommunicationInfo
@@ -12,7 +13,6 @@ from shadowspill.communication.memory import communication_overhead
 from shadowspill.errors import PlanInfeasibleError
 
 from .admission.program import caller_output_aliases, program_admission
-from .budgets import MemoryBudgets
 from .costs import simulation_inputs
 from .training.bind import bind_training
 

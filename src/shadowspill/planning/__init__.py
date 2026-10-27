@@ -4,7 +4,6 @@ from importlib import import_module
 from typing import Any
 
 _PUBLIC = {
-    "MemoryBudgets": ".budgets",
     "plan_program": ".plan",
     "sweep_programs": ".sweep",
 }

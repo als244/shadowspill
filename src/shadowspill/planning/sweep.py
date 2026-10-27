@@ -5,12 +5,12 @@ from __future__ import annotations
 from collections.abc import Mapping, Sequence
 from typing import TYPE_CHECKING, Any
 
+from shadowspill.artifacts.budgets import MemoryBudgets
 from shadowspill.artifacts.profiled_program import ProfiledProgram
 from shadowspill.artifacts.sweep import SweepCase, SweepResult
 from shadowspill.communication import CommunicationInfo
 from shadowspill.errors import PlanInfeasibleError, PlanSearchExhaustedError
 
-from .budgets import MemoryBudgets
 from .plan import plan_program
 
 if TYPE_CHECKING:

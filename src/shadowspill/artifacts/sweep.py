@@ -12,7 +12,7 @@ from .archive import Artifact
 from .plan import Plan
 
 if TYPE_CHECKING:
-    from shadowspill.planning.budgets import MemoryBudgets
+    from shadowspill.artifacts.budgets import MemoryBudgets
 
 
 @dataclass(frozen=True)
@@ -68,7 +68,7 @@ class SweepResult(Artifact):
     def from_dict(
         cls, value: dict[str, Any], *, payloads: Mapping[str, bytes] | None = None
     ) -> SweepResult:
-        from shadowspill.planning.budgets import MemoryBudgets
+        from shadowspill.artifacts.budgets import MemoryBudgets
 
         return cls(
             tuple(

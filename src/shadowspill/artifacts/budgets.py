@@ -4,8 +4,9 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from shadowspill.artifacts._values import nonnegative_int
 from shadowspill.ir.validation import expect_integer, expect_mapping, field
+
+from ._values import nonnegative_int
 
 
 @dataclass(frozen=True)

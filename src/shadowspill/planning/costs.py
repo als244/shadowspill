@@ -1,5 +1,6 @@
 """Convert explicit capacities and host costs to the existing simulator IR."""
 
+from shadowspill.artifacts.budgets import MemoryBudgets
 from shadowspill.artifacts.profiled_program import ProfiledProgram
 from shadowspill.communication import CommunicationInfo
 from shadowspill.communication.memory import communication_overhead
@@ -7,7 +8,6 @@ from shadowspill.errors import PlanInfeasibleError
 from shadowspill.ir import ShadowSpillProgram
 from shadowspill.simulator import SimulationConfig
 
-from .budgets import MemoryBudgets
 from .transfers import communication_transfers
 
 

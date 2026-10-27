@@ -15,11 +15,11 @@ from .profiled_program import ProfiledProgram
 from .program import Program
 
 if TYPE_CHECKING:
+    from shadowspill.artifacts.budgets import MemoryBudgets
     from shadowspill.communication import CommunicationInfo
     from shadowspill.planner.admission import AdmissionFacts
     from shadowspill.planner.admission.layout import FixedPhysicalLayout
     from shadowspill.planner.diagnostics import PlanningDiagnostics
-    from shadowspill.planning.budgets import MemoryBudgets
 
 
 @dataclass(frozen=True)
@@ -211,6 +211,7 @@ class Plan(Artifact):
     def from_dict(
         cls, value: dict[str, Any], *, payloads: Mapping[str, bytes] | None = None
     ) -> Plan:
+        from shadowspill.artifacts.budgets import MemoryBudgets
         from shadowspill.communication import CommunicationInfo
         from shadowspill.planner.admission import AdmissionFacts
         from shadowspill.planner.diagnostics import PlanningDiagnostics
@@ -218,7 +219,6 @@ class Plan(Artifact):
         from shadowspill.planner.serialization.physical_layout import (
             _fixed_layout_from_value,
         )
-        from shadowspill.planning.budgets import MemoryBudgets
 
         return cls(
             ProfiledProgram.from_dict(value["profiled_program"], payloads=payloads),

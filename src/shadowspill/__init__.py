@@ -21,7 +21,7 @@ _PUBLIC = {
     "SweepResult": "artifacts",
     "apply_profiles": "profiling.apply",
     "measure_program": "profiling.measure",
-    "MemoryBudgets": "planning.budgets",
+    "MemoryBudgets": "artifacts.budgets",
     "CommunicationInfo": "communication",
     "measure_communication": "communication.measure",
     "plan_program": "planning.plan",

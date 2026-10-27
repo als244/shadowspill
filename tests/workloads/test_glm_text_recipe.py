@@ -111,6 +111,8 @@ def test_recipe_worker_keeps_global_rank_and_maps_assigned_device(
 
     from benchmarking import device_worker as worker
 
+    # Worker setup mutates the mapping directly, including previously absent keys.
+    monkeypatch.setattr(os, "environ", dict(os.environ))
     monkeypatch.setenv("LOCAL_RANK", "1")
     monkeypatch.setenv("RANK", "5")
     monkeypatch.setenv("WORLD_SIZE", "8")
