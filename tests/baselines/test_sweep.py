@@ -9,7 +9,6 @@ from pathlib import Path
 
 import pytest
 
-from baselines import sweep
 from baselines.common import write_json
 from baselines.common.launch import command, engine_module, trainer_command
 from baselines.common.provenance import ROOT
@@ -21,22 +20,18 @@ from baselines.common.results import (
     varied,
 )
 from baselines.engines.fsdp2.settings import Settings, add_arguments, from_namespace
-from baselines.sweep import (
-    classify,
-    comparable,
+from baselines.sweep import config as sweep
+from baselines.sweep.config import comparable, expand, keep_names
+from baselines.sweep.process import run_case
+from baselines.sweep.reporting import (
     duration,
     ended_block,
-    expand,
-    failure_row,
-    keep_names,
     labels,
-    latest,
-    main,
-    run_case,
     started_block,
     tally,
-    to_attempt,
 )
+from baselines.sweep.results import classify, failure_row, latest, to_attempt
+from baselines.sweep.run import main
 
 #: A tiny case and the eight-GPU Qwen3-30B-A3B pretraining case.
 TINY = {

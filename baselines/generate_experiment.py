@@ -53,9 +53,10 @@ from fractions import Fraction
 from pathlib import Path
 from typing import Any
 
-from baselines import experiment, sweep
 from baselines.common.launch import engine_module
 from baselines.common.provenance import ROOT, source_identity
+from baselines.experiment import config as experiment
+from baselines.sweep import config as sweep
 
 EXPERIMENTS = ROOT / "baselines" / "experiments"
 TEMPLATES = EXPERIMENTS / "templates"

@@ -58,8 +58,8 @@ def test_preparation_resumes_and_preserves_requests_when_extending_budgets(
 ):
     import json
 
-    from baselines import sweep
     from baselines.common.preparation import ensure
+    from baselines.sweep import process as sweep
 
     settings = Settings.from_dict({"model": "llama3-tiny", "execution_gib": 8})
     group = {

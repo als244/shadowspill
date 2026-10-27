@@ -47,11 +47,17 @@ def native_allocation_failure(current):
     with path.open("rb") as stream:
         stream.seek(max(0, path.stat().st_size - 65536))
         text = stream.read().decode("utf-8", errors="replace")
-    lines = [line for line in text.splitlines() if "NCCL EP: failed to allocate" in line]
+    lines = [
+        line for line in text.splitlines() if "NCCL EP: failed to allocate" in line
+    ]
     if not lines:
         return None
-    return {"status": "out_of_memory", "stage": "native_dispatcher_setup",
-            "error": lines[0], "source": str(path)}
+    return {
+        "status": "out_of_memory",
+        "stage": "native_dispatcher_setup",
+        "error": lines[0],
+        "source": str(path),
+    }
 
 
 def run(args, pending, cases):
@@ -140,8 +146,15 @@ def run(args, pending, cases):
                             break
                         native_failure = native_allocation_failure(current)
                         if native_failure:
-                            write_json(Path(current["attempt"]) / "native_failure.json", native_failure)
-                            print(f"Native allocation failure; terminating workers: {native_failure['error']}", flush=True)
+                            write_json(
+                                Path(current["attempt"]) / "native_failure.json",
+                                native_failure,
+                            )
+                            print(
+                                "Native allocation failure; terminating workers: "
+                                f"{native_failure['error']}",
+                                flush=True,
+                            )
                             stop(process)
                             break
                         if (

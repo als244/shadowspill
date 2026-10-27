@@ -115,9 +115,9 @@ which combinations each one honors or refuses.
 
 ## LoRA
 
-A LoRA case trains adapters on the shared definition's targets
-(`workloads/lora`: every linear layer but the head, and the routed experts
-of each mixture block) in its framework's own default layout: the
+A LoRA case trains adapters on the shared definition's family-specific targets
+(`workloads/lora` and each model family's `lora.py`) in its framework's own
+default layout: the
 catalog's in ShadowSpill, FSDP2 and DeepSpeed; Megatron Bridge's in
 Megatron-Core, one adapter on each fused `linear_qkv` and `linear_fc1`; and
 AutoModel's, one on each Hugging Face projection. The layouts hold
@@ -127,6 +127,11 @@ of every trainable tensor, which each row records from the model its
 framework built.
 
 ## Sweeps
+
+The [sweep package](sweep/) separates case configuration, process lifetime,
+result classification and reporting. The [experiment package](experiment/)
+composes those sweeps, with its own configuration and run journal. Their `run.py`
+files own orchestration; `__main__.py` provides the command-line entry point.
 
 `python -m baselines.sweep --engine <name> --config <matrix.json> --output <dir>
 --gpus <n>` runs a matrix of one engine's cases as independent, resumable

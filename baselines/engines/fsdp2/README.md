@@ -165,7 +165,7 @@ output/
 ```
 
 A sweep adds `cases/<case>/attempt-NNN/` around that, `manifest.json`,
-`results.json` and a `README.md` index (`baselines/sweep.py`), and the report
+`results.json` and a `README.md` index (`baselines/sweep/`), and the report
 reads the rows (`baselines/report.py`).
 
 ## Measurement

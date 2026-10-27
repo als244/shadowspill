@@ -62,33 +62,61 @@ def test_oom_restarts_remaining_cases_without_repeating_success(tmp_path, monkey
 
 
 def test_native_nccl_oom_terminates_live_workers_and_continues(tmp_path, monkeypatch):
-    jobs = [dict(case=f"ncclep/bf16/full/tokens-{t}", attempt=str(tmp_path/f"case-{t}"),
-                 python="/python", ranks=8, distributed_tuning=False, arguments=[], command=[])
-            for t in (65536, 2048)]
-    launched=[]; stopped=[]
+    jobs = [
+        dict(
+            case=f"ncclep/bf16/full/tokens-{t}",
+            attempt=str(tmp_path / f"case-{t}"),
+            python="/python",
+            ranks=8,
+            distributed_tuning=False,
+            arguments=[],
+            command=[],
+        )
+        for t in (65536, 2048)
+    ]
+    launched = []
+    stopped = []
+
     class Process:
         def __init__(self, command, **kwargs):
-            queue_path=Path(command[-1]); queue=json.loads(queue_path.read_text())
-            launched.append(queue['jobs'])
-            self.returncode=None if len(launched)==1 else 0
+            queue_path = Path(command[-1])
+            queue = json.loads(queue_path.read_text())
+            launched.append(queue["jobs"])
+            self.returncode = None if len(launched) == 1 else 0
             if self.returncode is None:
-                current=queue['jobs'][0]
-                write_json(queue_path.parent/'current.json', {**current,'started':0})
-                path=Path(current['attempt'])/'console.log';path.parent.mkdir(parents=True)
-                path.write_text('NCCL EP: failed to allocate the HT intra-LSA staging buffer (50208.01 MiB)\nNCCL error 1 at nccl_ep.cc:1296\n')
+                current = queue["jobs"][0]
+                write_json(
+                    queue_path.parent / "current.json", {**current, "started": 0}
+                )
+                path = Path(current["attempt"]) / "console.log"
+                path.parent.mkdir(parents=True)
+                path.write_text(
+                    "NCCL EP: failed to allocate the HT intra-LSA staging buffer "
+                    "(50208.01 MiB)\nNCCL error 1 at nccl_ep.cc:1296\n"
+                )
             else:
-                for job in queue['jobs']:
-                    write_json(Path(job['attempt'])/'outcome.json', {'status':'completed','attempt':job['attempt']})
-        def poll(self): return self.returncode
+                for job in queue["jobs"]:
+                    write_json(
+                        Path(job["attempt"]) / "outcome.json",
+                        {"status": "completed", "attempt": job["attempt"]},
+                    )
+
+        def poll(self):
+            return self.returncode
+
     def stop(process):
-        stopped.append(process);process.returncode=-15
-    monkeypatch.setattr(persistent,'stop',stop)
-    monkeypatch.setattr(persistent,'emit_start',lambda *args:None)
-    monkeypatch.setattr(persistent,'emit_finished',lambda *args:None)
-    monkeypatch.setattr(persistent.subprocess,'Popen',Process)
-    cases=[]
-    persistent.run(SimpleNamespace(output=tmp_path,cpu_threads=1,timeout=60),jobs,cases)
-    assert len(stopped)==1 and len(launched)==2
-    assert [c['status'] for c in cases]==['out_of_memory','completed']
-    assert cases[0]['failure_stages']==['native_dispatcher_setup']
-    assert 'failed to allocate' in cases[0]['native_failure']['error']
+        stopped.append(process)
+        process.returncode = -15
+
+    monkeypatch.setattr(persistent, "stop", stop)
+    monkeypatch.setattr(persistent, "emit_start", lambda *args: None)
+    monkeypatch.setattr(persistent, "emit_finished", lambda *args: None)
+    monkeypatch.setattr(persistent.subprocess, "Popen", Process)
+    cases = []
+    persistent.run(
+        SimpleNamespace(output=tmp_path, cpu_threads=1, timeout=60), jobs, cases
+    )
+    assert len(stopped) == 1 and len(launched) == 2
+    assert [c["status"] for c in cases] == ["out_of_memory", "completed"]
+    assert cases[0]["failure_stages"] == ["native_dispatcher_setup"]
+    assert "failed to allocate" in cases[0]["native_failure"]["error"]

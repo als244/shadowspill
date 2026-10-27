@@ -7,7 +7,9 @@ from pathlib import Path
 
 import pytest
 
-from baselines import experiment
+from baselines.common.provenance import ROOT
+from baselines.experiment import commands, config, process
+from baselines.experiment import run as runner
 
 SPEC = {
     "schema_version": 1,
@@ -36,7 +38,7 @@ def write_spec(tmp_path, spec):
 
 
 def test_the_spec_resolves_names_and_interpreters(tmp_path):
-    spec = experiment.load_spec(write_spec(tmp_path, SPEC), tmp_path / "out")
+    spec = config.load_spec(write_spec(tmp_path, SPEC), tmp_path / "out")
     first, second = spec["sweeps"]
     assert first["name"] == "fsdp2-qualification"
     assert first["python"] == str(
@@ -45,19 +47,19 @@ def test_the_spec_resolves_names_and_interpreters(tmp_path):
     assert first["case_timeout"] == 3600
     assert second["python"] == "/opt/py/bin/python" and second["case_timeout"] == 60
     matrix = tmp_path / "matrix.json"
-    command = experiment.sweep_command(spec, first, matrix, tmp_path / "sweep", limit=3)
+    command = commands.sweep_command(spec, first, matrix, tmp_path / "sweep", limit=3)
     assert command[1:4] == ["-m", "baselines.sweep", "--engine"]
     assert command[command.index("--config") + 1] == str(matrix)
     assert "--resume" not in command and command[-2:] == ["--limit", "3"]
     (tmp_path / "sweep").mkdir()
     (tmp_path / "sweep" / "manifest.json").write_text("{}")
-    resumed = experiment.sweep_command(spec, first, matrix, tmp_path / "sweep")
+    resumed = commands.sweep_command(spec, first, matrix, tmp_path / "sweep")
     assert "--resume" in resumed and "--retry-failed" not in resumed
-    retried = experiment.sweep_command(
+    retried = commands.sweep_command(
         spec, first, matrix, tmp_path / "sweep", retry_failed=True
     )
     assert retried[-2:] == ["--resume", "--retry-failed"]
-    report = experiment.report_command([tmp_path / "sweep"], tmp_path / "report")
+    report = commands.report_command([tmp_path / "sweep"], tmp_path / "report")
     assert report[-2:] == ["--memory", "reserved"]
 
 
@@ -75,7 +77,7 @@ def test_the_settings_join_every_case_of_a_matrix(tmp_path):
         tmp_path,
         {"defaults": {"zero_stage": 2}, "grid": {"tokens_per_microbatch": [64, 128]}},
     )
-    matrix = experiment.sweep_matrix(path, SETTINGS)
+    matrix = config.sweep_matrix(path, SETTINGS)
     assert matrix["defaults"] == {**SETTINGS, "zero_stage": 2}
     assert matrix["grid"] == {"tokens_per_microbatch": [64, 128]}
 
@@ -91,14 +93,14 @@ def test_the_settings_join_every_case_of_a_matrix(tmp_path):
 def test_a_matrix_that_names_a_shared_setting_is_refused(tmp_path, matrix):
     path = write_matrix(tmp_path, matrix)
     with pytest.raises(ValueError, match="experiment's settings"):
-        experiment.sweep_matrix(path, SETTINGS)
+        config.sweep_matrix(path, SETTINGS)
     spec = {
         **SPEC,
         "settings": SETTINGS,
         "sweeps": [{"engine": "fsdp2", "config": str(path)}],
     }
     with pytest.raises(ValueError, match="experiment's settings"):
-        experiment.load_spec(write_spec(tmp_path, spec), tmp_path / "out")
+        config.load_spec(write_spec(tmp_path, spec), tmp_path / "out")
 
 
 @pytest.mark.parametrize(
@@ -127,7 +129,7 @@ def test_a_matrix_that_names_a_shared_setting_is_refused(tmp_path, matrix):
 )
 def test_bad_specs_are_refused(tmp_path, change):
     with pytest.raises(ValueError):
-        experiment.load_spec(write_spec(tmp_path, {**SPEC, **change}), tmp_path / "out")
+        config.load_spec(write_spec(tmp_path, {**SPEC, **change}), tmp_path / "out")
 
 
 class Sweeps:
@@ -156,11 +158,9 @@ class Sweeps:
 
 def run(tmp_path, monkeypatch, *arguments, sweeps=None):
     sweeps = sweeps or Sweeps()
-    monkeypatch.setattr(experiment.subprocess, "Popen", sweeps)
+    monkeypatch.setattr(process.subprocess, "Popen", sweeps)
     spec = write_spec(tmp_path, SPEC)
-    experiment.main(
-        ["--spec", str(spec), "--output", str(tmp_path / "out"), *arguments]
-    )
+    runner.main(["--spec", str(spec), "--output", str(tmp_path / "out"), *arguments])
     return sweeps
 
 
@@ -181,7 +181,7 @@ def test_a_dry_run_runs_each_sweeps_own_dry_run(tmp_path, monkeypatch):
     assert "baselines.sweep --engine deepspeed" in log and "a sweep's console" in log
     matrix = tmp_path / "out" / "matrices" / "deep.json"
     assert f"--config {matrix}" in log
-    source = experiment.ROOT / "baselines/engines/deepspeed/configs/qualification.json"
+    source = ROOT / "baselines/engines/deepspeed/configs/qualification.json"
     assert json.loads(matrix.read_text()) == json.loads(source.read_text())
     (console,) = (tmp_path / "out" / "runs").glob("*.log")
     text = console.read_text()
@@ -248,10 +248,10 @@ def spec_folder(tmp_path, settings):
 def test_a_spec_finds_its_matrices_beside_it_and_its_variables_at_launch(tmp_path):
     path = spec_folder(tmp_path, {**SETTINGS, "checkpoint": "{models}/tiny"})
     with pytest.raises(ValueError, match="--variable models="):
-        experiment.load_spec(path, tmp_path / "out")
+        config.load_spec(path, tmp_path / "out")
     with pytest.raises(ValueError, match="declares no variable"):
-        experiment.load_spec(path, tmp_path / "out", {"models": "/m", "other": "x"})
-    spec = experiment.load_spec(path, tmp_path / "out", {"models": "/m"})
+        config.load_spec(path, tmp_path / "out", {"models": "/m", "other": "x"})
+    spec = config.load_spec(path, tmp_path / "out", {"models": "/m"})
     assert spec["settings"]["checkpoint"] == "/m/tiny"
     assert spec["variables"] == {
         "models": {"description": "where the checkpoints are", "value": "/m"}
@@ -259,14 +259,14 @@ def test_a_spec_finds_its_matrices_beside_it_and_its_variables_at_launch(tmp_pat
     assert spec["sweeps"][0]["config"] == str(path.parent / "fsdp2.json")
     (tmp_path / "out").mkdir()
     (tmp_path / "out" / "experiment.json").write_text(json.dumps({"spec": spec}))
-    resumed = experiment.load_spec(path, tmp_path / "out")
+    resumed = config.load_spec(path, tmp_path / "out")
     assert resumed["settings"]["checkpoint"] == "/m/tiny"
 
 
 def test_a_reference_to_an_undeclared_variable_is_refused(tmp_path):
     path = spec_folder(tmp_path, {**SETTINGS, "checkpoint": "{weights}/tiny"})
     with pytest.raises(ValueError, match="not a variable"):
-        experiment.load_spec(path, tmp_path / "out", {"models": "/m"})
+        config.load_spec(path, tmp_path / "out", {"models": "/m"})
 
 
 def test_a_run_publishes_its_summary_without_its_paths(tmp_path, monkeypatch):

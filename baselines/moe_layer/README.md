@@ -120,6 +120,11 @@ attempt. `--tiny` exercises small geometry and never enters performance plots.
 
 ## Implementation interface
 
+`worker.py` coordinates a case; `measurement.py` owns synchronized timing and
+tuning inputs, `memory.py` the separate memory pass, `validation.py` bounded
+gradient checks, and `results.py` rank aggregation. Argument parsing and request
+metadata stay separate from GPU work.
+
 Each implementation has its own folder under `implementations/`:
 
 | Folder | Implementation | Environment |

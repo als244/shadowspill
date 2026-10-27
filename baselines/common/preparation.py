@@ -48,7 +48,7 @@ def groups(cases, *, engine, world_size, manifest, output):
 
 def ensure(group, *, engine, python, world_size, timeout):
     """Run one preparation worker to completion before any member case starts."""
-    from baselines.sweep import run_case
+    from baselines.sweep.process import run_case
 
     root = group["directory"]
     budgets = sorted(

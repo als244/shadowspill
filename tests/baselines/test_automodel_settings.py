@@ -9,9 +9,9 @@ import json
 import pytest
 
 from baselines.common.launch import command, engine_module
+from baselines.engines.automodel.options import OPTIONS
 from baselines.engines.automodel.settings import (
     IMPLEMENTATION,
-    OPTIONS,
     Settings,
     add_arguments,
     from_namespace,

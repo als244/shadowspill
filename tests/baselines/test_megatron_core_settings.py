@@ -9,9 +9,9 @@ import pytest
 
 from baselines.common.launch import command, engine_module
 from baselines.common.precision import Unsupported
+from baselines.engines.megatron_core.options import OPTIONS
 from baselines.engines.megatron_core.settings import (
     IMPLEMENTATION,
-    OPTIONS,
     Settings,
     add_arguments,
     aware,

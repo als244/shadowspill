@@ -29,7 +29,8 @@ from baselines.common import runner
 from baselines.common.precision import Unsupported
 from baselines.engines.automodel import data as engine_data
 from baselines.engines.automodel import settings as engine_settings
-from baselines.engines.automodel.settings import OPTIONS, parse_list
+from baselines.engines.automodel.options import OPTIONS
+from baselines.engines.automodel.settings import parse_list
 
 #: The recipe classes behind the engine's names.
 LOSSES = {

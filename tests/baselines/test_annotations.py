@@ -1,8 +1,8 @@
 """Checkpoint replay labels must preserve outputs and gradients."""
 
+import sys
 from contextlib import contextmanager
 from types import SimpleNamespace
-import sys
 
 import pytest
 import torch
