@@ -12,7 +12,6 @@ class _BlockPreparation(importlib.abc.MetaPathFinder):
             "shadowspill.profiling.measure",
             "shadowspill.planning.plan",
             "shadowspill.pytorch.capture",
-            "shadowspill.pytorch.compilation",
             *extra,
         )
 

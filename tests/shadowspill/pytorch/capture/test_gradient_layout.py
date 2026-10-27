@@ -85,14 +85,11 @@ def test_shard_padding_is_in_the_backward_contract_and_preserved_by_accumulation
     torch.testing.assert_close(got, torch.autograd.grad(function(x), x)[0])
     assert got.shape == x.shape
     assert got.untyped_storage().nbytes() == 16 * 4
-    from shadowspill.pytorch.compilation.compiler import compile_artifact
+    from shadowspill.build.compilation import compile_task
+    from shadowspill.pytorch.executable import restore_executable
 
-    compiled = compile_artifact(
-        variant.pair.backward,
-        device_ordinal=0,
-        representative_arguments=arguments,
-    )
-    (compiled_output,) = compiled()
+    compiled = compile_task(variant.pair.backward)
+    (compiled_output,) = restore_executable(compiled.payload)(*arguments)
     torch.testing.assert_close(compiled_output, got)
     view = compiled.manifest.storage_contract.output_views[0]
     allocation = next(

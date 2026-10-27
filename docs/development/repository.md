@@ -52,7 +52,11 @@ before the baseline worker creates spill pools.
 src/shadowspill/
 ├── artifacts/             portable Program, Profiles, ProfiledProgram and Plan archives
 ├── build/                 capture, compile and lower finalized task definitions
+│   ├── compilation/       package task code and physical storage contracts
+│   │   └── inductor/      version-specific lowering, aliases and allocation geometry
 │   └── lowering/          bind compiled tasks into portable IR
+│       ├── forward/       forward objects, tasks and residency
+│       └── training/      boundaries, all backward forms and optimizer templates
 ├── communication/         calibration and reusable communication information
 │   └── binding/           resolve logical groups into calibration participants
 ├── execution/             saved-plan workers, initialization and bounded tensor export
@@ -136,15 +140,8 @@ src/shadowspill/
     │                      capture, the symbolic replay
     ├── partition/         stage policies, splitting, provenance, authentic controls
     ├── graph_pairs/       differentiation alternatives by structural contract
-    ├── compilation/       Inductor adapter and executable storage manifests
-    │   └── inductor/      one compiled task: the manifest, the compiler that
-    │                      captures the lowering, the output geometry, the
-    │                      contract, the alias views, the cache
     ├── tuning/            finalized provider choices, saved and replayed per task
     ├── operators/         runtime-importable task operations, independent of capture
-    ├── lowering/          ObjectCatalog and task binding into ShadowSpillProgram
-    │   ├── forward/        the forward program's tasks and objects
-    │   └── training/       the training step's, ordering and all
     ├── optimizer/         capturable optimizer updates: discovery, sandbox,
     │                      bindings, trace and task definitions
     ├── accelerator.py     the device PyTorch drives, named once

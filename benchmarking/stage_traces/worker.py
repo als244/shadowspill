@@ -15,7 +15,8 @@ import torch
 from torch._subclasses.fake_tensor import FakeTensorMode
 from torch.utils._pytree import tree_flatten
 
-from shadowspill.pytorch.compilation.compiler import compile_artifact
+from shadowspill.build.compilation import compile_task
+from shadowspill.pytorch.executable import restore_executable
 
 from .capture import write_json
 from .inputs import materialize
@@ -63,7 +64,7 @@ def run(args):
     import mlops
 
     mlops.providers.ensure_implementations_registered()
-    # Same allocation-order policy as the transfer-sharded quickstart.
+    # Keep isolated trace captures reproducible across worker processes.
     import torch._inductor.config as inductor
 
     with inductor.patch({"deterministic": True, "reorder_for_peak_memory": False}):
@@ -79,9 +80,13 @@ def trace(args):
     print("Materializing isolated forward inputs", flush=True)
     inputs = materialize(pair.forward, payload["policies"])
     print("Compiling forward", flush=True)
-    forward = compile_artifact(pair.forward, device_ordinal=0)
+    forward_task = compile_task(pair.forward)
+    forward = restore_executable(
+        forward_task.payload, dependencies=forward_task.dependencies
+    )
+    del forward_task
     print("Running forward to obtain authentic saved tensors", flush=True)
-    output = forward.function(*inputs)
+    output = forward(*inputs)
     leaves, _ = tree_flatten(output)
     original_count = pair.forward.output_count - pair.saved_value_count
     saved = tuple(leaves[original_count:])
@@ -104,10 +109,13 @@ def trace(args):
         tangents.append(tangent)
     backward_inputs = (*saved, *tangents)
     print("Compiling backward", flush=True)
-    backward = compile_artifact(
-        pair.backward, device_ordinal=0, representative_arguments=backward_inputs
+    backward_task = compile_task(
+        replace(pair.backward, example_arguments=backward_inputs)
     )
-    backward = replace(backward, example_arguments=())
+    backward = restore_executable(
+        backward_task.payload, dependencies=backward_task.dependencies
+    )
+    del backward_task
     del output, leaves, saved, backward_inputs
     result = None
     output = None
@@ -122,12 +130,12 @@ def trace(args):
         with nvtx(f"iteration/{index}"):
             events[0].record()
             with nvtx("forward"):
-                output = forward.function(*inputs)
+                output = forward(*inputs)
             events[1].record()
             values, _ = tree_flatten(output)
             authentic = values[original_count:]
             with nvtx("backward"):
-                result = backward.function(*authentic, *tangents)
+                result = backward(*authentic, *tangents)
             events[2].record()
         torch.cuda.synchronize()
         return {

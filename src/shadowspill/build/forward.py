@@ -10,6 +10,7 @@ import torch
 from torch import nn
 
 from shadowspill.artifacts.program import Program
+from shadowspill.build.lowering.forward.program import lower_forward
 from shadowspill.parallelism import Parallelism
 from shadowspill.pytorch.accelerator import resolve_device
 from shadowspill.pytorch.partition import PartitionSpec
@@ -19,7 +20,6 @@ from shadowspill.resources.description import validate_resources
 from .capture import capture_forward_model
 from .common import build_setup, compile_artifacts
 from .finalize import finalize_tasks
-from .lowering.forward import lower_forward
 from .parallelism import attach_parallelism, model_parallelism
 from .resources import attach_resources
 

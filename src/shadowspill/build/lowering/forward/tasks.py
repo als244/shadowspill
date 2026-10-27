@@ -1,0 +1,270 @@
+"""Bind partitioned forward stages and emit their ordered task graph."""
+
+from __future__ import annotations
+
+import torch
+from torch.utils._pytree import tree_flatten
+
+from shadowspill.build.lowering.geometry import tensor_value_role
+from shadowspill.ir import (
+    MutationSpec,
+    ObjectRole,
+    Persistence,
+    ResourceKind,
+    ResourceSpec,
+    TaskSpec,
+)
+from shadowspill.pytorch.capture.artifacts import GraphArtifact
+from shadowspill.pytorch.capture.storage import TaskStorageContract
+from shadowspill.pytorch.partition import PartitionedExport, StageExample
+from shadowspill.task.entrypoints import TaskEntrypoint, TaskOptions
+from shadowspill.task.geometry import TaskStorageGeometry
+from shadowspill.task.slots import ObjectSlot
+
+from ..objects import ObjectCatalog
+from ..task_binding import TaskBindingResolver, resolve_stage_input_slots
+from .records import ForwardObjects, ForwardTaskGeometry, ForwardTaskGraph
+
+
+def emit_forward_tasks(
+    partitioned: PartitionedExport,
+    artifacts: tuple[GraphArtifact, ...],
+    objects: ForwardObjects,
+    physical: ForwardTaskGeometry,
+    *,
+    device_id: str,
+) -> ForwardTaskGraph:
+    return _ForwardTaskEmitter(
+        partitioned,
+        artifacts,
+        objects,
+        physical,
+        device_id=device_id,
+    ).build()
+
+
+class _ForwardTaskEmitter:
+    def __init__(
+        self,
+        partitioned: PartitionedExport,
+        artifacts: tuple[GraphArtifact, ...],
+        objects: ForwardObjects,
+        physical: ForwardTaskGeometry,
+        *,
+        device_id: str,
+    ) -> None:
+        self.partitioned = partitioned
+        self.artifacts = artifacts
+        self.objects = objects
+        self.physical = physical
+        self.device_id = device_id
+        self.tasks: list[TaskSpec] = [
+            invocation_start(physical.control_profile_id, device_id)
+        ]
+        self.entrypoints: list[TaskEntrypoint] = []
+        self.executables: dict[str, GraphArtifact] = {}
+        self.produced_aliases: set[str] = set()
+        self.public_outputs: dict[int, str] = {}
+        self.stage_outputs: list[dict[int, str]] = []
+        #: Which task produced each object, so a task can name the producers
+        #: of its inputs. Forward stages run in order, but a stage may consume
+        #: an output from further back than the one before it: a diffusion
+        #: transformer conditions every block on one timestep embedding, and
+        #: a UNet's decoder consumes its encoder's skips.
+        self.object_producers: dict[str, str] = {}
+
+    def build(self) -> ForwardTaskGraph:
+        for index, values in enumerate(self._stages()):
+            self._emit_stage(index, *values)
+        return ForwardTaskGraph(
+            tuple(self.tasks),
+            tuple(self.entrypoints),
+            dict(self.executables),
+            frozenset(self.produced_aliases),
+            tuple(
+                self.public_outputs.get(index)
+                for index in range(len(self.partitioned.user_output_indices))
+            ),
+        )
+
+    def _stages(
+        self,
+    ) -> zip[
+        tuple[
+            StageExample,
+            GraphArtifact,
+            TaskStorageContract,
+            TaskStorageGeometry,
+            str,
+        ]
+    ]:
+        return zip(
+            self.partitioned.stages,
+            self.artifacts,
+            self.physical.contracts,
+            self.physical.layouts,
+            self.physical.profile_ids,
+            strict=True,
+        )
+
+    def _emit_stage(
+        self,
+        index: int,
+        stage: StageExample,
+        artifact: GraphArtifact,
+        contract: TaskStorageContract,
+        layout: TaskStorageGeometry,
+        profile_id: str,
+    ) -> None:
+        input_slots = self._stage_inputs(stage, artifact)
+        input_objects = tuple(dict.fromkeys(slot.object_id for slot in input_slots))
+        resolver = TaskBindingResolver(
+            self.objects.catalog,
+            artifact,
+            input_slots,
+            layout,
+            storage_contract=contract,
+        )
+        output_slots, outputs = _bind_forward_outputs(
+            stage,
+            resolver,
+            self.objects.catalog,
+            input_objects,
+            self.produced_aliases,
+            self.public_outputs,
+        )
+        self.stage_outputs.append(
+            {slot.leaf_index: slot.object_id for slot in output_slots}
+        )
+        task = self._task(index, profile_id, input_objects, outputs, resolver)
+        self.tasks.append(task)
+        for object_id in outputs:
+            self.object_producers.setdefault(object_id, task.task_id)
+        self.entrypoints.append(
+            TaskEntrypoint(
+                task.task_id,
+                input_slots,
+                output_slots,
+                resolver.replacement_output_leaves,
+                resolver.storage_handoffs,
+                TaskOptions(
+                    phase="forward", stage_index=index, target=stage.stage.module_target
+                ),
+            )
+        )
+        self.executables[task.task_id] = artifact
+
+    def _stage_inputs(
+        self,
+        stage: StageExample,
+        artifact: GraphArtifact,
+    ) -> tuple[ObjectSlot, ...]:
+        return resolve_stage_input_slots(
+            stage,
+            artifact,
+            root_objects=self.objects.root_objects,
+            stage_outputs=tuple(self.stage_outputs),
+            compact_leaf_indices=False,
+        )
+
+    def _task(
+        self,
+        index: int,
+        profile_id: str,
+        inputs: tuple[str, ...],
+        outputs: tuple[str, ...],
+        resolver: TaskBindingResolver,
+    ) -> TaskSpec:
+        task_id = f"task_{index + 1:06d}"
+        # The stage before it, because forward stages run in order, and then
+        # the actual producer of every input, because the program declares
+        # what each task waits on rather than leaving it to be inferred from
+        # the chain.
+        dependencies = [f"task_{index:06d}"]
+        dependencies.extend(
+            producer
+            for object_id in inputs
+            if (producer := self.object_producers.get(object_id)) is not None
+        )
+        return TaskSpec(
+            task_id,
+            ResourceSpec(self.device_id, ResourceKind.COMPUTE),
+            profile_id,
+            dependencies=tuple(dict.fromkeys(dependencies)),
+            inputs=inputs,
+            outputs=outputs,
+            mutations=tuple(
+                MutationSpec(object_id) for object_id in resolver.mutation_object_ids
+            ),
+            phase="forward",
+        )
+
+
+def _bind_forward_outputs(
+    stage: StageExample,
+    resolver: TaskBindingResolver,
+    catalog: ObjectCatalog,
+    input_objects: tuple[str, ...],
+    produced_aliases: set[str],
+    public_outputs: dict[int, str],
+) -> tuple[tuple[ObjectSlot, ...], tuple[str, ...]]:
+    input_aliases = {catalog.alias_id(value) for value in input_objects}
+    output_slots: list[ObjectSlot] = []
+    outputs: list[str] = []
+    leaves, _ = tree_flatten(stage.output)
+    for position, leaf in enumerate(leaves):
+        if not isinstance(leaf, torch.Tensor):
+            continue
+        object_id = resolver.bind(
+            position,
+            tensor=leaf,
+            role=tensor_value_role(
+                leaf,
+                continuous_role=ObjectRole.ACTIVATION,
+            ),
+            persistence=Persistence.STEP,
+        )
+        output_slots.append(ObjectSlot(position, object_id))
+        alias_id = catalog.alias_id(object_id)
+        if (
+            object_id not in input_objects
+            and alias_id not in input_aliases
+            and object_id not in outputs
+        ):
+            outputs.append(object_id)
+            produced_aliases.add(alias_id)
+        public_indices = tuple(
+            public
+            for public, local in stage.stage.public_output_bindings
+            if local == position
+        )
+        if not stage.stage.public_output_bindings and (
+            position in stage.stage.user_output_indices
+        ):
+            # A Stage built without public_output_bindings still names its
+            # outputs via user_output_indices; assign the next public ordinal.
+            public_indices = (len(public_outputs),)
+        if public_indices:
+            catalog.mark_output(object_id)
+            for public_index in public_indices:
+                existing = public_outputs.setdefault(public_index, object_id)
+                if existing != object_id:
+                    raise RuntimeError(
+                        "one public output leaf resolved to multiple objects"
+                    )
+    return tuple(output_slots), tuple(outputs)
+
+
+__all__ = ["emit_forward_tasks"]
+
+
+def invocation_start(profile_id: str, device_id: str) -> TaskSpec:
+    """An ordinary control task that can trigger fetches before computation."""
+
+    return TaskSpec(
+        "task_000000",
+        ResourceSpec(device_id, ResourceKind.CONTROL),
+        profile_id,
+        requires_entrypoint=False,
+        phase="control",
+    )

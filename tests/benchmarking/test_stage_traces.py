@@ -7,11 +7,24 @@ import torch
 from torch._subclasses.fake_tensor import FakeTensorMode
 
 from benchmarking.stage_traces.report import verify
+from benchmarking.stage_traces.storage import materialize_example_arguments
 from benchmarking.stage_traces.sweep import describe_queue, visible_devices
 from shadowspill.pytorch.capture.fake import fake_device_model
 from shadowspill.pytorch.representations import materialize_meta_state
 from workloads.models.glm53_flash.stage_trace import workload
 from workloads.models.shared.glm.checkpoint import physical_state
+
+
+def test_materialization_preserves_storage_views_and_copies_metadata():
+    source = torch.arange(32, dtype=torch.float32)
+    metadata = {"mode": [2]}
+    left, right, copied = materialize_example_arguments(
+        (source[2:18].view(4, 4), source[4:20].view(4, 4), metadata), device_ordinal=0
+    )
+    assert left.untyped_storage()._cdata == right.untyped_storage()._cdata
+    assert left.storage_offset() == 2 and right.storage_offset() == 4
+    assert left.untyped_storage()._cdata != source.untyped_storage()._cdata
+    assert copied == metadata and copied is not metadata
 
 
 def test_fake_glm_preserves_fp8_components_and_trainability():

@@ -8,6 +8,7 @@ import torch
 from torch import nn
 
 from shadowspill.artifacts.program import Program
+from shadowspill.build.lowering.training.program import lower_training
 from shadowspill.parallelism import Parallelism
 from shadowspill.pytorch.accelerator import resolve_device
 from shadowspill.pytorch.capture.retention import RetentionPolicy
@@ -18,7 +19,6 @@ from shadowspill.resources.description import validate_resources
 from .common import build_setup, compile_artifacts
 from .finalize import finalize_tasks
 from .gradient_ops import capture_gradient_operations
-from .lowering.training import lower_training
 from .mutations import pad_mutations
 from .optimizer import capture_update
 from .optimizer_alignment import optimizer_input_offsets

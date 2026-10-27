@@ -422,7 +422,7 @@ from allocator pointers or FakeTensor storage identity.
 | `shadowspill.pytorch.graph_pairs.store` | Structural cache identity, persistence, and occurrence rebinding. |
 | `shadowspill.build` | Finalize each unique forward/backward artifact in a Program. |
 | `shadowspill.profiling` | Measure saved task implementations with the ordinary allocator. |
-| `shadowspill.pytorch.lowering.training` | Bind variants to canonical objects and emit program groups. |
+| `shadowspill.build.lowering.training` | Bind all variants to canonical objects and save stage templates. |
 
 Previous: [PyTorch capture and lowering](lowering.md). Next: [The step
 artifacts](step.md).

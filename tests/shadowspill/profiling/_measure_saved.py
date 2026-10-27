@@ -21,7 +21,6 @@ class BlockRuntime(importlib.abc.MetaPathFinder):
             for name in (
                 "shadowspill.runtime",
                 "shadowspill.store",
-                "shadowspill.pytorch.compilation",
                 "shadowspill.pytorch.capture",
                 "shadowspill.build",
             )

@@ -19,6 +19,7 @@ import torch
 from torch._subclasses.fake_tensor import FakeTensorMode
 from torch.fx.experimental.proxy_tensor import make_fx
 
+from shadowspill.build.compilation import compile_task
 from shadowspill.errors import CaptureError
 from shadowspill.pytorch.capture.aot import capture_graph_pair
 from shadowspill.pytorch.capture.artifacts import GraphArtifact
@@ -26,7 +27,7 @@ from shadowspill.pytorch.capture.gradients import (
     accumulate_gradient_outputs,
     cast_gradient_outputs,
 )
-from shadowspill.pytorch.compilation.compiler import compile_artifact
+from shadowspill.pytorch.executable import restore_executable
 from shadowspill.task.inputs import TaskInputRole
 from tests.precision import low_precision_dtype
 
@@ -413,10 +414,8 @@ def test_the_multiply_adding_in_place_compiles_as_one_call() -> None:
     )
     expected = accumulating.graph_module(*(item.clone() for item in arguments))
 
-    compiled = compile_artifact(
-        accumulating, device_ordinal=0, representative_arguments=arguments
-    )
-    total = compiled()
+    compiled = compile_task(accumulating)
+    total = restore_executable(compiled.payload)(*arguments)
 
     for index, leaf in enumerate(leaves):
         prior = arguments[len(kept.example_arguments) + index]

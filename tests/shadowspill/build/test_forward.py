@@ -22,7 +22,11 @@ class Network(nn.Module):
     def forward(self, x, *, options):
         for layer in self.layers:
             x = torch.relu(layer(x))
-        return {"result": x * options["scale"], "note": None}
+        return (
+            None,
+            x * options["scale"],
+            {"status": "ok", "loss": x.sum(), "optional": None},
+        )
 
 
 def replay_for_test(program, model, args, kwargs):
@@ -74,6 +78,11 @@ def test_meta_build_roundtrips_and_executes_bound_stages(tmp_path):
     assert program.bindings["parameter_ownership"][0]["name"] == "layers.0.weight"
     assert all(parameter.is_meta for parameter in model.parameters())
     assert len(program.bindings["entrypoints"]) == 2
+    assert [
+        i
+        for i, value in enumerate(program.bindings["public_outputs"])
+        if value is not None
+    ] == [1, 3]
     assert any("layers.0" in task.module_paths for task in program.task_definitions)
     assert all(task.workspace_bytes is None for task in program.task_definitions[1:])
     program.save(tmp_path / "program.ssp")
@@ -86,7 +95,10 @@ def test_meta_build_roundtrips_and_executes_bound_stages(tmp_path):
     with torch.no_grad():
         actual = replay_for_test(loaded, actual_model, (x,), {"options": {"scale": 2}})
         expected = actual_model(x, options={"scale": 2})
-    torch.testing.assert_close(actual, expected)
+    assert actual[2]["status"] == expected[2]["status"]
+    torch.testing.assert_close(actual[:2], expected[:2])
+    torch.testing.assert_close(actual[2]["loss"], expected[2]["loss"])
+    assert actual[2]["optional"] is None
     script = textwrap.dedent("""
         import importlib, sys, torch, triton
         from shadowspill import Program
@@ -100,7 +112,11 @@ def test_meta_build_roundtrips_and_executes_bound_stages(tmp_path):
         with torch.no_grad():
             program = Program.load(sys.argv[1])
             result = replay_for_test(program, model, (x,), {"options": {"scale": 2}})
-            torch.testing.assert_close(result, model(x, options={"scale": 2}))
+            expected = model(x, options={"scale": 2})
+            assert result[2]["status"] == expected[2]["status"]
+            torch.testing.assert_close(result[:2], expected[:2])
+            torch.testing.assert_close(result[2]["loss"], expected[2]["loss"])
+            assert result[2]["optional"] is None
         print("fresh cache replay correct")
     """)
     result = subprocess.run(

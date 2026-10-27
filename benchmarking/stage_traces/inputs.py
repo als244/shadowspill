@@ -7,9 +7,8 @@ import hashlib
 import torch
 from torch._subclasses.fake_tensor import FakeTensor
 
-from shadowspill.pytorch.compilation.compiler import materialize_example_arguments
-
 from .api import resolve
+from .storage import materialize_example_arguments
 
 
 def policy(artifact, workload, position):

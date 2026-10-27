@@ -16,8 +16,8 @@ from shadowspill.pytorch.capture.artifacts import (
     TensorGeometry,
 )
 from shadowspill.pytorch.capture.retention import RetentionSummary
+from shadowspill.pytorch.capture.serialized_graph import SerializedFxGraph
 from shadowspill.pytorch.capture.storage import TaskStorageContract
-from shadowspill.pytorch.compilation.fx_graph import SerializedFxGraph
 
 from .artifacts import GraphPairVariant
 

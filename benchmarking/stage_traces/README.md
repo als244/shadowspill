@@ -4,7 +4,8 @@ Capture the same partitioned forward/backward graph pairs used by quickstart,
 deduplicate equivalent stages, and trace each unique pair on one GPU. A process
 per visible GPU drains the shared queue. Embedding-containing stages are omitted;
 optimizer stages are never captured. Both saved-activation and recompute variants
-are available. Backward consumes the actual forward's saved tensors.
+are available. The worker uses the same packaged task compiler as `build_*`.
+Backward consumes the actual forward's saved tensors.
 
 From an allocation, run for example:
 

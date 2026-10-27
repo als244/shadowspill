@@ -76,9 +76,7 @@ class CompiledTasks:
             item.memory["off_device_output_leaves"]
         )
 
-    def geometry(
-        self, artifact: GraphArtifact, metadata_digest: str | None = None
-    ) -> TaskStorageGeometry:
+    def geometry(self, artifact: GraphArtifact) -> TaskStorageGeometry:
         item = self.compiled[artifact.compatibility_digest]
         contract = self.contract(artifact)
         host_roots = {

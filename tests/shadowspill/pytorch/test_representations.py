@@ -240,51 +240,21 @@ def test_optimizer_publishes_all_components_from_dense_master():
 
 @pytest.mark.cuda
 def test_lowering_counts_components_and_one_logical_gradient():
+    from shadowspill import build_step
     from shadowspill.ir import ObjectRole
-    from shadowspill.pytorch.capture.fake import fake_device_inputs
-    from shadowspill.pytorch.lowering.training import lower_partitioned_training_program
-    from shadowspill.pytorch.optimizer import capture_optimizer
-    from tests.shadowspill.pytorch.lowering.test_training_lowering import _measurement
 
     net = model()
-    master = torch.nn.Parameter(net.weight.dense().detach())
-    optimizer = capture_optimizer(
-        {"weight": master},
-        torch.optim.SGD([master], lr=0.01),
-        compute_copies={"weight": net.weight},
+    program = build_step(
+        net,
+        objective=lambda m, x: m(x).square().sum(),
+        optimizer=torch.optim.SGD(net.parameters(), lr=0.01),
+        master_dtype=torch.float32,
+        example_args=(torch.ones(3, 8),),
+        num_examples=2,
+        partition="whole",
     )
-    mode = FakeTensorMode(allow_non_fake_inputs=True)
-    fake = fake_device_model(net, mode)
-    with mode:
-        captures = tuple(
-            partition_training_capture(
-                capture_training_objective(
-                    fake,
-                    lambda m, x: m(x).square().sum(),
-                    fake_device_inputs((torch.ones(3, 8),), mode),
-                ),
-                partition="whole",
-                accumulating=True,
-            )
-            for _ in range(2)
-        )
-        artifacts = [
-            a
-            for c in captures
-            for s in c.stages
-            for v in s.graph_pairs.variants
-            for a in (v.pair.forward, v.pair.backward)
-        ]
-        artifacts += [
-            optimizer.update,
-            *(task.artifact for task in optimizer.update_tasks),
-        ]
-        measurements = {a.compatibility_digest: _measurement(a) for a in artifacts}
-        lowered = lower_partitioned_training_program(
-            fake, captures, measurements, optimizer
-        )
-    parameters = [o for o in lowered.program.objects if o.role == ObjectRole.PARAMETER]
-    gradients = [o for o in lowered.program.objects if o.role == ObjectRole.GRADIENT]
+    parameters = [o for o in program.objects if o.role == ObjectRole.PARAMETER]
+    gradients = [o for o in program.objects if o.role == ObjectRole.GRADIENT]
     assert sorted(o.size_bytes for o in parameters) == [4, 32, 128]
     assert [o.size_bytes for o in gradients] == [128]
 

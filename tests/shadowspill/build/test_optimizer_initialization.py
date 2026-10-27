@@ -42,12 +42,15 @@ def test_portable_build_refuses_python_optimizer_fallback(monkeypatch):
     if not torch.cuda.is_available():
         pytest.skip("capture requires a representative GPU")
 
-    def reject_graph(_optimizer):
+    def reject_graph(_optimizer, _written):
         raise RuntimeError("optimizer graph intentionally unavailable")
 
     monkeypatch.setattr(trace, "_export_optimizer_graph", reject_graph)
     model = nn.Linear(6, 3, device="meta")
     optimizer = torch.optim.SGD(model.parameters(), lr=0.003)
-    with pytest.raises(CaptureError, match="requires a traceable optimizer"):
+    with pytest.raises(
+        CaptureError, match="must be capturable as a tensor-only graph"
+    ) as error:
         capture_update(model, optimizer, capture(model), gradient_dtype=None)
+    assert "optimizer graph intentionally unavailable" in str(error.value)
     assert not optimizer.state
