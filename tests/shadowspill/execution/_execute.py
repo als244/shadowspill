@@ -114,9 +114,14 @@ previous_norms, previous_norm_values = None, None
 first_invocation_compiles = None
 steady_statistics = None
 for index, (outputs, state) in enumerate(oracle["expected"]):
+    calls = (
+        oracle["invocation_examples"][index]
+        if "invocation_examples" in oracle
+        else oracle["examples"]
+    )
     with torch.cuda.stream(None if streams is None else streams.begin(index)):
         pending = executor.run(
-            input_loader=lambda i: oracle["examples"][i],
+            input_loader=lambda i, calls=calls: calls[i],
             hyperparams=oracle["hyperparams"][index],
             accumulate_gradients=oracle["accumulate"][index],
             collect_parameter_norms=bool(norms and norms[index] is not None),

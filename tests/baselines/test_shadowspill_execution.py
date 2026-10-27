@@ -14,18 +14,30 @@ from benchmarking.quickstart.phases.common import write
 
 
 @pytest.mark.cuda
-@pytest.mark.parametrize("mode", ["full", "lora"])
+@pytest.mark.parametrize(
+    "model,mode,grad_dtype",
+    [
+        ("llama3-tiny", "full", "bfloat16"),
+        ("llama3-tiny", "lora", "bfloat16"),
+        ("olmoe-tiny", "full", "float32"),
+        ("qwen3moe-tiny", "full", "float32"),
+        ("qwen3moe-tiny", "lora", "float32"),
+    ],
+)
 @pytest.mark.parametrize("world", [1, 2])
-def test_saved_baseline_matches_reference_in_fresh_worker(tmp_path, mode, world):
+def test_saved_baseline_matches_reference_in_fresh_worker(
+    tmp_path, model, mode, grad_dtype, world
+):
     import torch
 
     if torch.cuda.device_count() < world:
         pytest.skip(f"requires {world} CUDA devices")
     settings = Settings(
-        model="llama3-tiny",
+        model=model,
         mode=mode,
         lora={} if mode == "full" else {"rank": 32},
         model_config={"n_layers": 1},
+        grad_dtype=grad_dtype,
         sequence_length=32,
         tokens_per_step=128 * world,
         tokens_per_microbatch=64,
@@ -78,7 +90,7 @@ def test_saved_baseline_matches_reference_in_fresh_worker(tmp_path, mode, world)
     assert (tmp_path / "phases/planning/sweep.ssp").is_file()
     assert (tmp_path / "phases/report/index.html").is_file()
     assert (tmp_path / "row.json").is_file()
-    if mode == "full" and world == 1:
+    if model == "llama3-tiny" and mode == "full" and world == 1:
         # Adding a budget reuses profiles and preserves the original executable.
         artifacts = {
             path: path.read_bytes()

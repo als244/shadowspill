@@ -1,5 +1,7 @@
 """Diagnostics leave every owned shard, local buffer and RNG unchanged."""
 
+import json
+
 import torch
 
 from shadowspill import Trainer
@@ -31,6 +33,15 @@ def check(executor, calls, directory):
     assert torch.equal(cuda_rng, torch.cuda.get_rng_state())
     report = directory / f"rank_{executor.logical_rank:04d}"
     assert (report / "timelines/traced.html").is_file()
+    collectives = json.loads((report / "step.json").read_text())["collectives"]
+    assert collectives["complete"] and collectives["records"]
+    assert {item["source"] for item in collectives["records"]} >= {"task", "fetch"}
+    assert all(item["execution_task_id"] for item in collectives["records"])
+    assert all(
+        item["alias_group_id"]
+        for item in collectives["records"]
+        if item["source"] == "fetch"
+    )
     print(
         f"logical rank {executor.logical_rank}: diagnostics preserved state", flush=True
     )

@@ -199,8 +199,8 @@ shadowspill_add_public_api_test(
 )
 
 shadowspill_add_public_api_test(
-  shadowspill/pytorch/api/test_cpu_controls.py
-  test_cpu_outputs_and_mixed_device_controls_from_ssd 300
+  shadowspill/execution/test_packed_controls.py
+  test_packed_weights_and_host_controls_from_ssd 300
 )
 
 shadowspill_add_public_api_test(

@@ -65,7 +65,8 @@ def test_storage_initializer_executes_only_the_shard_leader(monkeypatch, leader,
 
     monkeypatch.setattr(initialization.dist, "broadcast_object_list", broadcast)
     monkeypatch.setattr(
-        initialization, "_write_storage_bytes",
+        initialization,
+        "_write_storage_bytes",
         lambda runtime, record, value, **kwargs: writes.append(value.clone()),
     )
     with initialization.pool_values(object()):
@@ -179,6 +180,7 @@ def test_a_wrapped_weight_in_an_unreadable_pool_is_read_component_by_component(
     reads each component through the runtime and rebuilds the wrapper."""
 
     from shadowspill.pytorch.representations import detached_representation
+    from shadowspill.pytorch.state.initialization import pool_values
     from shadowspill.pytorch.state.storage import read_tensor_value
     from shadowspill.ssd import ssd
 
@@ -207,6 +209,14 @@ def test_a_wrapped_weight_in_an_unreadable_pool_is_read_component_by_component(
                 value.dense(), reference.weight.dense(), rtol=0, atol=0
             )
             del value
+            replacement = torch.arange(32.0).reshape(4, 8) / 32
+            with torch.no_grad(), pool_values(runtime):
+                assert imported.weight.copy_(replacement) is imported.weight
+                actual = imported.weight.to("cuda")
+            with torch.no_grad():
+                reference.weight.copy_(replacement)
+            torch.testing.assert_close(actual.dense().cpu(), reference.weight.dense())
+            del actual
         finally:
             release_model_state(imported, runtime=runtime)
         assert runtime.pool_statistics("spill").allocated_bytes == 0
