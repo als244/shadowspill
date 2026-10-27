@@ -71,6 +71,7 @@ class MeasurementSession:
                     continue_while=None
                     if self.groups is None
                     else self.groups.continue_sampling,
+                    check=None if self.groups is None else self.groups.check,
                 )
         except Exception as error:
             raise task_error(

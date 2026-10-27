@@ -31,6 +31,7 @@ def measure_task(
     warmup_seconds: float,
     measure_seconds: float,
     continue_while: Callable[[bool, bool], bool] | None = None,
+    check: Callable[[str | None], None] | None = None,
 ) -> TaskProfile:
     cold = observe_task(function, arguments, device=device)
     timer = EventTimer(lambda: function(*arguments))
@@ -39,23 +40,35 @@ def measure_task(
     )
     condition_task(timer.sample, options=options, continue_while=continue_while)
     observations = [observe_task(function, arguments, device=device) for _ in range(3)]
-    storage = TaskStorageContract.from_dict(plain(manifest["storage_contract"]))
-    contracts = [
-        TaskAllocationContract.capture(item.trace, storage) for item in observations
-    ]
-    if len({item.compatibility_digest for item in contracts}) != 1:
-        raise CaptureError(
-            "allocation requests change across repeated warmed executions"
-        )
-    if any(item.persistent_bytes for item in observations):
-        raise CaptureError(
-            "warmed task retains anonymous allocations; resource setup is unresolved"
-        )
-    baseline = observations[0]
-    if any(item.input_bindings != baseline.input_bindings for item in observations[1:]):
-        raise CaptureError(
-            "output/input aliases change across repeated warmed executions"
-        )
+    # All ranks must validate before any rank starts more communicating samples.
+    # Otherwise one worker can enter provider cleanup while its peers keep timing.
+    try:
+        storage = TaskStorageContract.from_dict(plain(manifest["storage_contract"]))
+        contracts = [
+            TaskAllocationContract.capture(item.trace, storage) for item in observations
+        ]
+        if len({item.compatibility_digest for item in contracts}) != 1:
+            raise CaptureError(
+                "allocation requests change across repeated warmed executions"
+            )
+        if any(item.persistent_bytes for item in observations):
+            raise CaptureError(
+                "warmed task retains anonymous allocations; "
+                "resource setup is unresolved"
+            )
+        baseline = observations[0]
+        if any(
+            item.input_bindings != baseline.input_bindings for item in observations[1:]
+        ):
+            raise CaptureError(
+                "output/input aliases change across repeated warmed executions"
+            )
+    except Exception as error:
+        if check is not None:
+            check(str(error))
+        raise
+    if check is not None:
+        check(None)
     timing = collect_timing_samples(
         timer.sample, options=options, continue_while=continue_while
     )
