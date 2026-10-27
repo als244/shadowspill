@@ -4,7 +4,6 @@ from dataclasses import asdict
 from typing import Any
 
 from shadowspill.build.optimizer import BuiltOptimizer
-from shadowspill.errors import CaptureError
 from shadowspill.pytorch.capture.artifacts import GraphArtifact
 
 from ..catalog import CompiledTasks
@@ -29,10 +28,6 @@ def optimizer_templates(
     for index, component in enumerate(update.captured.update_tasks):
         artifact = component.artifact
         assert isinstance(artifact, GraphArtifact)
-        if component.output_names or component.metric_schema:
-            raise CaptureError(
-                "portable optimizer initialization/metrics need lowering"
-            )
         key = compiled.key(artifact, ("optimizer",))
         contract = compiled.contract(artifact)
         components.append(
