@@ -219,7 +219,7 @@ Compact correctness evidence is the default. An `--empty-caches` run starts
 every reference and planned subprocess with empty
 Inductor and Triton caches, in a temporary directory removed afterwards, so a
 case cannot be served anything an earlier run or another case left behind. Use
-`--detailed-artifacts` only for an investigation that needs full PlanReports,
+`--detailed-artifacts` only for an investigation that needs saved Plans,
 plan records, and per-task runtime traces. Use `--regenerate-reference` only when intentionally
 replacing the canonical compiled references and input sidecars.
 

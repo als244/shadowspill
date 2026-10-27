@@ -1,4 +1,4 @@
-"""The few numbers that describe a plan: the step it makes and where it goes."""
+"""Simulated timing and memory totals for an annotated planner result."""
 
 from __future__ import annotations
 
@@ -14,18 +14,17 @@ from shadowspill.planner.serialization import _integer, _mapping
 
 @dataclass(frozen=True, slots=True)
 class PlanSummary:
-    """What the selected plan promises, in one place.
+    """Summary attached to an internal ``AnnotatedProgramPlan``.
 
-    Only quantities that exist nowhere else on the report live here;
-    budgets, transfer totals, and calibration stay on their canonical
-    fields and profiles. The five time parts identify exactly:
+    The five time components satisfy:
     ``simulated_step_seconds == unconstrained_step_seconds +
     recomputation_overhead_seconds + task_contention_seconds + idle_seconds +
     terminal_writeback_seconds``. The unconstrained step charges every
     task-alternative group its cheapest option and no waiting at all — the
     compute floor the geometry admits. A group counts as a recomputation
     selection when the option the search chose costs strictly more compute
-    than that group's cheapest, whatever the options are named.
+    than that group's cheapest, whatever the options are named. The public
+    phase ``Plan.summary`` is a separate mapping.
     """
 
     simulated_step_seconds: float
@@ -41,18 +40,13 @@ class PlanSummary:
     flexible_group_count: int
     #: Scheduled traffic and coarsened calibration from this plan's config.
     #: Rates affect simulated timing; latency is retained only as metadata.
-    #: Raw measurements live on the report's transfer profiles. Coarsening
-    #: those here would use the wrong calibration for a stored plan.
+    #: These rates describe the selected simulation configuration.
     transfer_bytes_fetched: int = 0
     transfer_bytes_evicted: int = 0
     #: Lane occupancy from simulated intervals; no per-transfer latency charge.
     fetch_busy_ns: int = 0
     evict_busy_ns: int = 0
-    #: The most the spill pool ever holds while the step runs, as the
-    #: simulation of this plan reached it. Beside the spill budget it says
-    #: whether that budget bound the plan or merely bounded it: a peak well
-    #: under the budget means a larger pool would have changed nothing, and a
-    #: peak against it means the plan was shaped by the pool's size.
+    #: Maximum live spill bytes reached by the selected simulation.
     spill_peak_bytes: int = 0
     fetch_solo_bandwidth_bytes_per_second: int = 0
     fetch_concurrent_bandwidth_bytes_per_second: int = 0
@@ -60,9 +54,7 @@ class PlanSummary:
     evict_concurrent_bandwidth_bytes_per_second: int = 0
     fetch_latency_ns: int = 0
     evict_latency_ns: int = 0
-    #: Wall time each frontend planning phase spent, in seconds, in phase
-    #: order. A view over the report's ``phase_timings_ns``, which stays the
-    #: stored record.
+    #: Wall time of each recorded planning phase, in seconds.
     planning_phase_seconds: Mapping[str, float] = field(
         default_factory=lambda: MappingProxyType({})
     )

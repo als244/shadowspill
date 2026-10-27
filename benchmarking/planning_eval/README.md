@@ -1,8 +1,7 @@
 # Planning evaluation
 
 This harness **plans**. It reads saved `ProfiledProgram` archives from
-[program collection](../program_collection/README.md), or existing JSON
-`StepProgram` corpora, and runs
+[program collection](../program_collection/README.md), and runs
 graph-pair selection, the search, simulation, and physical admission over a
 grid of budgets and transfer bandwidths. It constructs no model, captures no
 graph, compiles no task, and profiles no kernel, so it takes no build
@@ -19,8 +18,7 @@ host with more cores finishes sooner.
 For phase archives, GPU budgets include the recorded fixed device overhead.
 The evaluation worker binds task ordering and measured allocation evidence on
 CPU, using the sweep's budgets and transfer rates. Collection creates no pools
-and imposes no execution-budget ceiling. Existing JSON corpora retain their
-recorded capacity conventions.
+and imposes no execution-budget ceiling.
 
 ## Running it
 

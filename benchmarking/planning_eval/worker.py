@@ -23,7 +23,6 @@ from shadowspill.planner.search.algorithms.pressurefit.options import (
 )
 from shadowspill.schema import artifact_schema
 from shadowspill.simulator import SimulationInfeasibleError
-from shadowspill.step.program import StepProgram
 
 from .config import FrontierConfig, load_frontier_config
 from .evidence import failed_point_evidence, successful_point_evidence
@@ -161,7 +160,7 @@ def _evaluate_point(
     paths: BaselinePaths,
     case: CorpusProgramCase,
     saved_case: SavedProgramCase,
-    source_program: ProfiledProgram | StepProgram,
+    source_program: ProfiledProgram,
     program: ShadowSpillPlanningProblem,
     request: FrontierPointRequest,
     directory: Path,

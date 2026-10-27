@@ -17,7 +17,6 @@ class BlockGPU(importlib.abc.MetaPathFinder):
                 "shadowspill.runtime",
                 "shadowspill.pytorch",
                 "shadowspill.build",
-                "shadowspill.pipeline",
                 "shadowspill.store",
             )
         ):

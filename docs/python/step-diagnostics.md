@@ -211,9 +211,9 @@ a selected-task simulator interval without accounting for those boundaries;
 
 ## Tasks
 
-`diagnostics.tasks` maps chronological `execution_XXXXXX` ids, matching
-`PlanReport.diagnostics.tasks`, to one `TaskRecord` each; `task_id` names
-the program task. Every record carries the same groups -- identity,
+`diagnostics.tasks` maps chronological `execution_XXXXXX` ids to one
+`TaskRecord` each. Join its `task_id` with the selected tasks in the saved
+Plan; `execution_task_id` identifies that invocation's chronological position. Every record carries the same groups -- identity,
 simulated, stream, delta, host -- so a task reads like a transfer.
 
 | Group | Fields | Meaning |
@@ -516,7 +516,7 @@ records the live trace produced.
 | Memory unexpectedly fills | Charged allocator events, peak bytes, largest free range, pending retirements, and each transfer's `next_access`. |
 | A step appears to leak | Compare before/after live bytes and repeat across steps; include terminal caller-owned outputs in the interpretation. |
 | Trace looks truncated | Both overflow flags, event capacities, and `summary.trace_complete`. |
-| Runtime and plan identities are unclear | Join `execution_task_id` with the [PlanReport guide](plan-report.md). |
+| Runtime and plan identities are unclear | Join `task_id` with the saved [Plan](plan-report.md). |
 
 How the two clocks are measured, and why every lane can share one zero, is
 described in [timelines](../architecture/timelines.md).

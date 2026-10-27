@@ -1,16 +1,12 @@
-"""Physical replay, budget reconciliation, and runtime sealing."""
+"""Check physical GPU headroom and seal runtime record reservations."""
 
 from __future__ import annotations
 
 import ctypes
 
 from shadowspill.errors import AdmissionError
-from shadowspill.ir import ExecutionPlan, MemoryActionKind, PhysicalAdmission
-from shadowspill.pipeline.common import round_up
-from shadowspill.planner.admission.layout import FixedPhysicalLayout
 from shadowspill.runtime.abi import AdapterStatistics, PhysicalMemory
 from shadowspill.runtime.bootstrap import InstalledRuntime
-from shadowspill.runtime.plan import PlanMemory
 
 _MIB = 1 << 20
 
@@ -47,83 +43,6 @@ def _runtime_record_reserve(
     )
     lifetime_records = fixed_lifetime_count + dynamic_lifetime_count + 64
     return max(event_records, lifetime_records)
-
-
-def reconcile_spill_pool(*, predicted_peak: int, budget: int) -> None:
-    """Reject a selected schedule that exceeds its public spill budget."""
-
-    if predicted_peak < 0:
-        raise AdmissionError("predicted spill peak must be non-negative")
-    if predicted_peak > budget:
-        raise AdmissionError(
-            "predicted spill-pool peak exceeds the selected plan budget: "
-            f"peak={predicted_peak}, budget={budget}"
-        )
-
-
-def physical_admission(
-    memory: PlanMemory,
-    installed: InstalledRuntime,
-    *,
-    workspace_reserve: int,
-    predicted_spill_peak_bytes: int,
-    predicted_fragmentation_bytes: int,
-) -> PhysicalAdmission:
-    """Describe the callable's admitted resources after spatial replay.
-
-    The runtime may own a larger spill pool than this plan is allowed to use.
-    ``spill_reservation_bytes`` therefore records this callable's predicted
-    spill peak, not the process-lifetime pool allocation.
-    """
-
-    reconcile_spill_pool(
-        predicted_peak=predicted_spill_peak_bytes,
-        budget=memory.spill_budget,
-    )
-
-    return PhysicalAdmission(
-        device_budget_bytes=(
-            memory.execution.physical_capacity or memory.execution_budget
-        ),
-        spill_budget_bytes=memory.spill_budget,
-        baseline_bytes=int(installed.admission.baseline_bytes),
-        external_headroom_bytes=int(installed.admission.external_headroom_bytes),
-        reject_overbudget=bool(installed.admission.reject_overbudget),
-        slab_bytes=memory.execution_budget,
-        workspace_reserve_bytes=workspace_reserve,
-        spill_reservation_bytes=predicted_spill_peak_bytes,
-        predicted_fragmentation_bytes=predicted_fragmentation_bytes,
-    )
-
-
-def seal_physical_budget(
-    installed: InstalledRuntime,
-    execution_plan: ExecutionPlan,
-    fixed_layout: FixedPhysicalLayout,
-) -> None:
-    """Seal external headroom and complete steady-state record inventories."""
-
-    if fixed_layout.program_digest != execution_plan.program.digest:
-        raise AdmissionError("fixed layout belongs to a different ShadowSpillProgram")
-    if fixed_layout.schedule_digest != execution_plan.schedule.digest:
-        raise AdmissionError("fixed layout belongs to a different memory schedule")
-
-    seal_worker_budget(
-        installed,
-        selected_task_count=len(
-            execution_plan.program.selected_tasks(execution_plan.selections)
-        ),
-        initial_transfer_count=sum(
-            item.location.value == "device"
-            for item in execution_plan.schedule.initial_residency
-        ),
-        scheduled_transfer_count=sum(
-            item.kind in {MemoryActionKind.EVICT, MemoryActionKind.FETCH}
-            for item in execution_plan.schedule.actions
-        ),
-        fixed_lifetime_count=len(fixed_layout.placements),
-        dynamic_lifetime_count=len(fixed_layout.dynamic_lifetimes),
-    )
 
 
 def check_physical_budget(installed: InstalledRuntime) -> None:
@@ -170,12 +89,11 @@ def seal_worker_budget(
     )
     if status != 0:
         raise AdmissionError(f"allocator statistics failed with status {status}")
+    alignment = 64 * _MIB
+    observed = int(statistics.observed_external_high_water_bytes) + alignment
     required = max(
         int(installed.admission.external_headroom_bytes),
-        round_up(
-            int(statistics.observed_external_high_water_bytes) + 64 * _MIB,
-            64 * _MIB,
-        ),
+        ((observed + alignment - 1) // alignment) * alignment,
     )
     runtime_record_reserve = _runtime_record_reserve(
         selected_task_count=selected_task_count,
@@ -198,6 +116,3 @@ def seal_worker_budget(
             f"required={required}, reserved={reserved}, "
             f"observed_external={int(statistics.observed_external_high_water_bytes)}"
         )
-
-
-__all__ = ["physical_admission", "reconcile_spill_pool", "seal_physical_budget"]

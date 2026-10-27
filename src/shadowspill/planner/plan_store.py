@@ -36,7 +36,7 @@ from .diagnostics import (
     graph_pair_outcomes,
 )
 from .diagnostics.json import without_measurements
-from .diagnostics.plan import PlanSummary, summarize_selected_plan
+from .diagnostics.plan_summary import PlanSummary, summarize_selected_plan
 from .result import ProgramPlanResult, ResolutionPlan
 from .search import (
     SearchAlgorithm,
@@ -48,6 +48,7 @@ from .serialization import (
     _boolean,
     _integer,
     _list,
+    _mapping,
     _resident_slice_from_value,
     _simulation_result_from_value,
 )
@@ -556,7 +557,7 @@ class PlanStore:
         return PlanLookup(result, True, key, certificate)
 
     def _read_resolutions(
-        self, key: str, program: ShadowSpillProgram, boundary: dict
+        self, key: str, program: ShadowSpillProgram, boundary: dict[str, object]
     ) -> tuple[ResolutionPlan, ...] | None:
         """Restore retained alternatives for consumers that need complete plans."""
         expected = {**boundary, "schema": _RESOLUTION_SCHEMA}
@@ -1004,7 +1005,7 @@ def read_stored_selection(path: Path, *, layout: bool = True) -> dict[str, objec
     beside it is returned as it is, so a record that carries its own layout
     reads the same through this as directly."""
 
-    value = json.loads(path.read_text())
+    value: dict[str, object] = _mapping(json.loads(path.read_text()), str(path))
     certificate = path.parent / CERTIFICATE_FILE
     if not certificate.exists():
         return value

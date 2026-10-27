@@ -3,28 +3,21 @@
 from __future__ import annotations
 
 import re
-from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
 
 from benchmarking._serialization import (
     atomic_json,
     atomic_text,
-    commit_immutable_directory,
-    existing_artifact_is_identical,
     integer,
-    json_mapping,
     mapping,
-    pretty_json,
-    read_mapping,
     string,
-    text_digest,
 )
 from benchmarking.data_geometry import DataGeometry
-from shadowspill.step import StepProgram
 
-_CORPUS_SCHEMA = "shadowspill.planning_corpus/v1"
-_CASE_SCHEMA = "shadowspill.planning_corpus.case/v1"
+_CORPUS_SCHEMA = "shadowspill.planning_corpus/v2"
+CASE_SCHEMA = "shadowspill.planning_corpus.case/v3"
+PROGRAM_FILENAME = "profiled_program.ssp"
 
 
 @dataclass(frozen=True, slots=True)
@@ -75,16 +68,14 @@ class ProgramCaseIdentity:
             "sequences_per_microbatch": (
                 self.tokens_per_microbatch // self.sequence_length
             ),
-            # Schema v1 retains this key so the collected dataset remains
-            # immutable. New interfaces and reports say "accumulation rounds".
-            "accumulation_steps": self.accumulation_rounds,
+            "accumulation_rounds": self.accumulation_rounds,
             "tokens_per_step": self.tokens_per_microbatch * self.accumulation_rounds,
         }
 
     @classmethod
     def from_value(cls, value: object) -> ProgramCaseIdentity:
         data = mapping(value, "case.identity")
-        raw_rounds = data.get("accumulation_rounds", data.get("accumulation_steps"))
+        raw_rounds = data.get("accumulation_rounds")
         return cls(
             family=string(data.get("family"), "case.identity.family"),
             provider=string(data.get("provider"), "case.identity.provider"),
@@ -109,11 +100,10 @@ class SavedProgramCase:
     identity: ProgramCaseIdentity
     program_digest: str
     artifact_digest: str
-    filename: str = "step_program.json"
 
     @property
     def program_path(self) -> Path:
-        return self.directory / self.filename
+        return self.directory / PROGRAM_FILENAME
 
 
 def initialize_corpus(root: Path) -> None:
@@ -137,84 +127,6 @@ def initialize_corpus(root: Path) -> None:
         atomic_text(guide, _README)
 
 
-def save_step_program(
-    root: Path,
-    *,
-    identity: ProgramCaseIdentity,
-    program: StepProgram,
-    metadata: Mapping[str, object] | None = None,
-) -> SavedProgramCase:
-    """Atomically save one self-contained pre-PressureFit ShadowSpillProgram case."""
-
-    initialize_corpus(root)
-    payload = program.to_json()
-    artifact_digest = text_digest(payload)
-    directory = (
-        root / "cases" / identity.case_name / identity.geometry_name / program.digest
-    )
-    manifest = {
-        "schema": _CASE_SCHEMA,
-        "identity": identity.to_dict(),
-        "metadata": json_mapping(metadata or {}, "metadata"),
-        "step_program": {
-            "path": "step_program.json",
-            "program_digest": program.digest,
-            "artifact_sha256": artifact_digest,
-        },
-        # Retained in schema v1 for byte-compatible corpus retries. Planner
-        # evaluations now write only beneath benchmarking/planning_eval/results.
-        "evaluations_directory": "evaluations",
-    }
-    program_path = directory / "step_program.json"
-    manifest_path = directory / "manifest.json"
-    if not existing_artifact_is_identical(
-        program_path,
-        manifest_path,
-        payload=payload,
-        manifest=manifest,
-    ):
-        commit_immutable_directory(
-            directory,
-            artifact_name="step_program.json",
-            payload=pretty_json(payload),
-            manifest=manifest,
-            child_directories=("evaluations",),
-        )
-    return SavedProgramCase(
-        directory.resolve(), identity, program.digest, artifact_digest
-    )
-
-
-def load_step_program(path: Path) -> tuple[SavedProgramCase, StepProgram]:
-    """Load and integrity-check a case directory or its ShadowSpillProgram JSON file."""
-
-    directory = path if path.is_dir() else path.parent
-    manifest = read_mapping(directory / "manifest.json", "case manifest")
-    if manifest.get("schema") != _CASE_SCHEMA:
-        raise ValueError("case manifest has an unsupported schema")
-    identity = ProgramCaseIdentity.from_value(manifest.get("identity"))
-    artifact = mapping(manifest.get("step_program"), "case.step_program")
-    program_path = directory / string(artifact.get("path"), "case.step_program.path")
-    payload = program_path.read_text()
-    expected_artifact = string(
-        artifact.get("artifact_sha256"), "case.step_program.artifact_sha256"
-    )
-    if text_digest(payload) != expected_artifact:
-        raise ValueError("saved StepProgram artifact digest does not match")
-    program = StepProgram.from_json(payload)
-    expected_program = string(
-        artifact.get("program_digest"), "case.step_program.program_digest"
-    )
-    if program.digest != expected_program:
-        raise ValueError("saved StepProgram content digest does not match")
-    return (
-        SavedProgramCase(
-            directory.resolve(), identity, program.digest, expected_artifact
-        ),
-        program,
-    )
-
-
 def _safe(value: str) -> str:
     normalized = re.sub(r"[^A-Za-z0-9._-]+", "-", value.strip()).strip("-._")
     if not normalized:
@@ -225,8 +137,7 @@ def _safe(value: str) -> str:
 _README = """# Planning input dataset
 
 Each case stores an immutable manifest and a self-contained phase archive
-(`profiled_program.ssp`). Older cases contain `step_program.json` instead;
-planning evaluation can read both formats. Cases are grouped by provider/model,
+(`profiled_program.ssp`). Cases are grouped by provider/model,
 data geometry and content digest. Checksums cover each saved artifact.
 
 Collection builds and measures tasks with the ordinary PyTorch allocator.
@@ -239,6 +150,4 @@ __all__ = [
     "ProgramCaseIdentity",
     "SavedProgramCase",
     "initialize_corpus",
-    "load_step_program",
-    "save_step_program",
 ]

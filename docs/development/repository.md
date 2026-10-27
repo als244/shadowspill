@@ -67,9 +67,8 @@ src/shadowspill/
 ├── ir/                    framework-neutral values and indexed projections
 │   └── program/           the program: its vocabularies, specs, alternatives,
 │                          and the checks it must satisfy
-├── step/                  a training step's shape and provenance, framework-free
-│   ├── ordering.py        StepDataOrdering: the walk through the microbatches
-│   └── program.py         StepProgram: the problems a captured step lowered to
+├── step/                  microbatch ordering descriptions for planning
+│   └── ordering.py        StepDataOrdering: the walk through the microbatches
 ├── diagnostics/           what one traced step turned out to cost, as
 │   │                      immutable evidence, and the reading of it
 │   ├── step.py            the summary, the two timelines, and the clock each
@@ -80,16 +79,10 @@ src/shadowspill/
 │   ├── transfer_phases/   event matching, lane regions and payload throughput
 │   └── occupancy/         pool attribution, clocks and timeline rendering
 │       └── run/           stored-run discovery, trace matching and report indexes
-├── pipeline/              the ordered work that turns a captured step into a
-│   │                      plan, minus the framework: the phase clock, the
-│   │                      budgets, the report
-│   └── admission/         what a plan needs of a live runtime: its layout, the
-│                          budget it seals, what it selected
-├── profiling/             ordinary-allocator task timing and memory measurement;
-│   │                      CPU-only application of measured or manually supplied profiles
-│   ├── invariant.py       reconcile complete allocation paths into one contract
-│   ├── alignment.py       bounded sequence-distance and unique-alignment algorithms
-│   └── observation/       bounded allocator observations and lifetime decoding
+├── profiling/             ordinary-allocator timing and memory measurement
+│   ├── invariant.py       reconcile allocation paths into one contract
+│   ├── alignment.py       bounded sequence alignment
+│   └── observation/       allocator observations and lifetime decoding
 ├── task/                  one task's shape and provenance, framework-free
 │   ├── storage.py         the storage contract: roots, output views, mutations
 │   ├── allocations.py     what a task promised about its allocations, and the
@@ -108,9 +101,7 @@ src/shadowspill/
 │   ├── admission/         neutral physical admission, after a search answers
 │   │   ├── physical.py    what a plan needs physically, before a runtime exists
 │   │   └── layout/        leases to fixed offsets, and the certificate
-│   ├── diagnostics/       PlanReport values
-│   │   └── plan/          the report by part: what building it cost, the
-│   │                      graphs, the stages, the layout, the summary
+│   ├── diagnostics/       search evidence, counters and plan summaries
 │   ├── search/            the search seam
 │   │   ├── toolkit/       what any search may call
 │   │   └── algorithms/
@@ -132,8 +123,8 @@ src/shadowspill/
 │   ├── abi/               the ctypes projection of the C API, one module per
 │   │                      record kind
 │   ├── objects/           runtime objects: the reference, and how one is made
-│   ├── plan/              one plan on the runtime: the bridge, its objects, its
-│   │                      admission, what it reports, and its lifecycle
+│   ├── plan/              one plan on the runtime: bindings, admission and lifecycle
+│   │   └── layout/        certified offsets and completion dependencies
 │   └── timing.py          an instant recorded on a stream, and the time between two
 ├── training/              saved-Plan training loops, schedules and checkpoints
 │   ├── diagnostics/       no-update startup calls, state preservation and reports
@@ -158,8 +149,8 @@ src/shadowspill/
     ├── lowering/          ObjectCatalog and task binding into ShadowSpillProgram
     │   ├── forward/        the forward program's tasks and objects
     │   └── training/       the training step's, ordering and all
-    ├── optimizer/         optimizer graph capture and ordering, by concern:
-    │                      discovery, sandbox, bindings, trace, tasks, opaque
+    ├── optimizer/         capturable optimizer updates: discovery, sandbox,
+    │                      bindings, trace and task definitions
     ├── accelerator.py     the device PyTorch drives, named once
     ├── bindings.py        who holds a range, in PyTorch's terms, and detaching them
     ├── frontend.py        PyTorch's answers to what the runtime cannot do itself
@@ -167,8 +158,6 @@ src/shadowspill/
     ├── runtime_adapter/   PyTorch's half of the task boundary: the operators
     │                      that rebind a plan's leases onto storages
     ├── spill.py           a CPU tensor's bytes, as the runtime takes them
-    ├── diagnostics/       PlanReport and StepDiagnostics
-    │   └── builders/      each record built where its own consumer reads it
     └── state/             tensor serialization and allocator qualification
 ```
 

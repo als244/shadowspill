@@ -176,22 +176,18 @@ recordings, preserving the storage's stable name and role across task-local
 views. Required-use bands still include every member's actual task references;
 a shared buffer is counted once, even when several microbatches save views of it.
 
-New frontend step builds preserve `StepProgram.semantic_labels_json`. These
-annotations map task IDs to phase, zero-based `stage_index`, zero-based
-`microbatch`, variant and target, and object IDs to available parameter paths,
-gradient paths, optimizer names, input positions and task-output origins.
-Annotations do not affect the step's planning digest. Older archives read with
-an empty annotation map; missing names are not inferred from numeric IDs.
+Saved Programs retain semantic source names and task metadata. The trace
+collection tools join those names to the selected task IDs and write
+`semantic_labels.json` beside each trace manifest. Missing names remain absent;
+numeric IDs are not interpreted as module names.
+
+Other producers may supply an explicit annotation map:
 
 ```python
-import json
-
-manifest = read_manifest(
-    directory, semantic_labels=json.loads(step_program.semantic_labels_json)
-)
+manifest = read_manifest(directory, semantic_labels=labels)
 ```
 
-Alternatively place that object in `semantic_labels.json` beside the manifest;
+Place that object in `semantic_labels.json` beside the manifest;
 `read_manifest` reads it automatically. The `program_digest` must match. An
 activation's output origin is joined to the candidate's active producer, so
 save/recompute alternatives are labelled correctly. `boundary_labels(tasks,

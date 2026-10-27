@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from shadowspill import apply_profiles
 from shadowspill.ir import (
     AliasGroupSpec,
     DeviceSpec,
@@ -16,17 +17,17 @@ from shadowspill.ir import (
 )
 from shadowspill.planner import (
     AdmissionFacts,
-    StepDataOrdering,
     TaskAdmissionSpec,
 )
 from shadowspill.planner.program import (
     ShadowSpillPlanningProblem,
 )
 from shadowspill.simulator import SimulationConfig
-from shadowspill.step import StepProgram
+from tests.benchmarking._profiled import measured
+from tests.shadowspill.offline._costed_fixture import split_costed_program
 
 
-def _fixture() -> StepProgram:
+def problem() -> ShadowSpillPlanningProblem:
     program = ShadowSpillProgram(
         devices=(DeviceSpec("cuda_0", "process_0", "cuda", 0),),
         alias_groups=(AliasGroupSpec("state", "cuda_0", 64, retain_spill_copy=True),),
@@ -41,7 +42,7 @@ def _fixture() -> StepProgram:
             ),
         ),
     )
-    pre_pressurefit = ShadowSpillPlanningProblem(
+    return ShadowSpillPlanningProblem(
         role="step",
         program=program,
         initial_residency=(ResidencySpec("state", MemoryLocation.DEVICE),),
@@ -69,16 +70,14 @@ def _fixture() -> StepProgram:
         object_reserve_bytes=96,
         dynamic_scratch_reserve_bytes=0,
     )
-    return StepProgram(
-        problem=pre_pressurefit,
-        optimizer_ordering="stage_interleaved",
-        data_ordering=StepDataOrdering.depth_first(1),
-        signature_digests=("0" * 64,),
-        profiling_metadata=(),
-        phase_timings_ns=(("fixture", 1), ("total", 1)),
-        store_directories=(),
-        cache_artifacts=(),
-        transfer_capabilities_json="{}",
-        unique_profile_count=1,
-        captured_stage_count=1,
+
+
+def _fixture():
+    source = problem()
+    program, profiles = split_costed_program(
+        source.program,
+        initial_residency=source.initial_residency,
+        final_residency=source.final_residency,
+        fixed_device_bytes=source.fixed_execution_bytes,
     )
+    return measured(apply_profiles(program, profiles))

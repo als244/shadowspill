@@ -643,7 +643,7 @@ def test_a_summary_is_written_with_the_certificate_and_read_without_the_plan(
     answers from that record and never deserializes the plan."""
 
     from shadowspill.planner.diagnostics import graph_pair_outcomes
-    from shadowspill.planner.diagnostics.plan import summarize_selected_plan
+    from shadowspill.planner.diagnostics.plan_summary import summarize_selected_plan
     from shadowspill.planner.plan_store import certified_result
 
     program = _placeable_program()

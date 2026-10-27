@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import hashlib
 import json
-import re
 import threading
 from collections.abc import Mapping
 from dataclasses import dataclass, field
@@ -20,14 +19,13 @@ from shadowspill._files import (
 from shadowspill._files import (
     atomic_write as atomic_write,
 )
-from shadowspill.ir import ExecutionPlan, ShadowSpillProgram
+from shadowspill.ir import ShadowSpillProgram
 from shadowspill.ir.program import PROGRAM_SCHEMA
 from shadowspill.schema import ARTIFACT_VERSION, artifact_schema
 
 from .policy import STORE_MODES, StoreMode, StorePolicy
 
 _LAYOUT_SCHEMA = artifact_schema("artifact_store")
-_PLAN_MANIFEST_SCHEMA = artifact_schema("plan_manifest")
 #: How a run touched an artifact. "improved" is a write that replaced a
 #: stored plan the answer beat, kept distinct from a first write so the
 #: ledger says which plans a run displaced.
@@ -102,22 +100,12 @@ class _ArtifactLedger:
 
 @dataclass(frozen=True, slots=True)
 class ArtifactStore:
-    """Where one planning call reads and writes its artifacts.
+    """Optional content-addressed caches for capture, profiling and planning.
 
-    Two trees under one versioned root. ``build`` holds what a run pays for
-    and another run can reuse: exports, graph pairs,
-    optimizer captures and profiles. ``planning`` holds what a run decided:
-    the program it was given,
-    the requests put to the planner, its results, and the plans callables run,
-    the last a readable index linking one planning call to the immutable
-    artifacts behind it. Nothing under ``planning`` is written by a build, and
-    nothing under ``build`` by a planning call, which is what lets one build
-    store serve many runs that each keep their own plans. Content-addressed
-    leaf paths provide identity throughout.
-
-    ``plan_store`` puts the ``planning`` tree under another directory, so
-    several runs can share one artifact store and each keep its own plans;
-    ``None`` keeps both trees under ``root``.
+    ``build`` holds graph pairs, optimizer captures and measurements;
+    ``planning`` holds costed IR inputs, search requests and results. Either
+    tree can use its own root and read/write policy. Saved public phase
+    artifacts are independent of these directories.
     """
 
     root: Path
@@ -185,10 +173,6 @@ class ArtifactStore:
         )
 
     @property
-    def exports(self) -> Path:
-        return self.build / "exports"
-
-    @property
     def graph_pairs(self) -> Path:
         return self.build / "graph_pairs"
 
@@ -209,12 +193,6 @@ class ArtifactStore:
         return self.profiling / "compiled_manifests"
 
     @property
-    def steps(self) -> Path:
-        # Step programs by the identity a build has before any capture, so a
-        # build with a bypass key can answer without exporting.
-        return self.build / "steps"
-
-    @property
     def programs_archive(self) -> Path:
         # In the planning tree, not the build tree. A planning call archives
         # the program it was given so a plan's lineage points at an immutable
@@ -229,10 +207,6 @@ class ArtifactStore:
     @property
     def plan_selections(self) -> Path:
         return self.planning / "results"
-
-    @property
-    def plans(self) -> Path:
-        return self.planning / "plans"
 
     @property
     def build_policy(self) -> StorePolicy:
@@ -274,11 +248,8 @@ class ArtifactStore:
             self.root,
             False,
             {
-                "build": "what a run pays for and another can reuse: exports,"
-                " graph pairs, optimizer captures, profiles",
-                "planning": "what a run decided: the programs it was given,"
-                " the requests put to the planner, its results, and the plans"
-                " callables run",
+                "build": "graph pairs, optimizer captures and profiles",
+                "planning": "costed IR inputs, search requests and results",
             },
             _CACHE_README,
         )
@@ -287,10 +258,7 @@ class ArtifactStore:
             _write_guides(
                 self.plan_store,
                 False,
-                {
-                    "planning": "search requests and results, and the"
-                    " plans callables run"
-                },
+                {"planning": "costed IR inputs, search requests and results"},
                 _PLAN_STORE_README,
                 artifact_store=self.root,
             )
@@ -395,58 +363,6 @@ class ArtifactStore:
         )
         return digest, path
 
-    def archive_plan(
-        self,
-        *,
-        model_label: str,
-        capture_identity: str,
-        execution_plan: ExecutionPlan,
-        manifest: Mapping[str, object],
-    ) -> Path:
-        """Write the resolved plan and a readable lineage manifest."""
-
-        directory = (
-            self.plans
-            / safe_label(model_label)
-            / capture_identity[:16]
-            / execution_plan.digest[:16]
-        )
-        if not self.plan_policy.write_enabled:
-            return directory / "manifest.json"
-        plan_path = directory / "execution_plan.json"
-        atomic_text(plan_path, execution_plan.to_json())
-        self.record(
-            category="plans",
-            kind="execution_plan",
-            digest=execution_plan.digest,
-            path=plan_path,
-            access="write",
-            schema=artifact_schema("execution_plan"),
-            dependencies=(execution_plan.program.digest,),
-        )
-        manifest_path = directory / "manifest.json"
-        atomic_json(
-            manifest_path,
-            {
-                "schema": _PLAN_MANIFEST_SCHEMA,
-                "model": model_label,
-                "capture_identity": capture_identity,
-                "execution_plan_digest": execution_plan.digest,
-                "execution_plan": plan_path.name,
-                **dict(manifest),
-            },
-        )
-        self.record(
-            category="plans",
-            kind="plan_manifest",
-            digest=execution_plan.digest,
-            path=manifest_path,
-            access="write",
-            schema=_PLAN_MANIFEST_SCHEMA,
-            dependencies=(execution_plan.program.digest,),
-        )
-        return manifest_path
-
 
 def _write_guides(
     root: Path,
@@ -497,11 +413,6 @@ def digest_directory(root: Path, digest: str) -> Path:
     return root / digest[:2] / digest
 
 
-def safe_label(value: str) -> str:
-    result = re.sub(r"[^A-Za-z0-9_.-]+", "_", value).strip("._")
-    return result or "model"
-
-
 def read_json(path: Path) -> dict[str, object]:
     try:
         value = json.loads(path.read_text())
@@ -512,60 +423,29 @@ def read_json(path: Path) -> dict[str, object]:
     return value
 
 
-_CACHE_README = """# ShadowSpill planning cache
+_CACHE_README = """# ShadowSpill internal cache
 
-This directory is both a content-addressed cache and a planning evidence store.
-Digests determine identity; readable model names under `plans/` are indexes only.
-Its name is the artifact version every file in it carries: a ShadowSpill
-update that changes any stored structure writes a fresh `v<N>` tree beside
-this one and replans.
+Optional content-addressed entries under a versioned root:
 
-`build/` is what a run pays for and another run can reuse:
-
-- `build/exports/`: normalized Export archives and manifests.
 - `build/graph_pairs/`: structural AOT graph pairs.
-- `build/optimizers/`: traced optimizer updates, keyed by the
-  optimizer, the objects it binds, its hyperparameters and its stage split.
-- `build/profiling/`: hardware/compiler-specific layouts and task measurements.
+- `build/optimizers/`: captured optimizer updates.
+- `build/profiling/`: executable storage manifests and task measurements.
+- `planning/programs/`: costed IR inputs.
+- `planning/requests/`: search inputs and settings.
+- `planning/results/`: selected schedules, diagnostics and certificates.
 
-Compiler intermediates live outside this store, in node-local temporary storage
-by default. The frontend supports an optional cache root override; see
-`docs/python/artifact-store.md`. Older stores may still contain `build/inductor/`;
-new runs do not write compiler files there.
-
-`planning/` is what a run decided:
-
-- `planning/programs/`: the exact canonical ShadowSpillProgram each planning call was
-  given, so a plan's lineage points at an immutable copy of what was planned.
-- `planning/requests/`: what each search was asked for.
-- `planning/results/`: the planner's answer, the selected resolution and
-  memory schedule with the search diagnostics, and, when a search was asked
-  to keep them, every resolution's best plan beside it.
-- `planning/plans/`: one readable manifest and ExecutionPlan per planning call.
-
-The two trees are written by different halves of the work and never by each
-other: a build contributes nothing under `planning/`, and a planning call
-nothing under `build/`. That is what lets one build store serve many runs
-while each keeps its own plans -- point `--build-store` at the shared one and
-`--plan-store` at your own, or give a single `--artifact-store` and get both
-under it.
-
-Every returned `PlanReport` records the absolute path and access disposition of
-the artifacts touched by that call.  Do not edit content-addressed entries.
+Compiler caches remain external and use their compiler's cache settings.
+Public phase artifacts use explicit save/load and do not depend on this tree.
+Do not edit content-addressed entries.
 """
 
-_PLAN_STORE_README = """# ShadowSpill plan store
+_PLAN_STORE_README = """# ShadowSpill planner cache
 
-The plans one run searched, kept apart from the artifact store they were
-searched over (named in `layout.json`) so that store can be shared.
+This separate root stores costed IR inputs under `planning/programs/`, search
+requests under `planning/requests/`, and results under `planning/results/`.
+The shared artifact root is recorded in `layout.json`.
 
-- `planning/requests/`: what each search was asked for.
-- `planning/results/`: the search's answer, the selected resolution and
-  memory schedule with the search diagnostics, and, when a search was asked
-  to keep them, every resolution's best plan beside it.
-- `planning/plans/`: one readable manifest and ExecutionPlan per planning call.
-
-Digests determine identity; do not edit content-addressed entries.
+Public Plan archives are saved explicitly. Do not edit cache entries.
 """
 
 

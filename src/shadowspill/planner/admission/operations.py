@@ -49,17 +49,13 @@ class AdmissionOperations:
     #: from, read straight through by every later library call.
     arrays: OperationArrays
 
-    def _operations(self, name: str, missing: int | None = None) -> tuple:
+    def _operations(self, name: str) -> tuple[int, ...]:
         values = getattr(self.arrays.operations, name)[: self.operation_count]
-        if missing is None:
-            return tuple(values)
-        return tuple(None if value == missing else value for value in values)
+        return tuple(values)
 
-    def _leases(self, name: str, missing: int | None = None) -> tuple:
+    def _leases(self, name: str) -> tuple[int, ...]:
         values = getattr(self.arrays.operations, name)[: self.live_lease_count]
-        if missing is None:
-            return tuple(values)
-        return tuple(None if value == missing else value for value in values)
+        return tuple(values)
 
     @cached_property
     def lease_ids(self) -> tuple[int, ...]:
@@ -67,7 +63,7 @@ class AdmissionOperations:
 
     @cached_property
     def dependency_ids(self) -> tuple[int | None, ...]:
-        return self._operations("dependency_ids", _NO_DEPENDENCY)
+        return _optional(self._operations("dependency_ids"), _NO_DEPENDENCY)
 
     @cached_property
     def bytes(self) -> tuple[int, ...]:
@@ -95,11 +91,11 @@ class AdmissionOperations:
 
     @cached_property
     def allocation_offsets(self) -> tuple[int | None, ...]:
-        return self._operations("allocation_offsets", _NO_INDEX)
+        return _optional(self._operations("allocation_offsets"), _NO_INDEX)
 
     @cached_property
     def lease_aliases(self) -> tuple[int | None, ...]:
-        return self._leases("lease_aliases", _NO_INDEX)
+        return _optional(self._leases("lease_aliases"), _NO_INDEX)
 
     @cached_property
     def lease_starts(self) -> tuple[int, ...]:
@@ -107,7 +103,7 @@ class AdmissionOperations:
 
     @cached_property
     def lease_retires(self) -> tuple[int | None, ...]:
-        return self._leases("lease_retires", _NO_OPERATION)
+        return _optional(self._leases("lease_retires"), _NO_OPERATION)
 
     @property
     def lease_count(self) -> int:
@@ -117,6 +113,10 @@ class AdmissionOperations:
 _NO_INDEX = (1 << 32) - 1
 _NO_DEPENDENCY = (1 << 64) - 1
 _NO_OPERATION = (1 << 64) - 1
+
+
+def _optional(values: tuple[int, ...], missing: int) -> tuple[int | None, ...]:
+    return tuple(None if value == missing else value for value in values)
 
 
 def build_admission_operations(

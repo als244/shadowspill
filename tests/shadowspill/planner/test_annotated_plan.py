@@ -10,10 +10,12 @@ from benchmarking.planning_eval.plan_artifacts import (
     load_annotated_plan,
     save_annotated_plan,
 )
+from benchmarking.program_collection.artifacts import (
+    load_program,
+    save_profiled_program,
+)
 from benchmarking.program_collection.corpus import (
     ProgramCaseIdentity,
-    load_step_program,
-    save_step_program,
 )
 from shadowspill.ir import (
     AliasGroupSpec,
@@ -29,7 +31,6 @@ from shadowspill.ir import (
 )
 from shadowspill.planner import (
     AdmissionFacts,
-    StepDataOrdering,
     TaskAdmissionSpec,
     plan_program,
 )
@@ -40,7 +41,7 @@ from shadowspill.planner.program import (
     TransferBandwidths,
 )
 from shadowspill.simulator import SimulationConfig
-from shadowspill.step import StepProgram
+from tests.benchmarking._fixtures import _fixture
 
 
 def _pressurefit_program() -> ShadowSpillPlanningProblem:
@@ -164,61 +165,33 @@ def test_annotated_program_plan_separates_budgets_and_bandwidths(
 
 def test_corpus_round_trip_keeps_plan_axes_separate(tmp_path: Path) -> None:
     pressurefit_input = _pressurefit_program()
-    step_program = StepProgram(
-        problem=pressurefit_input,
-        optimizer_ordering="stage_interleaved",
-        data_ordering=StepDataOrdering.depth_first(1),
-        signature_digests=("a" * 64,),
-        profiling_metadata=(),
-        phase_timings_ns=(("capture", 1), ("total", 1)),
-        store_directories=(("root", str(tmp_path / "store")),),
-        cache_artifacts=(),
-        transfer_capabilities_json="{}",
-        unique_profile_count=1,
-        captured_stage_count=1,
-    )
-    different_evidence = replace(
-        step_program,
-        phase_timings_ns=(("capture", 2), ("total", 3)),
-        store_directories=(("root", "/different/cache"),),
-        semantic_labels_json=json.dumps(
-            {"objects": {"state_object": {"label": "parameter weight"}}}
-        ),
-    )
-    assert different_evidence.digest == step_program.digest
-    restored_labels = StepProgram.from_json(different_evidence.to_json())
-    assert json.loads(restored_labels.semantic_labels_json) == json.loads(
-        different_evidence.semantic_labels_json
-    )
-    old_record = different_evidence.to_dict()
-    del old_record["semantic_labels"]
-    assert StepProgram.from_dict(old_record).semantic_labels_json == "{}"
+    source = _fixture()
     identity = ProgramCaseIdentity("llama3", "mlops", 4_096, 1_024, 2)
-    saved = save_step_program(
+    saved = save_profiled_program(
         tmp_path / "corpus",
         identity=identity,
-        program=step_program,
+        program=source,
         metadata={"purpose": "smoke"},
     )
     assert (
-        save_step_program(
+        save_profiled_program(
             tmp_path / "corpus",
             identity=identity,
-            program=step_program,
+            program=source,
             metadata={"purpose": "smoke"},
         )
         == saved
     )
     with pytest.raises(FileExistsError, match="different evidence"):
-        save_step_program(
+        save_profiled_program(
             tmp_path / "corpus",
             identity=identity,
-            program=different_evidence,
-            metadata={"purpose": "smoke"},
+            program=source,
+            metadata={"purpose": "changed"},
         )
-    loaded_case, loaded_program = load_step_program(saved.directory)
+    loaded_case, loaded_program = load_program(saved.directory)
     selected = plan_program(
-        loaded_program.problem,
+        pressurefit_input,
         transfer_bandwidths=TransferBandwidths(
             1_000_000, 1_000_000, 2_000_000, 2_000_000
         ),
@@ -246,7 +219,7 @@ def test_corpus_round_trip_keeps_plan_axes_separate(tmp_path: Path) -> None:
     )
     repeated = load_annotated_plan(repeated_directory)
 
-    assert loaded_program.digest == step_program.digest
+    assert loaded_program.digest == source.digest
     assert restored.digest == selected.digest
     assert external.digest == selected.digest
     assert tmp_path / "external-evaluations" in external_directory.parents

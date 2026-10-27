@@ -136,27 +136,6 @@ def test_detached_components_keep_storage_when_live_handles_are_rebound():
     torch.testing.assert_close(reference.dense(), expected)
 
 
-def test_export_archive_preserves_fake_component_views_and_reloads(tmp_path):
-    from torch._export.serde.serialize import _reconstruct_fake_tensor
-
-    from shadowspill.pytorch.capture.export import capture_forward
-    from shadowspill.pytorch.store import _serializable_export
-
-    net = model()
-    with FakeTensorMode(allow_non_fake_inputs=True) as mode:
-        fake = fake_device_model(net, mode)
-        capture = capture_forward(fake, (torch.empty(3, 8, device="cuda"),))
-    exported = _serializable_export(capture.exported_program)
-    path = tmp_path / "export.pt2"
-    torch.export.save(exported, path)
-    with torch.serialization.safe_globals([ScaledWeight, _reconstruct_fake_tensor]):
-        restored = torch.export.load(path)
-    weight = next(iter(restored.state_dict.values()))
-    assert isinstance(weight, ScaledWeight)
-    assert weight.payload.is_meta and weight.scale.is_meta
-    assert type(weight.payload) is torch.Tensor
-
-
 def test_optimizer_placeholder_preserves_component_storage_views():
     from shadowspill.pytorch.representations import empty_representation
 

@@ -20,7 +20,6 @@ class BlockRuntime(importlib.abc.MetaPathFinder):
             fullname == name or fullname.startswith(name + ".")
             for name in (
                 "shadowspill.runtime",
-                "shadowspill.pipeline",
                 "shadowspill.store",
                 "shadowspill.pytorch.compilation",
                 "shadowspill.pytorch.capture",

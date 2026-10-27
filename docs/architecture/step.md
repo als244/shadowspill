@@ -36,13 +36,5 @@ rebuilding or remeasuring the tasks. `optimizer_ordering` similarly selects
 stage-interleaved or tail updates. Mutation and random-state dependencies still
 constrain valid schedules; an incompatible ordering is rejected.
 
-## Diagnostic JSON corpora
-
-`shadowspill.step.StepProgram` remains the reader for JSON planning corpora. It
-contains a bound `ShadowSpillPlanningProblem`, a fixed ordering and provenance.
-These files can still be inspected and replanned, but new collection writes
-`ProfiledProgram` archives. The [JSON reference](../python/planning-json.md)
-describes their retained format.
-
 Previous: [Graph-pair construction](graph-pair-construction.md). Next:
 [Importing state](state-import.md).

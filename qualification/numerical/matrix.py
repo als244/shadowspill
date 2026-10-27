@@ -482,7 +482,7 @@ def _parser() -> argparse.ArgumentParser:
         "--detailed-artifacts",
         action="store_true",
         help=(
-            "retain full PlanReports and per-task traces; compact correctness "
+            "retain saved Plans and per-task traces; compact correctness "
             "evidence is the default"
         ),
     )

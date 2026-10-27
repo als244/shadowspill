@@ -1,7 +1,8 @@
 # Program and annotated-plan JSON
 
-ShadowSpill exposes content-addressed JSON artifacts at distinct planning
-boundaries. They are canonical, schema-tagged, validated on load, and designed
+Public phase artifacts use self-contained archives; see the
+[artifact API](api/artifacts.md). This page describes the lower-level planner's
+content-addressed JSON records. They are canonical, schema-tagged, validated on load, and designed
 for corpus collection, budget sweeps, inspection, and reproducible planning.
 Every schema below carries the one artifact version
 (`shadowspill.schema.ARTIFACT_VERSION`, see `artifact-store.md`), so a change
@@ -11,7 +12,6 @@ to any stored structure moves them all together.
 |---|---|---|
 | `ShadowSpillProgram` | `shadowspill.program/v1` | Framework-neutral logical tasks, objects, costs, sharing policies, and task alternatives. |
 | `ShadowSpillPlanningProblem` | `shadowspill.plan_program/v1` | One program plus residency, machine inputs, and admission topology. It carries no search options: a program is a problem, and how to search it is the caller's. |
-| `StepProgram` | `shadowspill.step_program/v1` | Complete PyTorch capture and profile result, as the step's `ShadowSpillPlanningProblem`. |
 | `AnnotatedProgramPlan` | `shadowspill.annotated_program_plan/v1` | The winning plan, physical admission, and simulator evidence for one budget/bandwidth point. |
 
 Each one round-trips through `to_json()` and `from_json()`:
@@ -20,13 +20,6 @@ Each one round-trips through `to_json()` and `from_json()`:
 from pathlib import Path
 
 from shadowspill.planner.program import AnnotatedProgramPlan
-from shadowspill.step import StepProgram
-
-Path("step-program.json").write_text(step_program.to_json(), encoding="utf-8")
-loaded_program = StepProgram.from_json(
-    Path("step-program.json").read_text(encoding="utf-8")
-)
-
 Path("annotated-plan.json").write_text(annotated.to_json(), encoding="utf-8")
 loaded_plan = AnnotatedProgramPlan.from_json(
     Path("annotated-plan.json").read_text(encoding="utf-8")
@@ -40,13 +33,10 @@ whitespace. Digests are SHA-256 over the UTF-8 encoding of that canonical
 text. Array order remains semantically meaningful
 for tasks, actions, allocation operations, and attempts.
 
-Three identity rules matter:
+Two identity rules matter:
 
 1. A `ShadowSpillProgram.digest` covers the complete logical program.
-2. A `StepProgram.digest` excludes phase time and cache paths, so the same
-   planning content has one identity regardless of where or how long it took
-   to construct.
-3. An `AnnotatedProgramPlan.digest` covers what was planned, not how it was
+2. An `AnnotatedProgramPlan.digest` covers what was planned, not how it was
    found: it excludes `selection.from_store`, the search diagnostics at both
    levels (`selection.diagnostics` and each attempt's
    `search_diagnostics`), and the whole `timing` block, while retaining
@@ -204,37 +194,6 @@ The capacity contract keys are:
 | `object_reserve_bytes` | Capacity leeway: pool bytes withheld from the search's object capacity so a fixed layout whose extent exceeds the planner's instantaneous bound can still be admitted without capacity refinement. Not a workspace partition — task workspace is charged per boundary and placed inside the fixed slice. |
 | `dynamic_scratch_reserve_bytes` | Measured or user-raised optional dynamic scratch requirement. |
 
-## StepProgram format
-
-A training `StepProgram` holds the one problem every invocation of the step
-runs:
-
-```text
-shadowspill.step_program/v1
-├── identity
-│   ├── signature_digests
-│   └── program_digest
-├── problem                   ShadowSpillPlanningProblem
-├── profiling
-│   ├── metadata
-│   ├── unique_profile_count
-│   └── captured_stage_count
-├── planning
-│   ├── optimizer_ordering
-│   ├── data_ordering         depth, breadth, reverse_breadth, pair_loss
-│   └── phase_timings_ns
-├── transfer_capabilities
-└── cache_lineage
-    ├── directories
-    └── artifacts
-```
-
-`profiling.metadata` is planning identity for data-dependent measurement
-effects; it is not a runtime model input. `transfer_capabilities` is the
-runtime calibration matrix captured during program construction.
-`cache_lineage` explains where artifacts came from but does not participate in
-`StepProgram.digest`.
-
 ## AnnotatedProgramPlan format
 
 An annotated plan is one admitted planning point:
@@ -382,7 +341,7 @@ entry is one plan the candidate held, in order:
 | `simulation_status` | What the simulator returned for it. |
 | `outcome` | Seven flags -- `simulated`, `measured`, `placed`, `refined`, `best`, `answer`, `moved` -- saying what became of it; `moved` marks a plan whose layout overran and had a fetch delayed after it. |
 
-See [Interpreting a PlanReport](plan-report.md#search-diagnostics) for the
+See [Interpreting a Plan](plan-report.md#search-diagnostics) for the
 meaning of a problem versus a policy.
 
 ### Simulation
@@ -443,7 +402,7 @@ a schedule action's index, and each holds `-1` where an entry names none; a
 predecessor always names a task. The remaining tables are short and keep one
 object per entry. A planning store keeps the same columns as arrays, in a file
 beside the plan record, which [the artifact
-store](artifact-store.md#what-each-record-contains) describes.
+store](artifact-store.md#internal-content-addressed-store) describes.
 
 Each attempt records requested/effective object capacity, required bytes,
 pool capacity, accepted status, and the search evidence for that trial.
@@ -486,9 +445,9 @@ strip validation evidence to make an artifact load.
 |---|---|
 | Inspect or hand-author a framework-neutral workload | `ShadowSpillProgram` |
 | Sweep budgets or bandwidths for one step or forward | `ShadowSpillPlanningProblem` |
-| Preserve all capture/profile work for a PyTorch training step | `StepProgram` |
+| Preserve built code and applied profiles | `ProfiledProgram.save(path)` |
 | Preserve one selected, simulated, physically admitted point | `AnnotatedProgramPlan` |
-| Preserve one planning call's explanatory tree | `PlanReport.diagnostics.as_dict()` |
+| Preserve one planning call's explanatory tree | `Plan.diagnostics.to_dict()` |
 | Preserve one real execution observation | `StepDiagnostics.as_dict()` |
 
 The final two are diagnostic dictionaries, not reloadable planning artifacts.

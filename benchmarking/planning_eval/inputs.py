@@ -9,17 +9,14 @@ from shadowspill.planning.admission.program import program_admission
 from shadowspill.planning.budgets import MemoryBudgets
 from shadowspill.planning.costs import simulation_inputs
 from shadowspill.planning.training.bind import bind_training
-from shadowspill.step.program import StepProgram
 
 from .config import FrontierConfig
 
 
 def planning_problem(
-    source: ProfiledProgram | StepProgram, config: FrontierConfig
+    source: ProfiledProgram, config: FrontierConfig
 ) -> ShadowSpillPlanningProblem:
-    """Preserve old corpora; bind new artifacts to this sweep's explicit limits."""
-    if isinstance(source, StepProgram):
-        return source.problem
+    """Bind saved compute/memory evidence to this sweep's explicit limits."""
     if (
         source.program.parallelism is not None
         and source.program.parallelism.world_size != 1
@@ -60,8 +57,6 @@ def planning_problem(
     )
 
 
-def program_digest(source: ProfiledProgram | StepProgram) -> str:
+def program_digest(source: ProfiledProgram) -> str:
     """Verify a selected plan against the source's default ordered compute graph."""
-    if isinstance(source, StepProgram):
-        return source.problem.program.digest
     return replace(source, program=bind_training(source.program))._costed_ir().digest

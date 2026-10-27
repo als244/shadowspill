@@ -16,10 +16,6 @@ from shadowspill.ir import (
     TaskProfile,
     TaskSpec,
 )
-from shadowspill.pipeline.admission import (
-    DynamicTaskAllocationPolicy,
-    project_runtime_fixed_layout,
-)
 from shadowspill.planner import (
     AdmissionFacts,
     CandidateDiagnostic,
@@ -35,6 +31,10 @@ from shadowspill.planner import (
 from shadowspill.planner.admission.layout import build_fixed_layout_admission
 from shadowspill.planner.search import SearchOptions
 from shadowspill.runtime.fixed_layout import RuntimePlacementKind
+from shadowspill.runtime.plan.layout import (
+    DynamicTaskAllocationPolicy,
+    project_runtime_fixed_layout,
+)
 from shadowspill.simulator import SimulationConfig, simulate
 from tests.shadowspill.planner._examples import COMPUTE, DEVICE
 

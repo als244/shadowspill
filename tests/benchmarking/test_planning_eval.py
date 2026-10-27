@@ -42,12 +42,12 @@ from benchmarking.planning_eval.storage import (
     recover_running_attempt,
 )
 from benchmarking.planning_eval.summary import write_frontier_summary
+from benchmarking.program_collection.artifacts import save_profiled_program
 from benchmarking.program_collection.corpus import (
     ProgramCaseIdentity,
-    save_step_program,
 )
 from shadowspill.schema import artifact_schema
-from tests.benchmarking._fixtures import _fixture
+from tests.benchmarking._fixtures import _fixture, problem
 
 _REPOSITORY = Path(__file__).resolve().parents[2]
 #: An older revision of this repository, used to prove that resume does not
@@ -68,7 +68,7 @@ def test_full_frontier_has_2520_points_and_three_global_bandwidths() -> None:
     assert config.max_point_attempts == 1
     assert len(expand_grid_axes(config.grids)) == 15
     assert config.expected_programs * config.expected_points_per_program == 2520
-    program = _fixture().problem
+    program = problem()
     points = expand_frontier_points(
         program,
         config.grids,
@@ -104,7 +104,7 @@ def test_config_rejects_duplicate_points(tmp_path: Path) -> None:
 
 def test_corpus_discovery_and_point_crash_recovery(tmp_path: Path) -> None:
     corpus_root = tmp_path / "corpus"
-    saved = save_step_program(
+    saved = save_profiled_program(
         corpus_root,
         identity=ProgramCaseIdentity("llama3", "mlops", 1024, 1024, 1),
         program=_fixture(),
@@ -156,7 +156,7 @@ def test_corpus_discovery_and_point_crash_recovery(tmp_path: Path) -> None:
         cases=cases,
     )
     request = expand_frontier_points(
-        _fixture().problem,
+        problem(),
         config.grids,
         transfer_baseline=config.transfer_bandwidths,
     )[0]
@@ -195,7 +195,7 @@ def test_resume_preserves_but_does_not_charge_an_interrupted_attempt(
     tmp_path: Path,
 ) -> None:
     corpus_root = tmp_path / "corpus"
-    saved = save_step_program(
+    saved = save_profiled_program(
         corpus_root,
         identity=ProgramCaseIdentity("llama3", "mlops", 1024, 1024, 1),
         program=_fixture(),
@@ -241,7 +241,7 @@ def test_resume_preserves_but_does_not_charge_an_interrupted_attempt(
         cases=(case,),
     )
     request = expand_frontier_points(
-        _fixture().problem,
+        problem(),
         config.grids,
         transfer_baseline=config.transfer_bandwidths,
     )[0]
@@ -262,7 +262,7 @@ def test_timeout_recovery_writes_summarizable_canonical_evidence(
     tmp_path: Path,
 ) -> None:
     corpus_root = tmp_path / "corpus"
-    saved = save_step_program(
+    saved = save_profiled_program(
         corpus_root,
         identity=ProgramCaseIdentity("qwen35", "mlops", 4096, 1024, 8),
         program=_fixture(),
@@ -312,7 +312,7 @@ def test_timeout_recovery_writes_summarizable_canonical_evidence(
         {"case": case.to_dict()},
     )
     request = expand_frontier_points(
-        _fixture().problem,
+        problem(),
         config.grids,
         transfer_baseline=config.transfer_bandwidths,
     )[0]

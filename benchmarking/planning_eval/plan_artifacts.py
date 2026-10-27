@@ -22,7 +22,6 @@ from shadowspill.planner.program import (
     AnnotatedProgramPlan,
 )
 from shadowspill.schema import artifact_schema
-from shadowspill.step.program import StepProgram
 
 from .inputs import program_digest
 
@@ -34,7 +33,7 @@ def save_annotated_plan(
     plan: AnnotatedProgramPlan,
     *,
     metadata: Mapping[str, object] | None = None,
-    source_program: ProfiledProgram | StepProgram | None = None,
+    source_program: ProfiledProgram | None = None,
     output_root: Path,
 ) -> Path:
     """Save one plan under independent budget and bandwidth axes."""
@@ -70,7 +69,7 @@ def save_annotated_plan(
     )
     manifest = {
         "schema": _SELECTION_SCHEMA,
-        "source_step_program_digest": case.program_digest,
+        "source_profiled_program_digest": case.program_digest,
         "source_program_digest": plan.program.digest,
         "memory_budgets": plan.memory_budgets.to_dict(),
         "transfer_bandwidths": plan.transfer_bandwidths.to_dict(),

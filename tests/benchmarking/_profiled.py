@@ -14,8 +14,8 @@ from shadowspill.task.storage import TaskStorageContract
 from tests.shadowspill.offline._example import profiled
 
 
-def measured():
-    original = profiled()
+def measured(original=None):
+    original = profiled() if original is None else original
     profiles = original.profiles
     storage = TaskStorageContract.build((), (), ())
     for key, record in profiles.tasks.items():
@@ -57,8 +57,8 @@ def measured():
                 for key in profiles.tasks
             },
             "entrypoints": [
-                {"task_id": key, "input_slots": [], "output_slots": []}
-                for key in profiles.tasks
+                {"task_id": task.task_id, "input_slots": [], "output_slots": []}
+                for task in original.program.tasks
             ],
         },
     )

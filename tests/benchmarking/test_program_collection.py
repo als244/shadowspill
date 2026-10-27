@@ -6,6 +6,7 @@ from pathlib import Path
 
 import pytest
 
+from benchmarking.program_collection.artifacts import save_profiled_program
 from benchmarking.program_collection.config import load_collection_config
 from benchmarking.program_collection.controller import (
     ControllerOptions,
@@ -13,7 +14,6 @@ from benchmarking.program_collection.controller import (
 )
 from benchmarking.program_collection.corpus import (
     ProgramCaseIdentity,
-    save_step_program,
 )
 from benchmarking.program_collection.matrix import (
     ProgramRequest,
@@ -91,7 +91,7 @@ def test_completed_artifact_is_validated_before_resume(tmp_path: Path) -> None:
     request = expand_program_requests(config)[0]
     paths = CollectionPaths.initialize(tmp_path, config)
     program = _fixture()
-    saved = save_step_program(
+    saved = save_profiled_program(
         tmp_path,
         identity=ProgramCaseIdentity("llama3", "mlops", 1024, 1024, 1),
         program=program,
@@ -128,7 +128,7 @@ def test_completed_artifact_survives_dataset_relocation(tmp_path: Path) -> None:
     request = expand_program_requests(config)[0]
     original = tmp_path / "original"
     paths = CollectionPaths.initialize(original, config)
-    saved = save_step_program(
+    saved = save_profiled_program(
         original,
         identity=ProgramCaseIdentity("llama3", "mlops", 1024, 1024, 1),
         program=_fixture(),

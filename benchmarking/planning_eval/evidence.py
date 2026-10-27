@@ -78,7 +78,7 @@ def successful_point_evidence(
             "directory": str(case.directory),
             "identity": case.identity.to_dict(),
             "data_geometry": case.identity.data_geometry.to_dict(),
-            "step_program_digest": case.program_digest,
+            "profiled_program_digest": case.program_digest,
             "program_digest": request.program_digest,
         },
         "request": request.to_dict(),

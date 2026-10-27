@@ -24,8 +24,8 @@ from shadowspill.runtime.fixed_layout import (
     RuntimePlacementKind,
 )
 
-from .layout_dependencies import ActionIdentity as _ActionIdentity
-from .layout_dependencies import runtime_dependencies
+from .dependencies import ActionIdentity as _ActionIdentity
+from .dependencies import runtime_dependencies
 
 #: Where one fixed lease lies: its offset, bytes and alignment.
 _Fixed = tuple[int, int, int]

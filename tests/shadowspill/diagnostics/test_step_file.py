@@ -22,7 +22,7 @@ from shadowspill.runtime.telemetry import (
     CapturedAllocationEvent,
 )
 from shadowspill.runtime.trace import RuntimeTraceEvent, RuntimeTraceEventKind
-from tests.shadowspill.pytorch.diagnostics.test_step_diagnostics_serialization import (
+from tests.shadowspill.diagnostics.test_step_serialization import (
     _diagnostics,
 )
 

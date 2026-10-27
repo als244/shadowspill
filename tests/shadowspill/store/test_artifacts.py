@@ -48,7 +48,6 @@ def test_planning_cache_has_stable_human_readable_layout(tmp_path: Path) -> None
     assert cache.root == root
     assert cache.build == root / "build"
     assert cache.planning == root / "planning"
-    assert cache.exports == root / "build" / "exports"
     assert cache.graph_pairs == root / "build" / "graph_pairs"
     assert cache.profile_measurements == root / "build" / "profiling" / "measurements"
     assert cache.compiled_manifests == (
@@ -57,7 +56,6 @@ def test_planning_cache_has_stable_human_readable_layout(tmp_path: Path) -> None
     assert cache.programs_archive == root / "planning" / "programs"
     assert cache.plan_requests == root / "planning" / "requests"
     assert cache.plan_selections == root / "planning" / "results"
-    assert cache.plans == root / "planning" / "plans"
     assert (root / "layout.json").is_file()
     assert (root / "README.md").is_file()
     assert dict(cache.diagnostics())["build"] == str(root / "build")
@@ -95,13 +93,11 @@ def test_a_plan_store_roots_the_planning_kinds_apart(tmp_path: Path) -> None:
     assert cache.build == shared / "build"
     assert cache.planning == plans / "planning"
     # what a run pays for stays shared
-    assert cache.exports == shared / "build" / "exports"
     # the program a plan was for follows the plans, not the builds
     assert cache.programs_archive == plans / "planning" / "programs"
     # what a run measured is its own
     assert cache.plan_requests == plans / "planning" / "requests"
     assert cache.plan_selections == plans / "planning" / "results"
-    assert cache.plans == plans / "planning" / "plans"
     assert (plans / "layout.json").is_file()
     assert (plans / "README.md").is_file()
     assert (shared / "layout.json").is_file()

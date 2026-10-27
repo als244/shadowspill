@@ -104,7 +104,7 @@ is priced before any of it is committed.
 17. [Fixed-offset placement](architecture/fixed-placement.md) — how leases are
     given addresses and what the cost of doing so depends on.
 18. [The planning pipeline](architecture/planning-pipeline.md) — reusable artifacts,
-    transfer inputs, callable publication, and PlanReport.
+    communication inputs, physical admission and saved Plans.
 
 ### Execution
 
@@ -158,22 +158,21 @@ reports and execution through Executor or Trainer. The
 
 Task-oriented pages: how to do something, and how to read what comes back.
 
-- [Artifact store](python/artifact-store.md) — the content-addressed store,
-  its build and planning trees, and what each mode does with them.
+- [Artifacts and caches](python/artifact-store.md) — saved phase results,
+  disposable compiler caches and optional internal stores.
 - [PyTorch allocator integration](python/allocator.md) — how the ShadowSpill
   allocator sits under PyTorch and what it accounts for.
-- [Interpreting a Plan](python/plan-report.md) — planning time, task and
-  graph-pair selection, profiles, search diagnostics, store use, and physical
-  admission.
-- [PlanReport field reference](python/plan-report-fields.md) — every field of
-  every record the planning report carries, and what it holds.
+- [Interpreting a Plan](python/plan-report.md) — selected tasks, simulated
+  timelines, memory layouts and search evidence.
+- [Planning diagnostic fields](python/plan-report-fields.md) — inspectable
+  search records, counters and candidate outcomes.
 - [PressureFit cut traces](python/pressurefit-trace.md) — record and replay
   residency cuts, compare ranked alternatives, and render their trajectory.
 - [Interpreting execution diagnostics](python/step-diagnostics.md) — task and
   transfer instants, host boundaries, allocator evidence, and simulator
   reconciliation, with a complete field reference.
 - [program and annotated-plan JSON](python/planning-json.md) — canonical program,
-  ShadowSpillPlanningProblem, StepProgram, and AnnotatedProgramPlan schemas.
+  ShadowSpillPlanningProblem and AnnotatedProgramPlan schemas.
 - [Errors, failures, and cleanup](python/failures.md) — exception taxonomy,
   structured runtime evidence, rollback, and teardown.
 
@@ -183,14 +182,14 @@ One page per public surface, listing every exported name with its signature
 and the contract behind it.
 
 - [Frontend and lifecycle API](python/api/frontend.md) — `shadowspill.memory`
-  and `shadowspill.pytorch`: the runtime, planning calls, planned callables,
-  and state lifecycle.
+  and `shadowspill.pytorch`: pool configurations, build policies and low-level
+  runtime access.
 - [SSD spill storage](python/api/ssd.md) — temporary direct-I/O pools, bounded
   host staging and initialization without a complete host model.
 - [Reusable planning artifacts](python/api/artifacts.md) — the immutable,
   content-addressed values planning is composed from.
-- [Diagnostics API](python/api/diagnostics.md) — the planning and step
-  diagnostics classes and how they are requested.
+- [Diagnostics API](python/api/diagnostics.md) — CPU report generation and
+  opt-in execution diagnostics.
 - [Framework-neutral Python API](python/api/neutral.md) — `shadowspill.ir`,
   `shadowspill.planner`, `shadowspill.simulator`, `shadowspill.runtime`,
   `shadowspill.planning`, and the frontend interface, for tooling and independent

@@ -9,7 +9,7 @@ from typing import TYPE_CHECKING
 from shadowspill.ir import MemorySchedule, ResidencySpec, TaskAlternativeChoice
 from shadowspill.planner.admission import AdmissionFacts
 from shadowspill.planner.diagnostics import PlanningDiagnostics
-from shadowspill.planner.diagnostics.plan.summary import (
+from shadowspill.planner.diagnostics.plan_summary import (
     PlanSummary,
     summarize_selected_plan,
 )

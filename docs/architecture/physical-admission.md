@@ -113,7 +113,8 @@ Let:
 - $B_s$ be the public spill-memory budget.
 
 `AdmissionFacts` records both $P$ and $C$. The difference $P-C$ is capacity
-leeway (`shadowspill.pipeline.common.capacity_leeway`). A search subtracts each
+leeway. The public planning phase starts with $P=C$; explicit lower-level
+reservations and capacity refinement can reduce $C$. A search subtracts each
 selected task's actual workspace at that task's boundary; neither it nor the
 leeway is a monolithic workspace partition reserved at every boundary.
 
@@ -577,13 +578,12 @@ is how the store comes to hold one.
 
 ## Diagnostics
 
-`PlanReport.diagnostics` carries the plan's `PlanPhysicalLayout`: the capacities, the bytes each term of $L + D + S \le P$
-required, the placements and their offsets, the reuse dependencies, the task
-memory envelopes, the digests, and the logical and physically admitted
-simulations side by side. Its `attempts` hold one `PlanFixedLayoutAttempt`,
-since the search settles capacity and leaves nothing here to walk, with the
-search and physical-admission wall times reported separately. Every field is
-defined in [physical-layout
+`Plan.memory_layout` carries the certified `FixedPhysicalLayout`: pool
+capacity, fixed and resident slices, dynamic/scratch reserves, placements and
+offsets, lifetimes, reuse dependencies and identity digests. `Plan.timeline`
+contains the admitted simulated schedule, and `Plan.diagnostics` records the
+search and any capacity refinement. Executor derives its task allocation limits
+from the saved measurement evidence. See [physical-layout
 diagnostics](../python/plan-report.md#physical-layout-diagnostics).
 
 When runtime tracing is enabled, `StepDiagnostics` adds actual allocation
@@ -619,7 +619,7 @@ the supported contract.
 | `shadowspill.planner.admission.layout.dependencies` | Prove shared-range reuse and project the simulator edges that cross between compute and transfer. |
 | `shadowspill.planner.admission.layout.build` | Measure a layout, certify it, or both. |
 | `shadowspill.planner.admission.refinement` | Certify the fixed layout of the plan the search placed. |
-| `shadowspill.pipeline.admission.layout_runtime` | Translate semantic placements to indexed runtime identities. |
+| `shadowspill.runtime.plan.layout` | Translate semantic placements to indexed runtime identities. |
 | `csrc/src/planner/admission/` | Operations, lifetimes, placement, and the pool replay, over a `ShadowSpillScheduleContext`. |
 | `csrc/src/runtime/plan/fixed_layout.c` | Reserve the parent slice, seal identities, adopt subleases, and insert dependency waits. |
 | `csrc/src/runtime/memory/memory_pool/` | Own dynamic ranges outside the fixed slice and enforce physical accounting. |

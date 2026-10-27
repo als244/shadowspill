@@ -10,6 +10,7 @@ from shadowspill.planner import (
     PlanningDiagnostics,
     ProgramPlanResult,
     ResolvedProgramDiagnostics,
+    SearchOptions,
     TaskAdmissionSpec,
 )
 from shadowspill.planner.admission.refinement import resolve_fixed_layout_selection
@@ -35,7 +36,9 @@ def _selection(
     return PlanLookup(
         ProgramPlanResult(
             program,
-            GenericPlanningOptions(minimum_object_bytes_evict_eligible=0),
+            SearchOptions(
+                generic=GenericPlanningOptions(minimum_object_bytes_evict_eligible=0)
+            ),
             (),
             (),
             config,

@@ -36,8 +36,7 @@ search policy.
 
 New [program collection](../../benchmarking/program_collection/README.md) saves
 `ProfiledProgram` archives. The evaluator derives a problem from the archive and
-the requested sweep. Existing `StepProgram` JSON cases already contain a bound
-problem and retain their recorded limits.
+the requested sweep. Collection does not bind budgets or communication costs.
 
 | Field | Meaning |
 | --- | --- |

@@ -73,9 +73,8 @@ class PhysicalAdmission:
     against ``slab_bytes`` and is NOT subtracted from the pool. Task
     workspace is charged per boundary during planning and placed inside
     the admitted fixed slice, so this value does not define the search's
-    object capacity — see
-    ``shadowspill.pipeline.common.simulation_capacity``
-    for the capacity actually presented to the planner.
+    object capacity. The planning phase derives usable capacity from the
+    total GPU budget and fixed device overhead before physical admission.
     """
 
     device_budget_bytes: int

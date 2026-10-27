@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
-from shadowspill.planner.diagnostics.plan import PlanSummary, summarize_selected_plan
+from shadowspill.planner.diagnostics.plan_summary import (
+    PlanSummary,
+    summarize_selected_plan,
+)
 from tests.shadowspill.ir._examples import SAVE_SELECTION
 
 from ._examples import representative_result

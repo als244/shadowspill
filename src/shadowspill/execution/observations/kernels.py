@@ -11,10 +11,18 @@ PARTIALS = 256
 BLOCK = 4096
 
 
-@triton.jit(do_not_specialize=["N"], do_not_specialize_on_alignment=["X"])
+# Triton's JIT decorator is untyped; arguments below are values in its GPU DSL.
+@triton.jit(  # type: ignore[untyped-decorator]
+    do_not_specialize=["N"], do_not_specialize_on_alignment=["X"]
+)
 def norm_partials(
-    X, Scratch, N, SHAPE: tl.constexpr, STRIDE: tl.constexpr, B: tl.constexpr
-):
+    X: tl.tensor,
+    Scratch: tl.tensor,
+    N: tl.tensor,
+    SHAPE: tl.constexpr,
+    STRIDE: tl.constexpr,
+    B: tl.constexpr,
+) -> None:
     total = tl.full((B,), 0, tl.float32)
     for start in range(tl.program_id(0) * B, N, tl.num_programs(0) * B):
         index = start + tl.arange(0, B)
@@ -28,12 +36,18 @@ def norm_partials(
     tl.store(Scratch + tl.program_id(0), tl.sum(total, 0))
 
 
-@triton.jit(do_not_specialize=["column", "count"])
-def norm_sum(Scratch, Output, column, count, B: tl.constexpr):
+@triton.jit(do_not_specialize=["column", "count"])  # type: ignore[untyped-decorator]
+def norm_sum(
+    Scratch: tl.tensor,
+    Output: tl.tensor,
+    column: tl.tensor,
+    count: tl.tensor,
+    B: tl.constexpr,
+) -> None:
     index = tl.arange(0, B)
     values = tl.load(Scratch + index, index < count, other=0)
     tl.store(Output + column, tl.sum(values, 0))
 
 
 def grid(elements: int) -> int:
-    return min(PARTIALS, max(1, triton.cdiv(elements, BLOCK)))
+    return min(PARTIALS, max(1, (elements + BLOCK - 1) // BLOCK))

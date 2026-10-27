@@ -7,7 +7,7 @@ import json
 from dataclasses import dataclass
 from pathlib import Path
 
-from benchmarking.program_collection.corpus import ProgramCaseIdentity
+from benchmarking.program_collection.corpus import CASE_SCHEMA, ProgramCaseIdentity
 
 
 @dataclass(frozen=True, slots=True)
@@ -100,8 +100,10 @@ def _case_from_manifest(path: Path) -> CorpusProgramCase:
         raise ValueError(f"cannot read ShadowSpillProgram manifest {path}") from error
     if not isinstance(value, dict):
         raise ValueError(f"ShadowSpillProgram manifest {path} is not an object")
+    if value.get("schema") != CASE_SCHEMA:
+        raise ValueError(f"program manifest {path} has an unsupported schema")
     identity = ProgramCaseIdentity.from_value(value.get("identity"))
-    artifact = value.get("profiled_program", value.get("step_program"))
+    artifact = value.get("profiled_program")
     if not isinstance(artifact, dict):
         raise ValueError(f"program manifest {path} has no program artifact")
     program_digest = artifact.get("program_digest")

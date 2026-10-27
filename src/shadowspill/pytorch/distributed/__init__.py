@@ -50,10 +50,9 @@ class Distributed:
     These groups do not replace parameter replicas: ``shard_optimizer`` on the
     training API still partitions masters and optimizer state over those replicas.
 
-    ``symmetric_planning=True`` verifies matching planning memory contracts,
-    shares conservative timing estimates and divides CPU search work among
-    participants. Mismatches fall back to independent local searches. Each
-    rank still captures, profiles, and physically admits its own executable.
+    ``symmetric_planning`` enables matching memory-contract checks and
+    conservative timing aggregation in the retained low-level preparation
+    helpers. Public builders use declarative ``Parallelism`` instead.
     """
 
     def __init__(

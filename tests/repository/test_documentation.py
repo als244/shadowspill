@@ -650,12 +650,10 @@ def test_diagnostic_and_serialization_guides_cover_runtime_schemas() -> None:
     for required in (
         "## Program format",
         "## ShadowSpillPlanningProblem format",
-        "## StepProgram format",
         "## AnnotatedProgramPlan format",
         "## Loading and validation",
         artifact_schema("program"),
         artifact_schema("plan_program"),
-        artifact_schema("step_program"),
         artifact_schema("annotated_program_plan"),
         artifact_schema("fixed_physical_layout"),
     ):
@@ -806,23 +804,10 @@ def test_step_diagnostics_names_instants_and_durations_apart() -> None:
     )
 
 
-def test_every_plan_report_field_is_described_in_its_reference() -> None:
-    """The planning report is the other half of the evidence, and larger.
-
-    It carries several hundred fields across three dozen records, and a
-    reader looking one up has nowhere else to go. Its reference is a separate
-    page from the step trace because the two describe different objects on
-    different clocks, and merging them would bury both.
-    """
-
+def test_search_diagnostic_fields_are_described_in_the_reference() -> None:
+    """Document the inspectable search records used by the current Plan."""
     modules = (
-        "src/shadowspill/planner/diagnostics/plan/compilation.py",
-        "src/shadowspill/planner/diagnostics/plan/graphs.py",
-        "src/shadowspill/planner/diagnostics/plan/stages.py",
-        "src/shadowspill/planner/diagnostics/plan/layout.py",
-        "src/shadowspill/planner/diagnostics/plan/diagnostics.py",
-        "src/shadowspill/planner/diagnostics/plan/summary.py",
-        "src/shadowspill/planner/diagnostics/plan/report.py",
+        "src/shadowspill/planner/diagnostics/plan_summary.py",
         "src/shadowspill/planner/diagnostics/summary.py",
         "src/shadowspill/planner/diagnostics/resolved_programs.py",
         "src/shadowspill/planner/diagnostics/candidates.py",

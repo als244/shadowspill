@@ -7,8 +7,6 @@ from shadowspill.artifacts.entrypoints import entrypoint
 from shadowspill.artifacts.plan import Plan
 from shadowspill.communication.binding.groups import GroupBindings
 from shadowspill.communication.contracts import collective_measurement
-from shadowspill.pipeline.admission.layout_runtime import project_runtime_fixed_layout
-from shadowspill.pipeline.admission.selected import task_memory_envelope
 from shadowspill.planning.admission.outputs import output_bindings_for_entrypoints
 from shadowspill.profiling.records import measured_task
 from shadowspill.pytorch.executable import restore_executable
@@ -22,6 +20,8 @@ from shadowspill.runtime.plan import (
     admit_task,
     seal_fixed_layout,
 )
+from shadowspill.runtime.plan.envelopes import task_memory_envelope
+from shadowspill.runtime.plan.layout import project_runtime_fixed_layout
 from shadowspill.task.entrypoints import execution_entrypoints
 
 from .distributed.collectives import CollectiveTask

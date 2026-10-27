@@ -33,7 +33,14 @@ def test_generic_quickstart_search_run_plot(tmp_path):
     )
     assert sys.stdout is stdout
     report = SweepResult.load(output / "planning/sweep.ssp")
-    assert {case.candidate for case in report.cases} == {"two_images", "four_images"}
+    assert {case.candidate for case in report.cases} == {
+        "two_images: 1x4rp",
+        "two_images: 2x2rp",
+        "two_images: 4x1rp",
+        "four_images: 1x2rp",
+        "four_images: 2x1rp",
+    }
+    assert len(report.cases) == 10  # Five orderings at each of two budgets.
     assert (output / "report/index.html").is_file()
     assert list((output / "report").rglob("timeline.svg"))
     assert (output / "execution/performance.png").stat().st_size > 0

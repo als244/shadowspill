@@ -5,11 +5,11 @@ import sys
 from functools import partial
 
 import torch
-from torch._inductor.standalone_compile import AOTCompiledArtifact
 
 from shadowspill import Profiles, Program
 from shadowspill.artifacts._values import plain
 from shadowspill.libraries import resolve_library
+from shadowspill.pytorch.executable import restore_executable
 from shadowspill.pytorch.frontend import PyTorchFrontend
 from shadowspill.pytorch.profiling.profiler.boundary import AllocatorBoundary
 from shadowspill.pytorch.profiling.profiler.workspace import output_allocation_views
@@ -54,7 +54,11 @@ def main():
     program, profiles = Program.load(sys.argv[1]), Profiles.load(sys.argv[2])
     stream = boundary.stream()
     for key, payload in program.executables.items():
-        function = AOTCompiledArtifact.deserialize(payload)
+        function = restore_executable(
+            payload,
+            dependencies=program.bindings.get("operator_dependencies", {}).get(key, ()),
+            triton_choices=program.bindings.get("triton_choices", {}).get(key),
+        )
         arguments = prepare_inputs(program, key, torch.device("cuda", 0))
         boundary.invoke(partial(function, *arguments), stream)
         start_allocation_telemetry(installed.runtime_handle, capacity=131072)

@@ -116,9 +116,10 @@ class Control:
             chunk_bytes = 4 << 20  # Below TCPStore's 8 MiB per-value limit.
             count = (len(payload) + chunk_bytes - 1) // chunk_bytes
             for index in range(count):
+                # Store accepts bytes; the external stub only declares str.
                 self.store.set(
                     f"{key}/chunk/{index}",
-                    payload[index * chunk_bytes : (index + 1) * chunk_bytes],
+                    payload[index * chunk_bytes : (index + 1) * chunk_bytes],  # type: ignore[arg-type]
                 )
             for index in range(count, self._chunk_counts.get(key, 0)):
                 self.store.delete_key(f"{key}/chunk/{index}")

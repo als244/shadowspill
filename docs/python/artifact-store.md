@@ -1,420 +1,79 @@
-# Artifact store
+# Artifacts and caches
 
-The public phase APIs persist their results with explicit `save`/`load`; see
-[phase artifacts](api/artifacts.md#persistence-and-reports). They do not require
-ArtifactStore. This page describes the internal compiler/profile caches and
-the lower-level planner cache. Applications pass saved phase artifacts, not
-cache directories, between preparation and execution.
+Use `save(path)` and `load(path)` on `Program`, `Profiles`, `ProfiledProgram`,
+`Plan` and `SweepResult` to pass results between phases. Each archive is
+self-contained; a `ProfiledProgram` includes its Program, and a Plan includes
+its selected code and applied profiles. Checkpoint tensors and compatible
+runtime/provider libraries remain external. See the
+[artifact API](api/artifacts.md#persistence-and-reports).
 
-The content-addressed cache used by compiler adapters and
-`shadowspill.planner.plan_program()` holds two independent trees:
+`write_report(result, directory)` writes human-readable tables and timelines.
+Reports and disposable compiler caches are separate from saved phase artifacts.
+Neither is required to load a Plan.
 
-```text
-artifact_store/
-└── v1/                   one tree per store format version
-    ├── layout.json
-    ├── README.md
-    ├── build/            what a run pays for, and another run can reuse
-    │   ├── exports/      normalized Export archives and manifests
-    │   ├── graph_pairs/  structural AOT graph pairs
-    │   ├── optimizers/   traced optimizer updates
-    │   └── profiling/
-    │       ├── compiled_manifests/
-    │       └── measurements/
-    └── planning/         what a run decided
-        ├── programs/     the canonical ShadowSpillProgram each planning call was given
-        ├── requests/     what each search was asked for
-        ├── results/      its answer: resolution, schedule, diagnostics, and a summary of it
-        └── plans/        the ExecutionPlan a callable runs, with its lineage
-```
+## Compiler caches
 
-A build writes nothing under `planning/`, and a planning call nothing under
-`build/`. That is what lets one build store serve many runs that each keep
-their own plans. The program archive is in the planning tree for the same
-reason: a planning call archives the program it was handed, so a plan's
-lineage points at an immutable copy of what was planned, and that copy is
-evidence about the planning rather than something a build produced.
+PyTorch and Triton manage their own caches. Their normal temporary locations
+apply; ShadowSpill does not redirect them into a report or artifact directory.
+Set `TORCHINDUCTOR_CACHE_DIR` or `TRITON_CACHE_DIR` explicitly only when an
+alternate location is useful. Compiler intermediates can contain many small
+files, so node-local temporary storage is preferable to cold storage.
 
-There is exactly one version for the store and everything in it:
-`shadowspill.schema.ARTIFACT_VERSION`. It names the version directory, and
-every stored file, and every structure embedded in one (programs, schedules,
-plans, graph pairs, compiled manifests, profiles, selections, requests,
-manifests), carries it in its schema string as `shadowspill.<kind>/v<N>`. It is
-bumped whenever any stored structure changes, so one `artifact_store` can
-be kept across ShadowSpill updates: an update writes a fresh `v<N>` tree beside
-the old one and replans, and nothing inside one tree is ever read as a stale
-version. A file whose schema does not match inside a tree is corruption and
-raises. Documents that live outside the store, such as step and plan
-diagnostics, qualification results, and fixtures, version themselves. Callers
-should use manifests and artifact diagnostics rather than constructing leaf
-paths.
+Build finalizes task implementations and packages the required code in the
+Program. A fresh execution worker restores that payload; it does not depend on
+the build process's live compiler state. Build may use a temporary isolated
+cache to replace an incompatible AOT entry, and removes that directory afterward.
 
-## Identity
+## Internal content-addressed store
 
-Every artifact is found by a digest of its inputs, and each layer hashes only
-what changes its own answer. Two rules decide what goes in.
-
-**A key holds everything that changes the artifact.** If two requests would
-produce different bytes, they must not share a key. This is why a profile
-depends on the hardware and a plan depends on the bandwidths it was made for.
-
-**A key holds nothing else.** Anything a consumer chooses, rather than
-something the artifact is, stays out, or every such choice invalidates
-everything downstream of it. The clearest case is a `ShadowSpillPlanningProblem`: it
-records a problem, so a search *policy* is not part of it. Options are passed
-by whoever plans, and the same saved program answers any of them.
-
-| Artifact | Its key holds | Deliberately excluded |
-|---|---|---|
-| Export | callable semantics, graph signature, fixed input geometry, export bypass key | |
-| Graph pair | normalized stage semantic contract, differentiation options, the retention policy and the class it gives each of the stage's custom operators | |
-| Compiled manifest | graph-pair contract, compiler and provider identity, physical storage contract | |
-| Profile | compiled manifest, hardware, representative-value policy, `profiling_metadata`, allocation-probe policy | |
-| Step program | the export bypass key, the model's structure, the inputs' signatures, the optimizer's type, step code and hyperparameters, the request's own settings, the machine, the profiling environment, the data ordering | the library's own version: the key stands for the code, the caller's and the library's |
-| `ShadowSpillPlanningProblem` | the canonical `ShadowSpillProgram` and its measured task costs, the role, initial and final residency, admission facts, the device and its simulated capacities and calibrated transfers, and the capacity contract | `SearchOptions`. A program is a problem, not a search |
-| Planned program | the canonical `ShadowSpillProgram` digest, both residency lists, every device's capacity, both bandwidths and both latencies, the spill capacity, the admission and placement digests, which search ran, and everything that search was told | `workers`, which changes how long an answer takes and not which answer is right; and the plan handed in as the one to beat, which is provenance rather than the question |
-
-The plan manifest is the one document not found by a key. It is filed by the
-callable it was planned for, and it names the whole request and every artifact
-the call depended on, so it is where a plan is read rather than looked up.
-
-The planned-program key is built from the inputs *resolved for that call*, not
-from what a saved program happens to record. A caller that overrides budgets or
-bandwidths is asking a different question and gets a different key, which is
-what lets one corpus of programs be planned across a sweep of budgets without
-any point reading another point's answer.
-
-`profiling_metadata` describes data-dependent measurement effects that are not
-fully expressed by tensor geometry. For packed variable-length workloads, for
-example, the same `[T, D]` activation can use metadata that distinguishes one
-sequence from several shorter sequences. The value participates in profile
-and downstream plan identity but is never passed into execution.
-
-## What is saved beside a key
-
-A stored artifact carries more than its key. The extra fields are provenance:
-they record how the artifact came to exist, and they are never read back as
-inputs, so adding one cannot invalidate anything.
-
-- A `ShadowSpillPlanningProblem` records the budget and machine model in effect when
-  it was collected. Planning it uses what the caller passes.
-- A program corpus records, in each case manifest, the collection's runtime
-  configuration, model, geometry, and seed, beside the program itself.
-- A planned program records the options and resolved inputs it was searched
-  under, which is what makes a stale entry detectable rather than silently
-  reused: reading one re-derives the same fields and rejects a mismatch. It
-  also records the plan the search was handed to beat, which never enters the
-  key: a run that replans a budget without that plan in hand must still read
-  back the answer the sweep chose.
-- A certified plan has a summary beside it: what the plan promises, in a few
-  kilobytes, so a caller comparing many plans reads the summaries and the
-  whole plan only for the one it will run. It is derived from the plan and
-  its certificate, never read as an input to anything, and written again
-  whenever they are.
-- A search asked to keep its resolutions files each resolved program's best
-  plan beside the answer, in the answer's own form less the search
-  diagnostics and marked with the share it recomputes and whether it is the
-  answer. These are saved results, not inputs defining the search request.
-  A hit reads the answer alone unless `keep_resolutions=True` requests the
-  retained alternatives too.
-
-The distinction is worth keeping deliberately. A field that is hashed is a
-question; a field that is only saved is a note about the answer.
-
-## Where each artifact lands
-
-One rule covers every content-addressed artifact:
+`shadowspill.store.ArtifactStore` supports lower-level capture/profiling adapters
+and planner experiments. It is an optional cache, not a phase handoff mechanism.
+The public phase APIs do not require an ArtifactStore.
 
 ```text
-<kind>/<first two characters of the digest>/<digest>/<document>
+artifact_store/v<N>/
+├── layout.json
+├── README.md
+├── build/
+│   ├── graph_pairs/                 structural AOT graph pairs
+│   ├── optimizers/                  captured optimizer updates
+│   └── profiling/
+│       ├── compiled_manifests/      executable storage contracts
+│       └── measurements/            task measurements
+└── planning/
+    ├── programs/                   costed IR inputs
+    ├── requests/                   search inputs and settings
+    └── results/                    schedules, diagnostics and certificates
 ```
 
-A directory named for the key, sharded so no directory grows unbounded,
-holding one file per document. A kind that needs a second document later adds
-it beside the first rather than inventing a path, and every store builds this
-path through the same helper, `digest_directory`.
+Entries use `<kind>/<digest[:2]>/<digest>/...`. Identity includes the inputs
+that affect the result: graph structure, compilation choices, measurement setup,
+or planning budgets and communication costs. Planner worker count affects wall
+clock time, not the planning identity. Files use schema strings derived from
+`shadowspill.schema.ARTIFACT_VERSION`; incompatible schemas are rejected.
 
-| Kind | Path under `v<N>/` |
-|---|---|
-| Export | `build/exports/<2>/<digest>/exported_program.pt2` |
-| Graph pair | `build/graph_pairs/<2>/<digest>/graph_pairs.pt` |
-| Optimizer capture | `build/optimizers/<2>/<digest>/optimizer_capture.pt` |
-| Compiled manifest | `build/profiling/compiled_manifests/<2>/<digest>/manifest.json` |
-| Profile measurement | `build/profiling/measurements/<2>/<digest>/measurement.json` |
-| Step program | `build/steps/<2>/<key>/step_program.json`, with `manifest.json` beside it |
-| Canonical program | `planning/programs/<2>/<digest>/program.json` |
-| Selection request | `planning/requests/<2>/<digest>/request.json` |
-| Planned program | `planning/results/<2>/<digest>/selection.json`, with `certificate.npz` and `summary.json` beside it once certified |
-| Kept resolution | `planning/results/<2>/<digest>/resolutions/<label>/selection.json`: one per resolved program the search planned, when asked to keep them, certified beside the answer, its `certificate.npz` in the same folder; `<label>` is `recompute_<share>`, the share of the flexible groups it recomputes |
+The lower-level [planning JSON reference](planning-json.md) describes
+`ShadowSpillProgram`, `ShadowSpillPlanningProblem` and `AnnotatedProgramPlan`.
+The store's `artifacts()` method returns the files touched by that cache instance;
+`diagnostics()` lists its roots. These are cache records, not fields of Plan.
 
-The digest in a path is the key described above, so a path is a question and
-its contents are the answer. The program archive is the one entry keyed by
-something it wraps rather than by a composite: its digest is `ShadowSpillProgram.digest`,
-because the archive's job is to hold one immutable copy of each distinct
-program a plan can be traced back to. Graph pairs, optimizer captures and
-certificates are the entries that are not JSON: the first two hold compiled
-graphs and traced tensors, and a certificate holds columns that run to
-millions of entries. A graph pair's key covers the structural contract, the
-differentiation options and the retention policy together, so one entry is
-one digest like everything else.
+## Roots and policies
 
-Compiler intermediates are disposable and live **outside** the artifact store.
-The default root is PyTorch's temporary cache (`/tmp/torchinductor_<user>` on a
-standard Linux setup); no launch-time override is needed. Set
-`TORCHINDUCTOR_CACHE_DIR=/path/to/cache` only when an alternate root is wanted.
-ShadowSpill uses `<root>/shadowspill/<revision>-<digest>/` for Inductor and its
-`triton/` child for Triton. The revision is `export_bypass_key`, or `default`;
-rank-specific artifact stores share this compiler cache on a node. PyTorch and
-Triton own their content addressing and locking. A cache miss recompiles;
-copying a report or artifact store does not require these compiler files.
-Existing `build/inductor/` directories are compiler caches and are left untouched.
+`ArtifactStore.resolve(root, build_store=..., plan_store=...)` can place the
+build and planning trees under separate roots. Omitting `root` uses
+`~/.cache/shadowspill/v<N>`. `export_bypass_key` adds an explicit caller-provided
+identity to adapters that consume it; it does not control compiler cache paths.
 
-One directory is deliberately not content-addressed:
-`planning/plans/<model class>/<capture identity>/<plan digest>/` groups plan
-manifests under the qualified name of the class they were planned for, because
-a person reading a store wants the plans for one model rather than a digest they
-would have to compute. The last two segments are the leading sixteen characters
-of each identity.
+`build_store_mode` and `plan_store_mode` apply independently:
 
-## Rooting the two trees apart
+| Mode | Read | Write | On miss |
+| --- | --- | --- | --- |
+| `contribute` | Yes | Yes | Compute and save |
+| `reuse` | Yes | No | Compute without saving |
+| `require` | Yes | No | Raise with the missing key |
+| `refresh` | No | Yes | Recompute and replace |
 
-| Argument | Effect |
-|---|---|
-| `artifact_store` | Roots both trees under one directory's own `v<N>/`. `None` uses `~/.cache/shadowspill`. |
-| `build_store` | Roots `build/` elsewhere, overriding `artifact_store` for that tree. |
-| `plan_store` | Roots `planning/` elsewhere, overriding `artifact_store` for that tree. |
-
-The common shape is a build store several runs read and a plan store each run
-keeps to itself, so runs share the capture, compilation and profiling they
-paid for while each searches every point itself rather than reading back a
-plan another run found. A plan store gets its own `layout.json` naming the
-artifact store it was searched over.
-
-The lower-level `shadowspill.planner.plan_program()` takes `artifact_store`
-and `plan_store`; it plans a problem it is given and builds nothing. Public
-phase builders and `shadowspill.plan_program()` return independently saved archives.
-
-Long-running or reproducible work should pass an explicit artifact directory.
-Compiler caches stay on node-local temporary storage by default, separately from
-persistent exports, graph pairs, profiles and plans. Local storage is also
-preferable for high-frequency artifact publication.
-
-## Store modes
-
-`build_store_mode` and `plan_store_mode` each say what this run does with one
-tree: whether it reads what is there, and what it does about what is not.
-A mode sets all four gates at once -- read, write, overwrite, refuse a miss --
-so no combination that means nothing can be asked for.
-
-| Mode | Reads a hit | On a miss |
-|---|---|---|
-| `contribute` (default) | yes | builds it and writes it back |
-| `reuse` | yes | builds it and persists nothing |
-| `require` | yes | refuses, naming the request that missed and the mode that would allow it |
-| `refresh` | no | rebuilds and overwrites what was there |
-
-`reuse` is what makes a shared store safe to read from many runs at once, and
-`require` is what makes one a fixed reference: two results compared against a
-`require` store are known to have stood on the same artifacts rather than on
-whatever each rebuilt.
-
-The two trees take separate modes because they are shared for different
-reasons. A build artifact is what a run *paid for* and any run may reuse; a
-plan is what a run *decided*, and two runs comparing planners must not read
-each other's. So a run can keep its plans to itself and still contribute the
-builds it paid for.
-
-`build_store_mode` also decides where PyTorch compiles. Only `contribute`
-points Inductor and Triton at the external compiler cache. Every other mode runs
-them in a private temporary directory, with the process-local compiler caches
-cleared on the way in and out, so an earlier plan in this process cannot
-serve an entry the mode was told not to read. `refresh` publishes what it
-built there back into the external cache afterwards; `reuse` and `require`
-discard it. The artifact store records the cache path as provenance; it does
-not contain the compiler files.
-
-`export_bypass_key` is the other invalidation control. It marks the
-lower-level implementations a build was measured against, so a kernel change
-that does not change the exported graph still gives compiler and profile
-artifacts a new identity. It also names the Inductor cache subdirectory, so a
-fresh revision starts a fresh compiler cache. It reaches a plan only through
-the profiles behind it: a planned program's key does not name it.
-
-Export runs on every planning call, so Python objective and signature
-semantics are freshly validated. A matching Export archive is retained as
-evidence; it is not permission to skip capture.
-
-## What each record contains
-
-The four planning documents -- canonical `ShadowSpillProgram`, `ShadowSpillPlanningProblem`,
-`StepProgram`, and `AnnotatedProgramPlan` -- are specified field by field in
-[program and annotated-plan JSON](planning-json.md). The rest of the store is
-summarized here.
-
-Every record names its own schema, and one addressed by a key this store
-computed repeats that key inside itself, so a file found at the wrong path is
-detected rather than trusted. A record addressed by the digest of its own bytes
--- a canonical program, a selection request -- has nothing to repeat.
-
-**Compiled manifest** records what compiling one structural task produced:
-
-```text
-schema, graph_digest, profile_key_digest, manifest{
-  compatibility_digest, semantic_contract_digest,
-  storage_contract, optimized_storage_contract,
-  root_allocations, contract_capture_ns }
-```
-
-The two storage contracts are what a later profile and admission bind
-against; `compatibility_digest` is what a task is matched by.
-
-**Profile measurement** records what running that task cost:
-
-```text
-schema, key_digest, measurement{
-  runtime_ns, samples_ns,
-  timing_relative_mad, timing_half_drift, timing_unstable,
-  profiling_options, conditioning, sampling,
-  workspace_requested_bytes, workspace_charged_bytes, workspace_extent_bytes,
-  persistent_extent_bytes,
-  allocation_contract, allocation_trace, allocation_path_observations,
-  output_input_bindings, off_device_output_leaves, representative_inputs,
-  provenance, phase_timings_ns, profiling_wall_time_ns }
-```
-
-`runtime_ns` with its samples is the measured cost the planner schedules
-against. The `timing_*` fields describe stability; `profiling_options` records
-the effective warmup and timing policy. `conditioning` and `sampling` record
-`gpu_ns`, `wall_ns`, `iterations`, and `target_met`. Missing either duration
-target also sets `timing_unstable`. The
-allocation contract and trace are what physical admission replays,
-`off_device_output_leaves` names the outputs that came back from somewhere
-the plan does not manage, and `provenance` records the hardware and policy
-the measurement was taken under.
-
-A record this build cannot read is one it has not got: the entry is measured
-again and written over, rather than failing the run. The envelope is what has
-to be this build's, and an envelope that disagrees is corruption.
-
-**Selection request** is the question a search was put:
-
-```text
-schema, program_digest, initial_residency, final_residency,
-simulation, search, search_options, admission, incumbent
-```
-
-**Planned program** is the answer, keyed by that request:
-
-```text
-schema, key_digest, program_digest, initial_residency, final_residency,
-simulation, search, search_options, admission_digest, incumbent,
-schedule, selections, simulation_result, resident_slice, diagnostics
-```
-
-**Certificate** is the fixed layout certified for that plan, in
-`certificate.npz` beside the record:
-
-```text
-meta                      JSON: schema, facts_digest, layout header,
-                          simulator_input, simulation header, interval_names
-placements.<column>       one array per placement column
-reuse_dependencies.<column>
-task_allocation_leases.<column>
-simulation.tasks.<column>, simulation.transfers.<column>
-```
-
-`search` names the algorithm and `search_options` is everything it was told,
-both halves in full, so a plan searched over one candidate space is never read
-back for another. The search that ships carries its `resolution_options` there,
-the shares of the flexible groups to recompute as exact fractions (`"1/4"`).
-`selections` is the task-alternative choice per group and `schedule` the memory
-schedule it implies. `simulation_result` is the simulation the search answered
-with. The certificate is the fixed layout certified for the plan, the
-simulator input it implies and the physical simulation that proved it, named
-for the admission facts it was certified against; the call that certified it
-writes it after the plan, as a file of its own, so the record is never read or
-written again for it. What grows with the step is stored as arrays: the
-layout's columns, as the planning JSON lists them, and the simulation's task
-and transfer intervals in the order a simulation decodes them, by index into
-`interval_names`; the rest is the `meta` member. A new plan under the same key
-removes the old certificate with the old summary.
-`read_stored_selection` returns a record with its certificate merged back under
-`admission_certificate`, which is how the occupancy tool reads a store.
-Reading a record checks the request fields and both digests and rejects a
-mismatch, which is what makes a stale entry an error rather than a silent
-wrong answer; what it does not do is simulate or place again, so a hit costs
-its deserialization. `incumbent` is provenance in both documents and in
-neither key: it names the plan the search was handed to beat.
-
-**Plan summary** is what a certified plan promises, beside it under the same
-key:
-
-```text
-schema, key_digest, program_digest, schedule_digest,
-makespan_ns, answered_with_incumbent, summary, graph_pair_outcomes
-```
-
-`makespan_ns` is the plan's makespan as its certificate re-simulated it,
-`summary` the `PlanSummary` as a plan report serialises it,
-`graph_pair_outcomes` one record per graph-pair selection the search
-evaluated, and `answered_with_incumbent` whether the search answered with the
-plan it was handed to beat. `summarize_plan()` reads it, checking the two
-digests before returning the stored summary. It is written when the certificate is, by the same call,
-and dropped whenever the plan beside it is rewritten, so a record written
-before summaries were kept has none: the first summary read of such a record
-builds it from the plan and its certificate and keeps it when the store's mode
-allows writing. A verdict has no summary; the verdict is its own small record.
-
-**Verdict** is a search's refusal, under the key a plan would have had:
-
-```text
-schema, key_digest, program_digest, initial_residency, final_residency,
-simulation, search, search_options, admission_digest,
-verdict{ outcome, error, kind, message }
-```
-
-`outcome` is `infeasible` or `exhausted`, `error` the exception's name and
-`message` its text; a read raises the same refusal again. A verdict is written
-and read only when no plan to beat was handed in, because with one in hand the
-search may answer with that plan instead. A refusal that is a `RuntimeError`,
-such as a preparation failure, is not recorded: it may be the environment's.
-An answer found later, with a plan to beat, overwrites the verdict.
-
-**Plan manifest** is the readable record of one planning call, beside the
-`execution_plan.json` it produced:
-
-```text
-schema, mode, model, capture_identity,
-execution_device, execution_pool, spill_pool,
-execution_budget_bytes, spill_budget_bytes,
-requested_dynamic_scratch_reserve_bytes,
-allocation_probe_seeds, allocation_probe_repetitions,
-memory_bound_flops_per_byte,
-export_bypass_key, execution_plan_digest,
-execution_plan, artifacts, phase_timings_ns
-```
-
-`execution_plan` is the filename beside the manifest.
-
-`artifacts` lists every store entry the call depended on, which is how a plan
-is traced back to the profiles and programs behind it.
-
-## Plan diagnostics
-
-`PlanReport.diagnostics.store_directories` names the roots this call used as
-name/path pairs -- `root`, `build`, `build.inductor`, `planning`, `plan_store`
--- and `cache_artifacts` records every artifact it touched with its category,
-kind, digest, absolute path, schema, and dependency digests. Each carries one
-disposition:
-
-| Access | Meaning |
-|---|---|
-| `read` | Its bytes were loaded and used as planning authority. |
-| `matched` | It agreed with a freshly produced in-memory value, which was used instead. |
-| `write` | This call produced it. |
-| `improved` | A planned program this call replaced: a request handed a plan faster than the one on record searched again and won. |
-| `certified` | A planned program this call wrote the fixed-layout certificate beside, after certifying it. |
-| `verdict` | A refusal this call recorded under the key a plan would have had, so the next request for it is refused without a search. |
-| `managed` | A directory owned by another component, such as the Inductor cache. |
-
-Together they make a report a complete provenance index for the planning call.
+Entries are written atomically. A matching key with invalid content is an error,
+not a reason to accept stale evidence. Do not edit content-addressed entries.
+A planning experiment can share build data while keeping its search results in a
+separate `plan_store`; this does not require copying compiler caches.

@@ -9,7 +9,6 @@ from shadowspill.ir import (
     TaskProfile,
     TaskSpec,
 )
-from shadowspill.pipeline.admission import project_runtime_fixed_layout
 from shadowspill.planner import (
     AdmissionFacts,
     TaskAdmissionSpec,
@@ -24,9 +23,10 @@ from shadowspill.planner.admission.indexing import (
 from shadowspill.planner.admission.layout import build_fixed_layout_admission
 from shadowspill.runtime.admission_capi import NO_ID
 from shadowspill.runtime.fixed_layout import RuntimePlacementKind
+from shadowspill.runtime.plan.layout import project_runtime_fixed_layout
 from shadowspill.simulator import SimulationConfig
 from shadowspill.simulator.indexing import index_simulation_template
-from tests.shadowspill.pytorch.planning.test_fixed_layout import _selected
+from tests.shadowspill.runtime.plan.test_fixed_layout import _selected
 
 
 def test_fixed_arena_preserves_task_reuse_and_data_completion():

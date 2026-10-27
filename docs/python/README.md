@@ -11,11 +11,11 @@ How to use the system and how to read what it produces.
 
 - [Training with saved plans](../examples/generic-training.md)
 - [Independent build, profile, plan and execution APIs](../architecture/offline-pipeline.md)
-- [Artifact store](artifact-store.md)
+- [Artifacts and caches](artifact-store.md)
 - [PyTorch allocator integration](allocator.md)
 - [Errors, failures, and cleanup](failures.md)
 - [Interpreting a Plan](plan-report.md)
-- [PlanReport field reference](plan-report-fields.md)
+- [Planning diagnostic fields](plan-report-fields.md)
 - [PressureFit cut traces](pressurefit-trace.md)
 - [Interpreting execution diagnostics](step-diagnostics.md)
 - [program and annotated-plan JSON](planning-json.md)

@@ -231,9 +231,11 @@ def completed_artifact(
     if case.program_digest != raw.get("program_digest"):
         raise ValueError(f"saved program digest changed for {request.case_id}")
     if program.digest != raw.get("program_digest"):
-        raise ValueError(f"StepProgram content changed for {request.case_id}")
+        raise ValueError(f"ProfiledProgram content changed for {request.case_id}")
     if case.artifact_digest != raw.get("artifact_digest"):
-        raise ValueError(f"StepProgram artifact digest changed for {request.case_id}")
+        raise ValueError(
+            f"ProfiledProgram artifact digest changed for {request.case_id}"
+        )
     normalized = _portable_artifact(
         paths,
         {

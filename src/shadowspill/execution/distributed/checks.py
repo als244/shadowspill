@@ -2,8 +2,8 @@
 
 from collections.abc import Callable
 
-from shadowspill.pipeline.admission.physical import check_physical_budget
 from shadowspill.runtime import Runtime
+from shadowspill.runtime.budget import check_physical_budget
 
 from .worker import DistributedWorker
 

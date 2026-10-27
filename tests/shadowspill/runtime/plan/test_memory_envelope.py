@@ -11,10 +11,6 @@ from shadowspill.ir import (
     TaskProfile,
     TaskSpec,
 )
-from shadowspill.pipeline.admission.physical import _runtime_record_reserve
-from shadowspill.pipeline.admission.selected import (
-    task_memory_envelope,
-)
 from shadowspill.planner import (
     AdmissionFacts,
     GenericPlanningOptions,
@@ -30,12 +26,18 @@ from shadowspill.planning.admission.facts import (
     TaskOutputBinding,
     build_admission_facts,
 )
-from shadowspill.pytorch.profiling import (
+from shadowspill.runtime.budget import (
+    _runtime_record_reserve,
+)
+from shadowspill.runtime.plan.envelopes import (
+    task_memory_envelope,
+)
+from shadowspill.task.allocations import (
     TaskAllocationContract,
     TaskAllocationEvent,
     TaskAllocationOperation,
-    TaskMeasurement,
 )
+from shadowspill.task.profiles import TaskMeasurement
 from tests.shadowspill.planner._examples import (
     COMPUTE,
     DEVICE,

@@ -54,8 +54,7 @@ Planning chooses among the built alternatives; it does not compile or measure.
 `diagnostics` is a `PlanningDiagnostics` tree. It records the candidates visited,
 search counters, resolution outcomes and failures. PressureFit may also produce
 [cut traces](pressurefit-trace.md) for stepwise replay of its decisions.
-The lower-level [field reference](plan-report-fields.md) describes these neutral
-records alongside internal compilation/report records.
+The [field reference](plan-report-fields.md) describes these search records.
 
 A feasible result and an exhausted search are different: failure diagnostics
 say whether a constraint was violated or the search stopped without an answer.

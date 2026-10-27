@@ -83,7 +83,7 @@ when the failing task is known. `PlanInfeasibleError` retains the failure
 the search evidence behind the refusal. Both refusals are recorded in the
 planning store under the key the plan would have had, and the next request for
 that plan, made with no plan to beat in hand, raises the recorded refusal again
-without searching; see [the artifact store](artifact-store.md#what-each-record-contains). The original PyTorch exception remains
+without searching; see [the artifact store](artifact-store.md#internal-content-addressed-store). The original PyTorch exception remains
 the cause, so its traceback identifies the operator and model code that led to
 a capture or compilation failure.
 

@@ -7,9 +7,9 @@ import torch
 from shadowspill.artifacts._values import digest
 from shadowspill.artifacts.plan import Plan
 from shadowspill.ir import MemoryActionKind
-from shadowspill.pipeline.admission.physical import seal_worker_budget
 from shadowspill.pytorch.resource_streams import ResourceStreams
 from shadowspill.runtime.bootstrap import installed_runtime
+from shadowspill.runtime.budget import seal_worker_budget
 
 
 def worker_headroom(plans: Sequence[Plan], requested: int | None) -> int:

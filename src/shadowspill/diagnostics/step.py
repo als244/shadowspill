@@ -31,8 +31,8 @@ from .collectives import CollectiveTrace
 class TaskRecord:
     """One selected task, simulated beside measured."""
 
-    #: Identity. `execution_task_id` is the chronological join key shared
-    #: with `PlanReport.diagnostics.tasks`; `task_id` names the ShadowSpillProgram task.
+    #: `execution_task_id` identifies the chronological position in this run;
+    #: `task_id` joins the record to the selected task in the saved Plan.
     execution_task_id: str
     task_id: str
     execution_ordinal: int

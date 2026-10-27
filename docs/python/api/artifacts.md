@@ -127,10 +127,8 @@ caches are separate and never required to pass artifacts between phases.
 CPU-only. It writes the simulated timeline and memory/budget summaries. No
 runtime allocator or automatic profiling is invoked to render a report.
 
-## StepProgram
+## Lower-level planning records
 
-`StepProgram`, `ShadowSpillPlanningProblem`, `AnnotatedProgramPlan` and
-`TransferBandwidths` belong to the older preparation path still present for
-unmigrated internals. New callers should use the phase artifacts above. The
-[older JSON reference](../planning-json.md) documents those migration types;
-its combined build/profile/store workflow is not the current public pipeline.
+`ShadowSpillPlanningProblem`, `AnnotatedProgramPlan` and `TransferBandwidths`
+serve planner experiments and diagnostic tools. Their [JSON reference](../planning-json.md)
+is separate from the phase archives above.

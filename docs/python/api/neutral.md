@@ -86,8 +86,9 @@ profile and the minimum measured progress rates across ranks. Measurements
 must come from independent preparation probes; there is no automatic
 step-duration multiplier or model-specific correction. Empty measurements
 retain isolated timing. The artifact schema and the native ABI carry this contract.
-The PyTorch transfer-sharding frontend now measures these costs during profiling;
-its measurement-policy identity prevents reuse of prior isolated-only profiles.
+The low-level transfer-sharding profiler can measure these costs. In the public
+phase pipeline, communication calibration is separate from `measure_program`;
+see [distributed phases](../../architecture/offline-pipeline.md#logical-parallelism-and-distributed-plans).
 
 Indexed compiled projections:
 
@@ -140,18 +141,9 @@ pair_loss=True)` builds the one-at-a-time walk; `positions(pass_index)` and
 `backward_positions(pass_index)` give one pass's forward and backward order.
 `label` names the ordering in figures (`2x4rp`: the two counts, then `r` and `p`
 for the flags that are set) and `from_label()` reads one back. `to_dict()` and
-`from_dict(value, path)` carry it beside a `StepProgram` and a plan report; the
+`from_dict(value, path)` persist the ordering in planning metadata; the
 `path` names the position being read, so a malformed document is refused where
 it went wrong.
-
-### `StepProgram`
-
-The `ShadowSpillPlanningProblem` a captured step lowered to, with the
-provenance that says what produced it: the ordering, the
-measured profiles, and the digests that identify the content rather than the
-run. Low-level tooling constructs this record directly; `to_json()` and `from_json()` round it
-through a file, and `digest` identifies what it would plan as. Its fields are
-documented in [reusable artifacts](artifacts.md#stepprogram).
 
 ## `shadowspill.task`
 
@@ -190,12 +182,10 @@ profile recorded under an older one is not comparable.
 
 ## `shadowspill.store`
 
-Content-addressed storage for what each stage produced, and the modes that gate
-it. A store is not part of planning: it holds captured graphs, compiled
-profiles, programs and plans keyed by the digest of their inputs, so a later run
-asking the same question reads the answer instead of recomputing it. The
-frontend's build store, the planner's plan store, and the qualification
-harnesses all sit on this one.
+Optional caches for captured graphs, task measurements and planner results,
+keyed by the inputs that affect each result. These support lower-level adapters
+and planner experiments; public phase artifacts use independent `save`/`load`
+archives. See [artifacts and caches](../artifact-store.md).
 
 `ArtifactStore` is the store: two trees under one root.
 
@@ -238,7 +228,7 @@ is where one digest's entry lives under a tree. `atomic_json(path, value)` and
 beside their destination and renamed into place, so a reader never sees a
 partial record. `ArtifactRecorder` is the callback a store takes to publish
 each artifact it touched as a `PlanningArtifact`; the build store, the profile
-and manifest stores, the plan store and the step archive all take this one
+and manifest stores and the plan store all take this one
 protocol.
 
 [The artifact store](../artifact-store.md) has the layout and what each digest
@@ -834,8 +824,9 @@ calibration, independently of the frontend and pool kind.
 sizes and warmup/measured counts; its [arguments](frontend.md#runtime) apply to
 the neutral runtime as well. It measures solo and concurrent traffic, then
 atomically publishes `transfer_capabilities` while locally idle. Planning
-consumes this snapshot rather than recalibrating. The current simulator uses
-fixed effective rates, not a dynamic solo/concurrent bandwidth model.
+consumes this snapshot rather than recalibrating. The simulator uses the supplied
+solo/concurrent rates and integrates partial overlap; see
+[simulation](../../architecture/simulation.md#solo-and-concurrent-bandwidth).
 
 ### `shadowspill.runtime.timing`
 

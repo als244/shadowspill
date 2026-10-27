@@ -57,13 +57,14 @@ def initialize_storage_(
         if mode is None
         else mode.registry.storage(int(destination.untyped_storage()._cdata))
     )
-    whole = (
-        item is not None
+    sharding = (
+        item.sharding
+        if item is not None
         and destination.storage_offset() == 0
         and destination.is_contiguous()
         and destination.numel() * destination.element_size() == item.size_bytes
+        else None
     )
-    sharding = item.sharding if whole else None
 
     def materialize() -> torch.Tensor:
         value = torch.empty(destination.shape, dtype=destination.dtype, device="cpu")
@@ -97,6 +98,7 @@ def initialize_storage_(
     assert mode is not None and item is not None
     _write_storage_bytes(mode.runtime, item, value, synchronize=True)
     return destination
+
 
 _WRITE_ONLY_INITIALIZERS = frozenset(
     {
@@ -189,7 +191,7 @@ class pool_values(TorchDispatchMode):  # type: ignore[no-untyped-call]
         self._tokens: list[Any] = []
 
     def __enter__(self) -> pool_values:
-        super().__enter__()
+        super().__enter__()  # type: ignore[no-untyped-call]
         self._tokens.append(_active.set(self))
         return self
 

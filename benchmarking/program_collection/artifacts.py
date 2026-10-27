@@ -1,4 +1,4 @@
-"""Atomic phase archives, with read support for existing planning corpora."""
+"""Atomic, self-contained phase archives for planning corpora."""
 
 import errno
 import hashlib
@@ -10,17 +10,14 @@ from pathlib import Path
 
 from benchmarking._serialization import atomic_json, json_mapping, read_mapping
 from shadowspill.artifacts.profiled_program import ProfiledProgram
-from shadowspill.step.program import StepProgram
 
 from .corpus import (
+    CASE_SCHEMA,
+    PROGRAM_FILENAME,
     ProgramCaseIdentity,
     SavedProgramCase,
     initialize_corpus,
-    load_step_program,
 )
-
-_SCHEMA = "shadowspill.planning_corpus.case/v2"
-_FILENAME = "profiled_program.ssp"
 
 
 def save_profiled_program(
@@ -28,7 +25,7 @@ def save_profiled_program(
     *,
     identity: ProgramCaseIdentity,
     program: ProfiledProgram,
-    metadata: Mapping[str, object],
+    metadata: Mapping[str, object] | None = None,
 ) -> SavedProgramCase:
     """Publish one self-contained phase result; retries cannot replace evidence."""
     initialize_corpus(root)
@@ -36,23 +33,23 @@ def save_profiled_program(
         root / "cases" / identity.case_name / identity.geometry_name / program.digest
     )
     directory.parent.mkdir(parents=True, exist_ok=True)
-    metadata = json_mapping(metadata, "metadata")
+    metadata = json_mapping(metadata or {}, "metadata")
     staging = Path(tempfile.mkdtemp(prefix=".collect-", dir=directory.parent))
     try:
-        archive = staging / _FILENAME
+        archive = staging / PROGRAM_FILENAME
         program.save(archive)
         checksum = _checksum(archive)
         saved = SavedProgramCase(
-            directory.resolve(), identity, program.digest, checksum, _FILENAME
+            directory.resolve(), identity, program.digest, checksum
         )
         atomic_json(
             staging / "manifest.json",
             {
-                "schema": _SCHEMA,
+                "schema": CASE_SCHEMA,
                 "identity": identity.to_dict(),
                 "metadata": metadata,
                 "profiled_program": {
-                    "path": _FILENAME,
+                    "path": PROGRAM_FILENAME,
                     "program_digest": program.digest,
                     "artifact_sha256": checksum,
                 },
@@ -79,16 +76,16 @@ def save_profiled_program(
     return saved
 
 
-def load_program(path: Path) -> tuple[SavedProgramCase, ProfiledProgram | StepProgram]:
-    """Validate an archive or an older JSON case without loading CUDA or a model."""
+def load_program(path: Path) -> tuple[SavedProgramCase, ProfiledProgram]:
+    """Validate a phase archive without loading CUDA or a model."""
     directory = path if path.is_dir() else path.parent
     manifest = read_mapping(directory / "manifest.json", "case manifest")
-    if manifest.get("schema") != _SCHEMA:
-        return load_step_program(path)
+    if manifest.get("schema") != CASE_SCHEMA:
+        raise ValueError("case manifest has an unsupported schema")
     artifact = manifest["profiled_program"]
-    if artifact["path"] != _FILENAME:
+    if artifact["path"] != PROGRAM_FILENAME:
         raise ValueError("unsupported profiled-program filename")
-    archive = directory / _FILENAME
+    archive = directory / PROGRAM_FILENAME
     if _checksum(archive) != artifact["artifact_sha256"]:
         raise ValueError("saved ProfiledProgram artifact digest does not match")
     program = ProfiledProgram.load(archive)
@@ -99,7 +96,6 @@ def load_program(path: Path) -> tuple[SavedProgramCase, ProfiledProgram | StepPr
         ProgramCaseIdentity.from_value(manifest["identity"]),
         program.digest,
         artifact["artifact_sha256"],
-        _FILENAME,
     ), program
 
 
