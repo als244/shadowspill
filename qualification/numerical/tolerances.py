@@ -54,7 +54,10 @@ def meets_tensor_tolerance(
     nothing but its optimizer steps: given the run's ``step_size`` and
     ``steps``, one whose every element lies within ``steps`` learning rates of
     zero passes when no element is further from the reference than
-    :data:`STEP_QUANTUM_DISAGREEMENTS` learning rates.
+    :data:`STEP_QUANTUM_DISAGREEMENTS` learning rates, measured at the
+    resolution the weight is stored at: a BF16 weight two learning rates from
+    its reference lands on the nearest BF16 value, up to one ulp of its
+    largest element away from the bound itself.
     """
 
     half = state_half(key)
@@ -72,7 +75,8 @@ def meets_tensor_tolerance(
         and steps > 0
         and half == "model"
         and metric.reference_maximum_absolute <= steps * step_size
-        and metric.maximum_absolute_error <= STEP_QUANTUM_DISAGREEMENTS * step_size
+        and metric.maximum_absolute_error
+        <= STEP_QUANTUM_DISAGREEMENTS * step_size + metric.resolution
     )
 
 

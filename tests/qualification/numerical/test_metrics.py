@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import pytest
 import torch
 
 from qualification.numerical.measures import (
@@ -10,6 +11,7 @@ from qualification.numerical.metrics import (
     TensorMetrics,
     compare_states,
     state_digest,
+    tensor_metrics,
 )
 from qualification.numerical.tolerances import meets_tensor_tolerance
 from qualification.numerical.verdict import transfer_pressure_gate_passed
@@ -121,6 +123,31 @@ def test_a_weight_made_only_of_optimizer_steps_is_judged_absolutely() -> None:
     # More than one step's disagreement fails.
     drifted = TensorMetrics(0.996, 0.09, 1.0, 7e-4, reference_maximum_absolute=1.2e-3)
     assert not meets_tensor_tolerance(drifted, key=key, step_size=lr, steps=steps)
+    # Stored in BF16, two learning rates from the reference is 6.07e-4, not
+    # 6.0e-4: the bound is read at that resolution (tubingen, 2026-10-28).
+    rounded = TensorMetrics(
+        cosine=0.9832,
+        relative_l2=0.194,
+        sign_agreement=1.0,
+        maximum_absolute_error=6.0654e-4,
+        reference_maximum_absolute=1.2283e-3,
+        resolution=torch.finfo(torch.bfloat16).eps * 1.2283e-3,
+    )
+    assert meets_tensor_tolerance(rounded, key=key, step_size=lr, steps=steps)
+    # The same excess in an FP32 weight is a real third of a step over.
+    exact = TensorMetrics(
+        0.9832,
+        0.194,
+        1.0,
+        6.0654e-4,
+        reference_maximum_absolute=1.2283e-3,
+        resolution=torch.finfo(torch.float32).eps * 1.2283e-3,
+    )
+    assert not meets_tensor_tolerance(exact, key=key, step_size=lr, steps=steps)
+    bf16 = torch.tensor([1.2283e-3, 0.0], dtype=torch.bfloat16)
+    assert tensor_metrics(bf16, bf16).resolution == pytest.approx(
+        torch.finfo(torch.bfloat16).eps * float(bf16.float().abs().max())
+    )
     # An optimizer moment is judged by its own relative bound alone.
     moment_key = "state/optimizer/state/0/exp_avg"
     assert not meets_tensor_tolerance(bias, key=moment_key, step_size=lr, steps=steps)

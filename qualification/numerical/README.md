@@ -192,8 +192,10 @@ element of the reference within `steps` learning rates of zero, as a bias
 started at zero is after a few steps -- has no scale of its own for a relative
 bound to measure, so it is held to an absolute one instead: no element may be
 further from the reference than two learning rates, which is one step whose
-gradient sign the two runs' roundings disagreed on. The gate also requires a checkpoint replay to agree with the
-uninterrupted run within tolerance, and records whether it agreed bit for bit
-besides.
+gradient sign the two runs' roundings disagreed on, read at the resolution the
+weight is stored at (a BF16 weight two learning rates away lands on the nearest
+BF16 value, up to one ulp of its largest element past the bound). The gate also
+requires a checkpoint replay to agree with the uninterrupted run within
+tolerance, and records whether it agreed bit for bit besides.
 
 Use the [nondeterminism probe](../nondeterminism/README.md) to locate a divergence.

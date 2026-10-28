@@ -21,6 +21,10 @@ class TensorMetrics:
     reference_maximum_absolute: float = 0.0
     actual_maximum_absolute: float = 0.0
     numel: int = 0
+    #: One ulp of the stored dtype at the reference's largest element: the
+    #: closest two values held at that dtype can sit, and the slack an
+    #: absolute bound needs when the bound itself is not representable there.
+    resolution: float = 0.0
 
 
 def state_digest(value: object) -> str:
@@ -119,6 +123,11 @@ def tensor_metrics(reference: torch.Tensor, actual: torch.Tensor) -> TensorMetri
     right = actual.detach().float().reshape(-1)
     if left.numel() == 0:
         return TensorMetrics(1.0, 0.0, 1.0, 0.0)
+    resolution = (
+        float(torch.finfo(reference.dtype).eps) * float(left.abs().max())
+        if reference.is_floating_point()
+        else 0.0
+    )
     difference = right - left
     # Reduce in float64. A cosine is at most 1, but the numerator and the
     # denominator are separate reductions with independent rounding, so in
@@ -154,6 +163,7 @@ def tensor_metrics(reference: torch.Tensor, actual: torch.Tensor) -> TensorMetri
         reference_maximum_absolute=float(left.abs().max()),
         actual_maximum_absolute=float(right.abs().max()),
         numel=left.numel(),
+        resolution=resolution,
     )
 
 
