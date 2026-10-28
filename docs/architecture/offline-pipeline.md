@@ -293,8 +293,8 @@ finally:
 ```
 
 Distributed execution requires symmetric local programs. Common DP supports
-sharded and replicated parameter storage; differing nontrivial storage groups
-require redistribution support. Model-owned communication requires compatible
+sharded and replicated parameter storage, with buffers stored whole on every
+rank; differing nontrivial storage groups require redistribution support. Model-owned communication requires compatible
 operators and resource bindings; declaring a group alone does not rewrite it.
 Tensor loaders/exporters see original tensor geometry, global element offsets,
 and the worker's owned region. Checkpoint helpers save one archive per logical

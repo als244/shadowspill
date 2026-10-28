@@ -79,6 +79,13 @@ only from `default_parameter_storage`.
 optimizer ownership. A storage group may contain only ranks that compute with
 copies of the same logical parameter slice.
 
+The modes govern parameters. A buffer is stored whole on every rank: it has no
+gradient or optimizer state to share a shard with, and a program that mutates
+one (a step counter, a running statistic) does so on each rank's own copy.
+Optimizer state that is not parameter-element storage, such as a column norm,
+keeps the placement its optimizer gave it: replicated optimizer data loads and
+exports it by its own geometry, and sharded optimizer data cannot hold it.
+
 For example, the ownership resolver can describe two eight-way model-shard
 groups inside one 16-rank replica, with corresponding expert slices stored across
 pairs and dense attention weights stored across all 16 ranks:

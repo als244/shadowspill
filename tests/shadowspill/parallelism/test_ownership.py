@@ -71,6 +71,27 @@ def test_sixteen_rank_experts_and_attention_have_different_ownership():
         )
 
 
+def test_buffers_are_stored_whole_on_every_rank():
+    """A buffer has no gradient or optimizer shard to match, and a program that
+    mutates one does so on each rank's own copy, so the storage modes leave it
+    whole; a frozen parameter keeps its declared mode."""
+
+    spec = Parallelism.dp(ranks_per_replica=4, num_replicas=2)
+    counter, frozen = resolve_parameters(
+        spec,
+        (
+            ParameterGeometry(("counter",), (), False, parameter=False),
+            ParameterGeometry(("weight",), (12,), False),
+        ),
+    )
+    assert counter.copies(5) == tuple(range(8))
+    assert counter.weights.groups == tuple((rank,) for rank in range(8))
+    assert counter.weights.capacity == 1
+    assert counter.storage("weights", 5).region(5) == (0, 1)
+    assert frozen.weights.groups == ((0, 1, 2, 3), (4, 5, 6, 7))
+    assert frozen.weights.capacity == 3
+
+
 def test_group_order_determines_slices_not_numeric_rank_order():
     spec = Parallelism(
         ranks_per_replica=4,

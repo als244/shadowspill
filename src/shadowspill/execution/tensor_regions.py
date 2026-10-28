@@ -77,10 +77,19 @@ def tensor_regions(program: Program, logical_rank: int) -> dict[str, TensorRegio
         if value is None or value in regions or not item["shape"]:
             continue  # CPU controls and scalar state are not parameter shards.
         name = item.get("parameter_name")
-        if name is not None and name in parameters:
-            regions[value] = _parameter_region(
-                parameters[name], "optimizer", item, logical_rank
-            )
+        if name is None or name not in parameters:
+            continue
+        owner = parameters[name]["optimizer"]
+        if len(owner["groups"][0]) == 1 and prod(item["shape"]) != owner["elements"]:
+            # Optimizer state that is not parameter-element storage (a column
+            # norm, a factored moment) has the placement its optimizer gave it:
+            # stored whole on every rank, it is loaded and exported by its own
+            # geometry. No parameter slice describes a sharded one, which
+            # _parameter_region refuses.
+            continue
+        regions[value] = _parameter_region(
+            parameters[name], "optimizer", item, logical_rank
+        )
     if bindings.get("kind") == "forward_backward":
         for item in bindings.get("persistent_gradients", ()):
             regions[item["gradient_object_id"]] = _parameter_region(

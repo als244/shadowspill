@@ -20,6 +20,10 @@ class ParameterStorage:
     ``min_shard_bytes`` is opt-in (zero by default). Parameters whose unpadded
     physical weight storage is smaller keep all components replicated. Frozen
     tensor-wrapper payloads/scales are also checked separately during lowering.
+
+    The modes govern parameters. A buffer is stored whole on every rank: it has
+    no gradient or optimizer state to share a shard with, and a program that
+    mutates one does so on each rank's own copy.
     """
 
     group: str | None = None

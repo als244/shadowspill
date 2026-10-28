@@ -33,6 +33,16 @@ def test_cutoff_uses_physical_dtype_and_unpadded_bytes():
     assert model_parallelism(model, loaded)[1] == (weight, bias)
 
 
+def test_buffers_are_inventoried_whole_on_every_rank():
+    model = nn.Module()
+    model.weight = nn.Parameter(torch.empty(8, device="meta"))
+    model.register_buffer("counter", torch.zeros((), dtype=torch.int64, device="meta"))
+    _, (weight, counter) = model_parallelism(model, Parallelism.dp(ranks_per_replica=2))
+    assert weight.weights.capacity == 4
+    assert counter.weights.groups == ((0,), (1,))
+    assert counter.weights.capacity == 1
+
+
 def test_cutoff_is_opt_in_and_exact_override_can_disable_it():
     model = nn.Linear(8, 4, device="meta")
     spec = Parallelism.dp(ranks_per_replica=4)

@@ -12,12 +12,17 @@ from .storage import Component
 
 @dataclass(frozen=True)
 class ParameterGeometry:
-    """Internal framework-neutral inventory entry; names share one tensor."""
+    """Internal framework-neutral inventory entry; names share one tensor.
+
+    ``parameter`` is False for a buffer: a registered tensor with no gradient
+    or optimizer state, which every rank stores whole.
+    """
 
     names: tuple[str, ...]
     shape: tuple[int, ...]
     trainable: bool
     storage_bytes: int | None = None
+    parameter: bool = True
 
     def __post_init__(self) -> None:
         if not self.names or len(set(self.names)) != len(self.names):
@@ -83,7 +88,11 @@ def _resolve(spec: Parallelism, item: ParameterGeometry) -> ParameterOwnership:
                     f"{item.names[0]} {component}: storage group combines different "
                     "logical parameter shards"
                 )
-        if small or getattr(storage, component) == "replicated":
+        # A buffer has no gradient or optimizer state to share a shard with,
+        # and a program that mutates one (a step counter, a running statistic)
+        # does so on each rank's own copy, so every rank stores it whole. The
+        # modes govern parameters; a frozen parameter keeps its declared mode.
+        if small or not item.parameter or getattr(storage, component) == "replicated":
             groups = tuple((rank,) for rank in range(spec.world_size))
         return StorageOwnership(prod(item.shape), groups)
 

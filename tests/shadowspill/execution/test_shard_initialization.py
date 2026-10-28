@@ -126,12 +126,103 @@ def host_storage(program, rank):
     values = {}
     for _, value, _ in tensor_entries(state):
         alias = state.aliases[value]
-        region = state.regions[value]
-        dtype = getattr(torch, region.geometry["dtype"].removeprefix("torch."))
-        values.setdefault(alias, torch.full((region.capacity,), -9, dtype=dtype))
+        region = state.regions.get(value)
+        geometry = state.geometry[value] if region is None else region.geometry
+        dtype = getattr(torch, geometry["dtype"].removeprefix("torch."))
+        capacity = (
+            state.sizes[alias] // dtype.itemsize if region is None else region.capacity
+        )
+        values.setdefault(alias, torch.full((capacity,), -9, dtype=dtype))
     state.initial = set(values)
     state.spill = MemorySpill(values)
     return state, values
+
+
+def columns_program(optimizer_groups):
+    """One replicated weight whose optimizer keeps a column norm beside a moment."""
+
+    elements = 6
+    rows = [
+        {
+            "name": f"optimizer.layer.weight.{name}",
+            "parameter_name": "layer.weight",
+            "role": "state",
+            "object_id": name,
+            "shape": shape,
+            "stride": (1,),
+            "dtype": "torch.float32",
+            "initialization": {"kind": "constant", "value": 0},
+        }
+        for name, shape in (("columns", (3,)), ("velocity", (elements,)))
+    ]
+    bindings = {
+        "kind": "step",
+        "entrypoints": [],
+        "task_inputs": {},
+        "root_inputs": [],
+        "root_sources": [],
+        "registrations": [{"name": "layer.weight", "object_id": "weight"}],
+        "model_tensor_geometry": {
+            "weight": {"dtype": "torch.bfloat16", "shape": (elements,), "stride": (1,)}
+        },
+        "parameter_ownership": [
+            {
+                "names": ("layer.weight",),
+                "local_shape": (elements,),
+                "optimizer": {"elements": elements, "groups": optimizer_groups},
+                "gradients": {"elements": elements, "groups": optimizer_groups},
+            }
+        ],
+        "weight_shards": {},
+        "optimizer_bindings": rows,
+    }
+    return Program(
+        devices=(DeviceSpec("device", "worker", "cuda", 0),),
+        alias_groups=(
+            AliasGroupSpec("weight", "device", elements * 2),
+            AliasGroupSpec("columns", "device", 12),
+            AliasGroupSpec("velocity", "device", elements * 4),
+        ),
+        objects=(
+            ObjectSpec("weight", "weight", 0, elements * 2),
+            ObjectSpec("columns", "columns", 0, 12),
+            ObjectSpec("velocity", "velocity", 0, elements * 4),
+        ),
+        tasks=(),
+        task_definitions=(),
+        parallelism=Parallelism.dp(ranks_per_replica=2, num_replicas=2),
+        bindings=bindings,
+    )
+
+
+def test_optimizer_tensors_that_are_not_parameter_slices_keep_their_own_geometry():
+    """A column norm has the placement its optimizer gave it: stored whole on
+    every rank it is loaded and exported by its own geometry, and no parameter
+    slice describes a sharded one."""
+
+    with pytest.raises(ValueError, match="parameter-element"):
+        tensor_regions(columns_program(((1, 0), (3, 2))), 0)
+    program = columns_program(((0,), (1,), (2,), (3,)))
+    for rank in range(4):
+        regions = tensor_regions(program, rank)
+        assert "columns" not in regions
+        assert (regions["velocity"].offset, regions["velocity"].length) == (0, 6)
+    state, values = host_storage(program, 2)
+    visit_tensors(state, lambda request, chunk: chunk.fill_(1), 12, initialize=True)
+    assert values["columns"].tolist() == [0.0, 0.0, 0.0]
+    exported = {}
+    visit_tensors(
+        state,
+        lambda request, chunk: exported.setdefault(request.name, []).append(
+            (request.offset, request.shape, chunk.numel())
+        ),
+        12,
+        initialize=False,
+    )
+    assert exported["optimizer.layer.weight.columns"] == [(0, (3,), 3)]
+    assert (
+        sum(count for _, _, count in exported["optimizer.layer.weight.velocity"]) == 6
+    )
 
 
 @pytest.mark.parametrize("rank", range(4))

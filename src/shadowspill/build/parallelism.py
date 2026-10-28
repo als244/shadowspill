@@ -26,6 +26,9 @@ def model_parallelism(
     for name, value in tensors:
         names.setdefault(id(value), []).append(name)
         values[id(value)] = value
+    parameters = {
+        id(value) for _, value in model.named_parameters(remove_duplicate=False)
+    }
     geometry = tuple(
         ParameterGeometry(
             tuple(names[key]),
@@ -37,6 +40,7 @@ def model_parallelism(
                     for _, leaf in tensor_components(value)
                 }.values()
             ),
+            parameter=key in parameters,
         )
         for key, value in values.items()
     )
