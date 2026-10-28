@@ -17,15 +17,22 @@ from tests.shadowspill.execution._trace_checks import check_trace  # noqa: E402
 
 def compare(executor, expected):
     values = {}
+    missing = set()
 
     def collect(request, chunk):
         assert chunk.device.type == "cpu" and chunk.nbytes <= 8192
+        if request.name not in expected:
+            missing.add(request.name)
+            return
         wanted = expected[request.name].reshape(-1)
         target = values.setdefault(request.name, [[], []])
         target[0].append(chunk.clone())
         target[1].append(wanted[request.offset : request.offset + chunk.numel()])
 
     executor.export_tensors(collect, chunk_bytes=8192)
+    # Name every tensor the reference lacks at once; the Executor exports the
+    # whole Program, and the reference must account for all of it.
+    assert not missing, f"the reference has no values for {sorted(missing)}"
     moments = 0
     for name, (chunks, references) in values.items():
         actual, wanted = torch.cat(chunks), torch.cat(references)

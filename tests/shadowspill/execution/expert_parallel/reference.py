@@ -31,6 +31,34 @@ def payloads(model):
             yield name, value.detach()
 
 
+def constants(program):
+    """The Program's lifted constants, named as the Executor exports them.
+
+    Mirrors shadowspill.execution.tensors: a step program scopes each
+    example's constants by example index, a forward program does not.
+    """
+
+    bindings = program.bindings
+    groups = bindings["root_inputs"]
+    if bindings["kind"] == "forward":
+        groups = [groups]
+    values = {}
+    for index, slots in enumerate(groups):
+        sources = (
+            bindings["example_root_sources"][index]
+            if "example_root_sources" in bindings
+            else bindings["root_sources"]
+        )
+        for slot in slots:
+            source = sources[slot["leaf_index"]]
+            if source["kind"] == "CONSTANT_TENSOR" and "value" in source:
+                scope = "" if bindings["kind"] == "forward" else f"example_{index}."
+                values["constant." + scope + source["name"]] = torch.tensor(
+                    source["value"]
+                )
+    return values
+
+
 def dense(value):
     convert = getattr(value, "dequantize", None)
     if type(value) not in (torch.Tensor, nn.Parameter) and callable(convert):
@@ -86,6 +114,16 @@ def reference(root, request, group):
                 for name, parameter in parameters.items():
                     parameter.copy_(masters[name])
             values = {name: value.cpu().clone() for name, value in payloads(model)}
+            values.update(constants(plan.program))
+            # A mastered parameter's BF16 compute copy is the model's own weight;
+            # the Executor exports it under the compute prefix.
+            values.update(
+                {
+                    "compute." + name: values[name]
+                    for name in (n for n, _ in payloads(model))
+                    if name.removesuffix("._data") in parameters
+                }
+            )
             values.update(
                 {
                     "master." + name: value.detach().cpu().clone()
