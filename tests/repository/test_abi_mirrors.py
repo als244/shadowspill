@@ -16,6 +16,7 @@ from pathlib import Path
 
 import pytest
 
+from shadowspill.libraries import shadowspill_library_path
 from shadowspill.planner.capi import CScheduleAdmissionResult
 from shadowspill.planner.search.algorithms.pressurefit.capi import CPressureFitOptions
 from shadowspill.runtime import abi
@@ -73,20 +74,26 @@ _CONSTANTS = {
 
 
 def _c_sizes() -> dict[str, int]:
-    for directory in sorted(ROOT.glob("build/*")):
-        probe = directory / "shadowspill_abi_sizes_canary"
-        if not probe.is_file():
-            continue
-        completed = subprocess.run(
-            (str(probe),), check=True, capture_output=True, text=True
+    """What the C probe built beside the library this interpreter loads reports.
+
+    The probe is read from the build tree the library is resolved from, never
+    from whichever tree under ``build/`` sorts first: an older tree left beside
+    the current one answers for headers it was never built against.
+    """
+
+    library = shadowspill_library_path()
+    probe = None if library is None else library.parent / "shadowspill_abi_sizes_canary"
+    if probe is None or not probe.is_file():
+        pytest.skip("the C size probe has not been built beside the library in use")
+    completed = subprocess.run(
+        (str(probe),), check=True, capture_output=True, text=True
+    )
+    return {
+        name: int(size)
+        for name, size in (
+            line.split() for line in completed.stdout.splitlines() if line.strip()
         )
-        return {
-            name: int(size)
-            for name, size in (
-                line.split() for line in completed.stdout.splitlines() if line.strip()
-            )
-        }
-    pytest.skip("the C size probe has not been built")
+    }
 
 
 def test_every_ctypes_structure_matches_its_c_struct() -> None:
