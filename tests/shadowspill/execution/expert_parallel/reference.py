@@ -15,11 +15,20 @@ from shadowspill.resources.preparation import prepare_resources
 
 
 def payloads(model):
-    for name, value in model.state_dict().items():
+    # Every tensor the Program declares, as the build inventories them: the
+    # parameters and all buffers, the non-persistent rotary tables included,
+    # which state_dict() leaves out and the Executor fills and exports.
+    tensors = {
+        **dict(model.named_buffers(remove_duplicate=False)),
+        **dict(model.named_parameters(remove_duplicate=False)),
+    }
+    for name, value in tensors.items():
+        # Storage views, as state_dict() hands them out: filled and read in
+        # place, never through autograd.
         if hasattr(value, "_data"):
-            yield name + "._data", value._data
+            yield name + "._data", value._data.detach()
         else:
-            yield name, value
+            yield name, value.detach()
 
 
 def dense(value):
