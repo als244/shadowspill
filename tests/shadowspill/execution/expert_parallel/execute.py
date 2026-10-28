@@ -67,10 +67,15 @@ def execute(root, request, group):
                 **inputs, hyperparams=setup["hyperparams"], runtime_trace=index == 0
             )
             result = pending.result()
-            for loss, wanted in zip(result.losses, reference["losses"], strict=True):
-                torch.testing.assert_close(loss.cpu(), wanted, rtol=0.02, atol=0.002)
+            # Release the device outputs before any assertion: the Runtime
+            # cannot close while caller-owned outputs still reference its pools.
+            losses = [loss.cpu() for loss in result.losses]
+            diagnostics = pending.diagnostics
+            del result, pending
+            for loss, wanted in zip(losses, reference["losses"], strict=True):
+                torch.testing.assert_close(loss, wanted, rtol=0.02, atol=0.002)
             if index == 0:
-                check_trace(plan, pending.diagnostics)
+                check_trace(plan, diagnostics)
             compare(executor, reference["values"])
             if index == 0:
                 checkpoint = root / f"checkpoint-{group.logical_rank}.ssp"
@@ -78,10 +83,7 @@ def execute(root, request, group):
                 executor.initialize(lambda request, chunk: chunk.zero_(), restore=True)
                 load_checkpoint(executor, checkpoint, chunk_bytes=4096)
                 compare(executor, reference["values"])
-            records.append(
-                {"step": index + 1, "loss": sum(float(v) for v in result.losses)}
-            )
-            del result, pending, loss
+            records.append({"step": index + 1, "loss": sum(float(v) for v in losses)})
         (root / f"result-{group.logical_rank}.json").write_text(
             json.dumps({"passed": True, "steps": records}, indent=2)
         )

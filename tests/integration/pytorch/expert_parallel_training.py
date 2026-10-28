@@ -40,6 +40,10 @@ def main():
         measure_seconds=0.01,
         plots=False,
         factory_args={
+            # The reference arm sums each microbatch's gradient in the BF16
+            # parameter's .grad; the Program under test accumulates at the same
+            # dtype, so the two arms differ only in kernels, not in contract.
+            "grad_dtype": "bfloat16",
             "ranks": 2,
             "sequence_length": 64,
             "sequences_per_step": 16,
