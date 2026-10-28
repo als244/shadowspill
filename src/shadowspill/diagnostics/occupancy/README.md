@@ -11,7 +11,6 @@ remain the same. The implementation has these responsibilities:
 | `plan.py`, `summary.py` | Assemble a plan view and compute its summary |
 | `page.py`, `html.py`, `occupancy_page.html` | Numeric page data, HTML tables and the interactive timeline |
 | `stored.py` | Discover old store records and their certificates |
-| `run/` | Trace matching and the per-budget report tree |
 | `cli.py` | Argument parsing and command orchestration |
 
 Spill residency follows the simulator's transfer/release events. Execution

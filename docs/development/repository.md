@@ -84,7 +84,6 @@ src/shadowspill/
 │   ├── collection/        task/transfer joins, native evidence and timing summaries
 │   ├── transfer_phases/   event matching, lane regions and payload throughput
 │   └── occupancy/         pool attribution, clocks and timeline rendering
-│       └── run/           stored-run discovery, trace matching and report indexes
 ├── profiling/             ordinary-allocator timing and memory measurement
 │   └── observation/       allocator observations and lifetime decoding
 ├── task/                  one task's shape and provenance, framework-free
