@@ -75,7 +75,7 @@ print('single-GPU build/measurement and CPU-only sharded simulation passed')
     result = subprocess.run(
         [
             sys.executable,
-            "-S",
+            *(["-S"] if sys.flags.no_site else []),
             "-c",
             code,
             str(tmp_path / "profiled.ssp"),

@@ -13,7 +13,7 @@ def test_communication_calibration_without_runtime(tmp_path):
     result = subprocess.run(
         [
             sys.executable,
-            "-S",
+            *(["-S"] if sys.flags.no_site else []),
             str(Path(__file__).with_name("_measure_communication.py")),
             str(tmp_path / "communication.ssp"),
         ],

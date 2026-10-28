@@ -16,7 +16,7 @@ def test_collective_allocation_observation(tmp_path):
     result = subprocess.run(
         [
             sys.executable,
-            "-S",
+            *(["-S"] if sys.flags.no_site else []),
             str(Path(__file__).with_name("_collective_memory.py")),
             (tmp_path / "rendezvous").as_uri(),
         ],

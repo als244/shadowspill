@@ -120,7 +120,13 @@ def test_meta_build_roundtrips_and_executes_bound_stages(tmp_path):
         print("fresh cache replay correct")
     """)
     result = subprocess.run(
-        [sys.executable, "-S", "-c", script, str(tmp_path / "program.ssp")],
+        [
+            sys.executable,
+            *(["-S"] if sys.flags.no_site else []),
+            "-c",
+            script,
+            str(tmp_path / "program.ssp"),
+        ],
         env={
             **os.environ,
             "TORCHINDUCTOR_CACHE_DIR": str(tmp_path / "inductor"),

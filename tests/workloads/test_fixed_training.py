@@ -91,7 +91,7 @@ def test_fixed_updates_evaluate_log_and_resume_with_identical_next_update(
     for output in (whole, resumed):
         command = [
             sys.executable,
-            "-S",
+            *(["-S"] if sys.flags.no_site else []),
             str(Path(__file__).with_name("_fixed_training.py")),
             str(tmp_path),
             str(output),

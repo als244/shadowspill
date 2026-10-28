@@ -165,7 +165,7 @@ def test_text_phases_preserve_packing_metrics_and_exact_cold_resume(
     child = subprocess.run(
         [
             sys.executable,
-            "-S",
+            *(["-S"] if sys.flags.no_site else []),
             "-c",
             "import sys; sys.modules['torch'] = None; "
             "from workloads.recipes.text.experiment.plan import run; run(sys.argv[1])",

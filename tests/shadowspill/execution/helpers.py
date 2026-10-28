@@ -30,7 +30,7 @@ def run_worker(directory, script="_execute.py"):
     result = subprocess.run(
         [
             sys.executable,
-            "-S",
+            *(["-S"] if sys.flags.no_site else []),
             str(Path(__file__).with_name(script)),
             str(directory),
         ],

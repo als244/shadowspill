@@ -130,7 +130,7 @@ def test_saved_plan_executes_without_build_or_measurement(
     worker = subprocess.run(
         [
             sys.executable,
-            "-S",
+            *(["-S"] if sys.flags.no_site else []),
             str(Path(__file__).with_name("_execute.py")),
             str(tmp_path),
         ],

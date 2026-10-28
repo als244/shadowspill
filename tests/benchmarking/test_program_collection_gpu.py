@@ -67,7 +67,13 @@ from benchmarking.program_collection.cli import main
 raise SystemExit(main())
 """
     )
-    command = [sys.executable, "-S", "-c", controller, *args]
+    command = [
+        sys.executable,
+        *(["-S"] if sys.flags.no_site else []),
+        "-c",
+        controller,
+        *args,
+    ]
     child = subprocess.run(command, capture_output=True, text=True, timeout=240)
     assert child.returncode == 0, child.stdout + child.stderr
     (request,) = expand_program_requests(config)
@@ -93,7 +99,7 @@ raise SystemExit(main())
     planned = subprocess.run(
         [
             sys.executable,
-            "-S",
+            *(["-S"] if sys.flags.no_site else []),
             "-m",
             "tests.benchmarking._plan_corpus",
             str(tmp_path),

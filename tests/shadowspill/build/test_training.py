@@ -216,7 +216,7 @@ def _check_cpu_planning(directory, filename="training.ssp"):
         print('All three traversals planned and reported without framework imports')
     """)
     result = subprocess.run(
-        [sys.executable, "-S", "-c", code, filename],
+        [sys.executable, *(["-S"] if sys.flags.no_site else []), "-c", code, filename],
         cwd=directory,
         env={**os.environ, "CUDA_VISIBLE_DEVICES": ""},
         text=True,

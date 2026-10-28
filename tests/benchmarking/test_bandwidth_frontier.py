@@ -49,7 +49,7 @@ from benchmarking.bandwidth_frontier.cli import main
 main(sys.argv[1:])
 """
     child = subprocess.run(
-        [sys.executable, "-S", "-c", script, *args],
+        [sys.executable, *(["-S"] if sys.flags.no_site else []), "-c", script, *args],
         env={**os.environ, "CUDA_VISIBLE_DEVICES": ""},
         capture_output=True,
         text=True,

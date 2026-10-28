@@ -17,7 +17,7 @@ def test_cross_stream_fixed_reuse(kind):
     result = subprocess.run(
         [
             sys.executable,
-            "-S",
+            *(["-S"] if sys.flags.no_site else []),
             str(Path(__file__).with_name("_task_completion.py")),
             kind,
         ],

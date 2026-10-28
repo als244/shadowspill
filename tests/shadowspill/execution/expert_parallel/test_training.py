@@ -22,7 +22,7 @@ def test_saved_ep_training_and_checkpoint(tmp_path, resolution):
     )
     command = [
         sys.executable,
-        "-S",
+        *(["-S"] if sys.flags.no_site else []),
         str(script),
         "--resolution",
         str(resolution),

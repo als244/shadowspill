@@ -169,7 +169,13 @@ from tools.pressurefit_trace.profile_winners.capture import completed
 assert len(completed(Path(sys.argv[1]))[2]) == 1
 """
     child = subprocess.run(
-        [sys.executable, "-S", "-c", script, str(saved_winner)],
+        [
+            sys.executable,
+            *(["-S"] if sys.flags.no_site else []),
+            "-c",
+            script,
+            str(saved_winner),
+        ],
         env={**os.environ, "CUDA_VISIBLE_DEVICES": ""},
         capture_output=True,
         text=True,

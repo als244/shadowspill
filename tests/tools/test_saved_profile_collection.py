@@ -73,7 +73,13 @@ for argv in json.loads(sys.argv[1]):
         ["export", str(traces), "--output", str(exported)],
     ]
     child = subprocess.run(
-        [sys.executable, "-S", "-c", script, json.dumps(commands)],
+        [
+            sys.executable,
+            *(["-S"] if sys.flags.no_site else []),
+            "-c",
+            script,
+            json.dumps(commands),
+        ],
         env={**os.environ, "CUDA_VISIBLE_DEVICES": ""},
         capture_output=True,
         text=True,

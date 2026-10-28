@@ -94,7 +94,13 @@ sys.argv = ['worker', 'communicate', sys.argv[1]]
 main()
 """
     result = subprocess.run(
-        [sys.executable, "-S", "-c", script, str(tmp_path / "request.json")],
+        [
+            sys.executable,
+            *(["-S"] if sys.flags.no_site else []),
+            "-c",
+            script,
+            str(tmp_path / "request.json"),
+        ],
         env={**os.environ, "CUDA_VISIBLE_DEVICES": ""},
         capture_output=True,
         text=True,

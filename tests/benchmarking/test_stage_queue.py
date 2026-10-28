@@ -103,7 +103,12 @@ def test_queue_records_failures_and_retries_only_unfinished_cases(
 def test_timeout_stops_the_worker_process_group(tmp_path):
     pid_file = tmp_path / "process.json"
     code, timed_out = launch(
-        [sys.executable, "-S", "-c", "import time; time.sleep(30)"],
+        [
+            sys.executable,
+            *(["-S"] if sys.flags.no_site else []),
+            "-c",
+            "import time; time.sleep(30)",
+        ],
         tmp_path / "worker.log",
         env=os.environ.copy(),
         timeout=0.2,

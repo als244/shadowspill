@@ -187,7 +187,7 @@ def test_shared_evaluation_and_checkpoint_in_cold_workers(tmp_path):
         worker = subprocess.run(
             [
                 sys.executable,
-                "-S",
+                *(["-S"] if sys.flags.no_site else []),
                 str(Path(__file__).with_name("_evaluate.py")),
                 str(tmp_path),
                 mode,

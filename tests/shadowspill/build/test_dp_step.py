@@ -87,7 +87,7 @@ def test_step_build_measure_plan_and_local_owned_updates(
         result = subprocess.run(
             [
                 sys.executable,
-                "-S",
+                *(["-S"] if sys.flags.no_site else []),
                 str(Path(__file__).with_name("_cpu_plan_step.py")),
                 str(tmp_path / "profiled.ssp"),
                 str(tmp_path),

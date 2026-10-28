@@ -126,7 +126,7 @@ def test_quantized_training_evaluation_and_cold_checkpoint(
         worker = subprocess.run(
             [
                 sys.executable,
-                "-S",
+                *(["-S"] if sys.flags.no_site else []),
                 str(Path(__file__).with_name("_representation_execute.py")),
                 str(tmp_path),
                 mode,

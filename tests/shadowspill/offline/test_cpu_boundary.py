@@ -77,7 +77,7 @@ assert not Path('.shadowspill').exists()
 print('CPU-only archive, profile override, planning and report passed')
 """
     result = subprocess.run(
-        [sys.executable, "-S", "-c", code],
+        [sys.executable, *(["-S"] if sys.flags.no_site else []), "-c", code],
         cwd=tmp_path,
         env=env,
         capture_output=True,

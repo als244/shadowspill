@@ -16,7 +16,7 @@ from tests.shadowspill.training._replanned_model import fixture
 
 def child(arguments, **options):
     result = subprocess.run(
-        [sys.executable, "-S", *arguments],
+        [sys.executable, *(["-S"] if sys.flags.no_site else []), *arguments],
         capture_output=True,
         text=True,
         timeout=240,

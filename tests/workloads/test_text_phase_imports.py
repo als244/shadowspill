@@ -13,7 +13,7 @@ def test_recipe_import_boundary(recipe, phase):
     result = subprocess.run(
         [
             sys.executable,
-            "-S",
+            *(["-S"] if sys.flags.no_site else []),
             "-c",
             """
 import importlib

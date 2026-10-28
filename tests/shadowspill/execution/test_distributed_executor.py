@@ -35,7 +35,7 @@ def test_distributed_saved_executor(tmp_path, kind, variant, ownership):
     directory = Path(__file__).parent
 
     def run(phase, distributed=False, *extra):
-        command = [sys.executable, "-S"]
+        command = [sys.executable, *(["-S"] if sys.flags.no_site else [])]
         if distributed:
             command += [
                 "-m",
@@ -45,7 +45,7 @@ def test_distributed_saved_executor(tmp_path, kind, variant, ownership):
                 "--start-method=spawn",
                 "--no-python",
                 sys.executable,
-                "-S",
+                *(["-S"] if sys.flags.no_site else []),
             ]
         execution = phase in {"execute", "resume"}
         script = "_distributed_execute.py" if execution else "_distributed_phases.py"

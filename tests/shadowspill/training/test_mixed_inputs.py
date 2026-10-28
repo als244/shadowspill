@@ -120,7 +120,7 @@ def test_mixed_calls_keep_weights_metrics_and_group_controls(tmp_path, breadth):
     child = subprocess.run(
         [
             sys.executable,
-            "-S",
+            *(["-S"] if sys.flags.no_site else []),
             str(Path(__file__).with_name("_mixed_inputs.py")),
             str(tmp_path),
         ],

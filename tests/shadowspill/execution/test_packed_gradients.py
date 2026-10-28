@@ -67,7 +67,7 @@ def test_packed_parameter_gradients_in_cold_worker(tmp_path):
     worker = subprocess.run(
         [
             sys.executable,
-            "-S",
+            *(["-S"] if sys.flags.no_site else []),
             str(Path(__file__).with_name("_execute.py")),
             str(tmp_path),
         ],

@@ -59,7 +59,13 @@ result = run_config(sys.argv[1], ['steps=2', 'checkpoint_every=0', 'eval_every=0
 assert result.step == 2
 """
     child = subprocess.run(
-        [sys.executable, "-S", "-c", script, str(path)],
+        [
+            sys.executable,
+            *(["-S"] if sys.flags.no_site else []),
+            "-c",
+            script,
+            str(path),
+        ],
         env={**os.environ, "CUDA_VISIBLE_DEVICES": ""},
         capture_output=True,
         text=True,

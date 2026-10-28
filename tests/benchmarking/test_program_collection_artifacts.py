@@ -56,7 +56,7 @@ def test_saved_corpus_plans_without_build_torch_or_runtime(tmp_path):
     child = subprocess.run(
         [
             sys.executable,
-            "-S",
+            *(["-S"] if sys.flags.no_site else []),
             "-m",
             "tests.benchmarking._plan_corpus",
             str(tmp_path),

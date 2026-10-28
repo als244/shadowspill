@@ -54,7 +54,9 @@ sys.meta_path.insert(0, NoGPU())
 import workloads.recipes.regression.plan
 """
     child = subprocess.run(
-        [sys.executable, "-S", "-c", script], capture_output=True, text=True
+        [sys.executable, *(["-S"] if sys.flags.no_site else []), "-c", script],
+        capture_output=True,
+        text=True,
     )
     assert child.returncode == 0, child.stdout + child.stderr
 
@@ -67,7 +69,7 @@ def test_distributed_regression_runs_through_saved_artifacts(tmp_path):
     root = tmp_path / "regression"
     command = [
         sys.executable,
-        "-S",
+        *(["-S"] if sys.flags.no_site else []),
         "-m",
         "workloads.recipes.distributed_training",
         "--run-dir",

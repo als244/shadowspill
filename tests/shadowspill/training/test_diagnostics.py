@@ -160,7 +160,7 @@ def test_saved_startup_diagnostics_preserve_state_and_rng(tmp_path, stochastic):
     child = subprocess.run(
         [
             sys.executable,
-            "-S",
+            *(["-S"] if sys.flags.no_site else []),
             str(Path(__file__).with_name("_diagnostics.py")),
             str(tmp_path),
         ],

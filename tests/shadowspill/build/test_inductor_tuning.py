@@ -63,7 +63,13 @@ for lengths in ([20, 28, 16, 0], [7, 13, 25, 19]):
     torch.testing.assert_close(output, expected)
 """
     child = subprocess.run(
-        [sys.executable, "-S", "-c", script, str(tmp_path / "program.ssp")],
+        [
+            sys.executable,
+            *(["-S"] if sys.flags.no_site else []),
+            "-c",
+            script,
+            str(tmp_path / "program.ssp"),
+        ],
         env={
             **os.environ,
             "TRITON_CACHE_DIR": str(tmp_path / "cold-triton"),

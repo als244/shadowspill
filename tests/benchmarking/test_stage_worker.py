@@ -40,7 +40,7 @@ def test_stage_worker_replays_saved_pair(tmp_path, variant):
     result = subprocess.run(
         [
             sys.executable,
-            "-S",
+            *(["-S"] if sys.flags.no_site else []),
             "-m",
             "benchmarking.stage_traces.worker",
             "--artifact",
