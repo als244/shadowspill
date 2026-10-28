@@ -32,6 +32,9 @@ def _suite_report(log: Path) -> list[str]:
         rows = ["    the suite reported no counts"]
     else:
         counts = {name: int(count) for count, name in tallies}
+        # Not "deselected": it counts the fresh-process tests CTest runs inside
+        # this same gate and the slow tier the config chose to leave out, and
+        # naming it would read as something unchecked.
         counts.pop("deselected", None)
         rows = ["    " + ", ".join(f"{count} {name}" for name, count in counts.items())]
     named = [line.strip() for line in lines if line.startswith(("FAILED ", "ERROR "))]

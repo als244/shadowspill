@@ -69,7 +69,13 @@ def test_plan_worker_consumes_saved_profiles_without_torch_or_factory(tmp_path):
         main()
     """)
     child = subprocess.run(
-        [sys.executable, "-S", "-c", script, str(path)],
+        [
+            sys.executable,
+            *(["-S"] if sys.flags.no_site else []),
+            "-c",
+            script,
+            str(path),
+        ],
         env={**os.environ, "CUDA_VISIBLE_DEVICES": ""},
         capture_output=True,
         text=True,
@@ -112,7 +118,10 @@ from benchmarking.quickstart import main
 main(['--help'])
 """
     child = subprocess.run(
-        [sys.executable, "-S", "-c", script], capture_output=True, text=True, timeout=30
+        [sys.executable, *(["-S"] if sys.flags.no_site else []), "-c", script],
+        capture_output=True,
+        text=True,
+        timeout=30,
     )
     assert child.returncode == 0, child.stdout + child.stderr
     assert "--phase" in child.stdout
@@ -186,6 +195,7 @@ def test_build_keeps_every_examples_arguments(tmp_path, monkeypatch, form):
         "tests.benchmarking._phase_quickstart:mixed_examples",
     ],
 )
+@pytest.mark.slow
 def test_quickstart_process_pipeline_and_offline_replanning(tmp_path, factory):
     import torch
 

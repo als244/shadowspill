@@ -50,13 +50,21 @@ Results live under `qualification/results/`:
 - `gates_<run>/`: per-gate logs and the terminal summary.
 - `numerical_<run>/`, `performance_<run>/`: matrix summaries and per-cell results.
 - Each cell's `.phases/`: Program, Profiles, ProfiledProgram, CommunicationInfo,
-  Plan, exact inputs, settings and phase timings.
+  Plan, settings and phase timings.
 
 Every matrix gate starts with fresh phase artifacts and empty Inductor/Triton
 caches. Compiler caches are disposable; phase archives remain available for
-inspection and execution-only reruns. Tests use isolated temporary planning
-stores. Fresh-process tests deselected by the shared pytest process are run by
-CTest; capability skips are reported separately.
+inspection and replanning. A cell's exact inputs (`inputs.pt`) and streamed
+checkpoint (`checkpoint.ssp`) are each the size of its model, so they are
+removed once its verdict is recorded; `--retain-execution-files` keeps them for
+an execution-only rerun, and a failed cell keeps them regardless. Tests use
+isolated temporary planning stores. Fresh-process tests deselected by the shared
+pytest process are run by CTest; capability skips are reported separately.
+
+Tests marked `slow` are end-to-end recipe and quickstart runs of minutes each;
+the default suite deselects them. `python -m pytest tests -m slow` runs the tier
+alone, and a gate config with `"suite": ["-m", "not fresh_process"]` includes it
+in the suite gate.
 
 Numerical references are reused from
 `qualification/results/references/approximately_1b` (`pre_sm80` on older GPUs),

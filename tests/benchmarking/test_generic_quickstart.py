@@ -9,7 +9,7 @@ from benchmarking.quickstart import main, run
 from tests.benchmarking._generic_quickstart import experiment
 from tests.shadowspill.offline._example import communication
 
-pytestmark = [pytest.mark.fresh_process, pytest.mark.cuda]
+pytestmark = pytest.mark.cuda
 
 
 def test_generic_quickstart_search_run_plot(tmp_path):

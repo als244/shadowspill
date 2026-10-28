@@ -12,6 +12,7 @@ from benchmarking.quickstart import run
 
 
 @pytest.mark.cuda
+@pytest.mark.slow
 def test_saved_quickstart_produces_validated_nsys_capture(tmp_path):
     import torch
 
@@ -35,7 +36,7 @@ def test_saved_quickstart_produces_validated_nsys_capture(tmp_path):
     originals = {path: path.read_bytes() for path in root.glob("plans/*.ssp")}
     command = [
         sys.executable,
-        "-S",
+        *(["-S"] if sys.flags.no_site else []),
         "-m",
         "tools.pressurefit_trace.profile_winners",
         str(root),

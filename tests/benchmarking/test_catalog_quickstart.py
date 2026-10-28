@@ -129,6 +129,7 @@ def test_initialize_qwen35_norms_and_decay():
 @pytest.mark.cuda
 @pytest.mark.parametrize("lora", [None, {}])
 @pytest.mark.parametrize("ranks", [1, 2])
+@pytest.mark.slow
 def test_catalog_training_from_saved_phases(tmp_path, lora, ranks):
     import json
 

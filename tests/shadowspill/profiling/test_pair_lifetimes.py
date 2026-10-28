@@ -13,6 +13,7 @@ from tests.shadowspill.build.test_training import Network, objective
 
 
 @pytest.mark.cuda
+@pytest.mark.fresh_process
 def test_pair_inputs_are_released_between_measurements_and_on_failure(
     tmp_path, monkeypatch
 ):

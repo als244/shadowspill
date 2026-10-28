@@ -74,6 +74,7 @@ def profile_failure(tmp_path, inputs):
 
 
 @pytest.mark.cuda
+@pytest.mark.fresh_process
 def test_phase_failures_leave_preparation_reusable(tmp_path):
     if not torch.cuda.is_available():
         pytest.skip("requires a representative GPU")

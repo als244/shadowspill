@@ -57,7 +57,7 @@ def test_tensor_chunk_descriptor_does_not_import_execution_or_torch():
     subprocess.run(
         [
             sys.executable,
-            "-S",
+            *(["-S"] if sys.flags.no_site else []),
             "-c",
             """
 import sys
@@ -76,6 +76,7 @@ assert TensorChunk('weight', (4,), 'float32', 0, 4).storage_elements == 4
     "family,lora",
     [("llama3", False), ("llama3", True), ("qwen35", False), ("olmoe", False)],
 )
+@pytest.mark.slow
 def test_supplied_config_tiny_training_through_saved_phases(tmp_path, family, lora):
     if not torch.cuda.is_available():
         pytest.skip("requires CUDA")
@@ -115,7 +116,7 @@ def test_supplied_config_tiny_training_through_saved_phases(tmp_path, family, lo
     worker = subprocess.run(
         [
             sys.executable,
-            "-S",
+            *(["-S"] if sys.flags.no_site else []),
             "-m",
             "training.train",
             str(fixture),

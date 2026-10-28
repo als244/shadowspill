@@ -25,6 +25,7 @@ from benchmarking.quickstart.phases.common import write
     ],
 )
 @pytest.mark.parametrize("world", [1, 2])
+@pytest.mark.slow
 def test_saved_baseline_matches_reference_in_fresh_worker(
     tmp_path, model, mode, grad_dtype, world
 ):
@@ -63,7 +64,7 @@ def test_saved_baseline_matches_reference_in_fresh_worker(
         child = subprocess.run(
             [
                 sys.executable,
-                "-S",
+                *(["-S"] if sys.flags.no_site else []),
                 "-m",
                 "baselines.common.launch",
                 "--engine",
@@ -103,7 +104,7 @@ def test_saved_baseline_matches_reference_in_fresh_worker(
         child = subprocess.run(
             [
                 sys.executable,
-                "-S",
+                *(["-S"] if sys.flags.no_site else []),
                 "-m",
                 "baselines.common.launch",
                 "--engine",

@@ -72,6 +72,7 @@ def manifest(root, step):
 
 
 @pytest.mark.cuda
+@pytest.mark.slow
 def test_qwen_recipe_cold_execution_and_partial_resume(tmp_path, checkpoint):
     if not torch.cuda.is_available():
         pytest.skip("requires CUDA")
@@ -90,7 +91,7 @@ def test_qwen_recipe_cold_execution_and_partial_resume(tmp_path, checkpoint):
     }
     command = [
         sys.executable,
-        "-S",
+        *(["-S"] if sys.flags.no_site else []),
         "-m",
         "workloads.recipes.text.train_qwen35_lora",
         "--data",
@@ -149,7 +150,7 @@ def test_qwen_recipe_cold_execution_and_partial_resume(tmp_path, checkpoint):
     worker = subprocess.run(
         [
             sys.executable,
-            "-S",
+            *(["-S"] if sys.flags.no_site else []),
             str(Path(__file__).with_name("_qwen35_lora_execute.py")),
             str(cold),
         ],

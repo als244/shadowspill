@@ -90,6 +90,7 @@ def test_inputs_use_normalized_calls_and_restore_next_example(tmp_path):
 
 
 @pytest.mark.cuda
+@pytest.mark.slow
 def test_recipe_runs_with_saved_plans_after_original_caches_are_deleted(tmp_path):
     if not torch.cuda.is_available():
         pytest.skip("requires CUDA")
@@ -108,7 +109,7 @@ def test_recipe_runs_with_saved_plans_after_original_caches_are_deleted(tmp_path
     }
     command = [
         sys.executable,
-        "-S",
+        *(["-S"] if sys.flags.no_site else []),
         "-m",
         "workloads.recipes.text.train_llama3",
         "--data",
@@ -167,7 +168,7 @@ def test_recipe_runs_with_saved_plans_after_original_caches_are_deleted(tmp_path
         worker = subprocess.run(
             [
                 sys.executable,
-                "-S",
+                *(["-S"] if sys.flags.no_site else []),
                 str(Path(__file__).with_name("_llama3_execute.py")),
                 str(cold),
             ],

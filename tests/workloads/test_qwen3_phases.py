@@ -104,6 +104,7 @@ def test_rank_local_calls_normalize_by_global_tokens_and_restore_cursor(tmp_path
 
 @pytest.mark.cuda
 @pytest.mark.parametrize("ranks", [1, 2])
+@pytest.mark.slow
 def test_qwen_recipe_builds_profiles_replans_and_executes_saved_plan(tmp_path, ranks):
     if torch.cuda.device_count() < ranks:
         pytest.skip(f"requires {ranks} distinct GPUs")
@@ -114,7 +115,7 @@ def test_qwen_recipe_builds_profiles_replans_and_executes_saved_plan(tmp_path, r
     (data / "meta.json").write_text(json.dumps({"vocab_size": 1024}))
     command = [
         sys.executable,
-        "-S",
+        *(["-S"] if sys.flags.no_site else []),
         "-m",
         "workloads.recipes.text.train_qwen3_distributed",
         "--data",
@@ -174,7 +175,7 @@ def test_qwen_recipe_builds_profiles_replans_and_executes_saved_plan(tmp_path, r
     child = subprocess.run(
         [
             sys.executable,
-            "-S",
+            *(["-S"] if sys.flags.no_site else []),
             "-c",
             "import sys; sys.modules['torch'] = None; "
             "from workloads.recipes.text.qwen3.plan import run; run(sys.argv[1])",

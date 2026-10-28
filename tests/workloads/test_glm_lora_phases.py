@@ -154,6 +154,7 @@ def manifest(root, step):
 
 
 @pytest.mark.cuda
+@pytest.mark.slow
 def test_glm_checkpoint_training_evaluation_and_cold_resume(recipe, tmp_path):
     if not torch.cuda.is_available():
         pytest.skip("requires CUDA")
@@ -167,7 +168,7 @@ def test_glm_checkpoint_training_evaluation_and_cold_resume(recipe, tmp_path):
     child = subprocess.run(
         [
             sys.executable,
-            "-S",
+            *(["-S"] if sys.flags.no_site else []),
             "-m",
             "workloads.recipes.text.train_glm53_flash_lora",
             *cli,
@@ -199,7 +200,7 @@ def test_glm_checkpoint_training_evaluation_and_cold_resume(recipe, tmp_path):
     child = subprocess.run(
         [
             sys.executable,
-            "-S",
+            *(["-S"] if sys.flags.no_site else []),
             str(Path(__file__).with_name("_glm_lora_execute.py")),
             str(cold),
         ],

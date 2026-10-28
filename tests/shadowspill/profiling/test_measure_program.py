@@ -13,6 +13,7 @@ from tests.shadowspill.build.test_training import Network, objective
 
 @pytest.mark.cuda
 @pytest.mark.parametrize("with_optimizer", [False, True])
+@pytest.mark.fresh_process
 def test_saved_training_program_measurement_without_runtime_pools(
     tmp_path, with_optimizer
 ):
@@ -66,7 +67,7 @@ def test_saved_training_program_measurement_without_runtime_pools(
     planned = subprocess.run(
         [
             sys.executable,
-            "-S",
+            *(["-S"] if sys.flags.no_site else []),
             str(Path(__file__).with_name("_plan_saved.py")),
             str(tmp_path),
         ],
@@ -82,7 +83,7 @@ def test_saved_training_program_measurement_without_runtime_pools(
         subprocess.run(
             [
                 sys.executable,
-                "-S",
+                *(["-S"] if sys.flags.no_site else []),
                 str(Path(__file__).with_name("_measure_saved.py")),
                 str(tmp_path / "program.ssp"),
                 str(tmp_path / "worker-profiles.ssp"),
@@ -96,7 +97,7 @@ def test_saved_training_program_measurement_without_runtime_pools(
         qualified = subprocess.run(
             [
                 sys.executable,
-                "-S",
+                *(["-S"] if sys.flags.no_site else []),
                 str(Path(__file__).with_name("_qualify_allocator.py")),
                 str(tmp_path / "program.ssp"),
                 str(tmp_path / "profiles.ssp"),
