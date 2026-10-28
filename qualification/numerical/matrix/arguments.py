@@ -178,6 +178,14 @@ def create_parser() -> argparse.ArgumentParser:
             "evidence is the default"
         ),
     )
+    parser.add_argument(
+        "--retain-execution-files",
+        action="store_true",
+        help=(
+            "keep each cell's inputs.pt and checkpoint.ssp after its verdict, "
+            "for execution-only reruns; they are most of a cell's archive"
+        ),
+    )
     return parser
 
 

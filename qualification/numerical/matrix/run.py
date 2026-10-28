@@ -54,6 +54,7 @@ def main(spill: SpillPool | None = None) -> int:
         empty_caches=arguments.empty_caches,
         cache_directory=arguments.cache_dir,
         detailed_artifacts=arguments.detailed_artifacts,
+        retain_execution_files=arguments.retain_execution_files,
         spill_pool=selected_spill,
     )
     output_directory = arguments.output_dir.expanduser().resolve()

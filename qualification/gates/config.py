@@ -91,7 +91,7 @@ def _commands(
     ]
     if keep_going:
         command.append("--keep-going")
-    # Fresh compiler caches, retained phase artifacts.
+    # Fresh compiler caches; phase artifacts stay, execution files do not.
     command.append("--empty-caches")
     command += options
     if name == "numerical_ssd":

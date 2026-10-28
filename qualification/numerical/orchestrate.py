@@ -47,6 +47,7 @@ def orchestrate(
     grad_dtype: str | None = None,
     opt_state_dtype: str | None = None,
     spill_options: list[str] | None = None,
+    retain_execution_files: bool = False,
 ) -> None:
     result_directory.mkdir(parents=True, exist_ok=True)
     prefix = f"{model_implementation}_{family}"
@@ -122,6 +123,8 @@ def orchestrate(
         planned_options.extend(("--external-headroom-mib", str(external_headroom_mib)))
     if detailed_artifacts:
         planned_options.append("--detailed-artifacts")
+    if retain_execution_files:
+        planned_options.append("--retain-execution-files")
     subprocess.run(
         [
             *base,

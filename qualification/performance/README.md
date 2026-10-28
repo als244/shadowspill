@@ -42,6 +42,9 @@ calls the same `matrix.run.main` entry; there is no second matrix implementation
 | `execute.py` | Plan and initialization values | Timing samples, runtime evidence, verdict |
 
 `<result>.phases/` retains the archives, request, settings, and `phases.json`.
+`inputs.pt`, and `checkpoint.ssp` when checkpointing is enabled, are removed once
+the verdict is written unless `--retain-execution-files` asks for an
+execution-only rerun; a failed cell keeps them.
 The shared `qualification/pipeline/` package owns subprocess launching, bounded
 initialization/export and timing/trace observations. `phases.py` contains only
 warmup/checkpoint and repeated measurement; `verdict.py` applies the gate rules.

@@ -18,6 +18,7 @@ from qualification.device_defaults import (
     performance_defaults,
 )
 from qualification.pipeline.process import profile_and_plan, run_phase
+from qualification.pipeline.retention import remove_execution_files
 from qualification.precision import add_dtype_arguments
 from shadowspill.schema import artifact_schema
 
@@ -70,6 +71,8 @@ def _run(arguments: argparse.Namespace) -> dict[str, object]:
             "passed": True,
         }
     run_phase(directory, "execute", "qualification.performance.execute", directory)
+    if not arguments.retain_execution_files:
+        remove_execution_files(directory)
     return json.loads(output.read_text())
 
 
@@ -103,6 +106,14 @@ def main() -> int:
         help=(
             "run the throughput protocol without the streamed checkpoint/restore; "
             "this is a runtime probe, not checkpoint qualification"
+        ),
+    )
+    parser.add_argument(
+        "--retain-execution-files",
+        action="store_true",
+        help=(
+            "keep inputs.pt and checkpoint.ssp in the cell's .phases/ after its "
+            "verdict, for an execution-only rerun; they are most of the archive"
         ),
     )
     parser.add_argument(

@@ -61,6 +61,7 @@ def test_performance_workers_share_the_bounded_peer_capacity(
         planning_spill_budget_gib=planning_gib,
         remote_spill=f"unavailable:19426:{8 << 30}",
         plan_only=False,
+        retain_execution_files=False,
     )
     phases = []
 

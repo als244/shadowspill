@@ -82,6 +82,14 @@ def create_parser() -> argparse.ArgumentParser:
             "nothing is reused from an earlier run or another cell"
         ),
     )
+    parser.add_argument(
+        "--retain-execution-files",
+        action="store_true",
+        help=(
+            "keep each cell's inputs.pt and checkpoint.ssp after its verdict, "
+            "for execution-only reruns; they are most of a cell's archive"
+        ),
+    )
     parser.add_argument("--plan-only", action="store_true")
     parser.add_argument(
         "--measure-only",

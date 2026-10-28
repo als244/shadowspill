@@ -68,7 +68,10 @@ The planned arm uses four separate processes, shared with the performance gate:
 
 Each result has a sibling `<case>.phases/` directory containing these artifacts,
 settings, and `phases.json` timings. The archives are retained independently of
-compiler caches. To replan a case, edit its `settings.json` and run:
+compiler caches, except `inputs.pt` and `checkpoint.ssp`: each is the size of
+the model, only execution reads them, and they are removed once the verdict is
+written unless `--retain-execution-files` asks for an execution-only rerun. A
+failed case keeps them. To replan a case, edit its `settings.json` and run:
 
 ```bash
 python -m qualification.pipeline.plan /path/to/case.phases

@@ -8,6 +8,7 @@ import time
 from pathlib import Path
 
 from qualification.pipeline.process import profile_and_plan, run_phase
+from qualification.pipeline.retention import remove_execution_files
 
 from .compare import compare_planned_run
 from .evidence import qualification_artifact
@@ -24,6 +25,8 @@ def planned_worker(request: PlannedRequest) -> None:
     run_phase(directory, "build", "qualification.numerical.prepare", directory)
     profile_and_plan(directory)
     run_phase(directory, "execute", "qualification.numerical.planned", directory)
+    if not request.retain_execution_files:
+        remove_execution_files(directory)
 
 
 def execute(directory: Path) -> None:

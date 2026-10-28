@@ -140,6 +140,14 @@ def _parser() -> argparse.ArgumentParser:
         ),
     )
     parser.add_argument(
+        "--retain-execution-files",
+        action="store_true",
+        help=(
+            "keep inputs.pt and checkpoint.ssp in the case's .phases/ after its "
+            "verdict, for an execution-only rerun; they are most of the archive"
+        ),
+    )
+    parser.add_argument(
         "--case-factory",
         metavar="MODULE:FUNCTION",
         help="factory for a model not in the built-in qualification registry",
@@ -261,6 +269,7 @@ def _dispatch(
             reference_directory=arguments.reference_dir,
             regenerate_reference=arguments.regenerate_reference,
             detailed_artifacts=arguments.detailed_artifacts,
+            retain_execution_files=arguments.retain_execution_files,
             spill_options=spill_arguments(spill),
         )
     elif arguments.mode == "_warm":
@@ -290,6 +299,7 @@ def _dispatch(
                 require_pressure=not arguments.allow_fully_resident,
                 profiling_metadata=profiling_metadata_value,
                 detailed_artifacts=arguments.detailed_artifacts,
+                retain_execution_files=arguments.retain_execution_files,
                 spill_pool=spill,
             )
         )

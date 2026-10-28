@@ -106,6 +106,9 @@ class PlannedRequest:
     #: It is carried here rather than read from the environment because it is
     #: a property of the case, and a case's evidence should say what it ran on.
     spill_pool: SpillPool | None = None
+    #: Keep ``inputs.pt`` and ``checkpoint.ssp`` after the verdict, for an
+    #: execution-only rerun of this case. They are most of its archive.
+    retain_execution_files: bool = False
 
 
 def workload_metadata_for(case: Any, supplied: list[object] | None) -> list[object]:

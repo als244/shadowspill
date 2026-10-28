@@ -31,6 +31,8 @@ def cell_command(
         command.append("--skip-checkpoint")
     if arguments.measure_only:
         command.append("--measure-only")
+    if arguments.retain_execution_files:
+        command.append("--retain-execution-files")
     if manifest.identity in planning_budgets:
         command.extend(
             ("--planning-spill-budget-gib", str(planning_budgets[manifest.identity]))

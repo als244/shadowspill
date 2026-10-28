@@ -36,6 +36,7 @@ class CaseOptions:
     master_dtype: str | None = None
     grad_dtype: str | None = None
     opt_state_dtype: str | None = None
+    retain_execution_files: bool = False
 
     def case_arguments(self) -> list[str]:
         """The options both arms of a case are given, in their fixed order."""
@@ -111,5 +112,7 @@ def case_commands(
     if options.external_headroom_mib is not None:
         planned.extend(("--external-headroom-mib", str(options.external_headroom_mib)))
     planned.extend(spill_arguments(options.spill_pool))
+    if options.retain_execution_files:
+        planned.append("--retain-execution-files")
     commands.append(planned)
     return commands
