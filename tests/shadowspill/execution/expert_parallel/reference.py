@@ -11,6 +11,7 @@ from benchmarking.quickstart.phases.common import experiment, read
 from benchmarking.quickstart.phases.distributed import workers
 from shadowspill import Plan
 from shadowspill.artifacts.tensors import TensorChunk
+from shadowspill.execution.storage import dtype_of
 from shadowspill.resources.preparation import prepare_resources
 
 
@@ -56,6 +57,29 @@ def constants(program):
                 values["constant." + scope + source["name"]] = torch.tensor(
                     source["value"]
                 )
+    return values
+
+
+def controls(program):
+    """The optimizer's hyperparameter controls at the values the Program gives them.
+
+    The Executor holds each one as a bounded CPU tensor and exports it beside
+    the state; a run supplies only the learning rate, so every other control
+    keeps its initializer.
+    """
+
+    values = {}
+    for binding in program.bindings.get("optimizer_bindings", ()):
+        initializer = binding.get("initialization") or {}
+        if (
+            binding["object_id"] is not None
+            or binding["role"] != "hyperparameter"
+            or initializer.get("kind") not in {"constant", "value"}
+        ):
+            continue
+        values[binding["name"]] = torch.as_tensor(
+            initializer["value"], dtype=dtype_of(binding)
+        ).reshape(tuple(binding["shape"]))
     return values
 
 
@@ -115,6 +139,7 @@ def reference(root, request, group):
                     parameter.copy_(masters[name])
             values = {name: value.cpu().clone() for name, value in payloads(model)}
             values.update(constants(plan.program))
+            values.update(controls(plan.program))
             # A mastered parameter's BF16 compute copy is the model's own weight;
             # the Executor exports it under the compute prefix.
             values.update(
