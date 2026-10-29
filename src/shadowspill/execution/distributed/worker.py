@@ -6,11 +6,11 @@ import torch
 import torch.distributed as dist
 
 from shadowspill.artifacts._values import digest, plain
-from shadowspill.parallelism.agreement import agreement_digest
 from shadowspill.artifacts.plan import Plan
 from shadowspill.communication.binding.backend import shared_backend_setup
 from shadowspill.communication.binding.groups import GroupBindings
 from shadowspill.communication.requests import CollectiveRequest, collective_requests
+from shadowspill.parallelism.agreement import agreement_digest
 from shadowspill.resources.description import resource_groups
 
 from .storage import ShardedTransfers

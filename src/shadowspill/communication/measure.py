@@ -8,9 +8,9 @@ import torch
 import torch.distributed as dist
 
 from shadowspill.artifacts._values import digest, plain
-from shadowspill.parallelism.agreement import agreement_digest
 from shadowspill.artifacts.program import Program
 from shadowspill.memory import PinnedHostPool, SpillPool
+from shadowspill.parallelism.agreement import agreement_digest
 from shadowspill.pytorch.accelerator import resolve_device
 from shadowspill.pytorch.toolchain import build_setup
 from shadowspill.task.profiling import ProfilingOptions
