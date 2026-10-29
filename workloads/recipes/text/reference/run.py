@@ -14,8 +14,8 @@ from .initialization import initializer
 from .loop import fit
 
 
-def run_config(path, overrides=()):
-    options = config.load(path, list(overrides))
+def run_config(path, overrides=(), *, options=None):
+    options = config.load(path, list(overrides)) if options is None else dict(options)
     if options.get("startup_diagnostics"):
         raise ValueError("the PyTorch reference has no startup step timelines")
     root = Path(options["run_dir"])

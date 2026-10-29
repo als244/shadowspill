@@ -12,6 +12,7 @@ from shadowspill.training._inputs import ScaledObjective
 from shadowspill.training._model import build_optimizer
 from workloads.recipes.phases import settings
 
+from .hyperparameters import scheduled_arguments
 from .inputs import call_inputs, candidates
 
 
@@ -40,7 +41,10 @@ def run(directory):
         optimizer = build_optimizer(
             config.resolve(options["optimizer"]),
             model.parameters(),
-            config.resolve(options.get("optimizer_args", {})),
+            scheduled_arguments(
+                config.resolve(options.get("optimizer_args", {})),
+                options.get("schedules", {}),
+            ),
         )
         program = build_step(
             model,

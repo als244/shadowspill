@@ -1,15 +1,122 @@
 """Configured text runs: independent phases, or an ordinary PyTorch reference."""
 
 import argparse
+import difflib
 import json
 from pathlib import Path
 
 from shadowspill.training import config
 from workloads.recipes.phases import run_phases
 
+#: Every key a config may hold; a key outside it is refused by name.
+KNOWN_KEYS = frozenset(
+    {
+        "run_dir",
+        "engine",
+        "backend",
+        "settings",
+        "model",
+        "checkpoint",
+        "data",
+        "objective",
+        "objective_args",
+        "optimizer",
+        "optimizer_args",
+        "master_dtype",
+        "grad_dtype",
+        "build",
+        "initialize",
+        "resume",
+        "steps",
+        "schedules",
+        "max_seq_len",
+        "max_tokens_per_step",
+        "max_tokens_per_microbatch",
+        "planning_min_tokens_per_microbatch",
+        "planning_max_tokens_per_microbatch",
+        "seed",
+        "eval_every",
+        "eval_microbatches",
+        "checkpoint_every",
+        "checkpoint_dir",
+        "keep_last",
+        "log_every",
+        "metric_tables_every",
+        "parameter_norms_every",
+        "parameter_metrics",
+        "metric_reducer",
+        "omit_parameter_metrics",
+        "frozen_state_id",
+        "startup_diagnostics",
+        "wandb_project",
+        "wandb_mode",
+        "wandb",
+        "warmup_seconds",
+        "measure_seconds",
+        "external_headroom_mib",
+        "execution_gib",
+        "spill_gib",
+        "plots",
+        "checkpoint_weights",
+        "checkpoint_include_optimizer",
+        "device",
+        "compile",
+    }
+)
+
+#: Of a checkpoint entry, what only the model takes and what only the initializer takes.
+MODEL_ONLY = frozenset({"implementation", "dtype", "lora"})
+INITIALIZER_ONLY = frozenset({"seed"})
+
+
+def check_keys(raw):
+    """Refuse a key the runner does not know, naming the nearest it does."""
+    unknown = sorted(set(raw) - KNOWN_KEYS)
+    if unknown:
+        hints = []
+        for key in unknown:
+            matches = difflib.get_close_matches(key, KNOWN_KEYS, n=1)
+            hints.append(f"{key} (did you mean {matches[0]}?)" if matches else key)
+        raise ValueError("unknown config keys: " + ", ".join(hints))
+
+
+def expand_checkpoint(raw):
+    """A ``checkpoint`` entry -- a family and a local Hugging Face checkpoint
+    directory, with ``implementation``, ``dtype`` and ``lora`` for the model,
+    ``seed`` for the initializer (the run's seed otherwise) and any other
+    option, such as ``max_seq_len`` (the run's otherwise), for both -- stands
+    for ``model`` built at the checkpoint's configuration and ``initialize``
+    streaming it in. The two explicit entries remain for anyone who wants them."""
+    entry = raw.get("checkpoint")
+    if entry is None:
+        return raw
+    if "model" in raw or "initialize" in raw:
+        raise ValueError(
+            "checkpoint stands for model and initialize; give one form or the other"
+        )
+    if not {"family", "directory"} <= set(entry):
+        raise ValueError("a checkpoint entry names a family and directory")
+    shared = {k: v for k, v in entry.items() if k not in MODEL_ONLY | INITIALIZER_ONLY}
+    if "max_seq_len" not in shared and "max_seq_len" in raw:
+        shared["max_seq_len"] = raw["max_seq_len"]
+    expanded = dict(raw)
+    expanded["model"] = {
+        "@call": "workloads.models.catalog:build_from_checkpoint",
+        **shared,
+        **{k: entry[k] for k in ("implementation", "dtype", "lora") if k in entry},
+    }
+    expanded["initialize"] = {
+        "@call": "workloads.recipes.text.initialization:from_checkpoint",
+        **shared,
+        "seed": entry.get("seed", raw.get("seed", 0)),
+    }
+    return expanded
+
 
 def run_config(path, overrides=(), *, phase="all"):
     raw = config.load(path, list(overrides))
+    check_keys(raw)
+    raw = expand_checkpoint(raw)
     if raw.get("backend"):
         raise ValueError("use engine='pytorch' or engine='shadowspill', not backend")
     if raw.get("engine") == "pytorch":
@@ -17,7 +124,7 @@ def run_config(path, overrides=(), *, phase="all"):
             raise ValueError("ordinary PyTorch reference execution has no saved phases")
         from .reference.run import run_config as run_reference
 
-        return run_reference(path, overrides)
+        return run_reference(path, overrides, options=raw)
     if raw.get("engine", "shadowspill") != "shadowspill":
         raise ValueError("use engine='shadowspill' with explicit phase settings")
     if phase not in {"all", "build", "profile", "plan", "execute"}:

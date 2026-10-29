@@ -23,10 +23,7 @@
     "weight_decay": 0.1,
     "parameter_rounding": "stochastic",
     "opt_state_rounding": "stochastic",
-    "lr": {
-      "@call": "torch:tensor",
-      "data": 0.0003
-    }
+    "lr": 0.0003
   },
   "data": {
     "@call": "workloads.recipes.text.data.packed:PackedTokens",

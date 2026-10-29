@@ -15,6 +15,8 @@ from shadowspill.training._weights import Weights
 from shadowspill.training.observations import StepObservations, parameter_norms
 from shadowspill.training.results import StepResult
 
+from ..experiment.hyperparameters import scheduled_arguments
+
 
 class EagerStep:
     def __init__(self, model, options, initialize):
@@ -29,7 +31,10 @@ class EagerStep:
         self.optimizer = build_optimizer(
             config.resolve(options["optimizer"]),
             self.weights.parameters(),
-            config.resolve(options.get("optimizer_args", {})),
+            scheduled_arguments(
+                config.resolve(options.get("optimizer_args", {})),
+                options.get("schedules", {}),
+            ),
         )
         objective = ScaledObjective(
             functools.partial(

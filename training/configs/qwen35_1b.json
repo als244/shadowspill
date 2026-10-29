@@ -21,10 +21,7 @@
       0.95
     ],
     "weight_decay": 0.1,
-    "lr": {
-      "@call": "torch:tensor",
-      "data": 0.0003
-    }
+    "lr": 0.0003
   },
   "data": {
     "@call": "workloads.recipes.text.data.packed:PackedTokens",

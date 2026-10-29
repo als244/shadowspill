@@ -15,6 +15,7 @@ from shadowspill.artifacts.tensors import TensorChunk
 from shadowspill.training import config
 from shadowspill.training._hyperparams import set_hyperparams
 from shadowspill.training._model import build_optimizer
+from workloads.recipes.text.experiment.hyperparameters import scheduled_arguments
 
 CONFIGS = sorted(
     (Path(__file__).resolve().parents[2] / "training/configs").glob("*.json")
@@ -42,7 +43,9 @@ def test_supplied_configs_resolve_bounded_values_and_runtime_schedule(path):
     optimizer = build_optimizer(
         config.resolve(options["optimizer"]),
         model.parameters(),
-        config.resolve(options["optimizer_args"]),
+        scheduled_arguments(
+            config.resolve(options["optimizer_args"]), options["schedules"]
+        ),
     )
     rates = config.resolve(options["schedules"])
     values = {name: schedule(2) for name, schedule in rates.items()}
