@@ -12,7 +12,7 @@ from safetensors.torch import save_file
 from shadowspill.training import config
 from tests.workloads.test_checkpoints import huggingface_state, materialized, metadata
 from workloads.recipes.text.experiment.hyperparameters import scheduled_arguments
-from workloads.recipes.text.run import expand_checkpoint, run_config
+from workloads.recipes.text.run import expand_checkpoint, load_config, run_config
 
 
 def test_an_unknown_key_is_refused_with_the_nearest_name(tmp_path):
@@ -90,3 +90,34 @@ def test_a_number_a_schedule_names_becomes_a_tensor():
     assert scheduled_arguments({"lr": 1e-5}, {}) == {"lr": 1e-5}
     held = torch.tensor(2e-5)
     assert scheduled_arguments({"lr": held}, schedules)["lr"] is held
+
+
+def test_defaults_fill_what_a_config_leaves_out(tmp_path):
+    raw = {
+        "checkpoint": {"family": "llama3", "directory": "/models/x"},
+        "data": "data/x",
+        "optimizer_args": {"lr": 1e-5},
+        "max_seq_len": 64,
+        "max_tokens_per_step": 128,
+        "steps": 2,
+    }
+    expanded = load_config(raw, ["run_dir=runs/x"])
+    assert expanded["data"] == {
+        "@call": "workloads.recipes.text.data.packed:PackedTokens",
+        "directory": "data/x",
+    }
+    assert (
+        expanded["objective"]
+        == "@workloads.recipes.text.objectives:next_token_prediction"
+    )
+    assert expanded["optimizer"] == "@mlops.optim:AdamW"
+    assert expanded["model"]["@call"].endswith("build_from_checkpoint")
+    assert raw["data"] == "data/x"  # the caller's mapping is untouched
+    with pytest.raises(
+        ValueError, match="a config needs max_seq_len, max_tokens_per_step"
+    ):
+        load_config(
+            {"checkpoint": raw["checkpoint"], "data": "d", "steps": 1}, ["run_dir=r"]
+        )
+    with pytest.raises(ValueError, match="names a checkpoint or a model"):
+        load_config({k: v for k, v in raw.items() if k != "checkpoint"}, ["run_dir=r"])

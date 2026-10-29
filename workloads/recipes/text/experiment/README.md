@@ -23,9 +23,9 @@ objects. The model, data and objective remain workload choices.
 
 | Fields | Meaning |
 | --- | --- |
-| `model`, `data`, `objective`, `objective_args` | Model constructor, packed corpus and objective `(model, batch)`; batch is `[tokens, targets, seq_lens]`. |
+| `model`, `data`, `objective`, `objective_args` | Model constructor, packed corpus and objective `(model, batch)`; batch is `[tokens, targets, seq_lens]`. `data` given as a directory alone is `PackedTokens` over it; the objective defaults to next-token prediction. |
 | `checkpoint` | A family and a local Hugging Face checkpoint directory, standing for `model` built at the checkpoint's configuration and `initialize` streaming it in: `implementation`, `dtype` and `lora` go to the model, `seed` to the initializer (the run's seed otherwise), any other option such as `max_seq_len` (the run's otherwise) to both. |
-| `optimizer`, `optimizer_args` | Optimizer constructor and arguments. |
+| `optimizer`, `optimizer_args` | Optimizer constructor (default: the mlops AdamW) and arguments. |
 | `initialize` | Callable `(request, destination)` filling Executor-provided bounded CPU chunks. It may also be a context manager, such as a checkpoint reader; `workloads.recipes.text.initialization:from_checkpoint` is the supplied one for a local Hugging Face checkpoint. |
 | `max_seq_len`, `max_tokens_per_step` | Packed sequence cap and total token capacity per update. |
 | `max_tokens_per_microbatch` | Fixed example capacity; alternatively use `planning_min_tokens_per_microbatch` and `planning_max_tokens_per_microbatch` for a geometry sweep. |
@@ -39,7 +39,10 @@ objects. The model, data and objective remain workload choices.
 | `checkpoint_every`, `checkpoint_dir`, `keep_last` | Full training-state checkpoint cadence and retention. |
 | `run_dir`, `seed`, `settings`, `plots` | Output directory, build seed/settings and report plotting. |
 
-A key the runner does not know is refused, with the nearest known name.
+A config needs `run_dir`, `data`, `max_seq_len`, `max_tokens_per_step` and
+`steps`, and a `checkpoint` or a `model`; a missing one is named. A key the
+runner does not know is refused, with the nearest known name. `training.run`
+takes the same config as a path or a mapping from Python.
 
 Schedule keys use the saved Plan's hyperparameter names. A hyperparameter a
 schedule names is made a tensor by the runner, since a Python number is fixed

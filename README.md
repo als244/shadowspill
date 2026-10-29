@@ -49,27 +49,28 @@ for runnable code, evaluation and checkpoint loading.
 
 ## Training from a config
 
-A fine-tune is one JSON config and one command: prepare a corpus, name the
-checkpoint, run.
-
-```bash
-python -m workloads.recipes.text.data.prepare --tokenizer /models/Qwen3-1.7B \
-  --dataset HuggingFaceFW/fineweb-edu --files sample/10BT/000_00000.parquet --out data/qwen3
-python -m training.train finetune.json run_dir=runs/qwen3
-```
+A fine-tune is one JSON config and two commands: tokenize a corpus with the
+checkpoint's tokenizer, then run.
 
 ```json
 {"checkpoint": {"family": "qwen3", "directory": "/models/Qwen3-1.7B"},
- "data": {"@call": "workloads.recipes.text.data.packed:PackedTokens", "directory": "data/qwen3"},
- "objective": "@workloads.recipes.text.objectives:next_token_prediction",
- "optimizer": "@mlops.optim:AdamW", "optimizer_args": {"lr": 1e-5},
+ "data": "data/qwen3", "optimizer_args": {"lr": 1e-5},
  "max_seq_len": 2048, "max_tokens_per_step": 16384, "steps": 1000}
 ```
 
-The model streams in from the checkpoint and the GPU and host budgets come
-from the hardware unless given. `engine=pytorch` runs the same config eagerly
-for a step-by-step comparison, and `python -m training.reference` checks a
-step against the Hugging Face model. See the [training guide](training/README.md).
+```bash
+python -m training.prepare finetune.json --dataset HuggingFaceFW/fineweb-edu \
+  --files sample/10BT/000_00000.parquet
+python -m training.train finetune.json run_dir=runs/qwen3
+```
+
+The model streams in from the checkpoint, the objective and optimizer default
+to next-token prediction and AdamW, and the GPU and host budgets come from the
+hardware unless given. From Python, `training.run("finetune.json",
+run_dir="runs/qwen3")` does the same and returns the final step. `engine=pytorch`
+runs the same config eagerly for a step-by-step comparison, and
+`python -m training.reference` checks a step against the Hugging Face model.
+See the [training guide](training/README.md).
 
 ## Real model training
 

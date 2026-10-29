@@ -40,7 +40,14 @@ def load(
     loaded = json.loads(Path(path).read_text())
     if not isinstance(loaded, dict):
         raise ValueError("configuration must be a JSON object")
-    config: dict[str, Any] = loaded
+    return override(loaded, overrides)
+
+
+def override(
+    config: dict[str, Any], overrides: list[str] | tuple[str, ...] = ()
+) -> dict[str, Any]:
+    """``config`` with ``key=value`` overrides applied in place and returned."""
+
     for override in overrides:
         key, separator, text = override.partition("=")
         if not separator:

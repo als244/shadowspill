@@ -1,8 +1,10 @@
 """Configured text runs: independent phases, or an ordinary PyTorch reference."""
 
 import argparse
+import copy
 import difflib
 import json
+from collections.abc import Mapping
 from pathlib import Path
 
 from shadowspill.training import config
@@ -64,6 +66,15 @@ KNOWN_KEYS = frozenset(
     }
 )
 
+#: What a config must say; everything else has a default or is optional.
+REQUIRED_KEYS = ("run_dir", "data", "max_seq_len", "max_tokens_per_step", "steps")
+
+#: What a config may leave out.
+DEFAULTS = {
+    "objective": "@workloads.recipes.text.objectives:next_token_prediction",
+    "optimizer": "@mlops.optim:AdamW",
+}
+
 #: Of a checkpoint entry, what only the model takes and what only the initializer takes.
 MODEL_ONLY = frozenset({"implementation", "dtype", "lora"})
 INITIALIZER_ONLY = frozenset({"seed"})
@@ -113,10 +124,44 @@ def expand_checkpoint(raw):
     return expanded
 
 
-def run_config(path, overrides=(), *, phase="all"):
-    raw = config.load(path, list(overrides))
+def expand_defaults(raw):
+    """``data`` given as a directory alone is the packed documents it holds;
+    the objective defaults to next-token prediction and the optimizer to the
+    mlops AdamW (its ``lr`` still said in ``optimizer_args``)."""
+    expanded = dict(raw)
+    if isinstance(expanded.get("data"), str):
+        expanded["data"] = {
+            "@call": "workloads.recipes.text.data.packed:PackedTokens",
+            "directory": expanded["data"],
+        }
+    for key, value in DEFAULTS.items():
+        expanded.setdefault(key, value)
+    return expanded
+
+
+def check_required(raw):
+    missing = [key for key in REQUIRED_KEYS if key not in raw]
+    if missing:
+        raise ValueError(f"a config needs {', '.join(missing)}")
+    if not any(key in raw for key in ("checkpoint", "model")):
+        raise ValueError("a config names a checkpoint or a model")
+
+
+def load_config(source, overrides=()):
+    """The config at a path, or a JSON-like mapping, with overrides applied,
+    its keys checked, its checkpoint entry and defaults expanded."""
+    if isinstance(source, Mapping):
+        raw = config.override(copy.deepcopy(dict(source)), list(overrides))
+    else:
+        raw = config.load(source, list(overrides))
     check_keys(raw)
-    raw = expand_checkpoint(raw)
+    raw = expand_defaults(expand_checkpoint(raw))
+    check_required(raw)
+    return raw
+
+
+def run_config(path, overrides=(), *, phase="all"):
+    raw = load_config(path, overrides)
     if raw.get("backend"):
         raise ValueError("use engine='pytorch' or engine='shadowspill', not backend")
     if raw.get("engine") == "pytorch":

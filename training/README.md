@@ -21,6 +21,28 @@ This directory holds example configs and launchers for the optional
 `workloads.recipes.text` recipe. Text packing and its token-normalized objective
 are recipe behavior, and can be replaced without changing the trainer.
 
+## Getting started
+
+A fine-tune of a local Hugging Face checkpoint is a config of six keys:
+
+```json
+{"checkpoint": {"family": "qwen3", "directory": "/models/Qwen3-1.7B"},
+ "data": "data/qwen3", "optimizer_args": {"lr": 1e-5},
+ "max_seq_len": 2048, "max_tokens_per_step": 16384, "steps": 1000}
+```
+
+`python -m training.prepare finetune.json --dataset <hub dataset> --files
+<pattern>` tokenizes the corpus with the checkpoint's tokenizer into the
+directory `data` names (`--messages-column` for a chat dataset, whose
+assistant turns are then the only targets), and `python -m training.train
+finetune.json run_dir=runs/qwen3` trains. `data` given as a directory alone
+is the packed documents it holds; the objective defaults to next-token
+prediction and the optimizer to the mlops AdamW; a key the runner does not
+know is refused with the nearest known name, and a missing required key is
+named. From Python, `training.run(config, run_dir=..., steps=...)` takes a
+path or a mapping with the same overrides as keyword arguments and returns
+the final step's result.
+
 ## Run a supplied text recipe
 
 The JSON-configured launchers use separate build, profile, plan and execution
