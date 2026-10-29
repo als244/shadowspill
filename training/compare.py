@@ -7,8 +7,8 @@ difference at each step is only what the runs computed differently -- which
 each run's packing.jsonl lets this check rather than assume. Prints, for each
 run against the first: whether they trained on the same documents, the step-0
 difference, the largest over the first 10 steps, the mean over each 100
-steps, and the final validation loss when the runs validated; then draws the curves and differences
-into the reference run's compare.png.
+steps, and the final validation loss when the runs validated; then draws the
+curves and differences into the reference run's compare.png.
 """
 
 from __future__ import annotations
