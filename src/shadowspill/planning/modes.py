@@ -6,9 +6,7 @@ from shadowspill.artifacts.plan import Plan
 from shadowspill.errors import PlanInfeasibleError
 
 
-def bundle_gradient_modes(
-    fresh: Plan, accumulated: Plan, reserved_bytes: int = 0
-) -> Plan:
+def bundle_gradient_modes(fresh: Plan, accumulated: Plan) -> Plan:
     plans = [fresh, accumulated]
     if all(p.memory_layout is not None for p in plans):
         # The reusable arena must fit either path. Expanding an arena adds no
@@ -22,11 +20,7 @@ def bundle_gradient_modes(
             layout = plan.memory_layout
             assert layout is not None
             required = span + layout.required_bytes - layout.fixed_slice_bytes
-            capacity = (
-                plan.memory_budgets.execution_bytes
-                - plan.fixed_device_bytes
-                - reserved_bytes
-            )
+            capacity = plan.memory_budgets.execution_bytes - plan.fixed_device_bytes
             if required > capacity:
                 raise PlanInfeasibleError(
                     "shared gradient-mode arena exceeds the GPU allowance",

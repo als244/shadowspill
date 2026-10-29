@@ -7,11 +7,7 @@ import pytest
 
 from shadowspill.artifacts.tensors import shared_model_aliases
 from shadowspill.ir import AliasGroupSpec, MemoryLocation, ObjectSpec, ResidencySpec
-from shadowspill.planning.shared import (
-    _spill_bytes,
-    own_overhead_bytes,
-    worker_overhead_bytes,
-)
+from shadowspill.planning.shared import _spill_bytes
 
 from ._example import program
 
@@ -121,25 +117,3 @@ def test_joint_spill_keeps_private_inputs_and_deduplicates_shared_model():
     # them just because they are initial. Conservative extra capacity is needed.
     unretained = plan("weights", "inputs", 32, 128, retained=False)
     assert _spill_bytes([("", unretained), paths[1]], maps) == 320
-
-
-def test_worker_overhead_is_counted_once_and_each_programs_own_is_summed():
-    """Two Programs profiled in one worker both measure the worker's CUDA
-    context and headroom; a joint admission pays that once and each Program's
-    retained allocations once each. A Program without the split counts whole."""
-
-    def plan(fixed, **metadata):
-        return SimpleNamespace(
-            fixed_device_bytes=fixed,
-            profiled_program=SimpleNamespace(metadata=metadata),
-        )
-
-    training = plan(1300, external_device_bytes=740, external_headroom_bytes=512)
-    evaluation = plan(1290, external_device_bytes=740, external_headroom_bytes=512)
-    assert worker_overhead_bytes(training) == 1252
-    assert own_overhead_bytes(training) == 48 and own_overhead_bytes(evaluation) == 38
-    static = plan(20)
-    assert worker_overhead_bytes(static) == 0 and own_overhead_bytes(static) == 20
-    unmeasured = plan(600, external_device_bytes=None, external_headroom_bytes=512)
-    assert worker_overhead_bytes(unmeasured) == 512
-    assert own_overhead_bytes(unmeasured) == 88

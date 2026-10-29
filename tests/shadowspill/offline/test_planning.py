@@ -73,36 +73,6 @@ def test_budget_failure_has_diagnostics(budget):
     assert error.value.kind
 
 
-def test_a_reservation_stays_out_of_the_budget_while_planning():
-    """Room for a Program that will share the worker: the plan fits within the
-    budget less the reservation and still declares the whole budget; a
-    reservation that leaves too little is refused like a smaller budget."""
-    arguments = dict(communication_info=communication(), search_options=options())
-    result = plan_program(
-        profiled(),
-        memory_budgets=MemoryBudgets(110, 64),
-        reserved_bytes=10,
-        **arguments,
-    )
-    assert result.memory_budgets.execution_bytes == 110
-    assert result.summary["execution_peak_bytes"] == 100
-    with pytest.raises(PlanInfeasibleError) as error:
-        plan_program(
-            profiled(),
-            memory_budgets=MemoryBudgets(110, 64),
-            reserved_bytes=11,
-            **arguments,
-        )
-    assert error.value.kind
-    with pytest.raises(ValueError, match="nonnegative"):
-        plan_program(
-            profiled(),
-            memory_budgets=MemoryBudgets(110, 64),
-            reserved_bytes=-1,
-            **arguments,
-        )
-
-
 def test_save_recompute_alternatives_remain_available():
     p, costs = split_costed_program(
         recomputation_program(),

@@ -15,7 +15,6 @@ def simulation_inputs(
     profiled: ProfiledProgram,
     budgets: MemoryBudgets,
     communication: CommunicationInfo,
-    reserved_bytes: int = 0,
 ) -> tuple[ShadowSpillProgram, SimulationConfig]:
     program = profiled._costed_ir(communication)
     spec = profiled.program.parallelism
@@ -50,7 +49,7 @@ def simulation_inputs(
     ) != list(range(world_size)):
         raise ValueError("topology must contain exactly the declared logical ranks")
     communication_bytes, _ = communication_overhead(profiled.program, communication)
-    fixed_bytes = profiled.fixed_device_bytes + communication_bytes + reserved_bytes
+    fixed_bytes = profiled.fixed_device_bytes + communication_bytes
     usable = budgets.execution_bytes - fixed_bytes
     if usable <= 0:
         raise PlanInfeasibleError(

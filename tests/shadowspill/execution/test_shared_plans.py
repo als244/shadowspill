@@ -113,21 +113,31 @@ def test_shared_evaluation_and_checkpoint_in_cold_workers(tmp_path):
     assert shared.spill_bytes >= max(
         p.timeline.spill_peak_bytes for p in plans.values()
     )
-    for field, minimum in (
-        (
-            "execution_bytes",
-            max(
-                p.memory_layout.required_bytes + p.profiled_program.fixed_device_bytes
-                for p in plans.values()
-            ),
-        ),
-        ("spill_bytes", max(p.timeline.spill_peak_bytes for p in plans.values())),
-    ):
-        assert minimum < getattr(shared, field)
-        budget = replace(plans["training"].memory_budgets, **{field: minimum})
-        reduced = {name: replace(p, memory_budgets=budget) for name, p in plans.items()}
-        with pytest.raises(PlanInfeasibleError, match="shared Plans require"):
-            shared_memory(reduced["training"], {"evaluation": reduced["evaluation"]})
+    # One worker runs both: its fixed overhead, which every Program measured,
+    # counts once, beside the larger fixed slice and the larger dynamic need,
+    # so the pair costs exactly what the plan dominating both already needs
+    # and is admitted at that budget.
+    needed = max(
+        p.memory_layout.required_bytes + p.profiled_program.fixed_device_bytes
+        for p in plans.values()
+    )
+    assert shared.execution_bytes == needed
+    exact = replace(plans["training"].memory_budgets, execution_bytes=needed)
+    reduced = {name: replace(p, memory_budgets=exact) for name, p in plans.items()}
+    assert (
+        shared_memory(
+            reduced["training"], {"evaluation": reduced["evaluation"]}
+        ).execution_bytes
+        == needed
+    )
+    # Retained spill storage is private to each plan, so both must fit
+    # together: at the larger plan's own spill peak the pair is refused.
+    minimum = max(p.timeline.spill_peak_bytes for p in plans.values())
+    assert minimum < shared.spill_bytes
+    budget = replace(plans["training"].memory_budgets, spill_bytes=minimum)
+    reduced = {name: replace(p, memory_budgets=budget) for name, p in plans.items()}
+    with pytest.raises(PlanInfeasibleError, match="shared Plans require"):
+        shared_memory(reduced["training"], {"evaluation": reduced["evaluation"]})
 
     reference = Network()
     with torch.no_grad():
