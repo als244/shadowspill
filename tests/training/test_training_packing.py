@@ -89,33 +89,34 @@ def test_a_mask_keeps_only_the_marked_tokens_as_targets(tmp_path: Path) -> None:
 def test_ranks_share_a_steps_microbatches_and_its_normalizer(
     data: PackedTokens,
 ) -> None:
-    """Two ranks take the two halves of every step's microbatches, in order,
-    with the step's trained-token count as both their normalizer; their
-    validation batches are distinct and normalized over both ranks' batches."""
+    """Ranks take consecutive shares of every step's microbatches, equal or
+    not, with the step's trained-token count as every rank's normalizer;
+    their validation batches are distinct and normalized over all ranks'."""
     from workloads.recipes.text.data.source import PackedUpdates, validation_update
 
     geometry = dict(name="n", tokens=TOKENS, max_seq_len=MAX_SEQ_LEN)
-    whole = PackedUpdates(data, accumulation=4, **geometry)
-    halves = [
-        PackedUpdates(data, accumulation=4, rank=rank, world_size=2, **geometry)
-        for rank in (0, 1)
+    whole = PackedUpdates(data, counts=[4], **geometry)
+    uneven = [
+        PackedUpdates(data, counts=[3, 1], rank=rank, **geometry) for rank in (0, 1)
     ]
     for _ in range(3):
         step = next(whole)
-        parts = [next(half) for half in halves]
+        parts = [next(half) for half in uneven]
         assert [p["normalizer"] for p in parts] == [step["normalizer"]] * 2
         joined = parts[0]["candidates"]["n"] + parts[1]["candidates"]["n"]
-        assert len(joined) == 4 and all(len(p["candidates"]["n"]) == 2 for p in parts)
+        assert [len(p["candidates"]["n"]) for p in parts] == [3, 1]
         for mine, theirs in zip(joined, step["candidates"]["n"], strict=True):
             assert all(torch.equal(a, b) for a, b in zip(mine, theirs, strict=True))
-        assert halves[0].trained_tokens == whole.trained_tokens
-    assert halves[0].last_documents != halves[1].last_documents
-    state = halves[1].state_dict()
-    assert state["rank"] == 1 and state["world_size"] == 2
-    with pytest.raises(ValueError, match="another rank layout"):
-        halves[0].load_state_dict(state)
-    with pytest.raises(ValueError, match="divide among the ranks"):
-        PackedUpdates(data, accumulation=3, world_size=2, **geometry)
+        assert uneven[0].trained_tokens == whole.trained_tokens
+    assert uneven[0].last_documents != uneven[1].last_documents
+    state = uneven[1].state_dict()
+    assert state["counts"] == [3, 1] and state["rank"] == 1
+    with pytest.raises(ValueError, match="another rank"):
+        uneven[0].load_state_dict(state)
+    with pytest.raises(ValueError, match="different microbatch geometry"):
+        whole.load_state_dict(state)
+    with pytest.raises(ValueError, match="at least one microbatch"):
+        PackedUpdates(data, counts=[2, 0], **geometry)
     held = [
         validation_update(data, microbatches=2, rank=rank, world_size=2, **geometry)
         for rank in (0, 1)

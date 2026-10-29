@@ -124,13 +124,27 @@ def test_defaults_fill_what_a_config_leaves_out(tmp_path):
 
 
 def test_ranks_share_the_steps_tokens_and_need_the_shadowspill_engine(tmp_path):
-    from workloads.recipes.text.experiment.inputs import rank_options, ranks
+    from workloads.recipes.text.experiment.inputs import (
+        rank_counts,
+        rank_options,
+        ranks,
+    )
 
     options = {"ranks": 2, "max_tokens_per_step": 4096, "max_seq_len": 512}
     assert ranks(options) == 2 and ranks({}) == 1
     assert rank_options(options)["max_tokens_per_step"] == 2048
     with pytest.raises(ValueError, match="whole sequences for every rank"):
         rank_options({"ranks": 3, "max_tokens_per_step": 4096, "max_seq_len": 512})
+    uneven = {**options, "shares": [3, 1]}
+    assert [rank_options(uneven, r)["max_tokens_per_step"] for r in (0, 1)] == [
+        3072,
+        1024,
+    ]
+    assert rank_counts(uneven, 6, 0) == [6, 2] and rank_counts(uneven, 2, 1) == [6, 2]
+    with pytest.raises(ValueError, match="multiple of its share"):
+        rank_counts(uneven, 4, 0)
+    with pytest.raises(ValueError, match="one positive integer per rank"):
+        rank_options({**options, "shares": [1]})
     with pytest.raises(ValueError, match="positive integer"):
         ranks({"ranks": 0})
     path = tmp_path / "config.json"

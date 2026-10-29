@@ -64,6 +64,9 @@ KNOWN_KEYS = frozenset(
         "device",
         "compile",
         "ranks",
+        "shares",
+        "hosts",
+        "port",
     }
 )
 
@@ -201,7 +204,13 @@ def run_config(path, overrides=(), *, phase="all"):
     root.mkdir(parents=True, exist_ok=True)
     raw["run_dir"] = str(root)
     (root / "config.json").write_text(json.dumps(raw, indent=2) + "\n")
-    run_phases("workloads.recipes.text.experiment", root, phase, ranks=ranks)
+    from .experiment.hosts import check_hosts, run_hosts
+
+    hosts = check_hosts(raw)
+    if hosts is None:
+        run_phases("workloads.recipes.text.experiment", root, phase, ranks=ranks)
+    else:
+        run_hosts(root, raw, phase, hosts)
     if phase in {"all", "execute"}:
         from .experiment.results import load
 

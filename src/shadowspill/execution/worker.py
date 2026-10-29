@@ -72,6 +72,15 @@ def create_paths(
             for value in distributed.groups.gather(parameter_norms)
         ):
             raise ValueError("workers selected different parameter norm options")
+        if distributed is not None:
+            from shadowspill.parallelism.agreement import agreement_digest
+
+            agreements = distributed.groups.gather(agreement_digest(plan.program))
+            if any(value != agreements[0] for value in agreements):
+                raise ValueError(
+                    "ranks run Programs that disagree on what they exchange: the "
+                    "parallelism, the tensors or their shards and geometry differ"
+                )
         joint = coordinated(
             distributed, lambda: shared_memory(plan, plans) if plans else None
         )

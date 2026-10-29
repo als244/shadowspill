@@ -13,16 +13,44 @@ def ranks(options):
     return count
 
 
-def rank_options(options):
-    """The options one rank plans and trains with: its share of the step's
-    tokens. ``max_tokens_per_step`` is the whole step's, over every rank."""
+def shares(options):
+    """How the step's microbatches divide among the ranks: ``shares``, one
+    positive integer per rank, or equal shares."""
     count = ranks(options)
+    values = options.get("shares")
+    if values is None:
+        return [1] * count
+    if (
+        not isinstance(values, list)
+        or len(values) != count
+        or any(type(value) is not int or value < 1 for value in values)
+    ):
+        raise ValueError("shares lists one positive integer per rank")
+    return values
+
+
+def rank_options(options, rank=0):
+    """The options rank ``rank`` plans and trains with: its share of the
+    step's tokens. ``max_tokens_per_step`` is the whole step's, over every
+    rank, and every share must be whole sequences."""
+    parts = shares(options)
     tokens = options["max_tokens_per_step"]
-    if tokens % (count * options["max_seq_len"]):
+    if tokens % (sum(parts) * options["max_seq_len"]):
         raise ValueError(
-            "max_tokens_per_step must divide into whole sequences for every rank"
+            "max_tokens_per_step must divide into whole sequences for every "
+            "rank's share"
         )
-    return {**options, "max_tokens_per_step": tokens // count}
+    return {**options, "max_tokens_per_step": tokens // sum(parts) * parts[rank]}
+
+
+def rank_counts(options, microbatches, rank):
+    """Every rank's microbatches per step when rank ``rank`` takes
+    ``microbatches``: the shares scaled to it."""
+    parts = shares(options)
+    if microbatches % parts[rank]:
+        raise ValueError("a rank's microbatches must be a multiple of its share")
+    unit = microbatches // parts[rank]
+    return [unit * part for part in parts]
 
 
 def candidates(options, data):
@@ -67,10 +95,9 @@ def source(data, options, choice, rank=0):
         data,
         name=choice["candidate"],
         tokens=choice["tokens_per_microbatch"],
-        accumulation=choice["microbatches"] * ranks(options),
+        counts=rank_counts(options, choice["microbatches"], rank),
         max_seq_len=options["max_seq_len"],
         rank=rank,
-        world_size=ranks(options),
     )
 
 

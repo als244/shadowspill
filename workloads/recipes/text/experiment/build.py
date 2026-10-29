@@ -12,12 +12,15 @@ from shadowspill.training._inputs import ScaledObjective
 from shadowspill.training._model import build_optimizer
 from workloads.recipes.phases import settings
 
+from . import targets
 from .hyperparameters import scheduled_arguments
 from .inputs import call_inputs, candidates, rank_options, ranks
 
 
 def run(directory):
     root, options = settings(directory)
+    target = targets.record(root, options)
+    home = targets.artifacts(root, options)
     build_options = config.resolve(options.get("build", {}))
     # One worker per rank, the step's tokens shared among them; ``ranks``
     # workers shard weights, gradients and optimizer state by default.
@@ -38,7 +41,8 @@ def run(directory):
             **config.resolve(options.get("objective_args", {})),
         )
     )
-    example, _, geometries, skipped = candidates(rank_options(options), data)
+    rank = targets.first_rank(options, target["host"])
+    example, _, geometries, skipped = candidates(rank_options(options, rank), data)
     manifest = {"candidates": {}, "skipped": skipped}
     for name, (tokens, count) in geometries.items():
         args = call_inputs(example, name)["args"][0]
@@ -71,20 +75,20 @@ def run(directory):
                 f"schedules must name saved tensor hyperparameters: {sorted(unknown)}; "
                 f"available: {sorted(controls)}"
             )
-        program.save(root / f"programs/{name}/training.ssp")
+        program.save(home / f"programs/{name}/training.ssp")
         if options.get("eval_every", 0):
             build_forward(
                 model.eval(),
                 forward_fn=objective,
                 example_args=args,
                 parallelism=parallelism,
-            ).save(root / f"programs/{name}/evaluation.ssp")
+            ).save(home / f"programs/{name}/evaluation.ssp")
             model.train()
         manifest["candidates"][name] = {
             "tokens_per_microbatch": tokens,
             "microbatches": count,
         }
-    (root / "candidates.json").write_text(json.dumps(manifest, indent=2) + "\n")
+    (home / "candidates.json").write_text(json.dumps(manifest, indent=2) + "\n")
 
 
 if __name__ == "__main__":
