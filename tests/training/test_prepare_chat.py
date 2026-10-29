@@ -15,6 +15,7 @@ from workloads.recipes.text.data.packed import PackedTokens
 from workloads.recipes.text.data.prepare import write_meta
 from workloads.recipes.text.data.prepare_chat import (
     assistant_mask,
+    choose_separator,
     render,
     tokenize_chat,
 )
@@ -30,11 +31,18 @@ WORDS = ["hello", "world", "how", "are", "you", "fine", "thanks", "and", "well"]
 def tokenizer():
     tokenizers = pytest.importorskip("tokenizers")
     transformers = pytest.importorskip("transformers")
-    specials = ["<|eos|>", "<|user|>", "<|assistant|>", "<|end|>", "<unk>"]
+    specials = [
+        "<|eos|>",
+        "<|user|>",
+        "<|assistant|>",
+        "<|end|>",
+        "<unk>",
+        "<|endoftext|>",
+    ]
     vocab = {token: index for index, token in enumerate([*specials, *WORDS])}
     core = tokenizers.Tokenizer(tokenizers.models.WordLevel(vocab, unk_token="<unk>"))
     core.pre_tokenizer = tokenizers.pre_tokenizers.Whitespace()
-    core.add_special_tokens(specials[:4])
+    core.add_special_tokens([*specials[:4], specials[5]])
     fast = transformers.PreTrainedTokenizerFast(
         tokenizer_object=core, eos_token="<|eos|>", unk_token="<unk>"
     )
@@ -89,7 +97,10 @@ def test_prepared_files_carry_a_mask_a_run_trains_by(tokenizer, tmp_path):
     pq.write_table(pa.table({"messages": CONVERSATIONS * 3}), source)
     out = tmp_path / "tokens"
     counts = tokenize_chat(tokenizer, [source], out, val_tokens=1, batch_size=4)
-    write_meta(out, tokenizer, "tiny", counts, mask="assistant")
+    assert counts["eos_id"] == tokenizer.eos_token_id == 0
+    write_meta(
+        out, tokenizer, "tiny", counts, mask="assistant", eos_id=counts["eos_id"]
+    )
     for split in ("val", "train"):
         tokens = np.fromfile(out / f"{split}.bin", dtype=np.uint32)
         mask = np.fromfile(out / f"{split}.mask.bin", dtype=np.uint8)
@@ -120,3 +131,30 @@ def test_prepared_files_carry_a_mask_a_run_trains_by(tokenizer, tmp_path):
     assert (
         unmasked.trained_tokens(0) == 8 and (unmasked.targets(0) != IGNORE).sum() == 8
     )
+
+
+def test_a_template_ending_turns_with_the_end_of_text_id_gets_another_separator(
+    tokenizer, tmp_path
+):
+    """Llama 3 and Qwen end every turn with their end-of-text id; splitting a
+    file at it would make each turn a document, so a free document-end token
+    separates conversations instead, and the corpus records it as eos_id."""
+    tokenizer.chat_template = TEMPLATE.replace("<|end|>", "<|eos|>")
+    text, _ = render(tokenizer, CONVERSATIONS[0])
+    ids = tokenizer(text, add_special_tokens=False)["input_ids"]
+    assert tokenizer.eos_token_id in ids
+    assert choose_separator(tokenizer, [ids]) == tokenizer.convert_tokens_to_ids(
+        "<|endoftext|>"
+    )
+    with pytest.raises(ValueError, match="occurs inside"):
+        choose_separator(tokenizer, [ids], "<|eos|>")
+    with pytest.raises(ValueError, match="no token"):
+        choose_separator(tokenizer, [ids], "<|nothing|>")
+    source = tmp_path / "chat.parquet"
+    pq.write_table(pa.table({"messages": CONVERSATIONS}), source)
+    out = tmp_path / "tokens"
+    counts = tokenize_chat(tokenizer, [source], out, val_tokens=0, batch_size=4)
+    assert counts["eos_id"] == tokenizer.convert_tokens_to_ids("<|endoftext|>")
+    documents = TokenDocuments(out / "train.bin", counts["eos_id"], 64, "drop")
+    assert len(documents) == 2  # one document per conversation, turns intact
+    assert documents.trained_tokens(0) == 8

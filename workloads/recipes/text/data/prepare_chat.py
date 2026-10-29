@@ -4,11 +4,16 @@ and mark the assistant's tokens as the ones to learn.
     python -m workloads.recipes.text.data.prepare_chat --tokenizer <name or path> \\
         --dataset <hub dataset> --files <file pattern> --out <directory> \\
         [--revision REV] [--shards N] [--messages-column messages] \\
-        [--val-tokens N] [--max-train-tokens N]
+        [--val-tokens N] [--max-train-tokens N] [--separator TOKEN]
 
 Every conversation -- a list of ``{"role", "content"}`` messages -- becomes
 one document: its rendering by the tokenizer's chat template, tokenized,
-followed by the end-of-text id, as ``prepare`` writes documents. Beside
+followed by a separator, as ``prepare`` writes documents. The separator is a
+token no conversation contains: the tokenizer's end-of-text id when the
+template does not use it, otherwise ``<|end_of_text|>`` or ``<|endoftext|>``
+(Llama 3 and Qwen end every turn with their end-of-text id, which would cut
+a conversation into turns), or the one ``--separator`` names; ``meta.json``
+records it as ``eos_id``. Beside
 ``train.bin`` and ``val.bin`` go ``train.mask.bin`` and ``val.mask.bin``, one
 byte per token: 1 for a token of an assistant turn, from where its generation
 prompt ends to where the turn's rendering ends (its end-of-turn marker
@@ -34,6 +39,42 @@ import pyarrow.parquet as pq
 from workloads.recipes.text.data.prepare import write_meta
 
 Message = dict[str, Any]
+
+#: Document-end tokens a tokenizer may hold beside an end-of-turn end-of-text id.
+DOCUMENT_ENDS = ("<|end_of_text|>", "<|endoftext|>")
+
+
+def choose_separator(
+    tokenizer: Any, documents: Sequence[Sequence[int]], separator: str | None = None
+) -> int:
+    """The id that ends each document in the token file: ``separator`` when
+    named, else the end-of-text id unless a conversation contains it, else a
+    document-end token the vocabulary holds and no conversation contains."""
+
+    present = {int(token) for ids in documents for token in ids}
+    if separator is not None:
+        chosen = tokenizer.convert_tokens_to_ids(separator)
+        if chosen is None or chosen == getattr(tokenizer, "unk_token_id", None):
+            raise ValueError(f"the tokenizer has no token {separator!r}")
+        if chosen in present:
+            raise ValueError(f"{separator!r} occurs inside a conversation")
+        return int(chosen)
+    candidates = [
+        tokenizer.eos_token_id,
+        *(tokenizer.convert_tokens_to_ids(t) for t in DOCUMENT_ENDS),
+    ]
+    for candidate in candidates:
+        if (
+            candidate is not None
+            and candidate != getattr(tokenizer, "unk_token_id", None)
+            and candidate not in present
+        ):
+            return int(candidate)
+    raise ValueError(
+        "the end-of-text id ends the template's turns and the vocabulary has no "
+        "free document-end token; pass --separator with a token no conversation "
+        "contains"
+    )
 
 
 def render(
@@ -84,17 +125,20 @@ def tokenize_chat(
     val_tokens: int = 1_000_000,
     max_train_tokens: int | None = None,
     batch_size: int = 256,
+    separator: str | None = None,
     log: Callable[[str], None] = print,
 ) -> dict[str, Any]:
     """Render and tokenize the conversations of the parquet files at ``paths``,
     in order, into ``out/val.bin`` and ``out/train.bin`` with their masks.
     Whole batches go to the validation split until it holds ``val_tokens``;
     with ``max_train_tokens``, training stops at the last whole conversation
-    that fits. Returns the files read and the token counts, marked ones too."""
+    that fits. Returns the files read, the token counts, marked ones too, and
+    the separator id (``eos_id``) chosen on the first batch, which every
+    document ends with."""
 
     if not getattr(tokenizer, "is_fast", False):
         raise ValueError("marking the assistant's tokens needs a fast tokenizer")
-    eos = tokenizer.eos_token_id
+    eos: int | None = None
     out.mkdir(parents=True, exist_ok=True)
     counts = {"val": 0, "train": 0, "val_marked": 0, "train_marked": 0}
     read: list[str] = []
@@ -119,6 +163,12 @@ def tokenize_chat(
                     add_special_tokens=False,
                     return_offsets_mapping=True,
                 )
+                if eos is None:
+                    eos = choose_separator(tokenizer, encoded["input_ids"], separator)
+                    token = tokenizer.convert_ids_to_tokens(eos)
+                    log(f"documents end with {token!r} ({eos})")
+                elif any(eos in ids for ids in encoded["input_ids"]):
+                    raise ValueError(f"separator {eos} occurs inside a conversation")
                 documents = [
                     (
                         np.array([*ids, eos], dtype=np.uint32),
@@ -160,12 +210,15 @@ def tokenize_chat(
                     break
             if done:
                 break
+    if eos is None:
+        raise ValueError("no conversations were read")
     return {
         "files": read,
         "val_tokens": counts["val"],
         "train_tokens": counts["train"],
         "val_marked_tokens": counts["val_marked"],
         "train_marked_tokens": counts["train_marked"],
+        "eos_id": eos,
         "seconds": time.time() - started,
     }
 
@@ -181,6 +234,7 @@ def arguments() -> argparse.Namespace:
     parser.add_argument("--messages-column", default="messages")
     parser.add_argument("--val-tokens", type=int, default=1_000_000)
     parser.add_argument("--max-train-tokens", type=int)
+    parser.add_argument("--separator", help="the token that ends each document")
     return parser.parse_args()
 
 
@@ -202,6 +256,7 @@ def main() -> None:
         messages_column=args.messages_column,
         val_tokens=args.val_tokens,
         max_train_tokens=args.max_train_tokens,
+        separator=args.separator,
     )
     meta = write_meta(
         args.out,
@@ -212,6 +267,7 @@ def main() -> None:
         revision=args.revision,
         rendered="chat_template",
         mask="assistant",
+        eos_id=counts["eos_id"],
         val_marked_tokens=counts["val_marked_tokens"],
         train_marked_tokens=counts["train_marked_tokens"],
     )
