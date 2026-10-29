@@ -55,7 +55,13 @@ def test_portable_recipe_preserves_geometry_and_ownership():
     assert len(resource.options["layers"]) == 2
     _, ownership = model_parallelism(module, options["parallelism"])
     local = {id(p) for p in module.expert_parameters()}
+    buffers = {name for name, _ in module.named_buffers(remove_duplicate=False)}
     for row in ownership:
+        if row.name in buffers:
+            # A buffer is stored whole on every rank.
+            assert row.copy_groups == ((0, 1),)
+            assert row.weights.groups == ((0,), (1,))
+            continue
         expert = id(module.get_parameter(row.name)) in local if row.trainable else False
         assert row.copy_groups == (((0,), (1,)) if expert else ((0, 1),))
         assert row.optimizer.groups == (((0,), (1,)) if expert else ((0, 1),))
