@@ -31,11 +31,15 @@ def run_phases(package, root, selected, *, ranks=1):
         if workers > 1:
             environment.setdefault("OMP_NUM_THREADS", "1")
         with log_path.open("w") as log:
-            subprocess.run(
-                command,
-                env=environment,
-                stdout=log,
-                stderr=subprocess.STDOUT,
-                check=True,
+            result = subprocess.run(
+                command, env=environment, stdout=log, stderr=subprocess.STDOUT
+            )
+        if result.returncode:
+            # The phase ran in a worker whose output is its log; name the
+            # failure where the caller is looking.
+            tail = "".join(log_path.read_text().splitlines(keepends=True)[-20:])
+            raise RuntimeError(
+                f"{phase} failed with status {result.returncode}; "
+                f"the last lines of {log_path}:\n{tail}"
             )
         print(f"{phase}: complete", flush=True)
