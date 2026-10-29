@@ -39,9 +39,8 @@ objects. The model, data and objective remain workload choices.
 | `eval_every`, `eval_microbatches` | Held-out evaluation cadence and packed examples per evaluation. |
 | `checkpoint_every`, `checkpoint_dir`, `keep_last` | Full training-state checkpoint cadence and retention. |
 | `run_dir`, `seed`, `settings`, `plots` | Output directory, build seed/settings and report plotting. |
-| `shares` | One positive integer per rank: how the step's microbatches divide among the ranks (equal by default), for ranks of unequal speed; every rank's loss stays its share of the step's mean. |
-| `hosts`, `port` | Several machines in one run, the first the one the runner is launched on: `{"address", "ranks", "ssh", "repo", "python", "env"}` each. Every host builds, profiles and plans for its own GPUs under `targets/<gpu>/`, since executables and profiles belong to the hardware that made them; the ranks agree on what they exchange, checked when the workers open. Communicate and execute launch every host's workers under one rendezvous at the first host's address (`port`, default 29400); `env` carries the hosts' network settings (such as `NCCL_SOCKET_IFNAME`). Needs a fixed `max_tokens_per_microbatch`. |
-| `ranks` | Workers, one per GPU of one node (default 1). The build shards weights, gradients and optimizer state over them (`Parallelism.dp`, unless `build.parallelism` says otherwise), a communicate phase measures each Program's collectives on the workers, and every rank trains its share of each step's `max_tokens_per_step` tokens with the step's trained-token count as the shared normalizer. Evaluation runs distinct held-out batches per rank. |
+| `nodes`, `port` | The machines of a run with several, the first the one the runner is launched on: `{"address", "ranks", "ssh", "repo", "python", "env"}` each, their ranks adding up to `ranks`. The Plan is built once on the first and copied to the others, which hold the same hardware; the grouped phases launch every node's workers under one rendezvous at the first node's address (`port`, default 29400), each node advertising its own address; `env` carries a node's network settings. GPUs that differ take the [heterogeneous section](../heterogeneous/README.md) instead. |
+| `ranks` | Workers, one per GPU (default 1). The build shards weights, gradients and optimizer state over them (`Parallelism.dp`, unless `build.parallelism` says otherwise), a communicate phase measures each Program's collectives on the workers, and every rank trains its share of each step's `max_tokens_per_step` tokens with the step's trained-token count as the shared normalizer. Evaluation runs distinct held-out batches per rank. |
 
 A config needs `run_dir`, `data`, `max_seq_len`, `max_tokens_per_step` and
 `steps`, and a `checkpoint` or a `model`; a missing one is named. A key the
@@ -119,9 +118,12 @@ optimizer state, schedules, RNG and packing position. Partial/compute-only
 checkpoint policies from the old runner are rejected explicitly here rather
 than silently changing their meaning.
 
-With `ranks` the runner launches that many workers on one node under
-`torch.distributed.run`; the [Qwen3 distributed recipe](../qwen3/) is the
-qualified sharded-DP reference the phases follow.
+With `ranks` the runner launches that many workers under
+`torch.distributed.run`, on one node or, with `nodes`, across several; the
+[Qwen3 distributed recipe](../qwen3/) is the qualified sharded-DP reference
+the phases follow. `rank_tokens_per_step` is set by the
+[heterogeneous recipe](../heterogeneous/README.md) for a node whose ranks take
+an unequal share of the step; a config of the normal runner leaves it out.
 `engine="pytorch"` selects the ordinary [PyTorch reference loop](../reference/).
 It uses `device` (default `"auto"`) and `compile` (default `true`), without
 constructing ShadowSpill Plans or installing the execution allocator. It preserves

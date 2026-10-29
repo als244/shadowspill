@@ -44,9 +44,10 @@ path or a mapping with the same overrides as keyword arguments and returns
 the final step's result. `ranks=N` trains on N GPUs of one node, weights,
 gradients and optimizer state sharded over them, each rank taking its share
 of every step's tokens; the ranks' records sit under `rank-xxxxx/` and the
-summed figures under `aggregate/`. `hosts` spreads the ranks over several
-machines, each building for its own GPUs, with `shares` giving a faster card
-more of every step; see the [configuration reference](../workloads/recipes/text/experiment/README.md).
+summed figures under `aggregate/`. `nodes` spreads the ranks over several
+machines of the same hardware; machines whose GPUs differ train together
+through the [heterogeneous section](../workloads/recipes/text/heterogeneous/README.md),
+each building for its own card and taking its own share of every step.
 
 ## Run a supplied text recipe
 

@@ -6,13 +6,13 @@ from ..data.source import PackedUpdates, candidate_data, validation_update
 
 
 def ranks(options):
-    """How many workers the run uses: the hosts' ranks added up, else
+    """How many workers the run uses: the nodes' ranks added up, else
     ``ranks``, else one."""
-    hosts = options.get("hosts")
-    if hosts:
-        count = sum(int(host.get("ranks", 1)) for host in hosts)
+    nodes = options.get("nodes")
+    if nodes:
+        count = sum(int(node.get("ranks", 1)) for node in nodes)
         if options.get("ranks", count) != count:
-            raise ValueError("ranks must equal the hosts' ranks added up")
+            raise ValueError("ranks must equal the nodes' ranks added up")
         return count
     count = options.get("ranks", 1)
     if type(count) is not int or count < 1:
@@ -20,44 +20,21 @@ def ranks(options):
     return count
 
 
-def shares(options):
-    """How the step's microbatches divide among the ranks: ``shares``, one
-    positive integer per rank, or equal shares."""
-    count = ranks(options)
-    values = options.get("shares")
-    if values is None:
-        return [1] * count
-    if (
-        not isinstance(values, list)
-        or len(values) != count
-        or any(type(value) is not int or value < 1 for value in values)
-    ):
-        raise ValueError("shares lists one positive integer per rank")
-    return values
-
-
-def rank_options(options, rank=0):
-    """The options rank ``rank`` plans and trains with: its share of the
-    step's tokens. ``max_tokens_per_step`` is the whole step's, over every
-    rank, and every share must be whole sequences."""
-    parts = shares(options)
-    tokens = options["max_tokens_per_step"]
-    if tokens % (sum(parts) * options["max_seq_len"]):
-        raise ValueError(
-            "max_tokens_per_step must divide into whole sequences for every "
-            "rank's share"
-        )
-    return {**options, "max_tokens_per_step": tokens // sum(parts) * parts[rank]}
-
-
-def rank_counts(options, microbatches, rank):
-    """Every rank's microbatches per step when rank ``rank`` takes
-    ``microbatches``: the shares scaled to it."""
-    parts = shares(options)
-    if microbatches % parts[rank]:
-        raise ValueError("a rank's microbatches must be a multiple of its share")
-    unit = microbatches // parts[rank]
-    return [unit * part for part in parts]
+def rank_options(options):
+    """The options one rank plans and trains with: ``rank_tokens_per_step``
+    when a recipe gives ranks unequal shares, else an equal share of the
+    step's ``max_tokens_per_step``, whole sequences either way."""
+    tokens = options.get("rank_tokens_per_step")
+    if tokens is None:
+        count = ranks(options)
+        if options["max_tokens_per_step"] % (count * options["max_seq_len"]):
+            raise ValueError(
+                "max_tokens_per_step must divide into whole sequences for every rank"
+            )
+        tokens = options["max_tokens_per_step"] // count
+    elif tokens % options["max_seq_len"]:
+        raise ValueError("rank_tokens_per_step must be whole sequences")
+    return {**options, "max_tokens_per_step": tokens}
 
 
 def candidates(options, data):
@@ -102,7 +79,7 @@ def source(data, options, choice, rank=0):
         data,
         name=choice["candidate"],
         tokens=choice["tokens_per_microbatch"],
-        counts=rank_counts(options, choice["microbatches"], rank),
+        counts=[choice["microbatches"]] * ranks(options),
         max_seq_len=options["max_seq_len"],
         rank=rank,
     )

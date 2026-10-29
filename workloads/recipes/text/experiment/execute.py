@@ -19,7 +19,7 @@ from shadowspill.artifacts.tensors import registration_name, tensor_geometry
 from shadowspill.training import config
 from workloads.recipes.phases import settings
 
-from . import inputs, logging, results, targets
+from . import inputs, logging, results
 
 
 def resume_path(resume, home):
@@ -43,10 +43,9 @@ def run(directory):
         rank = dist.get_rank() if distributed else 0
         home = root / f"rank-{rank:05d}" if distributed else root
         home.mkdir(parents=True, exist_ok=True)
-        built = targets.artifacts(root, options)
-        choice = json.loads((built / "planning.json").read_text())
-        plan = Plan.load(built / "plans/training.ssp")
-        evaluation_path = built / "plans/evaluation.ssp"
+        choice = json.loads((root / "planning.json").read_text())
+        plan = Plan.load(root / "plans/training.ssp")
+        evaluation_path = root / "plans/evaluation.ssp"
         geometry = tensor_geometry(plan.program)
         sizes = {
             registration_name(item): math.prod(geometry[item["object_id"]]["shape"])

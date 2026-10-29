@@ -9,14 +9,11 @@ import torch.distributed as dist
 from shadowspill import Program, measure_communication
 from workloads.recipes.phases import settings
 
-from . import targets
 from .inputs import ranks
 
 
 def run(directory):
     root, options = settings(directory)
-    target = targets.read(root, options)
-    root = targets.artifacts(root, options)
     count = ranks(options)
     inventory = json.loads((root / "candidates.json").read_text())
     names = ["training", *(["evaluation"] if options.get("eval_every", 0) else [])]
@@ -33,8 +30,7 @@ def run(directory):
                     warmup_seconds=options.get("warmup_seconds", 0.05),
                     measure_seconds=options.get("measure_seconds", 0.18),
                 )
-                # The first worker of each host saves its target's calibration.
-                if dist.get_rank() == targets.first_rank(options, target["host"]):
+                if dist.get_rank() == 0:
                     communication.save(root / "communication" / relative)
     finally:
         dist.destroy_process_group()

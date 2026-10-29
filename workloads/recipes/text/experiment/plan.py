@@ -16,8 +16,6 @@ from shadowspill.planning.shared import shared_memory
 from shadowspill.step import StepDataOrdering
 from workloads.recipes.phases import settings
 
-from . import targets
-
 #: What a budget the config leaves out keeps back: 2 GiB of the device for
 #: the display and other processes, a quarter of the host memory that was
 #: available when profiling ran.
@@ -59,7 +57,6 @@ def shortfall(error):
 
 def run(directory):
     root, options = settings(directory)
-    root = targets.artifacts(root, options)
     inventory = json.loads((root / "candidates.json").read_text())
     for name in ("planning.json", "plans/training.ssp", "plans/evaluation.ssp"):
         (root / name).unlink(missing_ok=True)

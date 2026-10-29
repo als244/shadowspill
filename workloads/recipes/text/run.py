@@ -64,9 +64,9 @@ KNOWN_KEYS = frozenset(
         "device",
         "compile",
         "ranks",
-        "shares",
-        "hosts",
+        "nodes",
         "port",
+        "heterogeneous",
     }
 )
 
@@ -168,9 +168,14 @@ def run_config(path, overrides=(), *, phase="all"):
     raw = load_config(path, overrides)
     if raw.get("backend"):
         raise ValueError("use engine='pytorch' or engine='shadowspill', not backend")
-    ranks = raw.get("ranks", 1)
+    nodes = raw.get("nodes")
+    ranks = (
+        sum(node.get("ranks", 1) for node in nodes) if nodes else raw.get("ranks", 1)
+    )
     if type(ranks) is not int or ranks < 1:
         raise ValueError("ranks must be a positive integer")
+    if raw.get("heterogeneous") is not None and (nodes or "ranks" in raw):
+        raise ValueError("the heterogeneous section carries its own nodes and shares")
     if raw.get("engine") == "pytorch":
         if phase != "all":
             raise ValueError("ordinary PyTorch reference execution has no saved phases")
@@ -204,20 +209,25 @@ def run_config(path, overrides=(), *, phase="all"):
     root.mkdir(parents=True, exist_ok=True)
     raw["run_dir"] = str(root)
     (root / "config.json").write_text(json.dumps(raw, indent=2) + "\n")
-    from .experiment.hosts import check_hosts, run_hosts
+    if raw.get("heterogeneous") is not None:
+        from .heterogeneous.run import run_heterogeneous
 
-    hosts = check_hosts(raw)
-    if hosts is None:
-        run_phases("workloads.recipes.text.experiment", root, phase, ranks=ranks)
+        run_heterogeneous(root, raw, phase)
+    elif nodes:
+        from .experiment.nodes import run_nodes
+
+        run_nodes(root, raw, phase, nodes)
     else:
-        # The phases on every host read the group's size from the config.
-        raw["ranks"] = sum(host.get("ranks", 1) for host in hosts)
-        (root / "config.json").write_text(json.dumps(raw, indent=2) + "\n")
-        run_hosts(root, raw, phase, hosts)
+        run_phases("workloads.recipes.text.experiment", root, phase, ranks=ranks)
     if phase in {"all", "execute"}:
         from .experiment.results import load
 
-        for record in (root / "aggregate/wandb_run.json", root / "wandb_run.json"):
+        records = [
+            root / "aggregate/wandb_run.json",
+            *sorted(root.glob("nodes/*/aggregate/wandb_run.json")),
+            root / "wandb_run.json",
+        ]
+        for record in records:
             if record.exists() and (url := json.loads(record.read_text()).get("url")):
                 print(f"W&B run: {url}", flush=True)
                 break

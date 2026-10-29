@@ -7,7 +7,6 @@ from pathlib import Path
 from shadowspill import Program, apply_profiles, measure_communication, measure_program
 from workloads.recipes.phases import settings
 
-from . import targets
 from .inputs import ranks
 
 
@@ -39,7 +38,6 @@ def host_memory(meminfo="/proc/meminfo"):
 
 def run(directory):
     root, options = settings(directory)
-    root = targets.artifacts(root, options)
     timing = {
         "warmup_seconds": options.get("warmup_seconds", 0.05),
         "measure_seconds": options.get("measure_seconds", 0.18),
