@@ -55,5 +55,5 @@ def test_each_nodes_network_settings_are_its_own(monkeypatch):
     ]
     assert setup["groups"] == {"0,1": {"backend": "nccl"}}
     rows[1]["environment"]["NCCL_PROTO"] = "ll"
-    with pytest.raises(ValueError, match="backend setups: environment: .*simple.*ll"):
+    with pytest.raises(ValueError, match=r"backend setups: environment: .*simple.*ll"):
         module.shared_backend_setup(Group(rows), requests, device_ordinal=None)
