@@ -1,5 +1,6 @@
 """Streaming and failure behavior independent of a GPU/runtime instance."""
 
+import json
 import zipfile
 from types import SimpleNamespace
 
@@ -49,6 +50,19 @@ class MemoryExecutor:
         self.initialized = False
         self.export_tensors(callback, chunk_bytes=chunk_bytes)
         self.initialized = True
+
+    def tensor_chunks(self):
+        for name, tensor in self.values.items():
+            count = tensor.untyped_storage().nbytes() // tensor.element_size()
+            yield TensorChunk(
+                name,
+                tuple(tensor.shape),
+                tensor.dtype,
+                0,
+                count,
+                tuple(tensor.stride()),
+                tensor.storage_offset(),
+            )
 
 
 def test_streams_strided_and_mixed_dtype_storage_with_different_chunk_sizes(tmp_path):
@@ -106,11 +120,34 @@ def test_corrupted_tensor_cannot_be_used_after_restore(tmp_path):
     assert not executor.initialized
 
 
-def test_refuses_different_program_before_touching_executor(tmp_path):
+def test_another_program_of_the_same_state_restores(tmp_path):
+    """A checkpoint binds to the tensors, not to the Program that saved it: a
+    rebuild with other kernels or another geometry has the same state."""
+    executor = MemoryExecutor()
+    path = tmp_path / "checkpoint.ssp"
+    save_checkpoint(executor, path, metadata={"updates": 3})
+    with zipfile.ZipFile(path) as archive:
+        manifest = json.loads(archive.read("manifest.json"))
+    assert manifest["program"] == "example" and len(manifest["state"]) == 64
+    executor.plan.program.digest = "rebuilt"
+    for tensor in executor.values.values():
+        tensor.zero_()
+    assert load_checkpoint(executor, path) == {"updates": 3}
+    assert executor.values["step"].item() == 3
+
+
+def test_refuses_a_different_state_before_touching_executor(tmp_path):
     executor = MemoryExecutor()
     path = tmp_path / "checkpoint.ssp"
     save_checkpoint(executor, path)
-    executor.plan.program.digest = "different"
-    with pytest.raises(ValueError, match="Program identity"):
-        load_checkpoint(executor, path)
-    assert executor.initialized
+    other = MemoryExecutor()
+    other.values["fp8"] = other.values["fp8"][:30].clone()
+    other.values["extra"] = torch.zeros(2)
+    del other.values["step"]
+    with pytest.raises(ValueError, match="state identity differs") as error:
+        load_checkpoint(other, path)
+    message = str(error.value)
+    assert "only in the checkpoint: step" in message
+    assert "only in this executor: extra" in message
+    assert "geometry differs: fp8" in message
+    assert other.initialized

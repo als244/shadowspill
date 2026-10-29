@@ -73,6 +73,15 @@ class Controls:
             for request, chunk in self._chunks(name, value, chunk_bytes):
                 callback(request, chunk)
 
+    def descriptors(self) -> Iterator[TensorChunk]:
+        """One chunk spanning each control, as ``export`` describes it."""
+        for name, value in self.host.items():
+            for request, _ in self._chunks(
+                name, value, max(1, value.untyped_storage().nbytes())
+            ):
+                yield request
+                break
+
     @staticmethod
     def _chunks(
         name: str,

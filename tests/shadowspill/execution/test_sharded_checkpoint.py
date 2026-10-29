@@ -21,19 +21,22 @@ class ShardedExecutor(MemoryExecutor):
     def export_tensors(self, callback, *, chunk_bytes):
         width = max(1, chunk_bytes // 4)
         for start in range(0, self.shard.numel(), width):
-            callback(
-                TensorChunk(
-                    "weight",
-                    (3, 5),
-                    torch.float32,
-                    self.offset + start,
-                    15,
-                    (5, 1),
-                    region_offset=self.offset,
-                    region_elements=self.shard.numel(),
-                ),
-                self.shard[start : start + width],
-            )
+            callback(self.chunk(start), self.shard[start : start + width])
+
+    def chunk(self, start):
+        return TensorChunk(
+            "weight",
+            (3, 5),
+            torch.float32,
+            self.offset + start,
+            15,
+            (5, 1),
+            region_offset=self.offset,
+            region_elements=self.shard.numel(),
+        )
+
+    def tensor_chunks(self):
+        yield self.chunk(0)
 
 
 @pytest.mark.parametrize("rank", [0, 1])
@@ -51,5 +54,5 @@ def test_checkpoint_roundtrip_owns_only_declared_region(tmp_path, rank):
     executor.shard.zero_()
     load_checkpoint(executor, path, chunk_bytes=20)
     torch.testing.assert_close(executor.shard, expected)
-    with pytest.raises(ValueError, match="Program identity differs"):
+    with pytest.raises(ValueError, match="logical rank differs"):
         load_checkpoint(ShardedExecutor(1 - rank), path)

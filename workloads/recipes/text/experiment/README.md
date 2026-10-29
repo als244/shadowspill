@@ -95,7 +95,9 @@ python -m workloads.recipes.text.run experiment.json \
   resume=runs/text/checkpoints/step_00000003.ssp steps=6 --phase execute
 ```
 
-The saved Plan and evaluation Plan must match the checkpoint. Resume restores
+A checkpoint binds to the training state, not to the Plans: the tensors by
+name and geometry must match, and a rebuilt directory, another microbatch
+geometry or another budget resumes it. Resume restores
 optimizer state, schedules, RNG and packing position. Partial/compute-only
 checkpoint policies from the old runner are rejected explicitly here rather
 than silently changing their meaning.

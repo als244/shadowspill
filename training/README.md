@@ -116,8 +116,10 @@ change the schedule.
 
 `eval_every`, `checkpoint_every`, `log_every`, `metric_tables_every` and
 `keep_last` control the optional loop behavior. Resume checkpoints retain model
-weights, masters, optimizer state and loop/source progress. Compute-only or
-optimizer-omitting resume policies are rejected. The directory contains:
+weights, masters, optimizer state and loop/source progress, and bind to those
+tensors rather than to the Plan: a rebuilt run directory, another microbatch
+geometry or another budget resumes them. Compute-only or optimizer-omitting
+resume policies are rejected. The directory contains:
 
 | Path | Meaning |
 | --- | --- |

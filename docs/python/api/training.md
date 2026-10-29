@@ -156,7 +156,11 @@ formatting lives in checkpoint helpers rather than the Executor itself.
 
 Saving waits for the pending invocation. Export is chunked and does not create a
 full-device snapshot. A checkpoint is separate from a Plan: the Plan describes
-computation/layout; the checkpoint supplies mutable values. Numerical qualification
+computation/layout; the checkpoint supplies mutable values. It binds to the
+training state, the tensors by name, geometry and owned region, recorded as
+`state` in its manifest, so a Plan of the same state built elsewhere, with
+other kernels, another microbatch geometry or another budget, restores it; a
+different inventory is refused with the tensors named. Numerical qualification
 checks bitwise replay after restoring a checkpoint.
 
 For an immutable frozen base, construct `Trainer(plan, frozen_state_id="...")`.

@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable, Iterator, Mapping
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, NamedTuple
 
 import torch
 
@@ -103,26 +103,44 @@ def verify_initialization(state: Storage) -> None:
         )
 
 
-def visit_tensors(
-    state: Storage,
-    callback: Callable[[TensorChunk, torch.Tensor], None],
-    chunk_bytes: int,
-    *,
-    initialize: bool,
-    restore: bool = False,
-    prefix: str = "",
-    skip_shared: bool = False,
-) -> None:
-    if chunk_bytes <= 0:
-        raise ValueError("chunk_bytes must be positive")
+class OwnedTensor(NamedTuple):
+    """One persistent tensor of a Storage and the region this rank owns of it."""
+
+    name: str
+    object_id: str
+    initializer: Mapping[str, Any] | None
+    alias: str
+    geometry: Mapping[str, Any]
+    dtype: torch.dtype
+    capacity: int
+    region: Any | None
+    offset: int
+    length: int
+
+    def chunk(self, start: int, prefix: str = "") -> TensorChunk:
+        """The request for the owned region from ``start``, named with ``prefix``."""
+        return TensorChunk(
+            prefix + self.name,
+            tuple(self.geometry["shape"]),
+            self.dtype,
+            self.offset + start,
+            self.capacity if self.region is None else self.region.storage_elements,
+            tuple(self.geometry["stride"]),
+            self.geometry.get("storage_offset", 0),
+            self.offset,
+            self.length,
+        )
+
+
+def owned_tensors(
+    state: Storage, *, skip_shared: bool = False
+) -> Iterator[OwnedTensor]:
+    """Each persistent tensor of ``state`` once, by its first name, with the
+    region this rank owns; a shared alias is left out when asked."""
     visited = set()
-    entries = tuple(tensor_entries(state))
-    named = {name: object_id for name, object_id, _ in entries}
-    for name, object_id, initializer in entries:
+    for name, object_id, initializer in tensor_entries(state):
         alias = state.aliases[object_id]
         if skip_shared and alias in state.shared_aliases:
-            continue
-        if initialize and alias not in state.initial:
             continue
         if alias in visited or not state.sizes[alias]:
             continue
@@ -135,47 +153,80 @@ def visit_tensors(
         region = state.regions.get(object_id)
         if region is not None and capacity != region.capacity:
             raise ValueError(f"spill lease does not match the declared shard: {name}")
-        length = capacity if region is None else region.length
-        offset = 0 if region is None else region.offset
-        if region is not None:
-            geometry = region.geometry
-        if initialize and length < capacity:
+        yield OwnedTensor(
+            name,
+            object_id,
+            initializer,
+            alias,
+            geometry if region is None else region.geometry,
+            dtype,
+            capacity,
+            region,
+            0 if region is None else region.offset,
+            capacity if region is None else region.length,
+        )
+
+
+def tensor_descriptors(
+    state: Storage, *, prefix: str = "", skip_shared: bool = False
+) -> Iterator[TensorChunk]:
+    """One chunk spanning each persistent tensor's owned region, named as
+    ``visit_tensors`` names it: how a checkpoint describes a tensor, read
+    without touching any data."""
+    for tensor in owned_tensors(state, skip_shared=skip_shared):
+        yield tensor.chunk(0, prefix)
+
+
+def visit_tensors(
+    state: Storage,
+    callback: Callable[[TensorChunk, torch.Tensor], None],
+    chunk_bytes: int,
+    *,
+    initialize: bool,
+    restore: bool = False,
+    prefix: str = "",
+    skip_shared: bool = False,
+) -> None:
+    if chunk_bytes <= 0:
+        raise ValueError("chunk_bytes must be positive")
+    named = {name: object_id for name, object_id, _ in tensor_entries(state)}
+    for tensor in owned_tensors(state, skip_shared=skip_shared):
+        if initialize and tensor.alias not in state.initial:
+            continue
+        if initialize and tensor.length < tensor.capacity:
             for _, padding in state.spill.chunks(
-                alias,
-                dtype=dtype,
-                start=length,
+                tensor.alias,
+                dtype=tensor.dtype,
+                start=tensor.length,
                 chunk_bytes=chunk_bytes,
                 read=False,
                 write=True,
             ):
                 padding.zero_()
         for start, destination in state.spill.chunks(
-            alias,
-            dtype=dtype,
-            length=length,
+            tensor.alias,
+            dtype=tensor.dtype,
+            length=tensor.length,
             chunk_bytes=chunk_bytes,
             read=not initialize,
             write=initialize,
         ):
-            request = TensorChunk(
-                prefix + name,
-                tuple(geometry["shape"]),
-                dtype,
-                offset + start,
-                capacity if region is None else region.storage_elements,
-                tuple(geometry["stride"]),
-                geometry.get("storage_offset", 0),
-                offset,
-                length,
-            )
-            if initialize and not restore and name.startswith("gradient."):
+            request = tensor.chunk(start, prefix)
+            if initialize and not restore and tensor.name.startswith("gradient."):
                 destination.zero_()
             elif (
                 initialize
                 and not restore
-                and initializer
-                and initializer["kind"] != "external"
+                and tensor.initializer
+                and tensor.initializer["kind"] != "external"
             ):
-                fill_default(state, object_id, destination, start, initializer, named)
+                fill_default(
+                    state,
+                    tensor.object_id,
+                    destination,
+                    start,
+                    tensor.initializer,
+                    named,
+                )
             else:
                 callback(request, destination)

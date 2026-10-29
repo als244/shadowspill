@@ -17,6 +17,7 @@ from shadowspill.artifacts._values import encoded
 from shadowspill.artifacts.tensors import TensorChunk
 
 from .frozen import omitted_parameters, validate_identity
+from .identity import state_identity
 from .tensors import byte_view, geometry, region_bytes
 
 if TYPE_CHECKING:
@@ -90,6 +91,9 @@ def save_checkpoint(
     encoded as JSON data. This helper does not discover application state.
     Distributed callers supply a distinct path per logical rank; each archive
     contains only that rank's owned tensor regions and records its identity.
+    A checkpoint binds to the training state, the tensors by name, geometry
+    and owned region (``state``); the Program that saved it is recorded for
+    information only.
     With frozen_state_id, omit unchanged frozen parameters; retain trainable
     tensors, optimizer state, buffers and anything mutated by an admitted Plan.
     """
@@ -126,6 +130,7 @@ def save_checkpoint(
                         "format": "shadowspill.checkpoint",
                         "version": 1,
                         "byteorder": sys.byteorder,
+                        "state": state_identity(executor),
                         "program": executor.plan.program.digest,
                         "logical_rank": executor.logical_rank,
                         "additional_programs": {

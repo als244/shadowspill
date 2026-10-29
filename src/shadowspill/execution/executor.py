@@ -1,6 +1,6 @@
 """Admitted saved Plans, one worker, one outstanding asynchronous invocation."""
 
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Callable, Iterator, Mapping, Sequence
 from contextlib import ExitStack
 from dataclasses import replace
 from types import MappingProxyType
@@ -19,7 +19,7 @@ from .distributed.checks import check_external_budget, check_invocation, coordin
 from .inputs import stage_inputs
 from .paths import ExecutionPath
 from .results import TrainingResult, collect_outputs
-from .tensors import TensorChunk, visit_tensors
+from .tensors import TensorChunk, tensor_descriptors, visit_tensors
 from .tracing import InvocationTrace
 from .worker import create_paths
 
@@ -136,6 +136,17 @@ class Executor:
                 initialize=False,
                 skip_shared=True,
                 prefix=f"plans.{name}.",
+            )
+
+    def tensor_chunks(self) -> Iterator[TensorChunk]:
+        """One chunk spanning each persistent tensor this executor owns, named
+        as ``export_tensors`` names it and read without touching any data: the
+        training state a checkpoint describes and binds to."""
+        yield from tensor_descriptors(self._paths[0].storage)
+        yield from self._paths[0].controls.descriptors()
+        for name, path in self._named_paths.items():
+            yield from tensor_descriptors(
+                path.storage, skip_shared=True, prefix=f"plans.{name}."
             )
 
     def run(

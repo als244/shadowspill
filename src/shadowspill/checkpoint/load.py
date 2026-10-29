@@ -15,6 +15,7 @@ import torch
 from shadowspill.artifacts.tensors import TensorChunk
 
 from .frozen import validate_restore
+from .identity import describe_difference, inventory, state_identity
 from .tensors import byte_view, geometry, region_bytes
 
 if TYPE_CHECKING:
@@ -29,13 +30,22 @@ def _manifest(archive: zipfile.ZipFile, executor: Executor) -> dict[str, Any]:
         manifest.get("format") != "shadowspill.checkpoint"
         or manifest.get("version") != 1
         or manifest.get("byteorder") != sys.byteorder
-        or manifest.get("program") != executor.plan.program.digest
         or manifest.get("logical_rank", 0) != executor.logical_rank
-        or manifest.get("additional_programs", {})
-        != {name: plan.program.digest for name, plan in executor.plans.items()}
         or not isinstance(manifest.get("metadata"), dict)
+        or not isinstance(manifest.get("tensors"), list)
     ):
-        raise ValueError("checkpoint format or Program identity differs")
+        raise ValueError("checkpoint format or logical rank differs")
+    current = state_identity(executor)
+    if manifest.get("state") != current:
+        raise ValueError(
+            "checkpoint state identity differs: "
+            f"saved {manifest.get('state')}, this executor {current}; "
+            + describe_difference(
+                manifest["tensors"],
+                inventory(executor),
+                omitted=manifest.get("omitted_parameters", ()),
+            )
+        )
     return cast(dict[str, Any], manifest)
 
 
@@ -127,10 +137,12 @@ def load_checkpoint(
     frozen_state_id: str | None = None,
     fill_tensor: Callable[[TensorChunk, torch.Tensor], None] | None = None,
 ) -> dict[str, Any]:
-    """Restore a checkpoint for the same Program and return caller metadata.
+    """Restore a checkpoint of the same training state and return caller metadata.
 
-    Budgets and planning order may differ. Program identity and every requested
-    tensor's geometry/bytes must match. A failure while filling tensors leaves
+    The checkpoint binds to the tensors by name, geometry and owned region,
+    not to the Program: a rebuilt Program, other kernels, another microbatch
+    geometry or budget restore it, and a different inventory is refused with
+    the tensors named. A failure while filling tensors leaves
     Executor uninitialized. All persistent tensors, including CPU controls, load.
     Partial checkpoints require the same frozen_state_id and a bounded loader
     for the omitted base parameters, even when the Executor was initialized.
