@@ -36,7 +36,7 @@ def test_each_nodes_network_settings_are_its_own(monkeypatch):
     monkeypatch.setattr(
         module, "backend_setup", lambda groups, device_ordinal=None: record()
     )
-    requests = (CollectiveRequest("reduce_scatter", (0, 1), 64),)
+    requests = (CollectiveRequest("reduce_scatter", (0, 1), 64, "torch.float32"),)
     rows = [
         record(NCCL_SOCKET_IFNAME="enp114s0f1np1", NCCL_DEBUG="WARN"),
         record(NCCL_SOCKET_IFNAME="enp4s0f0np0", NCCL_DEBUG="WARN"),
