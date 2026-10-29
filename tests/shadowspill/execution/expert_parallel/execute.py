@@ -11,11 +11,18 @@ from tests.shadowspill.execution._cold import forbid_preparation
 forbid_preparation()
 from benchmarking.quickstart.phases.common import experiment, read  # noqa: E402
 from benchmarking.quickstart.phases.distributed import workers  # noqa: E402
+from qualification.numerical.tolerances import STEP_QUANTUM_DISAGREEMENTS  # noqa: E402
 from shadowspill import Executor, Plan, load_checkpoint, save_checkpoint  # noqa: E402
 from tests.shadowspill.execution._trace_checks import check_trace  # noqa: E402
 
 
-def compare(executor, expected):
+def compare(executor, expected, steps):
+    # The two arms round the same gradient sums in different orders, so an
+    # element whose gradient is near zero can carry opposite signs and move one
+    # learning rate each way in a step: a master weight is held to that bound
+    # per step taken, the rule the numerical gate applies to such weights.
+    rate = float(expected["optimizer_group.0.lr"])
+    master_bound = STEP_QUANTUM_DISAGREEMENTS * rate * steps
     values = {}
     missing = set()
 
@@ -45,8 +52,8 @@ def compare(executor, expected):
             torch.testing.assert_close(
                 actual,
                 wanted.to(actual.dtype),
-                rtol=0.01 if name.startswith("master.") else 0.03,
-                atol=0.0003 if name.startswith("master.") else 0.002,
+                rtol=0.0 if name.startswith("master.") else 0.03,
+                atol=master_bound if name.startswith("master.") else 0.002,
                 msg=lambda error, name=name: f"{name}: {error}",
             )
     assert moments and any(name.startswith("master.") for name in values)
@@ -76,13 +83,13 @@ def execute(root, request, group):
                 torch.testing.assert_close(loss, wanted, rtol=0.02, atol=0.002)
             if index == 0:
                 check_trace(plan, diagnostics)
-            compare(executor, reference["values"])
+            compare(executor, reference["values"], steps=index + 1)
             if index == 0:
                 checkpoint = root / f"checkpoint-{group.logical_rank}.ssp"
                 save_checkpoint(executor, checkpoint, chunk_bytes=8192)
                 executor.initialize(lambda request, chunk: chunk.zero_(), restore=True)
                 load_checkpoint(executor, checkpoint, chunk_bytes=4096)
-                compare(executor, reference["values"])
+                compare(executor, reference["values"], steps=index + 1)
             records.append({"step": index + 1, "loss": sum(float(v) for v in losses)})
         (root / f"result-{group.logical_rank}.json").write_text(
             json.dumps({"passed": True, "steps": records}, indent=2)
