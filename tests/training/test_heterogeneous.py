@@ -125,3 +125,30 @@ def test_the_section_is_checked_and_each_node_gets_its_share():
                 "max_seq_len": 1024,
             }
         )
+
+
+def test_nodes_walk_the_union_of_their_slots():
+    from workloads.recipes.text.heterogeneous.communicate import (
+        shared_slots,
+        slots,
+        stand_in,
+    )
+
+    fast = slots(
+        {"eval_every": 3}, {"candidates": {"6144_tokens": {}, "3072_tokens": {}}}
+    )
+    slow = slots({"eval_every": 3}, {"candidates": {"2048_tokens": {}}})
+    assert fast == [
+        "6144_tokens/training",
+        "6144_tokens/evaluation",
+        "3072_tokens/training",
+        "3072_tokens/evaluation",
+    ]
+    union = shared_slots([fast, slow])
+    assert len(union) == 6 and union == sorted(union)
+    assert stand_in("6144_tokens/evaluation", slow) == "2048_tokens/evaluation"
+    assert stand_in("3072_tokens/training", slow) == "2048_tokens/training"
+    with pytest.raises(ValueError, match="built no evaluation"):
+        stand_in(
+            "6144_tokens/evaluation", slots({}, {"candidates": {"2048_tokens": {}}})
+        )
