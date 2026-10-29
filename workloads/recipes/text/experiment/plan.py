@@ -16,7 +16,7 @@ from shadowspill.planning.shared import shared_memory
 from shadowspill.step import StepDataOrdering
 from workloads.recipes.phases import settings
 
-from . import inputs
+from . import group
 
 #: What a budget the config leaves out keeps back: 2 GiB of the device for
 #: the display and other processes, a quarter of the host memory that was
@@ -77,7 +77,7 @@ def run(directory):
     )
     print(f"budgets: execution {execution} GiB, spill {spill} GiB", flush=True)
     budget = MemoryBudgets(int(execution * (1 << 30)), int(spill * (1 << 30)))
-    ranks = inputs.ranks(options)
+    ranks = group.ranks(options)
 
     best, rows, misses = None, [], []
     for name, geometry in inventory["candidates"].items():

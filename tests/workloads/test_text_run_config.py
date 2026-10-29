@@ -124,7 +124,7 @@ def test_defaults_fill_what_a_config_leaves_out(tmp_path):
 
 
 def test_ranks_share_the_steps_tokens_and_need_the_shadowspill_engine(tmp_path):
-    from workloads.recipes.text.experiment.inputs import rank_options, ranks
+    from workloads.recipes.text.experiment.group import rank_options, ranks
 
     options = {"ranks": 2, "max_tokens_per_step": 4096, "max_seq_len": 512}
     assert ranks(options) == 2 and ranks({}) == 1

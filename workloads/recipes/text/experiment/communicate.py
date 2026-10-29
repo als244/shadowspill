@@ -9,7 +9,7 @@ import torch.distributed as dist
 from shadowspill import Program, measure_communication
 from workloads.recipes.phases import settings
 
-from .inputs import ranks
+from .group import ranks
 
 
 def run(directory):

@@ -19,7 +19,7 @@ from shadowspill.artifacts.tensors import registration_name, tensor_geometry
 from shadowspill.training import config
 from workloads.recipes.phases import settings
 
-from . import inputs, logging, results
+from . import group, inputs, logging, results
 
 
 def resume_path(resume, home):
@@ -33,7 +33,7 @@ def resume_path(resume, home):
 
 def run(directory):
     root, options = settings(directory)
-    count = inputs.ranks(options)
+    count = group.ranks(options)
     distributed = count > 1
     if distributed:
         import torch.distributed as dist

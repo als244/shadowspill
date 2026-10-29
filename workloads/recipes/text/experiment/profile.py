@@ -7,7 +7,7 @@ from pathlib import Path
 from shadowspill import Program, apply_profiles, measure_communication, measure_program
 from workloads.recipes.phases import settings
 
-from .inputs import ranks
+from .group import ranks
 
 
 def hardware():

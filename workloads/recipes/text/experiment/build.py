@@ -12,8 +12,9 @@ from shadowspill.training._inputs import ScaledObjective
 from shadowspill.training._model import build_optimizer
 from workloads.recipes.phases import settings
 
+from .group import rank_options, ranks
 from .hyperparameters import scheduled_arguments
-from .inputs import call_inputs, candidates, rank_options, ranks
+from .inputs import call_inputs, candidates
 
 
 def run(directory):
