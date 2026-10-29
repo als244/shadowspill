@@ -38,16 +38,22 @@ def test_each_nodes_network_settings_are_its_own(monkeypatch):
     )
     requests = (CollectiveRequest("reduce_scatter", (0, 1), 64, "torch.float32"),)
     rows = [
-        record(NCCL_SOCKET_IFNAME="enp114s0f1np1", NCCL_DEBUG="WARN"),
+        record(
+            NCCL_SOCKET_IFNAME="enp114s0f1np1", NCCL_DEBUG="WARN", NCCL_HOME="/opt/nccl"
+        ),
         record(NCCL_SOCKET_IFNAME="enp4s0f0np0", NCCL_DEBUG="WARN"),
     ]
     setup = module.shared_backend_setup(Group(rows), requests, device_ordinal=None)
     assert setup["environment"] == {"NCCL_PROTO": "simple"}
     assert setup["local_environment"] == [
-        {"NCCL_SOCKET_IFNAME": "enp114s0f1np1", "NCCL_DEBUG": "WARN"},
+        {
+            "NCCL_SOCKET_IFNAME": "enp114s0f1np1",
+            "NCCL_DEBUG": "WARN",
+            "NCCL_HOME": "/opt/nccl",
+        },
         {"NCCL_SOCKET_IFNAME": "enp4s0f0np0", "NCCL_DEBUG": "WARN"},
     ]
     assert setup["groups"] == {"0,1": {"backend": "nccl"}}
     rows[1]["environment"]["NCCL_PROTO"] = "ll"
-    with pytest.raises(ValueError, match="different communication backend setups"):
+    with pytest.raises(ValueError, match="backend setups: environment: .*simple.*ll"):
         module.shared_backend_setup(Group(rows), requests, device_ordinal=None)

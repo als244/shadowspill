@@ -26,6 +26,16 @@ LOCAL_SETTINGS = frozenset(
 )
 
 
+#: Variables naming where something is installed or written on a node, not
+#: how the collectives run: each node's own.
+LOCAL_SUFFIXES = ("_HOME", "_ROOT", "_PATH", "_DIR", "_FILE")
+
+
+def is_local(name: str) -> bool:
+    """Whether a setting is a node's own rather than the group's."""
+    return name in LOCAL_SETTINGS or name.endswith(LOCAL_SUFFIXES)
+
+
 def split_environment(row: dict[str, Any]) -> tuple[dict[str, Any], dict[str, Any]]:
     """A worker's backend record as the part every worker must share and the
     part that is its own."""
@@ -33,10 +43,8 @@ def split_environment(row: dict[str, Any]) -> tuple[dict[str, Any], dict[str, An
     shared = {
         key: value for key, value in row.items() if key not in ("groups", "environment")
     }
-    shared["environment"] = {
-        k: v for k, v in environment.items() if k not in LOCAL_SETTINGS
-    }
-    return shared, {k: v for k, v in environment.items() if k in LOCAL_SETTINGS}
+    shared["environment"] = {k: v for k, v in environment.items() if not is_local(k)}
+    return shared, {k: v for k, v in environment.items() if is_local(k)}
 
 
 def shared_backend_setup(
