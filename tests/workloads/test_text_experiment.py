@@ -56,6 +56,35 @@ def test_build_examples_match_actual_packed_layouts(tmp_path):
             expected.validate(args)
 
 
+def test_budgets_left_out_come_from_the_profiled_hardware(tmp_path):
+    import math
+
+    from workloads.recipes.text.experiment import plan, profile
+
+    meminfo = tmp_path / "meminfo"
+    meminfo.write_text(
+        "MemTotal:       263000000 kB\nMemFree:        1000 kB\n"
+        "MemAvailable:   200000000 kB\n"
+    )
+    host = profile.host_memory(meminfo)
+    assert host == {
+        "host_total_bytes": 263000000 << 10,
+        "host_available_bytes": 200000000 << 10,
+    }
+    hardware = {"device": "card", "device_total_bytes": 34_000_000_000, **host}
+    assert plan.budgets({"execution_gib": 4, "spill_gib": 0.5}, hardware) == (4, 0.5)
+    assert plan.budgets({"execution_gib": 4, "spill_gib": 0.5}, None) == (4, 0.5)
+    assert plan.budgets({"spill_gib": 8}, hardware) == (31 - 2, 8)
+    assert plan.budgets({}, hardware) == (
+        29,
+        math.floor((200000000 << 10) * 0.75 / (1 << 30)),
+    )
+    with pytest.raises(ValueError, match=r"hardware\.json"):
+        plan.budgets({}, None)
+    with pytest.raises(ValueError, match="positive"):
+        plan.budgets({"execution_gib": 0, "spill_gib": 1}, None)
+
+
 @pytest.mark.cuda
 @pytest.mark.parametrize("masters", [False, True])
 def test_text_phases_preserve_packing_metrics_and_exact_cold_resume(

@@ -34,6 +34,10 @@ python -u -m training.train training/configs/olmoe_1b.json \
   steps=1000 execution_gib=8 spill_gib=32
 ```
 
+A budget left out comes from the profiled hardware: the device's memory less
+2 GiB, three quarters of the host memory available when profiling ran. The
+plan phase prints the budgets it planned and records them in `planning.json`.
+
 The JSON file names constructors and functions explicitly. `@module:name`
 resolves a Python object, `{"@call": "module:name", ...}` constructs it, and
 `{"@partial": "module:name", ...}` binds its keyword arguments. Overrides use

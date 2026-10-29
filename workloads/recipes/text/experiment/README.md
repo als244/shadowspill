@@ -30,7 +30,7 @@ objects. The model, data and objective remain workload choices.
 | `max_tokens_per_microbatch` | Fixed example capacity; alternatively use `planning_min_tokens_per_microbatch` and `planning_max_tokens_per_microbatch` for a geometry sweep. |
 | `build` | Additional public `build_step` options, such as partitioning and operator recomputation. |
 | `master_dtype`, `grad_dtype` | Optional explicit precision policies, resolved as Python objects. |
-| `execution_gib`, `spill_gib` | Per-worker planning budgets; execution includes external headroom. |
+| `execution_gib`, `spill_gib` | Per-worker planning budgets; execution includes external headroom. Left out, the profiled device's memory less 2 GiB and three quarters of the host memory available when profiling ran (`hardware.json`); `planning.json` records the budgets planned. |
 | `warmup_seconds`, `measure_seconds`, `external_headroom_mib` | Task/communication measurement controls; defaults 0.05 s, 0.18 s and 512 MiB. |
 | `steps`, `schedules`, `resume` | Target total updates, runtime hyperparameter schedules and optional Trainer checkpoint. |
 | `parameter_norms_every`, `metric_reducer`, `omit_parameter_metrics` | Optional runtime norms (off by default) and CPU metric formatting. No compiled parameter-observation tasks. |
@@ -71,7 +71,8 @@ preserves document packing, pending documents and the trained-token count.
 
 ## Outputs and resume
 
-`programs/`, `profiles/` and `profiled/` hold `.ssp` artifacts by geometry.
+`programs/`, `profiles/` and `profiled/` hold `.ssp` artifacts by geometry;
+`hardware.json` records the profiled device's and host's memory.
 `search/` retains feasible plans for each ordering; `search.json` records failed
 cases too. `plans/training.ssp` and optional `plans/evaluation.ssp` are selected
 for execution, with shared model tensors admitted by Executor. `report/` holds
