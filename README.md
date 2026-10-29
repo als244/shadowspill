@@ -65,8 +65,9 @@ python -m training.train finetune.json run_dir=runs/qwen3
 ```
 
 The model streams in from the checkpoint, the objective and optimizer default
-to next-token prediction and AdamW, and the GPU and host budgets come from the
-hardware unless given. From Python, `training.run("finetune.json",
+to next-token prediction and AdamW, the GPU and host budgets come from the
+hardware unless given, and `ranks=N` trains on N GPUs with weights, gradients
+and optimizer state sharded over them. From Python, `training.run("finetune.json",
 run_dir="runs/qwen3")` does the same and returns the final step. `engine=pytorch`
 runs the same config eagerly for a step-by-step comparison, and
 `python -m training.reference` checks a step against the Hugging Face model.

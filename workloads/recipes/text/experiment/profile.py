@@ -7,6 +7,8 @@ from pathlib import Path
 from shadowspill import Program, apply_profiles, measure_communication, measure_program
 from workloads.recipes.phases import settings
 
+from .inputs import ranks
+
 
 def hardware():
     """The profiled device's memory and the host's, for budgets a config
@@ -56,7 +58,8 @@ def run(directory):
         )
         profiles.save(root / "profiles" / relative)
         apply_profiles(program, profiles).save(root / "profiled" / relative)
-    measure_communication(**timing).save(root / "communication.ssp")
+    if ranks(options) == 1:
+        measure_communication(**timing).save(root / "communication.ssp")
     (root / "hardware.json").write_text(json.dumps(hardware(), indent=2) + "\n")
 
 

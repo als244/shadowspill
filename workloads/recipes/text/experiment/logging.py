@@ -33,12 +33,24 @@ def reducer(options, sizes):
     return reduce_observations
 
 
-def open_logger(stack, root, options):
-    if not options.get("wandb_project"):
-        return None
+def open_logger(stack, root, options, group=None):
+    """The run's logger: W&B when ``wandb_project`` says so; with a rank
+    ``group``, the distributed logger, which keeps a W&B run per rank and one
+    aggregate beside ``aggregate/metrics.jsonl`` under ``root``."""
     arguments = dict(options.get("wandb", {}))
     arguments.setdefault("name", root.name)
     arguments.setdefault("mode", options.get("wandb_mode", "online"))
+    if group is not None:
+        from shadowspill.training.logging import DistributedLogger
+
+        wandb = (
+            {"project": options["wandb_project"], **arguments}
+            if options.get("wandb_project")
+            else None
+        )
+        return stack.enter_context(DistributedLogger(group, run_dir=root, wandb=wandb))
+    if not options.get("wandb_project"):
+        return None
     return stack.enter_context(
         Wandb(project=options["wandb_project"], run_dir=root, **arguments)
     )

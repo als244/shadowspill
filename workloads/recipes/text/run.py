@@ -63,6 +63,7 @@ KNOWN_KEYS = frozenset(
         "checkpoint_include_optimizer",
         "device",
         "compile",
+        "ranks",
     }
 )
 
@@ -164,16 +165,26 @@ def run_config(path, overrides=(), *, phase="all"):
     raw = load_config(path, overrides)
     if raw.get("backend"):
         raise ValueError("use engine='pytorch' or engine='shadowspill', not backend")
+    ranks = raw.get("ranks", 1)
+    if type(ranks) is not int or ranks < 1:
+        raise ValueError("ranks must be a positive integer")
     if raw.get("engine") == "pytorch":
         if phase != "all":
             raise ValueError("ordinary PyTorch reference execution has no saved phases")
+        if ranks > 1:
+            raise ValueError(
+                "the PyTorch reference runs one worker; "
+                "ranks needs the shadowspill engine"
+            )
         from .reference.run import run_config as run_reference
 
         return run_reference(path, overrides, options=raw)
     if raw.get("engine", "shadowspill") != "shadowspill":
         raise ValueError("use engine='shadowspill' with explicit phase settings")
-    if phase not in {"all", "build", "profile", "plan", "execute"}:
+    if phase not in {"all", "build", "profile", "communicate", "plan", "execute"}:
         raise ValueError(f"unknown phase: {phase}")
+    if phase == "communicate" and ranks == 1:
+        raise ValueError("one worker measures its host copies in the profile phase")
     if phase in {"all", "execute"} and not (raw.get("initialize") or raw.get("resume")):
         raise ValueError("supply initialize=(chunk, destination) or resume=checkpoint")
     if raw.get("parameter_metrics") is not None:
@@ -190,13 +201,14 @@ def run_config(path, overrides=(), *, phase="all"):
     root.mkdir(parents=True, exist_ok=True)
     raw["run_dir"] = str(root)
     (root / "config.json").write_text(json.dumps(raw, indent=2) + "\n")
-    run_phases("workloads.recipes.text.experiment", root, phase)
+    run_phases("workloads.recipes.text.experiment", root, phase, ranks=ranks)
     if phase in {"all", "execute"}:
         from .experiment.results import load
 
-        record = root / "wandb_run.json"
-        if record.exists() and (url := json.loads(record.read_text()).get("url")):
-            print(f"W&B run: {url}", flush=True)
+        for record in (root / "aggregate/wandb_run.json", root / "wandb_run.json"):
+            if record.exists() and (url := json.loads(record.read_text()).get("url")):
+                print(f"W&B run: {url}", flush=True)
+                break
         return load(root / "result.json")
     return None
 
@@ -206,7 +218,9 @@ def main(argv=None):
     parser.add_argument("config")
     parser.add_argument("overrides", nargs="*")
     parser.add_argument(
-        "--phase", choices=["all", "build", "profile", "plan", "execute"], default="all"
+        "--phase",
+        choices=["all", "build", "profile", "communicate", "plan", "execute"],
+        default="all",
     )
     args = parser.parse_args(argv)
     run_config(args.config, args.overrides, phase=args.phase)

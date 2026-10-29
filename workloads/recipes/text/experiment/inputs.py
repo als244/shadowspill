@@ -5,6 +5,26 @@ import torch
 from ..data.source import PackedUpdates, candidate_data, validation_update
 
 
+def ranks(options):
+    """How many workers the run uses; one unless the config says ``ranks``."""
+    count = options.get("ranks", 1)
+    if type(count) is not int or count < 1:
+        raise ValueError("ranks must be a positive integer")
+    return count
+
+
+def rank_options(options):
+    """The options one rank plans and trains with: its share of the step's
+    tokens. ``max_tokens_per_step`` is the whole step's, over every rank."""
+    count = ranks(options)
+    tokens = options["max_tokens_per_step"]
+    if tokens % (count * options["max_seq_len"]):
+        raise ValueError(
+            "max_tokens_per_step must divide into whole sequences for every rank"
+        )
+    return {**options, "max_tokens_per_step": tokens // count}
+
+
 def candidates(options, data):
     bounds = {
         key: options.get("planning_" + key)
@@ -40,17 +60,21 @@ class Inputs(PackedUpdates):
         return call_inputs(super().__next__(), self.name)
 
 
-def source(data, options, choice):
+def source(data, options, choice, rank=0):
+    """This rank's training source: ``choice`` counts one rank's microbatches,
+    so the step holds ``ranks`` times as many."""
     return Inputs(
         data,
         name=choice["candidate"],
         tokens=choice["tokens_per_microbatch"],
-        accumulation=choice["microbatches"],
+        accumulation=choice["microbatches"] * ranks(options),
         max_seq_len=options["max_seq_len"],
+        rank=rank,
+        world_size=ranks(options),
     )
 
 
-def validation(data, options, choice):
+def validation(data, options, choice, rank=0):
     count = options.get("eval_microbatches", 1)
     if count < 1:
         raise ValueError("eval_microbatches must be positive")
@@ -60,5 +84,7 @@ def validation(data, options, choice):
         tokens=choice["tokens_per_microbatch"],
         max_seq_len=options["max_seq_len"],
         microbatches=count,
+        rank=rank,
+        world_size=ranks(options),
     )
     return call_inputs(update, choice["candidate"])["args"]

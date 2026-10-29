@@ -6,24 +6,28 @@ import sys
 
 import torch
 
-from shadowspill import build_forward, build_step
+from shadowspill import Parallelism, build_forward, build_step
 from shadowspill.training import config
 from shadowspill.training._inputs import ScaledObjective
 from shadowspill.training._model import build_optimizer
 from workloads.recipes.phases import settings
 
 from .hyperparameters import scheduled_arguments
-from .inputs import call_inputs, candidates
+from .inputs import call_inputs, candidates, rank_options, ranks
 
 
 def run(directory):
     root, options = settings(directory)
     build_options = config.resolve(options.get("build", {}))
+    # One worker per rank, the step's tokens shared among them; ``ranks``
+    # workers shard weights, gradients and optimizer state by default.
+    count = ranks(options)
     parallelism = build_options.get("parallelism")
-    if parallelism is not None and parallelism.world_size != 1:
-        raise ValueError(
-            "text runner uses one worker; use a distributed recipe for multiple ranks"
-        )
+    if parallelism is None and count > 1:
+        parallelism = Parallelism.dp(ranks_per_replica=count)
+        build_options["parallelism"] = parallelism
+    elif parallelism is not None and parallelism.world_size != count:
+        raise ValueError("build.parallelism must span exactly ranks workers")
     config.resolve(options.get("settings", []))
     torch.manual_seed(options.get("seed", 0))
     model = config.resolve(options["model"])
@@ -34,7 +38,7 @@ def run(directory):
             **config.resolve(options.get("objective_args", {})),
         )
     )
-    example, _, geometries, skipped = candidates(options, data)
+    example, _, geometries, skipped = candidates(rank_options(options), data)
     manifest = {"candidates": {}, "skipped": skipped}
     for name, (tokens, count) in geometries.items():
         args = call_inputs(example, name)["args"][0]
@@ -69,9 +73,12 @@ def run(directory):
             )
         program.save(root / f"programs/{name}/training.ssp")
         if options.get("eval_every", 0):
-            build_forward(model.eval(), forward_fn=objective, example_args=args).save(
-                root / f"programs/{name}/evaluation.ssp"
-            )
+            build_forward(
+                model.eval(),
+                forward_fn=objective,
+                example_args=args,
+                parallelism=parallelism,
+            ).save(root / f"programs/{name}/evaluation.ssp")
             model.train()
         manifest["candidates"][name] = {
             "tokens_per_microbatch": tokens,

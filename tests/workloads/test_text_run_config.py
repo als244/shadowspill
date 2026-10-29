@@ -121,3 +121,34 @@ def test_defaults_fill_what_a_config_leaves_out(tmp_path):
         )
     with pytest.raises(ValueError, match="names a checkpoint or a model"):
         load_config({k: v for k, v in raw.items() if k != "checkpoint"}, ["run_dir=r"])
+
+
+def test_ranks_share_the_steps_tokens_and_need_the_shadowspill_engine(tmp_path):
+    from workloads.recipes.text.experiment.inputs import rank_options, ranks
+
+    options = {"ranks": 2, "max_tokens_per_step": 4096, "max_seq_len": 512}
+    assert ranks(options) == 2 and ranks({}) == 1
+    assert rank_options(options)["max_tokens_per_step"] == 2048
+    with pytest.raises(ValueError, match="whole sequences for every rank"):
+        rank_options({"ranks": 3, "max_tokens_per_step": 4096, "max_seq_len": 512})
+    with pytest.raises(ValueError, match="positive integer"):
+        ranks({"ranks": 0})
+    path = tmp_path / "config.json"
+    path.write_text(
+        json.dumps(
+            {
+                "engine": "pytorch",
+                "ranks": 2,
+                "checkpoint": {"family": "llama3", "directory": "/m"},
+                "data": "d",
+                "max_seq_len": 64,
+                "max_tokens_per_step": 128,
+                "steps": 1,
+                "run_dir": str(tmp_path / "run"),
+            }
+        )
+    )
+    with pytest.raises(ValueError, match="ranks needs the shadowspill engine"):
+        run_config(path)
+    with pytest.raises(ValueError, match="host copies in the profile phase"):
+        run_config(path, ["engine=shadowspill", "ranks=1"], phase="communicate")

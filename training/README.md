@@ -41,7 +41,10 @@ prediction and the optimizer to the mlops AdamW; a key the runner does not
 know is refused with the nearest known name, and a missing required key is
 named. From Python, `training.run(config, run_dir=..., steps=...)` takes a
 path or a mapping with the same overrides as keyword arguments and returns
-the final step's result.
+the final step's result. `ranks=N` trains on N GPUs of one node, weights,
+gradients and optimizer state sharded over them, each rank taking its share
+of every step's tokens; the ranks' records sit under `rank-xxxxx/` and the
+summed figures under `aggregate/`.
 
 ## Run a supplied text recipe
 

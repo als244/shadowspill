@@ -8,6 +8,7 @@ importing Torch; execution loads Plans without constructing the model.
 python -m workloads.recipes.text.run experiment.json
 python -m workloads.recipes.text.run experiment.json --phase build
 python -m workloads.recipes.text.run experiment.json --phase profile
+python -m workloads.recipes.text.run experiment.json --phase communicate  # ranks > 1
 python -m workloads.recipes.text.run experiment.json --phase plan
 python -m workloads.recipes.text.run experiment.json --phase execute
 ```
@@ -38,6 +39,7 @@ objects. The model, data and objective remain workload choices.
 | `eval_every`, `eval_microbatches` | Held-out evaluation cadence and packed examples per evaluation. |
 | `checkpoint_every`, `checkpoint_dir`, `keep_last` | Full training-state checkpoint cadence and retention. |
 | `run_dir`, `seed`, `settings`, `plots` | Output directory, build seed/settings and report plotting. |
+| `ranks` | Workers, one per GPU of one node (default 1). The build shards weights, gradients and optimizer state over them (`Parallelism.dp`, unless `build.parallelism` says otherwise), a communicate phase measures each Program's collectives on the workers, and every rank trains its share of each step's `max_tokens_per_step` tokens with the step's trained-token count as the shared normalizer. Evaluation runs distinct held-out batches per rank. |
 
 A config needs `run_dir`, `data`, `max_seq_len`, `max_tokens_per_step` and
 `steps`, and a `checkpoint` or a `model`; a missing one is named. A key the
@@ -88,7 +90,11 @@ what its own tensors need beyond the training plan's. `report/` holds
 the simulated timeline; `logs/` contains one log per phase.
 
 Execution writes `metrics.jsonl`, `packing.jsonl`, optional metric tables and
-`checkpoints/step_XXXXXXXX.ssp`; with `wandb_project`, `wandb_run.json` records
+`checkpoints/step_XXXXXXXX.ssp`; with `ranks`, each rank writes those under
+`rank-xxxxx/` (its records hold its share of each step's figures) and the
+distributed logger writes `aggregate/metrics.jsonl`, the ranks' shares summed,
+with one W&B run per rank and one aggregate; `resume=step_XXXXXXXX` names the
+step and every rank loads its own save; with `wandb_project`, `wandb_run.json` records
 the W&B run's id and URL, which the runner prints after execution. Norms/RMS/module shares use the same CPU reducer
 and logging hooks as the reference loop. `result.json` contains only the final
 CPU observations, not model tensors. Compiler caches remain external.
@@ -111,8 +117,9 @@ optimizer state, schedules, RNG and packing position. Partial/compute-only
 checkpoint policies from the old runner are rejected explicitly here rather
 than silently changing their meaning.
 
-This initial configured recipe launches one worker. Use the separate
-[Qwen3 distributed recipe](../qwen3/) for qualified sharded DP execution.
+With `ranks` the runner launches that many workers on one node under
+`torch.distributed.run`; the [Qwen3 distributed recipe](../qwen3/) is the
+qualified sharded-DP reference the phases follow.
 `engine="pytorch"` selects the ordinary [PyTorch reference loop](../reference/).
 It uses `device` (default `"auto"`) and `compile` (default `true`), without
 constructing ShadowSpill Plans or installing the execution allocator. It preserves

@@ -66,7 +66,15 @@ def run(directory):
     )
     print(f"budgets: execution {execution} GiB, spill {spill} GiB", flush=True)
     budget = MemoryBudgets(int(execution * (1 << 30)), int(spill * (1 << 30)))
-    communication = CommunicationInfo.load(root / "communication.ssp")
+    count = options.get("ranks", 1)
+
+    def communication(name, kind):
+        # One worker measured host copies once; ranks measured each Program's
+        # collectives in the communicate phase.
+        if count == 1:
+            return CommunicationInfo.load(root / "communication.ssp")
+        return CommunicationInfo.load(root / f"communication/{name}/{kind}.ssp")
+
     best, rows, misses = None, [], []
     for name, geometry in inventory["candidates"].items():
         # The evaluation Plan shares the worker with the training Plan, so a
@@ -78,7 +86,7 @@ def run(directory):
                 evaluation = plan_program(
                     ProfiledProgram.load(root / f"profiled/{name}/evaluation.ssp"),
                     memory_budgets=budget,
-                    communication_info=communication,
+                    communication_info=communication(name, "evaluation"),
                 )
             except (PlanInfeasibleError, PlanSearchExhaustedError) as error:
                 rows.append(
@@ -96,7 +104,7 @@ def run(directory):
                 plan = plan_program(
                     program,
                     memory_budgets=budget,
-                    communication_info=communication,
+                    communication_info=communication(name, "training"),
                     ordering=ordering,
                 )
                 if evaluation is not None:

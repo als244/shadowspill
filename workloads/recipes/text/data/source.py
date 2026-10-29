@@ -73,9 +73,22 @@ class TextMicrobatches:
 
 
 class PackedUpdates:
-    def __init__(self, data, *, name, tokens, accumulation, max_seq_len):
+    """A step's microbatches for one rank. ``accumulation`` is the step's
+    microbatch count over every rank; rank ``rank`` of ``world_size`` takes
+    its ``accumulation // world_size`` consecutive ones, and every rank's
+    normalizer is the step's trained-token count over all of them, so each
+    rank's loss is its share of the step's mean (see the loss convention)."""
+
+    def __init__(
+        self, data, *, name, tokens, accumulation, max_seq_len, rank=0, world_size=1
+    ):
+        if world_size < 1 or not 0 <= rank < world_size:
+            raise ValueError("rank must lie inside world_size")
+        if accumulation % world_size:
+            raise ValueError("the step's microbatches must divide among the ranks")
         self.name = name
         self.accumulation = accumulation
+        self.rank, self.world_size = rank, world_size
         self.packer = data.train_packer(tokens, max_seq_len)
         self.next_step = 0
         self.trained_tokens = 0
@@ -87,11 +100,13 @@ class PackedUpdates:
 
     def __next__(self):
         start = self.next_step * self.accumulation
-        indices = range(start, start + self.accumulation)
-        parts = [self.packer.microbatch(index) for index in indices]
-        normalizer = self.packer.trained_tokens(indices)
-        self.last_stats = self.packer.stats(indices)
-        self.last_documents = [self.packer.documents(index) for index in indices]
+        step = range(start, start + self.accumulation)
+        share = self.accumulation // self.world_size
+        mine = range(start + self.rank * share, start + (self.rank + 1) * share)
+        parts = [self.packer.microbatch(index) for index in mine]
+        normalizer = self.packer.trained_tokens(step)
+        self.last_stats = self.packer.stats(mine)
+        self.last_documents = [self.packer.documents(index) for index in mine]
         self.next_step += 1
         self.trained_tokens += normalizer
         return {"candidates": {self.name: parts}, "normalizer": normalizer}
@@ -100,6 +115,8 @@ class PackedUpdates:
         return {
             "candidate": self.name,
             "accumulation": self.accumulation,
+            "rank": self.rank,
+            "world_size": self.world_size,
             "next_step": self.next_step,
             "trained_tokens": self.trained_tokens,
             "packs": self.packer.packs,
@@ -113,6 +130,11 @@ class PackedUpdates:
             self.accumulation,
         ):
             raise ValueError("saved text source uses a different microbatch geometry")
+        if (state.get("rank", 0), state.get("world_size", 1)) != (
+            self.rank,
+            self.world_size,
+        ):
+            raise ValueError("saved text source belongs to another rank layout")
         self.next_step = state["next_step"]
         self.trained_tokens = state["trained_tokens"]
         self.packer.packs = [list(pack) for pack in state["packs"]]
@@ -120,10 +142,15 @@ class PackedUpdates:
         self.packer.next_document = state["next_document"]
 
 
-def validation_update(data, *, name, tokens, max_seq_len, microbatches):
+def validation_update(
+    data, *, name, tokens, max_seq_len, microbatches, rank=0, world_size=1
+):
+    """``microbatches`` held-out microbatches for this rank, distinct from
+    every other rank's, normalized by the trained tokens of all ranks' so
+    that the ranks' losses sum to the mean over the whole evaluation."""
     packer = data.validation_packer(tokens, max_seq_len)
-    indices = range(microbatches)
+    mine = range(rank * microbatches, (rank + 1) * microbatches)
     return {
-        "candidates": {name: [packer.microbatch(i) for i in indices]},
-        "normalizer": packer.trained_tokens(indices),
+        "candidates": {name: [packer.microbatch(i) for i in mine]},
+        "normalizer": packer.trained_tokens(range(world_size * microbatches)),
     }
