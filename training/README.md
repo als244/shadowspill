@@ -92,20 +92,28 @@ and its geometry when overriding a preset. Initialization does not allocate an
 anonymous full model alongside spill storage.
 
 A fine-tune of a local Hugging Face checkpoint names its family and directory
-twice, as the model and as the initializer:
+once:
 
 ```json
-"model": {"@call": "workloads.models.catalog:build_from_checkpoint",
-          "family": "qwen3", "directory": "/models/Qwen3-1.7B",
-          "dtype": "bfloat16", "max_seq_len": 2048},
-"initialize": {"@call": "workloads.recipes.text.initialization:from_checkpoint",
-               "family": "qwen3", "directory": "/models/Qwen3-1.7B",
-               "max_seq_len": 2048}
+"checkpoint": {"family": "qwen3", "directory": "/models/Qwen3-1.7B",
+               "dtype": "bfloat16", "lora": {"rank": 16, "alpha": 32}}
 ```
 
-The model is declared at the checkpoint's configuration; its parameters stream
-from the checkpoint in bounded chunks, and the rotary tables and any LoRA
-factors (`model.lora`) are generated as for a catalog model.
+The entry stands for the model, `workloads.models.catalog:build_from_checkpoint`,
+declared at the checkpoint's configuration, and the initializer,
+`workloads.recipes.text.initialization:from_checkpoint`, which streams the
+parameters in bounded chunks and generates the rotary tables and any LoRA
+factors as for a catalog model; the two explicit entries remain available.
+
+## Instruction data and the transformers check
+
+`python -m workloads.recipes.text.data.prepare_chat` renders a chat dataset's
+conversations through the tokenizer's chat template and writes, beside the
+token files, a mask marking the assistant's tokens; a run on that directory
+trains only those, never the prompt. `python -m training.reference <run dir>`
+runs the Hugging Face model the run was built from on the documents of a step
+(the mask included) and reports its loss beside the run's recorded loss, the
+check that a checkpoint loaded as transformers reads it.
 
 ## Run policy and results
 
