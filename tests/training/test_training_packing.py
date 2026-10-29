@@ -4,11 +4,12 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import numpy as np
 import pytest
 import torch
 
 from tests.training._synthetic import EOS, LENGTHS, write_dataset
-from workloads.recipes.text.data.documents import IGNORE
+from workloads.recipes.text.data.documents import IGNORE, TokenDocuments
 from workloads.recipes.text.data.packed import PackedTokens
 
 MAX_SEQ_LEN = 512
@@ -50,6 +51,39 @@ def test_a_microbatch_holds_whole_documents_and_their_targets(
             at += length
         assert (targets[0, at:] == IGNORE).all()
         assert packer.trained_tokens([index]) == int((targets != IGNORE).sum())
+
+
+def test_a_mask_keeps_only_the_marked_tokens_as_targets(tmp_path: Path) -> None:
+    """Instruction tuning: a byte per token beside the token file says which
+    tokens are the model's to produce; the others' targets leave the loss and
+    the trained-token count, and the separator is never a target."""
+    directory = write_dataset(tmp_path / "tokens")
+    tokens = np.fromfile(directory / "train.bin", dtype=np.uint32)
+    mask = np.random.default_rng(1).integers(0, 2, len(tokens)).astype(np.uint8)
+    mask[tokens == EOS] = 0
+    mask.tofile(directory / "train.mask.bin")
+    packer = PackedTokens(directory).train_packer(TOKENS, MAX_SEQ_LEN)
+    plain = PackedTokens(directory).validation_packer(TOKENS, MAX_SEQ_LEN)
+    assert packer.source.mask is not None and plain.source.mask is None
+    for index in range(10):
+        batch_tokens, targets, _ = packer.microbatch(index)
+        kept = targets[0] != IGNORE
+        # a kept target is the next token, kept exactly where the mask marks it
+        assert torch.equal(targets[0][kept], torch.roll(batch_tokens[0], -1)[kept])
+        at = 0
+        for ordinal, length in packer.documents(index):
+            sequence = int(np.flatnonzero(packer.source.ordinals == ordinal)[0])
+            start = int(packer.source.starts[sequence])
+            expected = torch.from_numpy(mask[start + 1 : start + length].astype(bool))
+            assert torch.equal(kept[at : at + length - 1], expected)
+            assert not kept[at + length - 1]
+            at += length
+        assert not kept[at:].any()
+        assert 0 < packer.trained_tokens([index]) == int(kept.sum()) < at
+    with pytest.raises(ValueError, match="one byte per token"):
+        TokenDocuments(
+            directory / "train.bin", EOS, MAX_SEQ_LEN, mask=directory / "val.bin"
+        )
 
 
 def test_packing_is_the_same_every_time(data: PackedTokens) -> None:

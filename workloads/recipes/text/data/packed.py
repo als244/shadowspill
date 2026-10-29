@@ -22,7 +22,9 @@ class PackedTokens:
     for one sequence per ``min_tokens_per_seq`` tokens -- its ``seq_slots``,
     the entries of its lengths tensor -- which bounds how many sequences it
     holds; shorter ones still pack, the microbatch simply fills its entries
-    first. The best fit looks ``window`` sequences ahead.
+    first. The best fit looks ``window`` sequences ahead. A mask beside a token
+    file (``train.mask.bin``, as ``prepare_chat`` writes it) marks the tokens
+    the model learns to produce; the others' targets stay out of the loss.
     """
 
     def __init__(
@@ -68,11 +70,13 @@ class PackedTokens:
         ]
 
     def _packer(self, name: str, tokens: int, max_seq_len: int) -> Packer:
+        mask = self.directory / name.replace(".bin", ".mask.bin")
         source = TokenDocuments(
             self.directory / name,
             int(self.meta["eos_id"]),
             max_seq_len,
             self.long_documents,
+            mask=mask if mask.exists() else None,
         )
         return Packer(
             source, tokens, seq_slots(tokens, self.min_tokens_per_seq), self.window

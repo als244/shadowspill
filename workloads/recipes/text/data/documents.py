@@ -13,8 +13,11 @@ position that is the document's next token when the document goes on past it,
 and nothing (``IGNORE``) at the document's end, whose next token is another
 document's.
 
-Another kind of training packs another source -- supervised fine-tuning, say,
-whose targets ignore the prompt -- with the same packer.
+Instruction tuning trains the assistant's tokens only. ``prepare_chat`` writes
+a mask beside each token file -- ``train.mask.bin`` beside ``train.bin``, one
+byte per token, 1 where the token is the model's to produce -- and a source
+given that mask makes every other target ``IGNORE`` and counts only the marked
+ones, so the same packer serves both kinds of training.
 """
 
 from __future__ import annotations
@@ -39,7 +42,12 @@ class TokenDocuments:
     """
 
     def __init__(
-        self, path: Path, eos: int, max_len: int, long_documents: str = "drop"
+        self,
+        path: Path,
+        eos: int,
+        max_len: int,
+        long_documents: str = "drop",
+        mask: Path | None = None,
     ) -> None:
         if long_documents not in LONG_DOCUMENTS:
             raise ValueError(
@@ -66,6 +74,11 @@ class TokenDocuments:
         self.continues = remaining > max_len
         self.eos = eos
         self.max_len = max_len
+        self.mask = None
+        if mask is not None:
+            self.mask = np.memmap(mask, dtype=np.uint8, mode="r")
+            if len(self.mask) != len(self.stream):
+                raise ValueError(f"{mask} does not hold one byte per token of {path}")
 
     def __len__(self) -> int:
         return len(self.lengths)
@@ -76,17 +89,28 @@ class TokenDocuments:
 
     def targets(self, sequence: int) -> np.ndarray:
         """Each position's next token: at the last position, the document's
-        next token if it continues, and nothing at the document's end."""
+        next token if it continues, and nothing at the document's end. Under a
+        mask, a next token that is not the model's to produce is nothing too."""
 
         start, length = int(self.starts[sequence]), int(self.lengths[sequence])
-        if self.continues[sequence]:
-            return self.stream[start + 1 : start + length + 1].astype(np.int64)
-        return np.append(
-            self.stream[start + 1 : start + length].astype(np.int64), IGNORE
-        )
+        count = self._next_tokens(sequence)
+        targets = self.stream[start + 1 : start + 1 + count].astype(np.int64)
+        if self.mask is not None:
+            targets[self.mask[start + 1 : start + 1 + count] == 0] = IGNORE
+        return targets if count == length else np.append(targets, IGNORE)
 
     def trained_tokens(self, sequence: int) -> int:
         """How many of the sequence's targets the loss reads."""
+
+        count = self._next_tokens(sequence)
+        if self.mask is None:
+            return count
+        start = int(self.starts[sequence])
+        return int(np.count_nonzero(self.mask[start + 1 : start + 1 + count]))
+
+    def _next_tokens(self, sequence: int) -> int:
+        """How many positions have a next token: every one while the document
+        goes on, all but the last at its end."""
 
         length = int(self.lengths[sequence])
         return length if self.continues[sequence] else length - 1
