@@ -3,29 +3,18 @@ model's parameters, written as the checkpoint would hold them, come back
 equal through the reader."""
 
 import json
+import math
 
 import pytest
 import torch
 from safetensors.torch import save_file
 
+from shadowspill.artifacts.tensors import TensorChunk
 from workloads.models import catalog
 from workloads.models.shared.checkpoint import copy_into
 
-READERS = {
-    "llama3": ("workloads.models.llama3.checkpoint", "Llama3Checkpoint"),
-    "qwen3": ("workloads.models.qwen3.checkpoint", "Qwen3Checkpoint"),
-    "qwen35": ("workloads.models.qwen35.checkpoint", "Qwen35Checkpoint"),
-    "olmoe": ("workloads.models.olmoe.checkpoint", "OLMoECheckpoint"),
-    "qwen3moe": ("workloads.models.qwen3moe.checkpoint", "Qwen3MoECheckpoint"),
-    "qwen35moe": ("workloads.models.qwen35moe.checkpoint", "Qwen35MoECheckpoint"),
-}
-
-
-def reader(family):
-    import importlib
-
-    module, name = READERS[family]
-    return getattr(importlib.import_module(module), name)
+READERS = sorted(catalog.READERS)
+reader = catalog.reader
 
 
 def interleave_heads(weight, heads):
@@ -255,7 +244,7 @@ def materialized(name, **changes):
 PUBLISHED = {"qwen35": {"zero_centered_norm": True}}
 
 
-@pytest.mark.parametrize("family", sorted(READERS))
+@pytest.mark.parametrize("family", READERS)
 def test_a_family_reads_its_own_layout_back(tmp_path, family):
     name = f"{family}-tiny"
     entry = catalog.entry(name)
@@ -280,6 +269,66 @@ def test_a_family_reads_its_own_layout_back(tmp_path, family):
     for parameter_name, parameter in target.named_parameters():
         assert torch.equal(parameter, expected[parameter_name]), parameter_name
     assert set(report["written"]) <= set(expected)
+
+
+@pytest.mark.parametrize("family", READERS)
+def test_a_checkpoint_initializes_a_run_chunk_by_chunk(tmp_path, family):
+    """A fine-tune's tensors come from the checkpoint in bounded chunks; the
+    rotary tables and LoRA factors it does not hold are generated as the
+    catalog generates them, the same whatever the chunking."""
+    from workloads.recipes.text.initialization import from_checkpoint
+
+    name = f"{family}-tiny"
+    changes = PUBLISHED.get(family, {})
+    source = materialized(name, **changes)
+    config = source.config
+    directory = tmp_path / "checkpoint"
+    directory.mkdir()
+    save_file(
+        huggingface_state(family, source, config), directory / "model.safetensors"
+    )
+    (directory / "config.json").write_text(json.dumps(metadata(family, config)))
+    model = catalog.build_from_checkpoint(
+        family,
+        directory,
+        dtype="bfloat16",
+        lora={"rank": 4, "alpha": 8},
+        max_seq_len=config.max_seq_len,
+    )
+    assert model.config == config
+    assert all(value.is_meta for value in (*model.parameters(), *model.buffers()))
+    expected = dict(source.named_parameters()) | dict(source.named_buffers())
+    with pytest.raises(ValueError, match="no catalog checkpoint reader"):
+        catalog.reader("glm53")
+    with from_checkpoint(
+        family, directory, seed=45, max_seq_len=config.max_seq_len
+    ) as initialize:
+        assert initialize.config == model.config and initialize.seed == 45
+        initialize.block_elements = 257
+        for tensor_name, tensor in (*model.named_parameters(), *model.named_buffers()):
+            values = []
+            for width in (tensor.numel(), 113):
+                value = torch.empty(tensor.numel(), dtype=tensor.dtype)
+                for start in range(0, value.numel(), width):
+                    request = TensorChunk(
+                        tensor_name,
+                        tuple(tensor.shape),
+                        tensor.dtype,
+                        start,
+                        math.prod(tensor.shape),
+                    )
+                    initialize(request, value[start : start + width])
+                values.append(value.reshape(tensor.shape))
+            torch.testing.assert_close(*values, rtol=0, atol=0)
+            if tensor_name in expected:
+                torch.testing.assert_close(
+                    values[0], expected[tensor_name], rtol=0, atol=0
+                )
+            elif tensor_name.endswith("_b"):
+                assert values[0].count_nonzero() == 0
+            else:
+                assert values[0].count_nonzero() > 0
+    assert initialize.checkpoint.reader._closed
 
 
 def test_qwen_lora_initializer_loads_base_and_initializes_only_adapters_and_buffers(

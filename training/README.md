@@ -91,6 +91,22 @@ per-tensor seeds. `initialize.model` and its geometry must match `model.model`
 and its geometry when overriding a preset. Initialization does not allocate an
 anonymous full model alongside spill storage.
 
+A fine-tune of a local Hugging Face checkpoint names its family and directory
+twice, as the model and as the initializer:
+
+```json
+"model": {"@call": "workloads.models.catalog:build_from_checkpoint",
+          "family": "qwen3", "directory": "/models/Qwen3-1.7B",
+          "dtype": "bfloat16", "max_seq_len": 2048},
+"initialize": {"@call": "workloads.recipes.text.initialization:from_checkpoint",
+               "family": "qwen3", "directory": "/models/Qwen3-1.7B",
+               "max_seq_len": 2048}
+```
+
+The model is declared at the checkpoint's configuration; its parameters stream
+from the checkpoint in bounded chunks, and the rotary tables and any LoRA
+factors (`model.lora`) are generated as for a catalog model.
+
 ## Run policy and results
 
 `steps` is the target total completed update count. Schedules are mappings such

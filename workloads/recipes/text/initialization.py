@@ -5,9 +5,19 @@ import math
 import torch
 
 from workloads.models.shared.decoder import llama3_frequencies
-from workloads.models.shared.initialization import fill_generated
+from workloads.models.shared.initialization import fill_generated, validate_chunk
 
 FAMILIES = {"llama3", "qwen3", "qwen35", "olmoe", "qwen3moe", "qwen35moe"}
+
+#: The leaves a checkpoint does not hold: fresh LoRA factors.
+LORA_LEAVES = {
+    "lora_a",
+    "lora_b",
+    "lora_gate_up_a",
+    "lora_gate_up_b",
+    "lora_down_a",
+    "lora_down_b",
+}
 
 
 def from_catalog(model, *, seed=0, **configuration):
@@ -16,6 +26,13 @@ def from_catalog(model, *, seed=0, **configuration):
 
     selected = entry(model)
     return Initialize(selected.family, selected.config(**configuration), seed=seed)
+
+
+def from_checkpoint(family, directory, *, seed=0, **configuration):
+    """A JSON-configurable bounded loader of a local Hugging Face checkpoint:
+    the family and directory a config's ``build_from_checkpoint`` model names,
+    ``configuration`` the same changes (such as ``max_seq_len``)."""
+    return FromCheckpoint(family, directory, seed=seed, **configuration)
 
 
 class Initialize:
@@ -96,3 +113,33 @@ class Initialize:
         indices = torch.arange(start, stop)
         phase = (indices // width).float() * frequency[indices % (width // 2)]
         return phase.cos_() if name.endswith("cosine") else phase.sin_()
+
+
+class FromCheckpoint(Initialize):
+    """Parameters and buffers a local Hugging Face checkpoint holds, chunk by
+    chunk from it; rotary tables and LoRA factors, which it does not hold, as
+    the catalog generates them. A context manager: closing it releases the
+    checkpoint's files."""
+
+    def __init__(self, family, directory, *, seed=0, **configuration):
+        from workloads.models.catalog import reader
+
+        self.checkpoint = reader(family)(directory, **configuration)
+        super().__init__(family, self.checkpoint.config, seed=seed)
+
+    def __call__(self, request, destination):
+        name = request.name
+        if name.startswith("rotary.") or name.rsplit(".", 1)[-1] in LORA_LEAVES:
+            super().__call__(request, destination)
+        else:
+            validate_chunk(request, destination)
+            self.checkpoint.copy_chunk(name, request.shape, request.offset, destination)
+
+    def close(self):
+        self.checkpoint.close()
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *arguments):
+        self.close()

@@ -106,7 +106,11 @@ Each family package under [models/](models/) has a README with its
 architecture, shapes, configuration fields, implementations and construction,
 and a checkpoint reader (`checkpoint.py`, a local Hugging Face checkpoint into
 the model, parameter by parameter, through `config.from_huggingface` and
-`load_into`):
+`load_into`, or chunk by chunk through `copy_chunk`). The catalog names each
+reader: `catalog.build_from_checkpoint(family, directory)` declares a family's
+model at a checkpoint's configuration, and
+`workloads.recipes.text.initialization.from_checkpoint` streams the checkpoint
+into a run, so a fine-tune is a config naming a family and a directory:
 
 | Family | What it is |
 |---|---|

@@ -25,7 +25,7 @@ objects. The model, data and objective remain workload choices.
 | --- | --- |
 | `model`, `data`, `objective`, `objective_args` | Model constructor, packed corpus and objective `(model, batch)`; batch is `[tokens, targets, seq_lens]`. |
 | `optimizer`, `optimizer_args` | Optimizer constructor and arguments. |
-| `initialize` | Callable `(request, destination)` filling Executor-provided bounded CPU chunks. It may also be a context manager, such as a checkpoint reader. |
+| `initialize` | Callable `(request, destination)` filling Executor-provided bounded CPU chunks. It may also be a context manager, such as a checkpoint reader; `workloads.recipes.text.initialization:from_checkpoint` is the supplied one for a local Hugging Face checkpoint. |
 | `max_seq_len`, `max_tokens_per_step` | Packed sequence cap and total token capacity per update. |
 | `max_tokens_per_microbatch` | Fixed example capacity; alternatively use `planning_min_tokens_per_microbatch` and `planning_max_tokens_per_microbatch` for a geometry sweep. |
 | `build` | Additional public `build_step` options, such as partitioning and operator recomputation. |
