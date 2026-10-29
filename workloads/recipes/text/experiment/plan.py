@@ -16,6 +16,8 @@ from shadowspill.planning.shared import shared_memory
 from shadowspill.step import StepDataOrdering
 from workloads.recipes.phases import settings
 
+from . import inputs
+
 #: What a budget the config leaves out keeps back: 2 GiB of the device for
 #: the display and other processes, a quarter of the host memory that was
 #: available when profiling ran.
@@ -55,6 +57,15 @@ def shortfall(error):
     return required - capacity
 
 
+def communication_path(root, ranks, name, kind):
+    """Where the calibration the ``name`` candidate's ``kind`` Program plans
+    with lies: one worker measured host copies once for a single rank; ranks
+    measured each Program's collectives in the communicate phase."""
+    if ranks == 1:
+        return root / "communication.ssp"
+    return root / f"communication/{name}/{kind}.ssp"
+
+
 def run(directory):
     root, options = settings(directory)
     inventory = json.loads((root / "candidates.json").read_text())
@@ -66,14 +77,7 @@ def run(directory):
     )
     print(f"budgets: execution {execution} GiB, spill {spill} GiB", flush=True)
     budget = MemoryBudgets(int(execution * (1 << 30)), int(spill * (1 << 30)))
-    count = options.get("ranks", 1)
-
-    def communication(name, kind):
-        # One worker measured host copies once; ranks measured each Program's
-        # collectives in the communicate phase.
-        if count == 1:
-            return CommunicationInfo.load(root / "communication.ssp")
-        return CommunicationInfo.load(root / f"communication/{name}/{kind}.ssp")
+    ranks = inputs.ranks(options)
 
     best, rows, misses = None, [], []
     for name, geometry in inventory["candidates"].items():
@@ -86,7 +90,9 @@ def run(directory):
                 evaluation = plan_program(
                     ProfiledProgram.load(root / f"profiled/{name}/evaluation.ssp"),
                     memory_budgets=budget,
-                    communication_info=communication(name, "evaluation"),
+                    communication_info=CommunicationInfo.load(
+                        communication_path(root, ranks, name, "evaluation")
+                    ),
                 )
             except (PlanInfeasibleError, PlanSearchExhaustedError) as error:
                 rows.append(
@@ -104,7 +110,9 @@ def run(directory):
                 plan = plan_program(
                     program,
                     memory_budgets=budget,
-                    communication_info=communication(name, "training"),
+                    communication_info=CommunicationInfo.load(
+                        communication_path(root, ranks, name, "training")
+                    ),
                     ordering=ordering,
                 )
                 if evaluation is not None:

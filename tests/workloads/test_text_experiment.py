@@ -206,3 +206,14 @@ def test_text_phases_preserve_packing_metrics_and_exact_cold_resume(
         timeout=90,
     )
     assert child.returncode == 0, child.stdout + child.stderr
+
+
+def test_the_calibration_a_candidate_plans_with_follows_the_rank_count(tmp_path):
+    from workloads.recipes.text.experiment.plan import communication_path
+
+    assert communication_path(tmp_path, 1, "6144_tokens", "training") == (
+        tmp_path / "communication.ssp"
+    )
+    assert communication_path(tmp_path, 2, "6144_tokens", "evaluation") == (
+        tmp_path / "communication/6144_tokens/evaluation.ssp"
+    )
