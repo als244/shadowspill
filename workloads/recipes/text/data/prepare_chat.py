@@ -18,9 +18,12 @@ records it as ``eos_id``. Beside
 byte per token: 1 for a token of an assistant turn, from where its generation
 prompt ends to where the turn's rendering ends (its end-of-turn marker
 included), 0 for every other token and for the separator. A run that packs
-the directory trains only the marked tokens (see ``documents``). The template
-must render a conversation's turns as prefixes of one another, as the common
-ones do; one that rewrites earlier turns is refused.
+the directory trains only the marked tokens (see ``documents``). An
+assistant turn runs from where its generation prompt ends in the whole
+rendering to the end of the template's end-of-turn tail after its content,
+so a template that decorates only the final turn (Qwen's empty think block)
+is read as it renders; one that does not render a message's content
+verbatim, or rewrites earlier turns, is refused.
 """
 
 from __future__ import annotations
@@ -77,13 +80,45 @@ def choose_separator(
     )
 
 
+PROBE = "\u2063probe\u2063"
+
+
+def turn_tail(tokenizer: Any) -> str:
+    """What the template renders after an assistant message's content: its
+    end-of-turn marker and whatever follows, learned from a one-turn probe."""
+
+    rendered = tokenizer.apply_chat_template(
+        [{"role": "user", "content": "?"}, {"role": "assistant", "content": PROBE}],
+        tokenize=False,
+    )
+    at = rendered.find(PROBE)
+    if at < 0:
+        raise ValueError(
+            "the chat template does not render an assistant message's content"
+        )
+    return rendered[at + len(PROBE) :]
+
+
+def common_prefix(first: str, second: str) -> int:
+    """How many leading characters the two strings share."""
+
+    length = min(len(first), len(second))
+    for index in range(length):
+        if first[index] != second[index]:
+            return index
+    return length
+
+
 def render(
-    tokenizer: Any, messages: Sequence[Message]
+    tokenizer: Any, messages: Sequence[Message], tail: str | None = None
 ) -> tuple[str, list[tuple[int, int]]]:
     """The conversation as the chat template renders it, and the character
-    spans of the assistant's turns: each from where its generation prompt ends
-    to where the turn's rendering ends."""
+    spans of the assistant's turns: each from where its generation prompt
+    ends in the whole rendering to the end of the template's end-of-turn
+    tail after its content."""
 
+    if tail is None:
+        tail = turn_tail(tokenizer)
     text = tokenizer.apply_chat_template(messages, tokenize=False)
     spans = []
     for index, message in enumerate(messages):
@@ -92,13 +127,22 @@ def render(
         prompt = tokenizer.apply_chat_template(
             messages[:index], tokenize=False, add_generation_prompt=True
         )
-        through = tokenizer.apply_chat_template(messages[: index + 1], tokenize=False)
-        if not (text.startswith(through) and through.startswith(prompt)):
+        start = common_prefix(text, prompt)
+        content = str(message["content"])
+        at = text.find(content, start)
+        if at < 0 or tail in text[start:at]:
             raise ValueError(
-                "the chat template does not render a conversation's turns as "
-                "prefixes of one another; the assistant's tokens cannot be located"
+                "the chat template does not render the assistant's content "
+                "verbatim after its generation prompt; the assistant's tokens "
+                "cannot be located"
             )
-        spans.append((len(prompt), len(through)))
+        end = at + len(content)
+        if not text.startswith(tail, end):
+            raise ValueError(
+                "the chat template does not end the assistant's turn as its "
+                "probe did; the assistant's tokens cannot be located"
+            )
+        spans.append((start, end + len(tail)))
     return text, spans
 
 
@@ -139,6 +183,7 @@ def tokenize_chat(
     if not getattr(tokenizer, "is_fast", False):
         raise ValueError("marking the assistant's tokens needs a fast tokenizer")
     eos: int | None = None
+    tail = turn_tail(tokenizer)
     out.mkdir(parents=True, exist_ok=True)
     counts = {"val": 0, "train": 0, "val_marked": 0, "train_marked": 0}
     read: list[str] = []
@@ -157,7 +202,9 @@ def tokenize_chat(
             )
             for index, batch in enumerate(batches):
                 conversations = batch.column(messages_column).to_pylist()
-                rendered = [render(tokenizer, messages) for messages in conversations]
+                rendered = [
+                    render(tokenizer, messages, tail) for messages in conversations
+                ]
                 encoded = tokenizer(
                     [text for text, _ in rendered],
                     add_special_tokens=False,

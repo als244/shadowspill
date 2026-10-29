@@ -24,7 +24,19 @@ TEMPLATE = (
     "{% for m in messages %}<|{{ m['role'] }}|>{{ m['content'] }}<|end|>"
     "{% endfor %}{% if add_generation_prompt %}<|assistant|>{% endif %}"
 )
-WORDS = ["hello", "world", "how", "are", "you", "fine", "thanks", "and", "well"]
+WORDS = [
+    "hello",
+    "world",
+    "how",
+    "are",
+    "you",
+    "fine",
+    "thanks",
+    "and",
+    "well",
+    "thinks",
+    "?",
+]
 
 
 @pytest.fixture
@@ -88,8 +100,29 @@ def test_a_template_that_rewrites_earlier_turns_is_refused(tokenizer):
         "{{ m['content'] }}<|end|>{% else %}<|{{ m['role'] }}|>...<|end|>"
         "{% endif %}{% endfor %}{% if add_generation_prompt %}<|assistant|>{% endif %}"
     )
-    with pytest.raises(ValueError, match="prefixes"):
+    with pytest.raises(ValueError, match="cannot be located"):
         render(tokenizer, CONVERSATIONS[1])
+
+
+def test_a_template_decorating_only_the_final_turn_is_read_as_it_renders(tokenizer):
+    """Qwen's templates give the final assistant turn an empty think block the
+    earlier turns lack, and Qwen 3.5 puts it in the generation prompt while
+    Qwen 3 leaves it to the model: the span starts where the generation
+    prompt ends in the whole rendering either way."""
+    base = (
+        "{% for m in messages %}<|{{ m['role'] }}|>{% if m['role'] == 'assistant' "
+        "and loop.last %}thinks {% endif %}{{ m['content'] }}<|end|>{% endfor %}"
+    )
+    tokenizer.chat_template = (
+        base + "{% if add_generation_prompt %}<|assistant|>{% endif %}"
+    )
+    text, spans = render(tokenizer, CONVERSATIONS[1])
+    assert [text[a:b] for a, b in spans] == ["well<|end|>", "thinks fine<|end|>"]
+    tokenizer.chat_template = (
+        base + "{% if add_generation_prompt %}<|assistant|>thinks {% endif %}"
+    )
+    text, spans = render(tokenizer, CONVERSATIONS[1])
+    assert [text[a:b] for a, b in spans] == ["well<|end|>", "fine<|end|>"]
 
 
 def test_prepared_files_carry_a_mask_a_run_trains_by(tokenizer, tmp_path):
