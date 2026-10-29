@@ -66,7 +66,7 @@ class GroupBindings:
                 raise ValueError("invalid distributed startup: " + "; ".join(failures))
             if any(item[0] != description for item in observed):
                 raise ValueError(
-                    "workers supplied different Plans, rank maps or group descriptions"
+                    "workers disagree on what they exchange, the rank map or the groups"
                 )
             assert assignment is not None
             validate_topology(topology, assignment, [item[2] for item in observed])

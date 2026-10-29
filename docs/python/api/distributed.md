@@ -2,7 +2,8 @@
 
 Declare logical ownership when building a Program. Measure DP compute on one
 representative GPU, calibrate communication separately, and plan on CPU. Every
-execution worker then loads the same saved Plan and binds its logical rank.
+execution worker then loads the saved Plan, one per kind of GPU when ranks
+differ in hardware, and binds its logical rank.
 Only execution opens ShadowSpill pools. The current CUDA training path supports
 symmetric DP with weights, gradients and optimizer data sharded over the same
 groups; broader declarations are described below with their implementation limits.
@@ -138,11 +139,12 @@ update's examples, valid tokens or weighted observations. A local mean needs
 the corresponding contribution weight. The simple baseline divides its
 rank-local normalized loss by world size.
 
-All workers currently run the same Program and input signatures. Unequal example
-shapes *within* that Program use `example_calls`; this does not provide different
-Programs or arbitrary shapes on different ranks. DataLoader workers should return
-CPU tensors. Account for their buffers/prefetch in host capacity, and preserve
-source progress for exact checkpoint continuation.
+Ranks on one kind of GPU run the same Program and input signatures. Unequal
+example shapes *within* that Program use `example_calls`; ranks on different GPUs
+run Programs of their own, described in
+[Ranks on different hardware](#ranks-on-different-hardware). DataLoader workers
+should return CPU tensors. Account for their buffers/prefetch in host capacity,
+and preserve source progress for exact checkpoint continuation.
 
 ## Communication calibration and CPU planning
 
@@ -199,12 +201,30 @@ from task profiles. Unknown memory is never zero; estimated memory permits
 simulation only. Timing estimates can still be used with complete memory
 evidence. Inspect `plan.simulation_only_reasons` before execution.
 
+## Ranks on different hardware
+
+A Plan's executables and profiles belong to the GPU that built them, so ranks on
+different GPUs cannot share one. Each kind of GPU instead builds, profiles and
+plans its own Program, with its own example shape, accumulation count and
+budgets, and the ranks train as one group when their Programs agree on what the
+ranks exchange: the parallelism, which tensors exist, how they are placed and
+sharded, and their geometry. Calibration takes each worker's own Program, and
+calibration and Executor startup compare that agreement rather than the Programs
+themselves; ranks whose Programs disagree are refused before any collective
+runs. A rank's contribution stays `loss_sum / global_normalizer` with the
+normalizer counting the whole update over every rank, so ranks taking different
+shares of a step are weighted correctly. Backend settings that belong to one
+node, such as the interface it reaches the network through, may differ between
+workers. The [heterogeneous text recipe](../../../workloads/recipes/text/heterogeneous/README.md)
+runs this from one config.
+
 ## Fresh execution workers
 
-Every worker loads the same Plan and supplies the same complete
-**launcher-rank → logical-rank** map. A permutation changes physical assignment,
-not logical group order or shard identity. Startup validates the assignment,
-distinct devices, backend setup and node membership. Executor creates and closes
+Every worker loads its Plan, the same one unless ranks differ in hardware, and
+supplies the same complete **launcher-rank → logical-rank** map. A permutation
+changes physical assignment, not logical group order or shard identity. Startup
+validates the assignment, distinct devices, the Plans' agreement on what the
+ranks exchange, backend setup and node membership. Executor creates and closes
 its own communication groups; caller-owned rendezvous remains the caller's.
 
 Saved Inductor code retains its compilation device ordinal. If build used

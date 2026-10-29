@@ -23,7 +23,7 @@ command as every other run, by a section of the config:
 
 | Field | Meaning |
 | --- | --- |
-| `nodes` | The machines, the first the one the runner is launched on; the others reached by `ssh` with the repository (`repo`), its interpreter (`python`) and the config's paths in place. `ranks` per node, one per GPU; `env` for the node's network settings. |
+| `nodes` | The machines, the first the one the runner is launched on; the others reached by `ssh` with the repository (`repo`), its interpreter (`python`) and the config's paths in place. `ranks` per node, one per GPU; `env` for the node's network settings, whose interface names, logging and install paths may differ between nodes while every other NCCL setting must agree. |
 | `shares` | One positive integer per rank: how many of every step's units it takes, in rank order (equal by default). The ranks of one node take equal shares. |
 | `port` | The rendezvous port at the first node's address (default 29400). |
 
@@ -40,7 +40,11 @@ share, normalized over all of them.
 
 The ranks agree on what they exchange, the parallelism, the tensors with
 their placement, shards and geometry, checked when the workers open; what
-each built, profiled or budgeted is its own. A rank writes its records and
+each built, profiled or budgeted is its own. Calibration is a collective over
+every rank, so the nodes walk the union of their candidates together: for a
+candidate a node did not build, it measures its own Program of the same kind,
+training or evaluation, whose exchange is the same, and keeps nothing; each
+node keeps the calibrations of its own candidates. A rank writes its records and
 checkpoints under its node's `rank-xxxxx/`; the distributed logger's
 aggregate under `nodes/00/aggregate/` sums the ranks' shares into the step's
 figures; remote nodes' rank directories are copied back to the first node

@@ -121,7 +121,9 @@ def _group_worker(worker, rendezvous):
             ("groups", ((0, 1, 2, 3),)),
         ):
             local = {**arguments, **({key: bad} if worker == 0 else {})}
-            with pytest.raises(ValueError, match=r"startup|different Plans"):
+            with pytest.raises(
+                ValueError, match=r"startup|disagree on what they exchange"
+            ):
                 GroupBindings(**local)
         with pytest.raises(ValueError, match="same host"):
             GroupBindings(**{**arguments, "topology": {"a": (0, 1), "b": (2, 3)}})

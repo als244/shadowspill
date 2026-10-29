@@ -73,10 +73,12 @@ Executable Plans need validated allocation evidence, compatible implementations,
 and physical admission. `MemoryBudgets.execution_bytes` includes runtime/provider
 headroom as well as usable execution memory; spill capacity is separate.
 
-Every rank loads the same Plan for its declared parallelism. Executor applies a
-complete worker-to-logical-rank mapping and recreates process-local resources.
-The initial distributed scope assumes symmetric local computation. A saved Plan
-is not portable across arbitrary world sizes, architectures or dependency builds.
+Every rank loads a Plan for its declared parallelism: one saved Plan on one kind
+of GPU, or Plans built for each GPU that agree on what the ranks exchange, each
+with its own microbatch geometry. Executor applies a complete
+worker-to-logical-rank mapping and recreates process-local resources. A saved
+Plan is not portable across arbitrary world sizes, architectures or dependency
+builds.
 
 `Executor.run()` returns a result handle; `.result()` waits and returns
 caller-owned outputs. One invocation is active at a time per Executor. The next

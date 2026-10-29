@@ -180,7 +180,9 @@ server allocations.
 `measure_communication(program=program, rank_map=..., device=...)` derives
 collective probes from saved transfer geometry. With multiple workers, initialize
 distributed rendezvous first and call on every worker with the same complete
-worker-to-logical-rank map. No compiled task is executed. Host copies are sampled
+worker-to-logical-rank map. Each worker passes its own Program; the workers'
+Programs must agree on what the ranks exchange, as at execution. No compiled
+task is executed. Host copies are sampled
 concurrently across workers; the shared result uses the minimum observed rates
 and maximum fitted latency, preserving every worker's observations. Each collective
 group is then probed separately, using coordinated repetition counts and completion
@@ -188,8 +190,11 @@ timing. Logical member order is retained after worker remapping. Topology is
 derived from physical hostname membership. Every worker receives the same result.
 Calibration records NCCL version, group options, relevant environment settings
 and configuration-file digests separately from compute setup. Workers must agree
-on this backend setup. Changing it invalidates matching communication timings
-and memory records without invalidating single-GPU compute profiles.
+on this backend setup, except for the settings that belong to one node: the
+interfaces and devices it reaches the network through, its logging, and the
+variables naming where something is installed or written, which are recorded
+per worker. Changing the setup invalidates matching communication timings and
+memory records without invalidating single-GPU compute profiles.
 
 ```python
 # All workers have initialized rendezvous and loaded the same Program.
@@ -270,8 +275,13 @@ collective evictions precede collective fetches, independent of event polling.
 This guarantees host submission order without waiting for GPU completion.
 
 Distributed workers initialize CPU rendezvous before constructing Executor. Each
-worker loads the same Plan and supplies the same complete launcher-to-logical-rank
-map. Executor owns the groups it creates, checks backend/topology compatibility,
+worker loads a Plan for the declared parallelism and supplies the same complete
+launcher-to-logical-rank map. The workers' Plans must agree on what the ranks
+exchange: the parallelism, which tensors exist, how they are placed and sharded,
+and their geometry. Executables, profiles, budgets and the number of examples a
+rank accumulates are each rank's own, so ranks on different GPUs can each load a
+Plan built for their own, while ranks on one kind of GPU load one saved Plan.
+Executor owns the groups it creates, checks backend/topology compatibility,
 and leaves caller-owned rendezvous intact. Each worker needs a distinct GPU.
 
 ```python

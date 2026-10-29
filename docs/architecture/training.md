@@ -92,7 +92,8 @@ sharding during build. Ordinary DP compute tasks build and profile without live
 process groups. `measure_communication` separately calibrates the declared
 collectives. Planning consumes those saved costs and memory evidence.
 
-Fresh workers share the same Plan and complete worker-to-logical-rank mapping.
+Fresh workers share a complete worker-to-logical-rank mapping and Plans that
+agree on what the ranks exchange, usually one saved Plan.
 Compute and optimizer communication retain their ordered execution contract.
 Parameter fetch/all-gather and gradient eviction/reduce-scatter use the tracked
 transfer paths. Backend work must finish under its task's completion event;

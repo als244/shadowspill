@@ -129,10 +129,12 @@ remain separate from saved phase artifacts. `write_report` is a CPU-only
 presentation step that writes summaries, timelines and inspection data; saving
 an artifact does not require generating its report.
 
-The same Plan is loaded by every execution worker for its fixed logical
-parallelism configuration. A complete worker-to-logical-rank map binds physical
-workers at startup. Build/profile artifacts carry implementation identities;
-execution validates relevant builds and memory evidence before admission.
+Every execution worker loads a Plan for its fixed logical parallelism
+configuration: one saved Plan on one kind of GPU, or Plans built for each GPU
+that agree on what the ranks exchange. A complete worker-to-logical-rank map
+binds physical workers at startup. Build/profile artifacts carry implementation
+identities; execution validates relevant builds and memory evidence before
+admission.
 
 Previous: [Fixed-offset placement](fixed-placement.md).
 See also: [training composition](training.md) and [phase API](offline-pipeline.md).
