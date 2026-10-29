@@ -68,7 +68,18 @@ def shared_backend_setup(
     for row in rows:
         shared, own = split_environment(row)
         if shared != common:
-            raise ValueError("workers have different communication backend setups")
+            differing = sorted(
+                key
+                for key in set(shared) | set(common)
+                if shared.get(key) != common.get(key)
+            )
+            detail = "; ".join(
+                f"{key}: {common.get(key)!r} against {shared.get(key)!r}"
+                for key in differing
+            )
+            raise ValueError(
+                f"workers have different communication backend setups: {detail}"
+            )
         local.append(own)
         for name, value in row["groups"].items():
             if name in groups and groups[name] != value:
