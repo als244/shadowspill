@@ -34,6 +34,24 @@ def test_overrides_replace_values_by_dotted_key(tmp_path: Path) -> None:
         config.load(path, ["steps"])
 
 
+def test_a_quoted_key_segment_keeps_its_dots(tmp_path: Path) -> None:
+    path = _write(
+        tmp_path, {"schedules": {"optimizer_group.0.lr": {"total_steps": 40}}}
+    )
+    loaded = config.load(
+        path,
+        ['schedules."optimizer_group.0.lr".total_steps=300', "schedules.'a.b'.c=1"],
+    )
+    assert loaded["schedules"] == {
+        "optimizer_group.0.lr": {"total_steps": 300},
+        "a.b": {"c": 1},
+    }
+    with pytest.raises(ValueError, match="unclosed quote"):
+        config.load(path, ['schedules."optimizer_group.0.lr.total_steps=300'])
+    with pytest.raises(ValueError, match="empty segment"):
+        config.load(path, ["schedules..total_steps=300"])
+
+
 def test_references_name_objects_calls_and_partials() -> None:
     resolved = config.resolve(
         {

@@ -15,7 +15,9 @@ run uses without this package knowing any of them:
 so any argument may itself be one of these forms. Overrides replace values by
 dotted key before anything is resolved -- ``steps=100``,
 ``backend.execution_gib=12`` -- each value read as JSON, or taken as a string
-when it is not JSON.
+when it is not JSON. A key segment that holds dots is quoted:
+``schedules."optimizer_group.0.lr".total_steps=300`` (the whole override
+quoted again for the shell).
 """
 
 from __future__ import annotations
@@ -47,12 +49,39 @@ def load(
             value = json.loads(text)
         except json.JSONDecodeError:
             value = text
-        *parents, name = key.split(".")
+        *parents, name = segments(key)
         target = config
         for parent in parents:
             target = target.setdefault(parent, {})
         target[name] = value
     return config
+
+
+def segments(key: str) -> list[str]:
+    """``key`` split at its dots; a quoted segment keeps its own
+    (``schedules."optimizer_group.0.lr".total_steps``)."""
+
+    result: list[str] = []
+    current, quote = "", ""
+    for character in key:
+        if quote:
+            if character == quote:
+                quote = ""
+            else:
+                current += character
+        elif character in "\"'":
+            quote = character
+        elif character == ".":
+            result.append(current)
+            current = ""
+        else:
+            current += character
+    if quote:
+        raise ValueError(f"an override key has an unclosed quote: {key!r}")
+    result.append(current)
+    if not all(result):
+        raise ValueError(f"an override key has an empty segment: {key!r}")
+    return result
 
 
 def resolve(value: Any) -> Any:

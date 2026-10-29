@@ -37,8 +37,10 @@ python -u -m training.train training/configs/olmoe_1b.json \
 The JSON file names constructors and functions explicitly. `@module:name`
 resolves a Python object, `{"@call": "module:name", ...}` constructs it, and
 `{"@partial": "module:name", ...}` binds its keyword arguments. Overrides use
-`key=value` with dotted paths and JSON values. The complete resolved request
-is recorded in the run directory. A model preset is optional user code.
+`key=value` with dotted paths and JSON values; a key segment that holds dots,
+such as a schedule's hyperparameter name, is quoted:
+`'schedules."optimizer_group.0.lr".total_steps=300'`. The complete resolved
+request is recorded in the run directory. A model preset is optional user code.
 
 Data ingestion is also supplied as a recipe:
 

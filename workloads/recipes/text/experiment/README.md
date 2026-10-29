@@ -61,6 +61,10 @@ fixed by capture. For example:
 }
 ```
 
+From the command line, a schedule's field is reached through its quoted name,
+`'schedules."optimizer_group.0.lr".total_steps=300'`; unquoted, the dots in
+the hyperparameter name would read as nesting.
+
 Packed token normalization is a scalar tensor input, so the number of valid
 targets can change between updates without rebuilding. The resumable source
 preserves document packing, pending documents and the trained-token count.
