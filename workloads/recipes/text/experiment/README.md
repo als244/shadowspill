@@ -74,7 +74,9 @@ preserves document packing, pending documents and the trained-token count.
 `programs/`, `profiles/` and `profiled/` hold `.ssp` artifacts by geometry;
 `hardware.json` records the profiled device's and host's memory.
 `search/` retains feasible plans for each ordering; `search.json` records failed
-cases too. `plans/training.ssp` and optional `plans/evaluation.ssp` are selected
+cases too, and the bytes held back from each training plan for the evaluation
+Program's own overhead (`reserved_bytes`), so the pair the worker admits
+together fits. `plans/training.ssp` and optional `plans/evaluation.ssp` are selected
 for execution, with shared model tensors admitted by Executor. `report/` holds
 the simulated timeline; `logs/` contains one log per phase.
 

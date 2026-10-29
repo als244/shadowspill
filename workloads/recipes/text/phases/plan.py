@@ -11,7 +11,7 @@ from shadowspill import (
     write_report,
 )
 from shadowspill.errors import PlanInfeasibleError, PlanSearchExhaustedError
-from shadowspill.planning.shared import shared_memory
+from shadowspill.planning.shared import own_overhead_bytes, shared_memory
 from shadowspill.step import StepDataOrdering
 from workloads.recipes.phases import settings
 
@@ -55,16 +55,22 @@ def run(directory):
             rows.append({"sequences_per_example": size, "evaluation_error": str(error)})
             continue
         profiled = ProfiledProgram.load(at / "training.ssp")
+        reserved = 0 if evaluation is None else own_overhead_bytes(evaluation)
         count = options["sequences_per_step"] // size
         for depth in (d for d in range(1, count + 1) if count % d == 0):
             ordering = StepDataOrdering(depth=depth, breadth=count // depth)
-            row = {"sequences_per_example": size, "ordering": ordering.label}
+            row = {
+                "sequences_per_example": size,
+                "ordering": ordering.label,
+                "reserved_bytes": reserved,
+            }
             print(f"planning {row}", flush=True)
             try:
                 training = plan_program(
                     profiled,
                     ordering=ordering,
                     communication_info=communication("training"),
+                    reserved_bytes=reserved,
                     **inputs,
                 )
                 if evaluation is not None:

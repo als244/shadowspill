@@ -22,8 +22,8 @@ def shared_memory(primary: Plan, plans: Mapping[str, Plan]) -> SharedMemory:
 
     Model storage is shared by registration name. Other tensors remain private.
     Plans execute sequentially, so fixed GPU workspace takes the largest slice.
-    Fixed provider overhead is conservatively summed across distinct Programs;
-    no undocumented resource sharing is assumed.
+    Of each Program's fixed device overhead, the worker's part is counted once
+    and each Program's own retained allocations are summed.
     """
     named = {"": primary, **plans}
     if "" in plans or any(not isinstance(name, str) for name in plans):
@@ -67,15 +67,12 @@ def shared_memory(primary: Plan, plans: Mapping[str, Plan]) -> SharedMemory:
         if layout is not None
     )
     unique = {plan.program.digest: plan for plan in named.values()}
-    overhead = sum(plan.fixed_device_bytes for plan in unique.values())
-    # These plans run in one worker. Its explicitly reserved headroom is shared;
-    # provider allocations remain conservatively summed because their sharing
-    # is not part of the execution contract.
-    headrooms = [
-        p.profiled_program.metadata.get("external_headroom_bytes", 0)
-        for p in unique.values()
-    ]
-    overhead -= sum(headrooms) - max(headrooms)
+    # These plans run in one worker, whose CUDA context, provider handles and
+    # reserved headroom exist once however many Programs it holds; each
+    # Program adds only its own retained allocations.
+    overhead = max(worker_overhead_bytes(p) for p in unique.values()) + sum(
+        own_overhead_bytes(p) for p in unique.values()
+    )
     execution = fixed + dynamic + overhead
     spill = _spill_bytes(paths, mappings)
     if execution > primary.memory_budgets.execution_bytes:
@@ -95,6 +92,25 @@ def shared_memory(primary: Plan, plans: Mapping[str, Plan]) -> SharedMemory:
             capacity_bytes=primary.memory_budgets.spill_bytes,
         )
     return SharedMemory(mappings, fixed, execution, spill)
+
+
+def worker_overhead_bytes(plan: Plan) -> int:
+    """The part of a Plan's fixed device overhead that is the worker's rather
+    than the Program's: what NVML saw outside the native cache when the
+    Program was profiled (the CUDA context and provider handles) and the
+    headroom reserved for it; one per worker, however many Plans it runs."""
+    metadata = plan.profiled_program.metadata
+    return (metadata.get("external_device_bytes") or 0) + metadata.get(
+        "external_headroom_bytes", 0
+    )
+
+
+def own_overhead_bytes(plan: Plan) -> int:
+    """What remains of a Plan's fixed device overhead beyond the worker's: the
+    Program's own retained allocations, which a worker holding several
+    Programs pays for each. A Program profiled without the split counts
+    whole, as before."""
+    return max(0, plan.fixed_device_bytes - worker_overhead_bytes(plan))
 
 
 def _read_only(plan: Plan, mapping: Mapping[str, str]) -> None:

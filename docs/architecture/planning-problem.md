@@ -5,6 +5,9 @@ communication_info=...)` binds an ordering, costs communication and searches for
 a schedule entirely on CPU. Its result is a saved, inspectable `Plan`.
 The same `ProfiledProgram` can be reused across budgets and communication
 assumptions without model construction, measurement or execution pools.
+`reserved_bytes` keeps part of the execution budget out of the search: the own
+overhead of Programs that will share the worker, so the Plan leaves room for
+them while declaring the whole budget.
 
 ## Inputs and accounting
 

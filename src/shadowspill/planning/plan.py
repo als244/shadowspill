@@ -29,11 +29,16 @@ def plan_program(
     search_options: SearchOptions | None = None,
     ordering: StepDataOrdering | None = None,
     optimizer_ordering: Literal["stage_interleaved", "tail"] = "stage_interleaved",
+    reserved_bytes: int = 0,
 ) -> Plan:
     """Plan a fully supplied candidate without compilation, measurement or CUDA.
 
-    The existing search raises diagnostic PlanInfeasibleError or
-    PlanSearchExhaustedError. No cache directory or allocator is created.
+    ``reserved_bytes`` stays out of the execution budget while planning: the
+    own overhead of the Programs that will share the worker
+    (``planning.shared.own_overhead_bytes``), so the Plan leaves room for
+    them without changing the budgets it declares. The existing search
+    raises diagnostic PlanInfeasibleError or PlanSearchExhaustedError. No
+    cache directory or allocator is created.
     """
     from shadowspill.planner.search import SearchOptions
 
@@ -43,6 +48,8 @@ def plan_program(
         )
     if search_options is not None and not isinstance(search_options, SearchOptions):
         raise TypeError("search_options must be SearchOptions")
+    if type(reserved_bytes) is not int or reserved_bytes < 0:
+        raise ValueError("reserved_bytes must be a nonnegative integer")
     options = search_options or SearchOptions()
     fresh = _plan_bound(
         replace(
@@ -54,6 +61,7 @@ def plan_program(
         memory_budgets=memory_budgets,
         communication_info=communication_info,
         options=options,
+        reserved_bytes=reserved_bytes,
     )
     if program.program.bindings.get("kind") != "forward_backward":
         return fresh
@@ -70,10 +78,11 @@ def plan_program(
         memory_budgets=memory_budgets,
         communication_info=communication_info,
         options=options,
+        reserved_bytes=reserved_bytes,
     )
     from .modes import bundle_gradient_modes
 
-    return bundle_gradient_modes(fresh, accumulated)
+    return bundle_gradient_modes(fresh, accumulated, reserved_bytes=reserved_bytes)
 
 
 def _plan_bound(
@@ -82,14 +91,18 @@ def _plan_bound(
     memory_budgets: MemoryBudgets,
     communication_info: CommunicationInfo,
     options: SearchOptions,
+    reserved_bytes: int = 0,
 ) -> Plan:
-    costed, config = simulation_inputs(program, memory_budgets, communication_info)
+    costed, config = simulation_inputs(
+        program, memory_budgets, communication_info, reserved_bytes=reserved_bytes
+    )
     facts = program_admission(
         program,
         costed,
         memory_budgets.execution_bytes
         - program.fixed_device_bytes
-        - communication_overhead(program.program, communication_info)[0],
+        - communication_overhead(program.program, communication_info)[0]
+        - reserved_bytes,
         communication_info,
     )
     result = options.resolved_algorithm(

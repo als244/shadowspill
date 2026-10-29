@@ -12,7 +12,7 @@ from shadowspill import (
     write_report,
 )
 from shadowspill.errors import PlanInfeasibleError, PlanSearchExhaustedError
-from shadowspill.planning.shared import shared_memory
+from shadowspill.planning.shared import own_overhead_bytes, shared_memory
 from shadowspill.step import StepDataOrdering
 from workloads.recipes.phases import settings
 
@@ -88,16 +88,26 @@ def run(directory):
                     misses.append((missed, error.kind))
                 continue
         program = ProfiledProgram.load(root / f"profiled/{name}/training.ssp")
+        # The evaluation Program's own overhead is held back while the
+        # training plan fills the budget, so the pair the worker admits
+        # together fits; the worker's own overhead is counted once there.
+        reserved = 0 if evaluation is None else own_overhead_bytes(evaluation)
         count = geometry["microbatches"]
         for depth in (d for d in range(1, count + 1) if count % d == 0):
             ordering = StepDataOrdering(depth=depth, breadth=count // depth)
-            row = {"candidate": name, **geometry, "ordering": ordering.label}
+            row = {
+                "candidate": name,
+                **geometry,
+                "ordering": ordering.label,
+                "reserved_bytes": reserved,
+            }
             try:
                 plan = plan_program(
                     program,
                     memory_budgets=budget,
                     communication_info=communication,
                     ordering=ordering,
+                    reserved_bytes=reserved,
                 )
                 if evaluation is not None:
                     shared_memory(plan, {"evaluation": evaluation})
