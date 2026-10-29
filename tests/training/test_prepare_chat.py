@@ -94,6 +94,18 @@ def test_the_assistants_turns_are_located_and_marked(tokenizer):
     ]
 
 
+def test_a_template_that_trims_the_content_still_locates_the_turn(tokenizer):
+    tokenizer.chat_template = TEMPLATE.replace(
+        "{{ m['content'] }}", "{{ m['content'] | trim }}"
+    )
+    messages = [
+        {"role": "user", "content": "hello"},
+        {"role": "assistant", "content": "  fine thanks \n"},
+    ]
+    text, spans = render(tokenizer, messages)
+    assert [text[a:b] for a, b in spans] == ["fine thanks<|end|>"]
+
+
 def test_a_template_that_rewrites_earlier_turns_is_refused(tokenizer):
     tokenizer.chat_template = (
         "{% for m in messages %}{% if loop.last %}<|{{ m['role'] }}|>"

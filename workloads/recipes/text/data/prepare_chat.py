@@ -129,14 +129,20 @@ def render(
         )
         start = common_prefix(text, prompt)
         content = str(message["content"])
-        at = text.find(content, start)
-        if at < 0 or tail in text[start:at]:
+        # A template may trim the content's surrounding whitespace.
+        found = [
+            (at, candidate)
+            for candidate in (content, content.strip())
+            if candidate and (at := text.find(candidate, start)) >= 0
+        ]
+        if not found or tail in text[start : found[0][0]]:
             raise ValueError(
                 "the chat template does not render the assistant's content "
                 "verbatim after its generation prompt; the assistant's tokens "
                 "cannot be located"
             )
-        end = at + len(content)
+        at, candidate = found[0]
+        end = at + len(candidate)
         if not text.startswith(tail, end):
             raise ValueError(
                 "the chat template does not end the assistant's turn as its "
