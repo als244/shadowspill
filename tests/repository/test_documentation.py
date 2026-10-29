@@ -336,13 +336,13 @@ def test_documentation_index_exposes_reading_paths() -> None:
 def test_root_readme_remains_a_minimal_entrypoint() -> None:
     readme = (ROOT / "README.md").read_text()
     sections = re.findall(r"^## (.+)$", readme, re.MULTILINE)
-    assert sections == ["Phases", "Real model training"]
+    assert sections == ["Phases", "Training from a config", "Real model training"]
     examples = re.findall(r"<details>.*?</details>", readme, re.DOTALL)
     assert len(examples) == 4
     assert all("<summary>" in example and "```" in example for example in examples)
     assert all(len(example.splitlines()) <= 20 for example in examples)
     collapsed = re.sub(r"<details>.*?</details>", "", readme, flags=re.DOTALL)
-    assert len(collapsed.splitlines()) <= 65
+    assert len(collapsed.splitlines()) <= 90
 
 
 def test_architecture_overview_describes_public_phase_boundaries() -> None:
