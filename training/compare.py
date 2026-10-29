@@ -7,7 +7,7 @@ difference at each step is only what the runs computed differently -- which
 each run's packing.jsonl lets this check rather than assume. Prints, for each
 run against the first: whether they trained on the same documents, the step-0
 difference, the largest over the first 10 steps, the mean over each 100
-steps, and the final validation loss; then draws the curves and differences
+steps, and the final validation loss when the runs validated; then draws the curves and differences
 into the reference run's compare.png.
 """
 
@@ -57,9 +57,12 @@ def main() -> None:
         color="C0",
     )
 
-    print(
-        f"reference: {reference.name}, final val loss {list(ref_val.values())[-1]:.4f}"
+    final = (
+        f"final val loss {list(ref_val.values())[-1]:.4f}"
+        if ref_val
+        else "no validation"
     )
+    print(f"reference: {reference.name}, {final}")
     for index, run in enumerate(others, start=1):
         train, val = read(run)
         steps = sorted(set(train) & set(ref_train))
@@ -88,10 +91,11 @@ def main() -> None:
         print(f"  first-step loss      {first} (diff {gap[first_step]:+.2e})")
         print(f"  max |diff| 0-9   {max(abs(gap[s]) for s in steps[:10]):.2e}")
         print("  mean |diff| / 100 steps  " + "  ".join(f"{w:.4f}" for w in windows))
-        if val:
-            final = max(set(val) & set(ref_val))
-            difference = val[final] - ref_val[final]
-            print(f"  val loss at {final}  {val[final]:.4f} (diff {difference:+.4f})")
+        validated = set(val) & set(ref_val)
+        if validated:
+            last = max(validated)
+            difference = val[last] - ref_val[last]
+            print(f"  val loss at {last}  {val[last]:.4f} (diff {difference:+.4f})")
         curves.plot(
             steps, [train[s] for s in steps], label=run.name, lw=0.8, color=f"C{index}"
         )
