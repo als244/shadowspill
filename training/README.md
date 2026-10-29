@@ -144,6 +144,9 @@ exact data continuation requires caller-managed progress or the optional
 - `training/train.py`: recipe CLI.
 - `training/scripts/`: launch and comparison helpers.
 
+`engine=pytorch` runs the same configuration in ordinary PyTorch, with one
+fixed microbatch size and no saved phases, as the reference for a comparison:
+
 ```bash
 python -m training.compare <reference run dir> <run dir> [<run dir> ...]
 ```

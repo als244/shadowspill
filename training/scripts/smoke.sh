@@ -15,7 +15,7 @@ for backend in pytorch shadowspill; do
     fi
 done
 short=(eval_every=3 eval_microbatches=2 checkpoint_every=3 wandb_project=null)
-pytorch='backend={"@call": "shadowspill.training.backends:PyTorch"}'
+pytorch='engine=pytorch'
 for backend in pytorch shadowspill; do
     extra=()
     if [ "$backend" = pytorch ]; then extra+=("$pytorch"); fi
