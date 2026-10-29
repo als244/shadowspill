@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import json
+
 import pytest
 
 from shadowspill.training.logging import Wandb
@@ -28,6 +30,9 @@ def test_wandb_uses_completed_updates_for_scalars_tables_and_eval(
             if step == first_step + 1:
                 logger({"step": step, "eval/loss": 0.5})
             assert logger.run.step == step
+    record = json.loads((tmp_path / "wandb_run.json").read_text())
+    assert record["project"] == "shadowspill-logger-test"
+    assert record["id"] == logger.run.id and "url" in record
 
 
 @pytest.mark.parametrize("as_object", [False, True])

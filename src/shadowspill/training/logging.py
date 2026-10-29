@@ -31,6 +31,20 @@ class Wandb:
         self.run = wandb.init(project=project, dir=str(root), **options)
         self.run.define_metric("step")
         self.run.define_metric("*", step_metric="step")
+        # The worker's output is its log; the record lets whoever launched it
+        # print where the run went.
+        (root / "wandb_run.json").write_text(
+            json.dumps(
+                {
+                    "project": project,
+                    "id": self.run.id,
+                    "name": self.run.name,
+                    "url": self.run.url,
+                },
+                indent=2,
+            )
+            + "\n"
+        )
 
     def __call__(self, record: dict[str, Any]) -> None:
         self.run.log(dict(record), step=int(record["step"]), commit=False)

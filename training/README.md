@@ -114,9 +114,10 @@ optimizer-omitting resume policies are rejected. The directory contains:
 validation item. Evaluation calls a separately built forward Plan sharing the
 current model weights.
 
-`wandb_project` enables the optional logger. `step` is the actual completed
-training step; evaluation, tables and training records use the same axis.
-`wandb` passes additional SDK options. System telemetry keeps the SDK defaults.
+`wandb_project` enables the optional logger; the run's id and URL are recorded
+in `wandb_run.json` and the runner prints the URL after execution. `step` is
+the actual completed training step; evaluation, tables and training records
+use the same axis. `wandb` passes additional SDK options. System telemetry keeps the SDK defaults.
 Tensor summaries leave compiled tasks as tensors. Host collection and `.item()`
 run after the step completes. `parameter_norms_every` enables bounded eager observations before optimizer
 updates. These are off by default and can report compute-weight and final-gradient

@@ -42,6 +42,9 @@ def run_config(path, overrides=(), *, phase="all"):
     if phase in {"all", "execute"}:
         from .experiment.results import load
 
+        record = root / "wandb_run.json"
+        if record.exists() and (url := json.loads(record.read_text()).get("url")):
+            print(f"W&B run: {url}", flush=True)
         return load(root / "result.json")
     return None
 

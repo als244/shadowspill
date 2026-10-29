@@ -78,7 +78,8 @@ for execution, with shared model tensors admitted by Executor. `report/` holds
 the simulated timeline; `logs/` contains one log per phase.
 
 Execution writes `metrics.jsonl`, `packing.jsonl`, optional metric tables and
-`checkpoints/step_XXXXXXXX.ssp`. Norms/RMS/module shares use the same CPU reducer
+`checkpoints/step_XXXXXXXX.ssp`; with `wandb_project`, `wandb_run.json` records
+the W&B run's id and URL, which the runner prints after execution. Norms/RMS/module shares use the same CPU reducer
 and logging hooks as the reference loop. `result.json` contains only the final
 CPU observations, not model tensors. Compiler caches remain external.
 
