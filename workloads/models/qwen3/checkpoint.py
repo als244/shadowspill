@@ -32,14 +32,32 @@ BLOCK = {
 }
 
 
-def _tied(values: list[torch.Tensor]) -> torch.Tensor:
-    embedding, head = values
-    if not torch.equal(embedding, head):
-        raise ValueError(
-            "the checkpoint ties its head to its embedding but stores a head"
-            " that differs from it"
-        )
-    return embedding
+def tied(embedding_key: str, head_key: str) -> Source:
+    """The embedding of a checkpoint that stores its tied head beside it. The
+    stored head must equal the embedding, checked over whatever is read: the
+    whole tensors when the parameter is assembled, the range alone when a
+    chunk is copied. The shape pass reads no values and checks nothing."""
+
+    def check(embedding: torch.Tensor, head: torch.Tensor) -> None:
+        if not torch.equal(embedding, head):
+            raise ValueError(
+                "the checkpoint ties its head to its embedding but stores a head"
+                " that differs from it"
+            )
+
+    def assemble(values: list[torch.Tensor]) -> torch.Tensor:
+        embedding, head = values
+        if not embedding.is_meta:
+            check(embedding, head)
+        return embedding
+
+    def copy_range(reader, offset: int, destination: torch.Tensor) -> None:
+        stop = offset + destination.numel()
+        embedding = reader.tensor(embedding_key).view(-1)[offset:stop]
+        check(embedding, reader.tensor(head_key).view(-1)[offset:stop])
+        destination.copy_(embedding)
+
+    return Source((embedding_key, head_key), assemble, copy_range)
 
 
 class Qwen3Checkpoint(Checkpoint):
@@ -48,7 +66,7 @@ class Qwen3Checkpoint(Checkpoint):
     def sources(self, name: str, config) -> Source:
         if name == "embed.weight":
             if config.tied_embeddings and "lm_head.weight" in self.reader.info:
-                return Source(("model.embed_tokens.weight", "lm_head.weight"), _tied)
+                return tied("model.embed_tokens.weight", "lm_head.weight")
             return tensor("model.embed_tokens.weight")
         if name == "final_norm.weight":
             return tensor("model.norm.weight")

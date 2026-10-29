@@ -375,6 +375,37 @@ def test_a_tied_checkpoint_may_store_its_head_only_as_the_embedding(tmp_path):
         checkpoint.load_into(built(name, tied_embeddings=True))
 
 
+def test_a_stored_tied_head_is_checked_through_bounded_chunks(tmp_path):
+    # The bounded loader reads shapes on meta, then copies ranges; the stored
+    # head is checked over each range, never assembled whole.
+    name = "qwen3-tiny"
+    config = catalog.entry(name).config(tied_embeddings=True)
+    source = materialized(name, tied_embeddings=True)
+    state = huggingface_state("qwen3", source, config)
+    state["lm_head.weight"] = state["model.embed_tokens.weight"].clone()
+    directory = tmp_path / "checkpoint"
+    directory.mkdir()
+    (directory / "config.json").write_text(json.dumps(metadata("qwen3", config)))
+    save_file(state, directory / "model.safetensors")
+    expected = source.embed.weight.detach().reshape(-1)
+    shape = tuple(source.embed.weight.shape)
+    copied = torch.empty_like(expected)
+    with reader("qwen3")(directory, max_seq_len=config.max_seq_len) as checkpoint:
+        for offset in range(0, expected.numel(), 1000):
+            chunk = copied[offset : offset + 1000]
+            checkpoint.copy_chunk("embed.weight", shape, offset, chunk)
+    assert torch.equal(copied, expected)
+    state["lm_head.weight"] = state["lm_head.weight"] + 1
+    save_file(state, directory / "model.safetensors")
+    with (
+        reader("qwen3")(directory, max_seq_len=config.max_seq_len) as checkpoint,
+        pytest.raises(ValueError, match="differs"),
+    ):
+        checkpoint.copy_chunk(
+            "embed.weight", shape, 0, torch.empty(1000, dtype=expected.dtype)
+        )
+
+
 def test_copy_into_refuses_a_shape_that_does_not_fit():
     parameter = torch.nn.Parameter(torch.zeros(4, 2))
     copy_into(parameter, torch.ones(4, 2))
