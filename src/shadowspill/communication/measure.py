@@ -8,6 +8,7 @@ import torch
 import torch.distributed as dist
 
 from shadowspill.artifacts._values import digest, plain
+from shadowspill.parallelism.agreement import agreement_digest
 from shadowspill.artifacts.program import Program
 from shadowspill.memory import PinnedHostPool, SpillPool
 from shadowspill.pytorch.accelerator import resolve_device
@@ -97,14 +98,15 @@ def measure_communication(
             )
         if requests:
             memory = CommunicationMemory(target)
+        # What the workers must agree on: the exchange, not each one's own
+        # build, so Programs built for different hardware calibrate together.
         identity = digest(
             {
-                "program": None if program is None else program.digest,
+                "program": None if program is None else agreement_digest(program),
                 "requests": [item.to_dict() for item in requests],
                 "sizes": sizes,
                 "warmup": warmup_seconds,
                 "measure": measure_seconds,
-                "setup": setup,
                 "spill_kind": "pinned_host" if spill is None else spill.kind_name,
             }
         )

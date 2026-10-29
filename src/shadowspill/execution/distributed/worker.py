@@ -6,6 +6,7 @@ import torch
 import torch.distributed as dist
 
 from shadowspill.artifacts._values import digest, plain
+from shadowspill.parallelism.agreement import agreement_digest
 from shadowspill.artifacts.plan import Plan
 from shadowspill.communication.binding.backend import shared_backend_setup
 from shadowspill.communication.binding.groups import GroupBindings
@@ -59,8 +60,13 @@ class DistributedWorker:
         except Exception as error:
             failure = str(error)
         self.groups = GroupBindings(
+            # Ranks agree on what their Plans exchange; what each built,
+            # profiled or budgeted is its own.
             identity=digest(
-                {name: plan.to_dict() for name, plan in sorted(plans.items())}
+                {
+                    name: agreement_digest(plan.program)
+                    for name, plan in sorted(plans.items())
+                }
             ),
             groups=[request.ranks for request in self.requests]
             + [
