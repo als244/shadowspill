@@ -6,7 +6,14 @@ from ..data.source import PackedUpdates, candidate_data, validation_update
 
 
 def ranks(options):
-    """How many workers the run uses; one unless the config says ``ranks``."""
+    """How many workers the run uses: the hosts' ranks added up, else
+    ``ranks``, else one."""
+    hosts = options.get("hosts")
+    if hosts:
+        count = sum(int(host.get("ranks", 1)) for host in hosts)
+        if options.get("ranks", count) != count:
+            raise ValueError("ranks must equal the hosts' ranks added up")
+        return count
     count = options.get("ranks", 1)
     if type(count) is not int or count < 1:
         raise ValueError("ranks must be a positive integer")

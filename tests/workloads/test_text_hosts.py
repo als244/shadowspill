@@ -44,6 +44,16 @@ def test_hosts_are_checked():
         check_hosts({"hosts": HOSTS})
 
 
+def test_the_group_size_comes_from_the_hosts():
+    from workloads.recipes.text.experiment.inputs import ranks, shares
+
+    assert ranks({"hosts": HOSTS}) == 2 and shares(
+        {"hosts": HOSTS, "shares": [3, 1]}
+    ) == [3, 1]
+    with pytest.raises(ValueError, match="added up"):
+        ranks({"hosts": HOSTS, "ranks": 3})
+
+
 def test_commands_name_the_rendezvous_and_the_remote_repository(tmp_path):
     single = worker_command("/py", "pkg.build", tmp_path)
     assert single == ["/py", "-u", "-m", "pkg.build", str(tmp_path)]

@@ -210,6 +210,9 @@ def run_config(path, overrides=(), *, phase="all"):
     if hosts is None:
         run_phases("workloads.recipes.text.experiment", root, phase, ranks=ranks)
     else:
+        # The phases on every host read the group's size from the config.
+        raw["ranks"] = sum(host.get("ranks", 1) for host in hosts)
+        (root / "config.json").write_text(json.dumps(raw, indent=2) + "\n")
         run_hosts(root, raw, phase, hosts)
     if phase in {"all", "execute"}:
         from .experiment.results import load
