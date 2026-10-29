@@ -2,13 +2,15 @@
 
     python -m workloads.recipes.text.data.prepare --tokenizer <name or path> \\
         --dataset <hub dataset> --files <file pattern> --out <directory> \\
-        [--revision REV] [--shards N] [--text-column text] [--val-tokens N]
+        [--revision REV] [--shards N] [--text-column text] [--val-tokens N] \\
+        [--max-train-tokens N]
 
 Reads ``--shards`` parquet files of the dataset -- ``--files`` names them, with
 ``{}`` for the shard's index, formatted as Python does -- tokenizes the text
 column, and writes ``train.bin`` and ``val.bin`` in ``--out``: every document's
 token ids followed by the tokenizer's end-of-text id, back to back, as uint32.
-The first ``--val-tokens`` tokens go to ``val.bin``. ``meta.json`` records the
+The first ``--val-tokens`` tokens go to ``val.bin``; ``--max-train-tokens``
+stops ``train.bin`` at the last whole document that fits. ``meta.json`` records the
 tokenizer, the end-of-text id, the vocabulary size and what was read. Downloads
 go wherever the Hugging Face cache is (``HF_HOME``).
 
@@ -42,6 +44,7 @@ def arguments() -> argparse.Namespace:
     parser.add_argument("--shards", type=int, default=1)
     parser.add_argument("--text-column", default="text")
     parser.add_argument("--val-tokens", type=int, default=5_000_000)
+    parser.add_argument("--max-train-tokens", type=int)
     return parser.parse_args()
 
 
@@ -163,6 +166,7 @@ def main() -> None:
         args.out,
         text_column=args.text_column,
         val_tokens=args.val_tokens,
+        max_train_tokens=args.max_train_tokens,
     )
     meta = write_meta(
         args.out,
