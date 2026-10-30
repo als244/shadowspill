@@ -4,7 +4,13 @@
 
 Every run trained on the same batches from the same initial weights, so the
 difference at each step is only what the runs computed differently -- which
-each run's packing.jsonl lets this check rather than assume. Prints, for each
+each run's packing.jsonl lets this check rather than assume. A run directory
+is one process's, holding metrics.jsonl and packing.jsonl, or a multi-rank
+run's: its losses in the aggregate/metrics.jsonl the ranks report together
+(under nodes/<index>/ when each node kept its own directory) and its
+documents in every rank-*/packing.jsonl. A step's documents are compared as
+one set over its ranks and microbatches, so runs that divide a step
+differently -- two ranks against one process -- still compare. Prints, for each
 run against the first: whether they trained on the same documents, the step-0
 difference, the largest over the first 10 steps, the mean over each 100
 steps, and the final validation loss when the runs validated; then draws the
@@ -23,11 +29,41 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 
 
+def metrics_file(run: Path) -> Path:
+    """The run's losses: its own, or the aggregate its ranks report."""
+
+    if (run / "metrics.jsonl").exists():
+        return run / "metrics.jsonl"
+    found = [
+        *run.glob("aggregate/metrics.jsonl"),
+        *run.glob("nodes/*/aggregate/metrics.jsonl"),
+    ]
+    if len(found) != 1:
+        raise SystemExit(
+            f"{run}: expected metrics.jsonl or one aggregate/metrics.jsonl, "
+            f"found {len(found)}"
+        )
+    return found[0]
+
+
+def packing_files(run: Path) -> list[Path]:
+    """The run's document records: its own, or every rank's."""
+
+    if (run / "packing.jsonl").exists():
+        return [run / "packing.jsonl"]
+    found = sorted(
+        [*run.glob("rank-*/packing.jsonl"), *run.glob("nodes/*/rank-*/packing.jsonl")]
+    )
+    if not found:
+        raise SystemExit(f"{run}: no packing.jsonl in the run or its rank directories")
+    return found
+
+
 def read(run: Path) -> tuple[dict[int, float], dict[int, float]]:
     """Training and validation loss by step; a resumed run's later lines win."""
 
     train, val = {}, {}
-    for line in (run / "metrics.jsonl").read_text().splitlines():
+    for line in metrics_file(run).read_text().splitlines():
         record = json.loads(line)
         if "train/loss" in record:
             train[record["step"]] = record["train/loss"]
@@ -36,11 +72,22 @@ def read(run: Path) -> tuple[dict[int, float], dict[int, float]]:
     return train, val
 
 
-def packing(run: Path) -> dict[int, list]:
-    """The documents each step trained on; a resumed run's later lines win."""
+def packing(run: Path) -> dict[int, list[str]]:
+    """The documents each step trained on, over every rank and microbatch, as
+    a sorted list of entries; a resumed process's later lines win."""
 
-    lines = (run / "packing.jsonl").read_text().splitlines()
-    return {record["step"]: record["microbatches"] for record in map(json.loads, lines)}
+    steps: dict[int, list[str]] = {}
+    for path in packing_files(run):
+        records = {}
+        for record in map(json.loads, path.read_text().splitlines()):
+            records[record["step"]] = [
+                json.dumps(entry)
+                for microbatch in record["microbatches"]
+                for entry in microbatch
+            ]
+        for step, entries in records.items():
+            steps.setdefault(step, []).extend(entries)
+    return {step: sorted(entries) for step, entries in steps.items()}
 
 
 def main() -> None:

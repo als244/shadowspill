@@ -219,8 +219,11 @@ python -m training.compare <reference run dir> <run dir> [<run dir> ...]
 ```
 
 The comparison reads actual step numbers, losses and document records from the
-saved runs. Model examples and qualification policies remain outside the
-installed generic trainer.
+saved runs. Each argument is a run directory: a multi-rank run's losses come
+from the aggregate its ranks report and its documents from every rank, and a
+step's documents are compared as one set, so a run on two ranks compares
+against one run by a single process. Model examples and qualification policies remain
+outside the installed generic trainer.
 
 ## LoRA examples
 
