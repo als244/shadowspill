@@ -1,9 +1,12 @@
 """Workers share a backend setup; what names a node's own network path is its own."""
 
+from types import SimpleNamespace
+
 import pytest
 
 from shadowspill.communication.binding import backend as module
 from shadowspill.communication.requests import CollectiveRequest
+from shadowspill.execution.distributed import worker as distributed_worker
 
 
 class Group:
@@ -57,3 +60,25 @@ def test_each_nodes_network_settings_are_its_own(monkeypatch):
     rows[1]["environment"]["NCCL_PROTO"] = "ll"
     with pytest.raises(ValueError, match=r"backend setups: environment: .*simple.*ll"):
         module.shared_backend_setup(Group(rows), requests, device_ordinal=None)
+
+
+def test_a_plan_without_collectives_takes_no_backend_setup(monkeypatch):
+    backend = {"nccl_version": [2, 29, 7], "groups": {"0,1": {"backend": "nccl"}}}
+    requests = []
+    monkeypatch.setattr(
+        distributed_worker, "collective_requests", lambda program, collectives: requests
+    )
+
+    def calibrated(setup):
+        return SimpleNamespace(
+            program=None,
+            communication_info=SimpleNamespace(metadata={"backend_setup": setup}),
+        )
+
+    assert not distributed_worker.backend_differs(backend, calibrated({}))
+    requests.append(CollectiveRequest("all_gather", (0, 1), 64, "torch.bfloat16"))
+    assert distributed_worker.backend_differs(backend, calibrated({}))
+    assert not distributed_worker.backend_differs(backend, calibrated(backend))
+    assert distributed_worker.backend_differs(
+        backend, calibrated({**backend, "nccl_version": [2, 28, 0]})
+    )

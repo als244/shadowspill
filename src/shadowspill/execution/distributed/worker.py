@@ -1,6 +1,7 @@
 """Worker-owned groups and transfers reconstructed from saved Plan descriptions."""
 
 from collections.abc import Mapping
+from typing import Any
 
 import torch
 import torch.distributed as dist
@@ -15,6 +16,30 @@ from shadowspill.resources.description import resource_groups
 
 from .storage import ShardedTransfers
 from .warmup import warm_collectives
+
+
+def backend_differs(backend: Mapping[str, Any], plan: Plan) -> bool:
+    """Whether the workers' backend setup differs from the one ``plan``'s
+    calibration recorded. A forward Plan may use a subset of a training Plan's
+    groups, and a Plan that issues no collectives was calibrated without a
+    backend, so no setup applies to it."""
+    expected = plain(plan.communication_info.metadata.get("backend_setup", {}))
+    if not expected and not any(
+        len(request.ranks) > 1 for request in collective_requests(plan.program, None)
+    ):
+        return False
+    observed = (
+        {
+            **backend,
+            "groups": {
+                name: backend.get("groups", {}).get(name)
+                for name in expected.get("groups", {})
+            },
+        }
+        if backend
+        else {}
+    )
+    return bool(observed != expected)
 
 
 class DistributedWorker:
@@ -89,22 +114,8 @@ class DistributedWorker:
             self.groups, self.requests, device_ordinal=device
         )
         failure = None
-        for plan in self.plans.values():
-            expected = plain(plan.communication_info.metadata.get("backend_setup", {}))
-            # A forward Plan may use a subset of a training Plan's groups.
-            observed = (
-                {
-                    **backend,
-                    "groups": {
-                        name: backend.get("groups", {}).get(name)
-                        for name in expected.get("groups", {})
-                    },
-                }
-                if backend
-                else {}
-            )
-            if observed != expected:
-                failure = "communication backend differs from the saved calibration"
+        if any(backend_differs(backend, plan) for plan in self.plans.values()):
+            failure = "communication backend differs from the saved calibration"
         self.groups.check(failure)
         warm_collectives(self.requests, self.groups, torch.device("cuda", device))
         failure = None
