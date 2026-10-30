@@ -211,7 +211,14 @@ ranks exchange: the parallelism, which tensors exist, how they are placed and
 sharded, and their geometry. Calibration takes each worker's own Program, and
 calibration and Executor startup compare that agreement rather than the Programs
 themselves; ranks whose Programs disagree are refused before any collective
-runs. A rank's contribution stays `loss_sum / global_normalizer` with the
+runs. Ranks pair collectives by the order they issue them, so their Plans must
+also issue the same collectives in the same order. Sharded weight fetches and
+gradient evictions are collectives each rank's planner places for its own
+hardware, so ranks on different GPUs store weights and gradients replicated and
+shard the optimizer state: a step's collectives are then its gradient reduction
+and weight publication tasks, in program order on every rank. Executor startup
+compares each Plan's collectives by tensor name and names the first that
+differs. A rank's contribution stays `loss_sum / global_normalizer` with the
 normalizer counting the whole update over every rank, so ranks taking different
 shares of a step are weighted correctly. Backend settings that belong to one
 node, such as the interface it reaches the network through, may differ between
@@ -224,8 +231,9 @@ Every worker loads its Plan, the same one unless ranks differ in hardware, and
 supplies the same complete **launcher-rank → logical-rank** map. A permutation
 changes physical assignment, not logical group order or shard identity. Startup
 validates the assignment, distinct devices, the Plans' agreement on what the
-ranks exchange, backend setup and node membership. Executor creates and closes
-its own communication groups; caller-owned rendezvous remains the caller's.
+ranks exchange and the order they issue collectives in, backend setup and node
+membership. Executor creates and closes its own communication groups;
+caller-owned rendezvous remains the caller's.
 
 Saved Inductor code retains its compilation device ordinal. If build used
 `cuda:0`, each worker must expose its GPU under that local ordinal before CUDA

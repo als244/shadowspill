@@ -52,3 +52,12 @@ figures; remote nodes' rank directories are copied back to the first node
 after execution, and `resume=step_XXXXXXXX` makes every rank load its own
 save. The normal runner's `ranks` and `nodes` are refused beside this
 section: it carries its own.
+
+Every rank keeps whole weights and gradients in its own spill storage and
+only the optimizer state is sharded, unless `build.parallelism` names
+another layout. Ranks pair collectives by the order they issue them, and
+each node's planner orders sharded weight fetches for its own GPU, while a
+step's gradient reductions and weight publications are tasks that run in
+program order on every rank. Workers compare the order their Plans issue
+collectives in when they open, and refuse a difference by naming the first
+collective that differs.

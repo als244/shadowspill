@@ -281,6 +281,11 @@ exchange: the parallelism, which tensors exist, how they are placed and sharded,
 and their geometry. Executables, profiles, budgets and the number of examples a
 rank accumulates are each rank's own, so ranks on different GPUs can each load a
 Plan built for their own, while ranks on one kind of GPU load one saved Plan.
+Ranks pair collectives by issue order, so the Plans must also issue the same
+collectives in the same order: the compound transfers of sharded storage in
+schedule order and the communication tasks in task order. Startup compares
+these sequences by tensor name and refuses a difference before any collective
+runs. A Plan that issues no collectives takes no backend setup.
 Executor owns the groups it creates, checks backend/topology compatibility,
 and leaves caller-owned rendezvous intact. Each worker needs a distinct GPU.
 

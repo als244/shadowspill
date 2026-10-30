@@ -131,10 +131,10 @@ an artifact does not require generating its report.
 
 Every execution worker loads a Plan for its fixed logical parallelism
 configuration: one saved Plan on one kind of GPU, or Plans built for each GPU
-that agree on what the ranks exchange. A complete worker-to-logical-rank map
-binds physical workers at startup. Build/profile artifacts carry implementation
-identities; execution validates relevant builds and memory evidence before
-admission.
+that agree on what the ranks exchange and in what order. A complete
+worker-to-logical-rank map binds physical workers at startup. Build/profile
+artifacts carry implementation identities; execution validates relevant builds
+and memory evidence before admission.
 
 Previous: [Fixed-offset placement](fixed-placement.md).
 See also: [training composition](training.md) and [phase API](offline-pipeline.md).

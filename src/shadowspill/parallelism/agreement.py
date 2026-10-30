@@ -6,7 +6,9 @@ Programs can take part in one group when they agree on that exchange: the
 parallelism, which tensors exist, how they are placed and sharded, and their
 geometry. Executables, profiles, budgets, the build's target and the number
 of examples a rank accumulates are each rank's own, so a group may hold
-Programs built for different hardware.
+Programs built for different hardware. Their Plans must also issue the same
+collectives in the same order, which execution compares separately, since a
+schedule is each rank's own.
 """
 
 from __future__ import annotations

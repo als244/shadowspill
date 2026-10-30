@@ -20,6 +20,14 @@ EXPERIMENT = "workloads.recipes.text.experiment"
 PACKAGE = "workloads.recipes.text.heterogeneous"
 PHASES = ("build", "profile", "communicate", "plan", "execute")
 
+#: How the ranks store what they train unless ``build.parallelism`` says
+#: otherwise. Ranks pair collectives by the order they issue them, and each
+#: node's planner orders sharded weight fetches for its own GPU, so every rank
+#: keeps whole weights and gradients and only the optimizer state is sharded:
+#: the step's collectives are then its reduction and publication tasks, which
+#: run in program order on every rank.
+STORAGE = {"weights": "replicated", "gradients": "replicated", "optimizer": "sharded"}
+
 
 def check_section(raw):
     """The heterogeneous section, checked: nodes, one positive share per
@@ -53,13 +61,20 @@ def check_section(raw):
 
 def node_config(raw, nodes, shares, index):
     """The config node ``index`` runs the phases with: the group's size, its
-    ranks' tokens per step and its place in the group."""
+    ranks' tokens per step, its place in the group and the group's storage."""
     step_units = raw["max_tokens_per_step"] // raw["max_seq_len"]
     rank = first_rank(nodes, index)
     units = step_units // sum(shares) * shares[rank]
+    ranks = sum(node_ranks(nodes))
+    build = dict(raw.get("build", {}))
+    build.setdefault(
+        "parallelism",
+        {"@call": "shadowspill:Parallelism.dp", "ranks_per_replica": ranks, **STORAGE},
+    )
     return {
         **raw,
-        "ranks": sum(node_ranks(nodes)),
+        "build": build,
+        "ranks": ranks,
         "rank_tokens_per_step": units * raw["max_seq_len"],
         "node": index,
     }

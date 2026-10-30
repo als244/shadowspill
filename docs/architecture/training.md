@@ -93,7 +93,7 @@ process groups. `measure_communication` separately calibrates the declared
 collectives. Planning consumes those saved costs and memory evidence.
 
 Fresh workers share a complete worker-to-logical-rank mapping and Plans that
-agree on what the ranks exchange, usually one saved Plan.
+agree on what the ranks exchange and in what order, usually one saved Plan.
 Compute and optimizer communication retain their ordered execution contract.
 Parameter fetch/all-gather and gradient eviction/reduce-scatter use the tracked
 transfer paths. Backend work must finish under its task's completion event;

@@ -5,6 +5,7 @@ from __future__ import annotations
 import pytest
 import torch
 
+from shadowspill.training import config
 from tests.training._synthetic import write_dataset
 from workloads.recipes.text.data.documents import IGNORE
 from workloads.recipes.text.data.packed import PackedTokens
@@ -112,6 +113,19 @@ def test_the_section_is_checked_and_each_node_gets_its_share():
         node_config(raw, nodes, shares, 1)["ranks"] == 2
         and node_config(raw, nodes, shares, 1)["node"] == 1
     )
+    # Whole weights and gradients on every rank, the optimizer state sharded,
+    # unless the config names its own layout.
+    storage = config.resolve(node_config(raw, nodes, shares, 0)["build"])
+    layout = storage["parallelism"].default_parameter_storage
+    assert storage["parallelism"].world_size == 2
+    assert (layout.weights, layout.gradients, layout.optimizer) == (
+        "replicated",
+        "replicated",
+        "sharded",
+    )
+    own = {"@call": "shadowspill:Parallelism.dp", "ranks_per_replica": 2}
+    chosen = node_config({**raw, "build": {"parallelism": own}}, nodes, shares, 1)
+    assert chosen["build"]["parallelism"] == own
     with pytest.raises(ValueError, match="one positive integer per rank"):
         check_section({**raw, "heterogeneous": {"nodes": NODES, "shares": [3]}})
     with pytest.raises(ValueError, match="whole units for every share"):

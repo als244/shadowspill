@@ -74,8 +74,8 @@ and physical admission. `MemoryBudgets.execution_bytes` includes runtime/provide
 headroom as well as usable execution memory; spill capacity is separate.
 
 Every rank loads a Plan for its declared parallelism: one saved Plan on one kind
-of GPU, or Plans built for each GPU that agree on what the ranks exchange, each
-with its own microbatch geometry. Executor applies a complete
+of GPU, or Plans built for each GPU that agree on what the ranks exchange and in
+what order, each with its own microbatch geometry. Executor applies a complete
 worker-to-logical-rank mapping and recreates process-local resources. A saved
 Plan is not portable across arbitrary world sizes, architectures or dependency
 builds.
