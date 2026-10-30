@@ -260,6 +260,10 @@ finally:
 
 `Trainer(plan, device=0, rank_map=...)` provides the loop and schedules over this
 same Executor. A prebuilt evaluation Plan can share its current model tensors.
+Every invocation of a Plan that issues collectives first checks that all workers
+selected the same Plan and options. A Plan that issues none, such as an
+evaluation Plan over replicated weights, runs on each worker by itself, so
+workers may invoke it different numbers of times.
 Neither API builds, profiles or replans during execution.
 
 ## Transfer lifetimes and optimizer ordering

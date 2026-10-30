@@ -16,6 +16,7 @@ from shadowspill.runtime.plan.annotations import TaskBoundaryAnnotations
 
 from .dispatch import dispatch
 from .distributed.checks import check_external_budget, check_invocation, coordinated
+from .distributed.sequence import independent_plans
 from .inputs import stage_inputs
 from .paths import ExecutionPath
 from .results import TrainingResult, collect_outputs
@@ -72,8 +73,10 @@ class Executor:
             parameter_norms,
             spill,
         )
+        self._independent: frozenset[str] = frozenset()
         if self._distributed is not None:
             self._assignment = self._distributed.groups.assignment
+            self._independent = independent_plans(self._named_paths)
         self._completion = ReusableCompletionEvent(
             self.runtime._runtime_handle, torch.device("cuda", device)
         )
@@ -169,8 +172,10 @@ class Executor:
             if collect_parameter_norms is None
             else collect_parameter_norms
         )
-        if self._distributed is not None:
-            check_invocation(self._distributed, plan, accumulate_gradients, observe)
+        # Workers meet for every invocation of a Plan that issues collectives.
+        distributed = None if plan in self._independent else self._distributed
+        if distributed is not None:
+            check_invocation(distributed, plan, accumulate_gradients, observe)
 
         def prepare() -> ExecutionPath:
             if type(profiler_annotations) is not bool:
@@ -201,7 +206,7 @@ class Executor:
             stage_inputs(path.storage, args, kwargs, input_loader)
             return path
 
-        path = coordinated(self._distributed, prepare)
+        path = coordinated(distributed, prepare)
         observations = self._observations if observe else None
         annotations = (
             TaskBoundaryAnnotations(path.bridge) if profiler_annotations else None
@@ -241,9 +246,9 @@ class Executor:
                     annotations.set_enabled(False)
                 if observations is not None:
                     observations.finish(parameter_metrics)
-                if self._distributed is not None:
+                if distributed is not None:
                     coordinated(
-                        self._distributed, lambda: check_external_budget(self.runtime)
+                        distributed, lambda: check_external_budget(self.runtime)
                     )
 
             self._pending = InvocationResult(

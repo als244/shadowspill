@@ -75,6 +75,16 @@ def collective_sequence(plan: Plan) -> tuple[tuple[str, str, str], ...]:
     return tuple(rows)
 
 
+def independent_plans(paths: Mapping[str, Any]) -> frozenset[str]:
+    """The named Plans that issue no collectives: nothing such a Plan does has
+    to meet another worker's work, so workers invoke it without meeting each
+    other, and as many times as each needs."""
+
+    return frozenset(
+        name for name, path in paths.items() if not collective_sequence(path.plan)
+    )
+
+
 def first_difference(
     name: str, sequences: list[tuple[tuple[str, str, str], ...]]
 ) -> str | None:

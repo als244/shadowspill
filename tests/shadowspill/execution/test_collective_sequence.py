@@ -8,6 +8,7 @@ from shadowspill.execution.distributed.sequence import (
     check_collective_order,
     collective_sequence,
     first_difference,
+    independent_plans,
 )
 from shadowspill.ir import MemoryActionKind
 
@@ -120,3 +121,14 @@ def test_workers_whose_plans_order_collectives_differently_are_refused():
             Groups(same, {"default": ours, "evaluation": ours}),
             {"default": plan(["embed", "head"])},
         )
+
+
+def test_plans_that_issue_no_collectives_run_on_each_worker_by_itself():
+    quiet = plan([], communication=())
+    quiet.program.bindings["weight_shards"] = {}
+    assert collective_sequence(quiet) == ()
+    paths = {
+        "evaluation": SimpleNamespace(plan=quiet),
+        "probe": SimpleNamespace(plan=plan(["embed"])),
+    }
+    assert independent_plans(paths) == {"evaluation"}
