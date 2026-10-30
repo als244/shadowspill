@@ -1,6 +1,9 @@
-"""Fresh saved-Plan EP worker; model construction and preparation are forbidden."""
+"""Fresh saved-Plan EP worker; model construction and preparation are forbidden.
 
-import json
+It trains from the saved Plan alone and keeps the whole state it holds after
+initialization and after every step, for the reference to take each step from.
+"""
+
 import sys
 from pathlib import Path
 
@@ -11,65 +14,35 @@ from tests.shadowspill.execution._cold import forbid_preparation
 forbid_preparation()
 from benchmarking.quickstart.phases.common import experiment, read  # noqa: E402
 from benchmarking.quickstart.phases.distributed import workers  # noqa: E402
-from qualification.numerical.tolerances import STEP_QUANTUM_DISAGREEMENTS  # noqa: E402
 from shadowspill import Executor, Plan, load_checkpoint, save_checkpoint  # noqa: E402
 from tests.shadowspill.execution._trace_checks import check_trace  # noqa: E402
 
 
-def compare(executor, expected, steps):
-    # The two arms round the same gradient sums in different orders, so an
-    # element whose gradient is near zero can carry opposite signs and move one
-    # learning rate each way in a step: a master weight is held to that bound
-    # per step taken, the rule the numerical gate applies to such weights.
-    rate = float(expected["optimizer_group.0.lr"])
-    master_bound = STEP_QUANTUM_DISAGREEMENTS * rate * steps
-    values = {}
-    missing = set()
+def exported(executor):
+    """The state this rank holds: each tensor's region as its offset in the
+    complete tensor and its values."""
+    regions = {}
 
     def collect(request, chunk):
         assert chunk.device.type == "cpu" and chunk.nbytes <= 8192
-        if request.name not in expected:
-            missing.add(request.name)
-            return
-        wanted = expected[request.name].reshape(-1)
-        target = values.setdefault(request.name, [[], []])
-        target[0].append(chunk.clone())
-        target[1].append(wanted[request.offset : request.offset + chunk.numel()])
+        offset, parts = regions.setdefault(request.name, (request.offset, []))
+        assert request.offset == offset + sum(part.numel() for part in parts)
+        parts.append(chunk.clone())
 
     executor.export_tensors(collect, chunk_bytes=8192)
-    # Name every tensor the reference lacks at once; the Executor exports the
-    # whole Program, and the reference must account for all of it.
-    assert not missing, f"the reference has no values for {sorted(missing)}"
-    moments = 0
-    for name, (chunks, references) in values.items():
-        actual, wanted = torch.cat(chunks), torch.cat(references)
-        if name.endswith((".exp_avg", ".exp_avg_sq")):
-            assert actual.dtype == torch.float32
-            relative = (actual - wanted).norm() / wanted.norm().clamp_min(1e-20)
-            assert relative <= 0.03, (name, float(relative))
-            moments += 1
-        else:
-            torch.testing.assert_close(
-                actual,
-                wanted.to(actual.dtype),
-                rtol=0.0 if name.startswith("master.") else 0.03,
-                atol=master_bound if name.startswith("master.") else 0.002,
-                msg=lambda error, name=name: f"{name}: {error}",
-            )
-    assert moments and any(name.startswith("master.") for name in values)
+    return {
+        name: (offset, torch.cat(parts)) for name, (offset, parts) in regions.items()
+    }
 
 
 def execute(root, request, group):
     plan = Plan.load(root / "plan.ssp")
-    expected = torch.load(
-        root / f"reference-{group.logical_rank}.pt", weights_only=True
-    )
     with Executor(plan, device=0, rank_map=group.rank_map) as executor:
         setup = experiment(request, logical_rank=group.logical_rank)
         executor.initialize(setup["fill_tensor"], chunk_bytes=8192)
         inputs = setup["candidates"]["4"]
-        records = []
-        for index, reference in enumerate(expected):
+        states = [{"losses": [], "tensors": exported(executor)}]
+        for index in range(request["steps"]):
             pending = executor.run(
                 **inputs, hyperparams=setup["hyperparams"], runtime_trace=index == 0
             )
@@ -79,21 +52,26 @@ def execute(root, request, group):
             losses = [loss.cpu() for loss in result.losses]
             diagnostics = pending.diagnostics
             del result, pending
-            for loss, wanted in zip(losses, reference["losses"], strict=True):
-                torch.testing.assert_close(loss, wanted, rtol=0.02, atol=0.002)
             if index == 0:
                 check_trace(plan, diagnostics)
-            compare(executor, reference["values"], steps=index + 1)
+            states.append({"losses": losses, "tensors": exported(executor)})
             if index == 0:
                 checkpoint = root / f"checkpoint-{group.logical_rank}.ssp"
                 save_checkpoint(executor, checkpoint, chunk_bytes=8192)
                 executor.initialize(lambda request, chunk: chunk.zero_(), restore=True)
                 load_checkpoint(executor, checkpoint, chunk_bytes=4096)
-                compare(executor, reference["values"], steps=index + 1)
-            records.append({"step": index + 1, "loss": sum(float(v) for v in losses)})
-        (root / f"result-{group.logical_rank}.json").write_text(
-            json.dumps({"passed": True, "steps": records}, indent=2)
-        )
+                # A checkpoint holds the state exactly: every tensor comes
+                # back bit for bit, so training resumes where it stopped.
+                held, restored = states[-1]["tensors"], exported(executor)
+                assert restored.keys() == held.keys()
+                changed = sorted(
+                    name
+                    for name, (offset, values) in held.items()
+                    if restored[name][0] != offset
+                    or not torch.equal(restored[name][1], values)
+                )
+                assert not changed, f"a checkpoint round trip changed {changed}"
+    torch.save(states, root / f"state-{group.logical_rank}.pt")
 
 
 if __name__ == "__main__":

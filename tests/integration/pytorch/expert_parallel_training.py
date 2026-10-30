@@ -1,7 +1,9 @@
 """Saved-phase EP qualification; launch directly on a two-H100 allocation.
 
-The eager reference shares MLOps' expert kernels, but uses ordinary PyTorch
-accumulation and FP32 AdamW. Every execution worker starts with only a saved Plan.
+Every execution worker starts with only a saved Plan and keeps the state it
+holds after each step. The eager reference, which shares MLOps' expert kernels
+but uses ordinary PyTorch accumulation and FP32 AdamW, then takes each step
+from the state ShadowSpill held before it and compares the step it took.
 """
 
 import argparse
@@ -80,7 +82,7 @@ def main():
     )
     assert not plan.simulation_only_reasons
     plan.save(root / "plan.ssp")
-    for phase in ("reference", "execute"):
+    for phase in ("execute", "reference"):
         command = worker_command(
             "tests.shadowspill.execution.expert_parallel." + phase,
             [root],
