@@ -30,6 +30,7 @@ def run(directory: Path) -> None:
         plan,
         external_headroom_bytes=manifest.external_headroom_bytes,
         spill=resolve(settings),
+        reject_overbudget=manifest.reject_overbudget,
     ) as executor:
         if arguments.profiler_annotations:
             set_profiler_annotations(executor._paths[0].bridge, True)

@@ -59,6 +59,7 @@ def run_planned_case(request: PlannedRequest, directory: Path) -> PlannedRun:
             plan,
             external_headroom_bytes=request.external_headroom_mib << 20,
             spill=request.spill_pool,
+            reject_overbudget=request.reject_overbudget,
         ) as executor,
     ):
         initialize(executor, inputs)

@@ -32,6 +32,10 @@ only an Executor it created. `close()` and context-manager exit wait for work an
 release owned resources. By default, Executor inherits the external-memory
 headroom recorded during profiling and included in the Plan's total GPU budget.
 An `external_headroom_bytes` override cannot exceed that planned reservation.
+Memory the process acquires outside the pool beyond that headroom is reported on
+stderr and execution continues; `reject_overbudget=True` on Trainer or Executor
+refuses it instead. Pool bounds and device allocation failures are enforced
+either way.
 
 `spill=SSDPool(...)` or `spill=RemotePool(...)` selects storage when Trainer creates
 its Executor; pass it directly to an existing Executor instead. Pinned-host storage

@@ -36,7 +36,10 @@ class Executor:
         external_headroom_bytes: int | None = None,
         parameter_norms: bool = False,
         spill: SpillPool | None = None,
+        reject_overbudget: bool = False,
     ) -> None:
+        if type(reject_overbudget) is not bool:
+            raise TypeError("reject_overbudget must be a bool")
         self.parameter_norms = parameter_norms
         world_size = (
             1
@@ -72,6 +75,7 @@ class Executor:
             rank_map,
             parameter_norms,
             spill,
+            reject_overbudget,
         )
         self._independent: frozenset[str] = frozenset()
         if self._distributed is not None:

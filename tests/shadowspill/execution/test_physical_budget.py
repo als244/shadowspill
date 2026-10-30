@@ -46,3 +46,35 @@ def test_within_budget_does_not_query_extra_memory():
         )
     )
     check_external_budget(runtime)
+
+
+def test_a_worker_reports_overruns_unless_told_to_reject(monkeypatch):
+    import torch
+
+    from shadowspill.execution import setup
+    from shadowspill.memory import PinnedHostPool
+
+    seen = []
+
+    class Runtime:
+        def __init__(self, *, frontend, pools, routes, calibrate):
+            seen.append(pools["execution"])
+
+        def close(self):
+            pass
+
+    identity = {"torch": torch.__version__}
+    monkeypatch.setattr(setup, "Runtime", Runtime)
+    monkeypatch.setattr(setup, "PyTorchFrontend", lambda: None)
+    monkeypatch.setattr(setup, "require_compiled_device", lambda program, device: None)
+    monkeypatch.setattr(setup, "build_setup", lambda device: identity)
+    plan = SimpleNamespace(
+        simulation_only_reasons=(),
+        program=SimpleNamespace(devices=("cuda_0",), setup=identity),
+        memory_budgets=SimpleNamespace(execution_bytes=8 << 30, spill_bytes=1 << 30),
+        communication_info=SimpleNamespace(metadata={}),
+    )
+    setup.open_worker(plan, 0, 512 << 20, PinnedHostPool(1 << 30))
+    setup.open_worker(plan, 0, 512 << 20, PinnedHostPool(1 << 30), True)
+    assert [pool.reject_overbudget for pool in seen] == [False, True]
+    assert all(pool.external_headroom == 512 << 20 for pool in seen)

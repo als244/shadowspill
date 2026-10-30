@@ -34,6 +34,7 @@ def create_paths(
     rank_map: Mapping[int, int] | None = None,
     parameter_norms: bool = False,
     spill: SpillPool | None = None,
+    reject_overbudget: bool = False,
 ) -> tuple[
     Runtime,
     tuple[ExecutionPath, ...],
@@ -91,7 +92,7 @@ def create_paths(
         )
         failure = None
         try:
-            runtime = open_worker(plan, device, headroom, spill)
+            runtime = open_worker(plan, device, headroom, spill, reject_overbudget)
         except Exception as error:
             if distributed is None:
                 raise

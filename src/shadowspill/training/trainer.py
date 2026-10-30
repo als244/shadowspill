@@ -45,6 +45,7 @@ class Trainer:
         frozen_state_id: str | None = None,
         parameter_norms_every: int = 0,
         spill: SpillPool | None = None,
+        reject_overbudget: bool = False,
     ) -> None:
         if not isinstance(plan, Plan) or plan.program.bindings.get("kind") != "step":
             raise TypeError("Trainer requires a Plan produced from build_step")
@@ -89,9 +90,10 @@ class Trainer:
             ):
                 raise ValueError("supplied Executor has a different evaluation Plan")
         validate_identity(frozen_state_id)
-        if executor is not None and spill is not None:
+        if executor is not None and (spill is not None or reject_overbudget):
             raise ValueError(
-                "supply spill when creating Executor, not alongside an existing one"
+                "supply spill and reject_overbudget when creating Executor, not "
+                "alongside an existing one"
             )
         self.frozen_state_id = frozen_state_id
         self.plan = plan
@@ -103,6 +105,7 @@ class Trainer:
             plans=None if evaluation_plan is None else {"evaluation": evaluation_plan},
             parameter_norms=parameter_norms_every > 0,
             spill=spill,
+            reject_overbudget=reject_overbudget,
         )
         self.evaluation_plan = self.executor.plans.get("evaluation")
         self._owns_executor = executor is None

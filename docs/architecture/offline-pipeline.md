@@ -240,6 +240,9 @@ separate from compute/provider overhead in Profiles.
 NCCL-owned allocations use ordinary external headroom. Executor warms the saved
 collective forms before admitting its arena, adds measured communicator memory
 to the reservation, and checks physical usage at admission and completed calls.
+An overrun of external or whole-process memory is reported and execution
+continues unless `reject_overbudget=True`, which refuses it; pool bounds and
+device allocation failures stay enforced either way.
 These external resources are distinct from task-local PyTorch allocations, which
 still require allocation contracts. Estimated task memory remains simulation-only.
 
