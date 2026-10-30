@@ -67,14 +67,14 @@ def test_current_defaults_preserve_the_existing_baseline_on_the_original_gpu() -
     assert comparison.applicable
 
 
-def test_remote_link_is_not_inferred_from_gpu_identity() -> None:
+def test_a_run_spilling_to_a_peer_has_no_throughput_floor() -> None:
     comparison = regression_comparison(
         _baseline_cell(),
         Namespace(remote_spill="h:1:1"),
         device_name="NVIDIA GeForce RTX 5090",
     )
     assert not comparison.applicable
-    assert "remote link" in comparison.reason
+    assert comparison.reason == "a run spilling to a peer has no throughput floor"
 
 
 def test_a_cell_without_a_baseline_is_explicitly_not_applicable() -> None:

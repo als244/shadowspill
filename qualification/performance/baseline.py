@@ -42,14 +42,14 @@ def regression_comparison(
     changes that provenance. An unrelated machine/configuration still runs
     every other gate and reports its measured throughput.
     """
-    remote = getattr(arguments, "remote_spill", None) is not None
-    floor = (
-        manifest.remote_regression_tokens_per_second
-        if remote
-        else manifest.regression_tokens_per_second
-    )
+    floor = manifest.regression_tokens_per_second
     baseline_device = "NVIDIA GeForce RTX 5090"
     mismatches: list[str] = []
+    # The floors were measured with the pool in pinned host memory. A run
+    # whose pool is on a peer crosses a link many times slower and is held to
+    # its simulator's prediction instead: no floor applies to it.
+    if getattr(arguments, "remote_spill", None) is not None:
+        mismatches.append("a run spilling to a peer has no throughput floor")
     if device_name != baseline_device:
         mismatches.append(f"device {device_name!r} differs from {baseline_device!r}")
     expected = {
@@ -77,9 +77,4 @@ def regression_comparison(
     planning_budget = getattr(arguments, "planning_spill_budget_gib", None)
     if planning_budget is not None and planning_budget != 112:
         mismatches.append("planning spill budget differs from baseline (112 GiB)")
-    # The old peer floor also depends on a particular 25 Gb/s path. The CLI
-    # does not identify that path's hardware, so do not infer it from a host
-    # name or silently judge a different network against it.
-    if remote:
-        mismatches.append("remote link hardware has no matching baseline identity")
     return RegressionComparison(device_name, baseline_device, floor, tuple(mismatches))

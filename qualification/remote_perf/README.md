@@ -19,13 +19,13 @@ the two cannot drift apart: a cell added there is a cell this gate runs.
 
 ## What it judges against
 
-The cells are judged against floors of their own,
-`remote_regression_tokens_per_second` in `workloads.full_model`, measured with
-the pool on a peer, at the same 0.95 margin the local floors use. The local
-floors do not apply: the link is about 3 GB/s against 25 GB/s to pinned host
-memory, so a transfer-bound step runs several times slower, and a local number
-says nothing about a remote run. Every cell runs even after one misses, so a
-run records all three numbers.
+The cells have no throughput floor. The local floors do not apply: the link
+is about 3 GB/s against 25 GB/s to pinned host memory, so a transfer-bound step
+runs several times slower, and a local number says nothing about a remote run.
+Each cell is held to the performance gate's other checks and to its
+simulator's prediction, the check that sees when the remote path behaves other
+than the planner priced it; its measured throughput is reported beside them.
+Every cell runs even after one misses, so a run records all three numbers.
 
 ## Running it
 

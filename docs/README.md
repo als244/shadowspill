@@ -289,8 +289,8 @@ These pages live beside the code they describe, outside `docs/`.
 - [Remote qualification](../qualification/remote/README.md) — the numerical
   matrix again, with the spill pool held by a daemon on another machine.
 - [Remote performance qualification](../qualification/remote_perf/README.md) —
-  the performance matrix again, with the spill pool on another machine, judged
-  against floors measured that way.
+  the performance matrix again, with the spill pool on another machine, held
+  to its simulator's prediction rather than a throughput floor.
 - [Workloads](../workloads/README.md) — the model and data definitions the
   benchmarks and gates consume.
 - [Example model catalog](../workloads/MODELS.md) — architecture index, dimensions,
