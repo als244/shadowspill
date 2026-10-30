@@ -20,6 +20,9 @@ class Config:
     vocab_size: int
     rope_base: float = 10_000.0
     max_seq_len: int = 131_072
+    #: The standard deviation Hugging Face initializes embeddings, projections
+    #: and expert banks with.
+    initializer_range: float = 0.02
 
     @property
     def query_width(self) -> int:

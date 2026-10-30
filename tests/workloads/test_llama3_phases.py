@@ -53,10 +53,14 @@ def test_initializer_chunks_preserve_tables_norms_and_random_values(scaling):
             torch.testing.assert_close(whole, getattr(rotary, name.split(".")[1]))
         elif "norm" in name:
             assert torch.equal(whole, torch.ones_like(whole))
-        elif name == "embed.weight":
-            assert 0.95 < whole.float().std().item() < 1.05
         else:
-            assert whole.abs().max() <= (128**-0.5 + 0.001)
+            # Hugging Face's N(0, initializer_range) for embeddings and
+            # projections; another seed draws other values.
+            assert 0.018 < whole.float().std().item() < 0.022
+            other = Initialize("llama3", config, seed=124)
+            target = torch.empty(math.prod(shape), dtype=dtype)
+            other(TensorChunk(name, shape, dtype, 0, target.numel()), target)
+            assert not torch.equal(whole, target.reshape(shape))
 
 
 def test_inputs_use_normalized_calls_and_restore_next_example(tmp_path):

@@ -114,8 +114,11 @@ uses nearest rounding so existing references remain valid.
 
 The build recipe declares models on meta. Execution uses an explicit bounded
 `initialize(request, destination)` callback or checkpoint. Supplied configs use
-the shared catalog initializer, including derived buffers and deterministic
-per-tensor seeds. `initialize.model` and its geometry must match `model.model`
+the shared catalog initializer: Hugging Face's initial distributions, with
+embeddings, projections and expert banks from N(0, `initializer_range`), and
+derived buffers. Every value follows from the initializer's `seed`, the tensor's
+name and its offset, so a seed reproduces a model whatever the loader's chunks
+or the ranks' shards. `initialize.model` and its geometry must match `model.model`
 and its geometry when overriding a preset. Initialization does not allocate an
 anonymous full model alongside spill storage.
 

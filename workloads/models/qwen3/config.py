@@ -20,6 +20,9 @@ class Config:
     max_seq_len: int = 40_960
     tied_embeddings: bool = False
     norm_epsilon: float = 1e-6
+    #: The standard deviation Hugging Face initializes embeddings, projections
+    #: and expert banks with.
+    initializer_range: float = 0.02
 
     @property
     def attention_width(self) -> int:

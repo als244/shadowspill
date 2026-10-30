@@ -30,6 +30,9 @@ class Config:
     #: The published models keep every RMSNorm weight but the linear
     #: attention's as an offset from one.
     zero_centered_norm: bool = False
+    #: The standard deviation Hugging Face initializes embeddings, projections
+    #: and expert banks with.
+    initializer_range: float = 0.02
 
     @property
     def attention_width(self) -> int:

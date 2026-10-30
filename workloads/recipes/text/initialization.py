@@ -1,7 +1,5 @@
 """Bounded catalog initialization; no anonymous full model or expert-bank copy."""
 
-import math
-
 import torch
 
 from workloads.models.shared.decoder import llama3_frequencies
@@ -36,11 +34,15 @@ def from_checkpoint(family, directory, *, seed=0, **configuration):
 
 
 class Initialize:
-    """Reproduce model distributions, independently of chunks and rank ownership.
+    """Hugging Face's initial distributions for these families: embeddings,
+    projections and expert banks from N(0, ``initializer_range``), norms at one
+    (zero when zero-centered), fresh LoRA factors as PEFT draws them.
 
-    This intentionally does not reproduce reset_parameters' traversal RNG stream.
-    Derived RoPE tables and constant gates/norms retain their model definitions.
-    Masters, moments and counters use the Program's own initializers.
+    Every value derives from ``seed``, the tensor's name and its block offset,
+    so one seed reproduces a model whatever the loader's chunks or the ranks'
+    shards. Derived RoPE tables and constant gates retain their model
+    definitions; masters, moments and counters use the Program's own
+    initializers.
     """
 
     block_elements = 256 << 10
@@ -93,13 +95,14 @@ class Initialize:
             return values.normal_(
                 std=self.config.initializer_range, generator=generator
             )
-        if leaf in {"w13_experts", "w2_experts"}:
-            return values.normal_(std=shape[-1] ** -0.5, generator=generator)
-        if name == "embed.weight":
-            return values.normal_(generator=generator)
-        if leaf == "weight" and len(shape) >= 2:
-            bound = math.prod(shape[1:]) ** -0.5
-            return values.uniform_(-bound, bound, generator=generator)
+        if (
+            name == "embed.weight"
+            or leaf in {"w13_experts", "w2_experts"}
+            or (leaf == "weight" and len(shape) >= 2)
+        ):
+            return values.normal_(
+                std=self.config.initializer_range, generator=generator
+            )
         raise ValueError(f"no catalog initializer for {name}")
 
     def rotary(self, name, start, stop):

@@ -22,6 +22,9 @@ class Config:
     #: ``high_freq_factor``, ``original_max_position_embeddings``), or none.
     rope_scaling: Mapping[str, float] | None = None
     norm_epsilon: float = 1e-5
+    #: The standard deviation Hugging Face initializes embeddings, projections
+    #: and expert banks with.
+    initializer_range: float = 0.02
 
     @property
     def head_dim(self) -> int:
