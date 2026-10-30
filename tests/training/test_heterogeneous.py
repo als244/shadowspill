@@ -166,3 +166,19 @@ def test_nodes_walk_the_union_of_their_slots():
         stand_in(
             "6144_tokens/evaluation", slots({}, {"candidates": {"2048_tokens": {}}})
         )
+
+
+def test_the_aggregate_adds_the_ranks_evaluation_shares():
+    from workloads.recipes.text.experiment.logging import sum_shares
+
+    evaluation = sum_shares(
+        [
+            {"step": 3, "eval/loss": 1.5, "eval/seconds": 0.2},
+            {"step": 3, "eval/loss": 0.5, "eval/seconds": 0.4},
+        ]
+    )
+    assert evaluation == {"step": 3, "eval/loss": 2.0, "eval/seconds": 0.4}
+    training = sum_shares(
+        [{"step": 4, "train/loss": 1.0}, {"step": 4, "train/loss": 2.0}]
+    )
+    assert training == {"step": 4, "train/loss": 3.0}

@@ -33,6 +33,18 @@ def reducer(options, sizes):
     return reduce_observations
 
 
+def sum_shares(records):
+    """The ranks' records as the step's: what the default reducer adds, and
+    the evaluation loss, which every rank of these recipes reports as its share
+    of one mean over all ranks' held-out tokens."""
+    from shadowspill.training.logging import sum_rank_records
+
+    combined = dict(sum_rank_records(records))
+    if all("eval/loss" in record for record in records):
+        combined["eval/loss"] = sum(record["eval/loss"] for record in records)
+    return combined
+
+
 def open_logger(stack, root, options, group=None):
     """The run's logger: W&B when ``wandb_project`` says so; with a rank
     ``group``, the distributed logger, which keeps a W&B run per rank and one
@@ -48,7 +60,9 @@ def open_logger(stack, root, options, group=None):
             if options.get("wandb_project")
             else None
         )
-        return stack.enter_context(DistributedLogger(group, run_dir=root, wandb=wandb))
+        return stack.enter_context(
+            DistributedLogger(group, run_dir=root, wandb=wandb, reduce=sum_shares)
+        )
     if not options.get("wandb_project"):
         return None
     return stack.enter_context(
