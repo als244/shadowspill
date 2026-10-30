@@ -5,7 +5,9 @@ must issue the same collectives in the same order. A Plan issues them on two
 paths: the compound transfers that fetch sharded weights and evict sharded
 gradients, in its schedule's order, and the gradient-communication and
 weight-communication tasks, in its task order. Entries name tensors, not the
-identities a build assigns, so Plans built separately compare.
+identities a build assigns, so Plans built separately compare. Collectives a
+model issues inside its own tasks, through communicator groups its provider
+resources hold, are not listed; a Plan with such groups is never independent.
 """
 
 from __future__ import annotations
@@ -16,6 +18,7 @@ from typing import TYPE_CHECKING, Any
 from shadowspill.artifacts._values import digest
 from shadowspill.artifacts.tensors import registration_name
 from shadowspill.ir import MemoryActionKind
+from shadowspill.resources.description import resource_groups
 
 if TYPE_CHECKING:
     from shadowspill.artifacts.plan import Plan
@@ -76,12 +79,17 @@ def collective_sequence(plan: Plan) -> tuple[tuple[str, str, str], ...]:
 
 
 def independent_plans(paths: Mapping[str, Any]) -> frozenset[str]:
-    """The named Plans that issue no collectives: nothing such a Plan does has
-    to meet another worker's work, so workers invoke it without meeting each
-    other, and as many times as each needs."""
+    """The named Plans that issue no collectives, neither in their transfers
+    and communication tasks nor through communicator groups their model's
+    resources hold: nothing such a Plan does has to meet another worker's
+    work, so workers invoke it without meeting each other, and as many times
+    as each needs."""
 
     return frozenset(
-        name for name, path in paths.items() if not collective_sequence(path.plan)
+        name
+        for name, path in paths.items()
+        if not collective_sequence(path.plan)
+        and not resource_groups(path.plan.program.resources)
     )
 
 

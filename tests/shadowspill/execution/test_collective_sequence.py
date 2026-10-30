@@ -46,6 +46,7 @@ def plan(fetch_order, *, communication=("embed", "head")):
     actions.append(SimpleNamespace(alias_group_id="a_optimizer", kind=FETCH))
     return SimpleNamespace(
         program=SimpleNamespace(
+            resources={},
             objects=objects,
             bindings={
                 "registrations": [
@@ -127,8 +128,16 @@ def test_plans_that_issue_no_collectives_run_on_each_worker_by_itself():
     quiet = plan([], communication=())
     quiet.program.bindings["weight_shards"] = {}
     assert collective_sequence(quiet) == ()
+    talking = plan([], communication=())
+    talking.program.bindings["weight_shards"] = {}
+    # A model that exchanges through its own communicator groups, as expert
+    # parallelism does, issues collectives no transfer or task lists.
+    talking.program.resources = {
+        "experts": SimpleNamespace(groups={"ep": SimpleNamespace(groups=((0, 1),))})
+    }
     paths = {
         "evaluation": SimpleNamespace(plan=quiet),
         "probe": SimpleNamespace(plan=plan(["embed"])),
+        "experts": SimpleNamespace(plan=talking),
     }
     assert independent_plans(paths) == {"evaluation"}
