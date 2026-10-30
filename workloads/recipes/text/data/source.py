@@ -134,17 +134,3 @@ class PackedUpdates:
         self.packer.packs = [list(pack) for pack in state["packs"]]
         self.packer.pending = deque(state["pending"])
         self.packer.next_document = state["next_document"]
-
-
-def validation_update(
-    data, *, name, tokens, max_seq_len, microbatches, rank=0, world_size=1
-):
-    """``microbatches`` held-out microbatches for this rank, distinct from
-    every other rank's, normalized by the trained tokens of all ranks' so
-    that the ranks' losses sum to the mean over the whole evaluation."""
-    packer = data.validation_packer(tokens, max_seq_len)
-    mine = range(rank * microbatches, (rank + 1) * microbatches)
-    return {
-        "candidates": {name: [packer.microbatch(i) for i in mine]},
-        "normalizer": packer.trained_tokens(range(world_size * microbatches)),
-    }

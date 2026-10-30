@@ -13,6 +13,7 @@ models, choose execution plans, or manage ShadowSpill pools.
 | `packing.py` | Pack whole documents and construct length tensors |
 | `packed.py` | `PackedTokens` corpus configuration |
 | `source.py` | Packed update iteration and candidate geometry inputs |
+| `units.py` | Units of `max_seq_len` tokens divided among ranks: the held-out calls each rank evaluates, padded to its microbatches |
 
 ```bash
 python -m workloads.recipes.text.data.prepare --help

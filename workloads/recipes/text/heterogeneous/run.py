@@ -56,6 +56,14 @@ def check_section(raw):
         raise ValueError(
             "max_tokens_per_step must divide into whole units for every share"
         )
+    if raw.get("eval_every"):
+        from workloads.recipes.text.data.units import held_out_units
+
+        held_out_units(
+            raw.get("eval_tokens", raw["max_tokens_per_step"]),
+            raw["max_seq_len"],
+            shares,
+        )
     return nodes, shares, section.get("port", 29400)
 
 

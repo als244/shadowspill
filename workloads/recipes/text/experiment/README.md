@@ -36,7 +36,7 @@ objects. The model, data and objective remain workload choices.
 | `warmup_seconds`, `measure_seconds`, `external_headroom_mib` | Task/communication measurement controls; defaults 0.05 s, 0.18 s and 512 MiB. |
 | `steps`, `schedules`, `resume` | Target total updates, runtime hyperparameter schedules and optional Trainer checkpoint. |
 | `parameter_norms_every`, `metric_reducer`, `omit_parameter_metrics` | Optional runtime norms (off by default) and CPU metric formatting. No compiled parameter-observation tasks. |
-| `eval_every`, `eval_microbatches` | Held-out evaluation cadence and packed examples per evaluation. |
+| `eval_every`, `eval_tokens` | Held-out evaluation cadence, and the held-out tokens each evaluation covers in whole `max_seq_len` sequences (one step's worth by default), divided equally among the ranks. |
 | `checkpoint_every`, `checkpoint_dir`, `keep_last` | Full training-state checkpoint cadence and retention. |
 | `run_dir`, `seed`, `settings`, `plots` | Output directory, build seed/settings and report plotting. |
 | `nodes`, `port` | The machines of a run with several, the first the one the runner is launched on: `{"address", "ranks", "ssh", "repo", "python", "env"}` each, their ranks adding up to `ranks`. The Plan is built once on the first and copied to the others, which hold the same hardware; the grouped phases launch every node's workers under one rendezvous at the first node's address (`port`, default 29400), each node advertising its own address; `env` carries a node's network settings. GPUs that differ take the [heterogeneous section](../heterogeneous/README.md) instead. |

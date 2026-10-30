@@ -13,6 +13,7 @@ from shadowspill import Plan, Trainer
 from shadowspill.artifacts.tensors import registration_name, tensor_geometry
 from shadowspill.training import config
 from workloads.recipes.phases import settings
+from workloads.recipes.text.data.units import held_out
 from workloads.recipes.text.experiment import logging, results
 from workloads.recipes.text.experiment.execute import resume_path
 
@@ -74,15 +75,21 @@ def run(directory):
             logger = logging.open_logger(stack, root, options, group=dist.group.WORLD)
             callbacks = [logging.record_packing(stack, home, source, logger)]
             if cadence := options.get("eval_every", 0):
-                held_out = units.validation(
-                    corpus, steps=options.get("eval_microbatches", 1), **shared
+                batches = held_out(
+                    corpus,
+                    name=choice["candidate"],
+                    max_seq_len=options["max_seq_len"],
+                    capacity=choice["tokens_per_microbatch"],
+                    tokens=options.get("eval_tokens", options["max_tokens_per_step"]),
+                    shares=shares,
+                    rank=rank,
                 )
 
                 def evaluate(owner, result):
                     if result.step % cadence and result.step != options["steps"]:
                         return
                     started = time.perf_counter()
-                    values = [owner.evaluate(args=[args]) for args in held_out]
+                    values = [owner.evaluate(args=[args]) for args in batches]
                     logging.emit(
                         home,
                         logger,

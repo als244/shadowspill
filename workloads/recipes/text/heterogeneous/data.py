@@ -2,30 +2,8 @@
 
 from __future__ import annotations
 
-import torch
-
+from workloads.recipes.text.data.units import concatenated, unit_ranges
 from workloads.recipes.text.experiment.inputs import call_inputs
-
-
-def concatenated(units):
-    """Several unit microbatches as one: tokens and targets side by side,
-    their length entries after one another, the shape the planner assumed
-    for a microbatch of that many sequences' capacity."""
-    tokens, targets, lengths = zip(*units, strict=True)
-    return [torch.cat(tokens, 1), torch.cat(targets, 1), torch.cat(lengths)]
-
-
-def unit_ranges(shares, step_units):
-    """Each rank's first unit and unit count within a step of ``step_units``."""
-    total = sum(shares)
-    if step_units % total:
-        raise ValueError("the step's units must divide by the shares' total")
-    scale = step_units // total
-    starts, at = [], 0
-    for share in shares:
-        starts.append((at, share * scale))
-        at += share * scale
-    return starts
 
 
 class UnitUpdates:
@@ -112,25 +90,3 @@ class UnitUpdates:
         self.packer.packs = [list(pack) for pack in state["packs"]]
         self.packer.pending = deque(state["pending"])
         self.packer.next_document = state["next_document"]
-
-
-def validation(data, *, name, max_seq_len, capacity, step_units, shares, rank, steps):
-    """This rank's held-out microbatches over ``steps`` steps' worth of units,
-    its share of each, normalized over every rank's units."""
-    packer = data.validation_packer(max_seq_len, max_seq_len)
-    first, units = unit_ranges(shares, step_units)[rank]
-    per_microbatch = capacity // max_seq_len
-    parts = []
-    for step in range(steps):
-        base = step * step_units
-        mine = range(base + first, base + first + units)
-        parts.extend(
-            concatenated(
-                [packer.microbatch(unit) for unit in mine[i : i + per_microbatch]]
-            )
-            for i in range(0, units, per_microbatch)
-        )
-    normalizer = packer.trained_tokens(range(steps * step_units))
-    return call_inputs({"candidates": {name: parts}, "normalizer": normalizer}, name)[
-        "args"
-    ]

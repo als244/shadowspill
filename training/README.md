@@ -171,9 +171,12 @@ resume policies are rejected. The directory contains:
 | `packing.jsonl` | Document identities and packing statistics |
 | `checkpoints/step_XXXXXXXX.ssp` | Model/optimizer/loop/source checkpoint archives |
 
-`eval_microbatches` sets the number of packed examples in each held-out
-validation item. Evaluation calls a separately built forward Plan sharing the
-current model weights.
+`eval_tokens` sets how many held-out tokens each evaluation covers, in whole
+`max_seq_len` sequences, one step's worth unless given. The ranks divide them,
+each packing its part into its own microbatches with the last padded, and the
+evaluation loss is the mean over all of them, whatever geometry the search
+picked. Evaluation calls a separately built forward Plan sharing the current
+model weights.
 
 `wandb_project` enables the optional logger; the run's id and URL are recorded
 in `wandb_run.json` and the runner prints the URL after execution. `step` is

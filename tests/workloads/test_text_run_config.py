@@ -22,6 +22,13 @@ def test_an_unknown_key_is_refused_with_the_nearest_name(tmp_path):
         run_config(path)
 
 
+def test_a_renamed_key_is_refused_with_its_new_name(tmp_path):
+    path = tmp_path / "config.json"
+    path.write_text(json.dumps({"eval_microbatches": 2, "run_dir": str(tmp_path)}))
+    with pytest.raises(ValueError, match=r"eval_microbatches \(now eval_tokens"):
+        run_config(path)
+
+
 def test_a_checkpoint_entry_stands_for_the_model_and_its_initializer(tmp_path):
     family, name = "llama3", "llama3-tiny"
     source = materialized(name)

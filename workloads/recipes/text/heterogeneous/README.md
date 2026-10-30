@@ -35,9 +35,10 @@ budgets, so each searches the microbatch geometry its hardware fits; at
 execution a rank concatenates as many units as its geometry holds into one
 microbatch, and every rank's loss is its share of the step's mean, the
 step's trained-token count being every rank's normalizer. Held-out
-evaluation takes `eval_microbatches` steps' worth of units, each rank its
-share, normalized over all of them; a rank evaluates its share in as many
-calls as its geometry needs, since the evaluation Plan issues no collectives.
+evaluation covers `eval_tokens` tokens of units, one step's worth unless
+given, each rank its share, normalized over all of them; a rank evaluates its
+share in as many calls as its geometry needs, padding the last, since the
+evaluation Plan issues no collectives.
 
 The ranks agree on what they exchange, the parallelism, the tensors with
 their placement, shards and geometry, checked when the workers open; what

@@ -38,7 +38,7 @@ KNOWN_KEYS = frozenset(
         "planning_max_tokens_per_microbatch",
         "seed",
         "eval_every",
-        "eval_microbatches",
+        "eval_tokens",
         "checkpoint_every",
         "checkpoint_dir",
         "keep_last",
@@ -84,6 +84,12 @@ MODEL_ONLY = frozenset({"implementation", "dtype", "lora"})
 INITIALIZER_ONLY = frozenset({"seed"})
 
 
+#: Keys a config may still carry under an earlier name, with what replaced them.
+RENAMED = {
+    "eval_microbatches": "eval_tokens, the held-out tokens each evaluation covers",
+}
+
+
 def check_keys(raw):
     """Refuse a key the runner does not know, naming the nearest it does."""
     unknown = sorted(set(raw) - KNOWN_KEYS)
@@ -91,7 +97,10 @@ def check_keys(raw):
         hints = []
         for key in unknown:
             matches = difflib.get_close_matches(key, KNOWN_KEYS, n=1)
-            hints.append(f"{key} (did you mean {matches[0]}?)" if matches else key)
+            if key in RENAMED:
+                hints.append(f"{key} (now {RENAMED[key]})")
+            else:
+                hints.append(f"{key} (did you mean {matches[0]}?)" if matches else key)
         raise ValueError("unknown config keys: " + ", ".join(hints))
 
 
@@ -176,6 +185,15 @@ def run_config(path, overrides=(), *, phase="all"):
         raise ValueError("ranks must be a positive integer")
     if raw.get("heterogeneous") is not None and (nodes or "ranks" in raw):
         raise ValueError("the heterogeneous section carries its own nodes and shares")
+    if raw.get("eval_every") and raw.get("heterogeneous") is None:
+        from .data.units import held_out_units
+
+        # Refused here rather than after build, profile and planning.
+        held_out_units(
+            raw.get("eval_tokens", raw["max_tokens_per_step"]),
+            raw["max_seq_len"],
+            [1] * ranks,
+        )
     if raw.get("engine") == "pytorch":
         if phase != "all":
             raise ValueError("ordinary PyTorch reference execution has no saved phases")

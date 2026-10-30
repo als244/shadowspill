@@ -2,7 +2,8 @@
 
 import torch
 
-from ..data.source import PackedUpdates, candidate_data, validation_update
+from ..data.source import PackedUpdates, candidate_data
+from ..data.units import held_out
 from .group import ranks
 
 
@@ -55,16 +56,15 @@ def source(data, options, choice, rank=0):
 
 
 def validation(data, options, choice, rank=0):
-    count = options.get("eval_microbatches", 1)
-    if count < 1:
-        raise ValueError("eval_microbatches must be positive")
-    update = validation_update(
+    """This rank's held-out calls: its equal share of ``eval_tokens`` held-out
+    tokens (one step's worth unless given), packed into its microbatches."""
+    count = ranks(options)
+    return held_out(
         data,
         name=choice["candidate"],
-        tokens=choice["tokens_per_microbatch"],
         max_seq_len=options["max_seq_len"],
-        microbatches=count,
+        capacity=choice["tokens_per_microbatch"],
+        tokens=options.get("eval_tokens", options["max_tokens_per_step"]),
+        shares=[1] * count,
         rank=rank,
-        world_size=ranks(options),
     )
-    return call_inputs(update, choice["candidate"])["args"]

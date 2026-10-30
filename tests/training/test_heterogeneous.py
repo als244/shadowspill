@@ -9,11 +9,8 @@ from shadowspill.training import config
 from tests.training._synthetic import write_dataset
 from workloads.recipes.text.data.documents import IGNORE
 from workloads.recipes.text.data.packed import PackedTokens
-from workloads.recipes.text.heterogeneous.data import (
-    UnitUpdates,
-    unit_ranges,
-    validation,
-)
+from workloads.recipes.text.data.units import held_out
+from workloads.recipes.text.heterogeneous.data import UnitUpdates, unit_ranges
 from workloads.recipes.text.heterogeneous.run import check_section, node_config
 
 MAX_SEQ_LEN = 512
@@ -83,17 +80,16 @@ def test_units_divide_by_shares_and_concatenate_into_each_ranks_geometry(data):
             shares=[3, 1],
             rank=0,
         )
-    held = validation(
+    held = held_out(
         data,
         name="n",
         max_seq_len=MAX_SEQ_LEN,
         capacity=MAX_SEQ_LEN,
-        step_units=8,
+        tokens=16 * MAX_SEQ_LEN,
         shares=[3, 1],
         rank=1,
-        steps=2,
     )
-    # two units a step at one unit per microbatch, over two steps
+    # a quarter of sixteen units at one unit per microbatch
     assert len(held) == 4 and held[0][1].item() == pytest.approx(
         1 / data.validation_packer(MAX_SEQ_LEN, MAX_SEQ_LEN).trained_tokens(range(16))
     )
@@ -130,6 +126,8 @@ def test_the_section_is_checked_and_each_node_gets_its_share():
         check_section({**raw, "heterogeneous": {"nodes": NODES, "shares": [3]}})
     with pytest.raises(ValueError, match="whole units for every share"):
         check_section({**raw, "max_tokens_per_step": 5120})
+    with pytest.raises(ValueError, match="every rank's share"):
+        check_section({**raw, "eval_every": 2, "eval_tokens": 3 * 1024})
     two = [{"address": "a", "ranks": 2}, NODES[1]]
     with pytest.raises(ValueError, match="equal shares"):
         check_section(
@@ -182,3 +180,36 @@ def test_the_aggregate_adds_the_ranks_evaluation_shares():
         [{"step": 4, "train/loss": 1.0}, {"step": 4, "train/loss": 2.0}]
     )
     assert training == {"step": 4, "train/loss": 3.0}
+
+
+def test_held_out_units_divide_among_ranks_and_pad_the_last_microbatch(data):
+    units = data.validation_packer(MAX_SEQ_LEN, MAX_SEQ_LEN)
+
+    def held(tokens, shares, rank):
+        return held_out(
+            data,
+            name="n",
+            max_seq_len=MAX_SEQ_LEN,
+            capacity=2 * MAX_SEQ_LEN,
+            tokens=tokens,
+            shares=shares,
+            rank=rank,
+        )
+
+    # Six units over two equal ranks, two units a microbatch: each rank's
+    # second microbatch is one held-out unit and one padding unit.
+    both = [held(6 * MAX_SEQ_LEN, [1, 1], rank) for rank in (0, 1)]
+    assert [len(calls) for calls in both] == [2, 2]
+    (tokens, targets, lengths), weight = both[1][1]
+    assert torch.equal(tokens[:, :MAX_SEQ_LEN], units.microbatch(5)[0])
+    assert bool((targets[:, MAX_SEQ_LEN:] == IGNORE).all())
+    assert int(lengths[lengths.numel() // 2]) == MAX_SEQ_LEN
+    assert weight.item() == pytest.approx(1 / units.trained_tokens(range(6)))
+    trained = sum(
+        int((targets != IGNORE).sum()) for calls in both for (_, targets, _), _ in calls
+    )
+    assert trained == units.trained_tokens(range(6))
+    with pytest.raises(ValueError, match="whole sequences of max_seq_len"):
+        held(6 * MAX_SEQ_LEN + 1, [1, 1], 0)
+    with pytest.raises(ValueError, match="every rank's share"):
+        held(5 * MAX_SEQ_LEN, [1, 1], 0)

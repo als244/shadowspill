@@ -97,7 +97,7 @@ def test_supplied_config_tiny_training_through_saved_phases(tmp_path, family, lo
         execution_gib=4,
         spill_gib=0.5,
         eval_every=2,
-        eval_microbatches=1,
+        eval_tokens=64,
         checkpoint_every=1,
         keep_last=2,
         wandb_project=None,

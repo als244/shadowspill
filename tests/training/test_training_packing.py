@@ -91,8 +91,8 @@ def test_ranks_share_a_steps_microbatches_and_its_normalizer(
 ) -> None:
     """Ranks take consecutive shares of every step's microbatches, equal or
     not, with the step's trained-token count as every rank's normalizer;
-    their validation batches are distinct and normalized over all ranks'."""
-    from workloads.recipes.text.data.source import PackedUpdates, validation_update
+    their held-out calls are distinct and normalized over all ranks'."""
+    from workloads.recipes.text.data.source import PackedUpdates
 
     geometry = dict(name="n", tokens=TOKENS, max_seq_len=MAX_SEQ_LEN)
     whole = PackedUpdates(data, counts=[4], **geometry)
@@ -117,15 +117,21 @@ def test_ranks_share_a_steps_microbatches_and_its_normalizer(
         whole.load_state_dict(state)
     with pytest.raises(ValueError, match="at least one microbatch"):
         PackedUpdates(data, counts=[2, 0], **geometry)
-    held = [
-        validation_update(data, microbatches=2, rank=rank, world_size=2, **geometry)
+    from workloads.recipes.text.data.units import held_out
+
+    evaluation = dict(name="n", max_seq_len=MAX_SEQ_LEN, capacity=TOKENS)
+    halves = [
+        held_out(data, tokens=4 * TOKENS, shares=[1, 1], rank=rank, **evaluation)
         for rank in (0, 1)
     ]
-    alone = validation_update(data, microbatches=4, **geometry)
-    assert held[0]["normalizer"] == held[1]["normalizer"] == alone["normalizer"]
-    first = [h["candidates"]["n"][0][0] for h in held]
-    assert not torch.equal(first[0], first[1])
-    assert torch.equal(first[1], alone["candidates"]["n"][2][0])
+    alone = held_out(data, tokens=4 * TOKENS, shares=[1], rank=0, **evaluation)
+    joined = halves[0] + halves[1]
+    assert [weight.item() for _, weight in joined] == [w.item() for _, w in alone]
+    assert all(
+        torch.equal(mine[0], whole[0])
+        for (mine, _), (whole, _) in zip(joined, alone, strict=True)
+    )
+    assert not torch.equal(halves[0][0][0][0], halves[1][0][0][0])
 
 
 def test_packing_is_the_same_every_time(data: PackedTokens) -> None:

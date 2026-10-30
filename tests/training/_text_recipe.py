@@ -40,7 +40,7 @@ def _config(tmp_path):
         "compile": False,
         "device": "cpu",
         "eval_every": 3,
-        "eval_microbatches": 2,
+        "eval_tokens": 4096,
         "checkpoint_every": 3,
     }
     path = tmp_path / "config.json"
