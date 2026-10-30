@@ -200,6 +200,15 @@ where the NIC touches the pool with no stream in between, the route stream
 stores a word behind the runtime's waits and the thread posts nothing before it
 reads it.
 
+The price of enqueueing at dispatch is that the dispatch can block. A staged
+transfer's device side is a few operations per piece, and the driver queues
+only so many per stream: a burst of transfers whose operations pass that
+blocks the worker until the device drains the queue, holding every action
+behind it, including evicts whose triggers have completed, while the
+simulator assumes dispatch is free. The staged piece is therefore sized so
+that the bursts a plan makes stay well inside the queue, rather than for the
+wire, which is near line rate at any of the sizes involved.
+
 The same rule reaches inside such a lane, and is easy to miss there. A lane that
 keeps work in flight across transfers has two halves — issuing and retiring —
 and **issuing must never block on something only retiring can release.** The
