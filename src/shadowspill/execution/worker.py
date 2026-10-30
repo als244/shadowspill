@@ -16,6 +16,7 @@ from shadowspill.resources.lifecycle import ResourceBindings
 from shadowspill.runtime import Runtime
 
 from .distributed.checks import coordinated
+from .distributed.sequence import check_collective_order
 from .distributed.worker import DistributedWorker
 from .paths import ExecutionPath, bind_path
 from .resources import plan_inventory, seal_paths, worker_headroom, worker_streams
@@ -81,6 +82,7 @@ def create_paths(
                     "ranks run Programs that disagree on what they exchange: the "
                     "parallelism, the tensors or their shards and geometry differ"
                 )
+            check_collective_order(distributed.groups, inventory)
         joint = coordinated(
             distributed, lambda: shared_memory(plan, plans) if plans else None
         )
