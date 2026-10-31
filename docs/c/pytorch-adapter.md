@@ -16,8 +16,11 @@ The header is ordered the way this page is, with a section banner at each
 heading below: vocabulary and descriptions; bootstrap, physical admission and
 close; the allocator callbacks; objects and storage; task boundaries and
 allocation scopes; failure and recovery. Every symbol is prefixed
-`shadowspill_pytorch_`. The one heading with no banner behind it is
-[Profiling](#profiling), which is here to say the adapter exposes none.
+`shadowspill_pytorch_`. The headings with no banner behind them are the two on
+what bootstrap loads, [Profiling](#profiling), which is here to say the adapter
+exposes none, and [Independent spill
+calibration](#independent-spill-calibration), whose three calls open the header
+ahead of the first banner.
 
 ## What the adapter requires of a backend
 
@@ -62,14 +65,15 @@ or which device it wants without this header learning any such word.
 directed routes as `ShadowSpillPytorchPoolConfig` and
 `ShadowSpillPytorchRouteConfig` arrays, which id and name what the runtime
 will build, the device budget and the external headroom, the worker's
-poll interval and the background transfer window it passes through to the
-runtime, and the backend library by path. The adapter hands back
-`ShadowSpillPytorchPhysicalAdmission` (the ledger as sealed),
-`ShadowSpillPytorchAdapterCapabilities` (the three contract versions and
-whether the storage operators were built), `ShadowSpillPytorchAdapterStatistics`
-(the callback counters, with the runtime's statistics, the backend's, and
-`allocator_pool`, the statistics of the pool the allocator is bound to, inside)
-and `ShadowSpillPytorchAdapterFailure` (the first failure, with the runtime's
+poll interval, the background transfer window and the NUMA-binding switch it
+passes through to the runtime, and the backend library by path. The adapter
+hands back `ShadowSpillPytorchPhysicalAdmission` (the ledger as bootstrap
+admitted it), `ShadowSpillPytorchAdapterCapabilities` (the three contract
+versions and whether the storage operators were built),
+`ShadowSpillPytorchAdapterStatistics` (the callback counters, with the
+runtime's statistics, the backend's, and `allocator_pool`, the statistics of
+the pool the allocator is bound to, inside) and
+`ShadowSpillPytorchAdapterFailure` (the first failure, with the runtime's
 record inside). `SHADOWSPILL_PYTORCH_ADAPTER_ABI_VERSION` versions all of it.
 
 Two ids the frontend synthesises for work that is not a planned task are
@@ -136,7 +140,7 @@ task outputs.
 
 ## Objects and storage
 
-Only the four `shadowspill_pytorch_` entries below are this library's; they
+Only the three `shadowspill_pytorch_` entries below are this library's; they
 are here because each wraps a provider stream or a PyTorch storage view. The
 rest of the object vocabulary is the neutral runtime's, listed here for the
 shape of the workflow and specified in the [Runtime API](runtime.md#object-api);
@@ -162,7 +166,8 @@ the frontend calls those with the handle from
   stream that is, so no adapter entry point is needed to reach it.
   `shadowspill_pytorch_transfer_acquired_object_to_caller()` and
   `shadowspill_pytorch_release_caller_allocation()` hand one to the caller and
-  take it back; they are the storage operators' own and have no ctypes caller.
+  take it back; they are the storage operators' own, and the frontend calls
+  neither.
 - `shadowspill_object_snapshot()` returns diagnostic state.
 - `shadowspill_object_location_snapshot()` returns one explicit
   pool-location view without assigning execution or spill meaning to it.
@@ -176,10 +181,10 @@ the frontend calls those with the handle from
 ## Task boundaries and allocation scopes
 
 The pre-task action batch is `shadowspill_submit_action_batch_handle()`, the
-neutral runtime's. It used to be mirrored here, because a stream had to be
-turned into a backend token and only this library could do that; the runtime
-resolves the caller's stream itself now, so the mirror is gone. The same is true
-of object acquisition under [Objects and storage](#objects-and-storage).
+neutral runtime's: it takes the integer its caller names the trigger stream by
+and asks the backend which stream that is, so no adapter entry point is needed
+to reach it. The same is true of object acquisition under
+[Objects and storage](#objects-and-storage).
 
 Everything else in plan admission needs nothing but handles the neutral runtime
 already owns, so the frontend calls those on the neutral library, passing the
@@ -191,19 +196,15 @@ runtime from `shadowspill_pytorch_runtime_handle()`:
   `shadowspill_plan_seal_fixed_layout()`
 - `shadowspill_plan_admit_object_acquisition()`,
   `shadowspill_plan_admit_action_batch()`, `shadowspill_plan_create()`
-- `shadowspill_object_handle_acquire()`,
-  `shadowspill_task_publish_allocation()`
+- `shadowspill_object_handle_acquire()`
 - `shadowspill_plan_close()`, `shadowspill_plan_destroy()`,
   `shadowspill_plan_clear_tasks()`, `shadowspill_plan_wait_idle()`
 - `shadowspill_object_handle_release()`,
   `shadowspill_object_release_generation()`
 - `shadowspill_register_object()`, `shadowspill_write_object()`,
   `shadowspill_runtime_wait_idle()`, and, from the storage operators,
+  `shadowspill_task_publish_allocation()` and
   `shadowspill_task_validate_replacement_binding()`
-
-Acquiring an object handle stays on the adapter while releasing one does not:
-acquiring resolves an id against the bound runtime, releasing needs only the
-handle.
 
 Plan creation receives the plan id together with explicit execution/spill pool
 IDs and fetch/evict route IDs. The adapter does not infer routes from global
@@ -231,8 +232,9 @@ Task calls mirror the neutral runtime:
   `shadowspill_pytorch_allocation_scope_end()`, and
   `shadowspill_pytorch_allocation_scope_abort()` attribute isolated profiling
   allocations without creating a fake execution task. `begin` takes the plan the
-  measurements are for alongside the scope id, and refuses one that names no
-  live plan: a scope runs outside any task, so the runtime has none to read the
+  measurements are for alongside the scope id, and refuses an id the runtime did
+  not issue; the plan itself need not exist yet, since profiling is what it is
+  built from. A scope runs outside any task, so the runtime has none to read the
   plan from, and anything a probe leaves behind would otherwise be attributable
   to nothing. See [plan identity](../architecture/plan-identity.md).
 

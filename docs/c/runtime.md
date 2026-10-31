@@ -19,9 +19,17 @@ buffers, and first-failure state.
   destination pool ids, whose kinds must differ); the two registered lists —
   [`pool_memory`](pool-memory.md) with `pool_memory_count`, saying where each
   kind's memory comes from, and [`lanes`](lanes.md) with `lane_count`, saying
-  which lane serves each directional kind pair; the worker's poll interval; and
+  which lane serves each directional kind pair; the worker's poll interval;
   `background_transfer_window_bytes`, how far a lane may run ahead with
-  transfers the plan did not schedule (zero removes the bound).
+  transfers the plan did not schedule (zero removes the bound); and
+  `disable_numa_binding`, which at zero has create narrow the process's
+  threads to the CPUs of the host node nearest the device (see
+  [host NUMA locality](backends.md#host-numa-locality)) and prefer that node
+  for pinned-host pools, warning and keeping the operating system's placement
+  where it cannot. With `SHADOWSPILL_RUNTIME_PROGRESS` set in the environment,
+  create also reports on stderr the node it bound and each pinned-host pool's
+  verified placement; the Python runtime reports its pool registration and
+  route calibration under the same variable.
 
   It validates the table and the topology, obtains each pool's memory through
   its kind's `acquire`, creates one lane per route, and starts the worker. Both
@@ -99,8 +107,9 @@ matrix; it does not benchmark routes itself.
 Calibration also applies to [SSD lanes](ssd.md): probe sources in
 non-addressable pools are initialized before reads are timed. Probe sizes
 change setup I/O and can change the estimate; they do not configure production
-chunk sizes. The simulator currently uses fixed effective rates throughout a
-step, while retaining solo/concurrent measurements for diagnostics.
+chunk sizes. The simulator moves each direction at its solo rate while only it
+is active and at its concurrent rate while both are; see [timing
+semantics](../architecture/simulation.md#solo-and-concurrent-bandwidth).
 
 ## Allocation API
 
@@ -125,15 +134,21 @@ step, while retaining solo/concurrent measurements for diagnostics.
 - `shadowspill_memory_pool_record_stream()` adds a stream use that must
   complete before the range can be reused.
 
-No backend operation runs while the pool lock is held. A request waits only
-when a known pending transition can satisfy it; otherwise it returns a
-structured no-progress status.
+One backend operation runs while the pool lock is held: when a task takes
+its own fixed slot again within one invocation, its stream's waits on the
+earlier occupant's uses on other streams are enqueued under the lock
+(`shadowspill_allocations_wait_fixed_reuse_locked`). The fixed layout's
+cross-task waits are enqueued before the lock is taken, and no other backend
+operation runs under it. A request waits only when a known pending transition
+can satisfy it; otherwise it returns a structured no-progress status.
 
 ## Object API
 
 - `shadowspill_register_object()` admits one `ShadowSpillObjectDescription` --
-  id, size, initial version, initial pool, whether a spill copy is retained
-  and whether it starts resident -- and `shadowspill_unregister_object()`
+  id, size, initial version, initial pool, whether a spill copy is retained,
+  whether it starts resident, and an optional `ShadowSpillObjectTransfer` that
+  converts its representation on the way through a lane (see
+  [operations](lanes.md#operations)) -- and `shadowspill_unregister_object()`
   removes an object that is spill-only or released, with no live allocation
   and no queued action.
 - `shadowspill_register_placed_object()` admits an initially resident object
@@ -196,7 +211,7 @@ them from the program's numbering, so task 1112 exists in every plan.
   scopes allocated, whatever still points at it, and reports how many. This is the
   forcing path for a plan that is closing: it works in leases and bytes, does not
   consult the framework, and so a caller that may still read an object backed by
-  one of those ranges must drop it first -- the PyTorch frontend detaches the
+  one of those ranges must drop it first -- the frontend detaches the
   storages before calling it. A lease the framework has not freed keeps its pointer
   indexed, so the free that eventually arrives still resolves. Ranges carrying no
   plan are left alone.
@@ -218,8 +233,10 @@ Allocations taken outside any plan's scope are a separate case: they carry no
 plan at all, report `SHADOWSPILL_RUNTIME_NO_ID` for the scope, and are not a
 plan's to reclaim.
 
-`shadowspill_allocation_scope_begin()` takes the same id, and refuses one that
-names no live plan.
+`shadowspill_allocation_scope_begin()` takes the same id, and refuses zero and
+any id the runtime did not issue. The id need not name a plan yet: profiling
+runs before the plan it measures is created, and a standalone measurement
+creates none.
 
 The registry behind these is `csrc/src/runtime/plan/registry.c`, with its own
 lock so asking what an id means never waits behind plan creation or teardown.
@@ -260,7 +277,7 @@ runtime's pool, route, event, and object owners:
   changes only its physical lease and generation.
 - `shadowspill_task_validate_replacement_binding()` validates that a frontend
   view names the replacement publication's exact retired lease while its
-  successor tensor names the current lease.
+  successor names the current lease.
 - `shadowspill_before_task_handle()` and `shadowspill_after_task_handle()` are
   the sole production execution boundary. For an action-bearing task, the
   after boundary publishes its preallocated batch and actively waits only for
@@ -307,7 +324,12 @@ runtime's pool, route, event, and object owners:
   completion event per invocation; stream waits never substitute a previous
   invocation's event and never require a device-wide synchronization. Allocation
   callbacks then validate task, ordinal, size and ownership before returning
-  the admitted offset. See [physical admission and offset
+  the admitted offset. A slot the same task invocation has already used is
+  handed out again only once the frontend has freed its previous occupant, and
+  the allocating stream first waits on the retirement event of every other
+  stream recorded on that occupant; reuse on the same stream waits for nothing,
+  and a slot whose occupant is still live is refused with
+  `SHADOWSPILL_STATUS_PLAN_VIOLATION`. See [physical admission and offset
   handling](../architecture/physical-admission.md) for the layout certificate
   and the offset coordinate systems.
 - `shadowspill_plan_admit_fixed_layout_in()` admits a layout into the slice
@@ -359,8 +381,8 @@ Isolated execution-allocator qualification attributes allocator activity through
 a dedicated boundary:
 
 - `shadowspill_allocation_scope_begin()` opens one allocator-attribution scope
-  against an explicitly selected pool, for the live plan whose id it is given
-  (see [Plan identity](#plan-identity)).
+  against an explicitly selected pool, for the plan whose id it is given (see
+  [Plan identity](#plan-identity)).
 - `shadowspill_allocation_scope_end()` retires its anonymous allocations behind
   the supplied stream fence and closes the scope.
 - `shadowspill_allocation_scope_abort()` rolls back an interrupted scope.
@@ -433,8 +455,8 @@ any dependency it was given had cleared; `lane_started_at_ns` is when its bytes
 began moving. **The gap between them is the wait**, and separating them is what
 keeps a transfer held behind an event from reading as a slow one. Every other
 event kind, a completion the backend could not measure, and a lane that does not
-report an instant, carry `SHADOWSPILL_TRACE_NO_STREAM_TIME` in all three. A zero
-origin token records no intervals.
+report an instant, carry `SHADOWSPILL_TRACE_NO_STREAM_TIME` in all three. A null
+origin marker records no intervals.
 
 `timestamp_ns` on every event is the host clock and the three lane fields are on
 the origin's axis. `origin_host_ns` on the summary relates them: it is the host
@@ -503,9 +525,9 @@ left for a route with no lane at all.
 The split follows ownership. A runtime may own any number of pools, and which of
 them a plan uses as its execution and spill pools is that plan's choice, so a
 pool's numbers belong to the pool rather than to named fields for two of them.
-The PyTorch adapter's statistics carry the pool the allocator is bound to
-alongside the runtime's, since that is the one a caller on the allocation path
-wants.
+The [framework adapter's](pytorch-adapter.md) statistics carry the pool the
+allocator is bound to alongside the runtime's, since that is the one a caller
+on the allocation path wants.
 
 `shadowspill_memory_pool_live_allocations()` answers the question statistics
 cannot: not how many allocations a pool holds but *which*, and where.

@@ -12,8 +12,10 @@ reference.
 
 ## Tokens and records
 
-- `ShadowSpillBackendStream`, `ShadowSpillBackendEvent`: opaque two-word
+- `ShadowSpillBackendStream`, `ShadowSpillBackendEvent`: opaque one-word
   provider tokens the runtime stores and returns unread.
+- `ShadowSpillBackendSignals`: one opaque word naming a
+  [signal block](#signals-and-waiting-on-one).
 - `ShadowSpillProfilerRange`: a range identifier from `range_begin`.
 - `ShadowSpillBackendConfig`: `abi_version`, `device_ordinal`.
 - `ShadowSpillBackendCapabilities`: `device_ordinal`, `minimum_alignment` for
@@ -25,10 +27,10 @@ reference.
 - `ShadowSpillBackendStatistics`: counters of the calls made through the
   table: device allocations and frees with their byte totals, pinned-host
   registrations and unregistrations with theirs, streams and events created
-  and destroyed, copies and bytes per direction, event queries, stream waits
-  and synchronizations, and `provider_activations`, the times the provider's
-  context had to be made current on a calling thread. A backend without a
-  notion of a counter reports zero.
+  and destroyed, copies and bytes per direction, event queries, stream waits,
+  stream writes and synchronizations, and `provider_activations`, the times
+  the provider's context had to be made current on a calling thread. A
+  backend without a notion of a counter reports zero.
 
 ## The table
 
@@ -45,7 +47,7 @@ nonzero on failure unless noted.
 | copies | `copy_host_to_device(device, host, bytes, stream)`, `copy_device_to_host(host, device, bytes, stream)`, `copy_device_to_device(destination, source, bytes, stream)` |
 | events | `create_event(&event, timing)`, `destroy_event(event)`, `record_event(event, stream)`, `query_event(event, &complete)`, `wait_event(stream, event)`, `synchronize_event(event)`, `elapsed_nanoseconds(from, to, &nanoseconds)` |
 | facts | `capabilities(&out)`, `physical_memory(&out)`, and `statistics(&out)`, the one entry here that returns nothing |
-| profiler, optional | `name_thread(name)`, `name_stream(stream, name)`, `profiler_enable(enabled)`, `range_begin(name)` returning a range, `range_end(range)` |
+| profiler, optional | `name_thread(name)`, `name_stream(stream, name)`, `profiler_enable(enabled)`, `range_begin(name)` returning a range, `range_end(range)`; the rest return nothing |
 
 Memory: device memory is the backend's to allocate; host memory is
 ShadowSpill's, mapped by the pinned-host pool and registered here so the
@@ -87,6 +89,16 @@ Events: a dependency event (`timing` clear) is the fast kind that record,
 query, and wait work with. A timing event carries a device timestamp when
 recorded, and `elapsed_nanoseconds` reads the device-clock interval between
 two of them: 0 with the interval, 1 while either is still pending, -1 when the
+pair cannot be measured. `record_event` and `wait_event` enqueue without
+blocking the host -- `wait_event` orders one stream behind an event on
+another -- and `query_event` is a nonblocking poll. The two calls that do block
+the calling thread are `synchronize_event`, which returns once the device has
+reached one event, and `synchronize_stream`, which returns once it has finished
+a whole stream.
+
+Profiler entries are best-effort diagnostics and never change execution
+semantics; a NULL entry is a no-op.
+
 ## Signals, and waiting on one
 
 A signal block is words a stream and a host thread can both reach.
@@ -129,16 +141,6 @@ be allocated so that mapping exists, and then the caller stores through one
 address while the stream reads another. That is why both entries name a word by
 index rather than by pointer: a caller holding only the address it stores to
 could not supply the other, and has no reason to know it exists.
-
-pair cannot be measured. `record_event` and `wait_event` enqueue without
-blocking the host -- `wait_event` orders one stream behind an event on
-another -- and `query_event` is a nonblocking poll. The two calls that do block
-the calling thread are `synchronize_event`, which returns once the device has
-reached one event, and `synchronize_stream`, which returns once it has finished
-a whole stream.
-
-Profiler entries are best-effort diagnostics and never change execution
-semantics; a NULL entry is a no-op.
 
 ## The two symbols
 

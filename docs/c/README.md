@@ -45,13 +45,18 @@ Every function in `libshadowspill` returns a `ShadowSpillStatus` unless its
 signature is explicitly `void` or it is an accessor, constructor, or query
 whose return value is the answer itself - `shadowspill_abi_version`,
 `shadowspill_status_string`, `shadowspill_failure_reason_string`,
-`shadowspill_backend_is_valid`, `shadowspill_task_id`,
-`shadowspill_task_trace_label`, `shadowspill_pressurefit_best_placed_create`, and
-`shadowspill_planner_struct_size`. The two separately compiled contracts
-differ: a backend's table entries and its two exported symbols return `int`,
-and two more calls return the answer itself rather than a status --
-`shadowspill_pytorch_backend_malloc` (the address), which PyTorch's allocator
-signature forces, and `shadowspill_profiler_range_begin` (the range).
+`shadowspill_backend_is_valid`, `shadowspill_runtime_plan`,
+`shadowspill_plan_id`, `shadowspill_task_id`, `shadowspill_task_trace_label`,
+`shadowspill_profiler_annotations_enabled`, `shadowspill_profiler_range_begin`
+(the range), `shadowspill_trace_context`, `shadowspill_lane_trace_active`,
+`shadowspill_lane_origin_instant`, `shadowspill_pressurefit_best_placed_create`,
+and `shadowspill_planner_struct_size`. Two return a plain `int`, 0 on success:
+`shadowspill_trace_event_instant`, which passes on the backend's
+`elapsed_nanoseconds` answer, and `shadowspill_transfer_duration_ns`. The two
+separately compiled contracts differ: a backend's table entries and its two
+exported symbols return `int`, and one more call returns the answer itself
+rather than a status -- `shadowspill_pytorch_backend_malloc` (the address),
+which PyTorch's allocator signature forces.
 
 One vocabulary covers the whole library: the three codes every component agrees
 on sit at 0-2, and each component owns a band after that, so a status decodes to
@@ -65,12 +70,14 @@ category; retain structured result fields for diagnostics.
 per subsystem from `include/shadowspill/runtime/`, in the order a program uses
 them. `vocabulary.h` is the statuses, reasons and enumerations; [`lane.h`](lanes.md) the contract
 for what moves bytes between two pools and [`pool_memory.h`](pool-memory.md) the
-one for where a pool's memory comes from; `descriptions.h` what a caller fills in; `diagnostics.h` the records the runtime fills in; then
+one for where a pool's memory comes from; `library.h` the descriptor an
+extension library exports to offer either or both; `descriptions.h` what a caller fills in; `diagnostics.h` the records the runtime fills in; then
 `lifecycle.h`, `pools.h`, `objects.h`, `plan.h`, `tasks.h` (task boundaries and
-the allocation scopes between them), and `telemetry.h` (tracing, waiting,
-recovery, and what a reader inspects afterwards). Open the part rather than the
-whole if you know which one you want; each also compiles on its own, so a
-caller may include just the part it uses.
+the allocation scopes between them), `telemetry.h` (tracing, waiting,
+recovery, and what a reader inspects afterwards), and
+[`timing.h`](runtime.md#timing) (markers that time work on a stream). Open the
+part rather than the whole if you know which one you want; each also compiles
+on its own, so a caller may include just the part it uses.
 
 [`lane_base.h`](lanes.md#the-struct-a-transport-embeds) is deliberately **not**
 in that umbrella. It defines the struct a lane implementation embeds, which is
@@ -108,21 +115,26 @@ finish.
 
 ## Platforms
 
-The public headers are POSIX-free: no pthreads, no `<stdatomic.h>`, no
-platform types. A consumer needs `<stdint.h>`, and `<stddef.h>` for the
+The public headers are POSIX-free: no pthreads, no platform types, and no
+`<stdatomic.h>` outside `lane_base.h`, which only a lane implementation
+includes. A consumer needs `<stdint.h>`, and `<stddef.h>` for the
 simulator, backend and adapter headers, and nothing else; the export
 declaration follows the platform - `__declspec(dllimport)` on Windows unless
 the translation unit is building the library itself, which the build says with
 `SHADOWSPILL_BUILDING`.
 
 The implementation is a different matter. It uses pthreads and C11 atomics
-directly, and reaches the operating system for exactly four things - a
-monotonic clock, a thread yield, a thread name, and the logical CPU count -
-which `csrc/src/common/platform.h` supplies for both platforms. So a Windows build
-needs a toolchain that provides pthreads and `<stdatomic.h>`: MinGW-w64 or
-clang does, MSVC needs `/experimental:c11atomics` and a pthreads shim. Linux
-is what every test and gate here runs on; Windows is portable by construction
-rather than by test.
+directly, and reaches the operating system for four things - a monotonic
+clock, a thread yield, a thread name, and the logical CPU count - which
+`csrc/src/common/platform.h` supplies for both platforms, and for two it does
+not: the pinned-host pool maps its region with POSIX `mmap`, and device-local
+NUMA placement (`csrc/src/runtime/numa.c`) uses Linux's affinity and
+memory-policy calls and on any other system warns and keeps the operating
+system's placement. So a Windows build needs pthreads and `<stdatomic.h>` from
+its toolchain - MinGW-w64 or clang provides both, MSVC needs
+`/experimental:c11atomics` and a pthreads shim - and an `mmap` for the
+pinned-host pool. Linux is what every test and gate here runs on; Windows is
+portable by construction rather than by test.
 
 ## Build boundaries
 

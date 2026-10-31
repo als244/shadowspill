@@ -87,12 +87,13 @@ matching status (`SHADOWSPILL_STATUS_INVALID_RELEASE`, `_INVALID_EVICT`,
 [Simulation](../architecture/simulation.md#memory-actions) states the
 preconditions.
 Stall masks distinguish input residency, device capacity, source readiness,
-spill capacity, physical memory reuse, and a busy lane. Two of those sound
-alike and are not: memory reuse is an ordering wait the plan created, for the
-eviction or release that frees the allocation about to be reused, while device
-capacity is a shortfall -- no room at all for a fetch to land or for a task's
-outputs and workspace. A plan that arranges its own capacity waits on the
-first and never reaches the second.
+spill capacity, physical memory reuse, a busy lane, and a timed phase waiting
+its turn on a transfer resource. Two of those sound alike and are not: memory
+reuse is an ordering wait the plan created, for the eviction or release that
+frees the allocation about to be reused, while device capacity is a shortfall
+-- no room at all for a fetch to land or for a task's outputs and workspace. A
+plan that arranges its own capacity waits on the first and never reaches the
+second.
 
 A busy lane is the one wait a plan does not arrange and cannot avoid: the
 copy is eligible and the lane is carrying another. It is set on the copy at
@@ -117,12 +118,15 @@ counts without storing.
 
 ## Functions
 
-`shadowspill_transfer_duration_ns()` returns the isolated directional cost of
-an alias's transfer recipe: copy-phase bytes at the calibrated solo rate plus
-timed-phase durations. PressureFit uses this same cost in exposed-transfer and
-slack scoring. Simulation additionally models phase resource contention and
-copy-lane concurrency. `ShadowSpillTransferPhase` describes each copy or timed
-phase; physical spill size is independent of the alias's full execution size.
+`shadowspill_transfer_duration_ns()` writes the isolated directional cost of
+an alias's transfer recipe at the copy rate its caller passes: copy-phase bytes
+at that rate plus timed-phase durations, or the alias's whole size at that rate
+when it has no recipe. It returns 0, or -1 for an argument it cannot use.
+PressureFit uses this same cost, at each direction's faster calibrated rate, in
+exposed-transfer and slack scoring. Simulation additionally models phase
+resource contention and copy-lane concurrency. `ShadowSpillTransferPhase`
+describes each copy or timed phase; physical spill size is independent of the
+alias's full execution size.
 
 `shadowspill_simulate(const ShadowSpillSimulationProgram *program,
 ShadowSpillSimulationResult *result)` validates and evaluates one indexed
@@ -140,17 +144,18 @@ bytes, in trigger order; every input is on the device when its task reads it;
 a fetch needs a current spill copy and no device copy, and an evict, release
 or write-back needs a device copy; a release may not drop the only current
 copy of a value a later task reads or the final residency names; and the final
-residency is reached. `alias_flags` holds one `ShadowSpillAliasCheckFlags`
-value per alias for what the compiled program does not carry: whether the
-runtime owns the group's residency, whether it holds no bytes, and whether it
-keeps its spill copy. `index` names the initial or final residency entry, the
-action, or the task the refusal points at, and `alias` the group. The call
-returns `SHADOWSPILL_STATUS_OK` once the check has run, whatever its verdict,
-and `SHADOWSPILL_STATUS_INVALID_ARGUMENT` for a malformed program.
+residency names no runtime-owned group and is reached. `alias_flags` holds one
+`ShadowSpillAliasCheckFlags` value per alias for what the compiled program does
+not carry: whether the runtime owns the group's residency, whether it holds no
+bytes, and whether it keeps its spill copy. `index` names the initial or final
+residency entry, the action, or the task the refusal points at, and `alias` the
+group. The call returns `SHADOWSPILL_STATUS_OK` once the check has run,
+whatever its verdict, and `SHADOWSPILL_STATUS_INVALID_ARGUMENT` for a malformed
+program.
 
 `shadowspill_abi_version()` and `shadowspill_status_string()` cover loading
 and diagnostics for this boundary as for every other; see the
 [C API guide](README.md#abi-use).
 
-Neither call performs I/O, owns external storage after return, or uses global
-mutable state. Distinct result buffers can be evaluated concurrently.
+None of these calls performs I/O, owns external storage after return, or uses
+global mutable state. Distinct result buffers can be evaluated concurrently.

@@ -244,7 +244,7 @@ capacity it was built against, the repair count reaching it, the simulation
 status, how many capacity boundaries it came up short at, and a `flags` word
 of `ShadowSpillPressureFitReductionStepFlags` saying what happened to it —
 whether it was simulated, measured for layout, placed, triggered a refinement,
-was at some point the best plan, or followed a fetch move. With cut tracing
+was at some point the best plan, or preceded a fetch move. With cut tracing
 enabled, the recording pass also marks the step the candidate returned with
 `SHADOWSPILL_STEP_ANSWER` and writes its explicit answer-step link.
 `cut_offset`/`cut_count` index the candidate's flat `cut_aliases` array, naming
@@ -271,6 +271,11 @@ schedule and candidate array until
 `shadowspill_pressurefit_result_destroy()` releases them, including when the
 call reports a failure: problems that completed still hold theirs. Calls with
 distinct inputs and results are independent. With `trace_directory == NULL`,
-the search performs no I/O; an enabled tracer writes its candidate files to
-that directory. The search owns no global mutable state beyond a best-placed
-record a caller passes it.
+the search performs no I/O unless one of its diagnostic environment variables
+is set: `SHADOWSPILL_PRESSUREFIT_REDUCTION_TRACE`, `SHADOWSPILL_REPAIR_TRACE`
+and `SHADOWSPILL_LAYOUT_TRACE` print each simulation, repair and layout
+measurement to `stderr`, and `SHADOWSPILL_LAYOUT_DUMP`, set beside the layout
+trace, writes each measured layout's leases as a CSV file into the directory it
+names. An enabled tracer writes its candidate files to `trace_directory`. The
+search owns no global mutable state beyond a best-placed record a caller passes
+it.

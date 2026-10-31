@@ -95,8 +95,9 @@ files: offsets below the image's size are the image, read-only, and every
 other offset is the temporary file at `offset - image_bytes`. A write into
 the image, or a transfer crossing its end, fails before any I/O; the image's
 size must be a multiple of the direct-I/O alignment and at most the capacity.
-The runtime reserves the image's range for its lifetime and binds the state
-in it with `shadowspill_register_placed_object()`, so nothing is allocated
+A caller reserves the image's range for the runtime's lifetime with
+`shadowspill_memory_pool_reserve_range()` and binds the state in it with
+`shadowspill_register_placed_object()`, so nothing is allocated
 there. Acquisition returns an address
 token that cannot be dereferenced. `read` and `write` are synchronous pool-state
 operations used for import, initialization and export, outside scheduled lanes.

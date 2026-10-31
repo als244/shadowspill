@@ -155,9 +155,11 @@ message, so which pair collided is not reported.
   through it. Its fields:
   - `runtime` — the lane's way back in. A lane that discovers a failure on a
     thread of its own has no return value to fail through, so it latches the
-    failure itself. The latch is built for concurrent callers and **first
-    writer wins**, so the original cause survives; the worker already reads the
-    latched status twice a turn, so nothing is added to its loop.
+    failure itself, with a status and a reason, through
+    `shadowspill_lane_latch_failure()`. The latch is built for concurrent
+    callers and **first writer wins**, so the original cause survives; the
+    worker already reads the latched status twice a turn, so nothing is added
+    to its loop.
   - `backend` — usable, but only through the stream below.
   - `stream` — the route's stream. The runtime writes it, and a lane writes it
     only from the thread that called into the lane: the built-in lane's copies
@@ -261,9 +263,10 @@ when the trace was begun with no origin, or for an instant before the origin.
 A lane may use both clocks, and the pinned-host lane does: its `issued_at` is a
 converted host instant and its other two come off the stream. That costs it a
 clock read per transfer where a third timing event would have cost more. The
-remote lane reads all three on the host clock — before posting the first chunk's
-verb, and when the last chunk's completion is reaped. The [SSD lane](ssd.md)
-also uses the host clock, covering the disk and device staging path.
+remote lane reads all three on the host clock — when it is handed the
+transfer, after posting the first chunk's verb, and when the last chunk's
+completion is reaped. The [SSD lane](ssd.md) also uses the host clock,
+covering the disk and device staging path.
 
 `chunks` is a transport's own granularity, not a unit shared between lanes: one
 enqueued copy is one chunk on the pinned-host lane, while a remote transfer
@@ -275,4 +278,5 @@ reports however many pieces the NIC was handed.
 `shadowspill_runtime_create()` refuses a config whose entry has a NULL
 `operations` or `create`, a NULL required entry, or a kind pair another entry
 already claims. It also refuses a route whose two pools' kinds no entry serves.
-`transfer` and `timing` are optional and are never a reason to refuse.
+`transfer`, `timing` and `join` are optional and are never a reason to refuse;
+a lane without `join` cannot carry a representation conversion.
