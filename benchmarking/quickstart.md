@@ -15,15 +15,14 @@ Each execution budget gets a fresh worker with Executor's allocator installed.
 Compiler caches stay outside the result directory. No stage implicitly invokes
 the previous one to fill missing artifacts.
 
-The migrated path supports single-GPU training and single-node sharded DP,
-including examples with different shapes and static arguments within one update.
+Quickstart supports single-GPU training and single-node sharded DP, including
+examples with different shapes and static arguments within one update.
 The [catalog factory](../workloads/recipes/text/benchmark/README.md) supplies
 ordinary text models, precision and LoRA settings. The GLM families use this
 same runner with their own model/input/initialization helpers. The
 [EP recipe](../workloads/recipes/text/expert_parallel/README.md) declares generic
 provider resources and uses distributed build/profiling when its tasks communicate.
-Its SM90 transport qualification remains pending; ordinary DP qualification does
-not certify it.
+Ordinary DP qualification does not certify its transport.
 The core APIs can be used directly without quickstart; see the
 [public phase guide](../docs/architecture/offline-pipeline.md).
 
@@ -65,8 +64,8 @@ bounded buffers for initialization, controls and checkpoint I/O on every backend
 To change backend, rerun communication calibration and planning before execution.
 
 Single-GPU SSD and RDMA execution are qualified. Compound sharded transfers
-use the same spill backend interface; their multi-GPU qualification is tracked
-separately. Saved Executor plans use bounded tensor loaders.
+use the same spill backend interface; that qualification does not cover them on
+several GPUs. Saved Executor plans use bounded tensor loaders.
 See [SSD storage](../docs/python/api/ssd.md) for configuration and lifetime details.
 
 ## One phase at a time

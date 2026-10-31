@@ -1,8 +1,7 @@
 # The remote performance gate
 
 The runner uses saved phases and passes the peer configuration to communication
-calibration and Executor. A missing peer produces an explicit skip. Full-size
-remote qualification remains a separate target run after this migration.
+calibration and Executor. A missing peer produces an explicit skip.
 
 The performance gate's matrix with one substitution: the spill pool is a region
 a daemon holds on another machine instead of pinned host memory. Same cells,

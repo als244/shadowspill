@@ -24,6 +24,5 @@ SSD backend. Initialization/checkpoint export use the ordinary bounded tensor
 interfaces. Results, Plans and reference checkpoints remain separate from the
 spill file and are retained.
 
-This runner's saved-phase wiring has a passing tiny training/checkpoint probe.
-The full-size SSD matrix remains a separate target run from the default
-pinned-host gate. See the [SSD API](../../docs/python/api/ssd.md) for pool details.
+The SSD matrix runs only when named; the default gate run spills to pinned host
+memory. See the [SSD API](../../docs/python/api/ssd.md) for pool details.

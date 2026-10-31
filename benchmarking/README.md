@@ -13,6 +13,8 @@ benchmarking/
 ├── quickstart/                         plan and run one model, story told
 ├── quickstart.md                       its guide: flags, phases, terms
 ├── bandwidth_frontier/                 CPU sweeps from ProfiledProgram archives
+├── stage_traces/                       Nsight traces of isolated compiled stages
+├── host_memory/                        host-memory preflight before spill pools
 ├── quickstart_reports/                 one directory per quickstart run
 ├── program_collection/
 │   ├── collect.py                      the launcher
@@ -41,6 +43,11 @@ render completed winners directly from their saved Plans.
 [**Bandwidth frontier**](bandwidth_frontier/README.md) replans saved
 `ProfiledProgram` candidates across memory budgets and communication rates.
 It needs no model construction, GPU, runtime pool, or artifact store.
+
+[**Stage traces**](stage_traces/README.md) capture the graph pairs quickstart
+builds, deduplicate equivalent stages, and trace each unique pair in isolation
+under Nsight, one worker per visible GPU. Their timings explain kernels; they
+are not throughput benchmarks.
 
 The other two split one long job in half, so the expensive half is paid once:
 

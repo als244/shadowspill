@@ -30,8 +30,8 @@ change across the sweep; concurrent fetch/evict rates equal their solo rates.
 For training Programs, `--orderings factors` tries depth/breadth factor pairs;
 `depth-first` restricts the traversal. Programs with ordering constraints retain
 their legal default. `--resolution-options` and `--search-workers` configure the
-existing planner. Each budget is planned independently; the old frontier's
-cross-budget incumbent sharing is not provided by this phase runner.
+planner. Each budget is planned independently, with no incumbent shared across
+budgets.
 
 `raw_data/` holds the request, one full `SweepResult` archive per calibration,
 and JSON/CSV rows including failures and winners. `--resume` reuses completed
@@ -53,6 +53,6 @@ Optional `--measured observations.json` overlays supplied observations:
                "units_per_second": {"16": 2500, "24": 3100}}]}
 ```
 
-The former model/build-store/runtime options are removed. Choose the model and
+The runner takes no model, build-store or runtime options. Choose the model and
 input shapes during build, then reuse the resulting profiles here. Estimated
 memory remains simulation-only; this runner does not make a Plan executable.

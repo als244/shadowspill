@@ -1,8 +1,7 @@
 # The remote gate
 
 The runner uses saved phases and passes the peer configuration to communication
-calibration and Executor. A missing peer produces an explicit skip. Full-size
-remote qualification remains a separate target run after this migration.
+calibration and Executor. A missing peer produces an explicit skip.
 
 The numerical gate's matrix with one substitution: the spill pool is a region a
 daemon holds on another machine instead of pinned host memory. Same programs,
@@ -42,5 +41,6 @@ so: a machine with no peer is not a machine with a broken runtime.
 Throughput. A step here is several times a local one, and that is the link
 rather than a regression; the rate over the link is the `remote_perf` gate's
 question ([remote_perf/README.md](../remote_perf/README.md)), which holds it
-to the simulator's prediction rather than a throughput floor. What this gate answers is whether the numbers come
-out the same, which is a question the hardware can answer honestly.
+to the simulator's prediction rather than a throughput floor. What this gate
+answers is whether the numbers come out the same, which is a question the
+hardware can answer honestly.

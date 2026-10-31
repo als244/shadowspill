@@ -25,9 +25,9 @@ The version-2 JSON configuration has three sections:
   multiple examples without fixing their execution order.
 - `profiling`: CUDA device, warmup/measurement seconds and external headroom bytes.
 
-The shipped matrix still contains 168 cases. It requires a compatible GPU and
-providers. Old pool budgets, build-store modes and optimizer ordering are removed
-from collection configuration. Compiler caches use their normal external paths.
+The shipped matrix contains 168 cases. It requires a compatible GPU and
+providers. Collection configuration carries no pool budgets, build-store modes
+or optimizer ordering. Compiler caches use their normal external paths.
 
 ```text
 <output>/
@@ -45,7 +45,7 @@ Archives are self-contained and published atomically. They can be loaded with
 `ProfiledProgram.load(path)` and passed to the public planning APIs. The
 [planning evaluator](../planning_eval/README.md) also reads them directly and
 supplies budgets and transfer rates on CPU. Existing JSON corpora remain
-readable; they are not rewritten. The collector currently targets one GPU.
+readable; they are not rewritten. The collector targets one GPU.
 
 `paths.py` owns directories and controller locking. `journal.py` records attempts;
 `resume.py` validates completed artifacts before reuse. `summary.py` derives the

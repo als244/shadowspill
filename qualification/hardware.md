@@ -32,8 +32,10 @@ optimizer precision through `--case-option` and can use master/gradient override
 
 Device allowances include process/runtime overhead. `--external-headroom-mib`
 reserves 512 MiB by default inside the allowance; zero removes this reservation.
-Executor always enforces the admitted budget. Performance floors apply only when
-hardware, geometry, precision and budgets match the recorded configuration.
+The gates always enforce the admitted budget: they open Executor with
+`reject_overbudget=True`. Performance floors apply only when hardware, geometry,
+precision and budgets match the recorded configuration and the spill pool is
+pinned host memory.
 
 The suite probes dtype support in a child process before collection, leaving its
 own allocator uninitialized. Its generic low-precision tests use BF16 when

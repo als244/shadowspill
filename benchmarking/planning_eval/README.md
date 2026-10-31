@@ -61,6 +61,7 @@ One JSON file, validated strictly — an unknown or missing key is an error.
 
 | Field | Meaning |
 |---|---|
+| `schema` | Must be `shadowspill.search_frontier_config/v1`. |
 | `name` | Names the baseline, with the config digest and revision. |
 | `expected_programs` | The corpus size this config is written for; a corpus of another size is refused. |
 | `expected_points_per_program` | Must equal the expanded grid size, so a grid edit that changes the point count fails at load rather than mid-sweep. |
@@ -72,7 +73,8 @@ One JSON file, validated strictly — an unknown or missing key is an error.
 
 Three optional fields reach the planner and are part of the config digest, so
 two runs that differ only in one of them are told apart:
-`capacity_refinement_bytes`, `max_repair_attempts` and `deterministic`. Absent means the planner's own default.
+`capacity_refinement_bytes`, `max_repair_attempts` and `deterministic`. Absent
+means the planner's own default.
 
 The v1 grids expand to 15 points per program: four execution budgets at one
 spill budget across three bandwidth scales — half, one, and twice the frozen

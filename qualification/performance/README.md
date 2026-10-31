@@ -4,7 +4,7 @@ The runner builds, profiles, plans and executes in separate processes. The last
 worker loads an executable Plan and exact initialization data; it never constructs
 the model, compiles tasks, profiles them, or calibrates communication.
 
-The retained geometries use sequence length 1,024 and 65,536 tokens per update:
+The cells use sequence length 1,024 and 65,536 tokens per update:
 
 | Family | Tokens per example | Examples per update |
 |---|---:|---:|
@@ -43,8 +43,9 @@ calls the same `matrix.run.main` entry; there is no second matrix implementation
 
 `<result>.phases/` retains the archives, request, settings, and `phases.json`.
 `inputs.pt`, and `checkpoint.ssp` when checkpointing is enabled, are removed once
-the verdict is written unless `--retain-execution-files` asks for an
-execution-only rerun; a failed cell keeps them.
+the execute phase has written the verdict, whether it passed or not, unless
+`--retain-execution-files` asks for an execution-only rerun; a cell whose phase
+stops on an error keeps them.
 The shared `qualification/pipeline/` package owns subprocess launching, bounded
 initialization/export and timing/trace observations. `phases.py` contains only
 warmup/checkpoint and repeated measurement; `verdict.py` applies the gate rules.
@@ -60,8 +61,8 @@ python -m qualification.pipeline.plan /path/to/case.phases
 
 Compiler caches remain separate from these archives. The matrix's `--empty-caches`
 creates temporary Inductor/Triton caches per cell, then removes those caches;
-phase archives remain available for inspection and execution. ArtifactStore
-mode and export-bypass flags are no longer part of these runners.
+phase archives remain available for inspection and execution. These runners
+take no artifact-store mode or export-bypass flags.
 
 ## Measurement protocol and gates
 
@@ -83,7 +84,7 @@ time. The headline `median_step_seconds` is the median of all twelve cycles;
 throughput is tokens per update divided by that median. Raw `cycle_seconds` and
 group timings are saved. There are no extra cooling pauses between groups.
 
-The existing gates remain:
+The gates:
 
 - Exactly three groups of four measured updates and the expected optimizer counters.
 - Finite objectives and successful checkpoint restore when enabled.
@@ -109,15 +110,16 @@ The default total device allowance is 16 GiB on SM80+ and 10 GiB below it;
 `--spill-budget-gib` changes it. `--planning-spill-budget-gib` can impose a smaller
 planning limit. Executor allocates the capacity saved in the resulting Plan.
 `--external-headroom-mib` reserves 512 MiB by default inside the total allowance.
-Physical budget enforcement is always enabled; the old enforcement switches
-are removed.
+Physical budget enforcement is always enabled, and no option disables it.
 
-Recorded floors belong to the RTX 5090, the original geometry, 16/112 GiB budgets
-and BF16 settings. A mismatch marks the regression comparison not applicable;
-runtime, memory and simulator checks still apply. The result explains which
-fields differ. Building needs CPU memory for the model and saved initial values;
-execution memory-maps those values and fills Executor-owned storage in bounded
-chunks. The host must also accommodate the configured pinned spill pool.
+Recorded floors belong to the RTX 5090, the geometry above, 16/112 GiB budgets,
+512 MiB of external headroom, BF16 settings without masters and pinned-host
+spill. A mismatch, including another device or a pool on a peer, marks the
+regression comparison not applicable; runtime, memory and simulator checks
+still apply. The result explains which fields differ. Building needs CPU memory
+for the model and saved initial values; execution memory-maps those values and
+fills Executor-owned storage in bounded chunks. The host must also accommodate
+the configured pinned spill pool.
 
 For remote runs, the Plan spill budget is the minimum of the requested peer
 capacity and the planning allowance. Calibration and execution receive that same

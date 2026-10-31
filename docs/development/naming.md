@@ -21,8 +21,9 @@
   name and canonical IR task ID are separate fields.
 - `communication_info` supplies topology, transfer rates and measured timings
   to planning and simulation; compute measurements belong to `Profiles`.
-- `export_bypass_key` is the caller's name for the code a build is made from
-  (model, objective, optimizer); build artifacts are filed under it.
+- `export_bypass_key` is the caller's label for the code a build is made from
+  (model, objective, optimizer); the store validates and keeps it, and files
+  nothing under it.
 
 ## Provider boundaries
 
@@ -88,9 +89,9 @@ creation. Python configuration uses `external_headroom` (default `512 << 20`),
 byte-valued admission records use `external_headroom_bytes`, and qualification
 CLI overrides use `--external-headroom-mib`. Zero reserves no allowance.
 
-The separate `reject_overbudget` flag defaults to `False`; set it to `True`
-(or use `--reject-overbudget`) to reject external and whole-process memory
-overruns. It never changes pool sizing or disables pool bounds.
+The separate `reject_overbudget` flag defaults to `False`; set it to `True` to
+reject external and whole-process memory overruns, as the qualification gates
+always do. It never changes pool sizing or disables pool bounds.
 
 Use **persistent in-pool allocations** for retained allocations inside that
 pool. They consume `fixed_execution_bytes`, not external headroom.

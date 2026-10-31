@@ -38,7 +38,7 @@ gradients with FP32 moments. Independent `--model-dtype`, `--master-dtype`,
 both arms. The case banner and artifacts show their resolved values. See
 [the precision options](../hardware.md).
 Custom factories configure their model and optimizer with `--case-option`.
-The original default reference root remains
+The default reference root is
 `qualification/results/references/approximately_1b/`; below SM80 the default
 is `qualification/results/references/pre_sm80/`. Each contains one
 identity-checked final state plus an exact-input `inputs.pt` sidecar under each
@@ -121,10 +121,11 @@ records all tolerances and planning phase timings used for that run, and, when
 a cell fails, the category of each failure -- a reference disagreement, a
 replay that did not reproduce, a budget exceeded -- with the failing tensor
 counts split into model state and optimizer state. Physical
-qualification checks setup, every update, and checkpoint replay. Executor always
-enforces the total device allowance, including external memory; bounded pools,
-sealed event inventories, zero steady-state allocation/event growth, and clean
-allocator callbacks remain required.
+qualification checks setup, every update, and checkpoint replay. The gate opens
+Executor with `reject_overbudget=True`, so the total device allowance, including
+external memory, is enforced; bounded pools, sealed event inventories, zero
+steady-state allocation/event growth, and clean allocator callbacks remain
+required.
 
 The result JSON records numerical comparisons, physical evidence, phase timings,
 per-step device/host elapsed times, and paths to the saved archives. Device elapsed
@@ -133,10 +134,9 @@ time includes transfers and dispatch gaps; it is not labeled compute-only time.
 Checkpoint writing and restoration stream Executor-owned tensors in bounded
 chunks instead of creating a second full-state device image.
 
-The SM80+ matrix retains the original roughly billion-parameter models and
-execution budgets: Llama 1,179,699,200 parameters / 10 GiB; Qwen 1,006,955,408 /
-10 GiB; OLMoE 975,766,528 / 8 GiB. Their default BF16 reference identities and
-paths are unchanged.
+The SM80+ matrix uses roughly billion-parameter models and these execution
+budgets: Llama 1,179,699,200 parameters / 10 GiB; Qwen 1,006,955,408 /
+10 GiB; OLMoE 975,766,528 / 8 GiB. Their default references are BF16.
 
 Below SM80 only, the matrix defaults to four layers and vocabulary size 8,192:
 Llama 251,676,672 parameters / 3 GiB; Qwen 147,224,776 / 3 GiB; OLMoE
@@ -155,9 +155,8 @@ The numerical and performance launchers accept `--external-headroom-mib`
 the initial process baseline, when sizing the execution pool. Zero reserves no
 external allowance. It does not change model or reference identity.
 
-Whole-process and external memory overruns fail qualification. The obsolete
-`--reject-overbudget`/`--no-reject-overbudget` switches are removed; the execution
-API always enforces its admitted budget.
+Whole-process and external memory overruns fail qualification: the gate always
+opens Executor with `reject_overbudget=True`, and no option changes that.
 
 ## Determinism and comparison criteria
 

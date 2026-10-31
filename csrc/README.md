@@ -8,7 +8,8 @@ that holds the far side of it, and the PyTorch adapter.
 csrc/
 ├── include/shadowspill/   every public header the library exports
 │   ├── runtime/           the runtime API by subsystem, included by the
-│   │                      umbrella `runtime.h`: vocabulary, descriptions,
+│   │                      umbrella `runtime.h`: vocabulary, lanes, pool
+│   │                      memory, extension libraries, descriptions,
 │   │                      diagnostics, lifecycle, pools, objects, plan,
 │   │                      tasks, telemetry, timing
 │   └── pressurefit/       the shipped search's own header, beside the generic
@@ -60,7 +61,7 @@ csrc/
 │   └── src/               another machine; loaded the way a backend is
 ├── ssd/                   temporary direct-I/O pool and staged fetch/evict lanes
 ├── daemon/                the far side: a process that holds registered
-│   └── src/               memory and answers two questions about it
+│   └── src/               memory and the queue pairs a peer reaches it by
 └── adapter/pytorch/       narrow allocator/storage bridge into PyTorch
     ├── include/shadowspill/  its one public header
     ├── lifecycle/         bootstrap, close, and the physical-memory ledger
@@ -68,6 +69,9 @@ csrc/
     ├── failure/           what a failed call latches, and the report it makes
     ├── tasks/             the task boundary a planned task runs between,
     │                      the thread's task range, and the scopes outside one
+    ├── profiling/         allocator observation, collective intervals and
+    │                      spill-route calibration for the measurement phases
+    ├── telemetry/         collective tracing under an armed runtime trace
     └── storage/           validated CPU views and sharded transfer callbacks
         └── device/        device views, task acquisition/publication, replacement
                            views and caller-owned outputs
@@ -111,8 +115,8 @@ build gets from its toolchain rather than from a shim here.
 
 Public headers live in `include/shadowspill/`. `runtime.h` is an umbrella: it
 includes one header per subsystem from `include/shadowspill/runtime/`, so a
-caller may take the whole API as before or just the part it uses, and each part
-compiles on its own. A private header named `internal.h` belongs to the
+caller may take the whole API or just the part it uses, and each part compiles
+on its own. A private header named `internal.h` belongs to the
 directory holding it, and is included by path from anywhere else, so
 `"internal.h"` always means this directory's.
 The adapter adds one refinement: a directory whose header the C++ storage

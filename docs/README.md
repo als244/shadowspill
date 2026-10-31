@@ -28,8 +28,9 @@ Pick the entry that matches what you came to do; each path stands on its own.
 - To use ShadowSpill from PyTorch, read [Training with saved plans](examples/generic-training.md),
   then the [Python API](python/README.md), then the complete workflows in the
   [examples](examples/README.md).
-- To understand the system, follow the ordered path in the [architecture
-  overview](architecture/overview.md).
+- To understand the system, start at the [architecture
+  overview](architecture/overview.md) and follow the numbered path under
+  Architecture below.
 - To integrate the C library or a backend, start with the [C API
   guide](c/README.md).
 - To modify the repository, use the [development guide](development/README.md).
@@ -40,16 +41,18 @@ on what it covers.
 ## Architecture
 
 The design: framework-neutral where the code is, PyTorch-specific where it
-must be. The pages form one ordered reading path that follows a step from
-capture to execution; the groups below are reading boundaries, not separate
-ownership trees. The overview page repeats this order as a map.
+must be. The numbered pages form one ordered reading path that follows a step
+from capture to execution; the groups below are reading boundaries, not
+separate ownership trees. The last group holds the contracts the path refers
+to without passing through them.
 
 ### Foundations
 
 What ShadowSpill is for, and the vocabulary every later page uses.
 
-1. [Architecture overview](architecture/overview.md) — vocabulary, artifacts,
-   ownership, invariants, and supported scope.
+1. [Architecture overview](architecture/overview.md) — the public phases and
+   artifacts, source organization, memory ownership and its invariants, and
+   the native libraries.
 2. [Intermediate representation](architecture/ir.md) — the four neutral
    types and how they relate, then schedules and execution plans.
 
@@ -58,19 +61,16 @@ What ShadowSpill is for, and the vocabulary every later page uses.
 How a PyTorch model becomes a framework-neutral program: what is captured,
 what is profiled, and what the planner is handed.
 
-3. [PyTorch capture and lowering](architecture/lowering.md) — semantic roots,
-   executable storage, profiling, and canonical objects.
-   [Model and task partitioning](architecture/partitioning.md) defines the generic
-   `PartitionPolicy` contract and how workloads supply custom boundaries.
+3. [Capture, compilation and lowering](architecture/lowering.md) — semantic
+   roots, executable storage, profiling, and canonical objects.
 4. [Graph-pair construction](architecture/graph-pair-construction.md) —
    structural forward/backward alternatives, saved-value accounting, and
    profiling.
-5. [The step artifacts](architecture/step.md) — what a captured step is: the
-   walk it takes through its microbatches, the problems it lowered to, and why
-   reading either needs no framework.
-6. [Importing state](architecture/state-import.md) — how a caller's model
-   state comes to live in the pools without a host copy of it, the contract
-   that makes that possible, and how dtype is decided.
+5. [Step structure and ordering](architecture/step.md) — what `build_step`
+   produces, and the walk through its microbatches that planning binds to it.
+6. [Model tensors and initialization](architecture/state-import.md) — how a
+   caller's model state comes to live in the pools without a host copy of it,
+   the contract that makes that possible, and how dtype is decided.
 7. [The optimizer](architecture/optimizer.md) — what ShadowSpill needs from an
    optimizer and promises in return: state declared on meta and filled by the
    caller, frozen parameters, and values that change between steps.
@@ -148,6 +148,20 @@ underneath, and the clocks a step is read on.
 31. [Timelines](architecture/timelines.md) — the two clocks a traced step is
     measured on, the origin they share, and what an untraced step pays.
 
+### Beside the reading path
+
+Contracts the path refers to rather than passes through: where stages are cut,
+what provider resources a build may describe, and how training composes the
+phases.
+
+- [Model and task partitioning](architecture/partitioning.md) — the generic
+  `PartitionPolicy` contract and how workloads supply custom boundaries.
+- [Provider resources](architecture/resources.md) — the `resources` builder
+  argument: buffers and handles a provider creates from an importable factory,
+  recreated for build, profiling and execution.
+- [Training composition](architecture/training.md) — the boundaries among
+  caller code, recipes, Trainer, Executor and planning.
+
 ## Python
 
 The `shadowspill` package: build, measurement, reusable profiles, CPU planning,
@@ -158,6 +172,10 @@ reports and execution through Executor or Trainer. The
 
 Task-oriented pages: how to do something, and how to read what comes back.
 
+- [Independent build, profile and planning phases](architecture/offline-pipeline.md)
+  — the public phase APIs end to end: build, measurement and profile overrides,
+  communication, CPU planning and sweeps, execution, Trainer, and distributed
+  plans.
 - [Artifacts and caches](python/artifact-store.md) — saved phase results,
   disposable compiler caches and optional internal stores.
 - [PyTorch allocator integration](python/allocator.md) — how the ShadowSpill
@@ -171,6 +189,9 @@ Task-oriented pages: how to do something, and how to read what comes back.
 - [Interpreting execution diagnostics](python/step-diagnostics.md) — task and
   transfer instants, host boundaries, allocator evidence, and simulator
   reconciliation, with a complete field reference.
+- [Pool occupancy over a step](python/occupancy.md) — what occupies each pool
+  at every moment of a planned step, attributed to objects and categories, as
+  tables and pages, and on the device's clock beside a traced step.
 - [program and annotated-plan JSON](python/planning-json.md) — canonical program,
   ShadowSpillPlanningProblem and AnnotatedProgramPlan schemas.
 - [Errors, failures, and cleanup](python/failures.md) — exception taxonomy,
@@ -186,17 +207,26 @@ and the contract behind it.
   runtime access.
 - [SSD spill storage](python/api/ssd.md) — temporary direct-I/O pools, bounded
   host staging and initialization without a complete host model.
-- [Reusable planning artifacts](python/api/artifacts.md) — the immutable,
-  content-addressed values planning is composed from.
+- [Phase artifacts](python/api/artifacts.md) — Program, Profiles,
+  ProfiledProgram, Plan and SweepResult: what each holds, and how each is
+  saved, loaded and reported.
+- [Training and forward execution over saved plans](python/api/training.md) —
+  Trainer and Executor: initialization, inputs and results, evaluation,
+  schedules, parameter norms, checkpoints, startup diagnostics and custom
+  optimizers.
+- [Distributed planning and training](python/api/distributed.md) — logical
+  ownership and groups, communication calibration and CPU planning, ranks on
+  different hardware, fresh execution workers, checkpoints, and the
+  qualification scope.
 - [Diagnostics API](python/api/diagnostics.md) — CPU report generation and
   opt-in execution diagnostics.
-- [Framework-neutral Python API](python/api/neutral.md) — `shadowspill.ir`,
-  `shadowspill.planner`, `shadowspill.simulator`, `shadowspill.runtime`,
-  `shadowspill.planning`, and the frontend interface, for tooling and independent
+- [Framework-neutral Python API](python/api/neutral.md) — `shadowspill.errors`,
+  `shadowspill.ir`, `shadowspill.step`, `shadowspill.task`, `shadowspill.store`,
+  `shadowspill.planner`, `shadowspill.simulator`, and `shadowspill.runtime` with
+  the frontend interface it is opened with, for tooling and independent
   planning.
-- [Timing: the step on the device clock](python/api/timing.md) — the events
-  every invocation records, the cycle they define, and the API that reads
-  it.
+- [Timing an invocation](python/api/timing.md) — measuring a step through its
+  result handle, and the device trace that breaks its time down.
 
 ## C
 
@@ -256,9 +286,13 @@ How the repository is laid out, validated, and named, for anyone changing it.
 
 ## Training
 
-- [Training](../training/README.md) — a generic trainer that runs a model on
-  real text, on plain PyTorch or on ShadowSpill, from Python or a JSON config:
-  packed documents, schedules, evaluation, resumable checkpoints, metrics.
+Text recipes over the generic trainer, run from a JSON config or from Python.
+This page lives beside its configs and commands, outside `docs/`.
+
+- [Training recipes](../training/README.md) — a fine-tune from one config and
+  two commands, on ShadowSpill or eagerly on PyTorch: data preparation, packed
+  documents, precision and initialization, schedules, evaluation, resumable
+  checkpoints, metrics and run comparison.
 
 ## Benchmarking and qualification
 
@@ -267,8 +301,8 @@ corpus, and the release gates that check numerics and full-model throughput.
 These pages live beside the code they describe, outside `docs/`.
 
 - [Benchmarking](../benchmarking/README.md) — the self-contained,
-  reproducible planning benchmark tree, and how its three entry points
-  divide.
+  reproducible planning benchmark tree, and what each of its entry points is
+  for.
 - [Quickstart script](../benchmarking/quickstart.md) — one model end to end:
   geometry search over execution budgets, figures, and a run of the winning
   plan.
@@ -278,8 +312,9 @@ These pages live beside the code they describe, outside `docs/`.
   harness that plans that corpus: search, simulation, and physical
   admission across budgets and bandwidths.
 - [Qualification](../qualification/README.md) — the release-acceptance
-  protocols and their launchers, including the one command that runs every
-  gate in order and reports what each found.
+  protocols and their launchers, including the one command that runs the
+  selected gates in a fixed order (suite, numerical and performance by
+  default) and reports what each found.
 - [Numerical qualification](../qualification/numerical/README.md) — planned
   steps checked against PyTorch alone, compiled fullgraph without ShadowSpill.
 - [SSD numerical qualification](../qualification/numerical/ssd.md)
@@ -303,16 +338,3 @@ public C headers, local links and heading anchors, and the Python signatures
 mirrored in API examples. Installed headers remain authoritative for C layouts,
 ABI constants, and exact C signatures. Source remains authoritative for cache
 schema labels and internal implementation details.
-
-The [generic trainer API](python/api/training.md) and
-[generic training example](examples/generic-training.md) cover ordinary user models
-and data iterables; the [text recipes](../training/README.md) compose these APIs.
-
-[Training composition](architecture/training.md) documents the boundaries among
-caller code, recipes, execution backends and planning.
-
-### Distributed PyTorch execution
-
-- [Distributed planning and training](python/api/distributed.md) — explicit
-  devices/groups, replica ownership, optimizer shards, local execution, and
-  checkpoint representation; separate-device qualification is in progress.

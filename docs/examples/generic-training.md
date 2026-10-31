@@ -86,5 +86,6 @@ Executor transfers them according to the plan.
 For prediction or validation, build and plan a separate `build_forward` Program.
 Pass that Plan as `evaluation_plan` to Trainer to share the current model tensors.
 The [training reference](../python/api/training.md) covers evaluation, schedules,
-checkpointing and the lower-level asynchronous Executor API. Distributed execution
-qualification is tracked in the [distributed guide](../python/api/distributed.md).
+checkpointing and the lower-level asynchronous Executor API. The
+[distributed guide](../python/api/distributed.md) covers training on several
+GPUs and the scope of its qualification.

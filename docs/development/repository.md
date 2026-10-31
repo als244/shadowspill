@@ -8,13 +8,17 @@ shadowspill/
 │   ├── shadowspill/       installed Python package
 │   └── tools/             trace analysis/videos, naming checks and sanitizer support
 ├── csrc/                  the C library, its backends and public C headers,
-│                          the network extension, and the memory daemon
+│                          the network and SSD extensions, the memory daemon,
+│                          and the PyTorch adapter
 ├── tests/                 fast tests mirroring product/tool boundaries
 ├── workloads/             model and data clients
+├── training/              text-recipe configs and the prepare, train,
+│                          reference and compare commands
 ├── reference/             executable reference implementations
 ├── benchmarking/          quickstart, profiled-program corpora, and planning evaluation
 ├── qualification/         gate commands, implementations, configurations, and docs
-├── docs/                  architecture, Python, C, and development
+├── baselines/             the training systems ShadowSpill is measured against
+├── docs/                  architecture, Python, C, examples, and development
 ├── scripts/               one-command setup
 ├── CMakeLists.txt         build orchestrator for the C tree
 └── pyproject.toml         Python build, dependency, lint, type, and test configuration
@@ -22,9 +26,10 @@ shadowspill/
 
 `qualification/` owns the complete gate implementation and its documentation.
 There is no forwarding package under `src/tools/`. `qualification/gates/`
-runs the selected gates; each gate's `matrix/` package selects and launches its
-cases; `run.py` implements the single-case command. Product behavior remains under
-`src/shadowspill/`. The numerical gate is a package,
+runs the selected gates; the numerical and performance gates' `matrix/`
+packages select and launch their cases, and the SSD and remote gates run those
+same matrices; `run.py` implements the single-case command. Product behavior
+remains under `src/shadowspill/`. The numerical gate is a package,
 `qualification/numerical/`, holding one case end to end: the
 request and its identity, the reference arm, the planned run, the two
 comparisons, the artifact, the verdict, and the matrix that launches cells.
@@ -186,11 +191,14 @@ The test tree mirrors the boundary under test, all the way down: a test for
 ```text
 tests/
 ├── shadowspill/           package tests matching src/shadowspill subpackages
-├── csrc/                  C, mock-backend, sanitizer, and device canaries, one directory per library
+├── csrc/                  C, mock-backend, and device canaries, one directory per library
 ├── integration/           fresh-process framework/backend integration
 ├── tools/                 source-tree tool tests
 ├── workloads/             workload definition tests
 ├── benchmarking/          corpus/frontier harness tests
+├── qualification/         gate runner and acceptance-rule tests
+├── training/              text-recipe command and runner tests
+├── baselines/             baseline harness tests
 ├── repository/            packaging, naming, links, and API documentation drift
 └── fixtures/              immutable test-only inputs
 ```
@@ -240,10 +248,24 @@ ruff check .
 mypy
 ```
 
-The CMake build enables warnings as errors and registers the C canaries with
-CTest. The PyTorch adapter's storage operations build against PyTorch's CMake
-package, which `CMAKE_PREFIX_PATH` names; without it the adapter builds
-without them and every PyTorch canary fails:
+`pytest` runs the default suite. The options in `pyproject.toml` deselect two
+markers: `slow`, the end-to-end recipe and quickstart runs of minutes each,
+which `pytest -m slow` runs alone; and `fresh_process`, the tests that assert
+their own process's allocator state, which CTest runs one per process.
+`tests/csrc/test_canaries.py` runs the editable build tree's CTest canaries
+from the suite: those that need neither the device backend nor a peer, those
+that need the device backend, and those that need a peer when
+`SHADOWSPILL_NETWORK_PEER` names one.
+
+The CMake build enables warnings as errors and registers with CTest the C
+canaries, the PyTorch canaries and the `fresh_process` tests, the last two
+listed in `tests/integration/CMakeLists.txt`. Each one's labels name what it
+needs: the device backend, a network peer, an SSD, or PyTorch. `ctest -L` and
+`-LE` take one regular expression, so excluding two labels joins them with `|`
+(`ctest -LE 'network|ssd'`); a `;` list excludes nothing. The PyTorch adapter's
+storage operations build against PyTorch's CMake package, which
+`CMAKE_PREFIX_PATH` names; without it the adapter builds without them and every
+PyTorch canary fails:
 
 ```bash
 cmake -S . -B build/dev -DBUILD_TESTING=ON \

@@ -57,9 +57,11 @@ caches. Compiler caches are disposable; phase archives remain available for
 inspection and replanning. A cell's exact inputs (`inputs.pt`) and streamed
 checkpoint (`checkpoint.ssp`) are each the size of its model, so they are
 removed once its verdict is recorded; `--retain-execution-files` keeps them for
-an execution-only rerun, and a failed cell keeps them regardless. Tests use
-isolated temporary planning stores. Fresh-process tests deselected by the shared
-pytest process are run by CTest; capability skips are reported separately.
+an execution-only rerun. A failed numerical cell keeps them regardless; a
+performance cell keeps them only when a phase stops on an error, not when a
+completed run fails a gate. Tests use isolated temporary planning stores.
+Fresh-process tests deselected by the shared pytest process are run by CTest;
+capability skips are reported separately.
 
 Tests marked `slow` are end-to-end recipe and quickstart runs of minutes each;
 the default suite deselects them. `python -m pytest tests -m slow` runs the tier
@@ -84,9 +86,7 @@ GPU tenants are recorded at gate start and on failure.
 The default matrix uses pinned-host spill. Optional `numerical_ssd`, `remote` and
 `remote_perf` use the same saved phases: their pool configuration is passed to
 communication calibration and Executor, while model build/task measurement stay
-backend-independent. Remote gates skip when no peer is configured. Full-size
-SSD/remote matrices still require target validation after this migration; core
-Executor backend tests and configuration checks are separate evidence. See
+backend-independent. Remote gates skip when no peer is configured. See
 [SSD qualification](numerical/ssd.md), [remote correctness](remote/README.md) and
 [remote throughput](remote_perf/README.md).
 
@@ -106,6 +106,7 @@ python -m qualification.gap_report qualification/results/performance_my_check
 | `numerical/`, `performance/` | Case definitions, phase workers, verdicts and matrix launchers |
 | `numerical/matrix/`, `performance/matrix/` | Argument parsing, case commands/execution, failure evidence and reports |
 | `remote/`, `remote_perf/` | Optional remote matrix selection |
+| `nondeterminism/` | The bitwise reproducibility probe |
 | `tests/qualification/` | Runner and acceptance-rule tests |
 
 Model definitions live in `workloads/`; runtime and planning behavior remain in
