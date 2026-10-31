@@ -209,6 +209,7 @@ a grown matrix varies more settings, so a resume finds it.
     manifest.json            # engine, sources, environment and every case
     README.md, results.json  # every case's latest outcome
     launcher.log             # the engine's console
+    preparations/<digest>/   # ShadowSpill's: one preparation per group of cases
     cases/<case>/
       config.json, command.txt
       attempt-NNN/
@@ -217,16 +218,17 @@ a grown matrix varies more settings, so a resume finds it.
         case.json            # the resolved case
         rank-NNNNN/          # each rank's request, result or failure
         outcome.json, row.json
-  report/                    # baselines.report's figures and tables
+  report/, report.log        # baselines.report's figures and tables, and its console
   summary.md, summary.json   # baselines.summary's summary
   traces/                    # baselines.trace's traces
 ```
 
 The console shows the spec's settings and every engine's case count, then
-each engine under its heading: a line as each case starts, with the
-settings that distinguish it, and a line as it ends, with its outcome and,
-when it completed, its tokens per second, update time, GPU peak held and in
-use, and host peak. A case's own output stays in its `console.log`.
+each engine under its heading: a block as each case starts, with the
+settings that distinguish it, its microbatches and its log, and a block as
+it ends, with its outcome and, when it completed, its tokens per second,
+update time, GPU peak held and in use, and host peak. A case's own output
+stays in its `console.log`.
 
 ## Summaries and reports
 
@@ -248,8 +250,9 @@ python -m baselines.report baselines/experiments/<experiment>/output/sweeps \
 `--publish` writes the summary into the experiment's `results/` with its
 figures beside it and no path of the machine it ran on, to be committed
 with the experiment. GPU memory is what an engine held at its peak: the
-execution pool's capacity for ShadowSpill, which holds it whole, and the
-peak its allocator reserved for any other engine.
+execution budget for ShadowSpill, the whole GPU allowance it holds (its
+pool, fixed overhead and external headroom), and the peak its allocator
+reserved for any other engine.
 
 ## Tracing a case
 

@@ -16,8 +16,9 @@ python -m baselines.common.launch --engine fsdp2 --gpus 1 --output <dir> \
   --recompute 1 --activation-offload none --offload-policy cpu
 ```
 
-The tiny qualification matrix, every family but Qwen 3.5 MoE
-(`../../PRECISION.md` says why) against a reference copy compiled whole:
+The tiny qualification matrix, the Llama 3, Qwen 3.5, OLMoE and Qwen 3 MoE
+families (`../../PRECISION.md` says why not Qwen 3.5 MoE) against a reference
+copy compiled whole:
 
 ```bash
 python -m baselines.sweep --engine fsdp2 \
@@ -78,7 +79,7 @@ across layers. Checkpoint values are loaded after initialization.
 | Option | FSDP2's call | What the engine enforces |
 |---|---|---|
 | `--offload-policy cpu`, `--[no-]pin-memory` | `fully_shard(offload_policy=CPUOffloadPolicy(pin_memory))`. Parameters, gradients and optimizer state move together; FSDP2 has no switch for one of them alone | The optimizer steps on the host. Refused with torchao's `--optimizer cpu-offload` |
-| `--forward-prefetch N`, `--backward-prefetch auto\|N` | `set_modules_to_forward_prefetch` and `set_modules_to_backward_prefetch` on the root and every block, naming the next N blocks; `0` and `auto` make no call, leaving FSDP2's own behavior | Backward depth zero is refused: it is not an off switch |
+| `--forward-prefetch N`, `--backward-prefetch auto\|N` | `set_modules_to_forward_prefetch` and `set_modules_to_backward_prefetch` on the root and every block, naming the next N blocks; `0` names none and `auto` makes no call, leaving FSDP2's own behavior | Backward depth zero is refused: it is not an off switch |
 | `--[no-]reshard-after-forward` | `fully_shard(reshard_after_forward=)` on every block; the root keeps its weights gathered | |
 | `--[no-]reshard-after-backward` | `set_reshard_after_backward` between accumulated microbatches | The last microbatch always reshards, so with one microbatch per update the switch has no effect |
 | `--gradient-sync` | `set_requires_gradient_sync` per microbatch | The last microbatch always synchronizes, so with one microbatch per update the setting has no effect |

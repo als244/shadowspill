@@ -2,9 +2,9 @@
 
 Measure the router and routed expert FFNs with forward, backward, and combined
 GPU timings. The GLM-5.3-Flash geometry is **288 experts, top-8 routing, model
-width 4096, expert hidden width 2048**. Qwen3-30B-A3B remains available as a
-preset. No attention, normalization, loss head, optimizer, checkpoint loading,
-or ShadowSpill runtime participates in these measurements.
+width 4096, expert hidden width 2048**. Qwen3-30B-A3B is the other preset and
+the default. No attention, normalization, loss head, optimizer, checkpoint
+loading, or ShadowSpill runtime participates in these measurements.
 
 ## GLM comparison on eight H100 GPUs
 
@@ -61,11 +61,12 @@ Distributed tuning requires lockstep calls with matching shapes and candidates.
 It is opt-in; independent stage-trace workers use the shared-cache tuner instead.
 
 `--sonicmoe-candidate-policy expanded` broadens the SM90 search with M=64
-tiles, more M=128 widths, and 1x1 clusters while retaining the original choices.
+tiles, more M=128 widths, and 1x1 clusters while keeping every `baseline` choice.
 The default `baseline` already includes M=128, N=96. The experimental
 `expanded-k` additionally varies K at selected anchor tiles. Quack's pruning
 still removes incompatible configurations. Candidate lists are part of the
-disk-cache identity, so an old narrow-pool winner cannot skip a wider search.
+disk-cache identity, so a winner cached from a narrower pool cannot skip a
+wider search.
 Each rank-zero case records candidate counts, timings and winners in
 `candidate-audit.jsonl`. These policies do not change SM100 candidates.
 
@@ -102,12 +103,13 @@ absolute-value temporary. Per-rank `measurements.json` is written before these
 checks; failures record their phase and memory state.
 
 By default, cases share workers, imports, CUDA contexts, and the default process
-group within each environment. Immutable model weights are reused across token
+group within each backend. Immutable model weights are reused across token
 counts; changing backend, precision, or training mode creates a new model. Each
 shape still has its own warmup (5 iterations) and measurement (20 iterations).
-`--fresh-workers` restores a separate process/group for each case. A genuine OOM
-ends that worker group and restarts remaining cases in clean processes. QuackMoE
-rebuilds its fixed-capacity model buffers when the token count changes.
+`--fresh-workers` gives each case a process and process group of its own. A
+genuine OOM ends that worker group and restarts remaining cases in clean
+processes. QuackMoE rebuilds its fixed-capacity model buffers when the token
+count changes.
 
 Each case saves its standalone reproduction command, console log, per-rank
 requests, every sample, finite-output/gradient checks, and memory peaks. Shared
@@ -138,7 +140,8 @@ Each implementation has its own folder under `implementations/`:
 
 `registry.py` lazy-loads backends after device selection. A backend's `build`
 returns the interface in `api.py`: `forward`, `backward`, `zero_grad`,
-`named_parameters`, `named_gradients`, `close`, and descriptive `metadata`.
+`named_parameters`, `named_gradients`, `prepare_case` (a reused model's next
+token count), `close`, and descriptive `metadata`.
 The runner owns inputs, synchronization, timing, validation, and output. To add
 a backend, implement this contract and register its environment, layout, label,
 and colors; the runner and plotter need no backend-specific branches.
@@ -179,6 +182,6 @@ Divide per-rank FLOPs by seconds and 1e12; do not multiply by EP group size agai
 Useful options: `--model`, shape overrides `--width/--hidden/--experts/--top-k`,
 `--dp-size` (8), `--ep-size` (8), `--lora-rank` (32), `--lora-alpha` (32),
 `--nvidia-python`, `--warmup` (5), `--iterations` (20), `--timeout` (1800),
-`--fresh-workers`, `--dry-run`, `--tiny`, `--resume`, and `--retry-failed`. The original default model
-is Qwen and the default backend subset remains SonicMoE/QuackMoE; select the GLM
-preset and four requested backends explicitly as above.
+`--fresh-workers`, `--dry-run`, `--tiny`, `--resume`, and `--retry-failed`. The default model
+is Qwen3-30B-A3B and the default backends are SonicMoE and QuackMoE; select the
+GLM preset and the four backends explicitly as above.

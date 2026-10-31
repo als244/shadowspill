@@ -23,8 +23,11 @@ The tiny numerical matrix is
 
 | Module | Responsibility |
 | --- | --- |
+| `settings.py` | The engine's flags, their validation and the microbatch candidates |
 | `train.py` | Compose preparation and launch fresh measurement workers |
 | `factory.py` | Catalog model, local objective, precision and microbatch examples |
+| `precision.py` | Translate the precision contract into build and optimizer options |
+| `microbatches.py` | Split an update into independent fixed-shape microbatch inputs |
 | `preparation.py` | Reuse quickstart's build/profile/calibration/CPU-plan workers |
 | `execute.py` | Load the selected Plan, check resources, initialize and admit |
 | `initialize.py` | Fill bounded model chunks from initialization or a checkpoint |
@@ -33,10 +36,12 @@ The tiny numerical matrix is
 | `reporting.py` | Record budgets, peaks and measured-versus-simulated results |
 
 The model starts on meta. The catalog initializer fills Executor-provided chunks
-and preserves derived buffers. It matches the model's initialization distributions,
-with chunk-independent deterministic seeds; it does not reproduce
-`reset_parameters`' traversal RNG sequence. Checkpoint readers also fill chunks
-directly. Master weights and optimizer state use the saved Program's initializers.
+and preserves derived buffers. It draws Hugging Face's initial distributions
+(embeddings, projections and expert banks from N(0, `initializer_range`)), with
+chunk-independent deterministic seeds; it does not run the model's
+`reset_parameters`, which FSDP2 and DeepSpeed initialize with. Checkpoint readers
+also fill chunks directly. Master weights and optimizer state use the saved
+Program's initializers.
 
 Distributed cases use `Parallelism.dp(ranks_per_replica=world_size)`: weights,
 gradients and optimizer data are sharded. Build and compute profiling use one
@@ -60,8 +65,9 @@ The common model/data/precision/run flags are described in
 | `--resolution-options` | Planner save/recompute shares: `quarters`, `halves`, `eighths`, or fractions |
 | `--artifact-store` | `default`: artifacts beside the case/shared preparation; `none`: disable sharing; a path: custom parent |
 
-The artifact-location flag retains its baseline spelling. There is no global
-artifact-store dependency. Compiler caches stay outside these output folders.
+`--artifact-store` names only where this engine's phase artifacts go; there is
+no global artifact-store dependency. Compiler caches stay outside these output
+folders.
 
 Planning chooses geometry, ordering and save/recompute alternatives together.
 `--recompute` and `--allocator-cap-gib` are refused: the planner controls

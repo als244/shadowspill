@@ -11,7 +11,7 @@ A check that the whole experiment path works, small enough to run in
 minutes: Llama 3 1B trained in full by ShadowSpill, FSDP2 and DeepSpeed, two
 cases per engine. Llama 3 1B is the smallest catalog size whose rows count
 as throughput results, so the demo exercises the summary and the report as
-a round's experiment does. Run it after a change to the runner, the
+the other experiments do. Run it after a change to the runner, the
 summary, the report or an engine, before a long experiment.
 
 ## Scenario
@@ -45,7 +45,7 @@ ignores; `--overwrite` runs it again from scratch.
 
 What to look at:
 
-* the console: every engine under its heading, a start and a result line
+* the console: every engine under its heading, a start and an end block
   per case, then the report and the summary;
 * `output/summary.md`: each engine's outcomes, the fastest case within 4,
   8, 16 and 32 GiB, each engine's frontier and the report's figures;

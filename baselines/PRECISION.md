@@ -178,8 +178,10 @@ differ between any two runs that round differently, eager and compiled
 PyTorch alike, by more than the bounds allow, most likely its router's
 top-k choosing differently on near-ties; Qwen 3.5's dense model, with the
 same pinned parameters, takes its cases. Each matrix also trains LoRA at
-bfloat16 weights stepped in place, the contract round 1's LoRA experiments
-run, on the llama3, qwen35 and qwen3moe families.
+bfloat16 weights stepped in place, the contract the LoRA experiments
+(`experiments/lora_rtx5090/`) run, on the llama3 and qwen35 families, and
+ShadowSpill's on qwen3moe too: in FSDP2 and DeepSpeed one routed expert's
+LoRA factor of that case exceeds even the routed factors' bounds.
 
 The Megatron-Core and AutoModel engines train NVIDIA's implementation of
 the architecture, so their matrices step no reference copy: each case's

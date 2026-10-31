@@ -85,20 +85,30 @@ around its construction), `reference` (the tiny-model check of an engine's
 updates against a copy compiled whole,
 [`PRECISION.md`](PRECISION.md#what-the-tiny-qualification-compares)),
 `results` (the result row schema and the measurement contract),
-`provenance` (the sources, packages and hardware a row records) and `data`
-(synthetic tokens per rank, or windows of a pre-tokenized corpus).
+`provenance` (the sources, packages and hardware a row records), `data`
+(synthetic tokens per rank, or windows of a pre-tokenized corpus),
+`annotations` (the NVTX ranges that label a captured trace's phases and
+recomputation) and `preparation` (the groups a single-rank sweep forms of
+the cases that differ only in their execution budget, each prepared once
+under `preparations/`, for an engine that declares `SHARED_PREPARATION`, as
+ShadowSpill's does).
 
 `launch` is the one entry point of every engine but the MoE layer
 benchmark, which runs its own sweep: `python -m baselines.common.launch
 --engine <name> --gpus <n> --output <dir> <the engine's flags>` validates
 and resolves a case in its own interpreter (which imports the catalog),
 writes `case.json`, sets the environment variables the case's settings
-decide, and starts torchrun with the engine's trainer, `python -m
-baselines.<name>.train`, in the engine's environment (`--python` names
-another). `runner` is what every trainer shares: it opens the case, serves
-the tokens, times each update with one clock, and writes each rank's result
-and the row. An engine's `train.py` provides `train(case, clock)` and a
-`main()` that hands it to `runner.main`. ShadowSpill's `main` also passes
+decide, and starts the engine's trainer in the engine's environment
+(`--python` names another): torchrun with `python -m
+baselines.engines.<name>.train`, or for ShadowSpill `python -m
+baselines.engines.shadowspill.train` alone, which prepares the case's
+phases and then starts its execution workers,
+`baselines.engines.shadowspill.execute`, in fresh processes (under torchrun
+for more than one rank). `runner` is what every trainer shares: it opens
+the case, serves the tokens, times each update with one clock, and writes
+each rank's result and the row. An engine's `train.py` provides
+`train(case, clock)` and a `main()` that hands it to `runner.main`;
+ShadowSpill's `execute.py` provides them, and its `main` also passes
 `standalone=False`, since its trainer imports ShadowSpill, which the runner
 refuses in every other engine; `device_first=False`, since its backend
 installs its own allocator in PyTorch's place and the trainer probes the
@@ -115,16 +125,18 @@ which combinations each one honors or refuses.
 
 ## LoRA
 
-A LoRA case trains adapters on the shared definition's family-specific targets
-(`workloads/lora` and each model family's `lora.py`) in its framework's own
-default layout: the
-catalog's in ShadowSpill, FSDP2 and DeepSpeed; Megatron Bridge's in
-Megatron-Core, one adapter on each fused `linear_qkv` and `linear_fc1`; and
-AutoModel's, one on each Hugging Face projection. The layouts hold
-different numbers of trainable parameters at the same adapter rank, so
-engines are compared by their total trainable parameters, the elements
-of every trainable tensor, which each row records from the model its
-framework built.
+A LoRA case trains adapters in its framework's own default layout: the
+catalog's in ShadowSpill, FSDP2 and DeepSpeed, on the shared definition's
+family-specific targets (`workloads/lora` and each model family's
+`lora.py`); Megatron Bridge's in Megatron-Core, one adapter on each
+projection module, fused ones such as `linear_qkv`, `linear_fc1` and Gated
+DeltaNet's `in_proj` included; and AutoModel's, one on each Hugging Face
+projection, every linear layer but the head. The two NVIDIA layouts also
+adapt projections the family targets leave frozen, such as Qwen 3.5's beta
+and decay inputs. The layouts hold different numbers of trainable
+parameters at the same adapter rank, so engines are compared by their total
+trainable parameters, the elements of every trainable tensor, which each
+row records from the model its framework built.
 
 ## Sweeps
 
@@ -148,17 +160,18 @@ resume (`--resume`) attempts every case with no outcome, never attempted or
 interrupted, keeps the completed ones, and attempts the failed,
 out-of-memory and timed-out ones again only with `--retry-failed`. The
 sweep's console names its cases, the settings its matrix varies and the
-outcomes so far, then gives a line as each case starts, with those settings,
-and a line as it ends, with its outcome and, when it completed, its tokens
-per second, update time, GPU peak held and in use, and host peak; a failed
-or timed-out case's line names its log. A trainer's own output never
+outcomes so far, then gives a block as each case starts, with those
+settings, its microbatches and its log, and a block as it ends, with its
+outcome and, when it completed, its tokens per second, update time, GPU
+peak held and in use, and host peak; the block of a case that did not
+complete names its log again. A trainer's own output never
 reaches it: each attempt's stdout and stderr, in order, are its
 `console.log`. Every attempt starts through the launcher, with `--python`
 (by default the engine's environment) as the trainer's interpreter. An engine joins by
 exposing `Settings`, `SOURCE_PATHS`, `ENVIRONMENT`, `add_arguments` and
-`from_namespace` in `baselines/<name>/settings.py`, and `train(case, clock)`
-with the `main()` that hands it to `runner.main` in
-`baselines/<name>/train.py`.
+`from_namespace` in `baselines/engines/<name>/settings.py`, and
+`train(case, clock)` with the `main()` that hands it to `runner.main` in
+`baselines/engines/<name>/train.py`.
 
 ## Experiments
 
@@ -207,7 +220,7 @@ and a corpus whose vocabulary exceeds the model's is refused.
 | Directory | Implementation | Qualification |
 |---|---|---|
 | [`moe_layer/`](moe_layer/README.md) | One Qwen- or GLM-shaped router/expert layer: SonicMoE DP8 (optional DP1), EP8 DeepEP / HybridEP / NcclEP, and optional QuackMoE; BF16/FP8 and full/LoRA | Its own sweep, with `--tiny` as the smoke-test geometry: every case checks that its output and gradients are present and finite, the trained gradients float32, and under LoRA that no frozen weight has one |
-| [`engines/shadowspill/`](engines/shadowspill/README.md) | ShadowSpill through `Trainer` over the `ShadowSpill` backend, full or LoRA, with the device and spill budgets (pinned host memory) as the configuration, a corpus and a checkpoint | Tiny cases whose every update is compared with the reference copy compiled whole (`PRECISION.md`) |
+| [`engines/shadowspill/`](engines/shadowspill/README.md) | ShadowSpill through `Trainer` over a saved `Plan`, full or LoRA, with the device and spill budgets (pinned host memory) as the configuration, a corpus and a checkpoint | Tiny cases whose every update is compared with the reference copy compiled whole (`PRECISION.md`) |
 | [`engines/fsdp2/`](engines/fsdp2/README.md) | Native PyTorch FSDP2, full or LoRA, with recompute, both activation offloaders, CPU offload, the torchao scenarios, a corpus and a checkpoint; local experts, no EP | As ShadowSpill's |
 | [`engines/deepspeed/`](engines/deepspeed/README.md) | DeepSpeed ZeRO stages 1 to 3, full or LoRA, with optimizer and parameter offload, activation checkpointing and CPU checkpointing, DeepCompile with its offloads, a corpus and a checkpoint | As ShadowSpill's, with and without DeepCompile |
 | [`engines/automodel/`](engines/automodel/README.md) | NVIDIA's model of a catalog architecture through NeMo AutoModel's fine-tuning recipe and its own loop, full or LoRA, from a Hugging Face configuration or a checkpoint, with AutoModel's options under their own names (FSDP2, Megatron-FSDP and DDP, tensor, pipeline, context and expert parallelism, every backend field, its four losses, FP8, compilation) | Tiny cases whose first update is checked against the dtypes the contract's mechanism holds, with no reference copy, since the model is NVIDIA's (`PRECISION.md`); a LoRA case that adapts pretrained weights adapts the tiny checkpoint `python -m baselines.scripts.write_checkpoint` writes |

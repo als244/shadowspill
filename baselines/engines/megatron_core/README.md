@@ -26,6 +26,7 @@ they accept but quietly change or ignore.
 [Data parallelism and communication](#data-parallelism-and-communication) ·
 [Recomputation and activation offloading](#recomputation-and-activation-offloading) ·
 [Optimizer offloading](#optimizer-offloading) ·
+[What each offload option moves](#what-each-offload-option-moves) ·
 [Mixture of experts](#mixture-of-experts) ·
 [Attention, fusions and kernels](#attention-fusions-and-kernels) ·
 [Graph capture](#graph-capture) ·
@@ -177,9 +178,11 @@ entries of `--lora`.
 
 The layouts differ between frameworks: where the catalog adapts the query,
 key and value projections, or the gate and up projections, one by one,
-Bridge adapts its fused `linear_qkv` or `linear_fc1` once. Engines are
-compared by their total trainable parameters, the elements of every
-trainable tensor, which each row records from the model Megatron built.
+Bridge adapts its fused `linear_qkv` or `linear_fc1` once, and Gated
+DeltaNet's fused `in_proj` also carries the beta and decay inputs, which the
+catalog's Qwen 3.5 targets leave frozen. Engines are compared by their total
+trainable parameters, the elements of every trainable tensor, which each row
+records from the model Megatron built.
 
 ## Shared settings
 
@@ -195,6 +198,7 @@ trainable tensor, which each row records from the model Megatron built.
 | `--recompute F` | 0 to 1 (none) | Full recomputation of the first share F of each pipeline stage's layers, or of each model chunk's with virtual stages (Megatron's `full` granularity, `block` method). None leaves recomputation to Megatron's own options. A case names `--recompute` or Megatron's own (`--recompute-granularity`, `--recompute-method`, `--recompute-num-layers`, `--recompute-modules`), not both, and `--recompute` is refused beside uneven pipeline stages (the first or last stage's layer count, or the `account_for_*` options), whose stages are not the even split it counts from |
 | `--warmup-steps`, `--steps` | updates (3, 5) | Excluded warmups and measured updates |
 | `--learning-rate`, `--weight-decay`, `--seed` | (3e-4, 0.01, 0) | AdamW's rate (constant) and decay; betas 0.9 and 0.999, epsilon 1e-8, no clipping |
+| `--cpu-threads`, `--allocator-cap-gib G` | (1, none) | Intra-op threads per rank, the host optimizer's work included; a PyTorch caching-allocator limit, which excludes NCCL's and other external allocations |
 | `--[no-]nsys-capture` | (off) | Brackets the measured updates with the profiler; not a throughput result |
 
 `--verify-reference` is refused: the reference check compares updates of the
@@ -228,7 +232,7 @@ the column says so.
 | Fused narrow-gradient accumulation | `gradient_accumulation_fusion` for gradients narrower than float32 ([below](#gradient-accumulation)); refused under Megatron-FSDP version 2, which turns the fusion off |
 
 The engine sets Bridge's mixed-precision configuration from the contract
-and the case's FP8 or FP4 options. With neither it names no FP8 recipe, since
+and the case's FP8 or FP4 options. Without FP8 it names no FP8 recipe, since
 Bridge's default recipe name, carried onto the optimizer, would keep the
 precision-aware optimizer from holding its masters itself. The first update
 checks the weights (at the model dtype; a trainable parameter the model
@@ -806,11 +810,14 @@ to run.
 | `NVTE_CPU_OFFLOAD_V1` | `1` with fine-grained offloading, unset otherwise | Transformer Engine chooses its offload implementation once, as it is imported. Megatron's fine-grained offloading tells Transformer Engine that offloading is on through the version-1 implementation's flag, which Transformer Engine reads only with this variable set; Transformer Engine then marks its weights (and its quantized copies of them) to stay on the device. Bridge refuses fine-grained offloading without it. Unset, layer-level offloading runs Transformer Engine's default implementation |
 | `CUDA_DEVICE_MAX_CONNECTIONS` | `--cuda-device-max-connections N` (1 to 32), unset otherwise (the runtime's 8) | The device runtime reads it as it starts. 1 keeps tensor-parallel communication ahead of the multiplies it overlaps, as Megatron advises with sequence parallelism; Megatron-FSDP version 1 refuses 1; Megatron-Core's local graphs warn when it is unset or below 16, advising 16 or 32 for GTP workloads |
 
-The trainer sets one more variable itself: `CUDA_HOME`, to the environment's
-own toolkit ([Running a case](#running-a-case)) where it exists, whatever
-the shell had, so that a kernel compiled when first used (NCCL EP's
-dispatch, with the `ncclep` backend) compiles with the toolkit the
-environment's builds used.
+The trainer sets two more variables itself, whatever the shell had:
+`CUDA_HOME`, to the environment's own toolkit
+([Running a case](#running-a-case)) where it exists, and `NCCL_HOME`, to
+the NCCL the setup laid out for NCCL EP's build (`<prefix>/nccl-home`)
+where it exists, unset otherwise; it also drops every `NCCL_EP_JIT_*`
+variable. So a kernel compiled when first used (NCCL EP's dispatch, with
+the `ncclep` backend, or HybridEP's) compiles with the toolkit and NCCL
+the environment's builds used.
 
 ## Data
 

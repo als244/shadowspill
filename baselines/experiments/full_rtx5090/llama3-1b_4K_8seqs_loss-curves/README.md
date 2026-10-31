@@ -44,5 +44,6 @@ python -u -m baselines.experiment \
 ```
 
 then the same command without `--dry-run`, which writes into `output/` in
-this folder. Every update's loss is in each case's `rank-NNNNN/result.json`
-(`losses`), and the row's measurement holds every rank's.
+this folder. Every measured update's loss is in each case's
+`rank-NNNNN/result.json` (`losses`), and the row's measurement holds every
+rank's; the warmup update's is in the case's `console.log`.

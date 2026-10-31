@@ -134,6 +134,8 @@ credited.
 | `--recompute F` | 0 or 1 (none) | AutoModel checkpoints every decoder layer or none: 1 is full activation checkpointing, 0 is none, and none leaves it to `--activation-checkpointing` |
 | `--warmup-steps`, `--steps` | updates (3, 5) | Excluded warmups and measured updates |
 | `--learning-rate`, `--weight-decay`, `--seed` | (3e-4, 0.01, 0) | Adam's rate (constant) and decay; betas 0.9 and 0.999, epsilon 1e-8, no clipping |
+| `--cpu-threads`, `--allocator-cap-gib G` | (1, none) | Intra-op threads per rank, the host optimizer's work included; a PyTorch caching-allocator limit, which excludes NCCL's and other external allocations |
+| `--[no-]nsys-capture` | (off) | Brackets the measured updates with the profiler; not a throughput result |
 
 `--verify-reference` is refused: the reference check compares updates of the
 catalog's own implementation, and this engine trains NVIDIA's.
@@ -429,29 +431,32 @@ and where the optimizer steps; an empty cell is the default's.
 ## LoRA
 
 LoRA is AutoModel's `PeftConfig` over the modules the shared LoRA
-definition's rules select (`workloads/lora`), applied to AutoModel's own
-module layout: every linear layer but the head, and the routed experts of
-each mixture block; inside a mixture block nothing else, unless the case's
-`shared_experts` adds its linear layers other than its router. The trainer
-builds the class AutoModel will build on the meta device, which holds no
-weights, selects the modules by those rules by module type, and passes their
-names as `target_modules`; the request records them
-(`automodel_lora_targets`). AutoModel adapts what a target matches and
-passes over a target that matches nothing, so the engine refuses a target
-that matches no module of the model AutoModel built. The adapters take the
-case's rank (`dim`), its alpha as given (AutoModel scales the adapters'
-output by alpha over `dim`) and its `factor_dtype`, the head frozen. A case
-takes the `rank`, `alpha`, `factor_dtype`, `head` (frozen) and
-`shared_experts` entries of `--lora`; LoRA adapts a pretrained model when it
-names `--checkpoint`, and AutoModel's own initialization otherwise.
+definition's rule for a model without a family preset selects
+(`workloads/lora`), applied to AutoModel's own module layout: every linear
+layer but the head, and the routed experts of each mixture block; inside a
+mixture block nothing else, unless the case's `shared_experts` adds its
+linear layers other than its router. The trainer builds the class AutoModel
+will build on the meta device, which holds no weights, selects the modules
+by that rule by module type, and passes their names as `target_modules`; the
+request records them (`automodel_lora_targets`). AutoModel adapts what a
+target matches and passes over a target that matches nothing, so the engine
+refuses a target that matches no module of the model AutoModel built. The
+adapters take the case's rank (`dim`), its alpha as given (AutoModel scales
+the adapters' output by alpha over `dim`) and its `factor_dtype`, the head
+frozen. A case takes the `rank`, `alpha`, `factor_dtype`, `head` (frozen)
+and `shared_experts` entries of `--lora`; LoRA adapts a pretrained model
+when it names `--checkpoint`, and AutoModel's own initialization otherwise.
 
 Each engine trains its framework's default LoRA layout over the shared
 definition's targets. AutoModel adapts each Hugging Face projection
 separately, so where the catalog fuses projections (Qwen 3.5's
-linear-attention inputs `w_qkvz` and `w_ba`, and the shared expert's
-`gate_up`), AutoModel's split ones (`in_proj_qkv`, `in_proj_z`, `in_proj_b`
-and `in_proj_a`; `gate_proj` and `up_proj`) each carry their own A factor, a
-few more trainable parameters than the catalog's; the routed experts'
+linear-attention input `w_qkvz` and the shared expert's `gate_up`),
+AutoModel's split ones (`in_proj_qkv` and `in_proj_z`; `gate_proj` and
+`up_proj`) each carry their own A factor, a few more trainable parameters
+than the catalog's. The rule also adapts linear layers the family presets
+leave frozen: Qwen 3.5's and Qwen 3.5 MoE's `in_proj_b` and `in_proj_a`, the
+beta and decay inputs the catalog keeps fused and frozen as `w_ba`, and with
+`shared_experts` Qwen 3.5 MoE's `shared_expert_gate`. The routed experts'
 factors are the catalog's shapes transposed. Engines are compared by total
 trainable parameters, the elements of every trainable tensor, which each row
 records from the model AutoModel built.
