@@ -35,8 +35,9 @@ Entry points and contracts, grouped by responsibility.
 - [Planning and step diagnostics](api/diagnostics.md)
 - [Timing: the step on the device clock](api/timing.md)
 
-The phase entrypoints are imported from `shadowspill`: builders, measurement,
-profile application, planning, artifact classes, Executor and Trainer.
+The phase entrypoints are imported from `shadowspill`: builders, parallelism and
+resource declarations, measurement, profile application, planning, reports,
+artifact classes, Executor, checkpoint helpers and Trainer.
 `shadowspill.memory` supplies pool configurations; `shadowspill.pytorch` supplies
 build policies and low-level integration. `shadowspill.training` supplies
 training-loop tools.

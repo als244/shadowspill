@@ -51,18 +51,19 @@ another machine, built by `remote()`:
 
 | argument | type | default | meaning |
 |---|---|---|---|
-| `capacity` | `int` | required | Bytes the daemon is asked for. Declared, not discovered: construction fails if the daemon cannot serve them, so a plan stays reproducible from its configuration. |
+| `capacity` | `int` | required | Bytes the daemon is asked for. Declared, not discovered: runtime construction fails if the daemon cannot serve them, so a plan stays reproducible from its configuration. |
 | `host` | `str` | required | Where the daemon is. |
 | `port` | `int` | required | Its TCP port. |
 | `selector` | `str` | `"host"` | Which memory the daemon should serve, in the daemon's own vocabulary. |
 
 It needs `libshadowspill_network.so`, which a build without it does not
-produce; asking for a remote pool without one raises where the pool is
-configured.
+produce; without that library, a runtime or calibration that opens the pool
+raises.
 
-`SSDPool`, built by `shadowspill.ssd.ssd()`, configures temporary direct-I/O
-storage and bounded host staging. See [SSD spill storage](ssd.md) for its
-capacity, directory, chunk-size and queue-depth arguments.
+`SSDPool`, built by `shadowspill.ssd.ssd()`, configures direct-I/O storage,
+temporary unless it is opened on a pool image, and bounded host staging. See
+[SSD spill storage](ssd.md) for its capacity, directory, staging, chunk-size,
+queue-depth and image arguments.
 
 `TransferRoute` is one directed relationship between two named pools, built
 by `transfer_route()`:
@@ -151,7 +152,8 @@ plan resolution.
 `Runtime` owns the installed allocator, the initialized `MemoryPool` and
 route registries, transfer calibration, pending and admitted plan handles,
 registered runtime objects, and the latest failure. Its public properties are
-`pools` (name to `MemoryPool`), `routes` (name to `RuntimeRoute`),
+`frontend` (the PyTorch `RuntimeFrontend` it was opened with), `pools` (name to
+`MemoryPool`), `routes` (name to `RuntimeRoute`),
 `transfer_capabilities` (a `TransferCapabilities` matrix of `TransferProfile`
 entries) and `last_failure` (a `RuntimeFailureDiagnostics` or `None`).
 
@@ -269,16 +271,19 @@ own layout lies; `slab_plan_id` and `slab_bytes` name the plan that reserved the
 range it lies in, and that range's size: the plan itself, unless its layout
 shares another's slab.
 
-`occupants(runtime, allocations)` maps each range to the framework objects whose
-storage lies inside it -- what the range is in PyTorch's terms. A range with no
+The runtime's frontend says what a range is in PyTorch's terms.
+`runtime.frontend.occupants(allocations, locate)` maps each range to the
+framework objects whose storage lies inside it, where `locate(address)` names
+the allocation that owns an address, as `allocation_id_for_address(runtime,
+address)` in `shadowspill.runtime.occupancy` does. A range with no
 occupant is held by something the framework does not own, and that is itself the
 answer: there is no reference for a caller to drop.
-`retainers(held)` then names where each of those objects is
+`runtime.frontend.retainers(held)` then names where each of those objects is
 *referenced from*, since a reference can only be dropped where it is held.
 Pass `ignore` the containers the question itself built, so the answer names
-holders rather than the query. Both
-compare addresses and return descriptions; neither keeps a reference, which
-would otherwise extend the lifetime of what is being investigated.
+holders rather than the query. Both compare addresses and keep no reference of
+their own, which would extend the lifetime of what is being investigated;
+`retainers` returns descriptions rather than references.
 
 ## Inputs, objectives, and partitioning
 
@@ -286,7 +291,7 @@ would otherwise extend the lifetime of what is being investigated.
 shape, dtype, optional stride, `requires_grad`, and layout.
 
 An objective may return a scalar loss tensor, `(loss, metrics)`, or `ObjectiveResult`. A bare
-tensor becomes the corresponding `StepResult.objectives` entry and has
+tensor becomes the corresponding `StepResult.losses` entry and has
 `metrics=None`. `ObjectiveResult` explicitly names the differentiable `loss`
 and arbitrary nondifferentiated `metrics`; each becomes the corresponding
 entry in the two per-round `StepResult` tuples. ShadowSpill validates this

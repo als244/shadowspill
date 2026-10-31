@@ -4,9 +4,10 @@ Declare logical ownership when building a Program. Measure DP compute on one
 representative GPU, calibrate communication separately, and plan on CPU. Every
 execution worker then loads the saved Plan, one per kind of GPU when ranks
 differ in hardware, and binds its logical rank.
-Only execution opens ShadowSpill pools. The current CUDA training path supports
+Only execution opens ShadowSpill's runtime pools. The CUDA training path supports
 symmetric DP with weights, gradients and optimizer data sharded over the same
-groups; broader declarations are described below with their implementation limits.
+groups; broader declarations and ranks that differ in hardware are described
+below with their implementation limits.
 
 ## Simple DP
 
@@ -47,7 +48,7 @@ that eight-rank layout. It uses 16 ranks without increasing the storage-sharding
 factor. Corresponding copies still require gradient reduction. Global sharding
 across all 16 ranks instead uses `ranks_per_replica=16, num_replicas=1`.
 Repeated replicas have ownership/reduction tests; their complete training path
-remains separate GPU qualification work.
+is outside the [qualification scope](#qualification-scope).
 
 ## Ownership and setup
 
@@ -76,9 +77,11 @@ only from `default_parameter_storage`.
 
 `ParameterStorage` has a common `group` and flat `weights`, `gradients` and
 `optimizer` modes (`"sharded"` or `"replicated"`). Optional `weight_group`,
-`gradient_group` and `optimizer_group` override the common group. Masters follow
-optimizer ownership. A storage group may contain only ranks that compute with
-copies of the same logical parameter slice.
+`gradient_group` and `optimizer_group` override the common group. Optional
+`min_shard_bytes`, also a `Parallelism.dp` argument and zero by default, keeps
+every component of a parameter whose unpadded physical weight storage is smaller
+replicated. Masters follow optimizer ownership. A storage group may contain only
+ranks that compute with copies of the same logical parameter slice.
 
 The modes govern parameters. A buffer is stored whole on every rank: it has no
 gradient or optimizer state to share a shard with, and a program that mutates
@@ -112,17 +115,20 @@ exchange = parallelism.group("partition")
 ```
 
 This describes ownership, not an executable EP recipe. The model supplies each
-local expert slice and the distributed operation. Builders now lower local
+local expert slice and the distributed operation. Builders lower local
 parameter shards and replicated optimizer updates alongside sharded DP. Their
-build/profile and CPU planning checks pass; multi-GPU execution qualification is
-pending. Model-owned communication still needs portable provider-resource binding.
+build/profile and CPU planning checks pass; their multi-GPU execution is outside
+the [qualification scope](#qualification-scope). Model-owned communication binds
+through [provider resources](../../architecture/resources.md), whose group
+references execution resolves to the process groups it creates.
 Weights and gradients may be replicated while optimizer data is sharded; when
-weights or gradients are sharded, their storage groups must currently match the
+weights or gradients are sharded, their storage groups must match the
 optimizer group. Other layouts need explicit redistribution.
-Equal contiguous model slices are represented today; noncontiguous maps,
-distributed input-placement maps and different graphs per logical rank remain
-unimplemented. The declaration API must not be mistaken for qualification of
-every layout it can describe.
+Equal contiguous model slices are represented; noncontiguous maps and
+distributed input-placement maps are not, and ranks' Programs differ only as
+[Ranks on different hardware](#ranks-on-different-hardware) describes. The
+declaration API must not be mistaken for qualification of every layout it can
+describe.
 
 ## Data loading and objective normalization
 
@@ -271,7 +277,9 @@ same Executor. A prebuilt evaluation Plan can share its current model tensors.
 Every invocation of a Plan that issues collectives first checks that all workers
 selected the same Plan and options. A Plan that issues none, such as an
 evaluation Plan over replicated weights, runs on each worker by itself, so
-workers may invoke it different numbers of times.
+workers may invoke it different numbers of times. A Plan whose model's provider
+resources hold communicator groups issues collectives inside its own tasks, so
+it always meets the other workers.
 Neither API builds, profiles or replans during execution.
 
 ## Transfer lifetimes and optimizer ordering
@@ -286,14 +294,15 @@ Fetch/evict readiness and buffer retirement cover the complete compound transfer
 Their host-copy bytes and collective costs are separate simulator phases.
 Transfers can overlap unrelated compute. Generated optimizer communication stays
 on the ordered compute lane; it does not introduce independent readers whose
-completion could outlive the recorded last task. Planning chooses either tail
-updates or stage-interleaved updates after all required old-weight reads.
+completion could outlive the recorded last task. Planning places updates after
+all required old-weight reads, interleaved with stages or at the tail as
+`plan_program(optimizer_ordering=...)` selects (`"stage_interleaved"` by default).
 
 The reduction logic counts ranks holding the same logical parameter, including
 copies of model shards across repeated groups. When a reduced gradient is fetched
 for further accumulation, the previous contribution is injected once before the
 next reduction; it must not be multiplied by the number of participants.
-Broader repeated-replica execution still needs qualification.
+Complete repeated-replica training is outside the qualification scope.
 
 A provider's private streams remain its responsibility. Its work must join the
 task's current stream before that task's completion event. Tensor/mutation and
@@ -311,7 +320,7 @@ stable parameter/element identities, not a rank-dependent traversal RNG.
 
 Checkpoint helpers stream owned tensor chunks. Use distinct archive paths per
 logical rank. A checkpoint rejects a different logical rank, but can be restored
-by another launcher rank assigned to that same logical rank. Current helpers
+by another launcher rank assigned to that same logical rank. The helpers
 assume unchanged topology and do not reshard a checkpoint automatically.
 See [Trainer checkpoints](training.md) for loop/source state and frozen-base
 partial checkpoints.
@@ -323,6 +332,6 @@ forward/backward/AdamW execution, save/recompute choices, bounded initialization
 checkpoint restoration and shared evaluation. Tiny catalog full-training and
 LoRA also have separate distributed checks. These do not qualify every model,
 provider, repeated-replica layout or arbitrary model-owned communication path.
-The migrated baseline controller has also passed full-training and LoRA checks
+The baseline controller has also passed full-training and LoRA checks
 on two H100s. The [phase guide](../../architecture/offline-pipeline.md) describes the
 implementation boundary; [phase artifacts](artifacts.md) describes persistence.

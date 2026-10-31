@@ -7,7 +7,8 @@ its selected code and applied profiles. Checkpoint tensors and compatible
 runtime/provider libraries remain external. See the
 [artifact API](api/artifacts.md#persistence-and-reports).
 
-`write_report(result, directory)` writes human-readable tables and timelines.
+`write_report(result, path)` writes human-readable tables and timelines into the
+directory `path`.
 Reports and disposable compiler caches are separate from saved phase artifacts.
 Neither is required to load a Plan.
 
@@ -57,9 +58,10 @@ The store's `artifacts()` method returns the files touched by that cache instanc
 ## Roots and policies
 
 `ArtifactStore.resolve(root, build_store=..., plan_store=...)` can place the
-build and planning trees under separate roots. Omitting `root` uses
-`~/.cache/shadowspill/v<N>`. `export_bypass_key` adds an explicit caller-provided
-identity to adapters that consume it; it does not control compiler cache paths.
+build and planning trees under separate roots. A `root` of `None` uses
+`~/.cache/shadowspill/v<N>`. `export_bypass_key` is a caller-provided label the
+store validates and keeps; no entry is keyed or filed under it, and it does not
+control compiler cache paths.
 
 `build_store_mode` and `plan_store_mode` apply independently:
 

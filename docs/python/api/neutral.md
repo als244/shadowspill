@@ -1,9 +1,9 @@
 # Framework-neutral Python API
 
-These packages expose the errors, the IR, the step's shape, the artifact store,
-the planner, the simulator, and physical admission. Nothing here imports a
-framework, so a saved program can be planned, simulated, and admitted with no
-model and no device present.
+These packages expose the errors, the IR, the step's shape, a task's records,
+the artifact store, the planner, the simulator, physical admission and the
+runtime. Nothing here imports a framework, so a saved program can be planned,
+simulated, and admitted with no model and no device present.
 
 ## `shadowspill.errors`
 
@@ -100,9 +100,9 @@ once. Invalid construction or cross-reference raises `ValidationError`.
 
 ## `shadowspill.step`
 
-A training step's shape and provenance, with no framework present. Two values,
-both readable and serializable with no PyTorch installed, which is what lets a
-corpus collected on one machine be planned on another.
+A training step's microbatch ordering, with no framework present: one value,
+readable and serializable with no framework installed, which is what lets CPU
+planning choose and record it.
 
 ### `StepDataOrdering`
 
@@ -201,11 +201,12 @@ ArtifactStore.resolve(
 
 `value` is the root both trees live under, or `None` for the default cache;
 `build_store` and `plan_store` root one tree elsewhere; the two modes say what
-this run may do with each tree; `export_bypass_key` is the caller's name for
-the code the artifacts were produced from, under which they are filed. Every entry point's store
-arguments are resolved here; the [cache guide](../artifact-store.md) defines them. `initialize()` creates the
-tree, `artifacts()` returns the `PlanningArtifact` records this call touched,
-and `record(...)` adds one.
+this run may do with each tree; `export_bypass_key` is a caller-provided
+identity the store validates and carries, and no key or path in either tree
+includes it. Every entry point's store arguments are resolved here; the [cache
+guide](../artifact-store.md) defines them. `initialize()` creates the tree,
+`artifacts()` returns the `PlanningArtifact` records this call touched, and
+`record(...)` adds one.
 
 `PlanningArtifact` is one such record: its `category` and `kind`, the `digest`
 it is keyed by (SHA-256, or `None` for an unkeyed entry), the `path` it landed
@@ -217,12 +218,13 @@ was derived from.
 tuple. `StorePolicy` turns one mode into the four gates the code checks --
 `read_enabled`, `write_enabled`, `overwrite` and `require_hit` -- which is what
 stops a caller spelling out a combination that means nothing;
-`StorePolicy.for_mode(mode)` builds one, `refuse_miss(what, key, request=None)`
+`StorePolicy.for_mode(mode)` builds one, `refuse_miss(what, key, *, request=None)`
 raises the refusal that names the fix -- and, when the store passes `request`,
 what the key was made of, so a miss can be read against the records the store
 holds -- and `CONTRIBUTE` is the default policy. `digest_directory(root, digest)`
-is where one digest's entry lives under a tree. `atomic_json(path, value)` and
-`atomic_text(path, value)` are the writers every record goes through, written
+is where one digest's entry lives under a tree. `atomic_json(path, value)`,
+`atomic_text(path, value)` and `atomic_write(path, write)`, which hands `write`
+a binary file to fill, are the writers every record goes through, written
 beside their destination and renamed into place, so a reader never sees a
 partial record. `ArtifactRecorder` is the callback a store takes to publish
 each artifact it touched as a `PlanningArtifact`; the capture and plan caches
@@ -249,6 +251,8 @@ search to any plan it was handed, and physically admits the winner. When the
 planning store already holds the answer, the plan is read back with the
 simulation and the fixed-layout certificate recorded beside it and nothing is
 simulated or placed; when it holds a refusal, that refusal is raised again.
+Handed a plan to beat, `plan_program()` asks the search again when that plan is
+faster than the stored answer or the store holds a refusal.
 `summarize_plan()` asks the store the same question and reads only the summary
 it keeps beside a certified plan, for a caller that compares many plans and
 runs one.
@@ -287,7 +291,7 @@ plan_program(
 |---|---|---|---|
 | `problem` | `ShadowSpillPlanningProblem` | required | The question to answer, normally a constructed problem or a value read with `ShadowSpillPlanningProblem.from_value()`. |
 | `execution_budget` | `int` \| `None` | `None` | Device bytes to plan for; the problem's own budget when `None`, and never more than the capacity it was compiled and profiled under. |
-| `spill_budget` | `int` \| `None` | `None` | Spill bytes to plan for, with the same bound. |
+| `spill_budget` | `int` \| `None` | `None` | Spill bytes to plan for; the problem's own spill capacity when `None`, with no ceiling, since nothing measured depends on the spill pool's size. |
 | `transfer_bandwidths` | `TransferBandwidths` \| `None` | `None` | Fetch and evict rates to price copies at; the problem's embedded calibration when `None`. |
 | `search_options` | `SearchOptions` \| `None` | `None` | How to answer the question. `None` runs the search that ships with its defaults. A problem carries none of this, because a problem is a question and how to answer it belongs to whoever plans it. |
 | `incumbent` | `AnnotatedProgramPlan` \| `None` | `None` | The plan to beat, for the same program, found under another budget. |
@@ -295,7 +299,7 @@ plan_program(
 | `plan_store` | path \| `None` | `None` | Roots the planning tree of its own, so one store serves many runs that each own their plans. |
 | `verbose` | `bool` | `True` | Reports search progress as it runs. |
 | `plan_store_mode` | `"contribute"` \| `"reuse"` \| `"require"` \| `"refresh"` | `"contribute"` | What this call does with the planning tree. |
-| `export_bypass_key` | `str` \| `None` | `None` | The caller's name for the code the plan was measured against; artifacts are filed under it. |
+| `export_bypass_key` | `str` \| `None` | `None` | A caller-provided identity the store validates and carries; the plan key does not include it. |
 | `keep_resolutions` | `bool` | `False` | Files every resolved program's best plan beside the answer, certified like it, when the search runs: what each way of fixing the alternatives found, to read against the answer. Each is as large as the answer, and a resolution the search bounded away before it placed a plan has none; `deterministic` search options make every resolution report the plan it found. |
 
 Raises `TypeError` when `search_options` is neither a `SearchOptions` nor
@@ -389,10 +393,10 @@ exists.
 
 ### Physical admission
 
-`plan_program` deducts measured fixed overhead and communication reservations
-from the total GPU budget, then checks task allocations and transfer lifetimes
-through the planner's native admission and placement code. `Plan.memory_layout`
-contains the resulting fixed offsets. See [physical admission](../../architecture/physical-admission.md).
+The phase-level `shadowspill.plan_program` deducts measured fixed overhead and
+communication reservations from the total GPU budget, then checks task
+allocations and transfer lifetimes through the planner's native admission and
+placement code. `Plan.memory_layout` contains the resulting fixed offsets. See [physical admission](../../architecture/physical-admission.md).
 
 For lower-level tools, `shadowspill.planner.admission.placement.place_lifetimes`
 places explicit byte/alignment/lifetime records. The runtime's
@@ -424,8 +428,10 @@ Search diagnostics:
 the `search_options` it was told, the `initial_residency` and `final_residency`
 it honoured, the `simulation_config` it was priced against, the chosen
 `schedule` and `selections`, the `simulation` that priced them, its
-`diagnostics`, the `resident_slice` of objects held resident throughout, and
-the `admission_facts` and `placement_facts` it was planned under.
+`diagnostics`, the `resident_slice` of objects held resident throughout, the
+`admission_facts` and `placement_facts` it was planned under, and the
+`resolutions`: every resolved program's best plan when the search was asked to
+keep them, and empty otherwise.
 
 `PlanningWorkDiagnostics` counts what the search did and carries a
 `PlanningSectionTiming` saying where the time went. Sections are disjoint spans
@@ -445,11 +451,12 @@ their spans overlap.
 `ReductionStep` is one plan a candidate held: its makespan, the bytes its
 layout needed, the capacity it was built against, the objects the reducer cut
 to reach it, and what became of it -- simulated, measured, placed, refined,
-best so far, or the answer. `CandidateDiagnostic.steps` is the whole trajectory
-in order, and is empty unless `record_reduction_steps` asked for it.
+best so far, the answer, or moved: its layout overran the pool and a fetch was
+moved later after it. `CandidateDiagnostic.steps` is the whole trajectory in
+order, and is empty unless `record_reduction_steps` asked for it.
 
-`PlanningRepairDiagnostics` records what one candidate's monotonic repairs did
-and why they stopped.
+`PlanningRepairDiagnostics` counts one candidate's monotonic repairs by what
+refused the plan and what the repair did about it.
 
 `GraphPairOutcome` is what one graph-pair selection cost, read off a finished
 result: its `selection_id`, how many groups it asked to recompute
@@ -457,8 +464,10 @@ result: its `selection_id`, how many groups it asked to recompute
 or `None` when no candidate fit, the compute it asked for and the cheapest any
 selection could (`selected_compute_seconds`, `unconstrained_seconds`, their
 difference as `recomputation_overhead_seconds`, the rest of the makespan as
-`waiting_seconds`), how many candidates were `valid` of those evaluated, and
-the bytes its best plan fetched and evicted.
+`waiting_seconds`), how many candidates were `valid` of those evaluated, the
+bytes its best plan fetched and evicted, and how long each lane was busy in it
+(`fetch_busy_ns`, `evict_busy_ns`), or `None` when the result holds no
+simulation of that plan.
 `shadowspill.planner.diagnostics.graph_pair_outcomes(result)` derives one per
 resolved program of a `ProgramPlanResult`, ordered by how many groups
 recompute, from the program's task profiles and the search's own record --
@@ -507,7 +516,7 @@ with tracing, including on cache hits. `trace_candidates:
 tuple[tuple[str, str], ...] | None = None` instead names explicit
 `(selection_id, candidate_id)` pairs to record. Both fields are excluded from
 `to_dict()`, stored requests and plan keys, like `workers`; deserialization
-leaves them `None`. This currently requires a single device and
+leaves them `None`. Recording requires a single device and
 `generic.deterministic=True`. The returned plan is unchanged. See
 [cut traces](../pressurefit-trace.md) for recording, replay and semantic labels.
 
@@ -528,11 +537,12 @@ writes the keyed half and `from_dict(value, path)` reads it back, rebuilding the
 search from its name and handing it its own options; `workers` appears in
 neither and comes back zero.
 
-A worker count is one thread per `(resolved program, candidate)` pair, so it is
-independent of how many resolved programs a call has. It does change how many
-candidates get skipped against the shared placement record, so per-candidate
-counters move with it. Python owns none of these threads: one call gets its own
-workers, and two callers planning at once do not contend.
+A worker is one thread taking one `(resolved program, candidate)` pair at a
+time, so the worker count is independent of how many resolved programs a call
+has. It does change how many candidates get skipped against the shared
+placement record, so per-candidate counters move with it. Python owns none of
+these threads: one call gets its own workers, and two callers planning at once
+do not contend.
 
 `GenericPlanningOptions` is what every search is told, whichever one runs.
 
@@ -545,7 +555,7 @@ Each lease the floor holds gets a static home in the `ResidentSlice` the result
 carries, and the capacity the search plans against is reduced by that slice, so
 those bytes are never charged again. A slice a budget cannot hold is reported as
 infeasible rather than quietly relaxed. These reserved homes are distinct even
-when their lifetimes do not overlap. Many small tensors (for example, quantization
+when their lifetimes do not overlap. Many small objects (for example, quantization
 scales or low-rank factors) can therefore reserve significant capacity; lower the
 threshold or set it to zero to let their leases use the ordinary reusable layout.
 
@@ -652,11 +662,13 @@ pressurefit(
 | `progress` | `(str) -> None` \| `None` | `None` | Receives one line per search milestone. |
 | `incumbent` | `ProgramPlanResult` \| `None` | `None` | The plan to beat, as a result for this same program. It reaches the resolved program it was found for; a search over resolution options that exclude that one carries none. |
 | `best` | `BestPlaced` \| `None` | `None` | A placement record shared with a wider search, so this call is bounded by what that search already placed. `None` means this call starts from nothing and keeps its own. |
+| `keep_resolutions` | `bool` | `False` | Materialises every resolved program's selected schedule the way the answer's is, and reports them beside it as the result's `resolutions`. |
 
 The result records the effective object capacity and the `AdmissionFacts` it
 was planned under. Raises `PlanInfeasibleError` when every resolution is
-analytically infeasible at this capacity, and `ValueError` when the incumbent
-is a plan for a different program.
+analytically infeasible at this capacity or no candidate fits,
+`PlanSearchExhaustedError` when no candidate fits and one stopped at its repair
+budget, and `ValueError` when the incumbent is a plan for a different program.
 
 `PressureFitOptions` is this search's own record, and lives with it under
 `shadowspill.planner.search.algorithms.pressurefit` rather than on
@@ -802,8 +814,8 @@ PyTorch callers construct `shadowspill.pytorch.Runtime` instead, which supplies
 that frontend and takes the same remaining arguments; [the frontend
 page](frontend.md#runtime) documents them, the pools a runtime holds, and what a
 closing plan leaves behind. Allocator selection is process-global and
-irreversible, so exactly one runtime is opened per process, before any device
-tensor exists.
+irreversible, so exactly one runtime is opened per process, before the
+framework makes any device allocation.
 
 `runtime.frontend` is the frontend it was opened with, and is the only route
 from a runtime to a framework.
@@ -838,13 +850,13 @@ step.
 | Call | Answers |
 |---|---|
 | `Marker(runtime_handle)` | a marker, before anything is recorded on it |
-| `marker.record(stream)` | records this instant on the framework's own stream, named by the integer handle it already has, replacing any instant before it |
+| `marker.record(compute_stream)` | records this instant on the framework's own stream, named by the integer handle it already has, replacing any instant before it |
 | `marker.reached()` | whether the device has reached it, without waiting |
 | `marker.wait()` | blocks the calling thread until the device reaches it |
 | `marker.nanoseconds_since(earlier)` | the time between two markers, or `None` while the later one is still ahead of the device |
 | `marker.release()` | gives the event back to the runtime; also a context manager |
 | `nanoseconds_between(earlier, later)` | the same span for a caller that has already waited: raises rather than answering `None` |
-| `wait_for_stream(runtime_handle, stream)` | blocks until the device has finished everything on a stream |
+| `wait_for_stream(runtime_handle, compute_stream)` | blocks until the device has finished everything on a stream |
 
 Measuring needs the device to have passed the marker, so every read says whether
 it has rather than blocking. A caller that must block waits for the marker, which
@@ -872,8 +884,8 @@ recalibrating.
 | Value | Is |
 |---|---|
 | `RuntimeConfigurationError` | a runtime or plan asked for incompatible pool resources |
-| `RuntimeExecutionError` | a call failed against a live runtime, carrying the latched diagnostics |
-| `RuntimeFailureDiagnostics` | what the runtime latched about the first and most recent failure |
+| `RuntimeExecutionError` | a call failed against a live runtime, carrying the latched diagnostics when there are any |
+| `RuntimeFailureDiagnostics` | what the runtime latched about its first failure |
 | `ExecutionTaskIdentity` | which task a latched failure belongs to |
 
 [Failures and cleanup](../failures.md) shows what raises them.

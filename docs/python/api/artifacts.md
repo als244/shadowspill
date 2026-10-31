@@ -29,7 +29,9 @@ known workspace information, but no invented durations.
 `parallelism` declares logical ranks/groups independently of live process groups.
 `setup` identifies the target and relevant builds. Finalized code is packaged in
 `executables`; `bindings` records its portable input, output and initialization
-requirements. Checkpoint tensors and live backend resources remain external.
+requirements. `resources` describes provider resources by importable factory,
+options and logical groups. Checkpoint tensors and the live resources those
+factories return remain external.
 
 Training builders accept either `example_args`, `example_kwargs` and
 `num_examples`, or optional `example_calls=[(args, kwargs), ...]` for different
@@ -123,9 +125,10 @@ archive containing a versioned JSON description and checksummed payloads.
 Shared executable payloads are deduplicated within that archive. Inductor/Triton
 caches are separate and never required to pass artifacts between phases.
 
-`write_report(plan_or_sweep, directory)` is separate from persistence and is
-CPU-only. It writes the simulated timeline and memory/budget summaries. No
-runtime allocator or automatic profiling is invoked to render a report.
+`write_report(result, path)` is separate from persistence and is CPU-only. It
+writes the simulated timeline and memory/budget summaries into the directory
+`path`. No runtime allocator or automatic profiling is invoked to render a
+report.
 
 ## Lower-level planning records
 

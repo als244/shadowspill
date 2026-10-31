@@ -38,16 +38,17 @@ refuses it instead. Pool bounds and device allocation failures are enforced
 either way.
 
 `spill=SSDPool(...)` or `spill=RemotePool(...)` selects storage when Trainer creates
-its Executor; pass it directly to an existing Executor instead. Pinned-host storage
+its Executor; a supplied Executor takes it at construction. Pinned-host storage
 is the default. Capacity must equal the Plan's spill budget, and its communication
 costs must describe the selected backend. Build/profile/planning open no spill pool.
-See [SSD storage](ssd.md) for setup, bounded I/O and current sharded-transfer limits.
+See [SSD storage](ssd.md) for setup, bounded I/O and sharded transfers.
 
 ## Inputs, objectives and results
 
 `step(args=..., kwargs=...)` takes sequences of positional tuples and keyword
 mappings, one entry per example. Alternatively,
-`input_loader(index) -> (args, kwargs)` supplies inputs in the plan's chosen order.
+`input_loader(index) -> (args, kwargs)` supplies the example at each index; the
+Plan chooses the order its tasks consume them.
 The objective controls normalization across examples; Trainer does not infer
 weights from batch size or sequence length. Input trees support arbitrary model
 arguments, not only text tokens.
@@ -83,12 +84,12 @@ with `run(plan="evaluation", ...)`.
 
 `hyperparams` supplies per-call optimizer controls declared during build and scalar
 fills of persistent model buffers by their qualified names. For example,
-`hyperparams={"lr": 0.001, "loss_scale": 2.0}` changes the learning rate and fills
-the model's `loss_scale` buffer before the call. Omitted optimizer controls use
-their captured defaults; omitted model buffers keep their current values. Model
-parameters, nonpersistent buffers and tensor-wrapper components cannot be set
-this way. Sharded buffer fills affect only owned elements and require a dense
-full-storage view.
+`hyperparams={"optimizer_group.0.lr": 0.001, "loss_scale": 2.0}` changes the first
+parameter group's learning rate and fills the model's `loss_scale` buffer before
+the call. Omitted optimizer controls use their captured defaults; omitted model
+buffers keep their current values. Model parameters, nonpersistent buffers and
+tensor-wrapper components cannot be set this way. Every rank stores a buffer
+whole, so under data parallelism a fill sets each rank's own copy.
 
 A `schedules` mapping passed to Trainer maps control names to
 `callable(completed_steps)`. Explicit per-call values override schedule outputs.
@@ -150,6 +151,47 @@ per call with `run(collect_parameter_norms=False)`. Collection defaults to enabl
 for its training Plan and disabled for named evaluation Plans. A Trainer supplied
 with an existing Executor requires that Executor to enable norms when N is nonzero.
 
+## Logger helpers
+
+`shadowspill.training.logging` holds two optional loggers to pass as
+`fit(logger=...)`. Importing it does not import W&B.
+
+`Wandb(*, project, run_dir, **options)` opens one W&B run in `run_dir`,
+passing `options` such as `entity`, `name`, `id` or `resume` to `wandb.init`.
+It logs every key of a record at the record's `step`, the completed update
+count, beside W&B's own system telemetry, and logs the tables of a
+`metric_reducer`'s `MetricSummary` whenever `fit` reaches `tables_every`. On
+opening it writes `wandb_run.json` into `run_dir` with the run's `project`,
+`id`, `name` and `url`, so whoever launched the worker can say where the run
+went; the text runner prints that URL once execution completes. `close()`
+finishes the run, with exit code 1 when a `with` block ends in an exception.
+
+`DistributedLogger(control_group, *, run_dir, wandb=None, device=None,
+reduce=sum_rank_records, max_pending=256, timeout=120)` adds one aggregate of
+the ranks' records to the per-rank console and JSONL output Trainer keeps.
+Every rank constructs and closes it in the same order over a CPU Gloo group.
+Background threads exchange completed CPU records through that group's store,
+so a step gains no collective and no task barrier; ranks must log the same
+steps in the same order, `max_pending` bounds the records a rank has in
+flight, and `timeout` how long a missing rank's record is awaited. The group's
+first rank passes the ranks' matching records, in group order, to `reduce` and
+writes the combined record, which must keep `step`, to the console and
+`run_dir/aggregate/metrics.jsonl`. With a `wandb` mapping, which must name a
+`project`, every rank also opens a run of its own under `run_dir/rank-NNNNN`,
+monitoring `device` (the current device by default), and the first rank an
+aggregate run under `run_dir/aggregate`; reducer tables stay in the rank runs.
+
+The default reducer, `sum_rank_records` (importable from the same module), sums
+`train/loss` and `train/work_units`, takes the largest `train/step_seconds`,
+`train/elapsed_seconds` and `eval/seconds`, and derives
+`train/units_per_second`. Summing `train/loss` relies on each rank's training
+loss already being its share over the step's global normalizer, which the
+objective provides. Nothing in the core says the same of an evaluation loss, so
+the default deliberately leaves `eval/loss`, like every other metric,
+rank-local. An application whose ranks each report a share of one evaluation
+mean supplies a reducer that sums it too, as `sum_shares` in
+`workloads/recipes/text/experiment/logging.py` does for the text recipes.
+
 ## Checkpoints
 
 `save(path, source=None, chunk_bytes=...)` streams model tensors, masters,
@@ -183,10 +225,8 @@ trainer.load("update.ssp", fill_tensor=fill_tensor)
 The loader fills Executor-provided CPU chunks for omitted base parameters only.
 Restore requires the same identity and explicit loader, even in an initialized
 worker. Every retained tensor must come from the checkpoint; a missing adapter,
-buffer or optimizer tensor is an error. Older Programs without trainability
-metadata can still save full checkpoints, but must be rebuilt to omit frozen
-parameters. Named evaluation Plans remain read-only with respect to shared model
-tensors.
+buffer or optimizer tensor is an error. Named evaluation Plans remain read-only
+with respect to shared model tensors.
 
 ## Reuse preparation across budgets and processes
 
@@ -201,8 +241,8 @@ All builders take one `parallelism` argument. `Parallelism.dp(...)` describes
 logical model replicas and weight/gradient/optimizer storage sharding; actual
 process groups are bound later from the saved declarations and a complete rank
 map. Simple DP compute profiling uses one representative device. Distributed
-execution is qualified for the common sharded-DP path; broader combinations
-remain separate qualification work. See [distributed status](distributed.md).
+execution is qualified for the common sharded-DP path; [distributed
+status](distributed.md) states the scope.
 
 ## Startup diagnostics
 

@@ -16,8 +16,8 @@ where the digest is the selection's `program_digest`. A certified plan's
 admitted layout is in `certificate.npz` beside its selection, and the tool
 reads the two together; a selection with no certificate beside it is read as
 it stands. The tool finds the program from the selection; `--program` names
-one explicitly. These are low-level planner artifacts. For current phase archives and
-quickstart results, use `write_report(plan_or_sweep, path)`.
+one explicitly. These are low-level planner artifacts. For phase archives and
+quickstart results, use `write_report(result, path)`.
 
 Some entries under `results/` name a plan without carrying its evidence (no
 `simulation_result`); the tool refuses those and says so.
@@ -25,7 +25,8 @@ Some entries under `results/` name a plan without carrying its evidence (no
 ```text
 python -m shadowspill.diagnostics.occupancy <selection.json>
     [--program program.json] [--step steps/12gib.json] [--tokens-per-step N]
-    [--by category|role] [--at 5.46,11.05] [--html DIRECTORY] [--json]
+    [--unconstrained] [--all-save] [--by category|role] [--at 5.46,11.05]
+    [--html DIRECTORY] [--json]
 ```
 
 | argument | meaning |
@@ -38,7 +39,7 @@ python -m shadowspill.diagnostics.occupancy <selection.json>
 | `--by` | Group by the tool's categories (the default) or by the program's object roles. |
 | `--at` | Seconds into the step to add as columns beside the peak. |
 | `--tokens-per-step` | The step's tokens, for the tokens-per-second figure in the page's summary. |
-| `--html` | A directory to write the pages into: one page per view, `simulated.html` and `traced.html`, and an `index.html` that links them and carries the tables. Each page names its pool capacities under the title. |
+| `--html` | A directory to write the pages into: one page per view, `simulated.html` and `traced.html`, and an `index.html` that links them and carries the tables. The simulated and traced pages name their pool capacities under the title. |
 | `--json` | The snapshots as JSON instead of tables. |
 
 ## What the tables say
@@ -77,8 +78,9 @@ category, from its role and the phases of the tasks that make and read it:
 | task workspace | A task's scratch in the execution pool, the layout's own lease. |
 | buffers, outputs | The program's roles of those names: registered buffers such as rotary tables, and the step's outputs. |
 
-`--by role` groups by the program's roles instead: `parameter`,
-`optimizer_state`, `gradient`, `activation`, `buffer`, `control`, `output`.
+`--by role` groups by the program's roles instead: `input`, `parameter`,
+`optimizer_state`, `gradient`, `activation`, `buffer`, `control`, `output` and
+`other`; task workspace keeps its own name.
 
 ## The rules
 
@@ -147,14 +149,15 @@ are read against one time axis.
   program's profiles, the number the planner reports), each lane's
   utilisation, the share of the span the lane is busy, the bytes each lane
   moved over the step, and the rate that comes to, beside the bandwidth the
-  plan was priced at; the page's subtitle names the assumed fetch and evict
-  bandwidths and recorded latency. Latency is metadata and is excluded from
-  simulated transfer timing. A simulated page achieves what it assumed by
+  plan was priced at; the page's subtitle names the planned solo and
+  concurrent fetch and evict bandwidths. Latency is metadata and is excluded
+  from simulated transfer timing. A simulated page achieves what it assumed by
   construction; a traced page shows what the device did against it. The
-  line under the title names the step: for a run's pages the model, the
-  geometry (sequences per microbatch, microbatches, ordering), the tokens
-  a step, the execution budget and the pool it resolved to, and the spill
-  capacity; for one selection given by hand, the two capacities.
+  line under the title names the step: what a caller passes to
+  `describe_plan` -- the model, the geometry (candidate, microbatches,
+  ordering), the tokens a step, the execution budget and the pool it resolved
+  to, and the spill capacity -- or, for one selection given by hand, the two
+  capacities.
 - **pools**: one stacked area per pool, the categories in a fixed order with
   state at the bottom, the pool's capacity as a dashed red line and its peak
   as a dotted amber one. Hovering gives the values at that instant. On the
@@ -165,13 +168,16 @@ are read against one time axis.
   compute bars by the task's phase, and the legend keeps the two apart; the
   backward task of a group chosen as `recompute` opens in a recompute colour
   for the length of its regeneration, the group's profiled cost beyond its
-  `save` option, then continues in the backward colour. A transfer bar runs
-  from the transfer's start on its lane to its finish, never from its issue,
-  which can come long before. Hovering names the task or the object, its
-  bytes, its times and the rate the copy achieved. A transfer the trace
-  could not time -- a record whose lane reported no start or finish, or
-  none at all -- is left off the lanes, its trigger task's end stands in
-  where a walk needs its time, and the subtitle counts them.
+  `save` option, then continues in the backward colour. On the traced page a
+  transfer bar is split by operation instead -- the host copies and
+  collectives the trace timed, and the time no event accounts for -- and
+  coloured by it. A transfer bar runs from the transfer's start on its lane
+  to its finish, never from its issue, which can come long before. Hovering
+  names the task or the object, its bytes, its times and the rate the copy
+  achieved. A transfer the trace could not time -- a record whose lane
+  reported no start or finish, or none at all -- is left off the lanes, its
+  trigger task's end stands in where a walk needs its time, and the subtitle
+  counts them.
 
 Dragging across a span zooms to it, shift-dragging pans, scrolling zooms
 around the cursor, `fit` resets, and the buttons zoom in steps. A lane is rasterised by pixel column: a column is
@@ -204,14 +210,15 @@ backlog and physical placement construction, see the source-tree
 module's role attribution and interval accounting and accept the annotated
 plans written by the collection workflow.
 
-`shadowspill.diagnostics.occupancy.attribute(selection, program, diagnostics=None)`
+`shadowspill.diagnostics.occupancy.attribute(selection, program, *, diagnostics=None)`
 takes the three files' contents as mappings (`unconstrained(program,
 selections)` takes the program and a plan's choices, `all_save(program)` the
 program alone); `shadowspill.planner.plan_store.reader.read_stored_selection(path)`
 gives a stored selection with its certificate merged in under
 `admission_certificate`, which is the mapping `attribute` reads. `attribute`
 returns a `PlanOccupancy` with `spill` and `execution` (`Occupancy` objects
-with `at`, `peak`, `peaks_by` and `series`), the `tasks` and `transfers` as
-spans, the `facts` the attribution rests on and, on the device's clock,
-`interpolated_leases`, the lease instants no traced event named;
-`write_pages` and `table` take those.
+with `at`, `peak`, `peaks_by` and `series`; `execution` is `None` without an
+admitted layout), the `tasks` and `transfers` as spans, the `facts` the
+attribution rests on and, on the device's clock, `interpolated_leases`, how
+many lease instants no traced event named, and the step's `collectives` and
+`transfer_phases`; `write_pages` and `table` take those.

@@ -85,12 +85,12 @@ workspace are separate from this payload cap.
 
 ## A pool image: import frozen state once
 
-Pool images remain a low-level facility while their adoption into saved Executor
-plans is pending. `ssd(..., create_image=True, image=...)` creates the persistent
-pool file. The image manifest describes named tensors and storage offsets;
-`ssd(..., image=...)` opens those bytes read-only, with new state in a separate
-scratch file. The existing GLM conversion tool uses this facility. Saved-plan
-workers currently use bounded checkpoint loaders instead of adopting pool images.
+Pool images are a low-level Runtime facility. `ssd(..., create_image=True,
+image=...)` creates the persistent pool file. `ssd(..., image=...)` opens an
+existing image read-only as the pool's first bytes, with new state in a separate
+scratch file; Runtime reserves the image's range for its whole life, and a write
+into the image fails. Executor and `measure_communication` refuse a pool with an
+image: saved-plan workers load state through bounded checkpoint loaders instead.
 
 ## Bounded initialization and checkpoints
 

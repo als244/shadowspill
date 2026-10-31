@@ -37,8 +37,8 @@ Two identity rules matter:
 
 1. A `ShadowSpillProgram.digest` covers the complete logical program.
 2. An `AnnotatedProgramPlan.digest` covers what was planned, not how it was
-   found: it excludes `selection.from_store`, the search diagnostics at both
-   levels (`selection.diagnostics` and each attempt's
+   found: it excludes the derived `summary`, `selection.from_store`, the search
+   diagnostics at both levels (`selection.diagnostics` and each attempt's
    `search_diagnostics`), and the whole `timing` block, while retaining
    the source program, budgets, transfer bandwidths, selected schedule and
    residency, the simulation, and the physical certificate.
@@ -86,7 +86,7 @@ An abridged `ShadowSpillProgram` has this shape:
 | `schema` | Exact schema label used for versioned parsing. |
 | `devices` | Logical execution devices and their process-local indices. |
 | `alias_groups` | Physical logical storage roots; capacity is charged at this level. |
-| `objects` | Named tensor views into alias groups. |
+| `objects` | Named views into alias groups. |
 | `profiles` | Deduplicated task runtime/workspace measurements. |
 | `tasks` | Topologically ordered executable/control tasks. |
 | `task_alternative_groups` | Mutually exclusive task and retention alternatives, one option of which the search chooses per group. |
@@ -96,12 +96,17 @@ An abridged `ShadowSpillProgram` has this shape:
 | Record | Keys | Meaning |
 |---|---|---|
 | Device | `device_id`, `process_id`, `kind`, `index` | Logical resource identity. |
-| Alias group | `alias_group_id`, `device_id`, `size_bytes`, `initial_version`, `retain_spill_copy`, `shared_residency` | One storage root and its version, spill-retention, and optional runtime-global sharing policy. |
+| Alias group | `alias_group_id`, `device_id`, `size_bytes`, `initial_version`, `retain_spill_copy`, `shared_residency`, optional `transfer` | One storage root and its version, spill-retention, optional runtime-global sharing policy, and optional transfer recipe. |
 | Object | `object_id`, `alias_group_id`, `offset_bytes`, `size_bytes`, `role`, `persistence` | One view into a root. |
 
 `ObjectSpec.size_bytes` is the logical view span. `AliasGroupSpec.size_bytes` is
 the full root extent used for residency and transfer accounting. Several
 objects may name the same alias group with different offsets.
+
+A `transfer` recipe prices a root whose move is more than one copy of
+`size_bytes`: it holds `spill_size_bytes` and ordered `fetch` and `evict`
+phases, each a `copy` on the directional host link or `timed` work on a named
+serial resource, such as a host latency or a sharded root's collective.
 
 Object roles are `input`, `parameter`, `buffer`, `activation`, `gradient`,
 `optimizer_state`, `output`, `control`, or `other`. Persistence is `step`,
@@ -115,6 +120,8 @@ Object roles are `input`, `parameter`, `buffer`, `activation`, `gradient`,
 | Profile | `runtime_ns` | Isolated measured task duration used by simulation. |
 | Profile | `workspace_bytes` | Peak anonymous task workspace used by logical simulation. |
 | Profile | `compatibility_digest` | Structural/physical contract compatibility identity. |
+| Profile | `resource_phases` | Sequential parts of the task, each a `duration_ns` and a `resource`, `null` for ordinary computation; empty, or summing to `runtime_ns`. |
+| Profile | `overlap_costs` | Progress rates while the task overlaps a transfer phase: `timing_class`, `bytes`, `task_rate`, `transfer_rate`. |
 | Task | `task_id` | Stable canonical IR identity. |
 | Task | `resource` | Device, resource kind, and lane. |
 | Task | `profile_id` | Cost profile reference. |
@@ -200,6 +207,7 @@ An annotated plan is one admitted planning point:
 
 ```text
 shadowspill.annotated_program_plan/v1
+├── summary
 ├── source_program
 ├── memory_budgets
 ├── transfer_bandwidths
@@ -213,6 +221,7 @@ shadowspill.annotated_program_plan/v1
 
 | Key | Meaning |
 |---|---|
+| `summary` | The point's `PlanSummary`, as the [field reference](plan-report-fields.md#plansummary) describes it. Derived, so loading does not read it. |
 | `source_program` | Complete `ShadowSpillPlanningProblem` from which the point was selected. |
 | `memory_budgets` | Requested physical execution and spill capacities. |
 | `transfer_bandwidths` | Exact fetch/evict rates and calibration identity used for the point. |
@@ -302,10 +311,10 @@ search answers with that plan, `selected_candidate_policy.candidate_id` is
 | `selected` | Whether it is the resolved program's answer. |
 | `schedule_digest`, `found_by`, `found_at_capacity_bytes` | Which plan it is, the candidate policy that first found it, and the object capacity it was first found at, both read through any chain of hand-offs. |
 
-`work` counts what the search did — residency and schedule cache hits,
-simulation calls, admission calls — and `work.sections` says where its time
-went, as disjoint spans named for the stage that produced them. The keys are
-the fields of
+`work` counts what the search did — schedule emissions and cache hits,
+simulation calls and cache hits, admission calls — and `work.sections` says
+where its time went, as disjoint spans named for the stage that produced them.
+The keys are the fields of
 [`PlanningSectionTiming`](plan-report-fields.md#planningsectiontiming).
 `total_ns` equals the sum of every one of them except `admit_ns`, which is
 nested inside `simulate_ns`, at each level of the hierarchy, so a breakdown

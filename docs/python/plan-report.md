@@ -32,10 +32,14 @@ write_report(plan, "reports/training")
 
 `summary["duration_seconds"]` is the simulated makespan.
 `execution_peak_bytes` includes fixed device memory; `spill_peak_bytes` describes
-spill occupancy. `fetch_bytes` and `evict_bytes` include host traffic and
-collective payloads, which also appear separately as `*_host_bytes` and
-`*_collective_bytes`. Inspect `communication_info` before comparing predictions
-made for different backends or machines.
+spill occupancy. `fixed_device_bytes` is that fixed memory, compute/provider
+overhead plus communication resources and reserves, of which
+`communication_fixed_bytes` is the communication part. `fetch_bytes` and
+`evict_bytes` include host traffic and collective payloads, which also appear
+separately as `*_host_bytes` and `*_collective_bytes`. `simulation_only` says
+whether `simulation_only_reasons` is non-empty, and `logical_ranks` is the
+Program's world size, 1 without parallelism. Inspect `communication_info`
+before comparing predictions made for different backends or machines.
 
 A Plan with estimated memory remains simulation-only. `simulation_only_reasons`
 also identifies missing executable code, allocation evidence or communication

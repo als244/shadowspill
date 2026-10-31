@@ -26,8 +26,9 @@ answer = plan_program(
 )
 ```
 
-Each call creates a unique `pressurefit-*` subdirectory. The directory contains `program.json`, `manifest.json`, and a binary
-`.pftrace` file per requested candidate. `trace_candidates=((selection_id,
+Each call creates a unique `pressurefit-*` subdirectory. The directory contains `program.json`, `manifest.json`, and per requested
+candidate a `candidate_NNNN` directory holding its binary `.pftrace` file; the
+manifest names each file relative to the directory. `trace_candidates=((selection_id,
 candidate_id), ...)` selects explicit pairs from the original diagnostics;
 omitting it records the winner. It does not narrow the ordinary search.
 
@@ -77,8 +78,8 @@ without an answer. Residency alone does not describe fetch timing changes.
 
 Pressure is the reducer's analytic charge, including output reservations and
 extra repair pressure. Capacity is the boundary capacity after workspace and
-resident-slice reservations. The current search represents capacity refinement
-as uniform extra pressure; do not subtract it from capacity a second time.
+resident-slice reservations. The search represents capacity refinement as
+uniform extra pressure; do not subtract it from capacity a second time.
 These arrays are not a physical execution occupancy trace or the full process
 memory budget.
 
@@ -143,17 +144,18 @@ The manifest's `contexts` stores each selected resolution's `selection_id`,
 `task_ids` in resolved execution order, and `aliases` table once. Candidates
 refer to it with `context_index`; `read_manifest` exposes `task_ids` and
 `aliases` on each candidate as well, sharing the same alias table in memory.
-Older manifests with these tables directly on candidates remain readable.
-Current contexts also include `pressure_accounting`: the resident alias indices
-and resident slice size returned by the search, and the aliases required to
-finish on the device. `resident_reservations` holds rows of alias index,
-generation count, and reserved bytes including alignment padding;
-`resident_alignment_bytes` records the alignment. Their sum is checked against
-the C resident slice size. These facts let the visualization attribute initial
-pressure to roles and check the result against the binary trace. Subsequent
-pressure operations identify their alias through the associated cut; repair
-pressure remains a separate component. The binary format is unchanged. Older
-contexts without this metadata still support exact total-pressure replay.
+A manifest whose candidates carry these tables themselves is read as it stands.
+The recorder also writes `pressure_accounting` into each context: the
+resident alias indices and resident slice size returned by the search, and the
+aliases required to finish on the device. `resident_reservations` holds rows
+of alias index, generation count, and reserved bytes including alignment
+padding; `resident_alignment_bytes` records the alignment. Their sum is checked
+against the C resident slice size. These facts let the visualization attribute
+initial pressure to roles and check the result against the binary trace.
+Subsequent pressure operations identify their alias through the associated
+cut; repair pressure remains a separate component. The binary trace does not
+carry these facts, and a context without them still supports exact
+total-pressure replay.
 The visualization joins task workspace from the captured program's profiles.
 It adds workspace as a separate stack layer beneath a flat planning budget,
 preserving the recorded excess at each boundary. The default view also includes
@@ -201,8 +203,8 @@ properties `PressureFitTrace.cut_score` (`split-exposed`) and `cut_ranking`
 (`slack-after-writeback`) identify it; they are not planner options.
 `ranking_criteria` and `ranking_key(reduction, cut, rank=0)` expose the exact
 ascending comparator, including the final cut-ID fallback.
-Version 4 adds the allocation or placement that prompted each reduction.
-Version 3 recordings remain readable; their reduction reason is unknown.
+Version 4 records the allocation or placement that prompted each reduction.
+The reader also accepts version 3, whose reduction reason is unknown.
 `object_capacity_bytes(reduction)` returns the object budget recorded in that
 pass's search steps. Repair-only passes may inherit the last recorded value;
 capacity refinements do not. It returns `None` when no placement budget was
@@ -246,7 +248,7 @@ complement i64. No device column is stored: the trace has exactly one device.
 Reason kinds are 0 (initial seed), 1 (simulation pressure repair), 2 (admission
 pressure repair), 3 (object-pool layout refinement), and 4 (escalation rollback).
 Task/alias indices can be absent (`UINT32_MAX` or `UINT64_MAX`). Location uses
-the memory-location enum: execution 0, spill 1. `reduction_reason(index)` decodes
+the memory-location enum: execution 0, spill 1. `reduction_reason(reduction)` decodes
 these fields. For task-start failures, the alias identifies the **first output**;
 the failed request covers all new outputs and workspace together, so it is not
 evidence that this output alone caused the shortfall. Layout refinements concern

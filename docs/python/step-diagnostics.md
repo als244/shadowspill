@@ -70,9 +70,10 @@ tells you what kind of number it is.
 | `_at_seconds` | An instant, measured from the trace's origin | `compute_started_at_seconds` |
 | `_seconds` | A duration | `input_readiness_wait_seconds` |
 
-No record stores a value that is the difference of two of its own fields, so
-there is one place to read each measurement and no second copy to disagree
-with it. The obvious subtractions are these: a task's kernel time is
+No task or transfer record stores a value that is the difference of two of
+its own fields, apart from its start and end deltas, so there is one place to
+read each measurement and no second copy to disagree with it. The obvious
+subtractions are these: a task's kernel time is
 `compute_finished_at_seconds` minus
 `compute_started_at_seconds`, the opening boundary's cost is
 `before_task_exited_at_seconds` minus `before_task_entered_at_seconds`, and
@@ -103,8 +104,6 @@ in Python, `null` in JSON). Records become reusable when completion is read.
 Missing transfer measurements make `summary.trace_complete` false and leave
 `real_invocation_seconds` and `real_terminal_tail_seconds` unknown. They do not
 invalidate measured compute durations or separately measured cycle throughput.
-Quickstart keeps the run and its artifacts, and marks trace-dependent
-comparisons unknown instead of aborting the sweep.
 
 A runtime trace that runs out of room before the step ends
 (`runtime.event_overflow`) holds only the step's first events, and joining
@@ -162,12 +161,12 @@ selected-task span = sum of selected task-event durations
 | `real_invocation_seconds` | Measured origin through the last required compute or transfer completion; `None` without all transfer timestamps. |
 | `real_terminal_tail_seconds` | Measured last computation through that completion; `None` without all transfer timestamps. |
 | `simulator_terminal_tail_seconds` | Simulated work after the last selected compute task. |
-| `cycle_seconds` | The step on the device clock: this invocation's origin on the compute stream to the next invocation's origin, or to the completion marker of an isolated invocation; `None` when the trace was resolved before anything closed the cycle. Includes caller and instrumentation work between invocations. See [timing](api/timing.md). |
+| `cycle_seconds` | The step on the device clock: this invocation's origin on the compute stream to the marker recorded there once its required terminal work has drained. A traced invocation is isolated, so the cycle holds no caller work before the next run; `None` when nothing closed the cycle. See [timing](api/timing.md). |
 | `entry_delay_seconds` | Origin to the first task's compute start: the first task's readiness waits and frontend preparation. |
-| `exposed_tail_seconds` | Last task's compute end to the cycle's end: terminal work the stream itself still did. `None` with `cycle_seconds`. |
+| `exposed_tail_seconds` | Last task's compute end to the cycle's end: the invocation's terminal work, such as writeback, after its last task. `None` with `cycle_seconds`. |
 | `call_seconds` | The whole planned call on the host clock. |
-| `prior_invocation_drain_seconds` | Host time this call spent at its start waiting for the previous invocation's plan to go idle. A plan assumes its initial objects are resident when it begins, and the invocation before it ends by writing them back, so the next call cannot overlap that writeback. The first invocation has nothing to wait for and reports zero, which is why a trace taken on a warm first step shows zero here even though every later step pays it. |
-| `trace_setup_seconds` | One-time trace setup, which only the first traced call pays. |
+| `prior_invocation_drain_seconds` | Host time this call spent at its start waiting for the previous invocation's plan to go idle. A plan assumes its initial objects are resident when it begins, and the invocation before it ends by writing them back, so the next call cannot overlap that writeback. `Executor.run` resolves the previous invocation, whose completion waits for that writeback, before it starts a traced call, so the wait falls outside the trace and this reads zero. |
+| `trace_setup_seconds` | Time spent setting the trace up. `Executor` sets each traced call's trace up before `call_seconds` starts and does not time it, so this reads zero. |
 | `optimizer_span_seconds` | First optimizer task's start through the last one's end, on the device timeline. |
 | `phase_comparisons` | Profiled versus real task-event sum by semantic phase. One `PhaseTimingComparison` per phase, carrying `phase`, `profiled_task_seconds`, `real_task_event_seconds`, and `delta_seconds`, which is the second minus the first. |
 | `trace_complete` | False when any required trace source overflowed or was incomplete. |
@@ -214,18 +213,18 @@ a selected-task simulator interval without accounting for those boundaries;
 `diagnostics.tasks` maps chronological `execution_XXXXXX` ids to one
 `TaskRecord` each. Join its `task_id` with the selected tasks in the saved
 Plan; `execution_task_id` identifies that invocation's chronological position. Every record carries the same groups -- identity,
-simulated, stream, delta, host -- so a task reads like a transfer.
+simulated, compute, delta, host -- so a task reads like a transfer.
 
 | Group | Fields | Meaning |
 |---|---|---|
 | Identity | `execution_task_id`, `task_id`, `execution_ordinal`, `semantic_name`, `phase`, `microbatch` | Which task, and where it sits in the plan. |
 | Simulated | `simulated_ready_at_seconds`, `simulated_started_at_seconds`, `simulated_finished_at_seconds`, `expected_profile_seconds` | When the simulator had the inputs ready, when it started and ended the task, and the isolated profile it ran for, which is what the plan was built from. |
 | Compute stream | `compute_reached_at_seconds`, `compute_started_at_seconds`, `compute_finished_at_seconds` | When the compute stream reached the task's readiness marker, when its kernels started after the waits, and when they finished. |
-| Compute-stream waits | `input_readiness_wait_seconds`, `allocation_reuse_wait_seconds` | Between reaching and starting: inputs still being fetched, then ranges the task's allocations reuse still owned by a transfer. These two split the interval, so together they are `compute_started_at_seconds` minus `compute_reached_at_seconds`. Both are the *stream* waiting; the host's own wait for the same ranges is `dispatch_allocation_reuse_seconds`. |
+| Compute-stream waits | `input_readiness_wait_seconds`, `allocation_reuse_wait_seconds` | Between reaching and starting: inputs still being fetched, then ranges the task's allocations reuse still owned by a transfer. These two split the interval, so together they are `compute_started_at_seconds` minus `compute_reached_at_seconds`. Both are the *stream* waiting; the host's own wait for the same ranges falls inside the opening boundary. |
 | Delta | `start_delta_seconds`, `end_delta_seconds` | Device minus simulated from the common invocation boundary. |
 | Host boundaries | `before_task_entered_at_seconds`, `before_task_exited_at_seconds`, `after_task_entered_at_seconds`, `after_task_exited_at_seconds` | Four instants partitioning the frontend's cycle for this task with no gap: entering the opening boundary, leaving it for the compiled call, the call returning, and leaving the closing boundary. The opening boundary, the call, and the closing boundary are the three differences between them. |
-| Inside the opening boundary | `dispatch_input_lookup_seconds`, `dispatch_storage_rebind_seconds`, `dispatch_input_acquire_seconds`, `dispatch_allocation_reuse_seconds`, `dispatch_argument_assembly_seconds` | Resolve frontend bindings; rebind changed PyTorch storages; acquire the task's inputs from the runtime; wait on the host until every transfer that still owns a range this task allocates into has published its completion event; assemble predecoded arguments. Disjoint parts of the opening boundary. |
-| Inside the closing boundary | `dispatch_output_flatten_seconds`, `dispatch_output_classification_seconds`, `dispatch_output_adoption_seconds`, `dispatch_output_state_publish_seconds`, `dispatch_output_publish_seconds`, `dispatch_dematerialize_seconds`, `dispatch_cleanup_seconds` | Flatten the output pytree; match leaves with contracts; adopt returned allocations; publish output state and bindings; publish public outputs; drop released bindings; remove terminal state. Disjoint parts of the closing boundary. |
+| Inside the opening boundary | `dispatch_input_lookup_seconds`, `dispatch_storage_rebind_seconds`, `dispatch_input_acquire_seconds`, `dispatch_allocation_reuse_seconds`, `dispatch_argument_assembly_seconds` | Resolve frontend bindings; rebind changed PyTorch storages; acquire the task's inputs from the runtime; wait on the host until every transfer that still owns a range this task allocates into has published its completion event; assemble predecoded arguments. Disjoint parts of the opening boundary. `Executor` does not time these parts, so each reads zero. |
+| Inside the closing boundary | `dispatch_output_flatten_seconds`, `dispatch_output_classification_seconds`, `dispatch_output_adoption_seconds`, `dispatch_output_state_publish_seconds`, `dispatch_output_publish_seconds`, `dispatch_dematerialize_seconds`, `dispatch_cleanup_seconds` | Flatten the output pytree; match leaves with contracts; adopt returned allocations; publish output state and bindings; publish public outputs; drop released bindings; remove terminal state. Disjoint parts of the closing boundary. `Executor` does not time these parts, so each reads zero. |
 
 The device timeline of one task, with the host's cycle beneath it:
 
@@ -236,10 +235,10 @@ host:     before_task entered ---- lookup / rebind / acquire / allocation reuse 
                                    after_task entered ---- outputs ---- exited
 ```
 
-`dispatch_allocation_reuse_seconds` and `allocation_reuse_wait_seconds` are
-the same dependency on two clocks and are usually very different sizes. The
-host spins until the worker has *published* each event; the stream then waits
-for the copy itself. A large host value with a small stream value means the
+The host's wait on range reuse and `allocation_reuse_wait_seconds` are the
+same dependency on two clocks and are usually very different sizes. The host
+spins until the worker has *published* each event; the stream then waits for
+the copy itself. A long opening boundary with a small stream wait can mean the
 frontend absorbed the wait and could not run ahead. See
 [task boundaries](../architecture/task-boundaries.md).
 
@@ -251,7 +250,7 @@ Interpret the deltas together:
 | Start delta grows along the lane while kernel times match their profiles | Readiness, dispatch gaps, or drift on a transfer lane -- read the lanes next. |
 | Start delta grows and later shrinks | Simulator conservatism or recovered overlap. |
 | A compute-stream readiness gap with a small `before_task` cost | Ordinary fetch readiness, expressed as a stream event wait, not a blocked Python thread. |
-| A large opening boundary | Lookup, rebinding, runtime work, or the host's own wait on range reuse -- read the `dispatch_*` parts to tell them apart. |
+| A large opening boundary | Lookup, rebinding, runtime work, or the host's own wait on range reuse, which the record does not tell apart. |
 
 To find expensive graph-task boundaries without bias from many short optimizer
 tasks:
@@ -340,7 +339,7 @@ for lane, records in (
 | `direction`, `transfers`, `bytes` | The lane and its scheduled traffic. |
 | `simulated_busy_seconds` | Lane time the simulator priced for these transfers. |
 | `measured_transfers`, `lane_busy_seconds` | How many transfers carry a stream interval, and the lane time those intervals add up to. |
-| `effective_bandwidth_bytes_per_second` | Host payload bytes over the full measured lane time. For sharded transfers this includes collective time, so it is not host-copy bandwidth. Use the per-operation transfer summary to compare copy and collective rates separately. `None` when nothing was measured. |
+| `effective_bandwidth_bytes_per_second` | Host payload bytes over the full measured lane time. For sharded transfers this includes collective time, so it is not host-copy bandwidth. Use the per-operation summary of `shadowspill.diagnostics.transfer_phases.transfer_phase_data` to compare copy and collective rates separately. `None` when nothing was measured. |
 | `largest_start_delta_seconds`, `largest_start_delta_transfer_id` | The signed start delta furthest from zero on the lane, and the transfer that reached it: where the lane had drifted furthest from the simulation. |
 | `lane_statistics` | What the lane itself counted, over its whole life. Below. |
 
@@ -397,7 +396,7 @@ fragmentation; the runtime answers only for the event ring, which is why
 |---|---|
 | `live_allocations_before`, `live_allocations_after` | Allocations the pool held when the step began and ended. |
 | `allocated_bytes_before`, `allocated_bytes_after` | Bytes those allocations charged. |
-| `peak_allocated_bytes` | The high-water mark reached during the step. |
+| `peak_allocated_bytes` | The pool's high-water mark since it was created, read when the step ends, so it covers earlier steps too. |
 | `free_bytes_after` | Bytes the pool holds free at the end. |
 | `free_prefix_bytes_after` | Of those, the contiguous run at the front of the slab. |
 | `largest_free_range_bytes_after` | The largest single contiguous free range. |
@@ -466,13 +465,23 @@ These clocks are aligned within each rank's invocation. Separate ranks do not
 share a globally synchronized timestamp origin; use group membership and
 collective sequence numbers to match their records.
 
-Every record names its group, membership, rank and sequence, its per-rank
-`input_bytes`/`output_bytes`, and its task. Transfer phases also name their alias,
-runtime object, and action ordinal. Their durations are subintervals of the
-existing task/transfer durations. The [diagnostic API](api/diagnostics.md)
-describes completeness flags and tracing overhead. The structured records are
-kept in the step JSON so later timeline renderers can use them without rerunning
-the model.
+Every record has a `collective_id` and names its `operation`, its group
+(`group`, `group_ranks`, `group_rank`, `group_size`) and `group_sequence`, its
+per-rank `input_bytes`/`output_bytes`, its `source` (`task`, `fetch` or
+`evict`), and its task (`task_id`, `execution_task_id`). Transfer phases also
+name their alias (`alias_group_id`), runtime object (`object_id`), and
+`action_ordinal`. Their durations are subintervals of the existing
+task/transfer durations. The structured records are kept in the step JSON, so
+a timeline renderer -- the occupancy tool's traced page -- reads them without
+rerunning the model.
+
+The trace says how complete it is. `enabled` is false when no process group
+was initialized, and the view is then empty. `capacity` bounds the records;
+`dropped`, `errors` and `missing_timings` count records the bound turned away,
+capture failures, and records without both device times, and `complete` is
+true when all three are zero, which `summary.trace_complete` requires.
+`host_copies`, when present, keeps the same counts and its own records for the
+physical host copies inside transformed transfers.
 
 ## Exporting diagnostics
 

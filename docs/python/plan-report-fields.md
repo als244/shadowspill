@@ -23,12 +23,12 @@ The tables below describe stored fields and useful derived properties.
 ## PlanningDiagnostics
 
 One search: its problems, the policies it evaluated, and the totals. Reachable
-as `diagnostics.search_runs[...]`, on an admission attempt, and on a
-`ProgramPlanResult`. The record has two halves. Which plan won, at what cost,
-and which search found it is what any search must say; the rest --
-`resolved_programs`, `work`, and the capacity it settled on -- is that search's
-own report, written under the name in `search`, so a reader that does not
-recognise the name reads the generic half and stops.
+as `Plan.diagnostics`, on an admission attempt, and on a `ProgramPlanResult`.
+The record has two halves. Which plan won, at what cost, and which search found
+it is what any search must say; the rest -- `resolved_programs`, `work`, and
+the capacity it settled on -- is that search's own report, written under the
+`search` key beside the name it gives as `search_name`, so a reader that does
+not recognise the name reads the generic half and stops.
 
 | Field | Meaning |
 |---|---|
@@ -38,7 +38,7 @@ recognise the name reads the generic half and stops.
 | `resolved_programs` | Every resolved program this search evaluated. |
 | `work` | Exact operation counts and where the time went. |
 | `effective_object_capacity_bytes` | The capacity it finally planned against. |
-| `search` | Which search produced this, as that search names itself. The key its own half is written under. |
+| `search` | Which search produced this, as that search names itself. Serialized as `search_name`. |
 | `workers` | How many threads it was given. Recorded for visibility and excluded from anything compared across runs, because it changes how long an answer took and not which answer was right. |
 
 Derived on access, not stored: `resolved_program_count`,
@@ -205,11 +205,12 @@ available as `AnnotatedProgramPlan.result`.
 | `simulation_config` | The device and capacity model the simulation ran against. |
 | `schedule` | The memory actions themselves. |
 | `selections` | The task-alternative choice per group. |
-| `simulation` | The simulator's evidence. Not persisted: a stored plan replays it and cross-checks the makespan, so a stale plan is caught rather than trusted. |
+| `simulation` | The simulator's evidence: the certificate's re-simulation over the fixed layout once one is certified, the search's own before. Stored with the plan; a load refuses a record whose makespan disagrees with the diagnostics' selected makespan. |
 | `diagnostics` | The search evidence, as `PlanningDiagnostics`. |
 | `resident_slice` | The slice reserved for objects kept resident. |
 | `admission_facts` | The capacity facts the plan was admitted against. |
 | `placement_facts` | The placement topology it was measured under. |
+| `resolutions` | Every resolved program's best plan, when the search was asked to keep them; the answer is among them. Empty otherwise. |
 
 ## PlanSummary
 
