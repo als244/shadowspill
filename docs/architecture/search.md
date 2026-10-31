@@ -3,7 +3,7 @@
 Choosing a schedule is one decision, and it is pluggable. This page states
 what the planner asks of a search, what it promises in return, and what a
 search is free to decide. [PressureFit](pressurefit.md) is the search that
-ships and the only one today; nothing below is written for it in particular.
+ships and the only one; nothing below is written for it in particular.
 
 ## Why the seam is here
 
@@ -33,6 +33,7 @@ not a flag inside PressureFit.
 | `placement` | The pool topology a layout must fit into |
 | `progress` | One line per phase, or `None` |
 | `incumbent` | A plan already in hand for this program, offered as a bound |
+| `keep_resolutions` | Whether to answer with every resolved program's best plan beside the winner |
 
 `generic` holds what is true of any search: whether it must reproduce
 exactly, and the size below which an object is not worth moving at all. A
@@ -125,11 +126,15 @@ used, which is the whole test of whether the seam is real. Defining it does
 record its `name`, which is how a plan read back from an archive can be
 given the search that made it.
 
-`sweep_programs` calls the same planner for each supplied ProfiledProgram and
+`sweep_programs` calls `plan_program` for each supplied ProfiledProgram and
 memory budget, retaining successful Plans and failure diagnostics. Both APIs are
 CPU-only: they neither build nor measure tasks. They take `memory_budgets` and
-`communication_info` separately from the profiled computation. See the
-[phase API guide](offline-pipeline.md) for the complete workflow.
+`communication_info` separately from the profiled computation. Neither keeps a
+plan store or hands one budget's plan to the next: the plan key, stored answers
+and incumbent replay above belong to `shadowspill.planner.plan_program`, which
+plans a `ShadowSpillPlanningProblem` against an artifact store and takes the
+plan to beat as `incumbent`. See the [phase API guide](offline-pipeline.md) for
+the complete workflow.
 
 ## Writing one
 

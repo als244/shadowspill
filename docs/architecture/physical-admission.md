@@ -135,12 +135,9 @@ during the search.
 `PhysicalAdmission.workspace_reserve_bytes` is a separate quantity: the
 contiguous workspace allowance the pool must be able to serve. It is validated
 against the slab and reported, but it is not subtracted from $P$ and does not
-define $C$. The leeway is derived from that allowance — it is whatever the
-allowance holds above the peak task workspace, a quarter of that peak under the
-default 5/4 policy, with a 512 MiB floor and 2 MiB rounding that bind instead
-of the ratio for small peaks. The excess the leeway absorbs is a property of
-lifetime overlap rather than of workspace, so the derivation bounds it only
-approximately.
+define $C$. Nor is the leeway derived from it: a lower-level planning problem
+declares the leeway as `object_reserve_bytes`, and the public planning phase
+declares none.
 
 For one fixed layout, let:
 
@@ -409,6 +406,13 @@ operation stream against `TaskAllocationContract`, then validate requested bytes
 and alignment before returning the planned subrange. Required output and
 mutation allocations cannot be silently omitted or replaced by scratch.
 
+A slot the contract reuses within one task is handed out again only after its
+previous occupant's logical free. Reuse on the allocating stream needs no wait;
+every other stream recorded on the previous occupant has its completion event
+waited on by the allocating stream first. Reuse before that free, or a recorded
+stream with no event, is a plan violation. Reuse across tasks is ordered by the
+layout's completion dependencies instead.
+
 ### Dynamic scratch
 
 The lower-level allocation contract can describe optional anonymous operations
@@ -423,11 +427,11 @@ bounded per task by:
 - maximum dynamic-scratch allocation;
 - maximum live dynamic-scratch bytes.
 
-The global scratch reserve is the maximum admitted need because execution
-tasks are sequential. For a contract with optional-path evidence, it is derived
-from those observations with 25% headroom rounded to 2 MiB. The lower-level
-planning request can increase this reserve but cannot reduce its required
-minimum.
+The global scratch reserve is one region for every task because execution
+tasks are sequential. A lower-level planning problem declares it as
+`dynamic_scratch_reserve_bytes`; the public planning phase declares none, so
+its Plans keep the strict contract. Each task's live allocation limits carry
+25% headroom over its measured peak, rounded up to 2 MiB.
 
 ### Terminal caller-owned outputs
 
@@ -472,10 +476,14 @@ pointer reaches a backend kernel.
 ## Sharing a slab
 
 `Executor(training_plan, plans={"evaluation": evaluation_plan})` admits the saved
-layouts into one arena. The joint memory calculation reserves the largest
-required slice, charges shared model tensors once, and includes each plan's
-private tensors and workspace. The C runtime validates every layout against that
-arena through `shadowspill_plan_admit_fixed_layout_in()`.
+layouts into one arena. The joint memory calculation takes the largest fixed
+slice and the largest dynamic and scratch reserve among the Plans, and counts
+the fixed device overhead once, at its largest: that overhead is the worker's,
+which opens its context, streams, provider resources and headroom once for
+every Plan it holds. Spill is charged with shared model tensors once and every
+Plan's own persistent spill storage beside the active Plan's peak. The C
+runtime validates every layout against that arena through
+`shadowspill_plan_admit_fixed_layout_in()`.
 
 Plans execute sequentially. Each invocation waits for the previous invocation
 and requires an empty execution layout before placing values into it. The plan

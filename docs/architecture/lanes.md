@@ -79,13 +79,14 @@ base is free to use `_Atomic` and the declaration header is not.
 
 **The obligation, and the whole of it:** a lane makes the event it was given
 complete when the bytes have landed, and **the runtime does not drive it**. How
-it arranges that is its own business. `transfer` and `timing` may be absent;
-everything else is required.
+it arranges that is its own business. `transfer`, `timing` and `join` may be
+absent; everything else is required.
 
 | entry | what it must do |
 |---|---|
 | `wait(lane, event)` | order this lane's work behind `event` |
 | `copy(lane, destination, source, bytes, handle)` | move the bytes, and name the transfer |
+| `join(lane)` | order later work on the route's stream behind the I/O issued so far; **optional** |
 | `signal(lane, handle, event)` | make `event` complete once everything issued so far has landed |
 | `synchronize(lane)` | block until everything issued has landed |
 | `transfer(lane, handle, out)` | what one transfer did; **optional** |
@@ -117,6 +118,11 @@ only costs observability.** A lane that reports neither moves bytes exactly as
 well as one that reports both; its transfers are recorded untimed, which the
 trace and every reader already handle.
 
+`join` is optional on other grounds. A compound transfer composes the lane's
+copy with a conversion on the route's stream, and `join` is what orders that
+stream behind the lane's I/O; a lane without it moves plain transfers exactly
+as well, and a compound transfer routed over it fails.
+
 A `ShadowSpillLaneTransfer` carries three instants (issued, started and finished),
 bytes and chunks. The instants
 are nanoseconds from the trace's origin, the axis the rest of a step is placed
@@ -139,7 +145,10 @@ that cannot express a device dependency at all has to observe the event
 completing instead, and 1 is how it says so. The action then goes back to the
 **head** of its queue, not the tail, so a retry cannot reorder what the task
 boundaries triggered, and the existing poll cadence
-(`worker_poll_nanoseconds`) revisits it.
+(`worker_poll_nanoseconds`) revisits it. Only the wait on an action's trigger
+is retried: the wait on a reserved destination's dependency is enqueued while
+the reservation is taken, before the action is claimed, so there is no head to
+return it to and a 1 there fails the transfer.
 
 ### How a lane knows its bytes have landed
 
@@ -200,15 +209,6 @@ where the NIC touches the pool with no stream in between, the route stream
 stores a word behind the runtime's waits and the thread posts nothing before it
 reads it.
 
-The price of enqueueing at dispatch is that the dispatch can block. A staged
-transfer's device side is a few operations per piece, and the driver queues
-only so many per stream: a burst of transfers whose operations pass that
-blocks the worker until the device drains the queue, holding every action
-behind it, including evicts whose triggers have completed, while the
-simulator assumes dispatch is free. The staged piece is therefore sized so
-that the bursts a plan makes stay well inside the queue, rather than for the
-wire, which is near line rate at any of the sizes involved.
-
 The same rule reaches inside such a lane, and is easy to miss there. A lane that
 keeps work in flight across transfers has two halves — issuing and retiring —
 and **issuing must never block on something only retiring can release.** The
@@ -218,6 +218,15 @@ Every readiness question on the issuing side is therefore asked, not waited on:
 if the answer is no, the thread goes and retires, which is what makes the answer
 become yes. Stated as a rule rather than as an account of one lane, because the
 deadlock it prevents does not look like a deadlock in the code that causes it.
+
+The price of enqueueing at dispatch is that the dispatch can block. A staged
+transfer's device side is a few operations per piece, and the driver queues
+only so many per stream: a burst of transfers whose operations pass that
+blocks the worker until the device drains the queue, holding every action
+behind it, including evicts whose triggers have completed, while the
+simulator assumes dispatch is free. The staged piece is therefore sized so
+that the bursts a plan makes stay well inside the queue, rather than for the
+wire, which is near line rate at any of the sizes involved.
 
 ## Create, probe, and teardown
 
@@ -251,6 +260,48 @@ Normal close drains work before destroying lanes. Abandon skips those device
 completion waits, so `destroy` must stop its own worker even when a producer
 dependency will never complete; it must not call `synchronize` again. Submitted
 OS I/O must be canceled or retired before freeing the memory it references.
+
+## Remote lane tuning
+
+The remote lane takes its tuning from the environment, read when a remote pool
+or one of its lanes is created (`csrc/network/src/tuning.c`): these are
+properties of a NIC and a fabric, not of a plan. Every name below carries the
+`SHADOWSPILL_NETWORK_` prefix. `DEVICE` names a device; every other value in
+the table is a number in C notation -- a `0x` prefix reads hexadecimal, a
+leading `0` octal -- where an empty one counts as unset and a malformed one
+prints a warning and takes the default. When a remote pool opens its connection
+it prints most of the resolved values on one line to stderr.
+
+| variable | default | what it controls |
+|---|---|---|
+| `QUEUE_PAIRS` | 2 | queue pairs a remote pool opens for its lanes to claim, one per lane, each with its own completion queue; the pool keeps one more for its own reads and writes of state. At least 2, and at most 16 in all |
+| `SEND_DEPTH` | 128 | work requests outstanding per queue pair, and each completion queue's depth |
+| `RECEIVE_DEPTH` | 16 | each queue pair's receive queue; one-sided reads and writes post no receives |
+| `OUTSTANDING_READS` | 16 | RDMA reads in flight per queue pair, which bounds the fetch direction; more than the device allows fails the queue pair's transition |
+| `CHUNK_BYTES` | 32 MiB | the staged piece, sized for the stream queue as above, and so one ring slot; zero becomes 64 KiB |
+| `MESSAGE_BYTES` | 0 | the largest single message: the direct path's piece and the unit of the pool's reads and writes of state. Zero takes the port's maximum, and a value only lowers it |
+| `RING_SLOTS` | 2 | staged pieces in flight through the ring; zero becomes 1, and at most 8 |
+| `SIGNAL_EVERY` | 8 | read and reported only: every work request is posted signalled |
+| `SPIN_NANOSECONDS` | never blocks | how long the lane's thread watches for the next transfer, and `synchronize` for the drain, before blocking on a condition variable; zero blocks at once |
+| `TRAFFIC_CLASS` | 0 | the GRH traffic class on RoCE, which its congestion control reads |
+| `SERVICE_LEVEL` | 0 | the address vector's service level |
+| `PATH_MTU` | 0 | an `ibv_mtu` code; zero takes the port's active MTU |
+| `TIMEOUT` | 14 | the queue pair's local ACK timeout exponent |
+| `RETRY_COUNT` | 7 | transport retries before the queue pair fails |
+| `RNR_RETRY` | 7 | receiver-not-ready retries |
+| `DEVICE` | detected | the RDMA device to open; unset takes the device owning the interface routed toward the peer, then any device with an active port |
+| `GID_INDEX` | -1 | the GID a RoCE port advertises; any negative value discovers the routable one |
+
+`TIMEOUT`, `RETRY_COUNT` and `RNR_RETRY` together decide how long a queue pair
+keeps trying a peer that has stopped answering, which is how long a dead peer
+takes to become an error rather than a hang.
+
+`SHADOWSPILL_NETWORK_MEASURE`, set to anything, makes the lane read the clock on
+the transfer path: the posted-to-completion interval of every piece, which is
+what `timing` reports, the completion-queue poll counts, and each instant of a
+transfer that had the lane to itself, all printed to stderr when the lane is
+destroyed. Without it `timing` reports nothing. The instants `transfer` reports
+to a trace do not depend on it.
 
 ## SSD staging
 

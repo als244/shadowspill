@@ -183,10 +183,10 @@ predecessor's retirement *precedes* the successor's acquisition in the
 schedule itself.
 
 The runtime then enforces it. Every shared address produces a reuse
-dependency, and the successor's transfer is ordered behind the predecessor's
-completion: the worker hands the dependency to the route's
-[lane](lanes.md), which does not begin the copy until that event completes.
-The wait is on an event, never on a predicted time.
+dependency, and the successor waits for the predecessor's completion: a task
+on the compute stream at its boundary, and a fetch destination on the route's
+stream ahead of its copy, so no [lane](lanes.md) writes the range before that
+event completes. The wait is on an event, never on a predicted time.
 
 So the two roles are cleanly separated:
 
@@ -203,15 +203,15 @@ into a range someone still holds.
 
 ## Judging the result
 
-Four numbers describe a layout, each computed where the information exists:
+Four numbers describe a layout, each held where the information exists:
 
 - `slack_bytes` on the fixed layout (`FixedPhysicalLayout.slack_bytes`,
   `src/shadowspill/planner/admission/layout/model.py`) is the pool capacity
   minus the bytes the assignment requires: how much of the pool the layout
   leaves untouched.
 - `predicted_fragmentation_bytes` in the execution plan's admission block is
-  the planner's estimate of slab bytes that lifetimes will leave unusable; it
-  can never exceed the slab.
+  a declared estimate of slab bytes that lifetimes will leave unusable; it can
+  never exceed the slab, and the planner leaves it at zero.
 - `peak_fragmentation_bytes` from admission replay
   (`<shadowspill/admission_replay.h>`) is the largest gap the replayed
   allocator actually left between live ranges while honouring the layout.
@@ -219,9 +219,8 @@ Four numbers describe a layout, each computed where the information exists:
   observed on the real pool: free bytes that no single request can use because
   they are not contiguous.
 
-The first two are predictions the layout is built against; the last two are
-what the allocator, replayed or real, made of it. A replayed peak larger than
-the prediction means the lifetimes were wrong, not the assignment.
+The first two are fixed when the layout is made; the last two are what the
+allocator, replayed or real, made of it.
 
 Previous: [From a resolved program to leases](admission-leases.md). Next: [The
 planning pipeline](planning-pipeline.md).

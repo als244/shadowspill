@@ -31,8 +31,7 @@ the work that made it ([plan identity](plan-identity.md)).
 So an object can exist with no storage at all, with a copy in spill only, with a
 copy in both pools where one is stale, or with a copy in the execution pool whose
 lease it does not own. `shadowspill_object_location_snapshot` reads that state;
-[the boundary-state model](memory-runtime.md) is where those bits are reasoned
-about.
+[memory runtime](memory-runtime.md) is where those bits are reasoned about.
 
 ## Binding names an object; it does not allocate
 
@@ -109,18 +108,18 @@ Nothing in the runtime ties a registered object to one pool. Pools are a flat
 array with ids; *execution* and *spill* are **roles a plan assigns** in its
 `ShadowSpillPlanDescription`, and `shadowspill_register_object` takes any
 `initial_pool_id`. A runtime object resident in the execution pool is a legal
-configuration the C layer supports today.
+configuration the C layer supports.
 
 Every registration nonetheless goes to the spill pool --
-`runtime/objects/registration.py` registers host objects and placeholders with
-`pool_id=spill_pool_id`, and state adoption passes the spill pool -- and that is
-the right policy rather than a missing generalization. The execution pool is the scarce device memory a
+`runtime/plan/objects.py` registers both the state Executor fills
+(`reserve_spill`) and placeholders with `pool_id=self.spill_pool_id` -- and that
+is the right policy rather than a missing generalization. The execution pool is the scarce device memory a
 fixed layout reserves in one contiguous span. Storage resident there that the
 plan did not place occupies memory outside the layout, which is precisely what
 costs the largest free range. Imported state belongs in the spill pool and is
 fetched in on the schedule the plan priced.
 
-So today no shared object's own lease sits in the execution pool, by choice.
+So no shared object's own lease sits in the execution pool, by choice.
 
 ## One genuine asymmetry, and it is in the runtime
 

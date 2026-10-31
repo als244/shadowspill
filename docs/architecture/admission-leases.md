@@ -248,12 +248,14 @@ admission resolves each to its final lease, excludes it from the fixed slice,
 and counts it in `dynamic_reserve_bytes`. For a training step those are the
 values the loop itself reads back.
 
-**Persistent in-pool allocations.** Profiling identifies an allocation that
-outlives its task and is not a returned tensor
-(`persistent_after_task and not output_leaf_indices`). Retained library
-workspaces and generator state may have this lifetime. Their measured reserve
-is included in `fixed_execution_bytes`, inside the allocation pool and excluded
-from the capacity available for task layouts.
+**Persistent in-pool allocations.** An allocation that outlives its task and
+is not a returned tensor (`persistent_after_task and not output_leaf_indices`)
+is state a library retains, such as a workspace. Runtime initialization creates
+the libraries' retained workspaces while the pool is otherwise empty and
+charges them as `fixed_execution_bytes`, inside the allocation pool and
+excluded from the capacity available for task layouts. A warmed task that still
+retains an anonymous allocation is refused at capture, as resource setup left
+unresolved.
 
 **External memory.** Device memory outside the allocation pool, excluding the
 initial process baseline, consumes `external_headroom_bytes`. This allowance

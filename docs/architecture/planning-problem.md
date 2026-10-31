@@ -34,7 +34,7 @@ costed IR program with residency boundaries, simulation configuration, admission
 facts and budget limits. It is separate from both the selected schedule and
 search policy.
 
-New [program collection](../../benchmarking/program_collection/README.md) saves
+[Program collection](../../benchmarking/program_collection/README.md) saves
 `ProfiledProgram` archives. The evaluator derives a problem from the archive and
 the requested sweep. Collection does not bind budgets or communication costs.
 
@@ -50,9 +50,9 @@ the requested sweep. Collection does not bind budgets or communication costs.
 | `fixed_execution_bytes` | Device overhead outside scheduled storage |
 | `object_reserve_bytes`, `dynamic_scratch_reserve_bytes` | Additional explicit reservations |
 
-For a new archive, the evaluator derives the diagnostic execution limit from its
-sweep; collection imposes no pool-size ceiling. JSON serialization is documented
-in the [planning format reference](../python/planning-json.md).
+For a `ProfiledProgram` archive, the evaluator derives the diagnostic execution
+limit from its sweep; collection imposes no pool-size ceiling. JSON serialization
+is documented in the [planning format reference](../python/planning-json.md).
 
 Previous: [The ShadowSpillProgram](program.md). Next:
 [Simulation](simulation.md).

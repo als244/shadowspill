@@ -54,6 +54,9 @@ on all participants during finalization/profiling; ordinary DP compute still
 needs only one representative GPU. Profiling coordinates iteration counts,
 requires symmetric allocation contracts, and retains maximum measured costs.
 Communication inside a model task is already included in that task's duration.
+No transfer or communication task lists those collectives, so workers meet on
+every invocation of a Plan whose resources hold groups, even an admitted
+evaluation Plan that would otherwise run on each worker by itself.
 
 Plans contain descriptions and source identities, never live groups or handles.
 Archive loading, planning and reporting do not import or initialize the provider.
@@ -62,6 +65,6 @@ conflicting descriptions or source identities are rejected. Resources close in
 reverse initialization order before their process groups are destroyed.
 
 The generic lifecycle is qualified with a non-distributed custom operator through
-all three builders and fresh Executor workers. Each distributed backend still
-needs its own target-hardware qualification; this interface alone does not certify
+all three builders and fresh Executor workers. Each distributed backend needs
+its own target-hardware qualification; this interface alone does not certify
 EP transport or a provider's transitive native dependencies.

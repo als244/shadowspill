@@ -153,10 +153,14 @@ save_checkpoint(executor, "step.ssp", chunk_bytes=64 << 20)
 load_checkpoint(executor, "step.ssp", chunk_bytes=64 << 20)
 ```
 
-Restore validates the Program, logical rank, additional Plans and tensor geometry.
-Trainer checkpoints also preserve loop progress, schedules, source position and
-RNG. An evaluation Plan shares current model storage; only its additional,
-nonshared tensors need separate checkpoint payloads.
+Restore validates the logical rank and the training state, not the Program: the
+name, geometry and owned region of every persistent tensor, the additional
+Plans' private tensors included. A rebuilt Program, other kernels or another
+microbatch geometry restore the same state, and a different inventory is refused
+with the differing tensors named. Trainer checkpoints also preserve loop
+progress, schedules, source position and RNG. An evaluation Plan shares current
+model storage; only its additional, nonshared tensors need separate checkpoint
+payloads.
 
 For partial checkpoints, `frozen_state_id` identifies the external frozen base.
 Only unchanged frozen parameters can be omitted. Trainable tensors, buffers,
@@ -177,4 +181,5 @@ Executor uses pinned-host spill by default and also accepts `SSDPool` or
 and checkpoint interface serves each backend; model-based pool import is not
 part of the public workflow.
 
-Previous: [The step artifacts](step.md). Next: [The optimizer](optimizer.md).
+Previous: [Step structure and ordering](step.md). Next: [The
+optimizer](optimizer.md).

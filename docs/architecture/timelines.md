@@ -15,8 +15,8 @@ when the host enqueued them.
 
 The **origin event** is recorded on the compute stream at the start of the
 call, before the step's first task. Every device measurement is read as the
-elapsed time from that one event, so the compute stream and both transfer
-lanes share a zero without any clock fitting.
+elapsed time from that one event, so the compute stream and every transfer
+lane share a zero without any clock fitting.
 
 Host work uses `CLOCK_MONOTONIC`, counted from a timestamp taken immediately
 before recording the invocation origin. Host and device durations use their
@@ -45,7 +45,10 @@ not measure them** -- the lane does, and the worker only asks. While a trace is
 active `copy` hands back a handle naming the transfer, and when the worker's
 nonblocking poll later sees the completion event it asks the lane, once, what
 that transfer did. The answer goes into the transfer's completion record, and
-the question retires the handle.
+the question retires the handle. A compound transfer is the exception: the
+worker brackets its whole conversion on the route's stream and reports that
+interval in place of the lane's answer, because the copy alone would leave out
+the gather or reduction around it.
 
 It is arranged that way because a lane is the only thing that knows how its
 bytes move. The built-in lane brackets its copy with a **stream interval**: one
@@ -56,12 +59,13 @@ finished everything ahead of the copy and began it, and the second the moment
 the copy finished; once the completion is observed, both stamps are guaranteed
 readable.
 
-A lane whose bytes do not move on a stream cannot be asked for that, and asking
-was what the worker used to do. It **reports no instants** -- there is no anchor
-from such a lane's own clock to this origin, the origin being a device event
-with no host stamp recorded beside it -- and its transfers are placed on the
-host timeline only. What it can report is how many bytes it moved and in how
-many pieces, which needs no clock; see
+A lane whose bytes do not move on a stream has no copy to bracket. It reads
+its own host clock instead and places each instant on the origin's axis with
+`shadowspill_lane_origin_instant()`, through the one anchor the runtime keeps:
+a host stamp taken when the trace begins, which marks the origin because the
+caller records the origin on an idle stream that reaches it at once. A lane
+that reads no clock **reports no instants**, and still reports how many bytes
+it moved and in how many pieces, which needs no clock; see
 [lanes](lanes.md#why-transfer-and-timing-may-be-absent).
 
 The interval the built-in lane uses is a generic runtime type,
@@ -120,7 +124,7 @@ Timing events for a trace come from a separate pool, keeping them apart from the
 readiness dependencies required for correctness ([events](events.md#the-timing-pool)).
 
 The step-level result of all this is described field by field in
-[StepResult diagnostics](../python/step-diagnostics.md); the event and stream
+[execution diagnostics](../python/step-diagnostics.md); the event and stream
 calls the intervals rest on are in the [backend
 contract](../c/backends.md).
 

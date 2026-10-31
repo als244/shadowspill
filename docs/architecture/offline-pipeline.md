@@ -55,7 +55,7 @@ program = build_forward(
 program.save("program.ssp")
 ```
 
-The model may have CPU or meta parameters. This initial backend uses a
+The model may have CPU or meta parameters. Build uses a
 representative GPU to finalize local CUDA task implementations. Model-owned
 distributed operators require their participants and saved
 [provider resource descriptions](resources.md). It accepts normal
@@ -214,7 +214,7 @@ dtype="torch.bfloat16")`. Supported operations are all-gather, reduce-scatter an
 all-reduce. Bytes describe the full padded gather output/scatter input, or the
 full tensor on each all-reduce participant. Sizes must contain whole elements in
 each shard. Duplicate probes are removed. Calls without Program, overrides or
-rank_map retain the original local host-only behavior.
+rank_map measure only local host copies.
 
 Gather probes accept `inplace=True` when the input shard occupies its ordered
 slot inside the full output buffer. Program-derived weight gathers select this
@@ -288,7 +288,16 @@ Ranks pair collectives by issue order, so the Plans must also issue the same
 collectives in the same order: the compound transfers of sharded storage in
 schedule order and the communication tasks in task order. Startup compares
 these sequences by tensor name and refuses a difference before any collective
-runs. A Plan that issues no collectives takes no backend setup.
+runs. Each rank's planner orders sharded weight fetches and gradient evictions
+for its own GPU, so ranks on different GPUs store weights and gradients
+replicated and shard only the optimizer data; their collectives are then the
+reduction and publication tasks, which run in program order on every rank.
+A Plan that issues no collectives takes no backend setup. Workers meet on every
+invocation of the default Plan and of every Plan that issues collectives. A
+named Plan that issues none, such as an evaluation Plan over replicated weights,
+runs on each worker by itself, so workers may invoke it different numbers of
+times, unless its model's provider resources hold communicator groups: its tasks
+then issue collectives that no transfer or communication task lists.
 Executor owns the groups it creates, checks backend/topology compatibility,
 and leaves caller-owned rendezvous intact. Each worker needs a distinct GPU.
 
@@ -310,14 +319,17 @@ finally:
     dist.destroy_process_group()
 ```
 
-Distributed execution requires symmetric local programs. Common DP supports
-sharded and replicated parameter storage, with buffers stored whole on every
-rank; differing nontrivial storage groups require redistribution support. Model-owned communication requires compatible
-operators and resource bindings; declaring a group alone does not rewrite it.
-Tensor loaders/exporters see original tensor geometry, global element offsets,
-and the worker's owned region. Checkpoint helpers save one archive per logical
-rank; callers supply distinct paths. A checkpoint rejects the wrong logical rank
-but can be restored by a different launcher rank mapped to that same logical rank.
+Distributed execution runs one rank-local program per worker, on one device.
+Common DP supports sharded and replicated parameter storage, with buffers stored
+whole on every rank; differing nontrivial storage groups require redistribution
+support. Model-owned communication requires compatible operators and resource
+bindings; declaring a group alone does not rewrite it. Tensor loaders/exporters
+see original tensor geometry, global element offsets, and the worker's owned
+region. Replicated optimizer data that is not parameter-element storage, such
+as a column norm, is loaded and exported by its own geometry; sharded optimizer
+data cannot hold it. Checkpoint helpers save one archive per logical rank;
+callers supply distinct paths. A checkpoint rejects the wrong logical rank but
+can be restored by a different launcher rank mapped to that same logical rank.
 
 The GPU allowance includes fixed compute/provider and communication overhead.
 Planning subtracts both before scheduling objects/workspace, and reporting adds
@@ -390,7 +402,7 @@ This is conservative: profiling observes loaded library/context memory, while
 the worker reserves headroom above its startup baseline. Planning therefore
 includes the reservation before fitting the task arena into the total GPU budget.
 The build/target setup must match. It does not compile or change
-task definitions. Provider resources that cannot yet be observed completely
+task definitions. Provider resources that cannot be observed completely
 remain an execution-qualification concern; they are not silently treated as zero.
 
 Workspace totals permit logical simulation. They do **not** establish allocation
@@ -476,11 +488,15 @@ shapes are supported by separately built Plans; execution never rebuilds one.
 Admission checks capacity for all Plans before opening pools. Sequential calls
 reuse one fixed GPU arena sized for the largest saved layout. Persistent spill
 storage is the union of shared model tensors and each Plan's private inputs and
-constants, plus active invocation requirements. Measured provider overhead is
-conservatively summed across distinct Programs until provider resource sharing is
-explicitly described. Plans that fit separately can therefore fail joint admission.
+constants, plus active invocation requirements. Fixed device overhead is the
+worker's, which opens its context, provider handles and resources, stream
+workspaces and reserved headroom once for every Plan it holds, so the largest
+Plan's overhead counts once. Plans that fit separately can still fail joint
+admission: the largest fixed slice and the largest dynamic requirement need not
+belong to one Plan, and every Plan's persistent spill storage is held at once.
 Initialization/export visit shared model tensors once; private constants use
-`plans.<name>.<tensor-name>`. Checkpoint restore requires the same named Programs.
+`plans.<name>.<tensor-name>`. A checkpoint binds to that tensor inventory, the
+private tensors included, rather than to the Programs.
 
 A forward/backward Plan contains both fresh and accumulating invocation paths.
 The default starts fresh gradients. `accumulate_gradients=True` uses stored
@@ -506,19 +522,19 @@ Load/export callbacks see only valid owned elements; padded tail elements are
 zeroed internally. Master initialization converts directly from the corresponding
 local compute-weight shard into each bounded destination chunk. Optimizer bindings
 record their associated parameter explicitly, including names containing dots.
-This shard-loading path is qualified independently; distributed Executor admission
-and distributed checkpoint publication remain pending.
 
 `save_checkpoint(executor, path, metadata={...})` streams persistent tensor storage
 into one atomic archive. `load_checkpoint(executor, path)` fills the same bounded
-views and returns the caller metadata. The initial helper requires the same
-Program identity; memory budgets and scheduling order may differ. It preserves
-storage geometry, exact dtypes and CPU optimizer controls. Chunk sizes can differ
-between writing and reading. Each tensor is a packed archive member, so there
-are no per-tensor filesystem writes or complete-model host snapshots. Format,
-geometry and checksum checks precede successful initialization. Application
-scheduler/RNG state belongs in the caller's JSON metadata; it is not discovered
-implicitly.
+views and returns the caller metadata. A checkpoint binds to the training state,
+not the Program: every persistent tensor's name, geometry and owned region. A
+rebuilt Program, other kernels, another microbatch geometry, memory budgets or
+scheduling order restore it; a different inventory is refused with the differing
+tensors named. It preserves storage geometry, exact dtypes and CPU optimizer
+controls. Chunk sizes can differ between writing and reading. Each tensor is a
+packed archive member, so there are no per-tensor filesystem writes or
+complete-model host snapshots. Format, geometry and checksum checks precede
+successful initialization. Application scheduler/RNG state belongs in the
+caller's JSON metadata; it is not discovered implicitly.
 
 Returned views of input or parameter storage become owned snapshots during build.
 Those copies are compiled and profiled as part of the task. Views sharing that
@@ -602,7 +618,9 @@ All builders accept `parallelism=Parallelism.dp(...)`. Omitting it describes one
 rank. The declaration contains no process groups or devices and survives saving
 the Program. `ranks_per_replica` describes a group collectively owning the whole
 model; `num_replicas` repeats that group. Simple DP defaults to sharded weights,
-gradients and optimizer tensors, with masters following optimizer ownership.
+gradients and optimizer tensors, with masters following optimizer ownership;
+its `weights`, `gradients` and `optimizer` arguments each select `"sharded"` or
+`"replicated"` storage.
 
 An optional `min_shard_bytes` cutoff avoids storage collectives for tiny tensors:
 
@@ -620,8 +638,8 @@ stays sharded. This changes neither model partitioning nor logical parameter
 identity. Planning accounts for the increased per-rank storage and the changed
 communication. A `ParameterStorage(min_shard_bytes=0)` per-name override disables
 the cutoff for that parameter; other fields inherit their defaults as usual.
-For now this option supports forward/full-step builds; a forward/backward-only
-build still rejects configurations requiring replicated reduced gradients.
+This option supports forward and full-step builds; a forward/backward-only
+build rejects configurations requiring replicated reduced gradients.
 
 `Parallelism`, `ParameterStorage`, `Replicated`, `Sharded` and `GroupRef` are
 framework-neutral. Advanced declarations use named ordered groups plus separate
@@ -632,7 +650,7 @@ fields only from `default_parameter_storage`. `parallelism.group(name)` supplies
 a typed reference exposing static membership and size, without creating a live
 communicator.
 
-The initial distributed build paths support forward, forward/backward and full-step
+The distributed build paths support forward, forward/backward and full-step
 computation with replicated local parameters and storage sharding. They build and
 measure on one representative GPU without a process group. Planning then
 models local host-shard copies followed by the full weight all-gather:
@@ -654,12 +672,12 @@ plan = plan_program(
 ```
 
 The communication archive may contain calibration or explicit simulation estimates.
-The shared schedule describes one symmetric rank
-and uses the slowest corresponding group instance's transfer cost. Memory and
-traffic totals are **per rank**, not summed over the job. Complete compute and
-communication memory evidence allows distributed admission and worker binding;
-estimated memory remains simulation-only. Model-sharded execution, annotated
-distributed input layouts and already-reduced-gradient overrides remain pending.
+A Plan's schedule describes one rank and uses the slowest corresponding group
+instance's transfer cost. Memory and traffic totals are **per rank**, not summed
+over the job. Complete compute and communication memory evidence allows
+distributed admission and worker binding; estimated memory remains
+simulation-only. Inputs carry no distributed layout annotation, and no override
+marks gradients a model has already reduced.
 
 `build_forward_backward` additionally supports sharded gradient storage. Local
 backward uses full logical accumulators, but an eviction can reduce and spill the
@@ -679,11 +697,14 @@ in-place transfer reductions from allocating optimizer reductions and records th
 buffer-zero time used on gradient fetch. Missing zero timing is explicitly
 estimated using the host-fetch rate. Collective scratch must still be supplied;
 manual memory estimates permit simulation only. CPU archive/planning tests forbid
-Torch, build and runtime imports. Replicated gradient storage remains later work.
+Torch, build and runtime imports. Gradient storage replicated across ranks is
+rejected here: its reduced gradients would need a final reduction and an
+accumulation-injection contract.
 
-`build_step` supports the common case with weights, gradients and optimizer data
-sharded over the same groups. Gradient completion feeds shard-shaped local
-optimizer inputs. Masters and moments have independent owned allocations.
+`build_step` supports weights, gradients and optimizer data sharded over the
+same groups, and weights and gradients replicated over sharded optimizer data.
+Gradient completion feeds shard-shaped local optimizer inputs. Masters and
+moments have independent owned allocations.
 The compute-weight shard is a view of the full compute buffer, with its logical
 group-relative offset recorded for worker binding. Build also accounts for the
 alignment of every owner's interior view: one rank's shard may be aligned while
@@ -695,14 +716,14 @@ An in-place all-gather on the same ordered compute resource
 publishes the updated weights immediately after the local update. Update placement waits for
 all contributions and reads of old weights, including aliased views.
 
-This initial path keeps the full compute-weight buffer available during the
-update; the plan accounts for that allocation and any required fetch. It does not
-claim shard-only device residency during optimization. Differing component groups
-need explicit redistribution and are currently rejected. The saved local AdamW
-updates are checked over four logical owners on one GPU, including padded tails,
-with and without FP32 masters. Local compute measurement does not stand in for
-NCCL calibration: communication memory/timing evidence comes from
-`measure_communication`, and the saved worker path needs multi-GPU qualification.
+This path keeps the full compute-weight buffer available during the update; the
+plan accounts for that allocation and any required fetch. It does not claim
+shard-only device residency during optimization. Sharded weights or gradients
+whose groups differ from the optimizer's need explicit redistribution and are
+rejected. The saved local AdamW updates are checked over four logical owners on
+one GPU, including padded tails, with and without FP32 masters. Local compute
+measurement does not stand in for NCCL calibration: communication memory/timing
+evidence comes from `measure_communication`.
 
 CommunicationInfo accepts flat scale-up/scale-out rates and latencies plus
 `measurements`, a sequence of plain mappings. An observation contains
@@ -714,7 +735,7 @@ local shard. Exact operation, membership/order, size, dtype, setup and topology
 must match. The latest matching observation wins. Uncovered cases use a flat-ring
 estimate, with missing topology/rates/latencies reported as errors. Scale-out
 costs use the slowest link type in that ordered ring; extra shared-NIC contention
-and alternative collective algorithms are not yet modeled.
+and alternative collective algorithms are not modeled.
 
 Reports distinguish host bytes from ring-equivalent collective traffic. Combined
 copy/collective intervals are purple, and do not claim an isolated host-copy

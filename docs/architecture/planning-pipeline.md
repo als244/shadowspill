@@ -136,5 +136,6 @@ worker-to-logical-rank map binds physical workers at startup. Build/profile
 artifacts carry implementation identities; execution validates relevant builds
 and memory evidence before admission.
 
-Previous: [Fixed-offset placement](fixed-placement.md).
+Previous: [Fixed-offset placement](fixed-placement.md). Next: [Plan
+identity](plan-identity.md).
 See also: [training composition](training.md) and [phase API](offline-pipeline.md).

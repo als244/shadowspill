@@ -12,8 +12,8 @@ is a fetch and device to pinned host an evict. Routes are declared to
 `shadowspill_runtime_create()` by pool ids, and it refuses three things: a
 route whose two pools share a kind, a second route over a pair it already has,
 and **a route whose directional kind pair no lane serves**. The third is what a
-route to a pool kind nothing can yet copy to runs into, and it is refused at
-create rather than at the first transfer.
+route to a pool kind no registered lane copies to runs into, and it is refused
+at create rather than at the first transfer.
 
 Each route owns a **queue** and a **lane**. The queue is the ordering: three
 intrusive FIFOs behind one mutex, holding the actions a route has been given and
@@ -51,18 +51,18 @@ separate calibration policy. Probe sizes and repetition counts are configurable
 through the C and Python runtime APIs; smaller probes reduce setup writes but
 may change the measured rate. They do not change production transfer sizes.
 
-The simulator currently uses those fixed effective rates throughout a step.
-Solo measurements remain diagnostic; it does not switch rates dynamically when
-the opposite lane becomes idle.
-
 ## Dispatch
 
-The worker owns both queues; it does not own the lanes and does not drive
-them. At an action trigger the dispatcher reserves destination capacity in
+The worker owns every route's queue; it does not own the lanes and does not
+drive them. At an action trigger the dispatcher reserves destination capacity in
 directive order and the action holds that reservation while queued; at queue
 head the worker submits the copy **through the route's lane** and asks the lane
 to signal the completion event; on completion the object publishes the ready
-residency generation. An eviction's source is not freed when the action is
+residency generation. An object registered with a conversion of its own — a
+gather on fetch, a reduction on evict — makes a compound transfer: the worker
+hands the conversion the route's stream and a copy that runs the lane's `copy`
+and then its `join`, and the one `signal` after it covers conversion and copy
+alike. An eviction's source is not freed when the action is
 queued: it becomes reusable only through that completion, which is what keeps
 later task allocations from overtaking planned transfer capacity while the queue
 stays FIFO. The worker loop itself is described in
@@ -85,9 +85,10 @@ the bound.
 
 ## Diagnostic labels
 
-Transfer labels name the object, byte size, triggering task, and producing or
-consuming task. Plan admission builds the object/alias and task-position indexes
-once and passes the resulting labels to the runtime. Repeated steps reuse these
-labels; transfer workers do not inspect the program or rebuild its indexes.
+A transfer's profiler range is named by a label fixed when its task is
+admitted. A caller may supply one per action; otherwise the runtime composes one
+naming the operation, object id, byte size and triggering task. The Executor
+supplies none. Repeated steps reuse the admitted labels; transfer workers do not
+inspect the program or build a label.
 
 Previous: [Lanes](lanes.md). Next: [Events](events.md).

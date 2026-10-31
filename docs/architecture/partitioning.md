@@ -89,31 +89,14 @@ requirement. This lets meta-built MoE models expose numeric expert counts withou
 running the whole model merely to prepare a loss statistic. Runtime computation
 and integer dtypes remain unchanged.
 
-Producer evaluation occurs for only a program's first microbatch; later
-microbatches check the derived values against their own geometry. Public build
-uses caller state, not runtime pools. Which microbatch creates a
+When partitioning derives these values, it evaluates producers for only a
+program's first microbatch; later microbatches check the derived values against
+their own geometry. The public builders leave them to finalization and
+profiling, which replay the compiled producers ([phase
+APIs](offline-pipeline.md#task-measurement)). Which microbatch creates a
 stage's gradient and which adds into it is not decided here: every microbatch
 carries both backward forms and the step's ordering chooses ([graph-pair
 construction](graph-pair-construction.md#accumulating-onto-gradients-that-already-exist)).
-
-The planning progress log reports each exported program's partition on one
-line:
-
-```text
-stage partition of program <i>/<n>: <count> positions, first <s> s, later <s> s each
-```
-
-| Field | Meaning |
-|---|---|
-| `<i>/<n>` | The exported program, in the order microbatches first used it, out of the step's distinct exported programs. |
-| `<count> positions` | The microbatches that share it. |
-| `first` | Its first microbatch: the split, the derived values, and any graph pair the store did not hold. |
-| `later` | The mean of every other microbatch, absent when there is none. |
-
-`later` is what grows with the microbatch count, and `first` is paid once per
-program. A later microbatch costs what binding its stages' graph pairs to its
-own values costs; one that costs about what the first did was split for itself,
-because its inputs' geometry differed.
 
 ## What a boundary means
 
@@ -159,10 +142,11 @@ requires building different Programs. The runner does not recognize architecture
 names or substitute a model-specific policy.
 
 The [custom partitioning example](../examples/custom-partitioning.md) shows a
-small standalone policy. The [GLM workload](../../workloads/models/glm53_flash/README.md#partitioning)
-is a model-scale example: its optional workload-local policy bounds each
-decoder layer and vision block, and would bound individual expert modules. No
-GLM condition belongs in the planner, simulator, runtime, or MLOps operators.
+small standalone policy. A model-scale [workload
+policy](../../workloads/models/glm53_flash/README.md#partitioning) is optional
+and kept beside its model: it bounds each decoder layer and vision block. No
+model's condition belongs in the planner, simulator, runtime, or MLOps
+operators.
 
 See also [phase APIs](offline-pipeline.md),
 [graph-pair construction](graph-pair-construction.md), and

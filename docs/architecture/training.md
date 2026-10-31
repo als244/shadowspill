@@ -82,8 +82,10 @@ state and masters so training can resume faithfully.
 `steps` is the total completed-update target. Schedules are evaluated at the
 zero-based update count and name the saved Plan's runtime hyperparameters, such
 as `optimizer_group.0.lr`. Data sources can implement `state_dict` and
-`load_state_dict` for exact continuation. Resuming loads the same Programs;
-compatible budgets and planning order can change independently.
+`load_state_dict` for exact continuation. A checkpoint binds to the training
+state, not the Programs: Plans rebuilt with other kernels, microbatch geometry,
+budgets or planning order resume it when they hold the same persistent tensors
+and the Trainer names the same schedules.
 
 ## Distributed execution and reporting
 

@@ -35,8 +35,8 @@ branch anywhere asking what kind of memory a pool has**, and the two kinds the
 runtime implements are registered exactly as a kind from a loaded library is,
 so one lookup resolves both.
 
-Four kinds ship today. The runtime implements the first two; remote and SSD
-come from extension libraries registered by the caller. The runtime does not
+Four kinds ship. The runtime implements the first two; remote and SSD come
+from extension libraries registered by the caller. The runtime does not
 load or link those libraries; the same lookup reaches all four.
 
 | kind | `acquire` | `release` |
@@ -114,8 +114,8 @@ selected spill backend using temporary pools and saves `CommunicationInfo`;
 callers can also supply rates directly. Model/task profiling uses the ordinary
 framework allocator and needs no runtime pool.
 
-A fresh execution worker installs the allocator, admits the saved Plan and
-creates its pools before initializing tensor values. It uses the saved costs and
+A fresh execution worker installs the allocator, creates its pools and admits
+the saved Plan before initializing tensor values. It uses the saved costs and
 layout without recalibrating or replanning. This keeps large spill allocations
 independent of anonymous full-model initialization and preserves the phase boundary.
 

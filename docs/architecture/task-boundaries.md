@@ -91,24 +91,28 @@ wait_task_allocations(runtime, task, compute_stream)
             if it has not been dispatched yet, spin until the worker
                 publishes its completion event
             make the compute stream wait on that event
+        for each earlier task that must finish with that range first:
+            make the compute stream wait on the completion event its
+                after_task published
 ```
 
 A task's inputs are acquired above, but its workspace and intermediates are
 allocated later, as the compiled graph runs. Each of those reuses a range the
-plan assigned, and the range may still belong to a transfer in flight. The
-allocator resolves that where the allocation happens, which is inside the
-task, where a wait cannot be told apart from compute. Resolving them here
-instead costs the overlap the late version got -- the first kernel now waits
-on a range only the last allocation needs -- and buys an interval where the
-wait is measurable.
+plan assigned, and the range may still belong to a transfer in flight.
+Resolving that where the allocation happens would put the wait inside the
+task, where it cannot be told apart from compute. Resolving it here, at the
+boundary, gives up some overlap -- the first kernel waits on a range only the
+last allocation needs -- and buys an interval where the wait is measurable.
+The allocator still makes its call, and finds the dependency already
+published.
 
 The spin is a rendezvous with the worker, not with the copy: it ends when the
 transfer has *started* and published its event, and the copy itself is then
 waited on by the stream rather than the host. That makes it two different
-waits on two clocks, and step diagnostics reports both:
-`dispatch_allocation_reuse_seconds` is how long the dispatching thread spun,
-and `allocation_reuse_wait_seconds` is how long the compute stream then
-waited. They are usually very different sizes.
+waits on two clocks. In step diagnostics the spin lies inside the opening
+boundary's host interval, between `before_task_entered_at_seconds` and
+`before_task_exited_at_seconds`, and `allocation_reuse_wait_seconds` is how
+long the compute stream then waited. They are usually very different sizes.
 
 **This is what bounds the frontend's run-ahead.** A transfer publishes its
 completion event only when the worker submits the copy, and the worker
@@ -129,9 +133,11 @@ after_task(runtime, task, compute_stream)
     status = latched failure, if any
     validate the allocation contract is complete
     publish mutations: bump each mutated object's authoritative version
-    if the task has actions or task-owned retirements:
+    if the task has actions, task-owned retirements, or a range
+            successor that waits on its completion:
         record a completion event on the compute stream
         attach that event to every lease the task retired
+        publish it as the task's completion for those successors
         instantiate the plan's actions against current object state
         publish the action batch and wake the worker
         wait until the worker has issued this batch's fetches
@@ -470,12 +476,13 @@ initialized. An opaque optimizer may retain CPU/meta state templates; capture
 describes its spillable state with fake device geometry, matching profiling and
 execution. Its ordinary CPU counters and hyperparameters keep their CPU bindings.
 
-When partitioning needs authentic integer or boolean intermediates for
+When partitioning derives authentic integer or boolean intermediates for
 profiling, it executes the required producer slice. Each input is materialized
 on its own captured device: explicit CPU controls stay on the CPU even when
-other inputs or outputs use the execution device. Public build takes caller
-state and does not require an execution pool. Pool-backed preparation callers
-use their setup-time access mechanism.
+other inputs or outputs use the execution device. The public builders do not
+derive these values while partitioning: finalization and profiling replay the
+compiled producers instead, without an execution pool ([phase
+APIs](offline-pipeline.md#task-measurement)).
 
 Integer outputs used exclusively in proven fixed-shape arithmetic are marked
 numeric statistics. Isolated profiling supplies ones and records that generated
@@ -519,9 +526,6 @@ Reuse replaces occurrence-specific inputs and provenance; it does not substitute
 one layer's weights or control values for another's. Compilation and profiling
 continue to consume the physical contract.
 
-Previous: [Memory runtime](memory-runtime.md). Next: [Failure, abort, and
-process exit](failure-and-exit.md).
-
 ### Activation-gradient memory format
 
 A compiled backward expects a specific memory format for incoming activation
@@ -549,3 +553,6 @@ one handle for all of those views. Giving separate storage handles the same
 pointer is insufficient: after eviction or checkpoint restore, a later fetch
 would update only the representative and leave the other views stale. Storage
 publication unifies the handles without copying device data.
+
+Previous: [Memory runtime](memory-runtime.md). Next: [Failure, abort, and
+process exit](failure-and-exit.md).

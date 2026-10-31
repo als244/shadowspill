@@ -39,10 +39,10 @@ The optimizer's own initialization determines the saved recipe:
 | Bounded tensor value | Save that small value with the Program |
 | State already held by the supplied optimizer | Require the execution initializer or checkpoint to supply it |
 
-The initial implementation rejects state that can only be created from the first
-gradient, such as a lazily initialized SGD momentum buffer, with an explicit
-first-use-initializer error. It also refuses to embed optimizer initialization
-values larger than 1,024 elements. Existing model-sized state remains external.
+Build rejects state that can only be created from the first gradient, such as a
+lazily initialized SGD momentum buffer, with an explicit first-use-initializer
+error. It also refuses to embed optimizer initialization values larger than
+1,024 elements. Existing model-sized state remains external.
 
 In a fresh execution worker, `Executor.initialize(fill_tensor)` fills bounded
 Executor-provided buffers. Constant and parameter-copy defaults are applied by
@@ -77,9 +77,10 @@ or passing only trainable parameters both preserve this behavior.
 Quantized weights expose physical payloads and scales through the
 [tensor representation interface](state-import.md#tensor-representations), while
 their gradient remains one dense logical tensor. Publishing a master uses that
-representation's copy operation. Sharded tensor-wrapper updates require a
-representation-specific shard/copy implementation and are currently rejected by
-the generic owned-update builder.
+representation's copy operation. Sharded updates of a packed or scaled wrapper
+require a representation-specific shard/copy implementation and are rejected by
+the generic owned-update builder; a single contiguous payload that keeps its
+logical shape through reshape, slicing and copy is supported.
 
 The bounded initializer receives physical names such as `weight.payload` and
 `weight.scale`, and `master.weight` for the logical master. For ordinary weights,
@@ -108,7 +109,7 @@ result = pending.result()
 
 Use one input call per example declared in the Program. Each group has its own
 binding, such as `optimizer_group.1.lr`. Trainer schedules use those same names.
-The original Python optimizer is no longer a live execution handle: mutating it
+The original Python optimizer is not a live execution handle: mutating it
 after build does not change a saved Plan.
 
 Executor accepts CPU values of the saved shape, validates every supplied name and
@@ -140,12 +141,12 @@ completion boundary. Final optimizer reduction writes a separate owned output,
 so a concurrent spill of the original accumulator remains valid. This design
 does not introduce independently scheduled optimizer communication streams.
 
-Flat sharding requires the optimizer capability
-`supports_flat_parameter_shards=True`: each flat slice must be independently
-updatable. Matrix-wide algorithms cannot claim that capability and must use
-unsharded optimizer ownership until their update-unit placement is supported.
-Sharded builds start with an uninitialized optimizer and restore persistent
-optimizer tensors in the execution worker.
+Flat sharding requires each flat slice to be independently updatable: the
+frontend accepts the elementwise Adam, AdamW and SGD it knows, and any other
+optimizer must declare `supports_flat_parameter_shards=True`. Matrix-wide
+algorithms cannot claim that capability and use replicated optimizer storage,
+which keeps complete tensor shapes. Sharded builds start with an uninitialized
+optimizer and restore persistent optimizer tensors in the execution worker.
 
 ## Observing parameters and gradients
 
@@ -158,7 +159,7 @@ Distributed observations count owned regions once and combine their summaries.
 These diagnostics are not compiled tasks and do not affect simulated task
 durations. They contribute to measured training time only on calls where
 collection is enabled. Ordinary runs launch no norm kernels. Arbitrary compiled
-`parameter_metrics` callbacks are not part of the new builder interface.
+`parameter_metrics` callbacks are not part of the builder interface.
 Loss and model metrics can still be objective outputs; Trainer's host reducer
 aggregates completed observations. Logging policy stays in the workload.
 
@@ -172,8 +173,10 @@ one archive per logical rank, containing that rank's owned regions.
 An explicit `frozen_state_id` allows unchanged frozen parameters to be omitted.
 Trainable tensors, optimizer state, buffers and tensors mutated by an admitted
 Plan remain in the archive. Restore validates the frozen-base identity and uses
-the bounded loader for omitted contents. Trainer adds update count and
-caller-owned progress metadata; the caller supplies any data/RNG progress needed
-for exact continuation. See [training composition](training.md).
+the bounded loader for omitted contents. Trainer adds the update count,
+schedule and source progress and the default RNG states; custom generators and
+other application state remain the caller's. See [training
+composition](training.md).
 
-Previous: [Importing state](state-import.md). Next: [The logical program](program.md).
+Previous: [Model tensors and initialization](state-import.md). Next: [The
+ShadowSpillProgram](program.md).

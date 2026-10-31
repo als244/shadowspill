@@ -90,11 +90,11 @@ rounds only completion times up to integer nanoseconds. Overflow-safe integer
 arithmetic keeps replay deterministic. The independent Python oracle uses
 unbounded integers and updates progress at every event.
 
-Runtime calibration already measures both rates for pinned host, network, and
-SSD routes. Planning coarsens both measurements independently and includes all
-four in configuration, plan keys, reusable artifacts, and distributed symmetric
-planning (which takes each rate's minimum across ranks). Without a reverse
-calibration, the concurrent input equals the measured solo rate. The copy-rate
+Runtime calibration measures both rates for pinned host, network, and SSD
+routes. `CommunicationInfo` keeps both, and planning carries all four into the
+simulation configuration a Plan saves; distributed calibration takes each
+rate's minimum across ranks. Without a reverse calibration, the concurrent
+input equals the measured solo rate. The copy-rate
 model does not infer compute interference, cross-device contention, or SSD
 cache-state prediction. Search heuristics use the faster rate as a lower bound until a
 concrete schedule can be scored with the event simulation.
@@ -114,15 +114,11 @@ timing, not object sizes, sharded host payloads, or copy bandwidth. Missing
 samples retain isolated timing. Task phases, rates, and message sizes are
 serialized with the program and affect every candidate's simulation.
 
-The PyTorch sharding frontend collects these fields during preparation. Internal
-collectives are measured separately from uninstrumented task duration, and their
-median segment proportions are normalized to that duration. Paired probes use
-actual program message sizes and borrowed groups, with extra buffers bounded by
-available profiling memory. Large-message probes repeat the task in a bounded
-sequence, draining each call's workspace before the next, so complete copies
-can be observed within the compute window. Rejected or unidentifiable measurements do not become
-arbitrarily small progress rates. The [distributed API](../python/api/distributed.md)
-describes the sampling policy and its limits.
+These fields arrive on supplied task profiles. A custom caller can measure and
+supply them; the public phase pipeline measures tasks and communications
+independently and measures no pairwise interference, so its programs keep
+isolated timing. A collective task takes its timing from `CommunicationInfo`
+and carries neither field.
 
 Calibration must measure the actual compiled task and communication operation
 independently of the training step being predicted. Pairwise rates approximate
@@ -177,7 +173,7 @@ boundaries](step-boundaries.md) defines that cycle — which synchronization
 points separate repeated invocations, and which of the boundary costs the
 makespan does and does not price.
 
-The [StepResult diagnostics guide](../python/step-diagnostics.md) defines the
+The [execution diagnostics guide](../python/step-diagnostics.md) defines the
 real-versus-simulated task and transfer fields, clock domains, selected-span
 summary, trace-integrity checks, and investigation workflow.
 

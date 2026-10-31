@@ -75,5 +75,5 @@ selection consistency. Invalid input raises `ValidationError` before a C
 component is invoked. Planner and simulator infeasibility is distinct from IR
 validation failure.
 
-Previous: [Architecture overview](overview.md). Next: [PyTorch capture and
-lowering](lowering.md).
+Previous: [Architecture overview](overview.md). Next: [Capture, compilation
+and lowering](lowering.md).

@@ -53,7 +53,10 @@ Each has its own page: [memory pools](memory-pools.md), [lanes](lanes.md),
   generation. They exist for a lane whose bytes do not move on a stream, which
   cannot make a stream wait by recording an event -- a consumer's wait may be
   enqueued before the transfer finishes, and a wait on an unrecorded event does
-  not wait. A provider whose streams read host memory through a mapping needs the
+  not wait. `write_value` is the mirror: the stream stores a word as it passes,
+  so a host thread learns how far the device has got, which a lane staging
+  through a host buffer must know before it hands a slot back to its hardware.
+  A provider whose streams read host memory through a mapping needs the
   block allocated so that mapping exists, which is why the entry names a word by
   index rather than by pointer.
 - **Event pools** keep backend events across leases. Reserving a pool creates
@@ -91,8 +94,9 @@ ones named in `SHADOWSPILL_BACKENDS`.
 
 1. Create `csrc/backends/<provider>/` and compile it against
    `<shadowspill/backend.h>` alone.
-2. Implement every entry of the table; report zero for counters the platform
-   has no notion of, and leave the profiler entries NULL if it has none.
+2. Implement every required entry of the table; report zero for counters the
+   platform has no notion of, and leave `export_dma_buf`, `host_numa_node` and
+   the profiler entries NULL where the platform has no such mechanism.
 3. Export the two symbols and register the provider in
    `csrc/backends/CMakeLists.txt` so it builds as
    `libshadowspill_backend_<provider>.so` next to the others.

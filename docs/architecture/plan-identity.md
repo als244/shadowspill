@@ -48,8 +48,9 @@ belongs to the work and not to the thread doing it. A pre-task action batch
 creates leases for a task it is not running, and stamping the dispatching
 thread's scope there would attribute the bytes to the wrong task.
 
-`shadowspill_memory_pool_live_allocations` reports both halves, which the
-adapter's `PoolAllocation.origin` names, so a range in the pool reads as:
+`shadowspill_memory_pool_live_allocations` reports both halves, which
+`PoolAllocation.origin` in `shadowspill.runtime.occupancy` names, so a range in
+the pool reads as:
 
     plan 7 task 1112                   a task of plan 7 made it
     plan 7 profiling scope #40         a probe for plan 7 made it

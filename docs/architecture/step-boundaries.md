@@ -49,8 +49,8 @@ reconciling model state; they do not implement a planned invocation's fetches.
 At an invocation boundary the executor:
 
 1. Waits for the preceding invocation's required terminal work to finish.
-2. Records this invocation's origin and, when requested, enables its trace.
-3. Refreshes external inputs and validates actual initial residency.
+2. Refreshes external inputs and validates actual initial residency.
+3. When a trace is requested, enables it and records this invocation's origin.
 4. Runs the start control task and the selected computational tasks through
    their ordinary before/after boundaries.
 5. Returns caller-owned results. Required terminal transfers may still run.
@@ -94,3 +94,6 @@ marker but does not collect the detailed task/transfer ledger.
 
 See [timelines](timelines.md), [the timing API](../python/api/timing.md), and
 [step diagnostics](../python/step-diagnostics.md) for the recorded fields.
+
+Previous: [Failure, abort, and process exit](failure-and-exit.md). Next:
+[PyTorch adapter](adapter.md).

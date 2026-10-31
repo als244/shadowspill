@@ -97,8 +97,10 @@ Every `TaskSpec` carries a `phase`: a plain identifier string that defaults to
 carried through, and nothing in `shadowspill.ir`, the simulator, or the runtime
 compares it against a particular value. A PyTorch training program labels its
 tasks `forward`, `backward`, and `optimizer` -- a recomputing forward carries
-`forward` like any other -- and a program from anywhere else may use whatever
-names describe its own structure.
+`forward` like any other -- with `control` on its start task and
+`gradient_local`, `gradient_communication` and `weight_communication` on the
+padding, reduction and publication tasks a distributed update adds. A program
+from anywhere else may use whatever names describe its own structure.
 
 What the phase is *for* is separating a task's dependency graph from the graph
 of the phase it belongs to, which is what the planner needs in order to decide
@@ -126,10 +128,14 @@ literally and `t3` looks like a *source*, because nothing points at it. Both
 describe the same graph. The documentation fixes the data-flow reading, so
 "sink" always means nothing downstream in this phase consumes it.
 
-Dependencies are data, and only data: a task lists the producers of what it
-consumes and the earlier writers of what it accumulates into, nothing else.
-The order of `ShadowSpillProgram.tasks` is the schedule, and the schedule is the
-lowering's choice; it is not written into the dependencies. So any
+Dependencies follow data: a task lists the producers of what it consumes and
+the earlier writers of what it accumulates into. A training program adds two
+orderings beside them. Every task also depends on the invocation's
+`invocation_start` task, and each optimizer update depends on the update
+before it and on every earlier task that touches its inputs, so an update
+never overwrites a value a task has yet to read. The order of
+`ShadowSpillProgram.tasks` is the schedule, and the schedule is the lowering's
+choice; it is not written into the dependencies. So any
 topological order of a program's tasks is a legal schedule, and one lowering
 can emit the same tasks in more than one order for the planner to compare.
 The training lowering's orders are the microbatch walks of

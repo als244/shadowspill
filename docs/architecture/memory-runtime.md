@@ -128,7 +128,7 @@ has landed, which is when the simulator frees it too.
 
 ## Worker
 
-One C-owned worker services completions, releases, and both routes' queues.
+One C-owned worker services completions, releases, and every route's queue.
 It does not drive the lanes themselves: a lane completes the event it was given
 when its bytes have landed, by whatever means suits it, and the worker reads
 events like any other.
@@ -184,8 +184,9 @@ Python dispatcher       compute stream         C worker          transfer lane
 the Python thread on ordinary readiness. `after_task()` reserves transfer
 capacity, publishes its predecoded action batch, and spins only until the
 worker acknowledges that every fetch in the batch has been issued and carries
-a readiness event. It never waits for copy completion, and never for the
-batch's evictions or releases.
+a readiness event, and that every collective transfer in it has been issued.
+It never waits for copy completion, and never for the batch's other evictions
+or releases.
 
 A dispatcher allocation or destination reservation that cannot be served waits
 only while the pool still has a release source -- a pending retirement or a
@@ -211,18 +212,19 @@ outstanding submitted invocation, because its physical layout and preallocated
 validation and action records are reused. A second concurrent invocation of the
 same mutable handle fails closed rather than sharing that state.
 
-The public PyTorch frontend exposes `submit()` for explicit invocation
-ownership. Dispatch runs immediately and returns an `InvocationResult`;
+The public PyTorch entry point is `Executor.run()`, which takes explicit
+invocation ownership. Dispatch runs immediately and returns an `InvocationResult`;
 `result()` is the single synchronization point for that invocation's public
 result.
 
 Reusing or closing a callable waits only for that plan's claimed task scopes,
 actions, and task-owned retirements, never for unrelated plans.
 
-The Python `_before_task()` and `_after_task()` add the framework half:
+The Executor's task dispatch (`shadowspill.execution.dispatch`) adds the
+framework half around `before_task_and_acquire()` and `after_task_and_update()`:
 rebinding storages, assembling arguments, classifying outputs, dematerializing
-releases, and recording timing. Forward and training share that skeleton and
-the same default-off profiler-annotation policy. The neutral
+releases, and recording timing. Forward and training Plans share that skeleton
+and the same default-off profiler-annotation policy. The neutral
 `shadowspill_before_task_handle()` and `shadowspill_after_task_handle()`
 contain no PyTorch storage logic.
 
@@ -235,8 +237,8 @@ library, so no-progress OOM, allocation-contract mismatch, worker failure, and
 backend failure remain distinguishable.
 
 Planned callables close their admitted execution state. Python
-`Runtime.close()` requires no active callable, persistent imported state,
-public object reference, or caller-owned device output. It then calls the C
+`Runtime.close()` requires no active plan or plan setup, public object
+reference, or caller-owned device output. It then calls the C
 close/destroy path, which stops and joins the worker, destroys every route's
 lane and stream, and gives each pool's memory back through its own kind's
 `release` -- unregistering and unmapping host memory, freeing device memory,
@@ -260,13 +262,11 @@ profiler. When runtime tracing is enabled, bounded preallocated buffers record
 task, allocator, transfer, and failure events and are converted to Python only
 when diagnostics are resolved.
 
-See [Interpreting StepResult diagnostics](../python/step-diagnostics.md) for
+See [Interpreting execution diagnostics](../python/step-diagnostics.md) for
 allocator/lease evidence, runtime counters, transfer frontiers, task-boundary
 timing, and overflow handling.
 
-Previous: [Events](events.md). Next: [Task boundaries](task-boundaries.md).
-
-### External memory reservation and enforcement
+## External memory reservation and enforcement
 
 Pool sizing subtracts the initial process baseline and `external_headroom`
 (default 512 MiB) from `physical_capacity`. Zero reserves no external allowance.
@@ -291,3 +291,5 @@ This is automatic by default and disabled by `numa_binding=False` in Python
 (`disable_numa_binding=1` in the runtime configuration). Unknown topology and OS
 restrictions warn without preventing startup. Existing pages are not migrated.
 These are process-lifetime placement changes, not task scheduling operations.
+
+Previous: [Events](events.md). Next: [Task boundaries](task-boundaries.md).
