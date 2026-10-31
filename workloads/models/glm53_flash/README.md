@@ -38,13 +38,14 @@ model = source.build_model(lora_rank=32, lora_alpha=32)
 # from the same checkpoint and initializes adapter factors separately.
 ```
 
-The shared [initializer](../shared/glm/initialization.py) supplies those bounded
-fills, including deterministic random initialization. No whole-model or expert-bank
-host staging copy is required. Checkpoint and random initialization use the same
-shapes and dtypes. The recipe's bounded loader supports direct checkpoint storage;
-representation conversion is rejected before build. The reader's ordinary
-`load_into(model)` method can explicitly convert one expert at a time for other
-callers; it does not depend on ShadowSpill pools.
+The GLM recipes' [initializer](../../recipes/text/glm/initialize.py) supplies
+those bounded fills, including deterministic random initialization. No
+whole-model or expert-bank host staging copy is required. Checkpoint and random
+initialization use the same shapes and dtypes. The recipe's bounded loader
+supports direct checkpoint storage; representation conversion is rejected
+before build. The reader's ordinary `load_into(model)` method can explicitly
+convert one expert at a time for other callers; it does not depend on
+ShadowSpill pools.
 
 Dense compressed projections retain their FP8/NVFP4 bytes and scales and decode
 for BF16 GEMMs. Routed experts use FP8 GEMMs with `fp8_block` storage on SM90.
@@ -90,8 +91,8 @@ storage's precision. FP32 factor storage yields FP32 factor gradients. The recip
 initializes factors through bounded Executor buffers. Meta tensors
 alone contain no initialized factor values.
 
-Composed training and checkpoint validation remain tracked in the internal agenda.
-Full-model LoRA training is not yet qualified.
+Tests on small synthetic checkpoints cover composed training, evaluation and
+resume; no test qualifies LoRA training of the full model.
 
 ## Images
 
@@ -103,7 +104,7 @@ not read GPU metadata back to Python.
 Programmatic callers can use their existing HF preprocessing:
 
 ```python
-from workloads.models.glm53_flash import prepare_images
+from workloads.models.glm53_flash.implementations.mlops import prepare_images
 
 model = source.build_model(include_vision=True)
 images = prepare_images(
@@ -122,8 +123,8 @@ images or expand tokens. When LoRA is enabled, vision linear projections also
 receive factors; convolution, normalization and base weights remain frozen.
 
 Reduced-encoder tests cover outputs, input/parameter gradients and strict export.
-Previous full-checkpoint checks found low-precision fusion differences on random
-pixel stress inputs; do not infer full-model numerical parity from small fixtures.
+At full checkpoint scale, low-precision fusion differs on random pixel stress
+inputs; do not infer full-model numerical parity from small fixtures.
 Video preprocessing and cached autoregressive generation are not integrated.
 
 ## Bounded training loss
@@ -203,6 +204,6 @@ auxiliary attention gates, routers, shared experts and indexers remain frozen.
 
 The original FP8 Flash model has about 303 GiB of physical parameter storage
 including adapters before optimizer state and activations. Full-size pretrained
-32K training, distributed evaluation and checkpoint resume still require target
-H100 qualification. Small synthetic-checkpoint and saved-worker tests establish
+32K training, distributed evaluation and checkpoint resume have no target H100
+qualification. Small synthetic-checkpoint and saved-worker tests establish
 pipeline behavior, not full-model throughput or learning results.

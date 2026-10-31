@@ -44,7 +44,7 @@ python -m workloads.recipes.distributed_training --run-dir runs/regression --pha
 Use `--phase plan --execution-gib ... --spill-gib ...` to replan the measured
 Program under different memory budgets without repeating build or measurement.
 
-The run directory contains one archive for each phase, `logs/`, `report/`, and
+The run directory contains the phases' archives, `logs/`, `report/`, and
 `training/rank-00000/` etc. Each rank writes its owned checkpoint shards and
 metrics; DistributedLogger also combines records. Optional `--wandb-project`
 enables the existing logger's device telemetry. Inductor/Triton caches remain

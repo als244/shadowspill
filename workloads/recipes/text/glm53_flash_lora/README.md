@@ -80,13 +80,13 @@ Profile only execution after preparing the plans:
 nsys profile --capture-range=cudaProfilerApi --capture-range-end=stop \
   -o /path/to/glm-training \
   python -m workloads.recipes.text.train_glm53_flash_lora \
-  --run-dir runs/glm-lora --phase execute --nsys-start-step 2 --nsys-steps 3
+  --run-dir runs/glm-lora --phase execute --nsys-start-step 3 --nsys-steps 2
 ```
 
 Capture spans completed updates, with per-rank NVTX ranges. Evaluation and
 checkpoint cadences must fall outside the interior of that capture; the CLI
 rejects conflicts. Inductor/Triton caches remain in node-local temporary storage.
 
-Full-size pretrained 32K training and distributed evaluation/resume still need
-qualification on the target H100 allocation. Small fixture tests establish
-pipeline behavior; they are not full-model throughput results.
+Small fixture tests establish pipeline behavior; they do not qualify full-size
+pretrained 32K training, distributed evaluation/resume on H100s or full-model
+throughput.

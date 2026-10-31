@@ -52,9 +52,11 @@ each building for its own card and taking its own share of every step.
 ## Run a supplied text recipe
 
 The JSON-configured launchers use separate build, profile, plan and execution
-workers. See the [configuration reference](../workloads/recipes/text/experiment/README.md)
+workers, and a communicate worker between profile and plan when a run has
+several ranks. See the [configuration reference](../workloads/recipes/text/experiment/README.md)
 for all fields and saved artifacts. Each phase can also be selected with
-`--phase build`, `--phase profile`, `--phase plan` or `--phase execute`.
+`--phase build`, `--phase profile`, `--phase communicate` (several ranks),
+`--phase plan` or `--phase execute`.
 
 ```bash
 python -u -m training.train training/configs/olmoe_1b.json \
@@ -96,9 +98,14 @@ FP16 weights and gradients with FP32 optimizer state without master weights:
 ```bash
 python -u -m training.train training/configs/llama3_1b.json \
   model.dtype=float16 grad_dtype=@torch:float16 \
+  optimizer_args.gradient_dtype=parameter \
   optimizer_args.opt_state_dtype=@torch:float32 \
   master_dtype=null
 ```
+
+The MLOps optimizer reads each gradient at its `gradient_dtype`, BF16 unless
+set; `parameter` keeps the parameter's dtype, so the update reads the FP16
+gradients as they are stored.
 
 For stock `torch.optim.AdamW`, use FP32 masters when FP16 compute weights need
 FP32 moments. Set `master_dtype=@torch:float32`. This consumes more storage.
@@ -144,7 +151,11 @@ token files, a mask marking the assistant's tokens; a run on that directory
 trains only those, never the prompt. `python -m training.reference <run dir>`
 runs the Hugging Face model the run was built from on the documents of a step
 (the mask included) and reports its loss beside the run's recorded loss, the
-check that a checkpoint loaded as transformers reads it.
+check that a checkpoint loaded as transformers reads it. It reads a one-process
+run's `packing.jsonl` and `metrics.jsonl`, needs the run's data to truncate long
+documents (`PackedTokens`'s `long_documents="truncate"`, under which every
+document is one sequence, indexed by its ordinal) and writes `reference.json`
+in the run.
 
 ## Run policy and results
 
@@ -209,6 +220,8 @@ exact data continuation requires caller-managed progress or the optional
   packing, objectives and text experiment composition.
 - `training/configs/`: example recipe requests.
 - `training/train.py`: recipe CLI.
+- `training/prepare.py`, `training/reference.py`, `training/compare.py`: data
+  preparation, the transformers check and run comparison.
 - `training/scripts/`: launch and comparison helpers.
 
 `engine=pytorch` runs the same configuration in ordinary PyTorch, with one
@@ -229,8 +242,9 @@ outside the installed generic trainer.
 
 The trainer uses ordinary `requires_grad` and has no LoRA-specific execution
 mode. Apply [`workloads.lora.configure_lora`](../workloads/MODELS.md#trainable-parameters-and-lora)
-before building the Program. The `build_on_meta` text recipe accepts a `lora`
-configuration dictionary (for example `{"rank": 32, "alpha": 32, "head": "lora"}`)
+before building the Program. The catalog's `build_on_meta`, which the supplied
+configs name, accepts a `lora` configuration dictionary (for example
+`{"rank": 32, "alpha": 32, "head": "lora"}`)
 so configuration-driven training can make the same selection. Optimizer updates and state are created for trainable parameters; frozen state
 remains available to forward and input-gradient computation.
 

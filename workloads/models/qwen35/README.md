@@ -35,6 +35,9 @@ outside this model.
 | `rope_base` | 10,000,000 |
 | `tied_embeddings` | Share embedding and output-head weights; false |
 | `max_seq_len` | Maximum sequence length; 131,072, or 262,144 in the `2b` and `27b` presets |
+| `norm_epsilon` | Stabilizer of every RMSNorm; 1e-5, or 1e-6 in the `2b`, `9b` and `27b` presets |
+| `zero_centered_norm` | Keep every RMSNorm weight but the DeltaNet output norm's as an offset from one; false, or true in the `2b`, `9b` and `27b` presets |
+| `initializer_range` | Standard deviation the catalog initializer draws embeddings and projections from, as Hugging Face does; 0.02 |
 
 Full-attention projection width is `n_heads * head_dim` and may differ from
 `d_model`. The rotary width must be positive and even. With tied embeddings,
@@ -56,7 +59,8 @@ registration (`delta_rule/`), and decoder assembly (`model.py`).
 
 `checkpoint.py` reads a local Hugging Face Qwen 3.5 checkpoint, the
 vision-language model whose text decoder's keys begin
-`model.language_model.` (the vision tower is ignored):
+`model.language_model.` (the vision tower and the multi-token-prediction head
+are ignored):
 `Qwen35Checkpoint(directory)` turns the `text_config` into this family's
 `Config` through `config.from_huggingface` and `load_into(model)` writes
 every parameter once, through a plain tensor or this rank's rows of an FSDP2
@@ -85,4 +89,4 @@ with `model="qwen35-9b"`. The
 LoRA defaults are declared in [`lora.py`](lora.py), shared by the family's
 implementations; explicit caller targets override the defaults. DeltaNet
 `w_ba` (beta/decay) stays frozen. Packed QKV+Z and the output projection remain
-targets, alongside the full-attention projections and dense MLP/routed experts.
+targets, alongside the full-attention projections and the dense MLP.

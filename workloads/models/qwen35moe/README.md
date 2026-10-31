@@ -48,7 +48,9 @@ vision-language model whose text decoder's keys begin
 head are ignored): `Qwen35MoECheckpoint(directory)` turns the `text_config`
 into this family's `Config` through `config.from_huggingface` and
 `load_into(model)` writes every parameter once, through a plain tensor or
-this rank's rows of an FSDP2 shard. The attention and linear-attention
+this rank's rows of an FSDP2 shard. The full-attention query projection keeps
+the checkpoint's per-head interleaving of queries and gates, which this
+family's attention splits per head; the other attention and linear-attention
 parameters load as the dense Qwen 3.5 family's do; the routed experts are
 the checkpoint's fused banks, `mlp.experts.gate_up_proj` of shape
 `[E, 2I, H]` with each expert's gate rows before its up rows and
@@ -74,4 +76,4 @@ with `model="qwen35moe-35b-a3b"`. The
 LoRA defaults are declared in [`lora.py`](lora.py), shared by the family's
 implementations; explicit caller targets override the defaults. DeltaNet
 `w_ba` (beta/decay) stays frozen. Packed QKV+Z and the output projection remain
-targets, alongside the full-attention projections and dense MLP/routed experts.
+targets, alongside the full-attention projections and the routed experts.

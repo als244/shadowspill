@@ -35,8 +35,8 @@ logs are ignored by git; the source and this guide are tracked.
 
 ## Inputs and first render
 
-Save `plan_program(...).to_json()` to obtain an annotated plan, or use the
-`program_XXXX.plan.json` produced by
+Save `shadowspill.planner.plan_program(...).to_json()` to obtain an annotated
+plan, or use the `program_XXXX.plan.json` produced by
 [`tools.pressurefit_trace plan`](../../README.md). A cut trace
 alone does not contain physical allocations or transfer intervals.
 
@@ -45,12 +45,13 @@ the capture's `program_XXXX.semantics.json` or a trace's
 `semantic_labels.json`. Its program digest must match. Without annotations,
 task/object IDs remain usable; the renderer never guesses a layer or microbatch
 from an opaque ID. Recompute prefixes use the paired backward profiles from
-the program itself, including for models other than OLMoE.
+the program itself.
 
 Optional `--metadata` takes a JSON object with `ordering`, `geometry`,
 `microbatches`, `resolution`, and `physical_budget_gib` for the header. A
-collection's `winner.json` is suitable. When a schedule digest is supplied,
-it must match the plan. `--title` supplies the workload name independently.
+prepared matrix case's `metadata.json` is suitable. When a schedule digest is
+supplied, it must match the plan. `--title` supplies the workload name
+independently.
 
 ```sh
 PLAN=runs/example/program_0000.plan.json
@@ -222,8 +223,7 @@ state and pink **Task workspace**. Lime marks recomputation within backward.
 Compute hatching shows recorded ready-to-start waiting. Recompute prefixes
 use `max(0, recompute_backward - save_backward)` and are a profile-derived
 duration decomposition, not a separately timed kernel. All tasks and transfers
-use one simulated clock. Measured GPU execution is a future input adapter;
-these movies are explicitly labeled simulated.
+use one simulated clock; these movies are explicitly labeled simulated.
 
 ## Outputs and organization
 

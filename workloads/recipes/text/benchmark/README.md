@@ -15,8 +15,9 @@ python -m benchmarking.quickstart \
 The ordinary Llama3, Qwen3, Qwen3.5, OLMoE, Qwen3MoE and Qwen3.5MoE catalog
 entries share this factory. `model_config` overrides the family's configuration;
 `implementation` selects its supported `mlops` or `pytorch` implementation.
-GLM/checkpoint and model-owned EP factories remain separate migration work.
-Provider tuning portability still needs qualification beyond the tested paths.
+GLM-5.3 and GLM-5.3-Flash have their own factories in
+[`glm/quickstart.py`](../glm/README.md), and expert parallelism has
+[its own](../expert_parallel/README.md).
 
 Factory options:
 
@@ -38,14 +39,17 @@ count. Batch orderings are enumerated during CPU planning using the saved Progra
 
 The shared `text/initialization.py` fills Executor-provided CPU storage in deterministic 256K-element
 RNG blocks. Scratch stays bounded, shard/chunk boundaries do not change values,
-and no complete anonymous model is allocated. It preserves family initialization
-distributions and derived RoPE/norm/gate values, not the original module traversal's
-RNG stream. Optimizer state and master copies use the Program's initialization.
+and no complete anonymous model is allocated. It draws Hugging Face's initial
+distributions for these families (N(0, `initializer_range`) for embeddings,
+projections and expert banks) and keeps derived RoPE/norm/gate values, not the
+original module traversal's RNG stream. Optimizer state and master copies use the
+Program's initialization.
 
 Tiny Llama full training and LoRA are tested through every phase with FP32
-masters/gradients/moments. Initializer coverage, shape/stride consistency and
-global loss normalization are also checked on CPU for all six families. These
-checks do not establish large-model performance or every provider's portability.
+masters/gradients/moments. Initializer coverage is also checked on CPU for all six
+families, and shape/stride consistency and global loss normalization for tiny
+Llama. These checks do not establish large-model performance or every provider's
+portability.
 
 See the [phase quickstart guide](../../../../benchmarking/quickstart.md) for
 independent phase commands, custom communication costs and result locations.

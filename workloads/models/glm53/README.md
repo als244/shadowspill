@@ -10,7 +10,9 @@ NoPE attention and mHC streams.
 
 The workload uses the general MLOps `sparse_latent_attention` operation with
 separate 64-dimensional positional query/key tails. Its indexer uses
-`pooled_topk` with pool size one. SonicMoE handles the local experts; no expert
+`pooled_topk` with pool size one. The local experts run through `mlops.moe`, or
+`mlops.lora.experts.expert_lora` when they carry LoRA, which select SonicMoE on
+Hopper and Blackwell and the builtin grouped GEMMs elsewhere; no expert
 parallel group is created.
 
 ## Training and precision
@@ -65,6 +67,6 @@ checkpoint prefix. Omit both for all 78 layers.
 Tests compare eager and compiled packed attention outputs, selected keys and
 input gradients against the Transformers GLM reference. Separate tests cover
 positional sparse-attention gradients, shared-index layers, the complete training
-composition, and exact synthetic checkpoint import. Full-checkpoint distributed
-training throughput and numerical qualification are still in progress; the
-example above is a configuration, not a completed benchmark result.
+composition, and exact synthetic checkpoint import. No test qualifies
+full-checkpoint distributed training throughput or numerics; the example above
+is a configuration, not a benchmark result.

@@ -2,8 +2,9 @@
 
 Start here to choose a supplied architecture, change its dimensions, and select
 training precision. These are ordinary PyTorch modules passed into the generic
-[Trainer](../docs/python/api/training.md), `Forward`, or planning APIs. Model
-construction, trainable parameters, and data semantics belong to the caller.
+[Trainer](../docs/python/api/training.md), `build_forward`, or planning APIs.
+Model construction, trainable parameters, and data semantics belong to the
+caller.
 
 ## Contents
 
@@ -16,6 +17,7 @@ construction, trainable parameters, and data semantics belong to the caller.
 - [Inputs, outputs, and loss](#inputs-outputs-and-loss)
 - [Construction and runnable recipes](#construction-and-runnable-recipes)
 - [Source organization](#source-organization)
+- [Family LoRA targets](#family-lora-targets)
 
 ## Architecture index
 
@@ -40,10 +42,11 @@ is a starting shape, not a constraint.
 A family package holds `Config` in its `config.py` and one module per
 implementation under `implementations/`, each exposing `Model`. Pure PyTorch
 implementations provide readable numerical references. MLOps
-implementations use the separately installed operation library. All three
-MLOps MoE architectures can enable EP through the same Python constructor
-arguments. An experiment factory supplies groups and resources; a catalog
-name alone does not enable EP.
+implementations use the separately installed operation library. The MLOps
+OLMoE, Qwen 3 MoE and Qwen 3.5 MoE architectures can enable EP through the same
+Python constructor arguments; the GLM families run their experts locally. An
+experiment factory supplies groups and resources; a catalog name alone does
+not enable EP.
 
 For a non-text example, see the [regression recipe](recipes/regression/benchmark.py) and
 [generic training walkthrough](../docs/examples/generic-training.md).
@@ -53,10 +56,9 @@ For a non-text example, see the [regression recipe](recipes/regression/benchmark
 Each family's `config.py` holds `PRESETS`, its named shapes by size, and the
 [catalog](models/catalog/) names every one `<family>-<size>`: a `numerical`
 shape is the small exact-scale one the numerical gate runs, `tiny` a smoke-test
-shape, and a published size is that checkpoint's text decoder (`qwen35-27b`
-and `qwen35-2b` without their multi-token prediction layer). The GLM
-families' shapes come from their checkpoints; see their READMEs under
-[Families](#families).
+shape, and a published size is that checkpoint's text decoder (every Qwen 3.5
+size without its multi-token prediction layer). The GLM families' shapes come
+from their checkpoints; see their READMEs under [Families](#families).
 
 Counts below include embeddings and the output head, count shared Parameter
 objects once, and exclude buffers and optimizer state. They describe the whole
@@ -106,11 +108,13 @@ Each family package under [models/](models/) has a README with its
 architecture, shapes, configuration fields, implementations and construction,
 and a checkpoint reader (`checkpoint.py`, a local Hugging Face checkpoint into
 the model, parameter by parameter, through `config.from_huggingface` and
-`load_into`, or chunk by chunk through `copy_chunk`). The catalog names each
-reader: `catalog.build_from_checkpoint(family, directory)` declares a family's
-model at a checkpoint's configuration, and
+`load_into`, or chunk by chunk through `copy_chunk`). The catalog names every
+reader except the GLM families', which load through their own recipe.
+`catalog.build_from_checkpoint(family, directory)` declares a family's model at
+a checkpoint's configuration, and
 `workloads.recipes.text.initialization.from_checkpoint` streams the checkpoint
-into a run, so a fine-tune is a config naming a family and a directory:
+into a run, so a fine-tune is a config naming a family and a directory, its
+`checkpoint` entry.
 
 | Family | What it is |
 |---|---|
@@ -123,10 +127,12 @@ into a run, so a fine-tune is a config naming a family and a directory:
 | [GLM-5.3](models/glm53/README.md) | 78 layers of positional sparse MLA with shared indices and 256-expert MoE, LoRA over a local checkpoint streamed into the pool; `mlops` |
 | [GLM-5.3-Flash](models/glm53_flash/README.md) | 45 layers of KDA and NoPE sparse MLA on mHC streams with 288-expert MoE and an optional vision encoder, LoRA over a local checkpoint streamed into the pool; `mlops` |
 
-The two GLM families share their building blocks, checkpoint importer, stage
-partition and LoRA recipe through [models/shared/glm/](models/shared/glm/);
-their catalog entries resolve to the quickstart factories, so
-`--model glm53-flash` with `--factory-args` runs one.
+The two GLM families share their building blocks, checkpoint importer and LoRA
+switch through [models/shared/glm/](models/shared/glm/), and their stage
+partition and quickstart factories through
+[recipes/text/glm/](recipes/text/glm/); their catalog entries name those
+factories, so `--factory workloads.recipes.text.glm.quickstart:glm53_flash`
+with `--factory-args` runs one.
 
 ## Dtypes and optimizer state
 
@@ -144,7 +150,7 @@ use FP32 even when stored weights and activations use BF16 or FP16.
 | Moment rounding | Optimizer `opt_state_rounding` | `opt_state_rounding` | `nearest` or `stochastic`; ShadowSpill defaults to stochastic for BF16 AdamW moments, nearest otherwise |
 
 Ordinary constructors follow PyTorch's default dtype unless a dtype is supplied
-or the module is converted. The text recipe's `build_on_meta(..., dtype=...)`
+or the module is converted. The catalog's `build_on_meta(..., dtype=...)`
 selects storage dtype without allocating weights. Quickstart does not choose
 FP16 automatically on older hardware. For example:
 
@@ -200,7 +206,7 @@ print(parameter_report(model))
 
 | Option | Default and behavior |
 |---|---|
-| `rank`, `alpha` | 16, 16; scale is alpha/rank |
+| `rank`, `alpha` | 32, 32; scale is alpha/rank |
 | `factor_dtype` | `"bfloat16"` storage; compute uses the activation dtype |
 | `targets` | Attention/mixer linear projections, dense MLPs and routed experts; explicit module globs replace the preset |
 | `head` | `"frozen"`, `"lora"`, or `"full"` |
@@ -231,10 +237,11 @@ configuration before strict checkpoint loading.
 `workloads.models.catalog.build_on_meta` and the generic
 `workloads.models.construction.build_on_meta` also accept a `lora` dictionary
 with these options, so a training config can construct LoRA before
-initialization and optimizer creation; the quickstart's `--lora` flags do the
-same for a catalog model. EP full-model conversion is not currently supported
-by this recipe: the separately available `QuackMoELoRA` and `TEMoELoRA` require their
-own layer construction and distributed validation.
+initialization and optimizer creation; the text benchmark factory's `lora`
+argument and the baseline engines' `--lora` flag do the same for a catalog
+model. This recipe refuses expert-parallel experts: the separately available
+`QuackMoELoRA` and `TEMoELoRA` require their own layer construction and
+distributed validation.
 
 Frozen state remains a forward/backward input when needed. Memory savings come
 primarily from omitted gradients and optimizer states; LoRA can add activation
@@ -243,10 +250,10 @@ than inferring task memory from trainable counts alone.
 
 ## Expert parallelism
 
-EP is a constructor choice for **every MLOps MoE architecture**: OLMoE,
-Qwen 3 MoE and Qwen 3.5 MoE. Local experts are the default; the pure-PyTorch
-implementations remain independent references. Model dimensions and attention
-structure do not change when enabling EP.
+EP is a constructor choice for the **MLOps OLMoE, Qwen 3 MoE and Qwen 3.5 MoE
+architectures**; the GLM families run their experts locally. Local experts are
+the default; the pure-PyTorch implementations remain independent references.
+Model dimensions and attention structure do not change when enabling EP.
 
 ```python
 from workloads.models.olmoe.config import PRESETS
@@ -321,8 +328,9 @@ these declarations without creating a communicator in the model.
 
 The caller defines global loss normalization and any replication across EP
 groups. See the [distributed API](../docs/python/api/distributed.md). Model
-implementations contain no ShadowSpill imports. The portable resource path still
-needs its own distributed qualification; existing live-module checks do not
+implementations contain no ShadowSpill imports. The portable resource path has
+its own two-GPU acceptance test of saved EP training and checkpoints
+(`tests/shadowspill/execution/expert_parallel/`); live-module checks do not
 qualify a saved Plan.
 
 ## Inputs, outputs, and loss
@@ -411,7 +419,7 @@ workers recreate the explicitly described resources.
 | [models/](models/) | One package per family: `config.py`, its `checkpoint.py` reading a local Hugging Face checkpoint, a README and `implementations/` with one module per implementation |
 | [models/shared/](models/shared/) | Code families share: reference decoder math, rotary tables, packing metadata and loss helpers, the mlops norm containers, the Gated DeltaNet mixer, EP construction, the Qwen mixture blocks and the GLM building blocks |
 | [models/shared/qwen_moe/](models/shared/qwen_moe/) | Initialization, mixers, experts and the decoder shared by the two Qwen MoE families |
-| [models/shared/expert_parallel](models/shared/expert_parallel/) | Shared EP construction and routing helpers for all MLOps MoE models |
+| [models/shared/expert_parallel](models/shared/expert_parallel/) | Shared EP construction and routing helpers for the MLOps OLMoE and Qwen MoE models |
 | [lora/](lora/) | Model-family LoRA targeting over the reusable projections in MLOps |
 | [recipes/](recipes/) | Caller-side model construction, objectives and data composition |
 | [precision.py](precision.py) | Supplied workload precision configuration |
@@ -431,7 +439,9 @@ PyTorch model and never import this catalog or the workload packages.
 
 Each family declares its default module globs in `models/<family>/lora.py`.
 Both implementations expose the same `LORA_TARGETS`; `configure_lora(targets=...)`
-can override them explicitly. New linear modules are not automatically adapted
+can override them explicitly. The GLM families apply their `LORA_TARGETS`
+through their checkpoint's `build_model(lora_rank=..., lora_alpha=...)`
+instead, which takes no `targets`. New linear modules are not automatically adapted
 by a family preset. The head remains frozen unless its existing option selects it.
 
 | Family | Default adapted projections | Frozen controls |
@@ -454,7 +464,3 @@ Qwen3.5 retains its packed QKV+Z projection: adapting `in_proj_z` alongside
 The tiny beta/decay projections (`w_ba`) are excluded. An explicit
 `shared_experts=True` selects only the family's `SHARED_TARGETS` (large
 shared-expert projections), not its scalar mixing gate or router.
-
-These preset changes alter adapter parameter sets. An adapter checkpoint created
-with the previous all-linear defaults may contain gate factors that are no
-longer present; select the old targets explicitly when continuing that run.

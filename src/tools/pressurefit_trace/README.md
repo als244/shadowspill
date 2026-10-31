@@ -1,8 +1,9 @@
 # PressureFit capture and analysis
 
 Record planner decisions from saved profiles, inspect every cut, and retain the
-winning schedules. These tools run on CPU; model build and GPU measurement happen
-beforehand. Generated data belongs in an ignored run directory such as `runs/`.
+winning schedules. These tools run on CPU, except the Nsight capture of executed
+winners; model build and GPU measurement happen beforehand. Generated data
+belongs in an ignored run directory such as `runs/`.
 
 ```sh
 python -m tools.pressurefit_trace --help
@@ -16,11 +17,16 @@ live under [video/](video/README.md).
 
 ## Capture new traces
 
-For an arbitrary program, the simplest route is the normal planning API:
+For an arbitrary program, the simplest route is the normal planning API, given
+a planning problem (one saved with its `to_json()`, for example):
 
 ```python
-from shadowspill.planner import GenericPlanningOptions, SearchOptions, plan_program
+from pathlib import Path
 
+from shadowspill.planner import GenericPlanningOptions, SearchOptions, plan_program
+from shadowspill.planner.program_inputs import ShadowSpillPlanningProblem
+
+problem = ShadowSpillPlanningProblem.from_json(Path("problem.json").read_text())
 plan = plan_program(
     problem,
     search_options=SearchOptions(
@@ -177,7 +183,8 @@ python -m tools.pressurefit_trace.profile_winners RUN/quickstart \
 ```
 
 `--budget-gib` limits capture to one executed winner. Each attempt retains its
-command, logs, `.nsys-rep`, SQLite export and validation. Validation requires kernel
+command, logs, `.nsys-rep` and SQLite export; the budget's `validation.json`
+names the validated attempt's files. Validation requires kernel
 records on every GPU, device metrics, semantic task/transfer NVTX and step ranges
 from every rank. Resume checks identities and hashes before skipping a capture.
 GPU metrics require permission on the allocated node.

@@ -28,6 +28,7 @@ their widths and parameter counts.
 | `top_k` | Experts selected per token; between 1 and `n_experts` |
 | `d_ff_expert` | Intermediate width of each expert |
 | `rope_base`, `max_seq_len` | 10,000 and 131,072 |
+| `initializer_range` | Standard deviation the catalog initializer draws embeddings, projections and expert banks from, as Hugging Face does; 0.02 |
 
 Q/K normalization is applied before rotary attention. The auxiliary load
 balancing loss is returned separately by `hidden`; `loss(..., aux_coef=...)`

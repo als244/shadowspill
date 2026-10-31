@@ -35,7 +35,7 @@ python -m workloads.recipes.text.train_qwen35_lora --run-dir runs/qwen35-lora --
 
 | Output | Contents |
 | --- | --- |
-| `programs/`, `profiles/`, `profiled/` | Separate archives for each batch size and training/evaluation |
+| `programs/`, `profiles/`, `profiled/`, `communication/` | Separate archives for each batch size and training/evaluation |
 | `search.json`, `selected.json` | Candidate outcomes and chosen geometry/ordering |
 | `plans/` | Chosen Plans and each successful candidate pair |
 | `reports/` | Selected simulated timelines and memory reports |

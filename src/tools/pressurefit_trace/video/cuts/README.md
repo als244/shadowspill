@@ -130,7 +130,8 @@ when the shown decision or batch is applied; the fading highlight is decoration.
 
 When enabled, automatic examples start with the first cut, then seek the strongest early
 visual contrast in object size, removable span, role, and release/eviction.
-The early window is the first 10% of cuts, after a six-cut gap. A different
+The early window is the first 10% of cuts, after a gap of `--opening-cuts` cuts
+(at least one; six with `--details`). A different
 comparison criterion breaks ties, so a sibling weight is not selected just
 because its tie-breaker changes. The third example seeks a change between
 release and eviction. If those changes do not exist, the renderer chooses
@@ -184,7 +185,7 @@ intervening decision for one frame instead of batching those passages.
   boundary until the next task begins; the selected pressure boundary may lie
   inside this gap. The release/eviction label marks the start of removed
   residency, not a simulated transfer completion timestamp.
-  This duration stays in seconds, milliseconds, or microseconds in either axis
+  This duration stays in time units (seconds down to nanoseconds) in either axis
   mode; it does not include future transfer stalls. A red outline marks the exact
   span selected for removal; its residency fades out after applying the cut, leaving
   a dashed outline and pointer on the gap. A cut with no positive-duration gap
@@ -231,7 +232,7 @@ intervening decision for one frame instead of batching those passages.
   once. Persistent state (parameters, optimizer state, gradients, and buffers)
   takes precedence over saved activation views of that same storage. Its stable
   name labels the row; member labels and task references remain available in
-  `aliases.json`. This also corrects the display of older trace recordings.
+  `aliases.json`. The renderer applies this precedence to every recording it reads.
   Output reservations and fetch headroom are assigned to that same role;
   repair pressure and any additional capacity reservation have a separate gray
   layer. The flat budget is the maximum recorded `capacity + workspace` across
@@ -241,7 +242,8 @@ intervening decision for one frame instead of batching those passages.
   `displayed usage - flat budget = recorded pressure - recorded capacity`.
   The red outline marks over-budget pressure. Adaptive scaling keeps zero at
   the bottom and 8% margin above the current usage/budget maximum.
-- The header shows `Cut X/N`, with the seed at cut zero. The decision panel
+- The header shows `Cut X/N`, the cut being chosen or just applied; the seed
+  frame already names cut 1, the first decision it leads to. The decision panel
   identifies `Cut X (Boundary Y)` and colors the selected object's name by its
   role, matching the timeline and pressure legend.
 - The decision panel breaks down the task immediately after the selected
@@ -261,7 +263,7 @@ intervening decision for one frame instead of batching those passages.
   capacity is unavailable. Pool/allocation causes remain in analysis and
   storyboard metadata.
 - Role attribution and the total view require `pressure_accounting` in the
-  manifest context. Current recordings include it automatically. Older traces
+  manifest context. Recordings include it automatically. Traces without it
   remain readable with `--pressure-view reducer`; missing composition is shown
   as **Unattributed**, preserving exact totals. Record the candidate again to
   obtain its role breakdown and resident reservations.
@@ -296,7 +298,8 @@ for the formulas and where residency strategies and fetch rules act.
 
 ## Render outputs
 
-`render` writes an MP4, FFmpeg log, seed/first-cut/final PNGs for each chapter,
+`render` writes an MP4, FFmpeg log, seed and final PNGs for each chapter, a
+first-cut PNG when a chapter shows its first cut slowly (as with `--details`),
 and `<stem>.storyboard.json`. Each storyboard entry names the exact reduction,
 cut count, axis, video frame range, boundary, visible/full local alias lists,
 pressure summary, flat budget, y-axis limits, and role bytes at the selected

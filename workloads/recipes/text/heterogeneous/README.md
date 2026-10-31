@@ -23,8 +23,8 @@ command as every other run, by a section of the config:
 
 | Field | Meaning |
 | --- | --- |
-| `nodes` | The machines, the first the one the runner is launched on; the others reached by `ssh` with the repository (`repo`), its interpreter (`python`) and the config's paths in place. `ranks` per node, one per GPU; `env` for the node's network settings, whose interface names, logging and install paths may differ between nodes while every other NCCL setting must agree. |
-| `shares` | One positive integer per rank: how many of every step's units it takes, in rank order (equal by default). The ranks of one node take equal shares. |
+| `nodes` | The machines, each at its `address`, the first the one the runner is launched on; the others reached by `ssh` with the repository (`repo`), its interpreter (`python`) and the config's paths in place. `ranks` per node, one per GPU; `env` for the node's network settings, whose interface names, logging and install paths may differ between nodes while every other NCCL setting must agree. |
+| `shares` | One positive integer per rank: its proportion of every step's units, in rank order (equal by default); the step's units must divide by the shares' total. The ranks of one node take equal shares. |
 | `port` | The rendezvous port at the first node's address (default 29400). |
 
 A step is `max_tokens_per_step / max_seq_len` units of `max_seq_len` tokens,

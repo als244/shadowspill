@@ -24,9 +24,8 @@ updates. Input data differs across logical ranks, while matching dense tensors
 start identically. Loss normalization and throughput use the global token count.
 Masters, gradients and moments default to FP32; compute weights are BF16.
 
-The provider currently requires SM90 and fixed GEMM policies. MLOps master
-includes the portable-resource implementation. Local metadata/construction tests pass; saved EP transport
-and numerical qualification on two H100s remain pending. Run:
+The provider requires SM90 and fixed GEMM policies. Local metadata/construction
+tests pass; saved EP transport and numerical qualification run on two H100s:
 
 ```bash
 python -m pytest tests/shadowspill/execution/expert_parallel/test_training.py -o addopts= -q
@@ -34,5 +33,8 @@ python -m pytest tests/shadowspill/execution/expert_parallel/test_training.py -o
 
 That test covers both save/recompute choices, four examples per invocation,
 reversed logical ranks, three updates, master/moment comparisons and checkpoint
-restore. Its eager reference shares expert kernels but uses ordinary PyTorch
-accumulation and FP32 AdamW. Logs and artifacts are separate for each phase.
+restore, with BF16 gradients, the dtype the reference accumulates in. Its eager
+reference shares expert kernels but uses ordinary PyTorch accumulation and FP32
+AdamW, and takes each step from the state the Executor held before it, so each
+comparison measures one step's arithmetic. Logs and artifacts are separate for
+each phase.

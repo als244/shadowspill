@@ -26,7 +26,7 @@ All three omit story frames and detailed examples by default. Add `--details`
 to the batch command to include them.
 
 Both commands resume completed work. `prepare` checks the saved schedules and
-simulated makespans against the source diagnostics. `render` records the renderer
+simulated makespans against the source diagnostics. `batch` records the renderer
 source hashes and options and refuses to mix changed configurations in one output
 directory. Use a fresh output directory for a different render configuration.
 Jobs run in separate processes; on Linux they divide the available CPU affinity.
@@ -44,17 +44,17 @@ movie for human inspection; successful decoding alone is not a visual review.
 | `prepare` | `planning`, `--output` | Source collection with `plans.json`, and resumable matrix directory. |
 | `prepare` | `--dump` | Capture directory; use this when the original capture moved to another machine. |
 | `prepare` | `--workers` | CPU planning workers, default `4`. Source searches must be deterministic. |
-| `render` | `matrix`, `--output` | Prepared matrix directory and resumable video directory. |
-| `render` | `--publish-to` | Optional library directory receiving each verified video and a linked index. |
-| `render` | `--details` | Add story frames and detailed examples to all three videos; default off. |
-| `render` | `--videos` | One or more of `cuts`, `emission-placement`, `execution`; default all three. |
-| `render` | `--jobs` | Concurrent video processes, default `4`. |
-| `render` | `--title` | Workload title; each video's ordering, geometry and resolution remain visible. |
-| `render` | `--resolution`, `--quality` | Default `4k`, `best`; same choices as the individual renderers. |
-| `render` | `--fps`, `--motion-fps` | Output rate and distinct plan-animation states per second; default `30` each. |
-| `render` | `--emission-timing` | Explain, motion, build, sweep, hold seconds; default `15,12,30,50,8`. |
-| `render` | `--execution-timing` | The same five durations; default `18,15,30,60,8`. |
-| `render` | `--cut-options-json` | Extra cut-render CLI settings as a JSON object, for example `'{"explain-seconds":20,"detail-at":"1,50,200"}'`. Defaults to continuous cut playback with no detailed examples. |
+| `batch` | `matrix`, `--output` | Prepared matrix directory and resumable video directory. |
+| `batch` | `--publish-to` | Optional library directory receiving each verified video and a linked index. |
+| `batch` | `--details` | Add story frames and detailed examples to all three videos; default off. |
+| `batch` | `--videos` | One or more of `cuts`, `emission-placement`, `execution`; default all three. |
+| `batch` | `--jobs` | Concurrent video processes, default `4`. |
+| `batch` | `--title` | Workload title; each video's ordering, geometry and resolution remain visible. |
+| `batch` | `--resolution`, `--quality` | Default `4k`, `best`; same choices as the individual renderers. |
+| `batch` | `--fps`, `--motion-fps` | Output rate and distinct plan-animation states per second; default `30` each. |
+| `batch` | `--emission-timing` | Explain, motion, build, sweep, hold seconds; default `15,12,30,50,8`. |
+| `batch` | `--execution-timing` | The same five durations; default `18,15,30,60,8`. |
+| `batch` | `--cut-options-json` | Extra cut-render CLI settings as a JSON object, for example `'{"explain-seconds":20,"detail-at":"1,50,200"}'`. Defaults to continuous cut playback with no detailed examples. |
 
 ## Completed quickstart winners
 

@@ -19,10 +19,10 @@ requires 768 GiB of host pools across the node.
 
 Profiling reserves 768 MiB of external GPU headroom (configurable with
 `--external-headroom-mib` when creating the run), in addition to calibrated
-communication overhead. This is included in the total GPU budget. The SonicMoE
-H100 worker exceeded the earlier 512 MiB allowance by 8 MiB during library/backend
-setup; the extra margin reduces the memory available to planning rather than
-relaxing runtime admission. Changing this reservation requires fresh profiles.
+communication overhead. This is included in the total GPU budget. Library and
+backend setup on an H100 SonicMoE worker takes more than 512 MiB outside the
+pool; the margin reduces the memory available to planning rather than relaxing
+runtime admission. Changing this reservation requires fresh profiles.
 
 Each phase also runs independently with `--phase build`, `profile`, `communicate`,
 `plan`, or `execute`. Start build with the data path and configuration. Subsequent
@@ -48,13 +48,14 @@ The files have one purpose each:
 The default candidates contain 1, 2, 4, 8, 16 and 32 sequences per example;
 planning selects their execution order without rebuilding. Inputs are rank-local
 and disjoint. Loss normalization uses the global token count. Random initialization
-preserves the model's distributions, with a stable per-tensor RNG stream rather
-than the old module-reset traversal order.
+draws Hugging Face's initial distributions, from a stable per-tensor RNG stream
+rather than the module-reset traversal order.
 
 `--model qwen3moe-tiny --ranks 1` supports local pipeline checks. Single-rank
 profiling also measures host copies, so it needs no communicate phase. Such a
 check does not qualify the 30B model's performance or memory use on eight GPUs.
-The underlying common DP Executor is qualified on two H100s; qualification of
-this migrated MoE recipe on multiple GPUs remains separate. External autotuners
-such as Quack still need saved-choice integration before claiming complete
-cache-independent kernel replay.
+The underlying common DP Executor is qualified on two H100s, and the recipe's
+test runs the tiny model through every phase on one and two GPUs. Saved
+Programs keep the Triton autotuner winners their build chose; an external
+autotuner such as Quack's chooses outside them, so a saved Program does not fix
+its kernels' choices.

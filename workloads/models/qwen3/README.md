@@ -35,6 +35,7 @@ their widths and parameter counts.
 | `max_seq_len` | Maximum supported sequence length / rotary-table capacity; 40,960 |
 | `tied_embeddings` | Share embedding and output-head weights; false |
 | `norm_epsilon` | Stabilizer of every RMSNorm: the block, final, query and key norms; 1e-6 |
+| `initializer_range` | Standard deviation the catalog initializer draws embeddings and projections from, as Hugging Face does; 0.02 |
 
 All shape fields above `rope_base` are required for a custom configuration.
 `attention_width` (`n_heads * head_dim`) and `key_value_width`
@@ -54,17 +55,17 @@ dtype before the gain, where Qwen 3.5 keeps its weights as offsets from one.
 `checkpoint.py` reads a local Hugging Face Qwen 3 checkpoint:
 `Qwen3Checkpoint(directory)` turns its `config.json` into this family's
 `Config` through `config.from_huggingface` (the rotary base from
-`rope_theta` or `rope_parameters`; `max_seq_len` stays the preset's rotary
-capacity unless overridden) and `load_into(model)` writes every parameter once
-from the memory-mapped safetensors shards, through a plain tensor or this
-rank's rows of an FSDP2 shard. The names map one to one, the query and key
-norms included, and a tied head is written once from the embedding; a tied
-checkpoint that also stores the head, as Qwen3-1.7B's does, is read only if
-the stored head equals the embedding. No projection is permuted: the rotary
-tables are computed, and the rotate-half convention matches the
-checkpoint's. A checkpoint that enables what the
-definition does not reproduce is refused: attention biases, sliding-window
-attention, a rotary scaling such as YaRN, or an activation other than SiLU.
+`rope_theta` or `rope_parameters`; `max_seq_len` stays the configuration's
+default rotary capacity unless overridden) and `load_into(model)` writes every
+parameter once from the memory-mapped safetensors shards, through a plain
+tensor or this rank's rows of an FSDP2 shard. The names map one to one, the
+query and key norms included, and a tied head is written once from the
+embedding; a tied checkpoint that also stores the head, as Qwen3-1.7B's does,
+is read only if the stored head equals the embedding. No projection is
+permuted: the rotary tables are computed, and the rotate-half convention
+matches the checkpoint's. A checkpoint that enables what the definition does
+not reproduce is refused: attention biases, sliding-window attention, a rotary
+scaling such as YaRN, or an activation other than SiLU.
 
 ## Construction
 

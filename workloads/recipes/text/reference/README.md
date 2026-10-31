@@ -11,12 +11,13 @@ The files each own one part of the reference:
 | File | Responsibility |
 | --- | --- |
 | `run.py` | Resolve configuration, initialize the model and choose fixed geometry. |
-| `engine.py` | Forward/backward, gradient accumulation, optimizer update and evaluation. |
-| `loop.py` | Schedules, logging, evaluation/checkpoint cadence and packing records. |
+| `initialization.py` | Fill the model through the configured `initialize` in bounded chunks, or reset its parameters from the seed when none is given. |
+| `engine.py` | Forward/backward, gradient accumulation, schedules, optimizer update and evaluation. |
+| `loop.py` | Logging, evaluation/checkpoint cadence and packing records. |
 | `checkpoint.py` | Atomic model/optimizer and loop-state saving, resume and retention. |
 
-The reference uses ordinary allocations. It does not depend on the old Trainer,
-preparation backends or a ShadowSpill Plan. Shared precision helpers retain compute
+The reference uses ordinary allocations. It does not depend on `Trainer`, the
+preparation phases or a ShadowSpill Plan. Shared precision helpers retain compute
 weights, optional masters and separately accumulated gradients. Metric callbacks
 remain eager. `parameter_norms_every` enables norms on selected updates; observations
 are disabled by default. An explicit `parameter_metrics` callback defaults to every
