@@ -16,7 +16,7 @@ def test_saved_ep_training_and_checkpoint(tmp_path, resolution):
     if torch.cuda.device_count() < 2:
         pytest.skip("requires two distinct GPUs")
     if torch.cuda.get_device_capability()[0] != 9:
-        pytest.skip("Quack EP currently requires SM90")
+        pytest.skip("Quack EP requires SM90")
     script = (
         Path(__file__).parents[3] / "integration/pytorch/expert_parallel_training.py"
     )

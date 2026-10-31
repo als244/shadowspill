@@ -580,7 +580,8 @@ def build(config_path, root):
         "page for new videos while the background catalog updater is running.",
         "",
         "Simulated throughput uses certified physical-plan timing wherever "
-        "available; older cut-only traces identify their search-simulation basis. "
+        "available; a cut-only trace, without a saved plan, identifies its "
+        "search-simulation basis. "
         "Measured throughput is shown separately when training steps were recorded. "
         "Movie length is teaching pace, not execution time.",
         "",

@@ -2,11 +2,14 @@
  * The neutral runtime's public API, in the order a program uses it.
  *
  * This header is the umbrella: it includes one header per subsystem, and
- * including it gives the whole API, as it always has. The parts are
- * vocabulary (statuses, reasons, enumerations), descriptions (what a caller
- * declares), diagnostics (what the runtime reports), lifecycle (opening and
- * closing a runtime and a plan), pools, objects, plan admission, task
- * boundaries, and telemetry. Each may also be included on its own.
+ * including it gives the whole API. The parts are vocabulary (statuses,
+ * reasons, enumerations), lanes (what moves bytes between two pools), pool
+ * memory (where a pool's memory comes from), library (what a separately
+ * loaded library offers), descriptions (what a caller declares), diagnostics
+ * (what the runtime reports), lifecycle (opening and closing a runtime and a
+ * plan), pools, objects, plan admission, task boundaries, telemetry, and
+ * timing (work timed against the runtime's own events). Each may also be
+ * included on its own.
  */
 
 #ifndef SHADOWSPILL_RUNTIME_H

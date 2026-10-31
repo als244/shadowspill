@@ -233,7 +233,7 @@ def _raw_offset_bytes(tensor: torch.Tensor) -> int:
 
 def _view_span_bytes(tensor: torch.Tensor) -> int:
     if tensor.layout is not torch.strided:
-        raise CaptureError("task output contract currently requires strided tensors")
+        raise CaptureError("task output contract requires strided tensors")
     if tensor.numel() == 0:
         return 0
     if any(stride < 0 for stride in tensor.stride()):

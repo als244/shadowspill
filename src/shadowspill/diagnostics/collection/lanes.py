@@ -46,10 +46,11 @@ def lane_statistics(bridge: RuntimeBridge, direction: str) -> LaneStatistics | N
     whatever the caller called them. A fetch runs spill to execution and an
     evict the other way, which is the whole of the direction.
 
-    One call serves every kind of lane: the runtime resolves the route's lane
-    and asks it through the contract, so nothing here knows which implementation
-    answered. UNSUPPORTED is a lane declining to keep a count, and stays None
-    rather than becoming zeroes a reader would take for "moved nothing".
+    One call serves every kind of lane: the runtime reads the counters every
+    lane keeps in its common struct and asks the lane only for its timing, so
+    nothing here knows which implementation answered. A route with no lane
+    answers UNSUPPORTED, which stays None rather than becoming zeroes a reader
+    would take for "moved nothing".
     """
 
     source, destination = (

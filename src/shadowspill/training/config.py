@@ -14,8 +14,8 @@ run uses without this package knowing any of them:
 ``name`` may be dotted (``Config.numerical``). Values are resolved depth first,
 so any argument may itself be one of these forms. Overrides replace values by
 dotted key before anything is resolved -- ``steps=100``,
-``backend.execution_gib=12`` -- each value read as JSON, or taken as a string
-when it is not JSON. A key segment that holds dots is quoted:
+``optimizer_args.weight_decay=0.01`` -- each value read as JSON, or taken as a
+string when it is not JSON. A key segment that holds dots is quoted:
 ``schedules."optimizer_group.0.lr".total_steps=300`` (the whole override
 quoted again for the shell).
 """

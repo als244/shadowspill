@@ -41,9 +41,9 @@ class GLMCheckpoint:
             raise ValueError(f"expert_storage must be one of {EXPERT_STORAGES}")
         if gemm_precision != "bf16":
             raise ValueError(
-                "The composed GLM checkpoint path currently supports BF16 GEMMs "
-                "only. Low-precision GEMM recipes, including checkpoint activation "
-                "scales, are not integrated yet; compressed weight storage remains "
+                "The composed GLM checkpoint path supports BF16 GEMMs only. "
+                "Low-precision GEMM recipes, including checkpoint activation "
+                "scales, are not integrated; compressed weight storage remains "
                 "FP8 or NVFP4."
             )
         self.directory = Path(directory)

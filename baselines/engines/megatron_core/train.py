@@ -254,7 +254,7 @@ def apply(config, case, vocabulary, dataset):
     config.dataset = dataset
     config.tokenizer.tokenizer_type = "NullTokenizer"
     config.tokenizer.vocab_size = vocabulary
-    # Megatron refuses a seed of zero, every engine's default; its seed
+    # Bridge refuses a seed of zero, every engine's default; its seed
     # sets NVIDIA's initialization alone, the tokens keep the case's.
     config.rng.seed = settings.seed + 1
     config.logger.log_interval = config.train.train_iters + 1

@@ -60,12 +60,11 @@ void shadowspill_network_tuning_read(ShadowSpillNetworkTuning *tuning) {
          * driver holds about 1,024 operations per stream: past that, the
          * dispatch blocks until the device drains the queue, and every
          * action behind it -- an evict whose trigger has completed among
-         * them -- waits with the worker. With 4 MiB pieces a 3.4 GB burst of
-         * fetches stalled the worker about a second each time: a step
-         * spilling to a peer ran in 36.77 s against 31.04 s planned, and in
-         * 31.13 s with 16 or 32 MiB pieces. At 32 MiB a burst has to pass
-         * about 11 GB to reach the ceiling, and the ring costs 64 MiB of
-         * pinned memory per lane, which is nothing beside a spill pool.
+         * them -- waits with the worker. The ceiling holds about 340
+         * pieces, so the piece size sets the burst a dispatch absorbs: at
+         * 32 MiB a burst has to pass about 11 GB to reach it, and the ring
+         * costs 64 MiB of pinned memory per lane, which is nothing beside a
+         * spill pool.
          */
         .chunk_bytes = number("SHADOWSPILL_NETWORK_CHUNK_BYTES", 32U << 20U),
         /* Zero is "ask the port", which is what anyone not testing the pieces

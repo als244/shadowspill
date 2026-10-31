@@ -327,7 +327,8 @@ def readme(name: str, relative: Path, folder: Path, args, spec, cases, matrices)
         f"| Precision | {contract}; {rounding}; the narrow-gradient fusion as each"
         " engine defaults |",
         f"| Run | {settings.get('warmup_steps', 3)} warmup and"
-        f" {settings.get('steps', 5)} measured updates per case;"
+        f" {settings.get('steps', 5)} measured"
+        f" update{'s' if settings.get('steps', 5) != 1 else ''} per case;"
         f" {settings.get('cpu_threads', 8)} CPU threads; at most"
         f" {spec.get('case_timeout', 3600):g} s a case |",
         f"| Sized for | {number(args.gpu_memory_gib)} GiB of GPU memory and"

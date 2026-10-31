@@ -84,9 +84,7 @@ class Storage:
             r.location is not MemoryLocation.SPILL
             for r in plan.schedule.initial_residency
         ):
-            raise NotImplementedError(
-                "saved Executor currently requires initial spill residency"
-            )
+            raise NotImplementedError("saved Executor requires initial spill residency")
         retain = {
             a.alias_group_id: a.retain_spill_copy for a in plan.program.alias_groups
         }

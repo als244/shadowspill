@@ -51,9 +51,7 @@ def decode_allocations(
     available: dict[tuple[int, int], list[int]] = defaultdict(list)
     for event in events:
         if event["pool_first"] or event["pool_second"]:
-            raise CaptureError(
-                "native profiling does not yet support private memory pools"
-            )
+            raise CaptureError("native profiling does not support private memory pools")
         action, address = event["action"], event["address"]
         if action == "out_of_memory":
             raise CaptureError("allocation observation contains an out-of-memory event")

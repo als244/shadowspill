@@ -121,5 +121,5 @@ def norm_inputs(
         ]
         raise ValueError(f"Plan has no safe norm observation point for {labels}")
     if len(resources) > 1:
-        raise ValueError("parameter norms currently require one ordered task stream")
+        raise ValueError("parameter norms require one ordered task stream")
     return names, reads

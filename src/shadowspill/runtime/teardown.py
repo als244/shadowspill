@@ -1,10 +1,12 @@
 """What a failed call leaves on the runtime, and how teardown is made safe.
 
-A failure is latched once, as `RuntimeFailureDiagnostics`, and a runtime that
-cannot be trusted after it is marked unusable with the reason; `close` and every
-later call read both. `prepare_failure_cleanup` is the step every failing
-worker setup or invocation runs before rolling back: record the failure, drain
-the device, recover the no-progress latch where that is the failure.
+`record_failure` keeps a failure's `RuntimeFailureDiagnostics` as the runtime's
+`last_failure`. `mark_unusable` marks a runtime that cannot be trusted unusable,
+keeping the first reason given, which every later call that needs an open
+runtime raises. `prepare_failure_cleanup` readies a failed call for rolling
+back: it records the failure, drains the device and recovers the no-progress
+latch where that is the failure, marking the runtime unusable when the drain or
+the recovery fails.
 """
 
 from __future__ import annotations

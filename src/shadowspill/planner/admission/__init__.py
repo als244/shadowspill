@@ -454,7 +454,7 @@ class AdmissionFacts:
             raise ValueError(f"admission facts names unknown device {self.device_id!r}")
         if len(program.devices) != 1:
             raise ValueError(
-                "one AdmissionFacts currently describes exactly one execution "
+                "one AdmissionFacts describes exactly one execution "
                 f"pool; ShadowSpillProgram has {len(program.devices)} devices"
             )
         expected_tasks = tuple(item.task_id for item in program.tasks)

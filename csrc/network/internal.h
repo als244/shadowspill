@@ -13,8 +13,8 @@
 /* The remote lane embeds the common struct; this is where its layout lives. */
 #include <shadowspill/runtime/lane_base.h>
 
-/* This library links verbs from Phase 4 onward; libshadowspill still does
-   not, and neither does anything that includes it. */
+/* This library links verbs; libshadowspill does not, and neither does
+   anything that includes it. */
 #include <infiniband/verbs.h>
 
 /* The one symbol this library exports; everything else stays hidden, as the
@@ -23,8 +23,8 @@
 
 /*
  * This directory owns no public header. Everything it implements is declared
- * by the runtime -- a pool-memory pair here, a lane later -- so what it exports
- * is one static descriptor and nothing else. A caller that loads it therefore
+ * by the runtime -- a pool-memory pair and the lanes -- so what it exports is
+ * one static descriptor and nothing else. A caller that loads it therefore
  * needs the runtime's headers and none of these.
  *
  * Nothing in memory/, transfers/ or sync/ may include this file.
@@ -179,8 +179,9 @@ int shadowspill_control_connect_endpoint(
  *                      the host copy with the transfer, which is what matters;
  *                      with one the two serialise, and more than two buys
  *                      little, since one stage is much faster than the other.
- *   SIGNAL_EVERY       Completions are expensive; only every Nth work request
- *                      need be signalled, with the last always signalled.
+ *   SIGNAL_EVERY       Read, clamped to at least one and reported with the
+ *                      rest; every work request is posted signalled, so it
+ *                      changes nothing a transfer does.
  *   SPIN_NANOSECONDS   How long a lane's thread watches for the next transfer
  *                      before blocking on a condition variable. The default,
  *                      `SHADOWSPILL_NETWORK_SPIN_FOREVER`, never blocks: a
@@ -348,7 +349,7 @@ typedef struct ShadowSpillRemotePoolConfiguration {
     const char *host;
     const char *port;
     /* Which memory the daemon should serve, in its own vocabulary. NULL means
-       "host", the only kind a daemon serves today. */
+       "host", the only kind a daemon serves. */
     const char *selector;
 } ShadowSpillRemotePoolConfiguration;
 

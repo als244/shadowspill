@@ -70,9 +70,8 @@ struct ShadowSpillRouteState {
     ShadowSpillTransferQueue queue;
     ShadowSpillBackendStream stream;
     /* What moves this route's bytes, resolved from its two pools' kinds at
-       create. The built-in lane copies on the stream above; a lane that works
-       on its own stream gets one of its own and leaves this one to the
-       runtime. */
+       create. Every lane is handed the stream above in its common struct and
+       issues its copies, waits and signals there. */
     ShadowSpillLane *lane;
     const ShadowSpillLaneOperations *operations;
     uint8_t stream_created;

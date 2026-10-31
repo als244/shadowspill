@@ -1,4 +1,4 @@
-"""Family checkpoint reader and legacy module initialization."""
+"""Family checkpoint reader and whole-module initialization."""
 
 from __future__ import annotations
 

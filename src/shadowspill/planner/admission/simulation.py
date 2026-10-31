@@ -36,7 +36,7 @@ def simulation_admission_from_replay(
     tasks = program.selected_tasks(selections)
     if len(program.devices) != 1:
         raise ValueError(
-            "one AdmissionReplay currently describes exactly one execution pool; "
+            "one AdmissionReplay describes exactly one execution pool; "
             f"ShadowSpillProgram has {len(program.devices)} devices"
         )
     device_id = program.devices[0].device_id

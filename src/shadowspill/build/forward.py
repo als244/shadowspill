@@ -38,8 +38,8 @@ def build_forward(
 ) -> Program:
     """Build fixed implementations without profiling, pools or live training state.
 
-    CPU and meta models are accepted. This initial CUDA backend finalizes
-    kernels on one representative GPU. Planning the returned artifact is CPU-only.
+    CPU and meta models are accepted. The CUDA backend finalizes kernels on
+    one representative GPU. Planning the returned artifact is CPU-only.
     By default capture calls ``model(*args, **kwargs)``. ``forward_fn`` instead
     receives ``(model, *args, **kwargs)``, preserving registered parameter names.
     """
@@ -65,9 +65,7 @@ def build_forward(
         program, bindings={**program.bindings, "compiled_device_index": device.index}
     )
     if spec.world_size > 1 and any(task.mutations for task in program.tasks):
-        raise NotImplementedError(
-            "distributed forward currently requires a read-only model"
-        )
+        raise NotImplementedError("distributed forward requires a read-only model")
     program = attach_resources(
         attach_parallelism(program, spec, parameters), resources or {}
     )

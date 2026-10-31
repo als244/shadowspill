@@ -71,8 +71,9 @@ def collective_requests(
     """Deduplicate probes, retaining order within each logical participant group.
 
     Explicit overrides replace derivation; an empty list requests no collectives.
-    Forward and training lowering expose weight gathers and gradient completion.
-    Model-owned communication needs its own lowered descriptors first.
+    Forward and training lowering expose weight gathers and gradient completion,
+    and explicit collective tasks their own operations; communication a model
+    owns inside its tasks is measured with those tasks, not probed.
     """
     rows: list[Mapping[str, Any]] = list(overrides) if overrides is not None else []
     if overrides is None and program is not None:

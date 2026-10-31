@@ -54,7 +54,7 @@ class VisionConfig:
                 "Axial rotary embedding requires head width divisible by 4"
             )
         if self.dtype not in (torch.float32, torch.bfloat16):
-            raise ValueError("Vision currently supports FP32/BF16 computation")
+            raise ValueError("Vision supports FP32/BF16 computation only")
 
     @classmethod
     def from_huggingface(cls, metadata, **overrides):

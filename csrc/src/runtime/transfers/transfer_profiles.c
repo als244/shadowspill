@@ -884,11 +884,11 @@ ShadowSpillStatus shadowspill_runtime_transfer_profiles(
 /*
  * What the lane serving one route has moved.
  *
- * Nothing here knows which kind of lane answers: the route holds an operations
- * table and this asks it, so a registered lane and a built-in are reached by
- * the same call. A lane entitled to keep no count says so by leaving the entry
- * NULL, and UNSUPPORTED carries that up rather than zeroes a caller would read
- * as "moved nothing".
+ * Nothing here knows which kind of lane answers: the counters come from the
+ * common struct every lane embeds and the timing from the route's operations
+ * table, so a registered lane and a built-in are reached by the same call. A
+ * route with no lane answers UNSUPPORTED rather than zeroes a caller would
+ * read as "moved nothing".
  */
 ShadowSpillStatus shadowspill_route_lane_statistics(
     ShadowSpillRuntime *runtime,

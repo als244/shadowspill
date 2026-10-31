@@ -162,8 +162,8 @@ class Settings(common.Settings):
 HELP = {
     "recompute": "not a setting here: ShadowSpill's planner decides what to keep,"
     " recompute or spill",
-    "execution_gib": "the device budget: the execution pool's physical capacity,"
-    " external headroom included",
+    "execution_gib": "the execution budget: the total per-rank GPU allowance,"
+    " fixed costs and external headroom included",
     "spill_gib": "the budget of the spill pool in pinned host memory, held whole"
     " from the start",
     "external_headroom_gib": "device memory reserved inside the execution budget"

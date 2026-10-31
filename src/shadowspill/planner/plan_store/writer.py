@@ -50,7 +50,7 @@ def write_selection(
         if _answer(existing) != _answer(payload):
             raise ValueError(
                 "a fresh search differs from the stored planned program; "
-                "use a 'refresh' store mode or a new export_bypass_key: "
+                "use a 'refresh' store mode or another plan_store: "
                 f"{path}"
             )
         store._record(key, result.program.digest, path, "matched")

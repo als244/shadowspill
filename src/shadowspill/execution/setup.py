@@ -41,9 +41,7 @@ def open_worker(
             "replan with its CommunicationInfo"
         )
     if getattr(spill, "image", None) is not None:
-        raise ValueError(
-            "Executor does not yet adopt SSD pool images; use a tensor loader"
-        )
+        raise ValueError("Executor does not adopt SSD pool images; use a tensor loader")
     runtime = Runtime(
         frontend=PyTorchFrontend(),
         pools={

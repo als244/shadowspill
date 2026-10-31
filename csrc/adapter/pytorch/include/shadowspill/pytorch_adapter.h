@@ -273,8 +273,8 @@ shadowspill_pytorch_allocation_for_pointer(
 /* ------------------------------------------------------------------------
  * Objects and storage
  *
- * Validating a CPU storage view against its lease, acquiring objects
- * for a stream, and handing one to the caller and taking it back.
+ * Validating a CPU storage view against its lease, handing an object the
+ * runtime acquired to the caller, and taking it back.
  */
 
 /* Validate one CPU-addressable pool lease before creating a CPU storage view. */
@@ -307,8 +307,8 @@ shadowspill_pytorch_release_caller_allocation(
 /* ------------------------------------------------------------------------
  * Task boundaries and allocation scopes
  *
- * The pre-task action batch, the two calls every planned task runs
- * between, the abort, and the scopes profiling opens outside a task.
+ * The two calls every planned task runs between, the abort, and the
+ * scopes profiling opens outside a task.
  */
 
 SHADOWSPILL_PYTORCH_API ShadowSpillStatus

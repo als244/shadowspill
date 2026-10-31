@@ -64,9 +64,7 @@ def create_paths(
             if type(parameter_norms) is not bool:
                 raise TypeError("parameter_norms must be a bool")
             if parameter_norms and plan.program.bindings["kind"] != "step":
-                raise ValueError(
-                    "parameter norms currently require an optimizer step Plan"
-                )
+                raise ValueError("parameter norms require an optimizer step Plan")
 
         coordinated(distributed, validate_observations)
         if distributed is not None and any(

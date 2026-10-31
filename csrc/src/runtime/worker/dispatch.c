@@ -234,9 +234,10 @@ int shadowspill_action_dispatch_evict_locked(
          * The action goes back to its queue's head, not its tail, so the order
          * the boundaries triggered survives the retry.
          *
-         * No lane returns this yet -- the host-device lane's waits are
-         * device-side and always enqueue. It is here because the contract says
-         * a host-issued lane may ask for it, and Phase 4 brings one.
+         * No shipped lane returns this -- the host-device, SSD and remote
+         * lanes all wait device-side and always enqueue. It is here because
+         * the contract lets a lane that cannot enqueue a device dependency ask
+         * for it.
          */
         if (completion_event != NULL) {
             (void)shadowspill_event_lease_release(runtime, completion_event);
@@ -415,9 +416,10 @@ int shadowspill_action_dispatch_fetch_locked(
          * The action goes back to its queue's head, not its tail, so the order
          * the boundaries triggered survives the retry.
          *
-         * No lane returns this yet -- the host-device lane's waits are
-         * device-side and always enqueue. It is here because the contract says
-         * a host-issued lane may ask for it, and Phase 4 brings one.
+         * No shipped lane returns this -- the host-device, SSD and remote
+         * lanes all wait device-side and always enqueue. It is here because
+         * the contract lets a lane that cannot enqueue a device dependency ask
+         * for it.
          */
         if (completion_event != NULL) {
             (void)shadowspill_event_lease_release(runtime, completion_event);

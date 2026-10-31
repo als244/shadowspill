@@ -14,14 +14,8 @@ not a machine with a broken runtime.
 This gate carries **no performance cell**, and that is a division of labour
 rather than a judgement: what it answers is whether the numbers come out the
 same, which is a question the hardware can answer honestly whatever the link
-costs. Throughput over that link is ``remote_perf``'s question.
-
-An earlier version of this note argued no such gate could exist, on the grounds
-that a rate measured over a 25 Gb/s link is not comparable with anything. That
-was half right. It is not comparable with the **local** matrix -- and it does
-not need to be. It is comparable with itself over time, which is what a
-baseline is, and without one nothing can say whether a change helped a run that
-spills across a network.
+costs. Throughput over that link is ``remote_perf``'s question, which holds
+each cell to its simulator's prediction rather than a throughput floor.
 """
 
 from __future__ import annotations

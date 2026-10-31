@@ -23,8 +23,9 @@ static int entry_is_valid(const ShadowSpillLaneDescription *entry) {
         return 0;
     }
     const ShadowSpillLaneOperations *operations = entry->operations;
-    /* `transfer` and `timing` are what a lane may leave out; the rest is what
-       the runtime cannot proceed without. */
+    /* `join`, `transfer` and `timing` are what a lane may leave out -- a lane
+       without `join` carries plain copies but no representation conversion;
+       the rest is what the runtime cannot proceed without. */
     return operations->wait != NULL && operations->copy != NULL &&
            operations->signal != NULL && operations->synchronize != NULL &&
            operations->destroy != NULL;

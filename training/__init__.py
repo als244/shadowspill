@@ -6,9 +6,9 @@
 
 ``run`` takes a config, a path or a JSON-like mapping, and the overrides the
 command line takes as keyword arguments (a key with dots as
-``**{"schedules.optimizer_group.0.lr.total_steps": 300}``), runs every phase
-or the one ``phase`` names, and returns the final step's result after
-execution.
+``**{'schedules."optimizer_group.0.lr".total_steps': 300}``, a segment that
+holds dots quoted), runs every phase or the one ``phase`` names, and returns
+the final step's result after execution.
 """
 
 from __future__ import annotations

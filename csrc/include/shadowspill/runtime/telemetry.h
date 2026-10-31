@@ -210,12 +210,14 @@ SHADOWSPILL_API ShadowSpillStatus shadowspill_memory_pool_statistics(
 /*
  * What the lane serving the route `route_id` names has moved.
  *
- * The runtime asks the lane through its contract and knows nothing about which
- * kind of lane answered -- the same lookup serves a built-in and a registered
- * one. A lane that keeps no count leaves the contract's `statistics` entry
- * NULL and this returns `SHADOWSPILL_STATUS_UNSUPPORTED`, which is the honest
- * answer and distinguishable from a lane that reports having moved nothing.
- * Unknown route ids are INVALID_ARGUMENT.
+ * The runtime reads the seven counters from the common struct every lane
+ * embeds and asks the lane only for its timing pair, through the contract's
+ * optional `timing` entry, so it knows nothing about which kind of lane
+ * answered -- the same lookup serves a built-in and a registered one. A lane
+ * without `timing` reports `timed` 0 rather than zero durations. A route with
+ * no lane returns `SHADOWSPILL_STATUS_UNSUPPORTED`, which is distinguishable
+ * from a lane that reports having moved nothing. Unknown route ids are
+ * INVALID_ARGUMENT.
  */
 SHADOWSPILL_API ShadowSpillStatus shadowspill_route_lane_statistics(
     ShadowSpillRuntime *runtime,

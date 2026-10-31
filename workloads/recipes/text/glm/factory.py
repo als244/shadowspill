@@ -56,8 +56,8 @@ def experiment(
 
     Random initialization is the default; checkpoint loading is opt-in. Both
     fill bounded CPU spill chunks and retain declared tensor dtypes. Checkpoint
-    loading currently requires direct expert copies (BF16 or block FP8), without
-    format conversion. No CUDA allocation or live process group is needed to
+    loading requires direct expert copies (BF16 or block FP8), without format
+    conversion. No CUDA allocation or live process group is needed to
     construct the recipe. The normal quickstart runner owns all four phases.
     """
     dtypes = ("float32", "bfloat16", "float16")

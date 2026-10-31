@@ -171,7 +171,8 @@ typedef struct ShadowSpillTraceSummary {
  */
 typedef struct ShadowSpillMemoryPoolStatistics {
     uint32_t pool_id;
-    /* The pool kind from its description: device or pinned host. */
+    /* The pool kind from its description: a ShadowSpillPoolKind value, or a
+       kind a loaded library registers. */
     uint8_t kind;
     uint64_t capacity_bytes;
     uint64_t requested_allocated_bytes;
@@ -242,7 +243,7 @@ typedef struct ShadowSpillRuntimeStatistics {
  * it. Every field here is already recorded on the lease; this is the shape a
  * caller reads them in.
  *
- * The three flags are what separate an allocation that is merely alive from one
+ * Three of its flags separate an allocation that is merely alive from one
  * that has outlived the scope which made it. `scratch` was requested as task
  * workspace rather than as a planned object; `plan_owned` is the converse, a
  * range the plan placed. `logical_freed` means the frontend has already given
@@ -280,6 +281,12 @@ typedef struct ShadowSpillLiveAllocation {
      * release. */
     uint8_t ever_plan_owned;
     uint8_t logical_freed;
+    /* Whether the framework has freed this range, for a range a plan owned:
+     * `shadowspill_memory_pool_free` sets it once and refuses a second free,
+     * and while the plan still owns the range that is all the free does,
+     * since the plan releases it. A cancelled reservation sets it too, having
+     * no free to wait for. `ever_plan_owned` without `plan_owned` or this is
+     * an output the caller still holds (`caller_owned_allocations`). */
     uint8_t framework_free_seen;
 } ShadowSpillLiveAllocation;
 

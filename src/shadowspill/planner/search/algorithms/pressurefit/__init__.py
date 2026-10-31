@@ -55,7 +55,7 @@ from .search import (
     run_problems,
 )
 
-#: What a group's alternatives are called today. Ordering only needs to
+#: What a group's alternatives are called. Ordering only needs to
 #: recognise the two extremes; anything else falls through to the middle.
 _RECOMPUTE = "recompute"
 _SAVE = "save"

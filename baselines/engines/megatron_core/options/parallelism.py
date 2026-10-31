@@ -197,8 +197,9 @@ PARALLELISM = (
         "megatron_fsdp_version",
         "ddp",
         int,
-        "Megatron-FSDP's implementation, 1 or 2 (2: bfloat16 only, no tensor"
-        " or pipeline parallelism, no optimizer offload or FP8)",
+        "Megatron-FSDP's implementation, 1 or 2 (2: bfloat16 only, no tensor,"
+        " pipeline or virtual pipeline parallelism, no optimizer offload, no FP8"
+        " or FP4, no checkpoint loading)",
         (1, 2),
     ),
     Option(

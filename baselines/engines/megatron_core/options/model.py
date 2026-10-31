@@ -165,9 +165,9 @@ MODEL = (
         "cuda_graph_impl",
         "model",
         str,
-        "CUDA graphs: none; local (Megatron-Core's, per layer or the whole"
-        " iteration); transformer_engine (per layer); full_iteration"
-        " (forward and backward as one graph, the optimizer outside)",
+        "CUDA graphs: none; local (Megatron-Core's, per layer);"
+        " transformer_engine (per layer); full_iteration (forward and backward"
+        " as one graph, the optimizer outside)",
         ("none", "local", "transformer_engine", "full_iteration"),
     ),
     Option(
@@ -193,7 +193,7 @@ MODEL = (
         "the hardware queues CUDA spreads a device's streams over"
         " (CUDA_DEVICE_MAX_CONNECTIONS, 1 to 32; unset is CUDA's 8): 1 keeps"
         " tensor-parallel communication ahead of the matmuls it overlaps, as"
-        " Megatron advises with sequence parallelism; Megatron-FSDP refuses"
-        " 1; CUDA graphs over many streams want 16 or more",
+        " Megatron advises with sequence parallelism; Megatron-FSDP version 1"
+        " refuses 1; CUDA graphs over many streams want 16 or more",
     ),
 )

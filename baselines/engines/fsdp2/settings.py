@@ -176,7 +176,9 @@ HELP = {
     " overlapped, the stream-overlapped offloader vendored from torchtune",
     "offload_policy": "FSDP2's CPUOffloadPolicy: the weights the optimizer steps,"
     " their gradients and the optimizer state on the host, the step on the CPU",
-    "pin_memory": "pin CPU-offloaded shards (with --offload cpu)",
+    "pin_memory": "pin CPU-offloaded shards (with --offload-policy cpu) and the"
+    " overlapped offloader's activation copies (with --activation-offload"
+    " overlapped)",
     "forward_prefetch": "explicit lookahead depth; 0 is native forward behavior",
     "backward_prefetch": "native auto prefetch or an explicit depth of at least 1",
     "gradient_sync": "reduce every microbatch, or keep full gradients until the last",

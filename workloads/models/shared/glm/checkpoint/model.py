@@ -96,9 +96,7 @@ def replace_projections(reader, model):
         if spec.format in DENSE:
             continue
         if name == "lm_head":
-            raise ValueError(
-                "GLM checkpoint output heads currently require dense storage"
-            )
+            raise ValueError("GLM checkpoint output heads require dense storage")
         parent, _, leaf = name.rpartition(".")
         replacement = FrozenLinear(parts, spec, gemm_precision=reader.gemm_precision)
         if isinstance(module, LoRALinear):

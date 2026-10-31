@@ -67,8 +67,7 @@ class PyTorchFrontend:
                 raise TypeError(_NOT_A_DEVICE) from exc
         if not is_accelerator(device):
             raise RuntimeConfigurationError(
-                "the installed PyTorch adapter currently requires an accelerator "
-                "execution device"
+                "the installed PyTorch adapter requires an accelerator execution device"
             )
         if device.index is None:
             return int(torch.cuda.current_device())

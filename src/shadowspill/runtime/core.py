@@ -305,7 +305,7 @@ class Runtime:
     def close(self) -> None:
         """Close every runtime resource after verifying external ownership.
 
-        the framework's selected allocator shim remains installed because allocator
+        The framework's selected allocator shim remains installed because allocator
         selection is process-global. Its runtime is permanently closed: future
         nonzero device allocations raise a typed closed-runtime error.
         """

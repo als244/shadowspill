@@ -1,7 +1,7 @@
 """Which resolutions of a program's task alternatives are worth planning.
 
 A program arrives with its alternatives open: each group offers options --
-today `save` and `recompute`, though nothing here assumes two. Fixing one
+`save` and `recompute`, though nothing here assumes two. Fixing one
 option for every group gives a *resolved program*, and this module answers
 which of those are worth the search's time.
 

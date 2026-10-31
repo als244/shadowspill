@@ -53,7 +53,7 @@ def capture_gradient_operations(
                 != value.numel() * value.element_size()
             ):
                 raise NotImplementedError(
-                    "distributed gradient lowering currently requires "
+                    "distributed gradient lowering requires "
                     "contiguous whole-storage parameters"
                 )
             reduction = gradient_reduction(parameter, destination=destination)

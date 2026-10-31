@@ -14,8 +14,9 @@ def groups(cases, *, engine, world_size, manifest, output):
     """Group compatible cases; only the execution budget may differ.
 
     Source and environment identities are generated from the code being run;
-    the caller supplies no cache stamp. Other engines and multi-rank runs keep
-    their existing case path until they expose a preparation contract.
+    the caller supplies no cache stamp. An engine that declares no shared
+    preparation (``SHARED_PREPARATION``), and any multi-rank run, keeps the
+    ordinary case path.
     """
     module = launch.engine_module(engine)
     if not getattr(module, "SHARED_PREPARATION", False) or world_size != 1:

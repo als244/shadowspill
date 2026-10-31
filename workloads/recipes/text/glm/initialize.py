@@ -26,7 +26,7 @@ class Initialize:
             if source.conversions:
                 raise ValueError(
                     "bounded initialization requires checkpoint expert storage; "
-                    "expert format conversion is not supported by this recipe yet"
+                    "this recipe does not convert expert formats"
                 )
             self.roles = {
                 name: "lora_a" if is_a else "zero"

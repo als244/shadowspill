@@ -25,15 +25,16 @@ extern "C" {
  * exactly the way a built-in one is.
  *
  * A lane is named for the pool kinds it connects, never for an argument it
- * takes. The host-device lane takes a stream; so will a peer lane. The stream
- * distinguishes nothing.
+ * takes. Every lane is handed the route's stream, the host-device lane and the
+ * peer lane alike. The stream distinguishes nothing.
  *
  * Two neighbours it is not. The *queue* in front of it orders the actions
  * issued on a route and never touches a backend. The route's *stream* carries
  * the events that order a transfer against compute, whether or not the bytes
- * moved on it, and the runtime is its only writer -- the completion tracker,
- * retirement and readiness publication all depend on that. A lane gets a stream
- * of its own to work on and leaves the route's alone.
+ * moved on it. A lane issues its own copies, waits and signals on that stream,
+ * but only from the thread that called into it, so the stream keeps one
+ * writer's order -- the completion tracker, retirement and readiness
+ * publication all depend on that. See `create` for the rule.
  */
 
 typedef struct ShadowSpillRuntime ShadowSpillRuntime;
@@ -230,9 +231,9 @@ typedef struct ShadowSpillLaneOperations {
      * enqueued or already satisfied, 1 when it cannot be enqueued yet and the
      * caller should retry at the next poll, and -1 on failure.
      *
-     * This orders the lane's own stream, not the route's: a transfer whose
-     * copy runs on the lane's stream still has to wait for whatever protects
-     * its source or destination. The retry return exists for a lane that
+     * This orders what the lane issues on the route's stream: a transfer
+     * still has to wait for whatever protects its source or destination,
+     * wherever its bytes move. The retry return exists for a lane that
      * cannot enqueue a device dependency at all and has to observe the event
      * completing instead; the action stays at its queue's pending head and the
      * existing cadence (`worker_poll_nanoseconds`) revisits it. A lane whose
@@ -293,10 +294,10 @@ typedef struct ShadowSpillLaneOperations {
      * will not ask again. That is the whole lifetime rule, and it is why there
      * is no release entry beside it.
      *
-     * This replaced a pair that bracketed the copy with timing events on a
-     * stream, which only a lane whose bytes move on one could implement. A
-     * lane that moves bytes some other way now reports what it actually
-     * observed instead of reporting nothing.
+     * A query after completion, rather than timing events bracketing the
+     * copy on a stream, is what a lane whose bytes do not move on a stream can
+     * implement too, so such a lane reports what it actually observed instead
+     * of reporting nothing.
      */
     int (*transfer)(
         ShadowSpillLane *lane,

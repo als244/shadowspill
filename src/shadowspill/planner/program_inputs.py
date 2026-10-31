@@ -154,7 +154,7 @@ class ShadowSpillPlanningProblem:
         if self.role not in {"step", "forward"}:
             raise ValueError(f"unsupported problem role {self.role!r}")
         if len(self.simulation_config.devices) != 1:
-            raise ValueError("ShadowSpillPlanningProblem currently requires one device")
+            raise ValueError("ShadowSpillPlanningProblem requires one device")
         device = self.simulation_config.devices[0]
         if device.device_id != self.admission_facts.device_id:
             raise ValueError("simulation and admission devices differ")

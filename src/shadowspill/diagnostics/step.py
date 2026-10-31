@@ -259,11 +259,11 @@ class LaneSummary:
     #: reached it: where the lane had drifted furthest from the simulation.
     largest_start_delta_seconds: float | None
     largest_start_delta_transfer_id: str | None
-    #: What the lane itself reports having moved, straight from the lane
-    #: contract's `statistics` entry -- the same call for a built-in lane and
-    #: for one a library registered, so nothing here knows which answered.
-    #: `None` when the lane keeps no count, which is not the same as a lane
-    #: reporting zero and is why this is not simply zeroed.
+    #: What the lane reports having moved: the counters every lane keeps in
+    #: its common struct, which the runtime reads the same way for a built-in
+    #: lane and for one a library registered, so nothing here knows which
+    #: answered. `None` when no lane serves the direction, which is not the
+    #: same as a lane reporting zero and is why this is not simply zeroed.
     #:
     #: **Cumulative, since the lane was created**, unlike every sibling field
     #: above, which describes this step. The two are different questions and

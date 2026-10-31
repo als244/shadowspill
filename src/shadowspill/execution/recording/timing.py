@@ -1,5 +1,6 @@
 """What an invocation measures about itself: the timelines every invocation
-records, the armed qualification measurement, and the runtime trace behind it.
+records, the armed measurement a traced invocation asks for, and the runtime
+trace behind it.
 
 Nothing here knows which kind of program it is measuring. An executor hands
 over a :class:`TracedInvocation` -- the selected tasks in execution order, the
@@ -51,8 +52,8 @@ class ExecutionTiming:
     where its last task ends on the compute stream. Every instant is a marker
     the runtime holds, taken once here and recorded again each invocation, so
     the executor and the runtime's own transfers share one clock. The armed
-    measurement is qualification-only and default-off; the runtime trace behind
-    it is allocated lazily.
+    measurement is opt-in (an invocation run with ``runtime_trace``); the
+    runtime trace behind it is allocated lazily.
     """
 
     def __init__(
@@ -151,8 +152,8 @@ class ExecutionTiming:
     def arm(self, traced: TracedInvocation, *, trace_setup_ns: int = 0) -> None:
         """Bracket the next invocation's numerical compute stream only.
 
-        This qualification-only measurement begins after the first task's
-        readiness waits and ends after the last task's launch. It excludes
+        This opt-in measurement begins after the first task's readiness
+        waits and ends after the last task's launch. It excludes
         invocation-start staging and terminal writeback without synchronizing
         ordinary execution.
         """

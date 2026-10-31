@@ -21,7 +21,7 @@ def simulation_inputs(
     world_size = 1 if spec is None else spec.world_size
     if len(program.devices) != 1:
         raise NotImplementedError(
-            "offline planning currently requires one symmetric rank-local program"
+            "offline planning requires one symmetric rank-local program"
         )
     if world_size > 1 and (
         not (
@@ -42,7 +42,7 @@ def simulation_inputs(
         for alias in program.alias_groups
     ):
         raise NotImplementedError(
-            "shared resources and distributed transfers migrate later"
+            "offline planning supports no shared resources or distributed transfers"
         )
     if communication.topology and sorted(
         rank for group in communication.topology.values() for rank in group

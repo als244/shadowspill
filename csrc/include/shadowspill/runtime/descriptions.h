@@ -50,9 +50,9 @@ typedef struct ShadowSpillMemoryPoolDescription {
     void *configuration;
 } ShadowSpillMemoryPoolDescription;
 
-/* A directed copy path between a pinned-host pool and the device pool. The
-   runtime derives the copy direction from the two pools' kinds and owns the
-   lane it dispatches on. */
+/* A directed copy path between two pools of different kinds. The runtime
+   resolves its lane from the two pools' kinds, through the built-in lanes and
+   the config's `lanes`, and owns the lane it dispatches on. */
 typedef struct ShadowSpillTransferRouteDescription {
     uint32_t route_id;
     const char *name;

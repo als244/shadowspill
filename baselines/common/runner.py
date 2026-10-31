@@ -319,7 +319,9 @@ def out_of_memory(error: BaseException) -> dict[str, Any]:
 def parse(engine, argv=None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description=f"One process of a {engine} case; started by"
-        " baselines.common.launch under torchrun."
+        " baselines.common.launch under torchrun, or for ShadowSpill by"
+        " baselines.engines.shadowspill.train, under torchrun only with more"
+        " than one rank."
     )
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument(

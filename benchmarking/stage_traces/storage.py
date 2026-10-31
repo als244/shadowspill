@@ -23,9 +23,7 @@ def materialize_example_arguments(
                 results.append(copy.deepcopy(argument))
                 continue
             if argument.layout is not torch.strided:
-                raise CaptureError(
-                    "compiled task examples currently require strided tensors"
-                )
+                raise CaptureError("compiled task examples require strided tensors")
             source_storage = argument.untyped_storage()
             target_device = (
                 device if is_accelerator(argument.device) else argument.device

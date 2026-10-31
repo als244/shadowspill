@@ -5,15 +5,14 @@
 #include <stdlib.h>
 
 /*
- * A thin table over the backend. Everything it does, the runtime did inline
- * before there was a lane contract: a wait is `wait_event` on this lane's
+ * A thin table over the backend: a wait is `wait_event` on this lane's
  * stream, a copy is whichever backend copy entry the direction calls for, and
  * a signal is `record_event`.
  *
  * One instance per route. Direction is not configured: it is `from_kind` and
  * `to_kind` in the common struct, which the runtime fills from the description
  * this lane was found through. A route has one direction for its whole life,
- * and now only one place says which.
+ * and only one place says which.
  */
 
 /* A timing record stays occupied until the runtime queries the completed

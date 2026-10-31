@@ -186,11 +186,10 @@ static ShadowSpillStatus open_pools_and_routes(
             &runtime->backend, route->stream, config->routes[route_id].name
         );
         /*
-         * The lane comes from the two pools' kinds, the way the copy direction
-         * used to. The built-in lane is granted this route's stream, which is
-         * where its copies and its completion event both belong; a lane that
-         * works elsewhere takes a stream of its own at create and leaves this
-         * one to the runtime.
+         * The lane comes from the two pools' kinds. Every lane is granted this
+         * route's stream, which is where its copies and its completion event
+         * both belong; a lane whose bytes move elsewhere still waits and
+         * signals here, so downstream sees an ordinary event either way.
          */
         const ShadowSpillLaneDescription *description = shadowspill_lane_for_kinds(
             &runtime->lanes,

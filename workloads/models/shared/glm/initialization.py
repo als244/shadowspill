@@ -14,7 +14,7 @@ def _roles(model, tensors):
         if isinstance(module, FrozenLinear):
             if module.spec.format != "fp8":
                 raise ValueError(
-                    "random checkpoint-shaped initialization currently supports "
+                    "random checkpoint-shaped initialization supports "
                     f"dense and block-FP8 storage, not {module.spec.format}"
                 )
             roles[name + ".components.0"] = "fp8"

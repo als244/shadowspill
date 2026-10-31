@@ -32,7 +32,7 @@ def build_admission_facts(
 
     if len(program.devices) != 1:
         raise ValueError(
-            "one admission facts currently describes one execution pool; "
+            "one admission facts describes one execution pool; "
             f"ShadowSpillProgram has {len(program.devices)} devices"
         )
     alias_by_object = {item.object_id: item.alias_group_id for item in program.objects}

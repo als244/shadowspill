@@ -65,9 +65,7 @@ class Config:
         if self.router_weight_dtype not in (torch.bfloat16, torch.float32):
             raise ValueError("router_weight_dtype must be BF16 or FP32")
         if self.dtype != torch.bfloat16:
-            raise ValueError(
-                "The GLM sparse-attention implementation currently requires BF16"
-            )
+            raise ValueError("The GLM sparse-attention implementation requires BF16")
         if self.num_attention_heads % 16 or self.kv_lora_rank not in (
             64,
             128,

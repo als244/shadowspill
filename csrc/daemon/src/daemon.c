@@ -42,10 +42,9 @@
 /*
  * Each connection owns its regions, endpoint and protection domain. Its worker
  * alone accesses them, so no shared region registry needs a lock. A list rather
- * than a single slot
- * because a runtime may hold more than one remote pool on one daemon in a
- * future that costs nothing to allow: allocate appends, free unlinks, and
- * closing the connection walks what is left.
+ * than a single slot, so one runtime can hold more than one remote pool on one
+ * daemon at no cost: allocate appends, free unlinks, and closing the
+ * connection walks what is left.
  */
 typedef struct Region {
     struct ibv_mr *registration;
@@ -55,22 +54,18 @@ typedef struct Region {
 } Region;
 
 /*
- * The queue pair this connection's peer posts against. One per connection,
- * built by `connect` and torn down with everything else when the socket
- * closes.
- *
- * It exists so that an rkey means something: a memory region's key is usable
- * only by a queue pair in the *same protection domain*, so the far side cannot
- * simply invent one. That is the whole of why this process takes part in
- * connection setup despite doing nothing at all during a transfer -- the data
- * path is one-sided, the *setup* is not.
- */
-/*
  * The queue pairs this connection's peer posts against. The peer decides how
  * many it wants and asks for them one at a time, so this grows by one per
  * `connect`: a peer that saturates its link with one asks once, and a peer on
  * a faster card asks several times. They share a completion queue this end
- * never reads, because this end never posts.
+ * never reads, because this end never posts, and are torn down with everything
+ * else when the socket closes.
+ *
+ * They exist so that an rkey means something: a memory region's key is usable
+ * only by a queue pair in the *same protection domain*, so the far side cannot
+ * simply invent one. That is the whole of why this process takes part in
+ * connection setup despite doing nothing at all during a transfer -- the data
+ * path is one-sided, the *setup* is not.
  */
 #define MAX_QUEUE_PAIRS 16
 

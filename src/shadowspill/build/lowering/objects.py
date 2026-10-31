@@ -95,7 +95,7 @@ class ObjectCatalog:
     @staticmethod
     def key(tensor: torch.Tensor) -> _TensorKey:
         if tensor.layout is not torch.strided:
-            raise CaptureError("program lowering currently requires strided tensors")
+            raise CaptureError("program lowering requires strided tensors")
         return _TensorKey(
             storage_identity=live_storage_identity(tensor),
             storage_offset=int(tensor.storage_offset()),

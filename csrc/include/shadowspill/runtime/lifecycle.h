@@ -63,8 +63,10 @@ shadowspill_runtime_reserve_retirement_records(
 
 /*
  * Cold-path capacity reservation for one pool's reusable MemoryLease records.
- * The first call seals hot acquisition: later exhaustion fails closed instead
- * of allocating process-heap metadata from an allocator callback.
+ * The reserve is a warm start rather than a limit: acquisition takes a free
+ * record when there is one and allocates another at a new high-water mark, so
+ * a pool that outgrows it says so through its record capacity rather than
+ * refusing a request its memory could serve.
  */
 SHADOWSPILL_API ShadowSpillStatus
 shadowspill_runtime_reserve_memory_lease_records(
@@ -128,8 +130,8 @@ SHADOWSPILL_API ShadowSpillStatus shadowspill_runtime_next_plan_id(
 
 /*
  * `description->plan_id` must be an id from `shadowspill_runtime_next_plan_id`
- * that no live plan on this runtime already holds; anything else is
- * INVALID_ARGUMENT.
+ * that no plan on this runtime has been created with, whether that plan is
+ * live, closed or destroyed; anything else is INVALID_ARGUMENT.
  */
 SHADOWSPILL_API ShadowSpillStatus shadowspill_plan_create(
     ShadowSpillRuntime *runtime,

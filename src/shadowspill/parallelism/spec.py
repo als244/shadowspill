@@ -23,8 +23,9 @@ class Parallelism:
     """Logical ownership only; compatible model layers implement communication.
 
     Named groups partition the replica's ranks, in caller-specified order.
-    All replicas use the same local model shapes. Distinct graphs per rank and
-    noncontiguous placement maps are outside the initial implementation.
+    All replicas use the same local model shapes, and placement maps are
+    contiguous; the Program each rank builds is its own, so long as the ranks
+    agree on what they exchange (``agreement``).
     """
 
     ranks_per_replica: int = 1

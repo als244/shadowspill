@@ -60,8 +60,9 @@ def main(argv=None):
         if not config.exists():
             parser.error("run the build phase first")
         options = json.loads(config.read_text())
-        # Earlier runs profiled with 512 MiB. Replanning must retain that
-        # reservation rather than silently claiming the new profiling default.
+        # A saved config without external_headroom_mib holds profiles taken
+        # with 512 MiB. Replanning must retain that reservation rather than
+        # silently claiming the profiling default.
         options.setdefault("external_headroom_mib", 512)
         for key in ("execution_gib", "spill_gib"):
             if getattr(args, key) is not None:

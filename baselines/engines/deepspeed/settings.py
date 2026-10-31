@@ -49,8 +49,8 @@ DEEPCOMPILE_WARMUP_STEPS = 8
 #: loss scaling. Without masters a bf16 model steps bfloat16 values with
 #: bfloat16 moments (``bf16_master_weights_and_grads`` and
 #: ``bf16_optimizer_states``). Gradients reduce and accumulate in the model
-#: dtype; stage one's optimizer accumulates at float32 when asked, stages
-#: two and three do not. No rounding choices.
+#: dtype, or at float32 when asked, in every stage (``communication_data_type``
+#: and ``data_types.grad_accum_dtype``). No rounding choices.
 CAPABILITIES = Capabilities(
     "deepspeed",
     model_dtypes=("bfloat16", "float16", "float32"),

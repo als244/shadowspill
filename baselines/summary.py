@@ -8,8 +8,9 @@ every row its sweeps hold, whichever run of the experiment wrote them, so an
 experiment collected one engine at a time is summarized like one collected
 in a single run; a case counts by its latest attempt. GPU memory is what an
 engine held at its peak, a row's ``peak_reserved_bytes``: the execution
-pool's capacity for ShadowSpill, which holds the pool whole, and the peak
-its allocator reserved for any other engine; what was in use at that peak,
+budget for ShadowSpill (its total per-rank GPU allowance: pool, fixed costs
+and external headroom), which holds the pool whole, and the peak its
+allocator reserved for any other engine; what was in use at that peak,
 ``peak_allocated_bytes``, is shown beside it. The budgets are ``--budgets``,
 else the spec's ``summary_budgets_gib``; with neither, the summary gives the
 frontiers alone. It names the commits the rows ran from and the span of the

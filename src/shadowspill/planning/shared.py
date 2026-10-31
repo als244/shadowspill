@@ -44,7 +44,7 @@ def shared_memory(primary: Plan, plans: Mapping[str, Plan]) -> SharedMemory:
             raise ValueError("shared Plans require the same logical devices")
         if name:
             if plan.program.bindings["kind"] != "forward":
-                raise ValueError("additional Plans currently support forward only")
+                raise ValueError("additional Plans support forward only")
             mapping = shared_model_aliases(primary.program, plan.program)
             _read_only(plan, mapping)
             mappings[name] = mapping

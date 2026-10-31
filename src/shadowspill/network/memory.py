@@ -15,10 +15,9 @@ REMOTE_POOL_KIND = 2
 
 _LIBRARY = "libshadowspill_network.so"
 
-#: What the daemon is asked for when a pool does not say. It is the only
-#: selector a daemon serves today, but the word stays in the protocol: it is
-#: what keeps one remote pool kind from becoming two the day a daemon can serve
-#: device memory.
+#: What the daemon is asked for when a pool does not say, and the only
+#: selector a daemon serves. The word stays in the protocol even so: it is
+#: what keeps one remote pool kind from becoming two.
 DEFAULT_SELECTOR = "host"
 
 

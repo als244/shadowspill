@@ -11,8 +11,8 @@ from typing import ClassVar
 # excluding the process baseline measured before the pool is created. Library
 # workspaces and loaded kernels can increase it lazily. Reserve space before
 # creating the pool because live allocations prevent resizing that pool.
-# 512 MiB covers the original qualification hardware; callers can override it
-# for other hardware and workloads. Enforcement is a separate setting.
+# 512 MiB is sized for the qualification corpus; callers can override it for
+# other hardware and workloads. Enforcement is a separate setting.
 _DEFAULT_EXTERNAL_HEADROOM = 512 << 20
 
 

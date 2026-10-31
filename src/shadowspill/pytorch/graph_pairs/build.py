@@ -17,11 +17,13 @@ _MEMORY_BUDGETS = {"save": 1.0, "recompute": 0.0}
 
 
 def validate_graph_pair_variants(variants: Sequence[str]) -> tuple[str, ...]:
-    """The variants a request asks the build for, in the build's own order.
+    """The variants named for a stage's graph pairs, in the build's own order.
 
-    A request may ask for fewer than both endpoints -- a search that
-    recomputes every flexible group needs ``recompute`` alone -- but never
-    for none, and never for a name that is not an endpoint.
+    The graph-pair store keys its entries by them, and
+    :func:`~shadowspill.pytorch.graph_pairs.training.partition_training_capture`
+    takes them as ``graph_pair_variants``, both by default. A caller may name
+    fewer than both endpoints, but never none, and never a name that is not an
+    endpoint.
     """
 
     chosen = tuple(variants)

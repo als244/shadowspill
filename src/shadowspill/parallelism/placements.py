@@ -19,7 +19,6 @@ class Sharded:
 
     The model supplies its local slice's shape. Repeated group instances own
     copies of corresponding slices, so those copies still require reduction.
-    Noncontiguous mappings will be added with distributed input-layout support.
     """
 
     group: str

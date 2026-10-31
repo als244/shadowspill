@@ -32,17 +32,12 @@ from .resolved_programs import (
 class PlanningDiagnostics:
     """What a search did, and what it answered with.
 
-    The record has two halves, and the split is what lets a second search
-    arrive without this type changing. The **generic** half is what any
-    search must say: which plan won, and at what cost. The **search** half
-    is whatever that search has to report about how it got there, written
-    under its own name and read by nothing here.
-
-    Everything belonging to whichever search ran -- resolved programs,
-    repairs, capacity refinement, section timings -- is serialized under the
-    key `search` names. The contract is deliberately loose: a search reports
-    what it has, and a reader that does not recognise the name reads the
-    generic half and stops.
+    The record has two halves. The **generic** half is what any search must
+    say: which plan won, at what cost, and which search found it. The
+    **search** half is how it got there -- resolved programs, repairs,
+    capacity refinement, work and section timings -- serialized under the
+    key ``search``, with the search's own name beside it as ``search_name``.
+    A reader that wants only the answer reads the generic half and stops.
     """
 
     SCHEMA: ClassVar[str] = artifact_schema("search_diagnostics")
@@ -53,8 +48,8 @@ class PlanningDiagnostics:
     resolved_programs: tuple[ResolvedProgramDiagnostics, ...]
     work: PlanningWorkDiagnostics = field(default_factory=PlanningWorkDiagnostics)
     effective_object_capacity_bytes: int | None = None
-    #: Which search produced this, as that search names itself. The key its
-    #: own half is written under. Empty only on a record built by hand.
+    #: Which search produced this, as that search names itself; serialized
+    #: as ``search_name``. Empty only on a record built by hand.
     search: str = ""
     #: How many threads the search was given. Recorded for visibility and
     #: excluded from anything compared across runs, because it changes how

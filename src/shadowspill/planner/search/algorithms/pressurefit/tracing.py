@@ -78,7 +78,7 @@ def record_plan_trace(
     if not options.generic.deterministic:
         raise ValueError("automatic PressureFit tracing requires deterministic=True")
     if len(result.simulation_config.devices) != 1:
-        raise ValueError("PressureFit tracing currently requires exactly one device")
+        raise ValueError("PressureFit tracing requires exactly one device")
     algorithm = options.resolved_algorithm.options
     if not isinstance(algorithm, PressureFitOptions):
         raise TypeError("PressureFit tracing requires PressureFitOptions")
