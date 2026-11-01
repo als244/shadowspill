@@ -11,14 +11,16 @@ engine's settings share and the forms a case takes; ``launch`` the start of
 one case of any engine; ``preparation`` the preparation artifacts cases
 share; ``runner`` what every engine's trainer process shares; ``training``
 the catalog model every engine trains and the helpers around its
-construction; ``reference`` the tiny-model check of an engine's
+construction; ``initialization`` the catalog initializer's values, which
+FSDP2 and DeepSpeed write into their models so every engine starts from
+ShadowSpill's; ``reference`` the tiny-model check of an engine's
 accumulation, reduction and optimizer ownership; ``annotations`` the
 optional NVTX scopes around phases and recomputation.
 
-Nothing here imports a training system. ``reference`` and ``training``
-import PyTorch as they load; every other module that uses it imports it
-inside the functions that need it, so a sweep launcher can import this
-package, its settings and its launcher without initializing a device.
+Nothing here imports a training system. ``initialization``, ``reference``
+and ``training`` import PyTorch as they load; every other module that uses it
+imports it inside the functions that need it, so a sweep launcher can import
+this package, its settings and its launcher without initializing a device.
 """
 
 from .geometry import accumulation_steps, recompute_layers

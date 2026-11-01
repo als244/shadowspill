@@ -38,8 +38,9 @@ The tiny numerical matrix is
 The model starts on meta. The catalog initializer fills Executor-provided chunks
 and preserves derived buffers. It draws Hugging Face's initial distributions
 (embeddings, projections and expert banks from N(0, `initializer_range`)), with
-chunk-independent deterministic seeds; it does not run the model's
-`reset_parameters`, which FSDP2 and DeepSpeed initialize with. Checkpoint readers
+chunk-independent deterministic seeds. FSDP2 and DeepSpeed write the same
+values into their models (`../../common/initialization.py`), so the three
+engines start from one model. Checkpoint readers
 also fill chunks directly. Master weights and optimizer state use the saved
 Program's initializers.
 

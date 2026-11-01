@@ -254,6 +254,17 @@ def train(case, clock):
     checkpointed = recompute_layers(len(blocks), settings.recompute)
     record["checkpointed_layers"] = checkpointed
     case.save()
+
+    def copy(parameter, value):
+        # A partitioned parameter is gathered, written on the first rank and
+        # partitioned again; a whole one is written as is.
+        if hasattr(parameter, "ds_id"):
+            with deepspeed.zero.GatheredParameters([parameter], modifier_rank=0):
+                if rank == 0:
+                    parameter.data.copy_(value.to(parameter.dtype))
+        else:
+            parameter.data.copy_(value.to(parameter.dtype))
+
     if settings.checkpoint is not None:
         checkpoint = request.checkpoint(settings.checkpoint)
         record["checkpoint"] = {
@@ -265,17 +276,6 @@ def train(case, clock):
                 for name in checkpoint.config.__dataclass_fields__
             },
         }
-
-        def copy(parameter, value):
-            # A partitioned parameter is gathered, written on the first
-            # rank and partitioned again; a whole one is written as is.
-            if hasattr(parameter, "ds_id"):
-                with deepspeed.zero.GatheredParameters([parameter], modifier_rank=0):
-                    if rank == 0:
-                        parameter.data.copy_(value.to(parameter.dtype))
-            else:
-                parameter.data.copy_(value.to(parameter.dtype))
-
         with checkpoint:
             record["loaded"] = model.load_checkpoint(checkpoint, copy=copy)
         if record["loaded"]["unused"]:
@@ -283,6 +283,29 @@ def train(case, clock):
                 "checkpoint keys the model did not take:"
                 f" {record['loaded']['unused'][:5]}"
             )
+    # ShadowSpill's initial values: the whole model, or with a checkpoint the
+    # LoRA factors it does not hold. The model is built at the dtype
+    # ShadowSpill stores each weight at, and DeepSpeed widens its masters from
+    # these values as ShadowSpill does; a partitioned parameter takes the
+    # first rank's values.
+    from baselines.common.initialization import (
+        SharedInitialization,
+        fill_parameters,
+        fresh,
+    )
+
+    shared = SharedInitialization(
+        request, settings.seed, model_dtype=precision.model_dtype
+    )
+    record["initialized_parameters"] = len(
+        fill_parameters(
+            model.model,
+            shared,
+            only=fresh if settings.checkpoint is not None else None,
+            copy=copy,
+            needs_values=lambda parameter: rank == 0 or not hasattr(parameter, "ds_id"),
+        )
+    )
     if checkpointed:
         deepspeed.checkpointing.configure(
             None,

@@ -81,7 +81,10 @@ combination an engine cannot honor), `models` (the catalog model an engine
 builds, full or LoRA, with the shared objective and the useful work a step
 performs), `training` (the catalog model with the shared objective as its
 forward, which ShadowSpill, FSDP2 and DeepSpeed train, and the helpers
-around its construction), `reference` (the tiny-model check of an engine's
+around its construction), `initialization` (the catalog initializer's values
+at the case's seed, which FSDP2 and DeepSpeed write into their models as
+ShadowSpill fills its pools from it, so the three engines start from the same
+weights), `reference` (the tiny-model check of an engine's
 updates against a copy compiled whole,
 [`PRECISION.md`](PRECISION.md#what-the-tiny-qualification-compares)),
 `results` (the result row schema and the measurement contract),

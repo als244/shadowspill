@@ -24,6 +24,13 @@ throughput matrix names only DeepSpeed's own knobs and runs inside an
 experiment, which gives every engine the same model, geometry and
 precision contract (`../../README.md`).
 
+The model is built at the contract's model dtype and then takes ShadowSpill's
+initial values (`../../common/initialization.py`), drawn from the catalog
+initializer at the case's seed; under ZeRO-3 each partitioned parameter is
+gathered and written by the first rank. DeepSpeed widens its float32 masters
+from these weights, as ShadowSpill does. With `--checkpoint` the checkpoint's
+values load instead, and only the LoRA factors it does not hold are drawn.
+
 ## What a case names
 
 The common flags are the FSDP2 engine's (`../fsdp2/README.md`): the model,

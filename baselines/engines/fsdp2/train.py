@@ -131,6 +131,11 @@ def train(case, clock):
     model_dtype = getattr(torch, precision.model_dtype)
     dist.init_process_group("nccl", device_id=device)
     # MLOps imports may inspect CUDA; select this rank's device first.
+    from baselines.common.initialization import (
+        SharedInitialization,
+        fill_parameters,
+        fresh,
+    )
     from baselines.engines.fsdp2.model import (
         TrainingModel,
         canonical_name,
@@ -178,9 +183,7 @@ def train(case, clock):
                 if settings.nsys_capture and not settings.compile_blocks
                 else {}
             )
-            block = checkpoint_wrapper(
-                block, preserve_rng_state=False, **trace_options
-            )
+            block = checkpoint_wrapper(block, preserve_rng_state=False, **trace_options)
         if settings.activation_offload == "cpu":
             block = offload_wrapper(block)
         blocks[index] = block
@@ -238,6 +241,21 @@ def train(case, clock):
                 "checkpoint keys the model did not take:"
                 f" {record['loaded']['unused'][:5]}"
             )
+    # ShadowSpill's initial values: the whole model, or with a checkpoint the
+    # LoRA factors it does not hold. Each rank draws only its own rows, at the
+    # dtype ShadowSpill stores the weight at, so a master starts as
+    # ShadowSpill's does; reset_parameters above set the buffers.
+    shared = SharedInitialization(
+        request, settings.seed, model_dtype=precision.model_dtype
+    )
+    record["initialized_parameters"] = len(
+        fill_parameters(
+            model.model,
+            shared,
+            only=fresh if checkpoint is not None else None,
+            rename=canonical_name,
+        )
+    )
     # Offloaded shards live on the host; rotary tables and other compute
     # buffers, and the pinned parameters, belong on the accelerator.
     for module in model.modules():

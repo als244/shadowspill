@@ -70,11 +70,16 @@ before anything launches.
 
 ### FSDP2
 
-Random initialization runs on each shard's accelerator mesh, staging one
-module's offloaded shards at a time and copying into their original CPU storage.
-This preserves parameter identity and pinning while using DTensor's supported
-distributed RNG; initializing CPU storage directly can repeat random values
-across layers. Checkpoint values are loaded after initialization.
+Each module's `reset_parameters` runs first on its shard's accelerator mesh,
+staging one module's offloaded shards at a time and copying into their original
+CPU storage. This preserves parameter identity and pinning and computes the
+buffers, using DTensor's supported distributed RNG; initializing CPU storage
+directly can repeat random values across layers. ShadowSpill's initial values
+then replace the parameters (`../../common/initialization.py`): each rank draws
+only its own rows from the catalog initializer at the case's seed, at the dtype
+ShadowSpill stores each weight at, so float32 masters start as ShadowSpill's
+widened weights. With `--checkpoint` the checkpoint's values load instead, and
+only the LoRA factors it does not hold are drawn.
 
 | Option | FSDP2's call | What the engine enforces |
 |---|---|---|
