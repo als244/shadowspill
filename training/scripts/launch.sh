@@ -4,8 +4,11 @@
 # Runs `python -m training.train` from the repository root, so a config's
 # relative paths are the repository's, and keeps everything the run prints --
 # ShadowSpill's own output included -- in <run dir>/stdout.log as well.
-# Pass resume=<checkpoint directory> to continue an earlier run. PYTHON
-# picks the interpreter (default: python).
+# To continue an earlier run on the ShadowSpill engine, resume= names a .ssp
+# archive or a bare step_XXXXXXXX, with --phase execute when resuming in the
+# same run directory; on engine=pytorch, it names the step directory. A
+# relative path resolves against the repository root. PYTHON picks the
+# interpreter (default: python).
 set -euo pipefail
 repo="$(cd "$(dirname "$0")/../.." && pwd)"
 mkdir -p "$1"
