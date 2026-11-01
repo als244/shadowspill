@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from pathlib import Path
+
 import pytest
 import torch
 
@@ -10,6 +12,7 @@ from tests.training._synthetic import write_dataset
 from workloads.recipes.text.data.documents import IGNORE
 from workloads.recipes.text.data.packed import PackedTokens
 from workloads.recipes.text.data.units import held_out
+from workloads.recipes.text.experiment.execute import checkpoint_directory
 from workloads.recipes.text.heterogeneous.data import UnitUpdates, unit_ranges
 from workloads.recipes.text.heterogeneous.run import check_section, node_config
 
@@ -108,6 +111,11 @@ def test_the_section_is_checked_and_each_node_gets_its_share():
     assert (
         node_config(raw, nodes, shares, 1)["ranks"] == 2
         and node_config(raw, nodes, shares, 1)["node"] == 1
+    )
+    # A rank of the group saves under its own part of a checkpoint_dir.
+    named = node_config({**raw, "checkpoint_dir": "/saves"}, nodes, shares, 1)
+    assert checkpoint_directory(named, Path("/run/rank-00001"), 1) == Path(
+        "/saves/rank-00001"
     )
     # Whole weights and gradients on every rank, the optimizer state sharded,
     # unless the config names its own layout.

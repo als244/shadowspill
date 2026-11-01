@@ -15,7 +15,7 @@ from shadowspill.training import config
 from workloads.recipes.phases import settings
 from workloads.recipes.text.data.units import held_out
 from workloads.recipes.text.experiment import logging, results
-from workloads.recipes.text.experiment.execute import resume_path
+from workloads.recipes.text.experiment.execute import checkpoint_directory, resume_path
 
 from . import data as units
 from .run import check_section
@@ -29,6 +29,7 @@ def run(directory):
         rank = dist.get_rank()
         home = root / f"rank-{rank:05d}"
         home.mkdir(parents=True, exist_ok=True)
+        checkpoints = checkpoint_directory(options, home, rank)
         choice = json.loads((root / "planning.json").read_text())
         plan = Plan.load(root / "plans/training.ssp")
         evaluation_path = root / "plans/evaluation.ssp"
@@ -68,7 +69,7 @@ def run(directory):
                 initialize = stack.enter_context(initialize)
             if options.get("resume"):
                 trainer.load(
-                    resume_path(options["resume"], home), fill_tensor=initialize
+                    resume_path(options["resume"], checkpoints), fill_tensor=initialize
                 )
             else:
                 trainer.initialize(initialize)
@@ -110,7 +111,7 @@ def run(directory):
                 log_every=options.get("log_every", 1),
                 tables_every=options.get("metric_tables_every", 100),
                 checkpoint_every=options.get("checkpoint_every", 0),
-                checkpoint_dir=options.get("checkpoint_dir"),
+                checkpoint_dir=checkpoints,
                 keep_last=options.get("keep_last", 3),
                 startup_diagnostics=options.get("startup_diagnostics", False),
             )

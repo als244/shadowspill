@@ -34,11 +34,11 @@ objects. The model, data and objective remain workload choices.
 | `master_dtype`, `grad_dtype` | Optional explicit precision policies, resolved as Python objects. |
 | `execution_gib`, `spill_gib` | Per-worker planning budgets; execution includes external headroom. Left out, the profiled device's memory less 2 GiB and three quarters of the host memory available when profiling ran (`hardware.json`); `planning.json` records the budgets planned. |
 | `warmup_seconds`, `measure_seconds`, `external_headroom_mib` | Task/communication measurement controls; defaults 0.05 s, 0.18 s and 512 MiB. |
-| `steps`, `schedules`, `resume` | Target total updates, runtime hyperparameter schedules and optional Trainer checkpoint. |
+| `steps`, `schedules`, `resume` | Target total updates, runtime hyperparameter schedules and an optional Trainer checkpoint to resume: a `.ssp` archive's path, or a step name, `step_XXXXXXXX`, that every rank resolves to its own save in the directory it saves checkpoints to. |
 | `parameter_norms_every`, `metric_reducer`, `omit_parameter_metrics` | Optional runtime norms (off by default) and CPU metric formatting. No compiled parameter-observation tasks. |
 | `log_every`, `metric_tables_every`, `wandb_project`, `wandb_mode`, `wandb` | Record and metric-table cadences (defaults every update and 100), and the W&B project the records also go to, its mode (`online` by default) and further `wandb.init` options. |
 | `eval_every`, `eval_tokens` | Held-out evaluation cadence, and the held-out tokens each evaluation covers in whole `max_seq_len` sequences (one step's worth by default), divided equally among the ranks. |
-| `checkpoint_every`, `checkpoint_dir`, `keep_last` | Full training-state checkpoint cadence and retention. |
+| `checkpoint_every`, `checkpoint_dir`, `keep_last` | Full training-state checkpoint cadence, directory and retention. A rank saves to `checkpoints/` in its own directory, or to `checkpoint_dir`, where each of several ranks has its own `rank-xxxxx/`, since every rank names its archive by the step; each rank keeps its last `keep_last` (default 3). |
 | `frozen_state_id` | The frozen base's identity; checkpoints then omit its unchanged parameters. |
 | `run_dir`, `seed`, `settings`, `plots` | Output directory, build seed/settings and report plotting. |
 | `nodes`, `port` | The machines of a run with several, the first the one the runner is launched on: `{"address", "ranks", "ssh", "repo", "python", "env"}` each, their ranks adding up to `ranks`. The Plan is built once on the first and copied to the others, which hold the same hardware; the grouped phases launch every node's workers under one rendezvous at the first node's address (`port`, default 29400), each node advertising its own address, and the other nodes' rank directories are copied back to the first after execution; `env` carries a node's network settings. GPUs that differ take the [heterogeneous section](../heterogeneous/README.md) instead. |
@@ -97,11 +97,13 @@ the training plan's. `report/` holds the simulated timeline; `logs/` contains
 one log per phase.
 
 Execution writes `metrics.jsonl`, `packing.jsonl`, optional metric tables and
-`checkpoints/step_XXXXXXXX.ssp`; with `ranks`, each rank writes those under
-`rank-xxxxx/` (its records hold its share of each step's figures) and the
+`checkpoints/step_XXXXXXXX.ssp`, the archives in `checkpoint_dir` instead when
+the config names one; with `ranks`, each rank writes those under `rank-xxxxx/`
+(its records hold its share of each step's figures), its archives going to
+`checkpoint_dir/rank-xxxxx/` instead when that is named, and the
 distributed logger writes `aggregate/metrics.jsonl`, the ranks' shares summed,
 with one W&B run per rank and one aggregate; `resume=step_XXXXXXXX` names the
-step and every rank loads its own save; with `wandb_project`, `wandb_run.json` records
+step and every rank loads its own save from the directory it saves to; with `wandb_project`, `wandb_run.json` records
 the W&B run's id and URL, which the runner prints after execution. Norms/RMS/module shares use the same CPU reducer
 and logging hooks as the reference loop. `result.json` contains only the final
 CPU observations, not model tensors. Compiler caches remain external.

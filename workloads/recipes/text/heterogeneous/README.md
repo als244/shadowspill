@@ -47,12 +47,14 @@ every rank, so the nodes walk the union of their candidates together: for a
 candidate a node did not build, it measures its own Program of the same kind,
 training or evaluation, whose exchange is the same, and keeps nothing; each
 node keeps the calibrations of its own candidates. A rank writes its records and
-checkpoints under its node's `rank-xxxxx/`; the distributed logger's
-aggregate under `nodes/00/aggregate/` sums the ranks' shares into the step's
-figures; remote nodes' rank directories are copied back to the first node
-after execution, and `resume=step_XXXXXXXX` makes every rank load its own
-save. The normal runner's `ranks` and `nodes` are refused beside this
-section: it carries its own.
+checkpoints under its node's `rank-xxxxx/`, its checkpoints going to
+`checkpoint_dir/rank-xxxxx/` instead when the config names that directory;
+the distributed logger's aggregate under `nodes/00/aggregate/` sums the ranks'
+shares into the step's figures; remote nodes' rank directories are copied
+back to the first node after execution, and `resume=step_XXXXXXXX` makes
+every rank load its own save from the directory it saves to. The normal
+runner's `ranks` and `nodes` are refused beside this section: it carries its
+own.
 
 Every rank keeps whole weights and gradients in its own spill storage and
 only the optimizer state is sharded, unless `build.parallelism` names

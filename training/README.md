@@ -180,7 +180,7 @@ resume policies are rejected. The directory contains:
 | `logs/` | A log for each preparation/execution phase |
 | `metrics.jsonl`, `observations.jsonl` | Completed losses, timing, schedules and optional tables |
 | `packing.jsonl` | Document identities and packing statistics |
-| `checkpoints/step_XXXXXXXX.ssp` | Model/optimizer/loop/source checkpoint archives |
+| `checkpoints/step_XXXXXXXX.ssp` | Model/optimizer/loop/source checkpoint archives, in `checkpoint_dir` instead when the config names one; with several ranks, each rank's in `rank-xxxxx/checkpoints/` or `checkpoint_dir/rank-xxxxx/` |
 
 `eval_tokens` sets how many held-out tokens each evaluation covers, in whole
 `max_seq_len` sequences, one step's worth unless given. The ranks divide them,
@@ -206,6 +206,8 @@ python -m training.train training/configs/olmoe_1b.json \
   resume=training/runs/olmoe_example/checkpoints/step_00000500.ssp --phase execute
 ```
 
+`resume=step_00000500` names the step alone: every rank loads its own save
+from the directory it saves checkpoints to, `checkpoint_dir` included.
 The checkpoint restores model and optimizer state, update count, RNG,
 stateful schedules and the packed source's progress. The saved Plans fix the candidate;
 execution does not repeat preparation. An ordinary iterable is also valid, but
@@ -222,7 +224,8 @@ exact data continuation requires caller-managed progress or the optional
 - `training/train.py`: recipe CLI.
 - `training/prepare.py`, `training/reference.py`, `training/compare.py`: data
   preparation, the transformers check and run comparison.
-- `training/scripts/`: launch and comparison helpers.
+- `training/scripts/launch.sh`: runs the CLI from the repository root and
+  keeps what the run prints in the run directory's `stdout.log`.
 
 `engine=pytorch` runs the same configuration in ordinary PyTorch, with one
 fixed microbatch size and no saved phases, as the reference for a comparison:

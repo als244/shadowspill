@@ -8,15 +8,18 @@ import sys
 import zipfile
 from dataclasses import asdict
 from pathlib import Path
+from types import SimpleNamespace
 
 import numpy as np
 import pytest
 import torch
 
+from shadowspill import Trainer
 from shadowspill.pytorch.guards import capture_input_signature
 from shadowspill.training import config
 from tests.training._text_recipe import _config, _records
 from workloads.recipes.text.experiment import results
+from workloads.recipes.text.experiment.execute import checkpoint_directory, resume_path
 from workloads.recipes.text.experiment.inputs import call_inputs, candidates, source
 from workloads.recipes.text.run import run_config
 
@@ -217,3 +220,61 @@ def test_the_calibration_a_candidate_plans_with_follows_the_rank_count(tmp_path)
     assert communication_path(tmp_path, 2, "6144_tokens", "evaluation") == (
         tmp_path / "communication/6144_tokens/evaluation.ssp"
     )
+
+
+@pytest.mark.parametrize(
+    "ranks,named,expected",
+    [
+        (1, False, ["run/checkpoints"]),
+        (1, True, ["saves"]),
+        (2, False, ["run/rank-00000/checkpoints", "run/rank-00001/checkpoints"]),
+        (2, True, ["saves/rank-00000", "saves/rank-00001"]),
+    ],
+)
+def test_each_rank_saves_prunes_and_resumes_a_step_in_its_own_directory(
+    tmp_path, monkeypatch, ranks, named, expected
+):
+    def step(self, **inputs):
+        self.step_count += 1
+        return SimpleNamespace(step=self.step_count)
+
+    def save(self, path):
+        # The archive names the rank that wrote it, so one rank's save
+        # replacing another's would show.
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(str(self.rank))
+
+    monkeypatch.setattr(Trainer, "step", step)
+    monkeypatch.setattr(Trainer, "save", save)
+    options = {"ranks": ranks}
+    if named:
+        options["checkpoint_dir"] = str(tmp_path / "saves")
+    for rank in range(ranks):
+        home = tmp_path / "run" / f"rank-{rank:05d}" if ranks > 1 else tmp_path / "run"
+        directory = checkpoint_directory(options, home, rank)
+        assert directory == tmp_path / expected[rank]
+        trainer = object.__new__(Trainer)
+        trainer.rank, trainer.step_count = rank, 0
+        trainer._source_state, trainer._closed = None, False
+        trainer.fit(
+            [{}] * 3,
+            steps=3,
+            run_dir=home,
+            log_every=0,
+            tables_every=0,
+            checkpoint_every=1,
+            checkpoint_dir=directory,
+            keep_last=2,
+        )
+    for rank, name in enumerate(expected):
+        directory = tmp_path / name
+        # Retention prunes the rank's own directory alone.
+        assert sorted(path.name for path in directory.iterdir()) == [
+            "step_00000002.ssp",
+            "step_00000003.ssp",
+        ]
+        resumed = resume_path("step_00000003", directory)
+        assert resumed == directory / "step_00000003.ssp"
+        assert resumed.read_text() == str(rank)
+    given = Path("runs/text/checkpoints/step_00000003.ssp")
+    assert resume_path(str(given), tmp_path / expected[0]) == given

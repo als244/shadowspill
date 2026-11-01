@@ -2,8 +2,10 @@
 
 With ``ranks`` workers, each is one rank of the Plan's parallelism: it trains
 its share of every step's microbatches, writes its records and checkpoints
-under ``rank-xxxxx/``, and logs through the distributed logger, whose
-aggregate under ``aggregate/`` sums the ranks' shares into the step's figures.
+under ``rank-xxxxx/`` (its checkpoints under ``checkpoint_dir/rank-xxxxx/``
+when the config names that directory), and logs through the distributed
+logger, whose aggregate under ``aggregate/`` sums the ranks' shares into the
+step's figures.
 """
 
 import json
@@ -22,13 +24,24 @@ from workloads.recipes.phases import settings
 from . import group, inputs, logging, results
 
 
-def resume_path(resume, home):
+def checkpoint_directory(options, home, rank):
+    """Where a rank saves its checkpoints: ``checkpoints/`` in its directory
+    ``home``, or ``checkpoint_dir``, each of several ranks in its own
+    ``rank-xxxxx/`` there, since every rank names its archive by the step."""
+    if options.get("checkpoint_dir") is None:
+        return home / "checkpoints"
+    directory = Path(options["checkpoint_dir"])
+    return directory / f"rank-{rank:05d}" if group.ranks(options) > 1 else directory
+
+
+def resume_path(resume, directory):
     """A checkpoint path as given, or a step name (``step_00000100``) that
-    every rank resolves to its own save under ``home``."""
+    every rank resolves to its own save in ``directory``, where it saves its
+    checkpoints."""
     path = Path(resume)
     if len(path.parts) > 1 or path.suffix == ".ssp":
         return path
-    return home / "checkpoints" / f"{path.name}.ssp"
+    return directory / f"{path.name}.ssp"
 
 
 def run(directory):
@@ -43,6 +56,7 @@ def run(directory):
         rank = dist.get_rank() if distributed else 0
         home = root / f"rank-{rank:05d}" if distributed else root
         home.mkdir(parents=True, exist_ok=True)
+        checkpoints = checkpoint_directory(options, home, rank)
         choice = json.loads((root / "planning.json").read_text())
         plan = Plan.load(root / "plans/training.ssp")
         evaluation_path = root / "plans/evaluation.ssp"
@@ -75,7 +89,7 @@ def run(directory):
                 initialize = stack.enter_context(initialize)
             if options.get("resume"):
                 trainer.load(
-                    resume_path(options["resume"], home), fill_tensor=initialize
+                    resume_path(options["resume"], checkpoints), fill_tensor=initialize
                 )
             else:
                 trainer.initialize(initialize)
@@ -113,7 +127,7 @@ def run(directory):
                 log_every=options.get("log_every", 1),
                 tables_every=options.get("metric_tables_every", 100),
                 checkpoint_every=options.get("checkpoint_every", 0),
-                checkpoint_dir=options.get("checkpoint_dir"),
+                checkpoint_dir=checkpoints,
                 keep_last=options.get("keep_last", 3),
                 startup_diagnostics=options.get("startup_diagnostics", False),
             )
