@@ -197,8 +197,8 @@ def recipe_config(case, mechanism, vocabulary, attention, own, targets=()):
             {
                 "_target_": "nemo_automodel.components._peft.lora.PeftConfig",
                 "target_modules": list(targets),
-                "dim": int(options.get("rank", 16)),
-                "alpha": options.get("alpha", 16),
+                "dim": int(options.get("rank", 32)),
+                "alpha": options.get("alpha", 32),
                 "lora_dtype": dtype_of(options.get("factor_dtype")),
             }
         )

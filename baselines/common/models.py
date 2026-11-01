@@ -254,7 +254,7 @@ def add_arguments(
         default={},
         metavar="JSON",
         help="configure_lora options for mode=lora, such as"
-        ' \'{"rank": 16, "alpha": 16, "head": "frozen"}\'',
+        ' \'{"rank": 32, "alpha": 32, "head": "frozen"}\'',
     )
     parser.add_argument(
         "--model-config",

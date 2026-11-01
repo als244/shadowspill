@@ -393,8 +393,8 @@ def apply(config, case, vocabulary, dataset):
             targets.extend(SHARED_EXPERT_TARGETS)
         config.peft = LoRA(
             target_modules=targets,
-            dim=int(options.get("rank", 16)),
-            alpha=options.get("alpha", 16),
+            dim=int(options.get("rank", 32)),
+            alpha=options.get("alpha", 32),
             dropout=0.0,
             share_expert_adapters=False,
         )

@@ -438,7 +438,7 @@ def main(argv=None) -> None:
     parser.add_argument(
         "--lora",
         type=json.loads,
-        default={"rank": 16, "alpha": 16.0},
+        default={"rank": 32, "alpha": 32.0},
         help="configure_lora's options, for a LoRA template",
     )
     parser.add_argument("--sequence-length", type=int, required=True)

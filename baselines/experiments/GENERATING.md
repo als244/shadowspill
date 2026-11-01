@@ -22,7 +22,7 @@ python -m baselines.generate_experiment lora_rtx5090/qwen35-27b_4K_8seqs \
 | `PATH` | The folder, any path under `baselines/experiments`, by the convention `<kind>_<hardware>/<model>_<sequence length>K_<sequences per update>seqs`; a folder that exists is never written over |
 | `--template NAME` | A folder of `templates/`: `full` (full training) or `lora` (LoRA from a checkpoint) |
 | `--model`, `--implementation` | The catalog model and its implementation (`mlops`) |
-| `--lora JSON` | `configure_lora`'s options, for the `lora` template (rank 16, alpha 16) |
+| `--lora JSON` | `configure_lora`'s options, for the `lora` template (rank 32, alpha 32 unless given) |
 | `--checkpoint NAME`, `--corpus NAME` | The checkpoint's directory under the `{models}` variable and the corpus's under `{corpora}`; left out, the experiment trains initialized weights on synthetic tokens |
 | `--sequence-length`, `--tokens-per-step`, `--gpus` | The geometry, and the world size every case runs at (1) |
 | `--device` | The GPU's name as its driver reports it, `NVIDIA GeForce RTX 5090`, for the README |
