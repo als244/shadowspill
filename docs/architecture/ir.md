@@ -26,10 +26,11 @@ Canonical serialized action kinds are `fetch`, `release`, `evict` and
 `write_back`. A **fetch** copies spill to execution; a
 **write-back** copies execution to spill and keeps the execution copy, so the
 spill copy is current again and a later release costs nothing; a **release**
-drops the execution copy, which requires the spill copy to be current; an
-**evict** is the two in one, a write-back where the spill copy is stale
-followed by the release. Explanatory documentation and runtime names use
-**fetch** for spill-to-execution movement and **evict** for
+drops the execution copy, and the spill copy with it unless the alias retains
+it, so releasing a value still needed requires a current spill copy that the
+alias retains; an **evict** is the two in one, a write-back where the spill
+copy is stale followed by the release. Explanatory documentation and runtime
+names use **fetch** for spill-to-execution movement and **evict** for
 execution-to-spill movement that frees the execution copy.
 
 Every action names a trigger task, so an action's place in time is a task

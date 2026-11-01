@@ -64,9 +64,10 @@ static int apply_action(
         return 0;
     }
     if (kind == SHADOWSPILL_MEMORY_RELEASE) {
-        /* Releasing the device copy is safe when a current spill copy remains,
-         * or when nothing later reads the value and the final residency does
-         * not name it. */
+        /* Releasing the only device copy of a value still needed is refused
+         * unless a current spill copy remains; the release then drops that
+         * spill copy as well unless the alias retains it, and a value still
+         * needed is refused where it is missed. */
         const int still_needed = final_alias[alias] != 0U ||
             (last_reader[alias] != SHADOWSPILL_SIMULATOR_NO_INDEX &&
              last_reader[alias] > task);

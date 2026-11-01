@@ -44,18 +44,26 @@ meaning each, and the runtime's executor keeps the same contract:
 |---|---|---|---|
 | fetch | fetch | a current spill copy and no device copy | a current device copy; the spill copy is dropped unless the alias retains it |
 | write-back | evict | a current device copy with no copy of it in flight | the spill copy current; the device copy kept, allocated and authoritative |
-| release | none | a current device copy, and a current spill copy when the value is still needed | the device copy dropped at once |
+| release | none | a current device copy, and a current spill copy when the value is still needed | the device copy dropped at once; the spill copy is dropped with it unless the alias retains it |
 | evict | evict | a current device copy with no copy of it in flight | the spill copy current and the device copy dropped when the copy lands |
 
 A write-back whose spill copy is already current completes at its trigger
 without occupying the lane. A release behind a pending write-back of the
 same alias waits for the copy to land, the way a fetch with nowhere to land
-waits for room, and holds the actions behind it while it waits. A value is still
-needed after a release when a later task reads it or the final residency
-names it; a release that would drop its only current copy is refused as
-an `invalid-release`, at the release rather than at the fetch, task or
-final residency that would miss the value. A value nothing needs any more
-is released freely, whatever its spill copy holds.
+waits for room, and holds the actions behind it while it waits. A value is
+still needed after a release when a later task reads it or the final
+residency names it. A release that would drop the only current copy of a
+value still needed -- its device copy, with no current spill copy beside
+it -- is refused at the release, as an `invalid-release`. A release beside a
+current spill copy goes ahead and, unless the alias retains that copy, drops
+it as well, so a value still needed is refused where it is missed: at the
+fetch that needs a spill copy, as an `invalid-fetch`; at the task that reads
+it, as a `task-input-deadlock`; or at the final residency that names it, as
+a `final-residency`. Schedule validation applies these rules before any
+simulation, in the schedule's order of tasks and actions rather than in
+time, and refuses such a schedule at the same release, fetch, task or final
+residency with a `ValidationError`. A value nothing needs any more is
+released freely, whatever its spill copy holds.
 
 A device-to-spill copy carries the version it started from. A task that
 writes the alias while the copy is in flight leaves the spill copy stale,
