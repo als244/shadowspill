@@ -115,13 +115,16 @@ masters are refused.
 
 Under DeepCompile the combinations qualified are a bfloat16 model with
 float32 masters and bfloat16 gradients, and a float32 model stepping its
-weights, in ZeRO-2 and 3 (ZeRO-1 with one microbatch per update); the
-float32-accumulating optimizer of a bfloat16 model is DeepSpeed's BF16
-optimizer, which DeepCompile does not take, a float16 model under its loss
-scaling is not qualified, and LoRA runs under ZeRO-3 only (the ZeRO-1 and
-2 passes register the optimizer's parameters alone, so a frozen base
-parameter has no identity in the graphs). Each of these is refused before
-launch.
+weights, in ZeRO-2 and 3 (ZeRO-1 with one microbatch per update). Float32
+accumulation under a bfloat16 model is refused at every stage: at ZeRO-1
+DeepSpeed runs it through its BF16 optimizer, which DeepCompile's passes do
+not take, and at ZeRO-2 and 3 the ZeRO optimizer accumulates into float32
+gradient partitions but DeepCompile reduces the gradients at the model
+dtype, not at the float32 `communication_data_type`. A float16 model under
+its loss scaling is not qualified, and LoRA runs under ZeRO-3 only (the
+ZeRO-1 and 2 passes register the optimizer's parameters alone, so a frozen
+base parameter has no identity in the graphs). Each of these is refused
+before launch.
 
 ## What a run writes
 

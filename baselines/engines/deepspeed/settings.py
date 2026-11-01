@@ -192,9 +192,13 @@ class Settings(common.Settings):
                 )
             if resolved_grad == "float32" and precision.model_dtype != "float32":
                 raise Unsupported(
-                    "DeepCompile takes ZeRO's bit16 optimizer; float32 accumulation"
-                    " under a narrower model is DeepSpeed's BF16 optimizer, which"
-                    " it does not take"
+                    "DeepCompile cannot honor float32 accumulation under a narrower"
+                    " model: at ZeRO-1 DeepSpeed runs it for a bfloat16 model"
+                    " through its BF16 optimizer, which DeepCompile's passes do not"
+                    " take (they read ZeRO's bit16 optimizer); at ZeRO-2 and 3 the"
+                    " ZeRO optimizer accumulates into float32 gradient partitions,"
+                    " but DeepCompile reduces the gradients at the model dtype, not"
+                    " at the float32 communication_data_type"
                 )
             if self.mode == "lora" and self.zero_stage != 3:
                 raise Unsupported(
