@@ -269,7 +269,7 @@ first failure, which is what stopped the runtime, and the counters around it.
 lifecycle barrier; `shadowspill_plan_wait_idle()` is the plan-local
 active-poll boundary used for callable recurrence and teardown, and ignores
 unrelated plans. `shadowspill_pytorch_recover_no_progress()` performs the one
-documented recovery: the frontend synchronizes the execution device first,
+documented recovery: its caller synchronizes the execution device first,
 and only a latched NO_PROGRESS failure can be cleared.
 
 ## Independent spill calibration

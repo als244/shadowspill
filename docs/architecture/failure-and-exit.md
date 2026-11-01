@@ -30,14 +30,30 @@ finalizes and which cases reach it.
 
 ## A failure in an Executor invocation
 
-A dispatch or completion failure makes Executor unusable for later invocations.
-The result handle preserves the original error. Closing Executor releases admitted
-paths and provider resources; it may wait while outstanding work completes. Use
-a context manager or explicitly close it after handling the failure.
+A dispatch or completion failure is terminal for Executor and for its runtime:
+no later invocation runs. The result handle preserves the original error and
+none of the call's outputs, which nobody could reach to release. Use a context
+manager or explicitly close Executor after handling the failure.
+
+Closing after a failure does not wait for the failed call. It synchronizes the
+device first: a runtime close stops waiting for outstanding work once a failure
+is latched (see below), and the device must be done with memory before that
+memory is released. It then releases admitted paths, provider resources and
+the runtime, the runtime last, and runs every step even when an earlier one
+raises. A latched runtime refuses the plan's own release steps, which is
+expected, and its close still releases everything. Once the runtime has
+closed, closing returns normally, because the call that failed has already
+raised the original error: a caller that closes in a `finally` sees what
+stopped the run. Closing raises in two cases. A completion failure that only
+the close waited for is raised once everything is released. A runtime that
+cannot close, because the caller still holds outputs, stays open; its refusal
+names the failure as its cause, and closing can be retried once those outputs
+are released.
 
 Cleanup does not undo weight updates that already ran. Persistent tensors belong
-to Executor, not the original model used during build. Resume training from a
-known checkpoint in a fresh worker.
+to Executor, not the original model used during build. A process opens one
+runtime and a closed runtime stays closed, so training resumes from a known
+checkpoint in a fresh worker.
 
 ## A failure in the runtime
 

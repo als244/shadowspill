@@ -287,14 +287,31 @@ class Executor:
             self._pending = None
 
     def close(self) -> None:
+        """Release the admitted Plans and close the runtime, failed or not.
+
+        After a failure the failed invocation is dropped rather than awaited,
+        the device is drained, and every step still runs. Once the runtime has
+        closed, close returns: the call that failed has raised already, and a
+        runtime that latched the failure is expected to refuse the plan's own
+        steps. A failure only this close waited for is raised once everything
+        is released. A runtime refused for outputs the caller still holds stays
+        open; close then raises, naming the failure, and can be retried once
+        those outputs are released.
+        """
         if self._closed:
             return
-        if not self._plan_released:
+        found: BaseException | None = None
+        if self._failure is None and self._pending is not None:
             try:
-                self.synchronize()
-            finally:
-                self._plan_released = True
-                with ExitStack() as cleanup:
+                self._pending.result()
+            except BaseException as error:
+                found = error
+        try:
+            with ExitStack() as cleanup:
+                # The runtime closes last, whatever the steps before it raise.
+                cleanup.callback(self.runtime.close)
+                if not self._plan_released:
+                    self._plan_released = True
                     if self._distributed is not None:
                         cleanup.callback(self._distributed.close)
                     cleanup.callback(self._providers.close)
@@ -303,10 +320,35 @@ class Executor:
                     if self._observations is not None:
                         cleanup.callback(self._observations.close)
                     cleanup.callback(self._completion.release)
-        # A caller-held output may prevent runtime shutdown. Allow close() to
-        # be retried after it is released without destroying plan handles twice.
-        self.runtime.close()
+                    cleanup.callback(self._settle)
+        except BaseException as error:
+            if self._failure is None:
+                raise
+            if not self.runtime._closed:
+                # A refused runtime stays open for a retry, which releases no
+                # plan twice. ExitStack drops the exception a caller's
+                # `finally` is unwinding from the chain, so the failure is
+                # named here.
+                raise error from self._failure
         self._closed = True
+        if found is not None:
+            raise found
+
+    def _settle(self) -> None:
+        """Drop the outstanding invocation; after a failure, drain the device.
+
+        A runtime close stops waiting for outstanding work once a failure is
+        latched, and the device must be done with memory before it is released.
+        """
+        self._pending = None
+        if self._failure is None:
+            return
+        try:
+            torch.cuda.synchronize(self.device)
+        except BaseException as error:
+            self._failure.add_note(
+                f"Synchronizing the execution device during close also failed: {error}"
+            )
 
     def __enter__(self) -> Self:
         return self

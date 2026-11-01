@@ -2,7 +2,7 @@ from dataclasses import replace
 
 import pytest
 
-from shadowspill.runtime.failures import allocator_oom_error, read_allocator_failure
+from shadowspill.runtime.failures import generic_runtime_error, read_allocator_failure
 from shadowspill.status import Status
 
 
@@ -32,14 +32,14 @@ def test_failure_retains_destination_pool_and_refused_eviction(pool_id):
         refused_action="EVICT activation (trigger task_28)",
         object_state="execution_ready, spill_current=0",
     )
-    error = allocator_oom_error(failure)
+    error = generic_runtime_error(failure)
     assert error.diagnostics is failure
     assert failure.as_dict()["refused_action"] == failure.refused_action
     assert failure.as_dict()["object_state"] == failure.object_state
     assert "refused_action: EVICT activation (trigger task_28)" in str(error)
     assert "object_state: execution_ready, spill_current=0" in str(error)
-    assert "requested: 32 B" in str(error)
-    assert "pool free: 16 B" in str(error)
+    assert "requested: 32\n" in str(error)
+    assert "free: 16\n" in str(error)
     if expected_pool is None:
         assert "\npool:" not in str(error)
     else:

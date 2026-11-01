@@ -1,6 +1,7 @@
 """Bind and release one admitted invocation path in a worker."""
 
 from collections.abc import Mapping
+from contextlib import ExitStack
 from dataclasses import dataclass
 
 import torch
@@ -35,10 +36,15 @@ class ExecutionPath:
     acquisition: int
 
     def close(self, runtime: Runtime) -> None:
-        self.storage.clear_views()
-        clear_tasks(self.bridge)
-        self.bridge.objects.unregister(self.bridge.objects.registered_aliases())
-        release_plan(runtime, self.memory.plan_handle)
+        # Each step runs whatever the ones before it raised, last registered
+        # first: a runtime that latched a failure refuses the task and object
+        # steps, and the plan handle is still released.
+        objects = self.bridge.objects
+        with ExitStack() as cleanup:
+            cleanup.callback(release_plan, runtime, self.memory.plan_handle)
+            cleanup.callback(objects.unregister, objects.registered_aliases())
+            cleanup.callback(clear_tasks, self.bridge)
+            cleanup.callback(self.storage.clear_views)
 
 
 def bind_path(

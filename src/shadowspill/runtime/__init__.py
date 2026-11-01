@@ -17,7 +17,6 @@ from .admission_replay import (
 from .configuration import RuntimeConfigurationError
 from .core import Runtime
 from .failures import (
-    ExecutionTaskIdentity,
     RuntimeExecutionError,
     RuntimeFailureDiagnostics,
 )
@@ -36,7 +35,6 @@ __all__ = [
     "AdmissionReplayOperationKind",
     "AdmissionReplayResult",
     "AdmissionReuseDependency",
-    "ExecutionTaskIdentity",
     "MemoryPool",
     "ObjectConsistency",
     "ObjectRef",

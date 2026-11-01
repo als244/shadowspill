@@ -886,7 +886,6 @@ recalibrating.
 | `RuntimeConfigurationError` | a runtime or plan asked for incompatible pool resources |
 | `RuntimeExecutionError` | a call failed against a live runtime, carrying the latched diagnostics when there are any |
 | `RuntimeFailureDiagnostics` | what the runtime latched about its first failure |
-| `ExecutionTaskIdentity` | which task a latched failure belongs to |
 
 [Failures and cleanup](../failures.md) shows what raises them.
 

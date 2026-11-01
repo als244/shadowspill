@@ -511,7 +511,7 @@ static int scopes(ShadowSpillRuntime *runtime) {
 static int tasks(ShadowSpillRuntime *runtime) {
     const ShadowSpillTaskDescription task = {
         .task_id = 1U,
-        .trace_label = "execution_000001.canary",
+        .trace_label = "example_0000.stage_0000.save.forward",
     };
     REQUIRE(
         shadowspill_test_admit_task(runtime, &task) == SHADOWSPILL_STATUS_OK,

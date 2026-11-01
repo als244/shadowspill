@@ -184,16 +184,25 @@ def create_paths(
             observations,
             providers,
         )
-    except BaseException:
-        with ExitStack() as cleanup:
-            if runtime is not None:
-                cleanup.callback(runtime.close)
-            if distributed is not None:
-                cleanup.callback(distributed.close)
-            cleanup.callback(providers.close)
-            for path in [*paths, *named.values()]:
-                assert runtime is not None
-                cleanup.callback(path.close, runtime)
-            if observations is not None:
-                cleanup.callback(observations.close)
+    except BaseException as error:
+        try:
+            with ExitStack() as cleanup:
+                if runtime is not None:
+                    cleanup.callback(runtime.close)
+                if distributed is not None:
+                    cleanup.callback(distributed.close)
+                cleanup.callback(providers.close)
+                for path in [*paths, *named.values()]:
+                    assert runtime is not None
+                    cleanup.callback(path.close, runtime)
+                if observations is not None:
+                    cleanup.callback(observations.close)
+        except BaseException as cleanup_error:
+            # As after a failed run: once the runtime has closed, the setup
+            # error is what is raised, and a runtime that latched it refuses
+            # the plans' own steps. A cleanup that could not close the runtime
+            # raises; ExitStack drops the setup error from its chain, so it is
+            # named as the cause here.
+            if runtime is None or not runtime._closed:
+                raise cleanup_error from error
         raise

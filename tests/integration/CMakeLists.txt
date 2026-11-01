@@ -92,3 +92,7 @@ shadowspill_add_public_api_test(
   shadowspill/profiling/test_pair_lifetimes.py
   test_pair_inputs_are_released_between_measurements_and_on_failure 300
 )
+shadowspill_add_public_api_test(
+  shadowspill/execution/test_close_after_failure.py
+  test_one_close_releases_everything_after_an_out_of_memory_failure 300
+)

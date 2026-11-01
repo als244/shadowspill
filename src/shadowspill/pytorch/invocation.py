@@ -65,16 +65,6 @@ class InvocationResult[T]:
     def result(self) -> T:
         """Synchronize this invocation once and return its public result."""
 
-        return self._resolve(report_failure=True)
-
-    wait = result
-
-    def _resolve_for_close(self) -> T:
-        """Synchronize during callable teardown without recursive cleanup."""
-
-        return self._resolve(report_failure=False)
-
-    def _resolve(self, *, report_failure: bool) -> T:
         with self._lock:
             if self._resolved:
                 if self._error is not None:
@@ -85,13 +75,18 @@ class InvocationResult[T]:
             except BaseException as error:
                 self._error = error
                 self._resolved = True
+                # A failed call has no result to return. Holding its outputs
+                # would keep device storage alive that no caller can reach or
+                # release, and the runtime refuses to close while it lives.
+                del self._payload
                 self._on_resolved(self)
-                if report_failure:
-                    self._on_failure(error)
+                self._on_failure(error)
                 raise
             self._resolved = True
             self._on_resolved(self)
             return self._payload
+
+    wait = result
 
 
 class ReusableCompletionEvent:

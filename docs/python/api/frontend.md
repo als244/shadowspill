@@ -150,12 +150,11 @@ Unsupported pool or route combinations fail during runtime construction or
 plan resolution.
 
 `Runtime` owns the installed allocator, the initialized `MemoryPool` and
-route registries, transfer calibration, pending and admitted plan handles,
-registered runtime objects, and the latest failure. Its public properties are
-`frontend` (the PyTorch `RuntimeFrontend` it was opened with), `pools` (name to
-`MemoryPool`), `routes` (name to `RuntimeRoute`),
-`transfer_capabilities` (a `TransferCapabilities` matrix of `TransferProfile`
-entries) and `last_failure` (a `RuntimeFailureDiagnostics` or `None`).
+route registries, transfer calibration, pending and admitted plan handles, and
+registered runtime objects. Its public properties are `frontend` (the PyTorch
+`RuntimeFrontend` it was opened with), `pools` (name to `MemoryPool`), `routes`
+(name to `RuntimeRoute`) and `transfer_capabilities` (a `TransferCapabilities`
+matrix of `TransferProfile` entries).
 
 ```text
 Runtime.calibrate_transfer_capabilities(

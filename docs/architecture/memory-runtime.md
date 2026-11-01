@@ -232,7 +232,7 @@ contain no PyTorch storage logic.
 
 Nonzero allocation failures become typed exceptions in the PyTorch adapter;
 they are never returned as a null pointer to a kernel. Runtime failures retain
-the execution ID, semantic task, request, pool state, and first cause in the
+the task's label and runtime id, the request, pool state, and first cause in the
 library, so no-progress OOM, allocation-contract mismatch, worker failure, and
 backend failure remain distinguishable.
 

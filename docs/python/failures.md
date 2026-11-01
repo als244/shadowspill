@@ -111,7 +111,7 @@ The record is organized into five groups:
 | Failure identity | `operation`, `status`, `status_name`, `device_ordinal` |
 | Why it refused | `reason`, `reason_name`, `refused_action`, `object_state` |
 | Memory state | `pool_id`, `requested_bytes`, `free_bytes`, `largest_free_range_bytes`, `object_id`, `allocation_id` |
-| Task identity | `execution_task_id`, semantic name, canonical task ID, internal task ID |
+| Task identity | `task_id`, the runtime's id for the task the failure happened in |
 | Allocation contract | task live bytes and limits, maximum-request limits, contract operation index, and expected/actual operation, ordinal, size, charge, and alignment |
 
 The runtime status names are:
@@ -130,8 +130,8 @@ The runtime status names are:
 | `task_allocation_envelope_exceeded` | A request or task-local live total exceeded the admitted profiled envelope. |
 | `task_allocation_contract_mismatch` | Allocation operation, order, geometry, or ownership differed from the admitted task contract. |
 
-`RuntimeFailureDiagnostics.is_allocator_oom`, `.is_recoverable_no_progress`,
-and `.is_shadowspill_contract_failure` classify one of those statuses without
+`RuntimeFailureDiagnostics.is_allocator_oom` and
+`.is_shadowspill_contract_failure` classify one of those statuses without
 requiring applications to parse exception text.
 
 ## No-progress OOM
@@ -145,8 +145,7 @@ allocation call, with a task-attributed message:
 ```text
 ShadowSpill out of memory in the execution pool (device 0), with nothing left to release
 reason: no range is large enough and nothing remains to release for one
-execution_task: example_0000
-semantic_task: stage_0017.recompute.backward
+semantic_task: example_0000.stage_0017.recompute.backward
 canonical_task: task_000042
 requested: 112.00 MiB (117440512 bytes)
 pool free: 38.00 MiB (39845888 bytes)
@@ -160,9 +159,10 @@ line when an earlier failure had already stopped the runtime. Sizes carry
 the readable form and the exact count, because neither alone says whether a
 request exceeded a budget. The requested, pool-free, and largest-contiguous-range
 values distinguish capacity exhaustion from fragmentation; the two pool lines
-are left out when the runtime recorded neither. Where no task is known, the
-task lines are absent, or one line names the runtime scope that made the
-request.
+are left out when the runtime recorded neither. `semantic_task` is the whole
+label the plan gives the task, and `canonical_task` the runtime's id for it.
+Where no task is known, the task lines are absent, or one line names the
+runtime scope that made the request.
 
 ## Contract failures versus provider failures
 
@@ -179,15 +179,29 @@ bad kernel as an allocator OOM.
 
 ## Execution rollback
 
-A dispatch or completion failure makes Executor unusable for subsequent calls,
-which raise with the original exception as their cause. A completion failure
-also stays on the result handle, which raises it again. This does not
-roll back partially executed weight updates; restart from a known checkpoint.
+A dispatch or completion failure is terminal for Executor and for its runtime.
+Later calls raise with the original exception as their cause. A completion
+failure also stays on the result handle, which raises it again and keeps none
+of the call's outputs. This does not roll back partially executed weight
+updates; restart from a known checkpoint.
 
-`close()` attempts to release admitted paths, provider resources, completion
-markers and distributed bindings before closing the runtime. A context manager
-adds cleanup failures as exception notes instead of masking the original error.
-Allocator failures are not silently retried with a relaxed budget.
+After a failure, `close()` does not wait for the failed call. It synchronizes
+the device, then releases admitted paths, provider resources, completion
+markers and distributed bindings, and closes the runtime last, each step
+running whether or not an earlier one raised. A runtime that latched the
+failure refuses the plan's own release steps, as expected, and its close still
+releases everything. Once the runtime has closed, `close()` returns: the call
+that failed has already raised the original error, so a caller that closes in
+a `finally` sees that error. A completion failure that only `close()` waited
+for is raised once everything is released. If the caller still holds outputs
+of an earlier call, the runtime refuses to close and stays open; `close()`
+then raises that refusal with the failure as its cause, and can be retried
+once the outputs are released. A context manager adds such a cleanup failure
+as an exception note instead of masking the original error. Allocator failures
+are not silently retried with a relaxed budget.
+
+A process opens one runtime, and a closed runtime stays closed, so the next
+run needs a new process.
 
 ## Normal close order
 

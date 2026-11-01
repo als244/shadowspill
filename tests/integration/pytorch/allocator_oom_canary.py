@@ -17,19 +17,14 @@ from shadowspill.runtime.abi import (
     runtime_library,
 )
 from shadowspill.runtime.bootstrap import install_runtime
-from shadowspill.runtime.failures import (
-    ExecutionTaskIdentity,
-    RuntimeExecutionError,
-    allocator_oom_error,
-    format_bytes,
-    read_allocator_failure,
-)
+from shadowspill.runtime.failures import format_bytes, read_allocator_failure
 from shadowspill.status import Status
 from tests.integration.pytorch.runtime_helpers import begin_task, two_pool_topology
 
 NO_PROGRESS = Status.NO_PROGRESS
 # Above the whole device budget, so it cannot fit whatever the context baseline costs.
 REQUEST_BYTES = 4 << 30
+LABEL = "example_0000.stage_0003.save.forward"
 
 
 def _runtime_handle(library: object) -> int:
@@ -100,7 +95,7 @@ def main() -> int:
     task_id = 17
     description = TaskDescription(
         task_id=task_id,
-        trace_label=b"execution_000017.dummy_model.stage_0003.forward",
+        trace_label=LABEL.encode(),
         input_object_ids=None,
         input_count=0,
         updates=None,
@@ -142,17 +137,23 @@ def main() -> int:
         torch.empty((REQUEST_BYTES,), dtype=torch.uint8, device="cuda")
     except torch.OutOfMemoryError as error:
         message = str(error)
+        lines = message.splitlines()
+        if "out of memory" not in message:
+            raise AssertionError(f"direct OOM is not an OOM: {message}") from error
+        # The label is one name: printed whole, never split at its first dot.
         for expected in (
-            "out of memory",
-            "execution_task: execution_000017",
-            "semantic_task: dummy_model.stage_0003.forward",
+            f"semantic_task: {LABEL}",
             "canonical_task: task_000017",
             f"requested: {format_bytes(REQUEST_BYTES)}",
         ):
-            if expected not in message:
+            if expected not in lines:
                 raise AssertionError(
-                    f"direct OOM omitted {expected!r}: {message}"
+                    f"direct OOM omitted the line {expected!r}: {message}"
                 ) from error
+        if any(line.startswith("execution_task:") for line in lines):
+            raise AssertionError(
+                f"direct OOM split the task label: {message}"
+            ) from error
         status = int(
             installed.library.shadowspill_pytorch_abort_task_handle(task_handle)
         )
@@ -172,37 +173,19 @@ def main() -> int:
         raise AssertionError("adapter did not preserve the runtime's first cause")
     if failure.runtime.free_bytes != free_before_request:
         raise AssertionError("diagnostic free-space accounting is incorrect")
-    task = ExecutionTaskIdentity(
-        execution_task_id="execution_000017",
-        semantic_name="dummy_model.stage_0003.forward",
-        canonical_task_id="task_000017",
-    )
     diagnostics = read_allocator_failure(
-        installed.library,
-        "allocate dummy-model task workspace",
-        task=task,
+        installed.library, "allocate dummy-model task workspace"
     )
     if diagnostics is None:
         raise AssertionError("public failure translation lost the allocator failure")
-    try:
-        raise allocator_oom_error(diagnostics)
-    except RuntimeExecutionError as error:
-        message = str(error)
-        for expected in (
-            "out of memory",
-            "execution_task: execution_000017",
-            "semantic_task: dummy_model.stage_0003.forward",
-            "canonical_task: task_000017",
-            f"requested: {format_bytes(REQUEST_BYTES)}",
-        ):
-            if expected not in message:
-                raise AssertionError(
-                    f"structured OOM omitted {expected!r}: {message}"
-                ) from error
-        if error.diagnostics is not diagnostics:
-            raise AssertionError(
-                "structured OOM did not retain its diagnostics"
-            ) from error
+    if (
+        diagnostics.status != NO_PROGRESS
+        or diagnostics.task_id != task_id
+        or diagnostics.requested_bytes != REQUEST_BYTES
+    ):
+        raise AssertionError(
+            f"public failure translation lost the task or the request: {diagnostics}"
+        )
     torch.cuda.synchronize()
     if int(installed.library.shadowspill_pytorch_recover_no_progress()) != 0:
         raise AssertionError("failed to recover no-progress for teardown")

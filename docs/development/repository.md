@@ -125,8 +125,8 @@ src/shadowspill/
 │                          and nothing else
 ├── runtime/               one runtime in this process, framework-neutral:
 │   │                      bootstrap, core, configuration, plan, occupancy,
-│   │                      residue, calibration, teardown, the admission replay,
-│   │                      the trace and telemetry it exposes, the markers a
+│   │                      residue, calibration, the admission replay, the
+│   │                      trace and telemetry it exposes, the markers a
 │   │                      caller times with, and the failures it reports
 │   ├── abi/               the ctypes projection of the C API, one module per
 │   │                      record kind

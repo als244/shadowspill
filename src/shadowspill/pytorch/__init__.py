@@ -14,9 +14,6 @@ if TYPE_CHECKING:
     from shadowspill.runtime import TransferCapabilities as TransferCapabilities
     from shadowspill.runtime import TransferProfile as TransferProfile
     from shadowspill.runtime.failures import (
-        ExecutionTaskIdentity as ExecutionTaskIdentity,
-    )
-    from shadowspill.runtime.failures import (
         RuntimeExecutionError as RuntimeExecutionError,
     )
     from shadowspill.runtime.failures import (
@@ -38,7 +35,6 @@ _GROUPS = {
         "TransferProfile",
     ),
     "shadowspill.runtime.failures": (
-        "ExecutionTaskIdentity",
         "RuntimeExecutionError",
         "RuntimeFailureDiagnostics",
     ),

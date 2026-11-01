@@ -66,15 +66,6 @@ _ALLOCATION_OPERATIONS = {0: "allocate", 1: "free", 255: "end_of_task"}
 
 
 @dataclass(frozen=True, slots=True)
-class ExecutionTaskIdentity:
-    """User-facing and canonical identities for one execution task."""
-
-    execution_task_id: str
-    semantic_name: str
-    canonical_task_id: str
-
-
-@dataclass(frozen=True, slots=True)
 class RuntimeFailureDiagnostics:
     """Immutable allocator/runtime failure details retained after an exception."""
 
@@ -105,7 +96,6 @@ class RuntimeFailureDiagnostics:
     task_allocation_actual_alignment_bytes: int = 0
     task_allocation_expected_operation: int = 255
     task_allocation_actual_operation: int = 255
-    task: ExecutionTaskIdentity | None = None
     #: What the runtime latched about why it refused, and the state of the object
     #: it refused over. The runtime knows both; a report that drops them leaves a
     #: status number and an object id to be decoded by hand.
@@ -124,12 +114,6 @@ class RuntimeFailureDiagnostics:
         )
 
     @property
-    def is_recoverable_no_progress(self) -> bool:
-        """Whether synchronized teardown may clear the runtime failure latch."""
-
-        return self.status == _NO_PROGRESS and self.requested_bytes > 0
-
-    @property
     def is_shadowspill_contract_failure(self) -> bool:
         """Whether ShadowSpill should replace a secondary provider exception."""
 
@@ -140,7 +124,6 @@ class RuntimeFailureDiagnostics:
         }
 
     def as_dict(self) -> dict[str, object]:
-        task = self.task
         return {
             "operation": self.operation,
             "status": self.status,
@@ -192,9 +175,6 @@ class RuntimeFailureDiagnostics:
                 self.task_allocation_expected_operation
             ),
             "task_allocation_actual_operation": (self.task_allocation_actual_operation),
-            "execution_task_id": None if task is None else task.execution_task_id,
-            "semantic_name": None if task is None else task.semantic_name,
-            "canonical_task_id": None if task is None else task.canonical_task_id,
         }
 
 
@@ -209,22 +189,10 @@ class RuntimeExecutionError(RuntimeError):
     ) -> None:
         super().__init__(message)
         self.diagnostics = diagnostics
-        self._cleanup_prepared = False
-
-    def _begin_cleanup(self) -> bool:
-        """Claim fault cleanup once across nested planning/execution boundaries."""
-
-        if self._cleanup_prepared:
-            return False
-        self._cleanup_prepared = True
-        return True
 
 
 def read_allocator_failure(
-    library: Any,
-    operation: str,
-    *,
-    task: ExecutionTaskIdentity | None = None,
+    library: Any, operation: str
 ) -> RuntimeFailureDiagnostics | None:
     """Read the adapter's immutable first-failure snapshot, if one exists."""
 
@@ -298,55 +266,7 @@ def read_allocator_failure(
         task_allocation_actual_operation=int(
             failure.runtime.task_allocation_actual_operation
         ),
-        task=task,
     )
-
-
-def allocator_oom_error(
-    diagnostics: RuntimeFailureDiagnostics,
-) -> RuntimeExecutionError:
-    """Build the precise public error for a failed allocator callback."""
-
-    if not diagnostics.is_allocator_oom:
-        raise ValueError("allocator OOM error requires an OOM diagnostic")
-    # Same phrasing as the allocator callback's own message: name what ran
-    # out, and say whether anything could still have been released for it.
-    title = (
-        "ShadowSpill out of memory, with nothing left to release"
-        if diagnostics.status == _NO_PROGRESS
-        else "ShadowSpill out of memory"
-    )
-    lines = [title]
-    task = diagnostics.task
-    if task is not None:
-        lines.extend(
-            (
-                f"execution_task: {task.execution_task_id}",
-                f"semantic_task: {task.semantic_name}",
-                f"canonical_task: {task.canonical_task_id}",
-            )
-        )
-    else:
-        lines.append(f"operation: {diagnostics.operation}")
-    if diagnostics.pool_id is not None:
-        lines.append(f"pool: {diagnostics.pool_id}")
-    if diagnostics.refused_action is not None:
-        lines.append(f"refused_action: {diagnostics.refused_action}")
-    if diagnostics.object_state is not None:
-        lines.append(f"object_state: {diagnostics.object_state}")
-    lines.extend(
-        (
-            f"device: {diagnostics.device_ordinal}",
-            f"requested: {format_bytes(diagnostics.requested_bytes)}",
-            f"pool free: {format_bytes(diagnostics.free_bytes)}",
-            f"largest free range: {format_bytes(diagnostics.largest_free_range_bytes)}",
-        )
-    )
-    if diagnostics.object_id is not None:
-        lines.append(f"object: {diagnostics.object_id}")
-    if diagnostics.allocation_id is not None:
-        lines.append(f"allocation: {diagnostics.allocation_id}")
-    return RuntimeExecutionError("\n".join(lines), diagnostics=diagnostics)
 
 
 def generic_runtime_error(
@@ -358,15 +278,7 @@ def generic_runtime_error(
         f"{diagnostics.operation} failed with status {diagnostics.status} "
         f"({diagnostics.status_name})"
     ]
-    if diagnostics.task is not None:
-        lines.extend(
-            (
-                f"execution_task: {diagnostics.task.execution_task_id}",
-                f"semantic_task: {diagnostics.task.semantic_name}",
-                f"canonical_task: {diagnostics.task.canonical_task_id}",
-            )
-        )
-    elif diagnostics.task_id is not None:
+    if diagnostics.task_id is not None:
         lines.append(f"runtime_task: {diagnostics.task_id}")
     if diagnostics.pool_id is not None:
         lines.append(f"pool: {diagnostics.pool_id}")
@@ -473,10 +385,8 @@ def _allocation_operation_name(value: int) -> str:
 
 
 __all__ = [
-    "ExecutionTaskIdentity",
     "RuntimeExecutionError",
     "RuntimeFailureDiagnostics",
-    "allocator_oom_error",
     "generic_runtime_error",
     "read_allocator_failure",
 ]

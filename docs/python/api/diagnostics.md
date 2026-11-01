@@ -45,5 +45,7 @@ not measured GPU execution.
 
 `RuntimeExecutionError` can carry `RuntimeFailureDiagnostics` with the failed
 task, allocation, capacity and contract operation. The runtime retains the
-first failure; see [failures and cleanup](../failures.md). Failed invocations
-make Executor unusable for further work. Closing it still releases its resources.
+first failure; see [failures and cleanup](../failures.md). A failed invocation
+is terminal for Executor and its runtime. Closing it still releases everything
+they hold, and an error the close raises names the failure as its cause. A new
+run needs a new process.

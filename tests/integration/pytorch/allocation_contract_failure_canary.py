@@ -16,14 +16,12 @@ from shadowspill.runtime.abi import (
     runtime_library,
 )
 from shadowspill.runtime.bootstrap import install_runtime
-from shadowspill.runtime.failures import (
-    ExecutionTaskIdentity,
-    read_allocator_failure,
-)
+from shadowspill.runtime.failures import read_allocator_failure
 from shadowspill.status import Status
 from tests.integration.pytorch.runtime_helpers import begin_task, two_pool_topology
 
 TASK_ID = 17
+LABEL = "example_0001.stage_0017.recompute.backward"
 CONTRACT_MISMATCH = Status.TASK_ALLOCATION_CONTRACT_MISMATCH
 
 
@@ -107,7 +105,7 @@ def main() -> int:
     )
     description = TaskDescription(
         task_id=TASK_ID,
-        trace_label=b"execution_000017.canary.stage_0000.forward",
+        trace_label=LABEL.encode(),
         input_object_ids=None,
         input_count=0,
         updates=None,
@@ -136,12 +134,11 @@ def main() -> int:
         torch.empty((24,), dtype=torch.uint8, device="cuda")
     except RuntimeError as cause:
         message = str(cause)
+        lines = message.splitlines()
         for expected_text in (
             "task allocation contract mismatch",
             f"status: {int(CONTRACT_MISMATCH)} (task allocation contract mismatch)",
             "reason: TASK_ALLOCATION_CONTRACT_MISMATCH",
-            "execution_task: execution_000017",
-            "semantic_task: canary.stage_0000.forward",
             "canonical_task: task_000017",
             "expected_requested: 4096",
             "actual_requested: 24",
@@ -150,19 +147,20 @@ def main() -> int:
                 raise AssertionError(
                     f"direct contract failure omitted {expected_text!r}: {message}"
                 ) from cause
+        # The label is one name: printed whole, never split at its first dot.
+        if f"semantic_task: {LABEL}" not in lines or any(
+            line.startswith("execution_task:") for line in lines
+        ):
+            raise AssertionError(
+                f"direct contract failure split the task label: {message}"
+            ) from cause
         status = int(library.shadowspill_pytorch_abort_task_handle(task_handle))
         if status != 0:
             raise AssertionError(
                 f"failed to abort allocation-contract task: status={status}"
             ) from None
         diagnostics = read_allocator_failure(
-            library,
-            "execute mismatched allocation task",
-            task=ExecutionTaskIdentity(
-                "execution_000017",
-                "canary.stage_0000.forward",
-                "task_000017",
-            ),
+            library, "execute mismatched allocation task"
         )
         if diagnostics is None or diagnostics.status != CONTRACT_MISMATCH:
             raise AssertionError(

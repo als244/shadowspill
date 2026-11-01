@@ -1,5 +1,7 @@
 """The asynchronous result handle synchronizes once and retains failures."""
 
+import weakref
+
 import pytest
 
 from shadowspill.pytorch.invocation import InvocationResult
@@ -53,3 +55,31 @@ def test_invocation_result_preserves_synchronization_failure() -> None:
     assert synchronizations == 1
     assert resolved == [invocation]
     assert failures == [error]
+
+
+def test_failed_invocation_releases_its_outputs() -> None:
+    class Outputs:
+        pass
+
+    def synchronize() -> None:
+        raise RuntimeError("completion failed")
+
+    outputs = Outputs()
+    alive = weakref.ref(outputs)
+    failures: list[BaseException] = []
+    invocation = InvocationResult(
+        outputs,
+        synchronize,
+        on_resolved=lambda result: None,
+        on_failure=failures.append,
+    )
+    del outputs
+
+    with pytest.raises(RuntimeError, match="completion failed"):
+        invocation.result()
+    # Nobody can reach a failed call's outputs, so the handle does not keep
+    # them, or their device storage, alive.
+    assert alive() is None
+    with pytest.raises(RuntimeError, match="completion failed"):
+        invocation.result()
+    assert len(failures) == 1

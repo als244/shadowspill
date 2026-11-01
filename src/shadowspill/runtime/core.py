@@ -34,10 +34,7 @@ from .calibration import (
     read_transfer_capabilities,
 )
 from .configuration import RuntimeConfigurationError, adapter_path, configure_topology
-from .failures import (
-    RuntimeExecutionError,
-    RuntimeFailureDiagnostics,
-)
+from .failures import RuntimeExecutionError
 from .objects import ObjectRef, release_object_reference, reserve_pool_range
 from .topology import (
     MemoryPool,
@@ -148,7 +145,6 @@ class Runtime:
             self._lock = threading.RLock()
             self._closed = False
             self._unusable_reason: str | None = None
-            self._last_failure: RuntimeFailureDiagnostics | None = None
             self._active_plan_handles: set[int] = set()
             self._pending_plan_handle: int | None = None
             self._active_object_references = 0
@@ -270,13 +266,6 @@ class Runtime:
             self._require_open()
             return read_transfer_capabilities(self._runtime_handle, self._pool_names)
 
-    @property
-    def last_failure(self) -> RuntimeFailureDiagnostics | None:
-        """Return the latest structured frontend failure, if any."""
-
-        with self._lock:
-            return self._last_failure
-
     def calibrate_transfer_capabilities(
         self,
         *,
@@ -323,7 +312,10 @@ class Runtime:
                     "release every retained object reference first"
                 )
             status = int(self._installed.library.shadowspill_pytorch_allocator_close())
-            if status == _RUNTIME_INVALID_STATE:
+            # A refused close leaves the runtime published. One that released
+            # everything returns the failure it observed, and a latched
+            # INVALID_STATE is the same status a refusal returns.
+            if status == _RUNTIME_INVALID_STATE and self._published():
                 raise RuntimeConfigurationError(
                     "cannot close Runtime while caller-owned device outputs "
                     "still reference its memory pools; release those references first"
@@ -334,6 +326,15 @@ class Runtime:
                     "runtime close released its resources after observing "
                     f"status {status}"
                 )
+
+    def _published(self) -> bool:
+        """Whether the adapter still publishes this runtime to its callers."""
+
+        handle = ctypes.c_size_t()
+        status = self._installed.library.shadowspill_pytorch_runtime_handle(
+            ctypes.byref(handle)
+        )
+        return int(status) == 0
 
     def _release_object_reference(self, reference: ObjectRef) -> None:
         """Release exactly one public runtime-object owner: the `ObjectRef`

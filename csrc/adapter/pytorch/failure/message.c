@@ -5,7 +5,6 @@
 #include <pthread.h>
 #include <stdarg.h>
 #include <stdio.h>
-#include <string.h>
 
 static void append_failure_message(
     char *destination,
@@ -81,26 +80,10 @@ static void append_failure_task(
         );
         return;
     }
-    char *const separator = strchr(label, '.');
-    if (separator != NULL) {
-        *separator = '\0';
-        append_failure_message(
-            destination,
-            destination_bytes,
-            offset,
-            "execution_task: %s\nsemantic_task: %s\n",
-            label,
-            separator + 1
-        );
-    } else {
-        append_failure_message(
-            destination,
-            destination_bytes,
-            offset,
-            "execution_task: %s\n",
-            label
-        );
-    }
+    /* A label's dotted parts name one task together, so it is printed whole. */
+    append_failure_message(
+        destination, destination_bytes, offset, "semantic_task: %s\n", label
+    );
     append_failure_message(
         destination,
         destination_bytes,
