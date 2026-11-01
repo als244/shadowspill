@@ -168,8 +168,6 @@ def build_step_summary(
             timing.dispatch_call_finished_ns - timing.dispatch_call_started_ns
         )
         / 1e9,
-        prior_invocation_drain_seconds=timing.prior_invocation_drain_ns / 1e9,
-        trace_setup_seconds=timing.trace_setup_ns / 1e9,
         optimizer_span_seconds=(
             max(item.compute_finished_at_seconds for item in optimizer)
             - min(item.compute_started_at_seconds for item in optimizer)

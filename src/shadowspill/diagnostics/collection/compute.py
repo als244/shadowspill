@@ -89,22 +89,6 @@ def compute_record(
         after_task_exited_at_seconds=_relative_seconds(
             task.after_task_exit_ns, origin_ns
         ),
-        dispatch_input_lookup_seconds=task.dispatch_input_lookup_ns / 1e9,
-        dispatch_storage_rebind_seconds=task.dispatch_storage_rebind_ns / 1e9,
-        dispatch_input_acquire_seconds=task.dispatch_input_acquire_ns / 1e9,
-        dispatch_allocation_reuse_seconds=task.dispatch_allocation_reuse_ns / 1e9,
-        dispatch_argument_assembly_seconds=task.dispatch_argument_assembly_ns / 1e9,
-        dispatch_output_flatten_seconds=task.dispatch_output_flatten_ns / 1e9,
-        dispatch_output_classification_seconds=(
-            task.dispatch_output_classification_ns / 1e9
-        ),
-        dispatch_output_adoption_seconds=task.dispatch_output_adoption_ns / 1e9,
-        dispatch_output_state_publish_seconds=(
-            task.dispatch_output_state_publish_ns / 1e9
-        ),
-        dispatch_output_publish_seconds=task.dispatch_output_publish_ns / 1e9,
-        dispatch_dematerialize_seconds=task.dispatch_dematerialize_ns / 1e9,
-        dispatch_cleanup_seconds=task.dispatch_cleanup_ns / 1e9,
     )
 
 

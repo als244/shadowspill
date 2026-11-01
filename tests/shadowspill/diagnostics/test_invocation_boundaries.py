@@ -48,8 +48,6 @@ def test_summary_components_include_entry_and_terminal_once(contention_ns: int) 
         timeline=None,
         dispatch_call_started_ns=0,
         dispatch_call_finished_ns=1,
-        prior_invocation_drain_ns=0,
-        trace_setup_ns=0,
         collectives=SimpleNamespace(complete=True),
     )
     runtime = SimpleNamespace(event_overflow=False, allocation_event_overflow=False)
@@ -182,8 +180,6 @@ def test_an_overflowed_trace_joins_no_transfer() -> None:
             timeline=None,
             dispatch_call_started_ns=0,
             dispatch_call_finished_ns=1,
-            prior_invocation_drain_ns=0,
-            trace_setup_ns=0,
         ),
         SimpleNamespace(makespan_ns=400_000_000),
         (_task(1, reached=0.01, started=0.05, finished=0.16),),

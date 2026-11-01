@@ -97,8 +97,6 @@ def _diagnostics() -> StepDiagnostics:
         entry_delay_seconds=0.02,
         exposed_tail_seconds=0.03,
         call_seconds=1.1,
-        prior_invocation_drain_seconds=0.0,
-        trace_setup_seconds=0.0,
         optimizer_span_seconds=0.1,
         phase_comparisons=(),
         trace_complete=True,

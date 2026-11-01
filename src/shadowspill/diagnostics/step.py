@@ -71,20 +71,6 @@ class TaskRecord:
     before_task_exited_at_seconds: float | None
     after_task_entered_at_seconds: float | None
     after_task_exited_at_seconds: float | None
-    #: The work inside the opening boundary, each a disjoint part of it.
-    dispatch_input_lookup_seconds: float
-    dispatch_storage_rebind_seconds: float
-    dispatch_input_acquire_seconds: float
-    dispatch_allocation_reuse_seconds: float
-    dispatch_argument_assembly_seconds: float
-    #: The work inside `after_task`, each a disjoint part of it.
-    dispatch_output_flatten_seconds: float
-    dispatch_output_classification_seconds: float
-    dispatch_output_adoption_seconds: float
-    dispatch_output_state_publish_seconds: float
-    dispatch_output_publish_seconds: float
-    dispatch_dematerialize_seconds: float
-    dispatch_cleanup_seconds: float
 
     def as_dict(self) -> dict[str, object]:
         """Serialize under the field names themselves, grouped by clock."""
@@ -118,34 +104,6 @@ class TaskRecord:
                 "before_task_exited_at_seconds": self.before_task_exited_at_seconds,
                 "after_task_entered_at_seconds": self.after_task_entered_at_seconds,
                 "after_task_exited_at_seconds": self.after_task_exited_at_seconds,
-                "dispatch_input_lookup_seconds": self.dispatch_input_lookup_seconds,
-                "dispatch_storage_rebind_seconds": (
-                    self.dispatch_storage_rebind_seconds
-                ),
-                "dispatch_input_acquire_seconds": self.dispatch_input_acquire_seconds,
-                "dispatch_allocation_reuse_seconds": (
-                    self.dispatch_allocation_reuse_seconds
-                ),
-                "dispatch_argument_assembly_seconds": (
-                    self.dispatch_argument_assembly_seconds
-                ),
-                "dispatch_output_flatten_seconds": (
-                    self.dispatch_output_flatten_seconds
-                ),
-                "dispatch_output_classification_seconds": (
-                    self.dispatch_output_classification_seconds
-                ),
-                "dispatch_output_adoption_seconds": (
-                    self.dispatch_output_adoption_seconds
-                ),
-                "dispatch_output_state_publish_seconds": (
-                    self.dispatch_output_state_publish_seconds
-                ),
-                "dispatch_output_publish_seconds": (
-                    self.dispatch_output_publish_seconds
-                ),
-                "dispatch_dematerialize_seconds": self.dispatch_dematerialize_seconds,
-                "dispatch_cleanup_seconds": self.dispatch_cleanup_seconds,
             },
         }
 
@@ -552,10 +510,8 @@ class StepTimingSummary:
     entry_delay_seconds: float
     #: Last computation to cycle end, including caller and terminal work.
     exposed_tail_seconds: float | None
-    #: Host call time, prior invocation's drain, and optional lazy trace setup.
+    #: The whole planned call on the host clock.
     call_seconds: float
-    prior_invocation_drain_seconds: float
-    trace_setup_seconds: float
     #: First optimizer task start through last optimizer task end.
     optimizer_span_seconds: float
     phase_comparisons: tuple[PhaseTimingComparison, ...]
@@ -618,8 +574,6 @@ class StepTimingSummary:
             "entry_delay_seconds": self.entry_delay_seconds,
             "exposed_tail_seconds": self.exposed_tail_seconds,
             "call_seconds": self.call_seconds,
-            "prior_invocation_drain_seconds": self.prior_invocation_drain_seconds,
-            "trace_setup_seconds": self.trace_setup_seconds,
             "optimizer_span_seconds": self.optimizer_span_seconds,
             "phase_comparisons": {
                 item.phase: item.as_dict() for item in self.phase_comparisons

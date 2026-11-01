@@ -41,18 +41,6 @@ class ArmedTaskTiming:
     before_task_exit_ns: int = 0
     after_task_enter_ns: int = 0
     after_task_exit_ns: int = 0
-    dispatch_input_lookup_ns: int = 0
-    dispatch_storage_rebind_ns: int = 0
-    dispatch_input_acquire_ns: int = 0
-    dispatch_allocation_reuse_ns: int = 0
-    dispatch_argument_assembly_ns: int = 0
-    dispatch_output_flatten_ns: int = 0
-    dispatch_output_classification_ns: int = 0
-    dispatch_output_adoption_ns: int = 0
-    dispatch_output_state_publish_ns: int = 0
-    dispatch_output_publish_ns: int = 0
-    dispatch_dematerialize_ns: int = 0
-    dispatch_cleanup_ns: int = 0
 
 
 @dataclass(slots=True)
@@ -68,7 +56,6 @@ class ArmedExecutionTiming:
     finished: bool = False
     dispatch_call_started_ns: int = 0
     dispatch_call_finished_ns: int = 0
-    prior_invocation_drain_ns: int = 0
     origin_recorded_ns: int = 0
     stream: int | None = None
     statistics_before: AdapterStatistics | None = None
@@ -77,7 +64,6 @@ class ArmedExecutionTiming:
     #: when a successor exists by the time the trace is resolved.
     timeline: InvocationTimeline | None = None
     simulation: SimulationResult | None = None
-    trace_setup_ns: int = 0
     collect_collectives: Callable[[], CollectiveTrace] | None = None
     collectives: CollectiveTrace = field(default_factory=CollectiveTrace)
     #: Every read and write of each alias group by the selected tasks, as

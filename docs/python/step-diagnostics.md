@@ -19,8 +19,8 @@ is the reference for reading the step against its plan:
 
 | View | Purpose |
 |---|---|
-| `summary` | The reconciliation: profiled versus real task time, simulated versus real waiting, the selected span, the makespan, and the call-level host totals. |
-| `tasks` | Every selected task by execution task id: one `TaskRecord` placing simulated beside measured, with the host boundary costs. |
+| `summary` | The reconciliation: profiled versus real task time, simulated versus real waiting, the selected span, the makespan, and the call's host time. |
+| `tasks` | Every selected task by execution task id: one `TaskRecord` placing simulated beside measured, with the host boundary instants. |
 | `transfers` | Every scheduled transfer by transfer id, grouped as `transfers.fetch` and `transfers.evict`: one `TransferRecord` each, simulated beside measured, naming the tasks it sits between. |
 | `timelines` | The order of the step on three lanes -- `compute`, `fetch`, `evict` -- as references into `tasks` and `transfers`, with each transfer lane's summary and their common invocation origin. |
 
@@ -86,8 +86,8 @@ Every measured time is in seconds, on one of the two clocks
 [timelines](../architecture/timelines.md) defines. Fields on the device
 timeline are named `compute_*` for the compute stream and `lane_*` for a
 transfer lane; fields on the host clock sit under `host` in the records and
-carry `before_task`, `after_task`, `dispatch`, `queued`, `reserved`,
-`dispatched`, or `completion_observed` in their names. Simulated times start at invocation entry. Device times use the event at the
+carry `before_task`, `after_task`, `queued`, `reserved`, `dispatched`, or
+`completion_observed` in their names. Simulated times start at invocation entry. Device times use the event at the
 same execution boundary. Deltas subtract these coordinates without shifting
 first compute starts. `timelines.first_task_started_at_seconds` records the
 measured entry delay; its input-readiness portion is
@@ -165,8 +165,6 @@ selected-task span = sum of selected task-event durations
 | `entry_delay_seconds` | Origin to the first task's compute start: the first task's readiness waits and frontend preparation. |
 | `exposed_tail_seconds` | Last task's compute end to the cycle's end: the invocation's terminal work, such as writeback, after its last task. `None` with `cycle_seconds`. |
 | `call_seconds` | The whole planned call on the host clock. |
-| `prior_invocation_drain_seconds` | Host time this call spent at its start waiting for the previous invocation's plan to go idle. A plan assumes its initial objects are resident when it begins, and the invocation before it ends by writing them back, so the next call cannot overlap that writeback. `Executor.run` resolves the previous invocation, whose completion waits for that writeback, before it starts a traced call, so the wait falls outside the trace and this reads zero. |
-| `trace_setup_seconds` | Time spent setting the trace up. `Executor` sets each traced call's trace up before `call_seconds` starts and does not time it, so this reads zero. |
 | `optimizer_span_seconds` | First optimizer task's start through the last one's end, on the device timeline. |
 | `phase_comparisons` | Profiled versus real task-event sum by semantic phase. One `PhaseTimingComparison` per phase, carrying `phase`, `profiled_task_seconds`, `real_task_event_seconds`, and `delta_seconds`, which is the second minus the first. |
 | `trace_complete` | False when any required trace source overflowed or was incomplete. |
@@ -223,8 +221,6 @@ simulated, compute, delta, host -- so a task reads like a transfer.
 | Compute-stream waits | `input_readiness_wait_seconds`, `allocation_reuse_wait_seconds` | Between reaching and starting: inputs still being fetched, then ranges the task's allocations reuse still owned by a transfer. These two split the interval, so together they are `compute_started_at_seconds` minus `compute_reached_at_seconds`. Both are the *stream* waiting; the host's own wait for the same ranges falls inside the opening boundary. |
 | Delta | `start_delta_seconds`, `end_delta_seconds` | Device minus simulated from the common invocation boundary. |
 | Host boundaries | `before_task_entered_at_seconds`, `before_task_exited_at_seconds`, `after_task_entered_at_seconds`, `after_task_exited_at_seconds` | Four instants partitioning the frontend's cycle for this task with no gap: entering the opening boundary, leaving it for the compiled call, the call returning, and leaving the closing boundary. The opening boundary, the call, and the closing boundary are the three differences between them. |
-| Inside the opening boundary | `dispatch_input_lookup_seconds`, `dispatch_storage_rebind_seconds`, `dispatch_input_acquire_seconds`, `dispatch_allocation_reuse_seconds`, `dispatch_argument_assembly_seconds` | Resolve frontend bindings; rebind changed PyTorch storages; acquire the task's inputs from the runtime; wait on the host until every transfer that still owns a range this task allocates into has published its completion event; assemble predecoded arguments. Disjoint parts of the opening boundary. `Executor` does not time these parts, so each reads zero. |
-| Inside the closing boundary | `dispatch_output_flatten_seconds`, `dispatch_output_classification_seconds`, `dispatch_output_adoption_seconds`, `dispatch_output_state_publish_seconds`, `dispatch_output_publish_seconds`, `dispatch_dematerialize_seconds`, `dispatch_cleanup_seconds` | Flatten the output pytree; match leaves with contracts; adopt returned allocations; publish output state and bindings; publish public outputs; drop released bindings; remove terminal state. Disjoint parts of the closing boundary. `Executor` does not time these parts, so each reads zero. |
 
 The device timeline of one task, with the host's cycle beneath it:
 

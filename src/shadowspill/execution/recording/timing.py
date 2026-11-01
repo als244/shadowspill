@@ -65,7 +65,6 @@ class ExecutionTiming:
         self._bridge = bridge
         self._task_ids = task_ids
         self.armed: _ArmedExecutionTiming | None = None
-        self.prior_invocation_drain_ns = 0
         self._runtime_handle = bridge.runtime._runtime_handle
         self._timelines = InvocationTimelines(self._runtime_handle)
         # Detailed tracing is default-off and allocated lazily, with room for
@@ -149,7 +148,7 @@ class ExecutionTiming:
                 marker.release()
         self._trace_task_events = {}
 
-    def arm(self, traced: TracedInvocation, *, trace_setup_ns: int = 0) -> None:
+    def arm(self, traced: TracedInvocation) -> None:
         """Bracket the next invocation's numerical compute stream only.
 
         This opt-in measurement begins after the first task's readiness
@@ -189,7 +188,6 @@ class ExecutionTiming:
             tuple(item.entrypoint.task_id for item in traced.tasks),
             actions=traced.actions,
             simulation=traced.simulation,
-            trace_setup_ns=trace_setup_ns,
             alias_accesses=traced.alias_accesses,
         )
         self.armed = armed
@@ -210,12 +208,6 @@ class ExecutionTiming:
         timing.collect_collectives = begin_collective_trace(
             self._bridge, timing, capacity=self._trace_capacities.events
         )
-
-    @property
-    def prior_invocation_drain_seconds(self) -> float:
-        """How long the last call waited for the previous invocation to drain."""
-
-        return self.prior_invocation_drain_ns / 1e9
 
     def mark_cycle_end(self) -> None:
         """Close the current invocation's cycle where the next one would begin.
