@@ -46,7 +46,9 @@ def categorize(
     An activation the forward made is a saved activation whatever reads it
     later -- the next stage after the other microbatches have had theirs, or
     the backward -- since the pool holds it the same way for either. One a
-    backward-phase task made is a recomputed activation.
+    backward-phase task made is a recomputed activation. Every role a
+    program can declare has a category; any other is refused rather than
+    shown as a category of its own.
     """
 
     if role == "parameter":
@@ -65,9 +67,16 @@ def categorize(
             if producer_phase == "forward"
             else "recomputed activations"
         )
-    return {"buffer": "buffers", "control": "control", "output": "outputs"}.get(
-        role, role
-    )
+    named = {
+        "input": "inputs",
+        "buffer": "buffers",
+        "control": "control",
+        "output": "outputs",
+        "other": "other",
+    }
+    if role not in named:
+        raise ValueError(f"object role {role!r} has no occupancy category")
+    return named[role]
 
 
 @dataclass(slots=True)
@@ -240,7 +249,7 @@ class ProgramFacts:
                         key=lambda facts: (
                             facts.size_bytes,
                             -facts.offset_bytes,
-                            -ROLE_PRIORITY.get(facts.role, len(ROLE_PRIORITY)),
+                            -ROLE_PRIORITY[facts.role],
                         ),
                     ).object_id,
                 )

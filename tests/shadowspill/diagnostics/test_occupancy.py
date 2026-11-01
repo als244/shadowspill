@@ -2,12 +2,19 @@
 
 from __future__ import annotations
 
+import ast
+import dataclasses
 import json
+import re
+from importlib.resources import files
 from pathlib import Path
 
 import pytest
 
+import shadowspill
 from shadowspill.diagnostics.occupancy import (
+    CATEGORY_ORDER,
+    ROLE_PRIORITY,
     WORKSPACE,
     Clock,
     ProgramFacts,
@@ -22,8 +29,29 @@ from shadowspill.diagnostics.occupancy import (
     unconstrained,
     write_pages,
 )
+from shadowspill.diagnostics.transfer_phases.records import LABELS
+from shadowspill.ir import (
+    AliasGroupSpec,
+    DeviceSpec,
+    MemoryAction,
+    MemoryActionKind,
+    MemoryLocation,
+    MemorySchedule,
+    ObjectRole,
+    ObjectSpec,
+    ResidencySpec,
+    ResourceKind,
+    ResourceSpec,
+    ShadowSpillProgram,
+    TaskProfile,
+    TaskSpec,
+)
 from shadowspill.planner.admission.layout.model import PURPOSES, FixedLayoutPlacements
+from shadowspill.planner.serialization.simulation_result import simulation_result_value
+from shadowspill.planning.training.order import traversal
 from shadowspill.schema import ARTIFACT_VERSION, artifact_schema
+from shadowspill.simulator import SimulationConfig, simulate
+from shadowspill.step.ordering import StepDataOrdering
 
 MIB = 1 << 20
 S = 1_000_000_000  # nanoseconds in a second
@@ -32,13 +60,14 @@ S = 1_000_000_000  # nanoseconds in a second
 def _program() -> dict:
     """Three stages of one microbatch and one weight.
 
-    ``w`` is a retained weight with a checkpoint copy in the spill pool.
-    ``t1`` (forward) makes ``a``, which ``t2`` (forward) reads as ``a_view``
-    -- the same storage under a second object id -- and ``t3`` (backward)
-    reads again; ``t3`` makes the model gradients ``g`` and ``gb`` that
-    ``t4`` (the optimizer) consumes, and ``gb`` takes over ``b``'s storage:
-    the layout gives it no lease of its own. ``t2``'s output ``b`` is
-    recomputed by ``t3r`` in the alternative the selection does not choose.
+    ``w`` is a retained weight with a checkpoint copy in the spill pool, and
+    ``x`` is the step's input. ``t1`` (forward) makes ``a``, which ``t2``
+    (forward) reads as ``a_view`` -- the same storage under a second object
+    id -- and ``t3`` (backward) reads again; ``t3`` makes the model gradients
+    ``g`` and ``gb`` that ``t4`` (the optimizer) consumes, and ``gb`` takes
+    over ``b``'s storage: the layout gives it no lease of its own. ``t2``'s
+    output ``b`` is recomputed by ``t3r`` in the alternative the selection
+    does not choose.
     """
 
     return {
@@ -110,7 +139,7 @@ def _program() -> dict:
                 "alias_group_id": "A_x",
                 "offset_bytes": 0,
                 "size_bytes": 8 * MIB,
-                "role": "activation",
+                "role": "input",
                 "persistence": "step",
             },
             {
@@ -317,6 +346,7 @@ def _selection(option: str = "save") -> dict:
                     "kind": "fetch",
                     "direction": "fetch",
                     "trigger_task_id": "t1",
+                    "ready_ns": 0,
                     "start_ns": 0,
                     "end_ns": 1 * S,
                     "bytes": 100 * MIB,
@@ -327,6 +357,7 @@ def _selection(option: str = "save") -> dict:
                     "kind": "fetch",
                     "direction": "fetch",
                     "trigger_task_id": "t1",
+                    "ready_ns": 0,
                     "start_ns": 0,
                     "end_ns": 1 * S,
                     "bytes": 8 * MIB,
@@ -337,6 +368,7 @@ def _selection(option: str = "save") -> dict:
                     "kind": "evict",
                     "direction": "evict",
                     "trigger_task_id": "t2",
+                    "ready_ns": 3 * S,
                     "start_ns": 3 * S,
                     "end_ns": 4 * S,
                     "bytes": 64 * MIB,
@@ -347,6 +379,7 @@ def _selection(option: str = "save") -> dict:
                     "kind": "fetch",
                     "direction": "fetch",
                     "trigger_task_id": "t3",
+                    "ready_ns": 5 * S,
                     "start_ns": 5 * S,
                     "end_ns": 6 * S,
                     "bytes": 64 * MIB,
@@ -529,8 +562,30 @@ def test_categories_follow_role_and_the_phases_that_touch_an_object() -> None:
         categorize("activation", "backward", ["backward"], False)
         == "recomputed activations"
     )
-    assert categorize("activation", None, ["forward"], False) == "inputs"
+    assert categorize("input", None, ["forward"], False) == "inputs"
     assert categorize("control", "forward", [], False) == "control"
+    assert categorize("other", None, [], False) == "other"
+
+
+@pytest.mark.parametrize("role", list(ObjectRole))
+def test_every_role_a_program_declares_has_a_category(role: ObjectRole) -> None:
+    for producer_phase in (None, "control", "forward", "backward", "optimizer"):
+        for consumer_phases in ([], ["forward"], ["backward"], ["optimizer"]):
+            for mutated in (False, True):
+                category = categorize(
+                    role.value, producer_phase, consumer_phases, mutated
+                )
+                assert category in CATEGORY_ORDER
+    assert role.value in ROLE_PRIORITY
+
+
+def test_a_role_no_program_declares_is_refused() -> None:
+    with pytest.raises(ValueError, match="'weight' has no occupancy category"):
+        categorize("weight", None, [], False)
+    program = _program()
+    program["objects"][0]["role"] = "weight"
+    with pytest.raises(ValueError, match="'weight' has no occupancy category"):
+        attribute(_selection(), program)
 
 
 def test_a_view_is_not_a_generation_and_an_unselected_output_does_not_exist() -> None:
@@ -591,6 +646,109 @@ def test_the_spill_walk_follows_the_simulator_and_names_what_it_holds() -> None:
     ]
 
 
+def test_an_evicts_spill_copy_is_held_from_its_issue() -> None:
+    """The simulator charges an evict's spill copy when it submits the
+    transfer, at its ``ready_ns``: a's evict, issued at t2's end, 3 s, and on
+    the lane only from 3.5 s, holds its copy from 3 s while its lane bar
+    starts at 3.5 s. A record without its ready time is issued at its
+    trigger task's end."""
+
+    selection = _selection()
+    evict = selection["simulation_result"]["transfer_intervals"][2]
+    assert evict["kind"] == "evict" and evict["ready_ns"] == 3 * S
+    evict["start_ns"] = int(3.5 * S)
+    held = {"weights": 100 * MIB, "saved activations": 64 * MIB}
+    result = attribute(selection, _program())
+    assert result.spill.at(int(3.25 * S)) == held
+    span = next(span for span in result.transfers if span.direction == "evict")
+    assert (span.start_ns, span.end_ns) == (int(3.5 * S), 4 * S)
+    del evict["ready_ns"]
+    assert attribute(selection, _program()).spill.at(int(3.25 * S)) == held
+
+
+def test_the_spill_peak_is_the_simulators_when_an_evict_waits_for_its_lane() -> None:
+    """t1 evicts a and b and fetches c, the step's input, back from the
+    host. The simulator charges both evicted copies when it submits them, at
+    t1's end, 10 ns, while c's copy is still there: 2500 bytes at once,
+    though b's evict waits for a's to clear the lane, until 1010 ns, and c's
+    copy is gone by then."""
+
+    compute = ResourceSpec("cuda_0", ResourceKind.COMPUTE)
+    program = ShadowSpillProgram(
+        devices=(DeviceSpec("cuda_0", "process_0", "cuda", 0),),
+        alias_groups=(
+            AliasGroupSpec("a", "cuda_0", 1000),
+            AliasGroupSpec("b", "cuda_0", 1000),
+            AliasGroupSpec("c", "cuda_0", 500),
+        ),
+        objects=(
+            ObjectSpec("a_obj", "a", 0, 1000, ObjectRole.ACTIVATION),
+            ObjectSpec("b_obj", "b", 0, 1000, ObjectRole.ACTIVATION),
+            ObjectSpec("c_obj", "c", 0, 500, ObjectRole.INPUT),
+        ),
+        profiles=(TaskProfile("p", 10, 0, "abi"),),
+        tasks=(
+            TaskSpec("t1", compute, "p", outputs=("a_obj", "b_obj"), phase="forward"),
+            TaskSpec(
+                "t2",
+                compute,
+                "p",
+                dependencies=("t1",),
+                inputs=("c_obj",),
+                phase="forward",
+            ),
+            TaskSpec(
+                "t3",
+                compute,
+                "p",
+                dependencies=("t1", "t2"),
+                inputs=("a_obj", "b_obj"),
+                phase="backward",
+            ),
+        ),
+    )
+    schedule = MemorySchedule(
+        initial_residency=(ResidencySpec("c", MemoryLocation.SPILL),),
+        actions=(
+            MemoryAction("t1", "a", MemoryActionKind.EVICT),
+            MemoryAction("t1", "b", MemoryActionKind.EVICT),
+            MemoryAction("t1", "c", MemoryActionKind.FETCH),
+            MemoryAction("t2", "a", MemoryActionKind.FETCH),
+            MemoryAction("t2", "b", MemoryActionKind.FETCH),
+        ),
+    )
+    config = SimulationConfig.single_device(
+        "cuda_0",
+        device_capacity_bytes=1 << 20,
+        spill_capacity_bytes=1 << 20,
+        fetch_solo_bandwidth_bytes_per_second=1_000_000_000,
+        fetch_concurrent_bandwidth_bytes_per_second=1_000_000_000,
+        evict_solo_bandwidth_bytes_per_second=1_000_000_000,
+        evict_concurrent_bandwidth_bytes_per_second=1_000_000_000,
+    )
+    simulation = simulate(program, schedule, config=config)
+    record = json.loads(
+        json.dumps(
+            {
+                "program_digest": program.digest,
+                "schedule": schedule.to_dict(),
+                "selections": [],
+                "simulation_result": simulation_result_value(simulation),
+            }
+        )
+    )
+
+    result = attribute(record, json.loads(json.dumps(program.to_dict())))
+
+    assert result.spill.peak()[0] == simulation.spill_peak_bytes == 2500
+    evict_b = next(
+        span
+        for span in result.transfers
+        if span.direction == "evict" and span.alias_group_id == "b"
+    )
+    assert evict_b.start_ns == 1010
+
+
 def test_the_execution_walk_is_the_layout_lease_by_lease() -> None:
     result = attribute(_selection(), _program())
     execution = result.execution
@@ -624,6 +782,26 @@ def test_a_traced_step_puts_the_walk_on_the_device_clock() -> None:
     assert result.spill.at(int(3.95 * S)) == {"weights": 100 * MIB}
     assert result.tasks[0].name == "microbatch_0.stage_0.forward"
     assert result.tasks[0].start_ns == int(0.9 * S)
+
+
+def test_on_the_device_an_evict_is_issued_at_its_trigger_tasks_end() -> None:
+    """The runtime reserves an evict's spill copy at its trigger task's
+    boundary: t2 ends at 2.0 s on the device and a's evict reaches its lane
+    at 2.3 s, so the copy is held from 2.0 s and the bar starts at 2.3 s.
+    Without a traced end for t2, the copy is held from its lane start."""
+
+    diagnostics = _diagnostics()
+    lane = diagnostics["transfers"]["evict"]["evict_2"]["lane"]
+    lane["lane_started_at_seconds"] = 2.3
+    held = {"weights": 100 * MIB, "saved activations": 64 * MIB}
+    result = attribute(_selection(), _program(), diagnostics=diagnostics)
+    assert result.spill.at(int(2.1 * S)) == held
+    span = next(span for span in result.transfers if span.direction == "evict")
+    assert span.start_ns == int(2.3 * S)
+    del diagnostics["tasks"]["record_1"]
+    untraced = attribute(_selection(), _program(), diagnostics=diagnostics)
+    assert untraced.spill.at(int(2.1 * S)) == {"weights": 100 * MIB}
+    assert untraced.spill.at(int(2.4 * S)) == held
 
 
 def test_a_transfer_the_trace_could_not_time_is_left_off_the_lanes() -> None:
@@ -770,6 +948,60 @@ def test_pages_are_written_per_view_with_the_data_inline(tmp_path: Path) -> None
     index = (tmp_path / "pages" / "index.html").read_text()
     assert "simulated.html" in index and "spill pool: peak" in index
     assert "a toy step" in index
+
+
+def _lowered_phases() -> set[str]:
+    """The phases the lowerings give the tasks they build, read off the
+    package's code: the phase each ``TaskSpec`` construction names, or
+    ``TaskSpec``'s own default where one names none, and for the training
+    stages, which the traversal of the step hands their phase, the phases
+    the traversal yields."""
+
+    fields = {item.name: item for item in dataclasses.fields(TaskSpec)}
+    package = Path(shadowspill.__file__).parent
+    phases: set[str] = set()
+    for path in sorted(package.rglob("*.py")):
+        module = path.relative_to(package)
+        for call in ast.walk(ast.parse(path.read_text(), filename=str(path))):
+            if not isinstance(call, ast.Call):
+                continue
+            if getattr(call.func, "id", getattr(call.func, "attr", None)) != "TaskSpec":
+                continue
+            where = f"{module}:{call.lineno}"
+            assert not any(isinstance(arg, ast.Starred) for arg in call.args), where
+            assert all(item.arg is not None for item in call.keywords), where
+            named = {item.arg: item.value for item in call.keywords}
+            named.update(zip(fields, call.args, strict=False))
+            phase = named.get("phase")
+            if phase is None:
+                phases.add(fields["phase"].default)
+            elif isinstance(phase, ast.Constant):
+                phases.add(phase.value)
+            else:
+                assert module == Path("planning/training/tasks.py"), where
+    for ordering in (StepDataOrdering(1, 2), StepDataOrdering(1, 2, pair_loss=False)):
+        phases.update(phase for phase, _, _ in traversal(ordering, 2))
+    return phases
+
+
+def test_the_page_palette_names_what_the_page_colours() -> None:
+    """The page colours by name: the categories, the program's roles, the
+    phases the lowerings give their tasks and its own recompute shading, and
+    the transfer-phase labels. Its palette names exactly those."""
+
+    page = (
+        files("shadowspill.diagnostics.occupancy") / "occupancy_page.html"
+    ).read_text()
+    palette = re.search(r"const PALETTE = \{(.*?)\};", page, re.DOTALL)
+    assert palette is not None
+    names = set(re.findall(r'"([^"]+)":', palette.group(1)))
+    assert names == {
+        *CATEGORY_ORDER,
+        *(role.value for role in ObjectRole),
+        *_lowered_phases(),
+        "recompute",
+        *LABELS.values(),
+    }
 
 
 def test_the_program_is_found_beside_the_selection_in_the_store(tmp_path: Path) -> None:

@@ -10,13 +10,17 @@ from typing import Any
 
 @dataclass(frozen=True, slots=True)
 class Clock:
-    """When each task runs and each transfer starts and ends, on one clock."""
+    """When each task runs and each transfer is issued, starts and ends, on
+    one clock."""
 
     task_start_ns: Mapping[str, int]
     task_end_ns: Mapping[str, int]
     #: ``(alias_group_id, kind, trigger_task_id)`` -> the matching transfers'
-    #: ``(start_ns, end_ns)`` in issue order.
-    transfers: Mapping[tuple[str, str, str], Sequence[tuple[int, int]]]
+    #: ``(issued_ns, start_ns, end_ns)`` in issue order. A transfer is issued
+    #: when the simulator submits it, its ``ready_ns``, or on the device at
+    #: its trigger task's end, and starts when its lane takes it up, which
+    #: can be much later.
+    transfers: Mapping[tuple[str, str, str], Sequence[tuple[int, int, int]]]
     makespan_ns: int
     #: What a traced step calls each task, when there is one.
     task_names: Mapping[str, str]
@@ -36,15 +40,23 @@ class Clock:
         intervals = simulation["task_intervals"]
         task_start = {item["task_id"]: int(item["start_ns"]) for item in intervals}
         task_end = {item["task_id"]: int(item["end_ns"]) for item in intervals}
-        transfers: dict[tuple[str, str, str], list[tuple[int, int]]] = defaultdict(list)
+        transfers: dict[tuple[str, str, str], list[tuple[int, int, int]]] = defaultdict(
+            list
+        )
         times: dict[tuple[str, int], tuple[int, int]] = {}
         for item in sorted(
             simulation["transfer_intervals"], key=lambda item: int(item["sequence"])
         ):
             span = (int(item["start_ns"]), int(item["end_ns"]))
+            # a record without its ready time was submitted at its trigger's end
+            issued = (
+                int(item["ready_ns"])
+                if "ready_ns" in item
+                else task_end[item["trigger_task_id"]]
+            )
             transfers[
                 (item["alias_group_id"], item["kind"], item["trigger_task_id"])
-            ].append(span)
+            ].append((issued, *span))
             times[(item["direction"], int(item["sequence"]))] = span
         return cls(
             task_start, task_end, transfers, int(simulation["makespan_ns"]), {}, times
@@ -58,6 +70,9 @@ class Clock:
 
         Traced transfers carry the simulated transfer's ``sequence``, which
         is how the two are paired; a traced task carries its program task id.
+        A transfer is issued at its trigger task's traced end, where the
+        runtime reserves its destination, or, when that task was not traced,
+        at its start on the lane.
         """
 
         seconds = 1e9
@@ -93,7 +108,9 @@ class Clock:
                     int(started * seconds),
                     int(finished * seconds),
                 )
-        transfers: dict[tuple[str, str, str], list[tuple[int, int]]] = defaultdict(list)
+        transfers: dict[tuple[str, str, str], list[tuple[int, int, int]]] = defaultdict(
+            list
+        )
         untimed = 0
         for item in sorted(
             simulation["transfer_intervals"], key=lambda item: int(item["sequence"])
@@ -102,11 +119,14 @@ class Clock:
             if key not in lanes:
                 untimed += 1
                 continue
+            start_ns, end_ns = lanes[key]
             transfers[
                 (item["alias_group_id"], item["kind"], item["trigger_task_id"])
-            ].append(lanes[key])
+            ].append(
+                (task_end.get(item["trigger_task_id"], start_ns), start_ns, end_ns)
+            )
         makespan = max(
-            [end for ends in transfers.values() for _, end in ends]
+            [end for ends in transfers.values() for _, _, end in ends]
             + list(task_end.values()),
             default=0,
         )

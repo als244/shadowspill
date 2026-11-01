@@ -46,18 +46,21 @@
 <script>
 (function () {
   const DATA = JSON.parse(document.getElementById("data").textContent);
-  // Two families that never share a hue: objects (pools, and transfer bars)
-  // in blues, purples, pinks, teals and greens; task phases (compute bars)
-  // in dark navy, brown and grey, with the regenerating part in yellow.
+  // Two families told apart by tone: objects (pools, and transfer bars) in
+  // light and mid blues, purples, pinks, teals and greens; task phases
+  // (compute bars) dark -- navy, brown and grey for the step's own work,
+  // green, blue and purple for a distributed step's gradient padding,
+  // gradient communication and weight communication -- with the
+  // regenerating part in yellow.
   const PALETTE = {
     "weights": "#5c6bc0", "optimizer state": "#b39ddb", "model gradients": "#ec407a", "tangents": "#f8bbd0",
     "saved activations": "#26a69a", "recomputed activations": "#80cbc4", "inputs": "#9ccc65", "buffers": "#dce775",
-    "control": "#90a4ae", "outputs": "#ffa726", "task workspace": "#fff59d", "unattributed": "#bdbdbd",
+    "control": "#90a4ae", "outputs": "#ffa726", "other": "#aa00ff", "task workspace": "#fff59d", "unattributed": "#bdbdbd",
     "forward": "#1e3a5f", "backward": "#4e342e", "optimizer": "#616161", "recompute": "#ffd600",
+    "gradient_local": "#005f00", "gradient_communication": "#0000d2", "weight_communication": "#780096",
     "parameter": "#5c6bc0", "optimizer_state": "#b39ddb", "gradient": "#ec407a", "activation": "#26a69a",
-    "buffer": "#dce775", "output": "#ffa726",
+    "input": "#9ccc65", "buffer": "#dce775", "output": "#ffa726",
     "host to device copy": "#228be6", "device to host copy": "#00a2a8",
-    "H2D copy": "#228be6", "D2H copy": "#00a2a8",
     "all-gather": "#7950f2", "reduce-scatter": "#e8590c", "all-reduce": "#d6336c",
     "copy / dispatch / wait (unsplit)": "#adb5bd", "dispatch / wait / other work": "#74808b",
   };
@@ -251,7 +254,10 @@
       const gap = document.createElement("span"); gap.className = "gap"; panel.legend.append(gap);
     };
     group(DATA.transfer_phases ? "fetch and evict bars, by operation:" : "fetch and evict bars, by object:", Array.from(objectNames), "");
-    group("compute bars, by the task's phase:", ["forward", "backward", "optimizer"], " tasks");
+    // a distributed step's communication phases join the legend when it has them
+    const communication = ["gradient_local", "gradient_communication", "weight_communication"]
+      .filter((phase) => DATA.compute.some((task) => task[2] === phase));
+    group("compute bars, by the task's phase:", ["forward", "backward", "optimizer", ...communication], " tasks");
     const rc = document.createElement("span"); rc.style.setProperty("--c", color("recompute")); rc.textContent = "recompute shading: estimated extra pair time from profiles, drawn at backward start; not a measured boundary"; panel.legend.append(rc);
     const LANE_H = 62, BAR = 44;
     panel.draw = (ctx) => {

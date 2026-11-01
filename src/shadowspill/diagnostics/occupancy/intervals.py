@@ -13,9 +13,11 @@ ROLE_PRIORITY = {
     "optimizer_state": 1,
     "gradient": 2,
     "buffer": 3,
-    "activation": 4,
-    "control": 5,
-    "output": 6,
+    "input": 4,
+    "activation": 5,
+    "control": 6,
+    "output": 7,
+    "other": 8,
 }
 
 
@@ -36,6 +38,7 @@ CATEGORY_ORDER = (
     "buffers",
     "control",
     "outputs",
+    "other",
     WORKSPACE,
     UNATTRIBUTED,
 )

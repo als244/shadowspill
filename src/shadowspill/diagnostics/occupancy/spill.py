@@ -39,7 +39,12 @@ def spill_occupancy(
     capacity_bytes: int | None = None,
 ) -> tuple[Occupancy, tuple[TransferSpan, ...]]:
     """The spill pool over the step under the simulator's rules, and every
-    transfer the walk saw, as lane intervals."""
+    transfer the walk saw, as lane intervals.
+
+    An evict or write-back holds its spill copy from the transfer's issue,
+    when the simulator charges the copy and the runtime reserves it, though
+    its lane interval starts only when the lane takes the copy up.
+    """
 
     intervals: list[Interval] = []
     spans: list[TransferSpan] = []
@@ -60,14 +65,14 @@ def spill_occupancy(
                 )
             )
 
-    def transfer(alias_id: str, kind: str, trigger: str) -> tuple[int, int] | None:
+    def transfer(alias_id: str, kind: str, trigger: str) -> tuple[int, int, int] | None:
         key = (alias_id, kind, trigger)
         times = clock.transfers.get(key, ())
         index = cursors[key]
         cursors[key] += 1
         if index >= len(times):
             return None
-        start_ns, end_ns = times[index]
+        issued_ns, start_ns, end_ns = times[index]
         holder = facts.occupant(alias_id, clock.task_start_ns, start_ns)
         spans.append(
             TransferSpan(
@@ -84,7 +89,7 @@ def spill_occupancy(
                 facts.alias_size[alias_id],
             )
         )
-        return start_ns, end_ns
+        return issued_ns, start_ns, end_ns
 
     for alias_id in facts.retained:
         opened[alias_id] = 0
@@ -108,7 +113,7 @@ def spill_occupancy(
             times = transfer(alias_id, kind, trigger)
             if alias_id not in facts.retained:
                 close(
-                    alias_id, times[1] if times else clock.task_end_ns.get(trigger, 0)
+                    alias_id, times[2] if times else clock.task_end_ns.get(trigger, 0)
                 )
         elif kind == "release":
             if alias_id not in facts.retained:

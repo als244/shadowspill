@@ -32,7 +32,8 @@ API in `shadowspill.reporting`, which needs no store.
 `attribute(selection, program, diagnostics=None)` returns a `PlanOccupancy`,
 one view of a plan: `simulated` on the simulator's clock, or `traced` on the
 device's when a traced step's diagnostics are given; a selection without a
-`simulation_result` is refused. `unconstrained(program, selections)` and
+`simulation_result` is refused, and so is an object whose role `categorize`
+has no category for. `unconstrained(program, selections)` and
 `all_save(program)` return the two floors: every task back to back at its
 profiled time, every object resident and each task's profiled workspace while
 it runs, with nothing spilled and no transfers. `clock_label` names a view's
@@ -46,7 +47,7 @@ that it is not a measured all-save baseline.
 | `tasks` | A `TaskSpan` per executing task: `task_id`, `name` (the traced step's name for it, else its id), `phase`, `start_ns`, `end_ns` and `overhead_ns`. |
 | `transfers` | A `TransferSpan` per fetch or evict the walk saw: `direction`, `start_ns`, `end_ns`, `bytes`, `execution_bytes`, `alias_group_id`, `object_id` and `category` (the slot's occupant when the transfer starts) and `trigger_task_id`. |
 | `facts` | The `ProgramFacts` the attribution rests on: the executing tasks in order, each object's role, producer, consumers and category, and each alias group's generations. |
-| `clock` | The view's `Clock`: task starts and ends, transfer intervals, the makespan and, on a traced view, `untimed_transfers`. |
+| `clock` | The view's `Clock`: task starts and ends, each transfer's issue, start and end, the makespan and, on a traced view, `untimed_transfers`. |
 | `assumed` | What the plan was priced against: the simulation config's solo and concurrent bandwidths and latencies per lane, and the blended rate the simulated transfers achieved (`fetch_blended_bandwidth_bytes_per_second`, `evict_blended_bandwidth_bytes_per_second`), taken from the simulation on every view. |
 | `interpolated_leases` | On a traced view, the lease instants no traced event named. |
 | `collectives`, `transfer_phases` | On a traced view, the step's collective record and its transfers' phase regions with payload and rate summaries. |
@@ -99,8 +100,13 @@ seconds, and on a traced view `collectives` and `transfer_phases`.
   leases a task's allocations one by one. `required_bytes` is the peak with
   every lease at its fixed offset, at or above the walk's.
 - The spill walk applies the simulator's rules, so on the simulated view its
-  peak matches the reported one; a traced view moves the same transfers to
-  the device's times.
+  peak equals the reported one. An evict's or write-back's spill copy counts
+  from the transfer's issue, the simulator's submission (its `ready_ns`),
+  not from its start on the lane, and a released copy is freed at the
+  release's trigger task's end, even where the simulator holds the release
+  back behind a pending write-back or an earlier waiting action. A traced
+  view moves the same transfers to the device's times and issues each at its
+  trigger task's end there.
 - `bytes` counts the copy phases of an alias group's transfer recipe (the
   whole group when it has none) and `execution_bytes` the object the transfer
   serves; they differ when the recipe copies less than the object and timed

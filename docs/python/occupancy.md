@@ -47,9 +47,9 @@ python -m shadowspill.diagnostics.occupancy <selection.json>
 One table per pool and view. The first column is the pool at its peak, one
 column per `--at` time follows, and the last is each category's own peak and
 when it happens. The header names the peak the walk found beside the peak the
-planner reported for the same plan; for the spill pool the two agree, because
-the walk applies the simulator's rules, and the execution pool's capacity is
-the admitted layout's.
+planner reported for the same plan; on the simulated view the spill pool's two
+are equal, because the walk applies the simulator's rules, and the execution
+pool's capacity is the admitted layout's.
 
 ```text
 spill pool: peak 145.31 GiB at 5.19 s (planner reported 145.31 GiB), capacity 150.00 GiB
@@ -77,7 +77,10 @@ category, from its role and the phases of the tasks that make and read it:
 | control | Integer and boolean values: tokens, targets, sequence lengths, indices and counters, which steer kernels rather than carry the model's arithmetic. The lowering gives every non-floating value this role. |
 | task workspace | A task's scratch in the execution pool, the layout's own lease. |
 | buffers, outputs | The program's roles of those names: registered buffers such as rotary tables, and the step's outputs. |
+| other | The program's `other` role: an object its program gives no more specific role. |
 
+Every role a program can declare has its category, and the tool refuses an
+object whose role is none of them rather than invent a category for it.
 `--by role` groups by the program's roles instead: `input`, `parameter`,
 `optimizer_state`, `gradient`, `activation`, `buffer`, `control`, `output` and
 `other`; task workspace keeps its own name.
@@ -99,8 +102,15 @@ never appears.
 state -- holds a spill copy for the whole step. Any other group holds one from
 the moment its evict or write-back is issued until the fetch that brings it
 back completes, or until it is released, and a group the schedule starts on
-the host holds one from the start. That is why the walk's peak equals the
-planner's.
+the host holds one from the start. Issued means the simulator's submission,
+the transfer's `ready_ns`: the simulator charges the copy when it submits the
+transfer, however long the copy then waits for its lane, as the runtime
+reserves the copy's destination at the task boundary. On the device's clock a
+transfer is issued at its trigger task's end. That is why the simulated view's
+spill peak equals the planner's reported one. The walk frees a released copy
+at the release's trigger task's end, even where the simulator holds the
+release back: behind a write-back of the same group still on its lane, or
+behind an earlier action still waiting.
 
 **The execution pool follows the admitted layout.** Every lease occupies its
 bytes from its predicted start to its predicted end: fetch destinations, task
@@ -165,19 +175,23 @@ are read against one time axis.
   (the rules above), and its header says so.
 - **lanes**: three rows, `fetch`, `compute` and `evict`, every interval a
   bar. Transfer bars are coloured by the category of the object moved and
-  compute bars by the task's phase, and the legend keeps the two apart; the
-  backward task of a group chosen as `recompute` opens in a recompute colour
-  for the length of its regeneration, the group's profiled cost beyond its
-  `save` option, then continues in the backward colour. On the traced page a
-  transfer bar is split by operation instead -- the host copies and
-  collectives the trace timed, and the time no event accounts for -- and
-  coloured by it. A transfer bar runs from the transfer's start on its lane
-  to its finish, never from its issue, which can come long before. Hovering
-  names the task or the object, its bytes, its times and the rate the copy
-  achieved. A transfer the trace could not time -- a record whose lane
-  reported no start or finish, or none at all -- is left off the lanes, its
-  trigger task's end stands in where a walk needs its time, and the subtitle
-  counts them.
+  compute bars by the task's phase, and the legend keeps the two apart. It
+  names the forward, backward and optimizer phases, and a distributed step's
+  `gradient_local`, `gradient_communication` and `weight_communication`
+  when the step has them. The backward task of a group chosen as
+  `recompute` opens in a recompute colour for the length of its
+  regeneration, the group's profiled cost beyond its `save` option, then
+  continues in the backward colour. On the traced page a transfer bar is
+  split by operation instead -- the host copies and collectives the trace
+  timed, and the time no event accounts for -- and coloured by it. A
+  transfer bar runs from the transfer's start on its lane to its finish,
+  never from its issue, which can come long before, while the spill copy an
+  evict or write-back makes counts from its issue: the spill pool can rise
+  before the bar begins. Hovering names the task or the
+  object, its bytes, its times and the rate the copy achieved. A transfer
+  the trace could not time -- a record whose lane reported no start or
+  finish, or none at all -- is left off the lanes, its trigger task's end
+  stands in where a walk needs its time, and the subtitle counts them.
 
 Dragging across a span zooms to it, shift-dragging pans, scrolling zooms
 around the cursor, `fit` resets, and the buttons zoom in steps. A lane is rasterised by pixel column: a column is
