@@ -57,9 +57,8 @@ caches. Compiler caches are disposable; phase archives remain available for
 inspection and replanning. A cell's exact inputs (`inputs.pt`) and streamed
 checkpoint (`checkpoint.ssp`) are each the size of its model, so they are
 removed once its verdict is recorded; `--retain-execution-files` keeps them for
-an execution-only rerun. A failed numerical cell keeps them regardless; a
-performance cell keeps them only when a phase stops on an error, not when a
-completed run fails a gate. Tests use isolated temporary planning stores.
+an execution-only rerun. A failed cell keeps them. Tests use isolated
+temporary planning stores.
 Fresh-process tests deselected by the shared pytest process are run by CTest;
 capability skips are reported separately.
 

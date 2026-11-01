@@ -71,9 +71,16 @@ def _run(arguments: argparse.Namespace) -> dict[str, object]:
             "passed": True,
         }
     run_phase(directory, "execute", "qualification.performance.execute", directory)
-    if not arguments.retain_execution_files:
+    result = json.loads(output.read_text())
+    if not keeps_execution_files(result, arguments.retain_execution_files):
         remove_execution_files(directory)
-    return json.loads(output.read_text())
+    return result
+
+
+def keeps_execution_files(result: dict, retain: bool) -> bool:
+    """A failed cell keeps its execution files for an execution-only rerun,
+    as does one whose caller asked for them."""
+    return retain or not result["passed"]
 
 
 def main() -> int:

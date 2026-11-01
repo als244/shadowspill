@@ -74,3 +74,11 @@ def test_performance_cells_retain_execution_files_only_when_asked() -> None:
 
     assert "--retain-execution-files" not in command()
     assert "--retain-execution-files" in command("--retain-execution-files")
+
+
+def test_a_failed_performance_cell_keeps_its_execution_files() -> None:
+    from qualification.performance.run import keeps_execution_files
+
+    assert not keeps_execution_files({"passed": True}, retain=False)
+    assert keeps_execution_files({"passed": False}, retain=False)
+    assert keeps_execution_files({"passed": True}, retain=True)
