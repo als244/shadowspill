@@ -179,9 +179,6 @@ int shadowspill_control_connect_endpoint(
  *                      the host copy with the transfer, which is what matters;
  *                      with one the two serialise, and more than two buys
  *                      little, since one stage is much faster than the other.
- *   SIGNAL_EVERY       Read, clamped to at least one and reported with the
- *                      rest; every work request is posted signalled, so it
- *                      changes nothing a transfer does.
  *   SPIN_NANOSECONDS   How long a lane's thread watches for the next transfer
  *                      before blocking on a condition variable. The default,
  *                      `SHADOWSPILL_NETWORK_SPIN_FOREVER`, never blocks: a
@@ -210,7 +207,6 @@ typedef struct ShadowSpillNetworkTuning {
        object larger than a gigabyte. */
     uint64_t message_bytes;
     uint32_t ring_slots;
-    uint32_t signal_every;
     /* How long a thread watches for work before blocking on a condition
        variable. `SHADOWSPILL_NETWORK_SPIN_FOREVER` means it never blocks:
        a core per lane, because a condition variable costs about twenty

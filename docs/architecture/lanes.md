@@ -281,7 +281,6 @@ it prints most of the resolved values on one line to stderr.
 | `CHUNK_BYTES` | 32 MiB | the staged piece, sized for the stream queue as above, and so one ring slot; zero becomes 64 KiB |
 | `MESSAGE_BYTES` | 0 | the largest single message: the direct path's piece and the unit of the pool's reads and writes of state. Zero takes the port's maximum, and a value only lowers it |
 | `RING_SLOTS` | 2 | staged pieces in flight through the ring; zero becomes 1, and at most 8 |
-| `SIGNAL_EVERY` | 8 | read and reported only: every work request is posted signalled |
 | `SPIN_NANOSECONDS` | never blocks | how long the lane's thread watches for the next transfer, and `synchronize` for the drain, before blocking on a condition variable; zero blocks at once |
 | `TRAFFIC_CLASS` | 0 | the GRH traffic class on RoCE, which its congestion control reads |
 | `SERVICE_LEVEL` | 0 | the address vector's service level |

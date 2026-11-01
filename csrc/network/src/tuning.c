@@ -73,8 +73,6 @@ void shadowspill_network_tuning_read(ShadowSpillNetworkTuning *tuning) {
         /* Two overlaps the host copy with the transfer, which is the whole
            point; a third stage would be needed for a third slot to help. */
         .ring_slots = (uint32_t)number("SHADOWSPILL_NETWORK_RING_SLOTS", 2U),
-        .signal_every =
-            (uint32_t)number("SHADOWSPILL_NETWORK_SIGNAL_EVERY", 8U),
         /* Watch, do not sleep. A bounded spin makes a small transfer pay a
            full wake on both handoffs, 26.71 us to wake the lane thread and
            19.86 us to hand back, against a NIC that answers in 2.05. Set the
@@ -105,9 +103,6 @@ void shadowspill_network_tuning_read(ShadowSpillNetworkTuning *tuning) {
     if (tuning->queue_pairs > SHADOWSPILL_NETWORK_MAX_QUEUE_PAIRS) {
         tuning->queue_pairs = SHADOWSPILL_NETWORK_MAX_QUEUE_PAIRS;
     }
-    if (tuning->signal_every == 0U) {
-        tuning->signal_every = 1U;
-    }
     if (tuning->ring_slots == 0U) {
         tuning->ring_slots = 1U;
     }
@@ -133,11 +128,11 @@ void shadowspill_network_tuning_report(
     fprintf(
         stderr,
         "shadowspill network: queue pairs %u, send depth %u, outstanding reads "
-        "%u, chunk %llu KiB x %u slots, signal every %u, traffic class %u, "
-        "service level %u, message %s, mtu %s, device %s, gid %s\n",
+        "%u, chunk %llu KiB x %u slots, traffic class %u, service level %u, "
+        "message %s, mtu %s, device %s, gid %s\n",
         tuning->queue_pairs, tuning->send_depth, tuning->outstanding_reads,
         (unsigned long long)(tuning->chunk_bytes >> 10U), tuning->ring_slots,
-        tuning->signal_every, tuning->traffic_class, tuning->service_level,
+        tuning->traffic_class, tuning->service_level,
         tuning->message_bytes == 0U ? "from the port" : "overridden",
         tuning->path_mtu == 0U ? "from the port" : "overridden",
         tuning->device != NULL ? tuning->device : "detected",
