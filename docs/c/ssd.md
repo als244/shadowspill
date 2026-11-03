@@ -90,7 +90,13 @@ and supplies a complete runtime example.
 
 Pool acquisition preallocates a direct-I/O file with no persistent name
 (`O_TMPFILE`, or a temporary file unlinked immediately), or with `CREATE` the
-named image file, which is kept at release. With `ADOPT` the pool has two
+named image file, which is kept at release. It uses the filesystem allocation
+operation when available. When that operation is unsupported, acquisition
+initializes the file with aligned direct writes using the existing state-I/O
+scratch buffer. This writes the complete reservation, so setup time scales with
+capacity and storage throughput; no sparse-file reservation is substituted.
+Other allocation errors, short writes and failed writes reject acquisition.
+With `ADOPT` the pool has two
 files: offsets below the image's size are the image, read-only, and every
 other offset is the temporary file at `offset - image_bytes`. A write into
 the image, or a transfer crossing its end, fails before any I/O; the image's

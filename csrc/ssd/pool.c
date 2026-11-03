@@ -106,6 +106,26 @@ int ssd_direct_io(int fd, void *buffer, uint64_t bytes, uint64_t offset,
     return 0;
 }
 
+static int reserve_file(SSDRegion *region, uint64_t bytes) {
+    if (bytes == 0U || fallocate(region->fd, 0, 0, (off_t)bytes) == 0) return 0;
+    const int failure = errno;
+    if (failure != EOPNOTSUPP && failure != ENOSYS) return failure;
+    /* libc can emulate posix_fallocate with a synchronous one-byte write per
+       block. Use the already-budgeted aligned scratch to initialize complete
+       chunks when the filesystem has no allocation operation. */
+    memset(region->scratch, 0, (size_t)region->scratch_bytes);
+    for (uint64_t offset = 0U; offset < bytes;) {
+        const uint64_t remaining = bytes - offset;
+        const uint64_t count = remaining < region->scratch_bytes
+            ? remaining : region->scratch_bytes;
+        errno = 0;
+        if (ssd_direct_io(region->fd, region->scratch, count, offset, 1) != 0)
+            return errno == 0 ? EIO : errno;
+        offset += count;
+    }
+    return 0;
+}
+
 static int acquire(void *configuration, uint64_t capacity,
                    void **base, void **state) {
     if (base != NULL) *base = NULL;
@@ -202,8 +222,7 @@ static int acquire(void *configuration, uint64_t capacity,
     region->file_bytes = round_up(capacity, region->alignment);
     /* The scratch file holds what the image does not. */
     const uint64_t scratch_file_bytes = region->file_bytes - region->image_bytes;
-    const int allocated = scratch_file_bytes == 0U
-        ? 0 : posix_fallocate(region->fd, 0, (off_t)scratch_file_bytes);
+    const int allocated = reserve_file(region, scratch_file_bytes);
     if (allocated != 0) {
         fprintf(stderr, "shadowspill SSD: cannot reserve %" PRIu64
                 " bytes in %s: %s\n", region->file_bytes, config->directory,

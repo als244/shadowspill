@@ -3,17 +3,40 @@
 
 #include <dirent.h>
 #include <dlfcn.h>
+#include <errno.h>
 #include <fcntl.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <sys/stat.h>
+#include <sys/syscall.h>
 #include <time.h>
 #include <unistd.h>
 
 #define CHECK(condition) do { if (!(condition)) { \
     fprintf(stderr, "SSD canary line %d: %s\n", __LINE__, #condition); return 1; \
 } } while (0)
+
+/* Exercise unsupported file allocation and short writes on any filesystem.
+   All other I/O remains real; the extension binds these exported test hooks. */
+static int reservation_error, reservation_short_write;
+static uint64_t reservation_writes, reservation_smallest_write;
+SHADOWSPILL_API int fallocate(int fd, int mode, off_t offset, off_t length) {
+    if (reservation_error != 0) {
+        errno = reservation_error;
+        return -1;
+    }
+    return (int)syscall(SYS_fallocate, fd, mode, offset, length);
+}
+SHADOWSPILL_API ssize_t pwrite(int fd, const void *data, size_t bytes, off_t offset) {
+    if (reservation_error == EOPNOTSUPP || reservation_error == ENOSYS) {
+        ++reservation_writes;
+        if (reservation_smallest_write == 0U || bytes < reservation_smallest_write)
+            reservation_smallest_write = bytes;
+        if (reservation_short_write) return (ssize_t)bytes - 4096;
+    }
+    return (ssize_t)syscall(SYS_pwrite64, fd, data, bytes, offset);
+}
 
 static int entries(const char *directory) {
     DIR *dir = opendir(directory);
@@ -78,7 +101,21 @@ int main(int argc, char **argv) {
     };
     const uint64_t capacity = (2U << 20) + 317;
     void *base = NULL, *state = NULL;
+    reservation_error = ENOSPC;
+    CHECK(pool->acquire(&config, capacity, &base, &state) != 0);
+    CHECK(base == NULL && state == NULL && reservation_writes == 0U);
+    CHECK(entries(path) == 0);
+    reservation_error = ENOSYS;
+    reservation_short_write = 1;
+    CHECK(pool->acquire(&config, capacity, &base, &state) != 0);
+    CHECK(base == NULL && state == NULL && reservation_writes == 1U);
+    CHECK(entries(path) == 0);
+    reservation_error = EOPNOTSUPP;
+    reservation_short_write = 0;
+    reservation_writes = reservation_smallest_write = 0U;
     CHECK(pool->acquire(&config, capacity, &base, &state) == 0);
+    CHECK(reservation_writes == 33U && reservation_smallest_write == 4096U);
+    reservation_error = 0;
     CHECK(entries(path) == 0);
     SSDRegion *region = state;
     const int fd = region->fd;
@@ -89,6 +126,8 @@ int main(int argc, char **argv) {
     const size_t host_bytes = ((size_t)capacity + 4095U) / 4096U * 4096U;
     CHECK(posix_memalign((void **)&expected, 4096, host_bytes) == 0);
     CHECK(posix_memalign((void **)&actual, 4096, host_bytes) == 0);
+    CHECK(pool->read(state, 0, actual, capacity) == 0);
+    for (uint64_t i = 0; i < capacity; ++i) CHECK(actual[i] == 0);
     for (uint64_t i = 0; i < capacity; ++i) expected[i] = (unsigned char)(i * 17U + i / 251U);
     CHECK(pool->write(state, 0, expected, capacity) == 0);
     CHECK(pool->read(state, 0, actual, capacity) == 0);
