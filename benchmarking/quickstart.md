@@ -6,7 +6,7 @@ Quickstart composes the public library APIs in separate processes:
 build_step → Program
 measure_program → Profiles → apply_profiles → ProfiledProgram
 measure_communication → CommunicationInfo
-plan_program over geometries/orderings/budgets → Plans + simulated reports
+plan_program over build policies/geometries/orderings/budgets → Plans + simulated reports
 Trainer(Plan) → execution measurements
 ```
 
@@ -119,8 +119,8 @@ It returns a plain mapping:
 | `model_factory` | Construct the ordinary model, preferably on `meta`; called only by build. |
 | `optimizer` | Callable taking model parameters and returning the optimizer used by `build_step`. |
 | `objective` | Called as `objective(model, *args, **kwargs)`. It owns loss normalization. |
-| `candidates` | Names mapped to `{"args": [...], "kwargs": [...]}`, the same per-example input sequences as Executor. Inputs stay on CPU. |
-| `build_options` | Optional direct builder controls such as `partition`, `operator_recompute`, `master_dtype`, `grad_dtype`. |
+| `candidates` | Names mapped to `{"args": [...], "kwargs": [...], "build_options": {...}}`. `args`/`kwargs` are the same per-example input sequences as Executor; inputs stay on CPU. Candidate `build_options` are optional overrides of the factory defaults. |
+| `build_options` | Optional shared direct builder controls such as `partition`, `chunking`, `graph_pair_policy`, `master_dtype`, `grad_dtype`. |
 | `fill_tensor` | Execution callback `(TensorChunk, destination)` filling the bounded CPU buffer supplied by Executor. Checkpoint slices or deterministic random initialization belong here. |
 | `hyperparams` | Optional per-call runtime values using the names declared in the Program. |
 | `metric_reducer` | Optional reducer of host observations to named scalars or MetricSummary. |
@@ -132,8 +132,8 @@ Each candidate supplies every example call, including its shapes and static
 arguments, through the builder's `example_calls` interface. Identical task forms
 still share compiled code and profiles; differing examples retain their own
 contracts. All candidates should describe the same normalized update. Example
-ordering and optimizer ordering are selected during planning. Both save/recompute variants
-remain available. Runtime hyperparameters must be declared during build—for
+ordering and optimizer ordering are selected during planning. Save/recompute variants
+permitted by each candidate's policies remain available. Runtime hyperparameters must be declared during build—for
 example, construct the optimizer with a tensor-valued learning rate to change it
 at execution time. There is no automatic alias from `lr` to an optimizer group.
 
@@ -144,6 +144,64 @@ geometry. It must not allocate a complete model's payload in its own body. Execu
 never calls `model_factory` or `optimizer`. Initializers must fill supplied chunks;
 quickstart does not create an anonymous full-model host copy. Each budget starts
 from the same contents when the initializer is deterministic.
+
+### Searching chunk and retention policies
+
+Declare a named candidate for each combination of input geometry, chunk policy
+and graph-pair policy to measure. For example, given `geometries`
+containing the `args`/`kwargs` sequences, `chunk_policies` containing generic
+[axis-chunking policies](../docs/architecture/axis-chunking.md), and
+`graph_pair_policies` containing the builder's
+[graph-pair policies](../docs/python/api/frontend.md#graph-pair-policies):
+
+```python
+candidates = {
+    f"{geometry}-{configuration}-{retention}": {
+        **inputs,
+        "build_options": {
+            "chunking": policy,
+            "graph_pair_policy": graph_pair_policy,
+        },
+    }
+    for geometry, inputs in geometries.items()
+    for configuration, policy in chunk_policies.items()
+    for retention, graph_pair_policy in graph_pair_policies.items()
+}
+```
+
+A policy can select different chunk sizes for different execution regions,
+including bounded compositions. Candidate overrides replace individual
+factory-level options; they are not recursively merged. An explicit
+`{"chunking": None}` measures the unchunked builder behavior. Keep the objective,
+initial state and numerical policy fixed when comparing throughput.
+`parallelism` and `resources` must be declared at factory level: candidate
+overrides for those controls are refused before selecting workers.
+
+Each graph-pair policy defines independent `save` and `recompute` cuts; the
+planner chooses among the variants each chunk policy permits. Retained values
+remain eligible for ordinary residency and spill decisions. Candidate names
+should identify both chunk and graph-pair policies. There is no need to enumerate
+every stage's save/recompute choice as a separate candidate.
+
+A small initial set uses the same cost-based save policy for both candidates,
+with inputs-only recompute in one and selected attention retention in the other.
+Combine these with a short list of chunk configurations. The runner does not
+invent additional policies or expand per-stage combinations. See the
+[graph-pair policy example](../docs/python/api/frontend.md#graph-pair-policies).
+
+Build finalizes each candidate and profile measures its task implementations.
+Planning searches every saved candidate and ordering at each budget, including
+its permitted save/recompute and offload choices. The admitted Plan with the
+lowest simulated update time wins. Candidate names identify the configuration
+in the full sweep/report, the winning Plan index and execution results; archives
+retain the resolved task contracts. Build/profile OOMs and planning refusals
+remain in the report. No candidate is inferred from a smaller task's workspace
+or an isolated kernel's throughput.
+
+Execution loads the winner's exact saved Plan; it does not resize chunks or
+forward build controls as model inputs. Replanning different budgets reuses
+the measured candidates without rebuilding. To try a new policy, build and
+profile it in a fresh run before comparing its Plans.
 
 ## Distributed workers
 

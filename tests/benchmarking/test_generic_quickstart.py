@@ -99,3 +99,85 @@ def test_generic_quickstart_reducer_failure_releases_outputs(tmp_path):
     )
     result = json.loads(next((output / "execution").glob("*/result.json")).read_text())
     assert len(result["steps"]) == 3
+
+
+def test_chunk_retention_geometry_search_executes_saved_winner_and_replans(tmp_path):
+    import torch
+
+    from shadowspill import Program, SweepResult
+    from tests.benchmarking._generic_quickstart import chunked_experiment
+
+    output = tmp_path / "chunk_search"
+    assert (
+        run(
+            chunked_experiment,
+            search_budget_gib=[2],
+            spill_gib=1,
+            steps=3,
+            output_dir=output,
+            plots=False,
+            communication_info=communication(),
+            warmup_seconds=0.001,
+            measure_seconds=0.002,
+        )
+        == 0
+    )
+    inventory = json.loads((output / "programs/index.json").read_text())
+    assert len(inventory["candidates"]) == 8
+    for entry in inventory["candidates"]:
+        program = Program.load(output / "programs" / entry["file"])
+        sizes = {
+            row["row_chunks"]["chunk_size"]
+            for row in program.bindings["task_metadata"].values()
+            if "row_chunks" in row
+        }
+        assert sizes == {int(entry["name"].rsplit("chunk", 1)[1])}
+    sweep = SweepResult.load(output / "planning/sweep.ssp")
+    # Two chunk sizes, two retention policies, and five example orderings.
+    assert len(sweep.cases) == 20
+    assert all(case.plan is not None for case in sweep.cases)
+    result = json.loads((output / "execution/budget-0000/result.json").read_text())
+    assert result["predicted_seconds"] == pytest.approx(
+        min(case.plan.summary["duration_seconds"] for case in sweep.cases)
+    )
+
+    setup = chunked_experiment(device="cpu")
+    reference = setup["model_factory"]().to_empty(device="cpu")
+    with torch.no_grad():
+        for name, parameter in reference.named_parameters():
+            parameter.fill_(0 if name.endswith("bias") else 0.1)
+    optimizer = setup["optimizer"](reference.parameters())
+    for step in result["steps"]:
+        optimizer.zero_grad()
+        loss = 0.0
+        for args in setup["candidates"][result["candidate"]]["args"]:
+            value, _ = setup["objective"](reference, *args)
+            value.backward()
+            loss += value.item()
+        assert step["objective_loss"] == pytest.approx(loss, rel=1e-5)
+        optimizer.step()
+
+    artifacts = {
+        path: path.read_bytes()
+        for directory in ("programs", "profiles", "profiled")
+        for path in (output / directory).glob("*.ssp")
+    }
+    assert len(artifacts) == 24
+    assert (
+        main(
+            [
+                "--phase",
+                "plan",
+                "--output-dir",
+                str(output),
+                "--search-budget-gib",
+                "2.25",
+                "--no-plots",
+            ]
+        )
+        == 0
+    )
+    assert all(path.read_bytes() == value for path, value in artifacts.items())
+    assert json.loads((output / "plans/index.json").read_text())[0]["budget"] == int(
+        2.25 * (1 << 30)
+    )

@@ -6,6 +6,7 @@ from contextlib import nullcontext
 from benchmarking.spill import resolve as spill_pool
 from shadowspill import Plan, Trainer
 
+from .candidates import example_inputs
 from .common import experiment, paths, plan_identity, read, write
 from .distributed import workers
 
@@ -54,7 +55,7 @@ def _execute(request, selection, root, index, group):
         trainer.metric_reducer = setup.get("metric_reducer")
         with setup.get("context", nullcontext)():
             trainer.initialize(setup["fill_tensor"])
-        inputs = dict(setup["candidates"][winner["candidate"]])
+        inputs = example_inputs(setup["candidates"][winner["candidate"]])
         inputs["hyperparams"] = setup.get("hyperparams", {})
         trainer.fit(
             (inputs for _ in range(request["steps"])),

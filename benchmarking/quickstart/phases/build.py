@@ -6,7 +6,7 @@ from pathlib import Path
 
 from shadowspill import build_step
 
-from .candidates import attempt
+from .candidates import attempt, build_options, example_inputs
 from .common import experiment, write
 from .distributed import preparation_size, workers
 
@@ -27,18 +27,18 @@ def run(request):
 
 def _build(request, setup, group):
     root = Path(request["output_dir"])
+    candidates = [
+        (name, example_inputs(candidate), build_options(setup, candidate))
+        for name, candidate in setup["candidates"].items()
+    ]
+    if not candidates:
+        raise ValueError("quickstart requires at least one candidate")
     model = setup["model_factory"]()
     optimizer = setup["optimizer"](model.parameters())
     entries, world_size = [], 1
-    for index, (name, inputs) in enumerate(setup["candidates"].items()):
-        if set(inputs) - {"args", "kwargs"}:
-            raise ValueError("candidate inputs contain only args/kwargs sequences")
+    for index, (name, inputs, options) in enumerate(candidates):
         args, kwargs = inputs.get("args", ()), inputs.get("kwargs", ())
         count = len(args) or len(kwargs)
-        if not count or (args and kwargs and len(args) != len(kwargs)):
-            raise ValueError(
-                "candidate needs equally sized, nonempty args/kwargs sequences"
-            )
         print(f"build: {name}, {count} examples", flush=True)
         entry = {
             "name": name,
@@ -55,7 +55,7 @@ def _build(request, setup, group):
             ),
             target=request["device"],
             rank_map=group.rank_map if group.count > 1 else None,
-            **setup.get("build_options", {}),
+            **options,
         )
         # A rank-local OOM cannot safely skip a communicating task while peers
         # are inside it. Let torchrun terminate that worker group on failure.
@@ -77,8 +77,6 @@ def _build(request, setup, group):
             )
         entries.append(entry)
         del program
-    if not entries:
-        raise ValueError("quickstart requires at least one candidate")
     if group.rank != 0:
         return
     write(

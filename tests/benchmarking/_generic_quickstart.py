@@ -3,6 +3,14 @@
 import torch
 from torch import nn
 
+from shadowspill.pytorch import (
+    AxisChunks,
+    GraphPairPolicy,
+    RetentionPolicy,
+    RetentionRule,
+)
+from shadowspill.task.inputs import TaskInputRole
+
 
 def experiment(*, device, fail_on_step=0):
     generator = torch.Generator().manual_seed(12)
@@ -51,3 +59,48 @@ def experiment(*, device, fail_on_step=0):
         "units_per_step": 8,
         "unit_label": "images",
     }
+
+
+class IndependentExamples:
+    def __init__(self, chunk_size):
+        self.chunk_size = chunk_size
+
+    def configure_stage(self, stage):
+        if stage.terminal:
+            return None
+        axes = {
+            i: 0
+            for i, (value, role) in enumerate(
+                zip(stage.inputs, stage.input_roles, strict=True)
+            )
+            if value is not None
+            and len(value.shape) == 2
+            and role not in {TaskInputRole.PARAMETER, TaskInputRole.BUFFER}
+        }
+        return AxisChunks(self.chunk_size, axes) if axes else None
+
+
+def chunked_experiment(*, device):
+    setup = experiment(device=device)
+    policies = {
+        "inputs_only": GraphPairPolicy(),
+        "selected_retained": GraphPairPolicy(
+            recompute=RetentionPolicy(
+                default="recompute",
+                rules=(RetentionRule("aten.tanh.default", "retain"),),
+            )
+        ),
+    }
+    setup["candidates"] = {
+        f"{name}-{retention}-chunk{size}": {
+            **inputs,
+            "build_options": {
+                "chunking": IndependentExamples(size),
+                "graph_pair_policy": policy,
+            },
+        }
+        for name, inputs in setup["candidates"].items()
+        for size in (1, 3)
+        for retention, policy in policies.items()
+    }
+    return setup
