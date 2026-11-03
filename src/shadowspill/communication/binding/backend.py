@@ -72,7 +72,7 @@ def shared_backend_setup(
         return {}
     common, _ = split_environment(rows[0])
     groups = {}
-    local = []
+    local_environments = []
     for row in rows:
         shared, own = split_environment(row)
         if shared != common:
@@ -88,7 +88,7 @@ def shared_backend_setup(
             raise ValueError(
                 f"workers have different communication backend setups: {detail}"
             )
-        local.append(own)
+        local_environments.append(own)
         for name, value in row["groups"].items():
             if name in groups and groups[name] != value:
                 raise ValueError("participants have different communicator options")
@@ -96,5 +96,5 @@ def shared_backend_setup(
     return {
         **common,
         "groups": dict(sorted(groups.items())),
-        "local_environment": local,
+        "local_environment": local_environments,
     }
