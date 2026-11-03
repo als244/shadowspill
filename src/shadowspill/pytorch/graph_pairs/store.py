@@ -167,10 +167,7 @@ class GraphPairStore:
             self._write(
                 key,
                 existing,
-                retention={
-                    **policy.identity(),
-                    "operators": policy.operator_classes(example.stage.graph_module),
-                },
+                retention=policy.capture_identity(example.stage.graph_module),
             )
             self.misses += 1
             return self._derive(key, existing, form)

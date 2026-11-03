@@ -154,6 +154,7 @@ def capture_graph_pair(
             retention
             or RetentionPolicy(default="recompute" if memory_budget == 0 else "cost"),
             record,
+            source=graph_module,
         ),
         memory_budget=memory_budget,
         root_output_positions=root_output_positions,

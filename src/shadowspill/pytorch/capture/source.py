@@ -46,7 +46,7 @@ def set_source_operation(node: Node, source: SourceOperation) -> None:
     }
 
 
-def _source_nodes(graph: GraphModule) -> tuple[Node, ...]:
+def source_nodes(graph: GraphModule) -> tuple[Node, ...]:
     # Static argument specialization can remove placeholders without changing
     # the structural contract. They must not shift an operation's identity.
     return tuple(
@@ -61,7 +61,7 @@ def traceable_source_graph(graph: GraphModule) -> GraphModule:
         custom = dict(node.meta.get("custom", {}))
         custom.pop(_SOURCE_KEY, None)
         node.meta["custom"] = custom
-    for index, node in enumerate(_source_nodes(copied)):
+    for index, node in enumerate(source_nodes(copied)):
         # Source indices belong to this capture, not to a graph it was derived
         # from. The structurally keyed source graph fixes their interpretation.
         set_source_operation(node, SourceOperation(index, node.op, str(node.target)))
@@ -70,7 +70,7 @@ def traceable_source_graph(graph: GraphModule) -> GraphModule:
 
 def bind_source_metadata(graph: GraphModule, source: GraphModule) -> GraphModule:
     """Resolve source indices against one occurrence without mutating a cache."""
-    nodes = _source_nodes(source)
+    nodes = source_nodes(source)
     bound = copy_graph_module(graph)
     for node in bound.graph.nodes:
         reference = source_operation(node)

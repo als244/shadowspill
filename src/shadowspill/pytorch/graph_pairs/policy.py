@@ -51,11 +51,32 @@ class GraphPairPolicy:
 
     def digest(self, graph_module: torch.fx.GraphModule) -> str:
         encoded = json.dumps(
-            {**self.identity(), "operators": self.operator_classes(graph_module)},
+            self.capture_identity(graph_module),
             sort_keys=True,
             separators=(",", ":"),
         )
         return hashlib.sha256(encoded.encode()).hexdigest()
+
+    def capture_identity(self, graph_module: torch.fx.GraphModule) -> dict[str, object]:
+        """Occurrence scopes resolve before graph-pair cache lookup."""
+        variants = {
+            name: self.variant(name).capture_identity(graph_module)
+            for name in ("save", "recompute")
+        }
+        result = {
+            **self.identity(),
+            "operators": {
+                name: identity["operators"] for name, identity in variants.items()
+            },
+        }
+        scoped = {
+            name: identity["scoped"]
+            for name, identity in variants.items()
+            if "scoped" in identity
+        }
+        if scoped:
+            result["scoped"] = scoped
+        return result
 
 
 __all__ = ["GraphPairPolicy"]

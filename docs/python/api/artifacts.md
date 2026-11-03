@@ -41,8 +41,8 @@ same built Program; changing ordering does not require rebuilding it.
 `bindings["task_metadata"][key]["numerical_contracts"]` lists versioned numerical
 lowering contracts applied during compilation. An empty list means no additional
 native scalar-rounding rule was applied. Composed tasks include contracts from
-their children. For example, `cuda.sigmoid_backward.scalar_rounding.v1` identifies
-the explicit BF16/FP16 CUDA rounding used when precision emulation is enabled.
+their children. A precision-emulated sigmoid-backward contract identifies the
+provider's intermediate rounding and multiplication order for BF16/FP16.
 These contracts participate in implementation identity; they are inspection
 metadata, not a runtime setting for changing an already measured task.
 
@@ -208,8 +208,14 @@ The manifest's `retention` records `save` and `recompute` policy identities,
 with custom-operator classifications under `operators.save` and
 `operators.recompute`; `retention_digest` keys their capture compatibility.
 Each policy identity records `memory_bound_flops_per_byte`, includes `default`
-when it is `retain` or `recompute`, and includes nonempty `rules` as target-sorted
-`{"target": operator_name, "action": "retain" | "recompute"}` records.
+when it is `retain` or `recompute`, and includes nonempty `rules` sorted by target
+and optional module pattern. Each rule records `target`, `action` (`retain` or
+`recompute`) and `module_pattern` when scoped. Scoped policies add
+`retention.scoped.save` and/or `retention.scoped.recompute`: each contains
+`rules` with target, action and resolved `source_indices`, plus per-source
+custom `operator_occurrences`. These structural decisions participate in cache
+identity before an entry is reused. A module path's occurrence name alone does
+not prevent reuse when the same pattern selects the same structural positions.
 Each variant records its `regenerated_operators` and `unknown_operators` from
 the actual captured backward. These describe the cut; they are not residency
 assignments or timing estimates. The variant's `memory_budget` labels the base

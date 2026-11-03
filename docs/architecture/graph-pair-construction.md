@@ -178,6 +178,17 @@ the caller or a class changed by a library misses rather than reading back a
 pair built under the old one. The manifest beside an entry records the policy
 and the classes in the clear.
 
+Scoped retention rules additionally resolve module-path patterns to structural
+source-operation indices before cache lookup. Matching occurrence paths do not
+become kernel identity: two repeated blocks with the same resolved selections
+can reuse a pair, while otherwise identical blocks with different selections
+cannot. The lazy AOT partition callback uses these indices to apply rules after
+decomposition; exact operator targets still constrain matches. Scoped policies
+also record per-source custom-operator classifications, so a retained occurrence
+cannot hide a changed cost classification in an unselected occurrence of the
+same overload. Missing provenance and contradictory overlapping rules are
+capture errors. The resolved selections are stored in the graph-pair manifest.
+
 The first occurrence constructs or restores them. Equivalent later
 occurrences reuse its graph code and contracts while rebinding authentic
 occurrence-local inputs and input provenance. This makes graph construction

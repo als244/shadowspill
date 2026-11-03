@@ -42,6 +42,7 @@ import operator
 from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass, field
 from enum import StrEnum
+from fnmatch import fnmatchcase
 from typing import Any, Literal
 
 import torch
@@ -55,6 +56,7 @@ from torch.utils.flop_counter import FlopCounterMode, flop_registry
 from shadowspill.errors import CaptureError
 
 from .effects import join_recomputed_effects
+from .source import source_nodes, source_operation
 
 #: Flops per byte moved, at or below which an operator is memory-bound and the
 #: ``save`` variant regenerates its results rather than retaining them.
@@ -91,17 +93,39 @@ class RetentionRule:
     """Override one exact operator overload in a variant's saved-state cut.
 
     ``retain`` saves backward-required results. ``recompute`` regenerates them
-    if needed. Contradictory model checkpoint annotations are refused.
+    if needed. ``module_pattern`` restricts the rule to source module paths
+    matching a case-sensitive shell pattern, including descendant operations.
+    Contradictory rules and model checkpoint annotations are refused.
     """
 
     target: str
     action: Literal["retain", "recompute"]
+    module_pattern: str | None = field(default=None, kw_only=True)
 
     def __post_init__(self) -> None:
         if not isinstance(self.target, str) or not self.target.strip():
             raise ValueError("retention rule target must be a nonempty operator name")
         if self.action not in ("retain", "recompute"):
             raise ValueError("retention rule action must be retain or recompute")
+        if self.module_pattern is not None and (
+            not isinstance(self.module_pattern, str) or not self.module_pattern.strip()
+        ):
+            raise ValueError("module_pattern must be a nonempty pattern or None")
+
+
+@dataclass(frozen=True, slots=True)
+class _RetentionScope:
+    rule: RetentionRule
+    indices: frozenset[int]
+    unattributed: frozenset[int]
+
+    def identity(self) -> dict[str, object]:
+        return {
+            "target": self.rule.target,
+            "action": self.rule.action,
+            "source_indices": sorted(self.indices),
+            "unattributed_source_indices": sorted(self.unattributed),
+        }
 
 
 @dataclass(frozen=True, slots=True)
@@ -137,9 +161,11 @@ class RetentionPolicy:
             not isinstance(rule, RetentionRule) for rule in self.rules
         ):
             raise TypeError("rules must be a tuple of RetentionRule values")
-        targets = [rule.target for rule in self.rules]
+        targets = [(rule.target, rule.module_pattern) for rule in self.rules]
         if len(set(targets)) != len(targets):
-            raise ValueError("retention rules must name each operator at most once")
+            raise ValueError(
+                "retention rules must name each operator and module scope at most once"
+            )
 
     def identity(self) -> dict[str, object]:
         result: dict[str, object] = {
@@ -147,8 +173,16 @@ class RetentionPolicy:
         }
         if self.rules:
             result["rules"] = [
-                {"target": rule.target, "action": rule.action}
-                for rule in sorted(self.rules, key=lambda rule: rule.target)
+                {
+                    "target": rule.target,
+                    "action": rule.action,
+                    **(
+                        {"module_pattern": rule.module_pattern}
+                        if rule.module_pattern is not None
+                        else {}
+                    ),
+                }
+                for rule in _ordered_rules(self)
             ]
         if self.default != "cost":
             result["default"] = self.default
@@ -159,13 +193,13 @@ class RetentionPolicy:
 
         if node.op != "call_function":
             return None
-        for rule in self.rules:
-            if str(node.target) == rule.target:
-                return (
-                    OperatorClass.COMPUTE_BOUND
-                    if rule.action == "retain"
-                    else OperatorClass.MEMORY_BOUND
-                )
+        action = _source_action(node, self.rules)
+        if action is not None:
+            return (
+                OperatorClass.COMPUTE_BOUND
+                if action == "retain"
+                else OperatorClass.MEMORY_BOUND
+            )
         if self.default == "recompute":
             return OperatorClass.MEMORY_BOUND
         if self.default == "retain":
@@ -191,11 +225,34 @@ class RetentionPolicy:
                 classes[str(node.target)] = operator_class.value
         return dict(sorted(classes.items()))
 
+    def capture_identity(self, graph_module: torch.fx.GraphModule) -> dict[str, object]:
+        """Resolve occurrence scopes before structural capture reuse."""
+
+        result = {**self.identity(), "operators": self.operator_classes(graph_module)}
+        if any(rule.module_pattern is not None for rule in self.rules):
+            scopes = _resolve_scopes(graph_module, self)
+            result["scoped"] = {
+                "rules": [scope.identity() for scope in scopes],
+                # The same custom overload can have different scoped actions.
+                # Record every occurrence so an unselected call's changed flop
+                # classification cannot be hidden by a selected later call.
+                "operator_occurrences": [
+                    {
+                        "source_index": index,
+                        "target": str(node.target),
+                        "class": self.classify(node),
+                    }
+                    for index, node in enumerate(source_nodes(graph_module))
+                    if node.op == "call_function" and not _is_builtin(node.target)
+                ],
+            }
+        return result
+
     def digest(self, graph_module: torch.fx.GraphModule) -> str:
-        """One digest of the policy and the classes it gives a graph's operators."""
+        """Digest the policy, operator classes and resolved source scopes."""
 
         encoded = json.dumps(
-            {**self.identity(), "operators": self.operator_classes(graph_module)},
+            self.capture_identity(graph_module),
             sort_keys=True,
             separators=(",", ":"),
         )
@@ -236,6 +293,8 @@ def partition_function(
     memory_budget: float,
     policy: RetentionPolicy,
     record: RetentionRecord,
+    *,
+    source: torch.fx.GraphModule | None = None,
 ) -> Callable[..., tuple[torch.fx.GraphModule, torch.fx.GraphModule]]:
     """The AOT partition callback for one variant.
 
@@ -251,6 +310,11 @@ def partition_function(
     instead: unselected values are marked for replay and selected results
     for retention. Intermediate budgets use PyTorch's knapsack.
     """
+
+    scoped = any(rule.module_pattern is not None for rule in policy.rules)
+    if scoped and source is None:
+        raise CaptureError("scoped retention requires the source graph")
+    scopes = _resolve_scopes(source, policy) if source is not None else ()
 
     def partition(
         joint_module: torch.fx.GraphModule,
@@ -270,7 +334,9 @@ def partition_function(
         # The inputs-only fast path reads no save marks. Replay annotations
         # would also enable PyTorch's separate RNG functionalization path,
         # changing a cut that needs no operator annotations at all.
-        marked, unknown = _mark_retained(joint_module, policy) if budget else ((), ())
+        marked, unknown = (
+            _mark_retained(joint_module, policy, scopes=scopes) if budget else ((), ())
+        )
         with functorch_config.patch(activation_memory_budget=budget, **_LIFTED_BANS):
             forward, backward = min_cut_rematerialization_partition(
                 joint_module, joint_inputs, **kwargs
@@ -279,7 +345,7 @@ def partition_function(
             forward, backward, num_fwd_outputs=kwargs["num_fwd_outputs"]
         )
         _validate_rules(
-            joint_module, forward, backward, policy, kwargs["num_fwd_outputs"]
+            joint_module, forward, backward, policy, kwargs["num_fwd_outputs"], scopes
         )
         regenerated = _regenerated_operators(backward)
         _strip_marks(marked, joint_module, forward, backward)
@@ -294,13 +360,16 @@ def partition_function(
 
 
 def _mark_retained(
-    joint_module: torch.fx.GraphModule, policy: RetentionPolicy
+    joint_module: torch.fx.GraphModule,
+    policy: RetentionPolicy,
+    *,
+    scopes: tuple[_RetentionScope, ...] | None = None,
 ) -> tuple[tuple[str, ...], tuple[str, ...]]:
     """Apply explicit rules, then model annotations, then the default policy."""
 
     marked: list[str] = []
     unknown: set[str] = set()
-    actions = _rule_actions(joint_module, policy)
+    actions = _rule_actions(joint_module, policy, scopes)
     required = _operator_actions(
         joint_module,
         {
@@ -351,7 +420,7 @@ def _mark_retained(
             )
             marked.append(node.name)
             continue
-        operator_class = policy.classify(node)
+        operator_class = _classify(node, policy.memory_bound_flops_per_byte)
         if operator_class is OperatorClass.UNKNOWN:
             unknown.add(str(node.target))
         if operator_class in (OperatorClass.COMPUTE_BOUND, OperatorClass.UNKNOWN):
@@ -361,11 +430,126 @@ def _mark_retained(
 
 
 def _rule_actions(
-    module: torch.fx.GraphModule, policy: RetentionPolicy
+    module: torch.fx.GraphModule,
+    policy: RetentionPolicy,
+    scopes: tuple[_RetentionScope, ...] | None = None,
 ) -> dict[str, str]:
-    return _operator_actions(
-        module, {rule.target: rule.action for rule in policy.rules}
+    global_rules = tuple(rule for rule in policy.rules if rule.module_pattern is None)
+    result = _operator_actions(
+        module, {rule.target: rule.action for rule in global_rules}
     )
+    for node in module.graph.nodes:
+        if (
+            node.op != "call_function"
+            or node.meta.get("partitioner_tag") == "is_backward"
+        ):
+            continue
+        if scopes is None:
+            action = _source_action(node, policy.rules)
+            if action is not None:
+                _record_action(result, node, action)
+            continue
+        for scope in scopes:
+            rule = scope.rule
+            if str(node.target) != rule.target or not (
+                scope.indices or scope.unattributed
+            ):
+                continue
+            reference = source_operation(node)
+            if reference is None:
+                raise CaptureError(
+                    f"scoped retention for {rule.target} requires source-operation "
+                    f"provenance at {node.name}"
+                )
+            if reference.index in scope.unattributed:
+                raise CaptureError(
+                    f"scoped retention requires source module paths for {rule.target} "
+                    f"at source index {reference.index}"
+                )
+            if reference.index in scope.indices:
+                _record_action(result, node, rule.action)
+    return result
+
+
+def _ordered_rules(policy: RetentionPolicy) -> tuple[RetentionRule, ...]:
+    return tuple(
+        sorted(policy.rules, key=lambda rule: (rule.target, rule.module_pattern or ""))
+    )
+
+
+def _module_paths(node: torch.fx.Node) -> tuple[str, ...]:
+    stack = node.meta.get("nn_module_stack")
+    if not isinstance(stack, Mapping) or any(
+        not isinstance(value, tuple) or len(value) != 2 or not isinstance(value[0], str)
+        for value in stack.values()
+    ):
+        raise CaptureError(
+            f"scoped retention requires source module paths for {node.target} "
+            f"at {node.name}; use an unscoped rule for unattributed graphs"
+        )
+    return tuple(value[0] for value in stack.values())
+
+
+def _source_action(node: torch.fx.Node, rules: tuple[RetentionRule, ...]) -> str | None:
+    actions = set()
+    for rule in rules:
+        if str(node.target) != rule.target:
+            continue
+        if rule.module_pattern is None or any(
+            fnmatchcase(path, rule.module_pattern) for path in _module_paths(node)
+        ):
+            actions.add(rule.action)
+    if len(actions) > 1:
+        raise CaptureError(f"retention rules conflict at {node.name} ({node.target})")
+    return next(iter(actions), None)
+
+
+def _resolve_scopes(
+    source: torch.fx.GraphModule, policy: RetentionPolicy
+) -> tuple[_RetentionScope, ...]:
+    if not any(rule.module_pattern is not None for rule in policy.rules):
+        return ()
+    nodes = source_nodes(source)
+    unattributed = frozenset(
+        index for index, node in enumerate(nodes) if "nn_module_stack" not in node.meta
+    )
+    for node in nodes:
+        _source_action(node, policy.rules)  # Refuse conflicts/missing source metadata.
+    return tuple(
+        _RetentionScope(
+            rule,
+            frozenset(
+                index
+                for index, node in enumerate(nodes)
+                if "nn_module_stack" in node.meta
+                and any(
+                    fnmatchcase(path, rule.module_pattern)
+                    for path in _module_paths(node)
+                )
+            ),
+            unattributed,
+        )
+        for rule in _ordered_rules(policy)
+        if rule.module_pattern is not None
+    )
+
+
+def _record_action(result: dict[str, str], node: torch.fx.Node, action: str) -> None:
+    pending = [node]
+    while pending:
+        value = pending.pop()
+        if value.name in result:
+            if result[value.name] != action:
+                raise CaptureError(
+                    f"retention rules conflict at {value.name}, "
+                    "including tuple extraction"
+                )
+            continue
+        result[value.name] = action
+        if isinstance(value.meta.get("val"), (tuple, list)):
+            pending.extend(
+                user for user in value.users if user.target is operator.getitem
+            )
 
 
 def _operator_actions(
@@ -383,18 +567,7 @@ def _operator_actions(
         action = targets.get(str(node.target))
         if action is None:
             continue
-        pending = [node]
-        while pending:
-            value = pending.pop()
-            if value.name in result:
-                if result[value.name] != action:
-                    raise CaptureError("retention rules conflict on tuple extraction")
-                continue
-            result[value.name] = action
-            if isinstance(value.meta.get("val"), (tuple, list)):
-                pending.extend(
-                    user for user in value.users if user.target is operator.getitem
-                )
+        _record_action(result, node, action)
     return result
 
 
@@ -404,10 +577,11 @@ def _validate_rules(
     backward: torch.fx.GraphModule,
     policy: RetentionPolicy,
     num_fwd_outputs: int,
+    scopes: tuple[_RetentionScope, ...],
 ) -> None:
     if not policy.rules:
         return
-    actions = _rule_actions(joint, policy)
+    actions = _rule_actions(joint, policy, scopes)
     replayed = {
         node.name
         for node in backward.graph.nodes

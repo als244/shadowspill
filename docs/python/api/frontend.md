@@ -336,10 +336,10 @@ returns an immutable policy for either graph pair:
 | Argument | Type | Contract |
 | --- | --- | --- |
 | `memory_bound_flops_per_byte` | finite nonnegative `float` | Under the cost default, operations at or below this arithmetic intensity may be regenerated. This is not a memory budget or measured execution time. |
-| `rules` | `tuple[RetentionRule, ...]` | Exact operator overrides; each target may appear once. |
+| `rules` | `tuple[RetentionRule, ...]` | Exact operator overrides, optionally scoped to source modules. Each target/scope pair may appear once; conflicting matches fail capture. |
 | `default` | `"cost"`, `"retain"` or `"recompute"` | `cost` retains compute-bound and unpriced custom operations, permitting memory-bound replay. `retain` keeps backward-required results. `recompute` regenerates unselected intermediates from checkpoint inputs and selected retained results. Correctness-required state can also remain saved. |
 
-`RetentionRule(target, action)` identifies one exact forward operator overload
+`RetentionRule(target, action, *, module_pattern=None)` identifies one exact forward operator overload
 name, such as `"aten.mm.default"`. `target` is a nonempty `str`; `action` is
 `"retain"` or `"recompute"`. The rule includes tuple extraction, so backward can
 receive the selected operation's required auxiliary outputs as well as its
@@ -348,6 +348,35 @@ operation's inputs: those can be regenerated from earlier saved state.
 Targets absent from an individual stage have no effect there, allowing one
 policy to apply across different stages. Inspect captured graphs and the
 graph-pair manifest to verify the intended operators and regenerated work.
+
+`module_pattern` is an optional case-sensitive shell pattern matched against
+the operation's source module paths. Any matching ancestor includes its
+descendants. For example, `"model.blocks.*.experts"` selects operations in each
+block's `experts` module and its children; `*` can match dots. `None` applies
+the rule everywhere. Module paths come from export, survive differentiation
+through structural source indices, and also identify operations introduced by
+decomposing that source operation. The target still names the exact overload
+in the differentiated forward graph. Missing required source provenance fails
+capture rather than silently turning a scoped rule into a global rule.
+
+Scope avoids removing useful saved cuts in unrelated operations. For example,
+if an expert implementation produces chunk-local state through an add:
+
+```python
+save_policy = RetentionPolicy(
+    rules=(RetentionRule(
+        "aten.add.Tensor", "recompute", module_pattern="model.blocks.*.experts"
+    ),)
+)
+```
+
+Other modules keep the cost-based default. A global add-removal rule can force
+both large projection operands to remain saved instead of their single sum.
+Choose scopes from the captured source paths, and verify the resulting saved
+tensors and chunk-local legality. This control does not make an otherwise
+invalid saved output legal. Rules have no ordering precedence: overlapping
+matches with different actions are errors. Use the policy's `default` for a
+broad choice and explicit rules for exceptions.
 
 Explicit rules override the default classification. Model checkpoint annotations
 take precedence over the default; contradictory explicit rules fail capture.
@@ -390,7 +419,7 @@ retention policies. Forward sinks require a `save` choice, so changing only
 | Phase/control | Responsibility |
 | --- | --- |
 | `partition` | Chooses checkpoint boundaries and their inputs. |
-| `graph_pair_policy` during build | Constructs each variant's saved-state cut and backward graph. Both policy identities, operator classifications and graph contracts key capture reuse. |
+| `graph_pair_policy` during build | Constructs each variant's saved-state cut and backward graph. Both policy identities, operator classifications, resolved source scopes and graph contracts key capture reuse. |
 | `chunking` during build | Chooses execution regions, axes, sizes and permitted outer variants. It does not change the selected outer saved-state cut. |
 | Profiling | Measures each final complete task, including its chunk loop, assembly and provider workspace. |
 | Planning/PressureFit | Chooses among measured allowed stage variants and decides residency, transfers and execution order under device and spill budgets. Retained does not mean device-resident. |
