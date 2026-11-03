@@ -24,6 +24,7 @@ def compile_region_task(
     metadata = deepcopy(task.identity)
     children = {}
     dependencies = {}
+    contracts: set[str] = set()
     # A checkpoint can retain an outer host input directly, without a child
     # producing it. Those passthroughs still have no device allocation.
     host_slots = {
@@ -33,6 +34,7 @@ def compile_region_task(
     }
     for index, child in enumerate(task.children):
         built = compiled[child.compatibility_digest]
+        contracts.update(built.numerical_contracts)
         instruction = metadata["regions"][index]
         host_leaves = set(built.memory["off_device_output_leaves"])
         roots = {
@@ -80,7 +82,10 @@ def compile_region_task(
             for root in storage.roots
         ),
         capture_ns=0,
-        toolchain={**toolchain(), "region_composition": artifact.compatibility_digest},
+        toolchain={
+            **toolchain(tuple(sorted(contracts))),
+            "region_composition": artifact.compatibility_digest,
+        },
     )
     return BuiltTask(
         manifest,
@@ -94,4 +99,5 @@ def compile_region_task(
             "off_device_output_leaves": tuple(sorted(host_leaves)),
         },
         tuple(dependencies.values()),
+        numerical_contracts=tuple(sorted(contracts)),
     )

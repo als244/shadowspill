@@ -61,6 +61,7 @@ class CompiledTasks:
                 "structural_contract": artifact.compatibility_digest,
                 "kind": artifact.kind,
                 "operators": artifact.operator_targets,
+                "numerical_contracts": item.numerical_contracts,
             }
             if artifact.chunking is not None:
                 self.metadata[key]["row_chunks"] = artifact.chunking.identity

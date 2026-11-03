@@ -38,6 +38,14 @@ Training builders accept either `example_args`, `example_kwargs` and
 shapes/static metadata. Planning chooses example and optimizer ordering from the
 same built Program; changing ordering does not require rebuilding it.
 
+`bindings["task_metadata"][key]["numerical_contracts"]` lists versioned numerical
+lowering contracts applied during compilation. An empty list means no additional
+native scalar-rounding rule was applied. Composed tasks include contracts from
+their children. For example, `cuda.sigmoid_backward.scalar_rounding.v1` identifies
+the explicit BF16/FP16 CUDA rounding used when precision emulation is enabled.
+These contracts participate in implementation identity; they are inspection
+metadata, not a runtime setting for changing an already measured task.
+
 `bindings["task_inputs"][key]["provenance"]` describes representative input
 policies. Authentic control, constant and optimizer-hyperparameter samples use
 `value` for small JSON values or `value_bytes` for larger arrays. `value_bytes`

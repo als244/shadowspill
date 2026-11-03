@@ -143,3 +143,26 @@ def test_dp_checkpoint_regions_chunks_and_retention(
     )
     _verify(tmp_path, kind, variant, "regions")
     _check_collective_traces(tmp_path)
+
+
+@pytest.mark.cuda
+@pytest.mark.parametrize("gate_dtype", ["bfloat16", "float16"])
+def test_dp_native_pointwise_emulation(tmp_path, gate_dtype):
+    if torch.cuda.device_count() < 2:
+        pytest.skip("requires two distinct GPUs")
+    (tmp_path / "regions.json").write_text(
+        json.dumps(
+            dict(
+                storage="sharded",
+                lora=True,
+                retain_sequence=True,
+                nested=True,
+                checkpoint_cuts=False,
+                gate_dtype=gate_dtype,
+            ),
+            indent=2,
+        )
+        + "\n"
+    )
+    _verify(tmp_path, "step", "recompute", "regions")
+    _check_collective_traces(tmp_path)

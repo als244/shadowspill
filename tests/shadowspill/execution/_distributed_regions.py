@@ -5,6 +5,8 @@ from collections.abc import Mapping
 from dataclasses import replace
 
 import torch
+from torch._inductor import config as inductor_config
+from torch.utils._pytree import tree_map
 
 from shadowspill import Parallelism, build_forward_backward, build_step
 from shadowspill.pytorch import GraphPairPolicy, RetentionPolicy, RetentionRule
@@ -15,8 +17,9 @@ from tests.shadowspill.pytorch.chunking.test_regions import RegionChunks
 
 
 class Block(torch.nn.Module):
-    def __init__(self, lora, *, device="cpu", dtype=torch.float32):
+    def __init__(self, lora, *, device="cpu", dtype=torch.float32, gate_dtype=None):
         super().__init__()
+        self.gate_dtype = gate_dtype
         self.weight = torch.nn.Parameter(
             torch.randn(7, 11, device=device, dtype=dtype) / 7,
             requires_grad=not lora,
@@ -30,14 +33,20 @@ class Block(torch.nn.Module):
 
     def forward(self, x):
         projected = x @ self.weight + (x @ self.a) @ self.b
-        return torch.nn.functional.silu(projected.softmax(1) @ self.out) + x
+        activated = torch.nn.functional.silu(projected.softmax(1) @ self.out)
+        if self.gate_dtype is not None:
+            activated = activated * activated.to(self.gate_dtype).sigmoid().float()
+        return activated + x
 
 
 class Network(torch.nn.Module):
-    def __init__(self, lora, *, device="cpu", dtype=torch.float32):
+    def __init__(self, lora, *, device="cpu", dtype=torch.float32, gate_dtype=None):
         super().__init__()
         self.blocks = torch.nn.ModuleList(
-            [Block(lora, device=device, dtype=dtype) for _ in range(2)]
+            [
+                Block(lora, device=device, dtype=dtype, gate_dtype=gate_dtype)
+                for _ in range(2)
+            ]
         )
         self.blocks[1].out = self.blocks[0].out
         self.blocks[1].b = self.blocks[0].b
@@ -83,11 +92,11 @@ def parameters(model):
     return {name: value.detach().clone() for name, value in model.named_parameters()}
 
 
-def oracle(kind, lora):
+def oracle(kind, lora, *, gate_dtype=None, device="cpu"):
     torch.manual_seed(731)
-    model = Network(lora)
+    model = Network(lora, gate_dtype=gate_dtype, device=device)
     initial = parameters(model)
-    calls = examples()
+    calls = tree_map(lambda value: value.to(device), examples())
     optimizer = torch.optim.AdamW(model.parameters(), lr=0.001, foreach=False)
     expected = []
     for invocation in range(3):
@@ -134,7 +143,7 @@ def oracle(kind, lora):
                 parameter_metrics=metrics,
             )
         )
-    return dict(
+    fixture = dict(
         initial=initial,
         examples=calls,
         expected=expected,
@@ -143,6 +152,12 @@ def oracle(kind, lora):
         exact_names=[
             name for name, value in model.named_parameters() if not value.requires_grad
         ],
+    )
+    return tree_map(
+        lambda value: (
+            value.detach().cpu() if isinstance(value, torch.Tensor) else value
+        ),
+        fixture,
     )
 
 
@@ -221,24 +236,42 @@ def policies(options):
 
 def build(path, kind):
     options = json.loads((path / "regions.json").read_text())
-    fixture = oracle(kind, options["lora"])
-    template = Network(options["lora"], device="meta")
+    gate_dtype = (
+        getattr(torch, options["gate_dtype"]) if options.get("gate_dtype") else None
+    )
+    # CUDA's native low-precision derivative differs from the CPU implementation.
+    # The independent reference uses ordinary CUDA autograd, never our compiler.
+    fixture = oracle(
+        kind,
+        options["lora"],
+        gate_dtype=gate_dtype,
+        device="cuda" if gate_dtype is not None else "cpu",
+    )
+    template = Network(options["lora"], device="meta", gate_dtype=gate_dtype)
     common = dict(
         objective=objective,
         example_calls=fixture["examples"][0],
         grad_dtype=torch.float32,
         **policies(options),
     )
-    program = (
-        build_step(
-            template,
-            optimizer=torch.optim.AdamW(template.parameters(), lr=0.001, foreach=False),
-            master_dtype=None,
-            **common,
+    with inductor_config.patch(emulate_precision_casts=gate_dtype is not None):
+        program = (
+            build_step(
+                template,
+                optimizer=torch.optim.AdamW(
+                    template.parameters(), lr=0.001, foreach=False
+                ),
+                master_dtype=None,
+                **common,
+            )
+            if kind == "step"
+            else build_forward_backward(template, **common)
         )
-        if kind == "step"
-        else build_forward_backward(template, **common)
-    )
+    if gate_dtype is not None:
+        assert any(
+            "cuda.sigmoid_backward.scalar_rounding.v1" in row["numerical_contracts"]
+            for row in program.bindings["task_metadata"].values()
+        ), "The fixture did not exercise compiled native scalar rounding"
     sizes, nested = set(), []
 
     def inspect(value):

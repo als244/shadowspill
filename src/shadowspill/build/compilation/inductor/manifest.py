@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass
 
 import torch
@@ -38,10 +39,13 @@ class _GraphLoweringManifest:
     root_allocations: tuple[ExecutableRootAllocation, ...]
 
 
-def toolchain() -> dict[str, str]:
+def toolchain(numerical_contracts: tuple[str, ...] = ()) -> dict[str, str]:
     """What compiled a task here: the framework and the device provider."""
 
-    return {"torch": torch.__version__, "provider": provider_version() or ""}
+    identity = {"torch": torch.__version__, "provider": provider_version() or ""}
+    if numerical_contracts:
+        identity["numerical_contracts"] = json.dumps(numerical_contracts)
+    return identity
 
 
 def _make_manifest(
@@ -51,6 +55,7 @@ def _make_manifest(
     root_allocations: tuple[ExecutableRootAllocation, ...],
     *,
     capture_ns: int,
+    numerical_contracts: tuple[str, ...] = (),
 ) -> ExecutableTaskManifest:
     return build_manifest(
         semantic_contract,
@@ -58,5 +63,5 @@ def _make_manifest(
         executable_contract,
         root_allocations,
         capture_ns=capture_ns,
-        toolchain=toolchain(),
+        toolchain=toolchain(numerical_contracts),
     )

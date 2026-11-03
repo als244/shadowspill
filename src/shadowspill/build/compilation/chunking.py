@@ -23,6 +23,15 @@ def compile_chunk_task(
 
     task = artifact.chunking
     assert task is not None
+    numerical_contracts = tuple(
+        sorted(
+            {
+                contract
+                for _, child in (*task.children, *task.accumulating_children)
+                for contract in compiled[child.compatibility_digest].numerical_contracts
+            }
+        )
+    )
     storage = task.storage_contract
     manifest = build_manifest(
         artifact.storage_contract,
@@ -36,7 +45,10 @@ def compile_chunk_task(
             for root in storage.roots
         ),
         capture_ns=0,
-        toolchain={**toolchain(), "row_composition": artifact.compatibility_digest},
+        toolchain={
+            **toolchain(numerical_contracts),
+            "row_composition": artifact.compatibility_digest,
+        },
     )
     dependencies: list[dict[str, str]] = []
     children: dict[int, Any] = {}
@@ -87,4 +99,5 @@ def compile_chunk_task(
             "off_device_output_leaves": host_outputs,
         },
         tuple(unique.values()),
+        numerical_contracts=numerical_contracts,
     )

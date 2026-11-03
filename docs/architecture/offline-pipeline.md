@@ -72,6 +72,22 @@ avoids benchmarking indexing kernels on unrelated synthetic integer buffers
 during standalone compilation. Selected binaries are saved in the Program;
 measurement and execution do not select new kernels or depend on an earlier
 process's compiler cache.
+
+When building with PyTorch's `emulate_precision_casts=True`, compilation also
+preserves native CUDA BF16/FP16 `sigmoid_backward` scalar rounding for matching
+strided operands. The native kernel rounds the complement and first product;
+the ordinary AOT decomposition uses FP32 arithmetic inside the operation.
+ShadowSpill makes those rounds explicit before AOT decomposition so they can
+remain in one fused pointwise kernel. CPU, other dtypes, and builds with
+emulation disabled keep their existing compiler behavior. This does not change
+the selected chunk reduction or stored-gradient precision.
+
+The applied numerical contract is versioned in compilation/cache identity and
+recorded as `task_metadata[key]["numerical_contracts"]`. Chunked and composed
+tasks include their children's contracts. Changing the arithmetic requires a
+new finalized implementation and matching profiles; planning and cold execution
+use the saved implementation without rerunning this transformation.
+
 Paired finalization and measurement retain only resolved backward inputs while
 invoking backward; forward-only inputs and outputs are released first.
 Before preparing a different task, they release idle allocator cache so its

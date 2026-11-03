@@ -35,6 +35,8 @@ def compile_graph(
     inputs: Sequence[object],
     semantic_contract: TaskStorageContract,
     input_offsets: tuple[tuple[int, int], ...],
+    *,
+    numerical_contracts: tuple[str, ...] = (),
     **options: Any,
 ) -> tuple[Any, ExecutableTaskManifest | None, dict[str, Any] | None]:
     started = time.perf_counter_ns()
@@ -70,6 +72,7 @@ def compile_graph(
         executable.storage_contract,
         executable.root_allocations,
         capture_ns=capture_ns + time.perf_counter_ns() - started,
+        numerical_contracts=numerical_contracts,
     )
     _, outputs = _select_graph_outputs(lowering, graph, inner, semantic_contract)
     leaves = sorted(view.leaf_index for view in semantic_contract.output_views)

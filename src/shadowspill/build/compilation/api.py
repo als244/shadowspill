@@ -22,8 +22,9 @@ from shadowspill.task.storage import TaskStorageContract
 from ..kernel_names import portable_kernel_names
 from .inductor.compiler import compile_graph
 from .inductor.manifest import toolchain
+from .pointwise import native_pointwise_rounding
 
-_BUILD_VERSION = 7
+_BUILD_VERSION = 8
 
 
 @dataclass(frozen=True)
@@ -33,12 +34,14 @@ class BuiltTask:
     memory: dict[str, Any]
     dependencies: tuple[dict[str, str], ...] = ()
     input_offsets: tuple[tuple[int, int], ...] = ()
+    numerical_contracts: tuple[str, ...] = ()
 
 
 @dataclass
 class _TaskCompiler:
     contract: TaskStorageContract
     input_offsets: tuple[tuple[int, int], ...] = ()
+    numerical_contracts: tuple[str, ...] = ()
     # Part of AOT's compiler identity, so changed build facts invalidate its cache.
     version: int = _BUILD_VERSION
 
@@ -51,7 +54,12 @@ class _TaskCompiler:
             portable_kernel_names(),
         ):
             compiled, manifest, memory = compile_graph(
-                graph, inputs, self.contract, self.input_offsets, **options
+                graph,
+                inputs,
+                self.contract,
+                self.input_offsets,
+                numerical_contracts=self.numerical_contracts,
+                **options,
             )
         if manifest is not None:
             # AOT's cache retains these plain fields with the matching code.
@@ -61,6 +69,7 @@ class _TaskCompiler:
                 "manifest": manifest.to_dict(),
                 "memory": memory,
                 "input_offsets": self.input_offsets,
+                "numerical_contracts": self.numerical_contracts,
             }
         return compiled
 
@@ -69,6 +78,7 @@ def _package(
     compiled: Any,
     contract: TaskStorageContract,
     input_offsets: tuple[tuple[int, int], ...],
+    numerical_contracts: tuple[str, ...],
 ) -> BuiltTask | None:
     if not isinstance(compiled, AOTCompiledArtifact):
         return None
@@ -81,6 +91,8 @@ def _package(
         return None
     if metadata.get("input_offsets", ()) != input_offsets:
         return None  # A cached aligned task cannot serve rank-dependent views.
+    if metadata.get("numerical_contracts") != numerical_contracts:
+        return None
     if (
         metadata["manifest"]["semantic_contract_digest"]
         != contract.compatibility_digest
@@ -90,10 +102,16 @@ def _package(
         # contract; obtain fresh lowering evidence for this one.
         return None
     manifest = ExecutableTaskManifest.from_dict(
-        metadata["manifest"], semantic_contract=contract, toolchain=toolchain()
+        metadata["manifest"],
+        semantic_contract=contract,
+        toolchain=toolchain(numerical_contracts),
     )
     return BuiltTask(
-        manifest, compiled.serialize(), metadata["memory"], input_offsets=input_offsets
+        manifest,
+        compiled.serialize(),
+        metadata["memory"],
+        input_offsets=input_offsets,
+        numerical_contracts=numerical_contracts,
     )
 
 
@@ -110,19 +128,26 @@ def compile_task(
     mode = detect_fake_mode(inputs)
     if mode is not None and mode.shape_env is None:
         mode.shape_env = ShapeEnv()
+    graph, numerical_contracts = native_pointwise_rounding(
+        artifact.graph_module, emulate=bool(config.emulate_precision_casts)
+    )
 
     def invoke() -> BuiltTask | None:
         compiled = standalone_compile(
-            artifact.graph_module,
+            graph,
             inputs,
             dynamic_shapes="from_example_inputs",
             options={
-                "inner_compile": _TaskCompiler(artifact.storage_contract, input_offsets)
+                "inner_compile": _TaskCompiler(
+                    artifact.storage_contract, input_offsets, numerical_contracts
+                )
             },
             aot=True,
             fake_mode=mode,
         )
-        return _package(compiled, artifact.storage_contract, input_offsets)
+        return _package(
+            compiled, artifact.storage_contract, input_offsets, numerical_contracts
+        )
 
     with (
         torch.no_grad(),
@@ -150,5 +175,10 @@ def compile_task(
     if result is None:
         raise CompilationError("task build did not produce portable code and geometry")
     return BuiltTask(
-        result.manifest, result.payload, result.memory, dependencies, input_offsets
+        result.manifest,
+        result.payload,
+        result.memory,
+        dependencies,
+        input_offsets,
+        numerical_contracts,
     )
