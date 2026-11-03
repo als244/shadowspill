@@ -30,9 +30,11 @@ def gradient_templates(
         alias = objects.catalog.alias_id(binding.gradient_object_id)
         width = example.dtype.itemsize
         spill = item.spill_reduction
-        objects.catalog.pad_alias(
-            alias, max(reduction.padded_elements, spill.padded_elements) * width
-        )
+        # The producer owns the gradient-storage layout. Optimizer reduction
+        # padding belongs to its separate local buffer below; extending the
+        # producer would disagree with its compiled output when only optimizer
+        # state is sharded.
+        objects.catalog.pad_alias(alias, spill.padded_elements * width)
         if spill.phases and spill.phases[0].operation == "reduce_scatter":
             shards[alias] = {
                 "groups": spill.phases[0].groups,
