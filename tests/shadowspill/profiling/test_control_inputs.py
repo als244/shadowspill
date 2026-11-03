@@ -26,15 +26,16 @@ def test_long_control_sequence_survives_portable_metadata():
     torch.testing.assert_close(restored, positions, rtol=0, atol=0)
 
 
-def test_oversized_controls_still_require_explicit_values():
+def test_large_controls_preserve_authentic_values_in_portable_metadata():
     positions = torch.arange((1 << 20) // 8 + 1)
     source = _input_source(
         TaskInputProvenance(
             TaskInputRole.CONTROL, "positions", representative_value=positions
         )
     )
-    with pytest.raises(CaptureError, match="caller-supplied values"):
-        _initialize(torch.empty_like(positions), source)
+    restored = torch.empty_like(positions)
+    _initialize(restored, json.loads(json.dumps(source)))
+    torch.testing.assert_close(restored, positions, rtol=0, atol=0)
 
 
 def test_parameter_values_are_not_embedded_in_program():

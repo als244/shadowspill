@@ -19,6 +19,14 @@ from torch.fx.node import map_aggregate
 
 from shadowspill.errors import CaptureError
 
+from .pointwise import (
+    SavedOutput,
+    pointwise_precision_barrier,
+    restore_saved_outputs,
+    saved_outputs,
+)
+from .source import SourceOperation, set_source_operation, source_operation
+
 
 @dataclass(frozen=True, slots=True)
 class FxNodeReference:
@@ -39,13 +47,17 @@ class FxCallableTarget:
 
 @dataclass(frozen=True, slots=True)
 class FxNodeRecord:
-    """One metadata-free FX node and its aggregate arguments."""
+    """An FX node with explicit source provenance and aggregate arguments."""
 
     name: str
     op: str
     target: str | FxCallableTarget
     args: tuple[Any, ...]
     kwargs: dict[str, Any]
+    source_operation: SourceOperation | None = None
+    partitioner_tag: str | None = None
+    low_precision_pointwise_barrier: bool = False
+    saved_outputs: tuple[SavedOutput, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -77,7 +89,22 @@ class SerializedFxGraph:
             kwargs = map_aggregate(node.kwargs, _encode_argument_leaf)
             if not isinstance(args, tuple) or not isinstance(kwargs, dict):
                 raise CaptureError("FX node aggregate shape changed during capture")
-            records.append(FxNodeRecord(node.name, node.op, target, args, kwargs))
+            phase = node.meta.get("partitioner_tag")
+            if phase is not None and not isinstance(phase, str):
+                raise CaptureError("FX partitioner tag must be a string")
+            records.append(
+                FxNodeRecord(
+                    node.name,
+                    node.op,
+                    target,
+                    args,
+                    kwargs,
+                    source_operation(node),
+                    phase,
+                    pointwise_precision_barrier(node),
+                    saved_outputs(node),
+                )
+            )
         return cls(tuple(records))
 
     def restore(self) -> GraphModule:
@@ -112,6 +139,13 @@ class SerializedFxGraph:
                 kwargs,
                 name=record.name,
             )
+            if record.source_operation is not None:
+                set_source_operation(node, record.source_operation)
+            if record.partitioner_tag is not None:
+                node.meta["partitioner_tag"] = record.partitioner_tag
+            if record.low_precision_pointwise_barrier:
+                node.meta["low_precision_pointwise_barrier"] = True
+            restore_saved_outputs(node, record.saved_outputs)
             nodes[record.name] = node
         try:
             graph.lint()

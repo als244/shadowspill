@@ -8,7 +8,8 @@ from torch import nn
 
 from shadowspill.artifacts.program import Program
 from shadowspill.parallelism import Parallelism
-from shadowspill.pytorch.capture.retention import RetentionPolicy
+from shadowspill.pytorch.chunking import ChunkPolicy, ChunkRegions
+from shadowspill.pytorch.graph_pairs.policy import GraphPairPolicy
 from shadowspill.pytorch.partition import PartitionSpec
 from shadowspill.resources import Resource
 
@@ -26,7 +27,8 @@ def build_step(
     example_calls: Sequence[tuple[Sequence[Any], Mapping[str, Any]]] | None = None,
     fuse_narrow_gradient_accumulation: bool = True,
     partition: PartitionSpec = "auto",
-    operator_recompute: RetentionPolicy | None = None,
+    chunking: ChunkPolicy | ChunkRegions | None = None,
+    graph_pair_policy: GraphPairPolicy | None = None,
     grad_dtype: torch.dtype | None = None,
     master_dtype: torch.dtype | None = None,
     parallelism: Parallelism | None = None,
@@ -49,6 +51,11 @@ def build_step(
     ``example_args``/``example_kwargs`` plus ``num_examples`` describe repeated
     geometry. Optional ``example_calls=[(args, kwargs), ...]`` describes distinct
     geometries instead; planning still chooses their execution order.
+    ``graph_pair_policy`` defines independent saved-state cuts for the ``save``
+    and ``recompute`` graphs; ``None`` selects ``GraphPairPolicy()``. ``chunking``
+    may restrict allowed stage variants; planning selects among measured
+    alternatives and chooses residency. A different policy requires building
+    and profiling its resulting implementations before planning.
     """
     return _build_training(
         model,
@@ -60,7 +67,8 @@ def build_step(
         example_calls=example_calls,
         fuse_narrow_gradient_accumulation=fuse_narrow_gradient_accumulation,
         partition=partition,
-        operator_recompute=operator_recompute,
+        chunking=chunking,
+        graph_pair_policy=graph_pair_policy,
         grad_dtype=grad_dtype,
         master_dtype=master_dtype,
         parallelism=parallelism,

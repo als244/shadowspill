@@ -3,10 +3,10 @@
 AOTAutograd traces a stage into one joint graph and then splits it: the
 values the backward is handed are the forward's saved outputs, and the rest
 of what the backward needs it computes again. Where that split falls is the
-difference between the two variants a stage offers. The ``recompute``
-variant retains only the stage's inputs. The ``save`` variant retains what
-would be expensive to rebuild and regenerates the rest, and this module is
-the rule that says which is which.
+difference between the variants a stage offers. Each variant has its own
+policy: retain backward-required state, regenerate selected results, or use
+cost to choose between them. A recompute policy can add retained results to
+its checkpoint inputs without changing the save policy.
 
 The rule is arithmetic intensity. Below a device's ridge point an operator's
 runtime is set by the bytes it moves, not by its flops, so regenerating its
@@ -38,10 +38,11 @@ from __future__ import annotations
 import hashlib
 import json
 import math
+import operator
 from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass, field
 from enum import StrEnum
-from typing import Any
+from typing import Any, Literal
 
 import torch
 from torch._functorch import config as functorch_config
@@ -86,10 +87,40 @@ class OperatorClass(StrEnum):
 
 
 @dataclass(frozen=True, slots=True)
+class RetentionRule:
+    """Override one exact operator overload in a variant's saved-state cut.
+
+    ``retain`` saves backward-required results. ``recompute`` regenerates them
+    if needed. Contradictory model checkpoint annotations are refused.
+    """
+
+    target: str
+    action: Literal["retain", "recompute"]
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.target, str) or not self.target.strip():
+            raise ValueError("retention rule target must be a nonempty operator name")
+        if self.action not in ("retain", "recompute"):
+            raise ValueError("retention rule action must be retain or recompute")
+
+
+@dataclass(frozen=True, slots=True)
 class RetentionPolicy:
-    """What the ``save`` variant may regenerate: everything memory-bound."""
+    """Choose which forward values one graph pair retains for backward.
+
+    Memory-bound results may be regenerated when the cut saves storage;
+    compute-bound and unknown results are marked for retention. Model-authored
+    checkpoint annotations take precedence over the default. Explicit rules
+    override classification; contradictory model annotations are refused.
+    ``default="retain"`` retains backward-required results; ``"recompute"``
+    regenerates them from inputs. ``"cost"`` permits memory-bound replay.
+    Explicit rules override the default. Selective cuts retain RNG/effect state;
+    explicit replay of those operations is refused. Retention never requests residency.
+    """
 
     memory_bound_flops_per_byte: float = MEMORY_BOUND_FLOPS_PER_BYTE
+    rules: tuple[RetentionRule, ...] = ()
+    default: Literal["cost", "retain", "recompute"] = "cost"
 
     def __post_init__(self) -> None:
         value = self.memory_bound_flops_per_byte
@@ -100,13 +131,45 @@ class RetentionPolicy:
                 "memory_bound_flops_per_byte must be finite and non-negative"
             )
         object.__setattr__(self, "memory_bound_flops_per_byte", float(value))
+        if self.default not in ("cost", "retain", "recompute"):
+            raise ValueError("retention default must be cost, retain or recompute")
+        if not isinstance(self.rules, tuple) or any(
+            not isinstance(rule, RetentionRule) for rule in self.rules
+        ):
+            raise TypeError("rules must be a tuple of RetentionRule values")
+        targets = [rule.target for rule in self.rules]
+        if len(set(targets)) != len(targets):
+            raise ValueError("retention rules must name each operator at most once")
 
     def identity(self) -> dict[str, object]:
-        return {"memory_bound_flops_per_byte": self.memory_bound_flops_per_byte}
+        result: dict[str, object] = {
+            "memory_bound_flops_per_byte": self.memory_bound_flops_per_byte
+        }
+        if self.rules:
+            result["rules"] = [
+                {"target": rule.target, "action": rule.action}
+                for rule in sorted(self.rules, key=lambda rule: rule.target)
+            ]
+        if self.default != "cost":
+            result["default"] = self.default
+        return result
 
     def classify(self, node: torch.fx.Node) -> OperatorClass | None:
         """Classify one traced operator, or ``None`` for a node that is not one."""
 
+        if node.op != "call_function":
+            return None
+        for rule in self.rules:
+            if str(node.target) == rule.target:
+                return (
+                    OperatorClass.COMPUTE_BOUND
+                    if rule.action == "retain"
+                    else OperatorClass.MEMORY_BOUND
+                )
+        if self.default == "recompute":
+            return OperatorClass.MEMORY_BOUND
+        if self.default == "retain":
+            return OperatorClass.COMPUTE_BOUND
         return _classify(node, self.memory_bound_flops_per_byte)
 
     def operator_classes(self, graph_module: torch.fx.GraphModule) -> dict[str, str]:
@@ -182,11 +245,11 @@ def partition_function(
     construction would silently observe the ambient Functorch configuration
     instead.
 
-    Budget ``1.0`` is the ``save`` variant: min-cut over saved bytes with
-    compute-bound and unknown operators marked as values to save and every
-    memory-bound one free to regenerate. Budget ``0.0`` is ``recompute``,
-    which retains the inputs alone and reads no mark. A budget between the
-    two is PyTorch's knapsack over the same marks.
+    The endpoint budget selects the base cut. Explicit policies apply to
+    either endpoint. PyTorch's zero-budget fast path ignores save marks, so
+    a recompute policy with retained additions uses its constrained min-cut
+    instead: unselected values are marked for replay and selected results
+    for retention. Intermediate budgets use PyTorch's knapsack.
     """
 
     def partition(
@@ -194,15 +257,29 @@ def partition_function(
         joint_inputs: object,
         **kwargs: Any,
     ) -> tuple[torch.fx.GraphModule, torch.fx.GraphModule]:
-        marked, unknown = _mark_retained(joint_module, policy)
-        with functorch_config.patch(
-            activation_memory_budget=memory_budget, **_LIFTED_BANS
+        budget = memory_budget
+        annotated_save = any(
+            node.meta.get("recompute")
+            in (CheckpointPolicy.MUST_SAVE, CheckpointPolicy.PREFER_SAVE)
+            for node in joint_module.graph.nodes
+        )
+        if budget == 0 and (
+            policy.default != "recompute" or policy.rules or annotated_save
         ):
+            budget = 1.0
+        # The inputs-only fast path reads no save marks. Replay annotations
+        # would also enable PyTorch's separate RNG functionalization path,
+        # changing a cut that needs no operator annotations at all.
+        marked, unknown = _mark_retained(joint_module, policy) if budget else ((), ())
+        with functorch_config.patch(activation_memory_budget=budget, **_LIFTED_BANS):
             forward, backward = min_cut_rematerialization_partition(
                 joint_module, joint_inputs, **kwargs
             )
         join_recomputed_effects(
             forward, backward, num_fwd_outputs=kwargs["num_fwd_outputs"]
+        )
+        _validate_rules(
+            joint_module, forward, backward, policy, kwargs["num_fwd_outputs"]
         )
         regenerated = _regenerated_operators(backward)
         _strip_marks(marked, joint_module, forward, backward)
@@ -219,21 +296,60 @@ def partition_function(
 def _mark_retained(
     joint_module: torch.fx.GraphModule, policy: RetentionPolicy
 ) -> tuple[tuple[str, ...], tuple[str, ...]]:
-    """Mark every compute-bound or unknown forward operator as a value to save.
-
-    Returns the marked nodes' names and the unknown operators. A node that
-    already carries a checkpoint policy keeps it: that is the model's own
-    say, and this rule fills in only where nothing was said.
-    """
+    """Apply explicit rules, then model annotations, then the default policy."""
 
     marked: list[str] = []
     unknown: set[str] = set()
+    actions = _rule_actions(joint_module, policy)
+    required = _operator_actions(
+        joint_module,
+        {
+            str(node.target): "retain"
+            for node in joint_module.graph.nodes
+            if node.target is torch.ops.higher_order.with_effects
+            or torch.Tag.nondeterministic_seeded in getattr(node.target, "tags", ())
+        },
+    )
+    for name in required:
+        if actions.get(name) == "recompute":
+            raise CaptureError(
+                f"retention rule requests replay of RNG/effect state at {name}; "
+                "retain its results or expose replayable state "
+                "as explicit tensor inputs"
+            )
+        actions[name] = "retain"
     for node in joint_module.graph.nodes:
         if node.op != "call_function":
             continue
         if node.meta.get("partitioner_tag") == "is_backward":
             continue
-        if "recompute" in node.meta:
+        action = actions.get(node.name)
+        existing = node.meta.get("recompute")
+        if existing is not None:
+            conflict = (
+                action == "retain"
+                and existing
+                in (CheckpointPolicy.MUST_RECOMPUTE, CheckpointPolicy.PREFER_RECOMPUTE)
+            ) or (
+                action == "recompute"
+                and existing
+                in (CheckpointPolicy.MUST_SAVE, CheckpointPolicy.PREFER_SAVE)
+            )
+            if conflict:
+                raise CaptureError(
+                    f"retention rule {action} for {node.target} conflicts with "
+                    "the model checkpoint annotation; use one consistent policy"
+                )
+            continue
+        if action is None and policy.default in ("retain", "recompute"):
+            action = policy.default
+        if action is not None:
+            node.meta["recompute"] = (
+                CheckpointPolicy.MUST_SAVE
+                if action == "retain"
+                else CheckpointPolicy.MUST_RECOMPUTE
+            )
+            marked.append(node.name)
             continue
         operator_class = policy.classify(node)
         if operator_class is OperatorClass.UNKNOWN:
@@ -242,6 +358,76 @@ def _mark_retained(
             node.meta["recompute"] = CheckpointPolicy.MUST_SAVE
             marked.append(node.name)
     return tuple(marked), tuple(sorted(unknown))
+
+
+def _rule_actions(
+    module: torch.fx.GraphModule, policy: RetentionPolicy
+) -> dict[str, str]:
+    return _operator_actions(
+        module, {rule.target: rule.action for rule in policy.rules}
+    )
+
+
+def _operator_actions(
+    module: torch.fx.GraphModule, targets: Mapping[str, str]
+) -> dict[str, str]:
+    result: dict[str, str] = {}
+    if not targets:
+        return result
+    for node in module.graph.nodes:
+        if (
+            node.op != "call_function"
+            or node.meta.get("partitioner_tag") == "is_backward"
+        ):
+            continue
+        action = targets.get(str(node.target))
+        if action is None:
+            continue
+        pending = [node]
+        while pending:
+            value = pending.pop()
+            if value.name in result:
+                if result[value.name] != action:
+                    raise CaptureError("retention rules conflict on tuple extraction")
+                continue
+            result[value.name] = action
+            if isinstance(value.meta.get("val"), (tuple, list)):
+                pending.extend(
+                    user for user in value.users if user.target is operator.getitem
+                )
+    return result
+
+
+def _validate_rules(
+    joint: torch.fx.GraphModule,
+    forward: torch.fx.GraphModule,
+    backward: torch.fx.GraphModule,
+    policy: RetentionPolicy,
+    num_fwd_outputs: int,
+) -> None:
+    if not policy.rules:
+        return
+    actions = _rule_actions(joint, policy)
+    replayed = {
+        node.name
+        for node in backward.graph.nodes
+        if node.op == "call_function"
+        and node.meta.get("partitioner_tag") == "is_forward"
+    }
+    output = next(node for node in forward.graph.nodes if node.op == "output")
+    leaves = tree_flatten(output.args[0])[0][num_fwd_outputs:]
+    saved = {node.name for node in leaves if isinstance(node, torch.fx.Node)}
+    conflicts = sorted(
+        name
+        for name, action in actions.items()
+        if (action == "retain" and name in replayed)
+        or (action == "recompute" and name in saved)
+    )
+    if conflicts:
+        raise CaptureError(
+            f"captured saved cut cannot satisfy retention rules for {conflicts}; "
+            "select materializing operators and preserve required effect/mutation state"
+        )
 
 
 def _strip_marks(
@@ -345,6 +531,7 @@ __all__ = [
     "OperatorClass",
     "RetentionPolicy",
     "RetentionRecord",
+    "RetentionRule",
     "RetentionSummary",
     "partition_function",
 ]

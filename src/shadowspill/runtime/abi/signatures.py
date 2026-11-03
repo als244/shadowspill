@@ -58,6 +58,11 @@ def configure_adapter_library(library: Any) -> None:
 #: a plain integer.
 _RUNTIME_SIGNATURES: tuple[tuple[str, Sequence[object], object], ...] = (
     ("shadowspill_failure_reason_string", [ctypes.c_uint32], ctypes.c_char_p),
+    (
+        "shadowspill_runtime_reserve_retirement_records",
+        [ctypes.c_size_t, ctypes.c_uint64],
+        ctypes.c_uint32,
+    ),
     ("shadowspill_plan_close", [ctypes.c_size_t], ctypes.c_uint32),
     ("shadowspill_plan_destroy", [ctypes.c_size_t], None),
     ("shadowspill_plan_wait_idle", [ctypes.c_size_t], ctypes.c_uint32),

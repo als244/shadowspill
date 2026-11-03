@@ -25,7 +25,7 @@ contracts.
 | Stage occurrence | One ordered partition in one captured input geometry or accumulation round. |
 | Structural contract | The deterministic graph/input/storage identity shared by equivalent stage occurrences. |
 | Graph pair | One mutually compatible AOTAutograd forward graph and backward graph. |
-| Variant | A named graph pair produced under one partition budget, such as `save` or `recompute`. |
+| Variant | A named graph pair produced under its retention policy, such as `save` or `recompute`. |
 | Task graph pairs | Every configured legal variant for one structural contract. |
 | Graph-pair group | The occurrence-level program choice whose options activate one variant's forward and backward tasks. |
 
@@ -47,7 +47,7 @@ Construction consumes:
 - the flattened stage output produced by the representative example;
 - the differentiable output positions that seed the vector-Jacobian product;
 - whether terminal unit cotangents may be specialized away;
-- the retention policy that says what the `save` variant regenerates;
+- the independent retention policies for `save` and `recompute`;
 - the builder that defines the variant set.
 
 It returns an immutable `TaskGraphPairs`:
@@ -159,15 +159,18 @@ Before AOT capture, ShadowSpill computes the stage structural contract from:
 
 ```text
 (structural_contract, differentiable_root_positions, specialize_unit_tangents,
- retention_digest, gradient_roots_policy, variants)
+ retention_digest, gradient_roots_policy, variants, emulate_precision_casts)
 ```
 
 `gradient_roots_policy` names the root rule [above](#differentiation-roots),
 outputs connected to the objective, and `variants` the variants the entry
 holds, so an entry holding one endpoint never answers a request for both.
+`emulate_precision_casts` fixes the low-precision pointwise rounding barriers
+recorded during differentiation. Changing this capture setting requires a
+different entry even when the exported source graph is unchanged.
 
-`retention_digest` is the retention policy together with the class it gives
-every custom operator in the stage ([below](#save)). PyTorch's own operators
+`retention_digest` combines both variant policies with the classes each gives
+the stage's custom operators ([below](#save)). PyTorch's own operators
 class the same way under one PyTorch build, which the structural contract
 already names; a custom operator's class moves when its library registers or
 corrects a flop formula, and the digest moves with it, so a policy changed by
@@ -179,6 +182,27 @@ The first occurrence constructs or restores them. Equivalent later
 occurrences reuse its graph code and contracts while rebinding authentic
 occurrence-local inputs and input provenance. This makes graph construction
 scale with unique structural contracts rather than model positions.
+
+Source-operation provenance follows the same separation. Capture tags each
+source operation by its order, operation kind and target, then preserves those
+tags through differentiation. Argument and output placeholders do not take
+source indices, so specializing a static argument cannot shift them. Generated
+work with no source tag has no inferred module path.
+
+Before an occurrence's execution policy runs, the tags resolve against that
+occurrence's source graph. Its module paths live on a separate graph copy;
+rebinding cannot change another occurrence's policy inputs. Paths do not enter
+code identity, so equal resolved child contracts still share compilation.
+The graph-pair store records a `metadata_policy` of `source_precision` in its
+persistent key and manifest. Its explicit node records preserve source tags,
+partitioner phase tags, low-precision rounding barriers and saved-output precision
+descriptors without serializing arbitrary frontend metadata or live tensor values.
+The precision annotations participate in graph compatibility because they change
+compiled arithmetic; source names and phase labels do not. See the
+[artifact fields](../python/api/artifacts.md#aot-graph-pair-cache).
+Capture aligns output descriptors after effect tokens are moved inside the task;
+saved-value positions refer to the resulting explicit output signature. The
+ordered effect chain remains in the graph.
 
 ## Constructing one variant
 
@@ -193,7 +217,7 @@ it](graph-pair-selection.md). The variants built are part of an entry's key in
 the store.
 
 Both variants come from PyTorch's min-cut rematerialization partitioner over
-the joint graph, at the two endpoints of its activation-memory budget. Values
+the joint graph, with independent policies derived from its two base cuts. Values
 the backward is handed are returned by the forward graph and become inputs to
 its paired backward graph; the rest of what the backward needs it computes
 again. The budget, and the partitioner options the `save` variant sets, are
@@ -207,6 +231,15 @@ for the backward what would be expensive to regenerate and regenerates the
 rest. It is the reference variant used to establish the canonical public
 stage-boundary contract.
 
+The builder's [graph-pair policy](../python/api/frontend.md#graph-pair-policies)
+controls both cuts independently. Its `save` policy defaults to the cost
+classification below, allowing removals from backward-required forward state.
+A retain default disables cost-based removals. Explicit rules can retain
+selected results or require replay, including required auxiliary outputs of
+tuple-valued operations. Model annotations and mandatory effect or mutation
+state constrain the cut; conflicting explicit rules are refused. Permitted
+stage variants remain a separate build control.
+
 What is expensive is decided by arithmetic intensity, in
 `shadowspill.pytorch.capture.retention`. Below a device's ridge point an
 operator's runtime is set by the bytes it moves rather than by its flops, so
@@ -215,11 +248,10 @@ does: a normalization, an activation, a rotation, a cast, a gather. Above the
 ridge the cost per regenerated byte grows with the flops without bound: a
 matrix product, an attention, a convolution. Every forward operator is
 classed as one or the other by its flops per byte moved against a threshold,
-`memory_bound_flops_per_byte`, which the builders' `operator_recompute` policy
-sets and whose default sits well under any ridge point in use, so the
+`memory_bound_flops_per_byte`, which each `RetentionPolicy` sets and whose default sits well under any ridge point in use, so the
 classification does not depend on the machine and a poor kernel near the
-boundary still costs about one pass. The threshold is part of the step's
-identity in the store.
+boundary still costs about one pass. The threshold, default and rules are part
+of the policy identity in the store.
 
 Flops come from PyTorch's flop counter, which knows every ATen matrix product,
 convolution and attention and any custom operator whose library registered a
@@ -248,14 +280,26 @@ and is kept for nothing else.
 
 ### Recompute
 
-The `recompute` variant is budget `0.0`, the full-recompute endpoint: it
-retains the stage's inputs alone, and the backward computes everything else
-again. It reads no mark.
+The `recompute` base cut, labeled `memory_budget=0.0`, retains the stage's
+inputs and regenerates intermediate results. Its independent policy can add
+retained operator results. For example, preserving a sequence operator's
+backward-required outputs can avoid replaying that operator while its input
+projections still regenerate. This choice does not change the `save` policy.
 
-A budget strictly between zero and one is PyTorch's knapsack between the two
-endpoints over the same marks, and a legal variant the representation already
-carries, so adding one changes what the builder emits and nothing downstream
-of it.
+PyTorch's zero-budget fast path ignores save annotations. When retained
+additions or model save annotations apply, construction uses a constrained
+min-cut instead: selected operations are marked for retention, unselected
+operations for replay. It validates the resulting cut against explicit rules.
+Selective cuts keep RNG-tagged and ordered-effect outputs instead of annotating
+them for implicit replay; explicit conflicting rules are refused. The inputs-only
+fast path needs no added replay annotations. This preserves the partitioner's
+handling of auxiliary outputs and backward dependencies. The endpoint label remains zero; actual tensors and
+profiles, not that label, determine memory use and admission.
+
+Search can compare two Programs with the same save policy and different
+recompute policies. Each Program exposes its own measured variants to
+PressureFit; candidate search chooses the fastest admitted Plan. No assumption
+about which policy retains more bytes is needed by planning.
 
 ### Captured pair contract
 
@@ -356,20 +400,20 @@ ConstructGraphPairs(partitioned_export):
         roots = differentiable_stage_roots(occurrence)
         terminal = occurrence is final stage
         key = structural_contract(occurrence, roots, terminal,
-                                  retention.digest(occurrence.graph))
+                                  graph_pair_policy.digest(occurrence.graph))
 
         graph_pairs = repository.lookup(key)
         if graph_pairs is absent:
             variants = []
-            for budget in (1.0, 0.0):
+            for name, budget in (("save", 1.0), ("recompute", 0.0)):
                 pair = AOTAutograd(
                     occurrence.graph,
                     roots,
-                    partition=min_cut(budget, marks=retention),
+                    partition=policy_cut(budget, graph_pair_policy.variant(name)),
                 )
                 validate_public_boundary(pair)
                 classify_saved_storage_roots(pair)
-                variants.append(named_variant(budget, pair))
+                variants.append(named_variant(name, budget, pair))
             graph_pairs = TaskGraphPairs(key, roots, variants)
             repository.store(graph_pairs)
         else:

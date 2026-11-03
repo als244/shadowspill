@@ -20,9 +20,22 @@ if TYPE_CHECKING:
         RuntimeFailureDiagnostics as RuntimeFailureDiagnostics,
     )
 
+    from .capture.retention import OperatorClass as OperatorClass
+    from .capture.retention import RetentionPolicy as RetentionPolicy
+    from .capture.retention import RetentionRule as RetentionRule
+    from .chunking import AxisChunks as AxisChunks
+    from .chunking import AxisFrom as AxisFrom
+    from .chunking import ChunkAxis as ChunkAxis
+    from .chunking import ChunkLocal as ChunkLocal
+    from .chunking import ChunkPolicy as ChunkPolicy
+    from .chunking import ChunkRegions as ChunkRegions
+    from .chunking import OperatorRule as OperatorRule
+    from .chunking import StageInfo as StageInfo
     from .contracts import ObjectiveResult as ObjectiveResult
     from .contracts import TensorSpec as TensorSpec
+    from .graph_pairs.policy import GraphPairPolicy as GraphPairPolicy
     from .invocation import InvocationResult as InvocationResult
+    from .partition import IsolateOperations as IsolateOperations
     from .partition import PartitionPolicy as PartitionPolicy
     from .partition import PartitionSpec as PartitionSpec
     from .runtime import Runtime as Runtime
@@ -38,9 +51,21 @@ _GROUPS = {
         "RuntimeExecutionError",
         "RuntimeFailureDiagnostics",
     ),
+    ".capture.retention": ("OperatorClass", "RetentionPolicy", "RetentionRule"),
+    ".graph_pairs.policy": ("GraphPairPolicy",),
+    ".chunking": (
+        "ChunkLocal",
+        "ChunkPolicy",
+        "ChunkRegions",
+        "OperatorRule",
+        "ChunkAxis",
+        "AxisChunks",
+        "AxisFrom",
+        "StageInfo",
+    ),
     ".contracts": ("ObjectiveResult", "TensorSpec"),
     ".invocation": ("InvocationResult",),
-    ".partition": ("PartitionPolicy", "PartitionSpec"),
+    ".partition": ("IsolateOperations", "PartitionPolicy", "PartitionSpec"),
     ".runtime": ("Runtime",),
 }
 _PUBLIC = {name: module for module, names in _GROUPS.items() for name in names}

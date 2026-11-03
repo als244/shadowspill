@@ -6,10 +6,10 @@ from collections.abc import Sequence
 
 from shadowspill.pytorch.capture.aot import capture_graph_pair
 from shadowspill.pytorch.capture.artifacts import GraphArtifact
-from shadowspill.pytorch.capture.retention import RetentionPolicy
 
 from ..partition.artifacts import StageExample
 from .artifacts import GraphPairVariant, TaskGraphPairs
+from .policy import GraphPairPolicy
 
 #: The two endpoints of the partition budget, in the order they are built.
 GRAPH_PAIR_VARIANTS: tuple[str, ...] = ("save", "recompute")
@@ -55,21 +55,15 @@ def build_default_graph_pairs(
     roots: tuple[int, ...],
     *,
     specialize_unit_tangents: bool,
-    retention: RetentionPolicy,
+    graph_pair_policy: GraphPairPolicy,
     variants: Sequence[str] = GRAPH_PAIR_VARIANTS,
 ) -> TaskGraphPairs:
-    """Capture the two endpoints of the partition budget.
+    """Capture independent saved-state cuts for the two named endpoints.
 
-    ``save`` is budget ``1.0``: the min-cut over saved bytes under
-    ``retention``, which regenerates every memory-bound value and retains the
-    rest. ``recompute`` is budget ``0.0``, which retains the stage's inputs
-    alone. Both budgets are bound inside the lazy partition callback so
-    ambient Functorch configuration cannot alter a structural contract.
-
-    The returned record and every downstream consumer support an arbitrary
-    ordered number of variants, so a budget between the two is a variant this
-    builder could emit without changing partitioning, caching, lowering,
-    diagnostics or the canonical ShadowSpillProgram representation.
+    ``graph_pair_policy.save`` controls the save cut; ``.recompute`` controls
+    the recompute cut, including retained additions. The numeric budgets label
+    the base endpoints, not actual saved bytes. Both policies are bound inside
+    the lazy partition callback, so ambient configuration cannot change them.
 
     ``variants`` names the endpoints to capture. A request whose search can
     select only one of them asks for that one alone: nothing is captured,
@@ -93,7 +87,7 @@ def build_default_graph_pairs(
                 stage.graph_module,
                 example.inputs,
                 memory_budget=_MEMORY_BUDGETS[option_id],
-                retention=retention,
+                retention=graph_pair_policy.variant(option_id),
                 original_output=example.output,
                 root_output_positions=roots,
                 specialize_unit_tangents=specialize_unit_tangents,

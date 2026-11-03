@@ -1,0 +1,218 @@
+"""Explicit row contracts for the supplied deterministic text operators.
+
+These are provider contracts, independent of a model family. Unknown operators
+remain errors in selected regions. Sequence mixers retain their complete inputs.
+"""
+
+from dataclasses import dataclass
+
+from shadowspill.pytorch.chunking import (
+    AxisChunks,
+    AxisFrom,
+    ChunkAxis,
+    ChunkLocal,
+    OperatorRule,
+)
+from shadowspill.pytorch.partition import IsolateOperations
+from shadowspill.task.inputs import TaskInputRole
+
+
+def operator_rules(batch_size=1):
+    same = AxisFrom(0)
+    flat = ChunkAxis(0, before=batch_size)
+    local = ChunkLocal(0)
+    specs = {
+        "rms_norm_builtin_triton_fwd": ((same, AxisFrom(0, 1)), ()),
+        "rms_norm_builtin_triton_bwd": ((same, None), (1,)),
+        "swiglu_builtin_triton_fwd": ((same,), ()),
+        "swiglu_builtin_triton_bwd": ((same, same), ()),
+        "packed_swiglu_builtin_triton_fwd": ((flat,), ()),
+        "packed_swiglu_builtin_triton_bwd": ((flat,), ()),
+        "partial_rope_builtin_triton_fwd": ((same,), ()),
+        "partial_rope_builtin_triton_bwd": ((same,), ()),
+        "rope_builtin_triton_table_fwd": ((same,), ()),
+        "rope_builtin_triton_table_bwd": ((same,), ()),
+        "rope_builtin_triton_analytic_fwd": ((same,), ()),
+        "rope_builtin_triton_analytic_bwd": ((same,), ()),
+        "l2_norm_fla_fwd": ((same, AxisFrom(0, 1)), ()),
+        "l2_norm_fla_bwd": ((same,), ()),
+        "gated_rms_norm_fla_fwd": ((same, AxisFrom(0, 1)), ()),
+        "gated_rms_norm_fla_bwd": ((same, same, None), (2,)),
+        "mhc_mix_four": ((flat,), ()),
+        "mhc_post_four": ((flat,), ()),
+        "mhc_post_four_input_grads": ((flat, flat), ()),
+        "mhc_post_four_coefficient_grads": ((flat, flat), ()),
+        "lora_router_logits": ((flat,), ()),
+        "lora_router_logits_bwd": ((flat, None), (1,)),
+        "lora_route": ((flat, flat), ()),
+        "lora_route_bwd": ((flat,), ()),
+        # Prefix counts add across chunks; sort/slot indices stay chunk-local.
+        "lora_assignment_layout": ((local, None, local), (1,)),
+        "lora_dispatch": ((local,), ()),
+        "lora_dispatch_bwd": ((flat,), ()),
+        "lora_grouped_linear_fwd": ((local,), ()),
+        "lora_grouped_linear_bwd": ((local, None), (1,)),
+        "lora_combine": ((flat,), ()),
+        "lora_combine_bwd": ((local, flat), ()),
+    }
+    return tuple(
+        OperatorRule(f"mlops.{name}.default", "1", axes, reductions)
+        for name, (axes, reductions) in specs.items()
+    )
+
+
+_LINEAR_ATTENTION = "mlops.linear_attention_fla_gated_delta_rule_fwd.default"
+
+
+def linear_attention_head_chunks(stage, chunk_size, variants):
+    """Keep all tokens while slicing matched key/value head groups.
+
+    This provider accepts packed T,H,D inputs and per-value-head gate state.
+    Its sequence metadata stays shared. The shape checks refuse other layouts
+    rather than treating an arbitrary attention stage as head independent.
+    """
+    matrices = {
+        i: value
+        for i, (value, role) in enumerate(
+            zip(stage.inputs, stage.input_roles, strict=True)
+        )
+        if value is not None
+        and role is not TaskInputRole.CONTROL
+        and len(value.shape) == 3
+    }
+    if len(matrices) != 3:
+        raise ValueError("linear-attention head chunks require three T,H,D inputs")
+    tokens = {value.shape[0] for value in matrices.values()}
+    heads = [value.shape[1] for value in matrices.values()]
+    key_heads, value_heads = min(heads), max(heads)
+    if len(tokens) != 1 or sorted(heads) != [key_heads, key_heads, value_heads]:
+        raise ValueError("linear-attention inputs must align tokens and head groups")
+    if key_heads <= 0 or value_heads % key_heads:
+        raise ValueError("value heads must be a positive multiple of key heads")
+    ratio = value_heads // key_heads
+    token_count = tokens.pop()
+    axes = {}
+    for i, (value, role) in enumerate(
+        zip(stage.inputs, stage.input_roles, strict=True)
+    ):
+        if value is None or role is TaskInputRole.CONTROL:
+            continue
+        if i in matrices:
+            axes[i] = ChunkAxis(1, after=value.shape[1] // key_heads)
+        elif value.shape == (token_count, value_heads):
+            axes[i] = ChunkAxis(1, after=ratio)
+        elif value.shape == (value_heads,):
+            axes[i] = ChunkAxis(0, after=ratio)
+        else:
+            raise ValueError(
+                f"unclassified linear-attention head input {i}: {value.shape}"
+            )
+    rules = (
+        OperatorRule(
+            _LINEAR_ATTENTION,
+            "head-groups-1",
+            (AxisFrom(2), ChunkAxis(2, after=ratio), ChunkAxis(2, after=ratio)),
+        ),
+        OperatorRule(
+            "mlops.linear_attention_fla_gated_delta_rule_bwd.default",
+            "head-groups-1",
+            tuple(AxisFrom(i) for i in range(1, 8)),
+        ),
+    )
+    return AxisChunks(chunk_size, axes, variants, rules)
+
+
+def is_barrier(target):
+    # Stacking per-stage statistics combines complete row reductions with
+    # earlier stages' summaries. Keep that aggregation outside a row region.
+    return target == "aten.stack.default" or any(
+        marker in target
+        for marker in (
+            "flash_attention",
+            "scaled_dot_product",
+            "linear_attention",
+            "kimi_delta_attention",
+            "causal_conv",
+            "head_loss",
+            "sparse_latent_attention",
+            "sparse_latent_rope",
+            "dsa_attention",
+            "pooled_topk",
+            # These providers embed complete-sequence lengths and nonlinear
+            # auxiliary statistics. Output-axis rules alone cannot resize that
+            # contract. Their explicit LoRA dispatch path has separate rules.
+            "moe_builtin_grouped_gemm",
+            "moe_sonicmoe",
+        )
+    )
+
+
+@dataclass(frozen=True)
+class SequenceBoundaries:
+    """Isolate selected sequence operations inside the ordinary module stages."""
+
+    def assign_stages(self, graph_module, module):
+        targets = tuple(
+            str(n.target) for n in graph_module.graph.nodes if is_barrier(str(n.target))
+        )
+        return IsolateOperations(targets).assign_stages(graph_module, module)
+
+
+@dataclass(frozen=True)
+class TextAxisChunks:
+    """Explicit fixed-window row selection, including flattened batch/sequence axes."""
+
+    sequence_length: int
+    batch_size: int
+    chunk_size: int
+    variants: tuple[str, ...] = ("recompute",)
+    linear_attention_head_chunk_size: int | None = None
+
+    def configure_stage(self, stage):
+        if stage.terminal:
+            return None
+        if (
+            self.linear_attention_head_chunk_size is not None
+            and _LINEAR_ATTENTION in stage.operators
+        ):
+            return linear_attention_head_chunks(
+                stage, self.linear_attention_head_chunk_size, self.variants
+            )
+        if any(is_barrier(target) for target in stage.operators):
+            return None
+        # Control derivation and embedding stay in the model prologue.
+        if any(
+            "embedding" in target or "packed_sequence" in target
+            for target in stage.operators
+        ):
+            return None
+        axes = {}
+        for i, (value, role) in enumerate(
+            zip(stage.inputs, stage.input_roles, strict=True)
+        ):
+            if value is None or role in {TaskInputRole.PARAMETER, TaskInputRole.BUFFER}:
+                continue
+            shape = value.shape
+            if (
+                len(shape) >= 2
+                and shape[0] == self.batch_size
+                and shape[1] == self.sequence_length
+            ):
+                axes[i] = ChunkAxis(1)
+            elif (
+                len(shape) == 4
+                and shape[0] == self.batch_size
+                and shape[2] == self.sequence_length
+            ):
+                # Attention providers may return B,H,S,D instead of B,S,H,D.
+                # The projection region must slice that boundary as well.
+                axes[i] = ChunkAxis(2)
+            elif shape and shape[0] == self.batch_size * self.sequence_length:
+                axes[i] = ChunkAxis(0, before=self.batch_size)
+        return (
+            AxisChunks(
+                self.chunk_size, axes, self.variants, operator_rules(self.batch_size)
+            )
+            if axes
+            else None
+        )

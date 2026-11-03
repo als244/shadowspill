@@ -8,6 +8,11 @@ from torch.fx import Graph, GraphModule
 
 from shadowspill.errors import CaptureError
 from shadowspill.pytorch.capture.serialized_graph import SerializedFxGraph
+from shadowspill.pytorch.capture.source import (
+    SourceOperation,
+    set_source_operation,
+    source_operation,
+)
 
 
 def _factory_output_graph() -> GraphModule:
@@ -60,3 +65,22 @@ def test_serialized_fx_graph_rejects_tensor_literals() -> None:
 
     with pytest.raises(CaptureError, match="literal Tensor"):
         SerializedFxGraph.capture(module)
+
+
+def test_serialized_fx_graph_preserves_structural_provenance_without_live_metadata():
+    graph = _factory_output_graph()
+    node = next(n for n in graph.graph.nodes if n.target is torch.ops.aten.add.Tensor)
+    source = SourceOperation(2, "call_function", "aten.add.Tensor")
+    set_source_operation(node, source)
+    node.meta["partitioner_tag"] = "is_forward"
+    node.meta["nn_module_stack"] = {"example": ("model.blocks.2", "Block")}
+    node.meta["unrelated_live_tensor"] = torch.ones(4)
+    buffer = io.BytesIO()
+    torch.save(SerializedFxGraph.capture(graph), buffer)
+    buffer.seek(0)
+    restored = torch.load(buffer, weights_only=False).restore()
+    actual = next(n for n in restored.graph.nodes if n.name == node.name)
+    assert source_operation(actual) == source
+    assert actual.meta["partitioner_tag"] == "is_forward"
+    assert "nn_module_stack" not in actual.meta
+    assert "unrelated_live_tensor" not in actual.meta

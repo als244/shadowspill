@@ -30,7 +30,7 @@ def test_one_export_per_input_signature(monkeypatch, mixed):
         example_calls=calls,
         fuse_narrow_gradient_accumulation=True,
         partition="whole",
-        operator_recompute=None,
+        graph_pair_policy=None,
         gradient_dtype=None,
         device_index=0,
     )

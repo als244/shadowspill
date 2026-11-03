@@ -156,6 +156,8 @@ phases.
 
 - [Model and task partitioning](architecture/partitioning.md) — the generic
   `PartitionPolicy` contract and how workloads supply custom boundaries.
+- [Axis chunking within a stage](architecture/axis-chunking.md) — axis contracts,
+  portable chunk composition, retention and complete-task measurement.
 - [Provider resources](architecture/resources.md) — the `resources` builder
   argument: buffers and handles a provider creates from an importable factory,
   recreated for build, profiling and execution.

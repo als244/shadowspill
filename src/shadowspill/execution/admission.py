@@ -24,7 +24,9 @@ from shadowspill.runtime.plan.common import (
 )
 from shadowspill.runtime.plan.envelopes import task_memory_envelope
 from shadowspill.runtime.plan.layout import project_runtime_fixed_layout
+from shadowspill.task.allocations.events import TaskAllocationOperation
 from shadowspill.task.entrypoints import execution_entrypoints
+from shadowspill.task.profiles import TaskMeasurement
 
 from .distributed.collectives import CollectiveTask
 
@@ -59,7 +61,36 @@ def prepare(
     )
     aliases = {o.object_id: o.alias_group_id for o in ir.objects}
     outputs = output_bindings_for_entrypoints(tasks, entries, aliases)
-    layout = project_runtime_fixed_layout(plan.memory_layout, ir, plan.schedule)
+    original_keys = {t.task_id: t.profile_id for t in plan.program.tasks}
+    measurements: dict[str, TaskMeasurement] = {}
+    allocation_bytes = {}
+    for task in tasks:
+        if not task.requires_entrypoint:
+            continue
+        key = original_keys[task.task_id]
+        if key not in measurements:
+            measurements[key] = (
+                collective_measurement(plan.program, key, plan.communication_info)
+                if key in plan.program.bindings.get("collective_tasks", {})
+                else measured_task(
+                    plan.profiled_program.task_profiles[key],
+                    plan.program.bindings["manifests"][key],
+                )
+            )
+        allocation_bytes.update(
+            {
+                (task.task_id, event.allocation_ordinal): event.charged_bytes
+                for event in measurements[key].allocation_trace
+                if event.operation is TaskAllocationOperation.ALLOCATE
+                and not event.output_leaf_indices
+            }
+        )
+    layout = project_runtime_fixed_layout(
+        plan.memory_layout,
+        ir,
+        plan.schedule,
+        anonymous_allocation_bytes=allocation_bytes,
+    )
     if shared_slice_bytes is not None:
         if shared_slice_bytes < layout.slice_bytes:
             raise ValueError("shared arena cannot be smaller than the saved layout")
@@ -67,7 +98,6 @@ def prepare(
     admit_fixed_layout(bridge, layout)
     actions = actions_by_task(plan.schedule.actions)
     descriptions = {e["task_id"]: e for e in plan.program.bindings["entrypoints"]}
-    original_keys = {t.task_id: t.profile_id for t in plan.program.tasks}
     functions, result = {}, []
     for task, entry in zip(tasks, entries, strict=True):
         function, description, envelope = None, {}, None
@@ -85,9 +115,6 @@ def prepare(
                     raise ValueError("collective task requires bound logical groups")
                 if key not in functions:
                     functions[key] = CollectiveTask(collective, groups)
-                measurement = collective_measurement(
-                    plan.program, key, plan.communication_info
-                )
             else:
                 if key not in functions:
                     functions[key] = restore_executable(
@@ -99,10 +126,7 @@ def prepare(
                             "triton_choices", {}
                         ).get(key),
                     )
-                measurement = measured_task(
-                    plan.profiled_program.task_profiles[key],
-                    plan.program.bindings["manifests"][key],
-                )
+            measurement = measurements[key]
             function = functions[key]
             description = plan.program.bindings["task_inputs"][key]
             envelope = task_memory_envelope(

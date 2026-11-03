@@ -338,7 +338,10 @@ class TaskBindingResolver:
         alias_id = self._inventory.alias_id(source)
         if root.minimum_span_bytes > self._inventory.alias_size(alias_id):
             raise CaptureError(
-                "task input-root output exceeds its canonical alias storage"
+                "task input-root output exceeds its canonical alias storage: "
+                f"input={root.source_input}, source={source}, "
+                f"required={root.minimum_span_bytes}, "
+                f"available={self._inventory.alias_size(alias_id)}"
             )
         return alias_id
 

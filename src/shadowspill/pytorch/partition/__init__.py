@@ -7,9 +7,11 @@ from .artifacts import (
     StageExample,
     StageValueSource,
 )
+from .isolate import IsolateOperations
 from .policy import PartitionPolicy, PartitionSpec
 
 __all__ = [
+    "IsolateOperations",
     "PartitionPolicy",
     "PartitionSpec",
     "PartitionedExport",

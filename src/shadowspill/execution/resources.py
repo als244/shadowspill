@@ -85,4 +85,9 @@ def seal_paths(plans: Sequence[Plan]) -> None:
         dynamic_lifetime_count=sum(
             len(layout.dynamic_lifetimes) for layout in layouts if layout is not None
         ),
+        task_allocation_count=sum(
+            len(layout.task_allocation_leases)
+            for layout in layouts
+            if layout is not None
+        ),
     )

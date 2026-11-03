@@ -79,6 +79,7 @@ def _finalize_tasks(program: Program, device: torch.device) -> Program:
                 component = job["optimizer"] if "optimizer" in job else job["gradient"]
                 key = component["profile_key"]
                 if key in pending:
+                    torch.cuda.empty_cache()
                     arguments = prepare_inputs(program, key, device)
                     invoke(key, arguments)
                     del arguments
@@ -88,6 +89,9 @@ def _finalize_tasks(program: Program, device: torch.device) -> Program:
             backward_key = None if backward is None else backward["profile_key"]
             if key not in pending and backward_key not in pending:
                 continue
+            # New task inputs must not split cached activation-sized allocations
+            # from a different geometry into long-lived, partially occupied blocks.
+            torch.cuda.empty_cache()
             arguments = controls.prepare(forward, invoke)
             leaves, _ = tree_flatten(invoke(key, arguments))
             if backward_key in pending:
@@ -109,9 +113,13 @@ def _finalize_tasks(program: Program, device: torch.device) -> Program:
                     slots=backward["inputs"],
                     values=values,
                 )
+                # Only the resolved backward inputs belong to this invocation.
+                # Forward-only outputs can be full-sized activation tensors.
+                del arguments, leaves, values
                 invoke(backward_key, backward_arguments)
-                del backward_arguments, values
-            del arguments, leaves
+                del backward_arguments
+            else:
+                del arguments, leaves
         torch.cuda.synchronize(device)
     if pending:
         raise ValueError(f"kernel finalization did not cover tasks: {sorted(pending)}")

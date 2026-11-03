@@ -142,6 +142,7 @@ src/shadowspill/
     │   ├── gradients/     accumulation, precision and padded gradient storage
     │   └── storage/       one task's contract: the records, the roots, the
     │                      capture, the symbolic replay
+    ├── chunking/          axis contracts, explicit graph slicing and portable loops
     ├── partition/         stage policies, splitting, provenance, authentic controls
     ├── graph_pairs/       differentiation alternatives by structural contract
     ├── tuning/            finalized provider choices, saved and replayed per task

@@ -69,6 +69,7 @@ def oracle(model, examples, kind):
                     {
                         f"gradient.{n}": p.grad.clone()
                         for n, p in model.named_parameters()
+                        if p.grad is not None
                     }
                 )
         if kind == "step_tensor_lr":

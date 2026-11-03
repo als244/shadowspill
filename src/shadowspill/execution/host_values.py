@@ -5,6 +5,7 @@ from typing import Any
 import torch
 
 from shadowspill.artifacts.plan import Plan
+from shadowspill.pytorch.control_samples import copy_sample
 
 
 class HostValues:
@@ -36,20 +37,18 @@ class HostValues:
                 geometry = geometries[index]
                 provenance = description.get("provenance", ())
                 source = provenance[index] if provenance else {}
-                if geometry["device_type"] == "cpu" and "value" in source:
-                    self.constants[object_id] = self._constant(
-                        geometry, source["value"]
-                    )
+                if geometry["device_type"] == "cpu" and (
+                    "value" in source or "value_bytes" in source
+                ):
+                    self.constants[object_id] = self._constant(geometry, source)
 
     @staticmethod
-    def _constant(geometry: Any, value: Any) -> torch.Tensor:
+    def _constant(geometry: Any, source: Any) -> torch.Tensor:
         dtype = getattr(torch, geometry["dtype"].removeprefix("torch."))
         result = torch.empty_strided(
             geometry["shape"], geometry["stride"], dtype=dtype, device="cpu"
         )
-        result.copy_(
-            torch.as_tensor(value, dtype=dtype, device="cpu").reshape(result.shape)
-        )
+        copy_sample(result, source)
         return result
 
     def get(self, object_id: str) -> torch.Tensor:

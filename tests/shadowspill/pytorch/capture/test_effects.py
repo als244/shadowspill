@@ -8,10 +8,14 @@ import pytest
 import torch
 from torch import nn
 from torch._higher_order_ops.effects import _EffectType, _register_effectful_op
+from torch.fx.experimental.proxy_tensor import make_fx
 
 from shadowspill.build.compilation import compile_task
+from shadowspill.pytorch import RetentionPolicy, RetentionRule
+from shadowspill.pytorch.capture.aot import capture_graph_pair
 from shadowspill.pytorch.capture.export import capture_forward, inference_artifact
 from shadowspill.pytorch.capture.objective import capture_training
+from shadowspill.pytorch.capture.pointwise import saved_outputs
 from shadowspill.pytorch.executable import restore_executable
 from shadowspill.pytorch.graph_pairs.serialization import CachedAotGraphPair
 
@@ -101,19 +105,52 @@ class _Network(nn.Module):
 
 
 @pytest.mark.parametrize("ordered_backward", [False, True])
-@pytest.mark.parametrize("variant", ["save", "recompute"])
+@pytest.mark.parametrize("variant", ["save", "recompute", "selected_recompute"])
 def test_graph_pair_keeps_effect_order_and_correct_gradients(variant, ordered_backward):
     model = _Network(ordered_backward)
     x = torch.arange(12, dtype=torch.float32).reshape(4, 3).requires_grad_()
     expected = (x @ model.weight @ model.weight).square().sum()
     expected_grads = torch.autograd.grad(expected, (model.weight, x))
     captured = capture_training(model, lambda m, values: m(values).square().sum(), (x,))
-    pair = getattr(captured, f"{variant}_pair")
+    if variant == "selected_recompute":
+
+        def forward(weight, value):
+            first = _product(value, weight, 1, ordered_backward)
+            return _product(first, weight, 2, ordered_backward).square().sum()
+
+        inputs = (model.weight, x)
+        pair = capture_graph_pair(
+            make_fx(forward)(*inputs),
+            inputs,
+            original_output=forward(*inputs),
+            memory_budget=0.0,
+            retention=RetentionPolicy(
+                default="recompute",
+                rules=(RetentionRule("aten.pow.Tensor_Scalar", "retain"),),
+            ),
+            specialize_unit_tangents=True,
+        )
+    else:
+        pair = getattr(captured, f"{variant}_pair")
+    precision = []
+    for artifact in (pair.forward, pair.backward):
+        output = next(
+            node for node in artifact.graph_module.graph.nodes if node.op == "output"
+        )
+        assert len(output.meta["desc"]) == len(output.args[0])
+        precision.append(saved_outputs(output))
     # Exercise the production artifact store as well as in-memory capture.
     storage = io.BytesIO()
     torch.save(CachedAotGraphPair.capture(pair), storage)
     storage.seek(0)
     pair = torch.load(storage, weights_only=False).restore()
+    for artifact, expected_precision in zip(
+        (pair.forward, pair.backward), precision, strict=True
+    ):
+        output = next(
+            node for node in artifact.graph_module.graph.nodes if node.op == "output"
+        )
+        assert saved_outputs(output) == expected_precision
     assert pair.forward.argument_count == 2
     assert pair.backward.argument_count == pair.saved_value_count
     assert all(value.numel() > 0 for value in pair.backward.example_arguments)

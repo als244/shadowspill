@@ -9,13 +9,14 @@ from typing import Any
 from torch import Tensor, nn
 from torch._subclasses.fake_tensor import FakeTensor
 from torch.export.graph_signature import InputKind
-from torch.fx import GraphModule
 from torch.utils._pytree import treespec_dumps
 
 from shadowspill.build.lowering.registration import RegistrationBinding
 from shadowspill.pytorch.capture.artifacts import GraphArtifact
 from shadowspill.pytorch.capture.export import ExportCapture
+from shadowspill.pytorch.control_samples import encode_sample
 from shadowspill.pytorch.guards import InputSignature
+from shadowspill.pytorch.partition.metadata import module_paths as module_paths
 from shadowspill.pytorch.representations import tensor_components
 from shadowspill.task.inputs import TaskInputRole
 
@@ -64,16 +65,6 @@ def model_tensor_geometry(
             "storage_offset": value.storage_offset(),
         }
     return result
-
-
-def module_paths(graph: GraphModule) -> tuple[str, ...]:
-    paths: dict[str, None] = {}
-    for node in graph.graph.nodes:
-        stack = node.meta.get("nn_module_stack", {})
-        for path, _type in stack.values():
-            if path:
-                paths.setdefault(path, None)
-    return tuple(paths)
 
 
 def signature_record(signature: InputSignature) -> dict[str, Any]:
@@ -142,11 +133,6 @@ def _input_source(item: Any) -> dict[str, Any]:
         and isinstance(value, Tensor)
         and not isinstance(value, FakeTensor)
         and value.device.type == "cpu"
-        # Control arrays include token indices and packed-attention positions.
-        # Preserve bounded authentic values instead of silently dropping every
-        # sequence longer than 4096 elements. Larger inputs still need an
-        # explicit profiling override; model weights are never embedded here.
-        and value.numel() * value.element_size() <= 1 << 20
     ):
-        record["value"] = value.tolist()
+        record.update(encode_sample(value))
     return record

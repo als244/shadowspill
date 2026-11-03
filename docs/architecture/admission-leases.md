@@ -102,7 +102,12 @@ template's tasks; a step that reuses an earlier ordinal takes that ordinal's
 slot; a release step takes the slot of the ordinal it releases. A task's
 allocations name distinct ordinals, so each reuse and each release names one
 allocation of its own task, and following those names ends at a new slot.
-The walk then only has to fill slots with leases.
+For each allocating step, the indexed `task_allocation_bytes` contains the
+largest request in its slot, so the first acquisition reserves enough for every
+later request. Different-sized reuse is restricted to anonymous storage;
+output-bearing slots retain one extent. Exact request sizes stay in the task
+contract and are bound within the certified capacity at execution. The walk
+then only has to fill slots with leases.
 
 The compile reads the facts as columns: one array per field of a task and
 per field of an allocation step, with alias names held once. They are

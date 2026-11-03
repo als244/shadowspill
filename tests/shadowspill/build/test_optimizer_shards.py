@@ -115,7 +115,7 @@ def test_one_compiled_local_update_matches_full_adam_over_four_owned_shards(
         example_calls=None,
         fuse_narrow_gradient_accumulation=False,
         partition="whole",
-        operator_recompute=None,
+        graph_pair_policy=None,
         gradient_dtype=torch.float32,
         device_index=0,
     )

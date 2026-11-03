@@ -55,8 +55,10 @@ allocator. Its delayed `free_completed` notifications are bookkeeping, not
 part of the compiled task's request contract. A freed tensor is not retained
 provider state merely because that notification has not arrived.
 
-Within a task, fixed slots may reuse equal-sized requests on the same allocation
-stream. At reuse, Executor joins any other streams registered on the previous
+Within a task, nonoverlapping temporary requests on the same allocation stream
+may share a fixed-address slot. The slot reserves its largest request; each
+allocation retains its exact requested size. At reuse, Executor joins any other
+streams registered on the previous
 allocation through `record_stream`, using their retirement events. Ordinary
 same-stream reuse needs no wait; additional uses require neither host waiting
 nor a device-wide synchronization. Providers must register extra stream uses

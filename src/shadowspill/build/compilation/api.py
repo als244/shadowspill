@@ -81,6 +81,14 @@ def _package(
         return None
     if metadata.get("input_offsets", ()) != input_offsets:
         return None  # A cached aligned task cannot serve rank-dependent views.
+    if (
+        metadata["manifest"]["semantic_contract_digest"]
+        != contract.compatibility_digest
+    ):
+        # Inductor can share lowered code after erasing distinctions between
+        # semantic graphs. Its cached build facts still belong to the first
+        # contract; obtain fresh lowering evidence for this one.
+        return None
     manifest = ExecutableTaskManifest.from_dict(
         metadata["manifest"], semantic_contract=contract, toolchain=toolchain()
     )

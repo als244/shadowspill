@@ -13,6 +13,7 @@ profiling, and memory planning. It has the same contract for every model.
 | Stage contract | The inputs, outputs, explicit mutations, and storage/alias relationships derived for that occurrence. Equivalent contracts may share compiled artifacts without sharing parameter values. |
 | Graph pair | A compiled forward/backward alternative for a training stage, such as save or recompute. |
 | Task | One scheduled entrypoint invocation. A training stage normally contributes forward and backward tasks; optimizer and transfer actions are planned separately. |
+| Execution region | A local interval inside an explicit task, optionally run in row chunks. It adds no checkpoint save or scheduled task. |
 
 A stage is not a named layer type, a device kernel, or a memory reservation. Ten
 identically structured experts can be ten stage occurrences and share a small
@@ -23,6 +24,10 @@ The policy chooses **where boundaries go**. ShadowSpill derives which objects
 cross each boundary, constructs backward dependencies, compiles the alternatives,
 and measures their workspace. The planner then chooses alternatives, microbatch
 ordering, placement and transfers under the supplied budgets.
+
+For independent execution cuts within checkpoint stages, use `ChunkRegions`;
+see [axis chunking](axis-chunking.md). Its partition policy receives the explicit
+forward/backward task graph after the checkpoint graph pair is constructed.
 
 ## Public contract
 
@@ -151,3 +156,6 @@ operators.
 See also [phase APIs](offline-pipeline.md),
 [graph-pair construction](graph-pair-construction.md), and
 [task boundaries](task-boundaries.md).
+
+Axis chunking is selected separately from boundaries; see
+[axis chunking](axis-chunking.md) for the stage-contained loop and its contracts.

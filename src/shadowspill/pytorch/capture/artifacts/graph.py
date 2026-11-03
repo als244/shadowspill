@@ -6,7 +6,7 @@ import hashlib
 import json
 import time
 from dataclasses import dataclass, field, replace
-from typing import Literal
+from typing import TYPE_CHECKING, Literal
 
 import torch
 from torch.fx import GraphModule
@@ -39,6 +39,10 @@ from .inputs import (
     _tensor_arguments,
 )
 
+if TYPE_CHECKING:
+    from shadowspill.pytorch.chunking.geometry import ChunkTask
+    from shadowspill.pytorch.chunking.regions import RegionTask
+
 
 @dataclass(frozen=True, slots=True)
 class GraphArtifact:
@@ -59,6 +63,8 @@ class GraphArtifact:
     example_arguments: tuple[object, ...] = field(repr=False, compare=False)
     #: Physical compiled arguments mapped to logical stage inputs.
     input_components: tuple[tuple[int, tuple[str, ...]], ...] = ()
+    chunking: ChunkTask | None = field(default=None, repr=False, compare=False)
+    regions: RegionTask | None = field(default=None, repr=False, compare=False)
 
     @classmethod
     def input_compatibility_digest(

@@ -73,6 +73,7 @@ def measure_program(
                 component = job["optimizer"] if "optimizer" in job else job["gradient"]
                 key = component["profile_key"]
                 if key not in session.profiles.tasks:
+                    torch.cuda.empty_cache()
                     arguments = prepare_inputs(
                         program, key, target, supplied=session.inputs.get(key)
                     )

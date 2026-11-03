@@ -62,6 +62,7 @@ class ControlInputs:
                 object_id in resolved
                 or source.get("role") != "control"
                 or "value" in source
+                or "value_bytes" in source
             ):
                 continue
             producer = self.producers.get(object_id)

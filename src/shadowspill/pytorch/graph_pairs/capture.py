@@ -6,12 +6,12 @@ import torch
 from torch.utils._pytree import tree_flatten
 
 from shadowspill.errors import CaptureError
-from shadowspill.pytorch.capture.retention import RetentionPolicy
 
 from ..partition.artifacts import PartitionedExport
 from ..partition.differentiability import differentiable_output_positions
 from .artifacts import DifferentiatedStage
 from .build import GRAPH_PAIR_VARIANTS, forward_sink_variants
+from .policy import GraphPairPolicy
 from .store import GraphPairStore
 
 
@@ -19,7 +19,7 @@ def capture_training_stages(
     partitioned: PartitionedExport,
     *,
     graph_pair_store: GraphPairStore | None = None,
-    retention: RetentionPolicy | None = None,
+    graph_pair_policy: GraphPairPolicy | None = None,
     accumulating: bool = False,
     gradient_dtype: torch.dtype | None = None,
     fuse_narrow_gradient_accumulation: bool = True,
@@ -27,7 +27,7 @@ def capture_training_stages(
 ) -> tuple[DifferentiatedStage, ...]:
     """Bind every stage occurrence to its structural graph pairs, their
     parameter gradients produced at ``gradient_dtype`` when one is given,
-    their ``save`` variant retaining what ``retention`` says to retain, and
+    each variant retaining what ``graph_pair_policy`` specifies, and
     only the ``variants`` named built at all -- except for a sink of the
     forward phase, a stage no later stage reads, which keeps ``save``
     because graph-pair selection forces it there."""
@@ -54,7 +54,7 @@ def capture_training_stages(
             index,
             roots=tuple(sorted(needed[index])),
             graph_pair_store=store,
-            retention=retention,
+            graph_pair_policy=graph_pair_policy,
             accumulating=accumulating,
             gradient_dtype=gradient_dtype,
             fuse_narrow_gradient_accumulation=fuse_narrow_gradient_accumulation,
@@ -91,7 +91,7 @@ def _capture_training_stage(
     *,
     roots: tuple[int, ...],
     graph_pair_store: GraphPairStore,
-    retention: RetentionPolicy | None = None,
+    graph_pair_policy: GraphPairPolicy | None = None,
     accumulating: bool = False,
     gradient_dtype: torch.dtype | None = None,
     fuse_narrow_gradient_accumulation: bool = True,
@@ -128,7 +128,7 @@ def _capture_training_stage(
             example,
             roots,
             specialize_unit_tangents=stage_index == len(partitioned.stages) - 1,
-            retention=retention,
+            graph_pair_policy=graph_pair_policy,
             accumulating=accumulating,
             gradient_dtype=gradient_dtype,
             fuse_narrow_gradient_accumulation=fuse_narrow_gradient_accumulation,

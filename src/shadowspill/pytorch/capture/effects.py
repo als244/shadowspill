@@ -105,6 +105,9 @@ def join_recomputed_effects(
 
     forward_output = next(iter(forward.graph.find_nodes(op="output")))
     saved = list(forward_output.args[0])
+    descriptors = list(forward_output.meta["desc"])
+    if len(descriptors) != len(saved):
+        raise CaptureError("effect replay output descriptors do not match outputs")
     for old in saved_tokens:
         if old.users:
             raise CaptureError("recomputed ordering token still has data consumers")
@@ -120,8 +123,10 @@ def join_recomputed_effects(
         if len(positions) != 1:
             raise CaptureError(f"expected one saved ordering token for {old.name}")
         del saved[positions[0]]
+        del descriptors[positions[0]]
         backward.graph.erase_node(old)
     forward_output.args = (tuple(saved),)
+    forward_output.meta["desc"] = descriptors
     for module in (forward, backward):
         module.graph.lint()
         module.recompile()

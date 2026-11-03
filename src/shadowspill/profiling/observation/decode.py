@@ -13,6 +13,8 @@ from shadowspill.task.allocations.events import (
 from shadowspill.task.layout import _allocation_live_set_peak
 from shadowspill.task.profiles import TaskOutputInputBinding
 
+from .slots import assign_temporary_slots
+
 
 @dataclass(frozen=True)
 class AllocationObservation:
@@ -65,7 +67,7 @@ def decode_allocations(
             # Runtime extents retain the exact request. Address alignment is a
             # separate placement constraint, not per-allocation size rounding.
             charged = size
-            # Plan equal-sized slots on one allocation stream. Executor joins
+            # Seed exact-size slots on one allocation stream. Executor joins
             # any recorded private-stream uses at actual slot reuse. Native
             # retirement polling is neither that dependency nor a task request.
             retired = available[event["stream"], charged]
@@ -113,5 +115,8 @@ def decode_allocations(
         if address not in output_views
     )
     return AllocationObservation(
-        tuple(trace), tuple(input_bindings), persistent, tuple(off_device_outputs)
+        assign_temporary_slots(tuple(trace), streams),
+        tuple(input_bindings),
+        persistent,
+        tuple(off_device_outputs),
     )

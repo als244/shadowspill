@@ -16,12 +16,12 @@ from shadowspill.pytorch.capture.objective import (
     capture_training_objective,
     rebind_training_objective,
 )
-from shadowspill.pytorch.capture.retention import RetentionPolicy
 from shadowspill.pytorch.graph_pairs import (
     GraphPairStore,
     PartitionedTrainingCapture,
     partition_training_capture,
 )
+from shadowspill.pytorch.graph_pairs.policy import GraphPairPolicy
 from shadowspill.pytorch.guards import InputSignature, capture_input_signature
 from shadowspill.pytorch.partition import PartitionSpec
 
@@ -48,7 +48,7 @@ def capture_training_model(
     example_calls: Sequence[tuple[Sequence[Any], Mapping[str, Any]]] | None,
     fuse_narrow_gradient_accumulation: bool,
     partition: PartitionSpec,
-    operator_recompute: RetentionPolicy | None,
+    graph_pair_policy: GraphPairPolicy | None,
     gradient_dtype: torch.dtype | None,
     device_index: int,
     gradient_shards: Mapping[str, int] | None = None,
@@ -112,7 +112,7 @@ def capture_training_model(
                 representative_stage_outputs=(
                     previous.control_values if previous is not None else None
                 ),
-                retention=operator_recompute,
+                graph_pair_policy=graph_pair_policy,
                 accumulating=True,
                 gradient_dtype=gradient_dtype,
                 fuse_narrow_gradient_accumulation=fuse_narrow_gradient_accumulation,

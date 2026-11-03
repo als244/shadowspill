@@ -67,19 +67,17 @@ def bind_forward_outputs(
             raise CaptureError(
                 f"{problem}: forward output {index} has no storage view"
             ) from error
-        if index < public_count:
+        try:
             object_id = resolver.bind(
                 index,
                 role=role,
                 persistence=Persistence.STEP,
-                canonical_object_id=canonical_outputs[index],
+                canonical_object_id=canonical_outputs[index]
+                if index < public_count
+                else None,
             )
-        else:
-            object_id = resolver.bind(
-                index,
-                role=role,
-                persistence=Persistence.STEP,
-            )
+        except CaptureError as error:
+            raise CaptureError(f"{problem}: forward output {index}: {error}") from error
         slots.append(ObjectSlot(index, object_id))
         if index >= public_count and root_by_leaf.get(index) in internal_root_ids:
             saved_internal_object_ids.append(object_id)

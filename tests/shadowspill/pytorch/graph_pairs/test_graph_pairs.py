@@ -10,6 +10,7 @@ from torch._subclasses.fake_tensor import FakeTensorMode
 from shadowspill.pytorch.capture import aot as aot_module
 from shadowspill.pytorch.capture.fake import fake_device_inputs, fake_device_model
 from shadowspill.pytorch.capture.objective import capture_training
+from shadowspill.pytorch.capture.retention import RetentionPolicy, RetentionRule
 from shadowspill.pytorch.graph_pairs import (
     DifferentiatedStage,
     GraphPairStore,
@@ -18,6 +19,7 @@ from shadowspill.pytorch.graph_pairs import (
     saved_value_footprint,
     validate_graph_pair_variants,
 )
+from shadowspill.pytorch.graph_pairs.policy import GraphPairPolicy
 from shadowspill.pytorch.partition import PartitionedExport, partition_export
 from shadowspill.pytorch.partition.differentiability import (
     differentiable_output_positions,
@@ -252,6 +254,74 @@ def test_the_variants_built_are_part_of_the_store_key(tmp_path: Path) -> None:
 
 
 @pytest.mark.cuda
+def test_recompute_retention_changes_the_cached_cut_without_changing_save(tmp_path):
+    mode, partitioned = _capture()
+    store = GraphPairStore(tmp_path)
+    selected = GraphPairPolicy(
+        recompute=RetentionPolicy(
+            default="recompute", rules=(RetentionRule("aten.relu.default", "retain"),)
+        )
+    )
+    with mode:
+        baseline = capture_training_stages(partitioned, graph_pair_store=store)
+        baseline_keys = store.unique_keys
+        changed = capture_training_stages(
+            partitioned, graph_pair_store=store, graph_pair_policy=selected
+        )
+        reader = GraphPairStore(tmp_path)
+        restored = capture_training_stages(
+            partitioned, graph_pair_store=reader, graph_pair_policy=selected
+        )
+    assert store.unique_keys == 2 * baseline_keys
+    assert reader.misses == 0 and reader.hits == len(partitioned.stages)
+    for old, new, loaded in zip(baseline, changed, restored, strict=True):
+        for side in ("forward", "backward"):
+            assert getattr(
+                old.graph_pairs.variant("save").pair, side
+            ).compatibility_digest == (
+                getattr(new.graph_pairs.variant("save").pair, side).compatibility_digest
+            )
+            assert getattr(
+                new.graph_pairs.variant("recompute").pair, side
+            ).compatibility_digest == (
+                getattr(
+                    loaded.graph_pairs.variant("recompute").pair, side
+                ).compatibility_digest
+            )
+        assert "aten.relu.default" not in (
+            new.graph_pairs.variant("recompute").pair.retention.regenerated_operators
+        )
+    assert any(
+        "aten.relu.default"
+        in stage.graph_pairs.variant("recompute").pair.retention.regenerated_operators
+        for stage in baseline
+    )
+
+
+def test_graph_pair_policy_identity_includes_each_independent_cut():
+    from torch.fx.experimental.proxy_tensor import make_fx
+
+    graph = make_fx(lambda x: x.sin())(torch.zeros(2))
+    baseline = GraphPairPolicy()
+    retained = RetentionPolicy(
+        default="recompute", rules=(RetentionRule("aten.sin.default", "retain"),)
+    )
+    assert (
+        len(
+            {
+                baseline.digest(graph),
+                GraphPairPolicy(save=retained).digest(graph),
+                GraphPairPolicy(recompute=retained).digest(graph),
+            }
+        )
+        == 3
+    )
+    for name in ("save", "recompute"):
+        with pytest.raises(TypeError, match=f"{name} must be a RetentionPolicy"):
+            GraphPairPolicy(**{name: object()})
+
+
+@pytest.mark.cuda
 def test_the_accumulating_form_is_derived_only_when_asked_for() -> None:
     """Deriving the second form costs a capture, so nobody pays for it unasked.
 
@@ -368,8 +438,13 @@ def test_repeated_stage_occurrences_share_one_structural_inventory() -> None:
     assert repository.hits == 1
     first_interior = stages[1].graph_pairs.variant("save").pair
     second_interior = stages[2].graph_pairs.variant("save").pair
-    assert first_interior.forward.graph_module is second_interior.forward.graph_module
-    assert first_interior.backward.graph_module is second_interior.backward.graph_module
+    assert (
+        first_interior.forward.graph_module is not second_interior.forward.graph_module
+    )
+    assert (
+        first_interior.backward.graph_module
+        is not second_interior.backward.graph_module
+    )
     assert first_interior.backward is not second_interior.backward
     assert (
         first_interior.forward.compatibility_digest

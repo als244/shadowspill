@@ -10,6 +10,8 @@ import torch
 from functorch.compile import make_boxed_func  # type: ignore[import-untyped]
 from torch._functorch import config as functorch_config
 from torch._functorch.aot_autograd import aot_function
+from torch.fx import Interpreter
+from torch.fx.traceback import preserve_node_meta
 from torch.utils._pytree import tree_flatten, tree_unflatten
 
 from shadowspill.errors import CaptureError
@@ -29,11 +31,13 @@ from shadowspill.pytorch.representations import is_wrapper, tensor_components
 from shadowspill.task.inputs import TaskInputRole
 
 from .export import ExportCapture, _explicit_mutations
+from .pointwise import align_unlifted_output_descriptors
 from .provenance import (
     _backward_input_provenance,
     _tensor_input_provenance,
     physical_input_provenance,
 )
+from .source import bind_source_metadata, traceable_source_graph
 from .torch_deprecations import copy_graph_module
 
 
@@ -56,6 +60,7 @@ class _GraphPairCollector:
         graph_module: torch.fx.GraphModule,
         example_inputs: Sequence[object],
     ) -> Any:
+        align_unlifted_output_descriptors(graph_module)
         self.forward = GraphArtifact.capture(
             kind="forward",
             graph_module=graph_module,
@@ -70,6 +75,7 @@ class _GraphPairCollector:
         graph_module: torch.fx.GraphModule,
         example_inputs: Sequence[object],
     ) -> Any:
+        align_unlifted_output_descriptors(graph_module)
         self.backward_graph = graph_module
         self.backward_inputs = tuple(example_inputs)
         return make_boxed_func(graph_module.forward)
@@ -114,11 +120,10 @@ def capture_graph_pair(
 ) -> AotGraphPair:
     """Differentiate one functional graph with a flat tensor/static signature.
 
-    ``memory_budget`` is the partition's. ``1.0`` retains for the backward
-    what ``retention`` says is expensive to regenerate and regenerates the
-    rest; ``0.0`` retains the inputs alone; a value between the two is
-    PyTorch's knapsack between them. ``None`` is the library's default policy
-    (:mod:`shadowspill.pytorch.capture.retention`).
+    ``memory_budget`` selects the base cut. With ``retention=None``, ``1.0``
+    uses cost-based retention and ``0.0`` retains inputs alone. An explicit
+    ``retention`` policy controls either endpoint, including retained additions
+    to recompute. Intermediate budgets use PyTorch's knapsack.
     """
 
     if not 0.0 <= memory_budget <= 1.0:
@@ -145,7 +150,10 @@ def capture_graph_pair(
         capture_inputs,
         collector,
         partition=partition_function(
-            memory_budget, retention or RetentionPolicy(), record
+            memory_budget,
+            retention
+            or RetentionPolicy(default="recompute" if memory_budget == 0 else "cost"),
+            record,
         ),
         memory_budget=memory_budget,
         root_output_positions=root_output_positions,
@@ -177,7 +185,17 @@ def capture_graph_pair(
                 if isinstance(value, torch.Tensor)
             ),
         )
-    return pair
+    return replace(
+        pair,
+        forward=replace(
+            pair.forward,
+            graph_module=bind_source_metadata(pair.forward.graph_module, graph_module),
+        ),
+        backward=replace(
+            pair.backward,
+            graph_module=bind_source_metadata(pair.backward.graph_module, graph_module),
+        ),
+    )
 
 
 # A backward graph is captured for one tangent layout and is then called
@@ -243,16 +261,20 @@ def _rooted_forward(
     Selecting outputs only at torch.autograd.grad is too late: AOT has already
     built a backward accepting gradients for every differentiable output.
     """
-    if root_output_positions is None:
-        return graph_module
-    selected = frozenset(root_output_positions)
+    source = traceable_source_graph(graph_module)
+    selected = (
+        None if root_output_positions is None else frozenset(root_output_positions)
+    )
 
     def forward(*args: object) -> object:
-        leaves, spec = tree_flatten(graph_module(*args))
+        with preserve_node_meta():
+            leaves, spec = tree_flatten(Interpreter(source).run(*args))
         return tree_unflatten(
             [
                 value.detach()
-                if isinstance(value, torch.Tensor) and index not in selected
+                if isinstance(value, torch.Tensor)
+                and selected is not None
+                and index not in selected
                 else value
                 for index, value in enumerate(leaves)
             ],

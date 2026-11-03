@@ -174,6 +174,8 @@ for index, (outputs, state) in enumerate(oracle["expected"]):
     )
     if oracle.get("host_metrics"):
         assert all(metric["bounds"].device.type == "cpu" for metric in result.metrics)
+    for leaf in oracle.get("host_output_leaves", ()):
+        assert tree_flatten(actual_outputs)[0][leaf].device.type == "cpu"
     assert_outputs(actual_outputs, outputs)
     if previous is not None:
         assert_outputs(previous, previous_value)

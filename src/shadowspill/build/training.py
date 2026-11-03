@@ -11,7 +11,8 @@ from shadowspill.artifacts.program import Program
 from shadowspill.build.lowering.training.program import lower_training
 from shadowspill.parallelism import Parallelism
 from shadowspill.pytorch.accelerator import resolve_device
-from shadowspill.pytorch.capture.retention import RetentionPolicy
+from shadowspill.pytorch.chunking import ChunkPolicy, ChunkRegions
+from shadowspill.pytorch.graph_pairs.policy import GraphPairPolicy
 from shadowspill.pytorch.partition import PartitionSpec
 from shadowspill.resources import Resource
 from shadowspill.resources.description import validate_resources
@@ -41,7 +42,8 @@ def build_forward_backward(
     example_calls: Sequence[tuple[Sequence[Any], Mapping[str, Any]]] | None = None,
     fuse_narrow_gradient_accumulation: bool = True,
     partition: PartitionSpec = "auto",
-    operator_recompute: RetentionPolicy | None = None,
+    chunking: ChunkPolicy | ChunkRegions | None = None,
+    graph_pair_policy: GraphPairPolicy | None = None,
     grad_dtype: torch.dtype | None = None,
     parallelism: Parallelism | None = None,
     resources: Mapping[str, Resource] | None = None,
@@ -54,6 +56,11 @@ def build_forward_backward(
     Gradients persist after execution; no optimizer is captured or initialized.
     For heterogeneous examples, supply ``example_calls=[(args, kwargs), ...]``
     instead of ``example_args``, ``example_kwargs`` and ``num_examples``.
+    ``graph_pair_policy`` defines independent saved-state cuts for the ``save``
+    and ``recompute`` graphs; ``None`` selects ``GraphPairPolicy()``. ``chunking``
+    may restrict allowed stage variants; planning selects among measured
+    alternatives and chooses residency. A different policy requires building
+    and profiling its resulting implementations before planning.
     """
     return _build_training(
         model,
@@ -65,7 +72,8 @@ def build_forward_backward(
         example_calls=example_calls,
         fuse_narrow_gradient_accumulation=fuse_narrow_gradient_accumulation,
         partition=partition,
-        operator_recompute=operator_recompute,
+        chunking=chunking,
+        graph_pair_policy=graph_pair_policy,
         grad_dtype=grad_dtype,
         parallelism=parallelism,
         resources=resources,
@@ -85,14 +93,19 @@ def _build_training(
     example_calls: Sequence[tuple[Sequence[Any], Mapping[str, Any]]] | None,
     fuse_narrow_gradient_accumulation: bool,
     partition: PartitionSpec,
-    operator_recompute: RetentionPolicy | None,
+    graph_pair_policy: GraphPairPolicy | None,
     grad_dtype: torch.dtype | None,
     target: str | torch.device,
     parallelism: Parallelism | None = None,
     master_dtype: torch.dtype | None = None,
+    chunking: ChunkPolicy | ChunkRegions | None = None,
     resources: Mapping[str, Resource] | None = None,
     rank_map: Mapping[int, int] | None = None,
 ) -> Program:
+    if graph_pair_policy is not None and not isinstance(
+        graph_pair_policy, GraphPairPolicy
+    ):
+        raise TypeError("graph_pair_policy must be a GraphPairPolicy or None")
     spec, parameters = model_parallelism(model, parallelism)
     validate_resources(resources or {}, spec)
     if optimizer is not None:
@@ -108,7 +121,7 @@ def _build_training(
         example_calls=example_calls,
         fuse_narrow_gradient_accumulation=fuse_narrow_gradient_accumulation,
         partition=partition,
-        operator_recompute=operator_recompute,
+        graph_pair_policy=graph_pair_policy,
         gradient_dtype=grad_dtype,
         device_index=device.index,
         gradient_shards={
@@ -119,6 +132,14 @@ def _build_training(
         },
     )
     captured = pad_mutations(captured, parameters)
+    if chunking is not None:
+        from .chunking import chunk_training
+
+        captured = chunk_training(
+            captured,
+            chunking,
+            fuse_narrow_gradient_accumulation=fuse_narrow_gradient_accumulation,
+        )
     artifacts = [
         artifact
         for example in captured.examples

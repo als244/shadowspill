@@ -270,7 +270,8 @@ def test_fixed_layout_gives_resident_leases_static_homes_after_the_assignment() 
     assert admitted.layout.reuse_dependencies == ()
 
 
-def test_fixed_layout_maps_same_task_allocator_reuse_to_one_lease() -> None:
+@pytest.mark.parametrize("sizes", [(32, 32), (16, 32), (32, 16)])
+def test_fixed_layout_maps_same_task_allocator_reuse_to_one_lease(sizes) -> None:
     program = ShadowSpillProgram(
         devices=(DEVICE,),
         alias_groups=(),
@@ -301,13 +302,13 @@ def test_fixed_layout_maps_same_task_allocator_reuse_to_one_lease() -> None:
                     TaskAllocationStep(
                         0,
                         TaskAllocationStepKind.ALLOCATE,
-                        32,
+                        sizes[0],
                     ),
                     TaskAllocationStep(0, TaskAllocationStepKind.RELEASE),
                     TaskAllocationStep(
                         1,
                         TaskAllocationStepKind.ALLOCATE,
-                        32,
+                        sizes[1],
                         reuses_allocation_ordinal=0,
                     ),
                     TaskAllocationStep(1, TaskAllocationStepKind.RELEASE),

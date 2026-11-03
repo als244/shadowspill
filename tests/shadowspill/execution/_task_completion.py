@@ -148,10 +148,10 @@ def exercise(runtime, kind):
         abort_plan(runtime, memory.plan_handle)
 
 
-def exercise_private_stream_reuse(runtime):
+def exercise_private_stream_reuse(runtime, sizes):
     """Free on the host while a side stream still needs the old slot contents."""
     memory, bridge = new_plan(runtime)
-    size = 16_384
+    size = max(sizes)
     try:
         admit_fixed_layout(
             bridge,
@@ -163,7 +163,7 @@ def exercise_private_stream_reuse(runtime):
                         ordinal,
                         NO_ID,
                         0,
-                        size,
+                        sizes[ordinal],
                         256,
                         RuntimePlacementKind.TASK_ALLOCATION,
                     )
@@ -174,7 +174,7 @@ def exercise_private_stream_reuse(runtime):
         )
         contract = TaskAllocationContract.capture(
             [
-                TaskAllocationEvent(ordinal, operation, size, size)
+                TaskAllocationEvent(ordinal, operation, sizes[ordinal], sizes[ordinal])
                 for ordinal in (0, 1)
                 for operation in (
                     TaskAllocationOperation.ALLOCATE,
@@ -195,11 +195,11 @@ def exercise_private_stream_reuse(runtime):
         seal_fixed_layout(bridge)
         side = torch.cuda.Stream()
         current = torch.cuda.current_stream()
-        observed = [torch.empty(size // 4, pin_memory=True) for _ in range(2)]
-        for iteration in range(24):
+        observed = [torch.empty(extent // 4, pin_memory=True) for extent in sizes]
+        for iteration in range(8):
             before_task_and_acquire(handle, 0, ())
             wait_task_allocations(handle, 0)
-            first = torch.empty(size // 4, device="cuda")
+            first = torch.empty(sizes[0] // 4, device="cuda")
             pointer = first.data_ptr()
             first.fill_(iteration * 2)
             side.wait_stream(current)
@@ -208,7 +208,7 @@ def exercise_private_stream_reuse(runtime):
                 observed[0].copy_(first, non_blocking=True)
             first.record_stream(side)
             del first
-            second = torch.empty(size // 4, device="cuda")
+            second = torch.empty(sizes[1] // 4, device="cuda")
             assert second.data_ptr() == pointer
             second.fill_(iteration * 2 + 1)
             observed[1].copy_(second, non_blocking=True)
@@ -239,7 +239,8 @@ with Runtime(
     },
 ) as runtime:
     if sys.argv[1] == "INTRA_TASK":
-        exercise_private_stream_reuse(runtime)
+        for sizes in ((16384, 16384), (8192, 16384), (16384, 8192), (4096, 12288)):
+            exercise_private_stream_reuse(runtime, sizes)
     else:
         exercise(runtime, RuntimePlacementKind[sys.argv[1]])
 print("task completion passed")

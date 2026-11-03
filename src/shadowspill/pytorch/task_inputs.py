@@ -8,6 +8,8 @@ import torch
 from shadowspill.artifacts.program import Program
 from shadowspill.errors import CaptureError
 
+from .control_samples import copy_sample
+
 
 def prepare_inputs(
     program: Program,
@@ -92,12 +94,8 @@ def _extent(geometry: Mapping[str, Any]) -> int:
 
 
 def _initialize(value: torch.Tensor, source: Mapping[str, Any]) -> None:
-    if "value" in source:
-        value.copy_(
-            torch.as_tensor(
-                source["value"], dtype=value.dtype, device=value.device
-            ).reshape(value.shape)
-        )
+    if "value" in source or "value_bytes" in source:
+        copy_sample(value, source)
     elif source.get("role") in {"control", "constant", "optimizer_hyperparameter"}:
         raise CaptureError(
             f"task input {source.get('source')} needs caller-supplied values"

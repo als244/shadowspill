@@ -5,7 +5,7 @@ from __future__ import annotations
 import ctypes
 
 from shadowspill.errors import AdmissionError
-from shadowspill.runtime.abi import AdapterStatistics, PhysicalMemory
+from shadowspill.runtime.abi import AdapterStatistics, PhysicalMemory, runtime_library
 from shadowspill.runtime.bootstrap import InstalledRuntime
 
 _MIB = 1 << 20
@@ -22,9 +22,9 @@ def _runtime_record_reserve(
 ) -> int:
     """Return the size every runtime record table starts at.
 
-    A bound for the inventories the plan bounds -- event leases and
-    retirement records -- and a warm start for the ones it does not. How
-    many lease records a pool needs is not derivable here: one is taken per
+    A bound for event leases and a warm start for the inventories that may
+    need more. Task allocation generations need a separate retirement bound.
+    How many lease records a pool needs is not derivable here: one is taken per
     live lease and one more each time a free range is split to fit a
     request, so the peak follows the order allocations and releases happen
     in and how far the dispatcher runs ahead of the device. A pool grows its
@@ -79,6 +79,7 @@ def seal_worker_budget(
     scheduled_transfer_count: int,
     fixed_lifetime_count: int,
     dynamic_lifetime_count: int,
+    task_allocation_count: int,
 ) -> None:
     """Seal the admitted worker's physical budget and reusable record inventory."""
     check_physical_budget(installed)
@@ -103,6 +104,23 @@ def seal_worker_budget(
         fixed_lifetime_count=fixed_lifetime_count,
         dynamic_lifetime_count=dynamic_lifetime_count,
     )
+    # A reused physical slot can represent many allocation generations in one
+    # task. Each free retains a record until the task's completion is published.
+    # Reserve those host records without creating one backend event per free.
+    retirement_records = max(
+        runtime_record_reserve,
+        fixed_lifetime_count + dynamic_lifetime_count + task_allocation_count + 64,
+    )
+    status = int(
+        runtime_library().shadowspill_runtime_reserve_retirement_records(
+            installed.runtime_handle, retirement_records
+        )
+    )
+    if status != 0:
+        raise AdmissionError(
+            f"runtime retirement reservation failed: records={retirement_records}, "
+            f"status={status}"
+        )
     status = int(
         library.shadowspill_pytorch_seal_physical_budget(
             required,

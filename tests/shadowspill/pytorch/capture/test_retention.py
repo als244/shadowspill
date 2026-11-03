@@ -25,6 +25,7 @@ from shadowspill.pytorch.capture.retention import (
     MEMORY_BOUND_FLOPS_PER_BYTE,
     OperatorClass,
     RetentionPolicy,
+    RetentionRule,
 )
 from shadowspill.pytorch.graph_pairs import GraphPairVariant, saved_value_footprint
 
@@ -127,6 +128,28 @@ def _(value: torch.Tensor) -> torch.Tensor:
 
 
 _unpriced_square.register_autograd(_square_backward, setup_context=_square_setup)
+
+
+@torch.library.custom_op("shadowspill_retention_test::sincos", mutates_args=())
+def _sincos(value: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
+    return value.sin(), value.cos()
+
+
+@_sincos.register_fake
+def _(value):
+    return torch.empty_like(value), torch.empty_like(value)
+
+
+def _sincos_setup(ctx, inputs, output):
+    ctx.save_for_backward(*output)
+
+
+def _sincos_backward(ctx, dsin, dcos):
+    sine, cosine = ctx.saved_tensors
+    return dsin * cosine - dcos * sine
+
+
+_sincos.register_autograd(_sincos_backward, setup_context=_sincos_setup)
 
 
 # A formula that cannot price the call it is asked about.
@@ -285,6 +308,198 @@ def test_the_recompute_variant_retains_the_inputs_alone() -> None:
         "shadowspill_retention_test.product.default",
     )
     assert _internal_bytes(pair) == 0
+
+
+@pytest.mark.parametrize("memory_budget", [0.0, 1.0])
+@pytest.mark.parametrize("default", ["cost", "retain", "recompute"])
+def test_explicit_retention_preserves_a_selected_result_and_correct_gradients(
+    default, memory_budget
+):
+    def forward(value, weight):
+        return torch.sin(value @ weight).square()
+
+    inputs = _inputs((17, 8), (8, 8))
+    policy = RetentionPolicy(
+        default=default, rules=(RetentionRule("aten.sin.default", "retain"),)
+    )
+    pair = _pair(forward, inputs, retention=policy, memory_budget=memory_budget)
+    assert "aten.sin.default" not in pair.retention.regenerated_operators
+    if default == "recompute":
+        assert "aten.mm.default" in pair.retention.regenerated_operators
+    values = pair.forward.graph_module(*inputs)
+    tangent = torch.randn_like(values[0])
+    actual = pair.backward.graph_module(*values[-pair.saved_value_count :], tangent)
+    expected = torch.autograd.grad(forward(*inputs), inputs, tangent)
+    for value, reference in zip(actual, expected, strict=True):
+        torch.testing.assert_close(value, reference)
+
+
+def test_save_removals_and_recompute_additions_are_independent():
+    from shadowspill.pytorch import GraphPairPolicy
+
+    inputs = _inputs((ROWS, WIDTH), (WIDTH, WIDTH), (WIDTH,))
+    target = "shadowspill_retention_test.product.default"
+    policy = GraphPairPolicy(
+        save=RetentionPolicy(rules=(RetentionRule(target, "recompute"),)),
+        recompute=RetentionPolicy(
+            default="recompute", rules=(RetentionRule(target, "retain"),)
+        ),
+    )
+    replay = _pair(
+        _product_then_pass,
+        inputs,
+        retention=policy.save,
+    )
+    assert target in replay.retention.regenerated_operators
+    assert _internal_bytes(replay) == 0
+    retained = _pair(
+        _product_then_pass,
+        inputs,
+        memory_budget=0.0,
+        retention=policy.recompute,
+    )
+    assert target not in retained.retention.regenerated_operators
+    assert _internal_bytes(retained) == BYTES
+
+
+@pytest.mark.parametrize("memory_budget", [0.0, 1.0])
+def test_selective_cut_keeps_auxiliary_results_without_unnecessary_replay(
+    memory_budget,
+):
+    def forward(value, weight):
+        return _sincos(value @ weight)[0]
+
+    inputs = _inputs((17, 8), (8, 8))
+    policy = RetentionPolicy(
+        default="recompute",
+        rules=(RetentionRule("shadowspill_retention_test.sincos.default", "retain"),),
+    )
+    pair = _pair(forward, inputs, retention=policy, memory_budget=memory_budget)
+    replayed = pair.retention.regenerated_operators
+    assert "shadowspill_retention_test.sincos.default" not in replayed
+    # The selected operation's derivative uses only its two results.
+    assert "aten.mm.default" not in replayed
+    values = pair.forward.graph_module(*inputs)
+    tangent = torch.randn_like(values[0])
+    actual = pair.backward.graph_module(*values[-pair.saved_value_count :], tangent)
+    expected = torch.autograd.grad(forward(*inputs), inputs, tangent)
+    for value, reference in zip(actual, expected, strict=True):
+        torch.testing.assert_close(value, reference)
+    assert len(values) == 5  # Public result, two inputs, and both sin/cos results.
+
+
+@pytest.mark.cuda
+@pytest.mark.parametrize("memory_budget", [0.0, 1.0])
+@pytest.mark.parametrize(
+    "batch, length, dtype", [(1, 17, torch.bfloat16), (2, 31, torch.float16)]
+)
+def test_selective_flash_attention_keeps_backward_state_and_replays_projection(
+    batch, length, dtype, memory_budget
+):
+    from torch.nn.attention import SDPBackend, sdpa_kernel
+
+    def forward(value, weight):
+        q, k, v = (value @ weight).reshape(batch, length, 3, 4, 32).unbind(2)
+        return torch.nn.functional.scaled_dot_product_attention(
+            q.transpose(1, 2), k.transpose(1, 2), v.transpose(1, 2), is_causal=True
+        )
+
+    torch.manual_seed(12)
+    inputs = tuple(
+        torch.randn(shape, device="cuda", dtype=dtype, requires_grad=True)
+        for shape in ((batch, length, 128), (128, 384))
+    )
+    target = "aten._scaled_dot_product_flash_attention.default"
+    policy = RetentionPolicy(
+        default="recompute", rules=(RetentionRule(target, "retain"),)
+    )
+    with sdpa_kernel(SDPBackend.FLASH_ATTENTION):
+        pair = _pair(forward, inputs, retention=policy, memory_budget=memory_budget)
+        values = pair.forward.graph_module(*inputs)
+        tangent = torch.randn_like(values[0])
+        actual = pair.backward.graph_module(*values[-pair.saved_value_count :], tangent)
+        expected = torch.autograd.grad(forward(*inputs), inputs, tangent)
+    assert target not in pair.retention.regenerated_operators
+    assert "aten.mm.default" in pair.retention.regenerated_operators
+    for value, reference in zip(actual, expected, strict=True):
+        torch.testing.assert_close(value, reference)
+
+
+def test_rule_identity_covers_builtin_overrides_and_is_order_independent():
+    graph = make_fx(lambda x: x.sin().cos())(*_inputs((8, 8)))
+    rules = (
+        RetentionRule("aten.sin.default", "retain"),
+        RetentionRule("aten.cos.default", "recompute"),
+    )
+    policy = RetentionPolicy(rules=rules)
+    assert policy.digest(graph) != RetentionPolicy().digest(graph)
+    assert policy.digest(graph) == RetentionPolicy(rules=rules[::-1]).digest(graph)
+    assert policy.digest(graph) != RetentionPolicy(
+        rules=rules, default="recompute"
+    ).digest(graph)
+
+
+def test_conflicting_rules_and_model_annotations_are_refused():
+    from torch.utils.checkpoint import CheckpointPolicy
+
+    from shadowspill.pytorch.capture.retention import _mark_retained
+
+    target = "aten.sin.default"
+    with pytest.raises(ValueError, match="at most once"):
+        RetentionPolicy(
+            rules=(RetentionRule(target, "retain"), RetentionRule(target, "recompute"))
+        )
+    graph = make_fx(lambda x: x.sin())(*_inputs((8, 8)))
+    node = next(n for n in graph.graph.nodes if str(n.target) == target)
+    node.meta["recompute"] = CheckpointPolicy.MUST_RECOMPUTE
+    with pytest.raises(CaptureError, match="model checkpoint annotation"):
+        _mark_retained(graph, RetentionPolicy(rules=(RetentionRule(target, "retain"),)))
+
+
+@pytest.mark.parametrize("memory_budget", [0.0, 1.0])
+@pytest.mark.parametrize(
+    "device", ["cpu", pytest.param("cuda", marks=pytest.mark.cuda)]
+)
+def test_selected_recompute_cut_preserves_random_values_and_rng_state(
+    memory_budget, device
+):
+    def forward(value):
+        return (value * torch.rand_like(value)).sin()
+
+    inputs = (torch.randn(17, 8, device=device, requires_grad=True),)
+    pair = _pair(
+        forward,
+        inputs,
+        memory_budget=memory_budget,
+        retention=RetentionPolicy(
+            default="recompute", rules=(RetentionRule("aten.sin.default", "retain"),)
+        ),
+    )
+    torch.manual_seed(21)
+    values = pair.forward.graph_module(*inputs)
+    rng_state = torch.get_rng_state if device == "cpu" else torch.cuda.get_rng_state
+    state = rng_state().clone()
+    tangent = torch.ones_like(values[0])
+    actual = pair.backward.graph_module(*values[-pair.saved_value_count :], tangent)
+    torch.testing.assert_close(rng_state(), state)
+    torch.manual_seed(21)
+    expected = torch.autograd.grad(forward(*inputs), inputs, tangent)
+    torch.testing.assert_close(actual, expected)
+    assert "aten.rand_like.default" not in pair.retention.regenerated_operators
+
+
+def test_explicit_replay_of_stateful_random_operations_is_refused():
+    inputs = _inputs((17, 8))
+    with pytest.raises(CaptureError, match="RNG/effect state"):
+        _pair(
+            lambda value: value * torch.rand_like(value),
+            inputs,
+            memory_budget=0.0,
+            retention=RetentionPolicy(
+                default="recompute",
+                rules=(RetentionRule("aten.rand_like.default", "recompute"),),
+            ),
+        )
 
 
 def test_the_policy_classes_a_graph_s_custom_operators() -> None:

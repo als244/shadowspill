@@ -9,6 +9,7 @@ from typing import Any, cast
 import torch
 from torch._guards import detect_fake_mode
 from torch._prims_common import get_computation_dtype
+from torch.utils._pytree import tree_flatten, tree_unflatten
 
 from shadowspill.errors import CaptureError
 from shadowspill.pytorch.capture.artifacts import GraphArtifact, TaskInputProvenance
@@ -65,7 +66,7 @@ def accumulate_gradient_outputs(
     graph_module = copy_graph_module(backward.graph_module)
     graph = graph_module.graph
     output_node = next(node for node in graph.nodes if node.op == "output")
-    outputs = list(output_node.args[0])
+    outputs, structure = tree_flatten(output_node.args[0])
     for leaf in leaf_indices:
         if leaf < 0 or leaf >= len(outputs) or outputs[leaf] is None:
             raise CaptureError(f"backward has no gradient output at leaf {leaf}")
@@ -77,16 +78,29 @@ def accumulate_gradient_outputs(
     # already there, and the caller need not be inside that mode.
     fake_mode = detect_fake_mode(backward.example_arguments)
     anchor = placeholders[-1]
+    argument_names = {node.target for node in placeholders}
     priors: list[torch.Tensor] = []
-    mutations: list[ExplicitMutation] = []
+    mutations = [
+        ExplicitMutation(m.input_position, m.replacement_output_leaf, m.argument_name)
+        for m in backward.storage_contract.mutations
+        if m.replacement_output_leaf is not None
+    ]
     replaced: list[torch.fx.Node] = []
     for offset, leaf in enumerate(leaf_indices):
         produced = outputs[leaf]
         value = produced.meta.get("val")
         if not isinstance(value, torch.Tensor):
             raise CaptureError(f"backward gradient at leaf {leaf} has no geometry")
+        argument_name = f"shadowspill_prior_grad_{leaf}"
+        suffix = 0
+        while argument_name in argument_names:
+            suffix += 1
+            argument_name = f"shadowspill_prior_grad_{leaf}_{suffix}"
+        argument_names.add(argument_name)
+        # Execution cuts renumber output leaves while retaining input names.
+        # FX uniquifies a node's name, but not its placeholder argument target.
         with graph.inserting_after(anchor):
-            prior = graph.placeholder(f"shadowspill_prior_grad_{leaf}")
+            prior = graph.placeholder(argument_name)
         prior.meta = dict(produced.meta)
         with fake_mode if fake_mode is not None else nullcontext():
             extent = value.untyped_storage().nbytes() // value.element_size()
@@ -120,10 +134,10 @@ def accumulate_gradient_outputs(
             ExplicitMutation(
                 input_position=len(backward.example_arguments) + offset,
                 output_leaf_index=leaf,
-                target=f"shadowspill_prior_grad_{leaf}",
+                target=argument_name,
             )
         )
-    output_node.args = (tuple(outputs),)
+    output_node.args = (tree_unflatten(outputs, structure),)
     for node in replaced:
         graph.erase_node(node)
     graph.lint()

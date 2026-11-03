@@ -62,6 +62,10 @@ class CompiledTasks:
                 "kind": artifact.kind,
                 "operators": artifact.operator_targets,
             }
+            if artifact.chunking is not None:
+                self.metadata[key]["row_chunks"] = artifact.chunking.identity
+            if artifact.regions is not None:
+                self.metadata[key]["execution_regions"] = artifact.regions.identity
         paths = tuple(dict.fromkeys((*definition.module_paths, *paths)))
         self.definitions[key] = replace(
             definition,

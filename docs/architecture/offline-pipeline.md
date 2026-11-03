@@ -42,6 +42,9 @@ an error, not zero. Known compiler memory is retained as a lower bound.
 
 ## Build
 
+The optional `chunking` build policy selects axis chunking for effective stages;
+see the [policy reference](../python/api/frontend.md#axis-chunking-policies).
+
 The builders separate export, partition, compilation and lowering from task
 timing and runtime pools:
 
@@ -50,7 +53,7 @@ from shadowspill import build_forward
 
 program = build_forward(
     model, example_args=(features,), example_kwargs={"mask": mask},
-    partition="auto", target="cuda:0",
+    partition="auto", chunking=None, target="cuda:0",
 )
 program.save("program.ssp")
 ```
@@ -69,6 +72,11 @@ avoids benchmarking indexing kernels on unrelated synthetic integer buffers
 during standalone compilation. Selected binaries are saved in the Program;
 measurement and execution do not select new kernels or depend on an earlier
 process's compiler cache.
+Paired finalization and measurement retain only resolved backward inputs while
+invoking backward; forward-only inputs and outputs are released first.
+Before preparing a different task, they release idle allocator cache so its
+inputs do not fragment large cached buffers from another task geometry. This
+preparation is outside measured task invocations.
 Finalization also resolves backend outputs whose device was provisional in
 compiler metadata, such as attention RNG controls returned on CPU. Those values
 have host lifetimes and no GPU allocation; conflicting observed storage locations
@@ -103,8 +111,10 @@ loss, optionally with metrics. `num_examples` fixes how many complete calls the
 program includes; ordering is a planning choice. Changing it reuses compiled
 forms and task profiles. Model mutations or RNG effects currently restrict
 reordering. Tied parameter contributions preserve both creation and mutation
-dependencies. `operator_recompute` controls operator retention during build;
-the planner separately chooses among saved stage variants.
+dependencies. `graph_pair_policy` defines independent saved-state cuts during build;
+the planner separately chooses among permitted stage variants and decides
+residency. See the [retention contract](../python/api/frontend.md#graph-pair-policies)
+for default classification, explicit rules and selective saved cuts.
 
 For differing example shapes or static metadata, both training builders accept
 `example_calls=[(args0, kwargs0), (args1, kwargs1)]` instead of
@@ -389,12 +399,14 @@ their dependencies but have zero GPU extent, and Executor holds their host value
 until the last ordered consumer.
 
 Measurement records durations, allocation lifetimes, output aliases and observed
-fixed memory. Completed native frees permit a later equal-sized allocation on
-the same allocation stream to reuse that slot, independent of native addresses.
-This lets fixed placement share a task-local slot across sequential temporaries;
-otherwise it would reserve every temporary until task completion. Different
-extents or streams remain separate leases. The saved allocation contract still
-describes requests and ownership, independently of native pointer choices.
+fixed memory. Logical free requests establish nonoverlapping temporary lifetimes
+on each allocation stream, independently of native addresses. Profiling compares
+exact-size reuse with a largest-first interval assignment and retains the smaller
+slot inventory. An interval slot reserves its largest request and can serve
+different sizes at the same address; returned roots and persistent state remain
+separate in that assignment. Different allocation streams retain separate slots.
+The saved allocation contract describes exact requests and ownership; admission
+reserves slot capacities, and execution binds each request within that capacity.
 
 `external_headroom_bytes` (512 MiB by default) additionally reserves
 worker headroom in that fixed-memory total; Executor inherits this saved setting.

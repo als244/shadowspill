@@ -207,6 +207,17 @@ class _AdmissionScriptBuilder:
             if step.reuses_allocation_ordinal is not None
         }
         replacement_aliases = set(admission.replacement_aliases)
+        roots: dict[int, int] = {}
+        capacities: dict[int, int] = {}
+        for step in allocation_steps:
+            if step.kind is TaskAllocationStepKind.ALLOCATE:
+                root = (
+                    step.allocation_ordinal
+                    if step.reuses_allocation_ordinal is None
+                    else roots[step.reuses_allocation_ordinal]
+                )
+                roots[step.allocation_ordinal] = root
+                capacities[root] = max(capacities.get(root, 0), step.charged_bytes)
         for step in allocation_steps:
             ordinal = step.allocation_ordinal
             if step.kind is TaskAllocationStepKind.ALLOCATE:
@@ -224,7 +235,7 @@ class _AdmissionScriptBuilder:
                     alias_group_id=alias_id,
                 )
                 if step.reuses_allocation_ordinal is None:
-                    lease_id = self._acquire_task(step.charged_bytes, provenance)
+                    lease_id = self._acquire_task(capacities[ordinal], provenance)
                 else:
                     lease_id = reusable_leases.pop(step.reuses_allocation_ordinal)
                     self.lease_provenance[lease_id] = provenance

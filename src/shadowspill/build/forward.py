@@ -13,6 +13,7 @@ from shadowspill.artifacts.program import Program
 from shadowspill.build.lowering.forward.program import lower_forward
 from shadowspill.parallelism import Parallelism
 from shadowspill.pytorch.accelerator import resolve_device
+from shadowspill.pytorch.chunking import ChunkPolicy, ChunkRegions
 from shadowspill.pytorch.partition import PartitionSpec
 from shadowspill.resources import Resource
 from shadowspill.resources.description import validate_resources
@@ -31,6 +32,7 @@ def build_forward(
     example_kwargs: Mapping[str, Any] | None = None,
     forward_fn: Callable[..., Any] | None = None,
     partition: PartitionSpec = "auto",
+    chunking: ChunkPolicy | ChunkRegions | None = None,
     parallelism: Parallelism | None = None,
     resources: Mapping[str, Resource] | None = None,
     rank_map: Mapping[int, int] | None = None,
@@ -55,6 +57,10 @@ def build_forward(
         partition=partition,
         device_index=device.index,
     )
+    if chunking is not None:
+        from .chunking import chunk_forward
+
+        captured = chunk_forward(captured, chunking)
     compiled = compile_artifacts(captured.artifacts, device)
     program = lower_forward(
         captured,

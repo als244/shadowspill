@@ -98,6 +98,10 @@ def partition_export(
             split,
             control_only=fold_control_only_stages,
         )
+        if fold_control_only_stages:
+            from .owned_outputs import own_differentiable_aliases
+
+            split = own_differentiable_aliases(split, capture.flat_inputs)
     stages, control_values = build_stage_examples(
         capture,
         split,

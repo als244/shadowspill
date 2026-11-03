@@ -95,6 +95,7 @@ class MeasurementSession:
             backward is None or backward["profile_key"] in self.profiles.tasks
         ):
             return
+        torch.cuda.empty_cache()
         arguments = self.controls.prepare(
             forward,
             lambda key, args: self.function(key)(*args),
@@ -126,4 +127,5 @@ class MeasurementSession:
             slots=backward["inputs"],
             values=values,
         )
+        del arguments, leaves, values
         self.measure(backward_key, backward_arguments)

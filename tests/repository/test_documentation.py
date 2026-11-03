@@ -74,6 +74,7 @@ _PUBLIC_C_REFERENCES = {
 }
 
 _REQUIRED_SIGNATURES = {
+    "src/shadowspill/pytorch/chunking/policy.py:ChunkPolicy.configure_stage",
     "src/shadowspill/ssd.py:ssd",
     "src/shadowspill/planner/plan.py:plan_program",
     "src/shadowspill/planner/plan.py:summarize_plan",

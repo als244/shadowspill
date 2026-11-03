@@ -13,10 +13,10 @@ from dataclasses import dataclass, replace
 from pathlib import Path
 
 import torch
+from torch._inductor import config as inductor_config
 
 from shadowspill.errors import CaptureError
 from shadowspill.pytorch.capture.artifacts import GraphArtifact
-from shadowspill.pytorch.capture.retention import RetentionPolicy
 from shadowspill.schema import artifact_schema
 from shadowspill.store import (
     CONTRIBUTE,
@@ -33,6 +33,7 @@ from .build import (
     build_default_graph_pairs,
     validate_graph_pair_variants,
 )
+from .policy import GraphPairPolicy
 from .rebind import rebind_task_graph_pairs
 from .serialization import (
     CachedAotGraphPair,
@@ -41,11 +42,12 @@ from .serialization import (
 )
 
 _GRAPH_PAIR_CACHE_SCHEMA = artifact_schema("aot_graph_pair")
+_METADATA_POLICY = "source_precision"
 
 #: What one entry is keyed by: the structural contract, the differentiation
 #: options, and the retention policy with the classes it gives the stage's
 #: custom operators, as one digest.
-_Key = tuple[str, tuple[int, ...], bool, str, str, tuple[str, ...]]
+_Key = tuple[str, tuple[int, ...], bool, str, str, tuple[str, ...], bool]
 
 
 @dataclass(frozen=True, slots=True)
@@ -91,14 +93,14 @@ class GraphPairStore:
         roots: tuple[int, ...],
         *,
         specialize_unit_tangents: bool,
-        retention: RetentionPolicy | None = None,
+        graph_pair_policy: GraphPairPolicy | None = None,
         accumulating: bool = False,
         gradient_dtype: torch.dtype | None = None,
         fuse_narrow_gradient_accumulation: bool = True,
         variants: tuple[str, ...] = GRAPH_PAIR_VARIANTS,
     ) -> TaskGraphPairs:
-        """The stage's graph pairs, their ``save`` variant retaining what
-        ``retention`` says to retain (the library's default when ``None``),
+        """The stage's graph pairs, each variant retaining what
+        ``graph_pair_policy`` specifies (the library's defaults when ``None``),
         their parameter gradients produced at ``gradient_dtype`` (the
         parameters' own when ``None``), and with the accumulating form when
         the stage runs in an ``accumulating`` step -- whose multiplies add
@@ -107,15 +109,15 @@ class GraphPairStore:
 
         The store holds the pairs as captured; the forms a step asks for are
         derived from them, once per contract, and rebound per occurrence. The
-        retention policy is part of an entry's key, together with the class
-        it gives every custom operator in the stage, so a policy changed by
+        independent policies are part of an entry's key, together with the class
+        each gives every custom operator in the stage, so a policy changed by
         the caller or a class changed by an operator's library misses rather
         than reading back a pair built under the old one. So are the
         ``variants`` the pairs carry: an entry holding one endpoint never
         answers a request for both.
         """
 
-        policy = retention or RetentionPolicy()
+        policy = graph_pair_policy or GraphPairPolicy()
         stage_contract = GraphArtifact.input_compatibility_digest(
             graph_module=example.stage.graph_module,
             example_inputs=example.inputs,
@@ -129,6 +131,7 @@ class GraphPairStore:
             policy.digest(example.stage.graph_module),
             "objective_connected_outputs",
             validate_graph_pair_variants(variants),
+            bool(inductor_config.emulate_precision_casts),
         )
         shards = self._gradient_shards
         padding = tuple(
@@ -157,7 +160,7 @@ class GraphPairStore:
                 example,
                 roots,
                 specialize_unit_tangents=specialize_unit_tangents,
-                retention=policy,
+                graph_pair_policy=policy,
                 variants=key[5],
             )
             self._pairs[key] = existing
@@ -207,12 +210,14 @@ class GraphPairStore:
             return None
         payload = {
             "schema": _GRAPH_PAIR_CACHE_SCHEMA,
+            "metadata_policy": _METADATA_POLICY,
             "structural_task_contract": key[0],
             "roots": key[1],
             "specialize_unit_tangents": key[2],
             "retention": key[3],
             "gradient_roots_policy": key[4],
             "variants": list(key[5]),
+            "emulate_precision_casts": key[6],
         }
         encoded = json.dumps(payload, sort_keys=True, separators=(",", ":"))
         # The contract, the differentiation options and the retention policy
@@ -245,6 +250,7 @@ class GraphPairStore:
             not isinstance(payload, dict)
             or payload.get("schema") != _GRAPH_PAIR_CACHE_SCHEMA
             or payload.get("key") != key
+            or payload.get("metadata_policy") != _METADATA_POLICY
         ):
             raise CaptureError(f"AOT graph-pair store entry {path} has the wrong key")
         reference_option_id = payload.get("reference_option_id")
@@ -301,6 +307,7 @@ class GraphPairStore:
                 torch.save(
                     {
                         "schema": _GRAPH_PAIR_CACHE_SCHEMA,
+                        "metadata_policy": _METADATA_POLICY,
                         "key": key,
                         "reference_option_id": pairs.reference_option_id,
                         "variants": cached,
@@ -317,11 +324,13 @@ class GraphPairStore:
         assert manifest_path is not None
         manifest = {
             "schema": _GRAPH_PAIR_CACHE_SCHEMA,
+            "metadata_policy": _METADATA_POLICY,
             "structural_task_contract": key[0],
             "differentiable_root_positions": list(key[1]),
             "specialize_unit_tangents": key[2],
             "retention_digest": key[3],
             "gradient_roots_policy": key[4],
+            "emulate_precision_casts": key[6],
             "retention": retention,
             "reference_option_id": pairs.reference_option_id,
             "variants": [

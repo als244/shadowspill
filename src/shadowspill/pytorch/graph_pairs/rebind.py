@@ -12,6 +12,7 @@ from shadowspill.pytorch.capture.provenance import (
     physical_input_provenance,
     rebind_backward_input_provenance,
 )
+from shadowspill.pytorch.capture.source import bind_source_metadata
 from shadowspill.pytorch.representations import component_at
 
 from ..partition.artifacts import StageExample
@@ -77,10 +78,22 @@ def _rebind_graph_pair(
         tuple(forward_arguments),
         input_provenance=forward_provenance,
     )
-    forward = replace(forward, input_components=pair.forward.input_components)
+    forward = replace(
+        forward,
+        input_components=pair.forward.input_components,
+        graph_module=bind_source_metadata(
+            forward.graph_module, example.stage.graph_module
+        ),
+    )
     backward = pair.backward.rebind_examples(
         pair.backward.example_arguments,
         input_provenance=rebind_backward_input_provenance(pair, forward),
+    )
+    backward = replace(
+        backward,
+        graph_module=bind_source_metadata(
+            backward.graph_module, example.stage.graph_module
+        ),
     )
     if len(roots) < pair.specialized_unit_tangent_count:
         raise CaptureError("specialized tangent count exceeds stage roots")

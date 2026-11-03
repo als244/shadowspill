@@ -147,6 +147,11 @@ draws on: event leases with their backend events ([events](events.md)),
 retirement queue entries, `MemoryLease` records, and lease-use records. A later
 callable sharing the runtime may grow these only at the same cold boundary.
 
+Retirement reservations count task allocation generations as well as physical
+leases. One slot reused repeatedly inside a task can leave several retirement
+records waiting for its completion event. Their host inventory is reserved
+separately from backend events, whose count follows completion boundaries.
+
 Two of those inventories exist for reasons worth naming. Adoption sizes one
 pool-owned release-frontier workspace from the sealed lease inventory, which
 dry-runs pending-range coalescing inside a bounded borrowed range-node arena,

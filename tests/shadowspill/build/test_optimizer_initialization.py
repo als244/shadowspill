@@ -20,7 +20,7 @@ def capture(model):
         example_calls=None,
         fuse_narrow_gradient_accumulation=True,
         partition="whole",
-        operator_recompute=None,
+        graph_pair_policy=None,
         gradient_dtype=None,
         device_index=0,
     )

@@ -211,6 +211,9 @@ class TaskAdmissionSpec:
         retired: set[int] = set()
         reused: set[int] = set()
         output_aliases: set[str] = set()
+        slot_roots: dict[int, int] = {}
+        slot_sizes: dict[int, set[int]] = {}
+        output_slots: set[int] = set()
         for step in self.allocation_steps:
             ordinal = step.allocation_ordinal
             if step.kind is TaskAllocationStepKind.ALLOCATE:
@@ -229,13 +232,13 @@ class TaskAdmissionSpec:
                             "task allocation trace reuses one ordinal twice"
                         )
                     reused.add(source)
-                    if allocations[source].charged_bytes != step.charged_bytes:
-                        raise ValueError(
-                            "task allocation trace reuse changes charged bytes"
-                        )
+                root = ordinal if source is None else slot_roots[source]
+                slot_roots[ordinal] = root
+                slot_sizes.setdefault(root, set()).add(step.charged_bytes)
                 allocations[ordinal] = step
                 live.add(ordinal)
                 if step.output_alias_group_id is not None:
+                    output_slots.add(root)
                     if step.output_alias_group_id in output_aliases:
                         raise ValueError(
                             "task allocation trace binds one output alias twice"
@@ -246,6 +249,10 @@ class TaskAdmissionSpec:
                 raise ValueError("task allocation trace releases an unknown ordinal")
             live.remove(ordinal)
             retired.add(ordinal)
+        if any(len(slot_sizes[root]) != 1 for root in output_slots):
+            raise ValueError(
+                "different-size task slot reuse is restricted to anonymous storage"
+            )
         expected_outputs = set(self.fresh_output_aliases) | set(
             self.replacement_aliases
         )

@@ -198,6 +198,12 @@ def _compiled_tasks(
     handoff_offsets, handoffs = _gather(columns.handoff_offsets, order)
     allocation_offsets, steps = _gather(columns.step_offsets, order)
     slots, slot_count = _allocation_slots(columns, allocation_offsets, steps)
+    allocating = columns.step_kinds[steps] == ALLOCATE
+    slot_bytes = np.zeros(slot_count, dtype=np.uint64)
+    np.maximum.at(slot_bytes, slots[allocating], columns.step_bytes[steps][allocating])
+    # A task reserves each slot once, before its first request. A later request
+    # can be larger; exact request sizes remain in the runtime task contract.
+    allocation_bytes = np.where(allocating, slot_bytes[slots], 0)
     outputs = columns.step_outputs[steps]
     present = outputs >= 0
     allocation_aliases = np.full(len(steps), NO_INDEX, dtype=np.int64)
@@ -214,7 +220,7 @@ def _compiled_tasks(
         _u32_array(indexed(columns.handoff_destinations[handoffs])),
         _u32_array(allocation_offsets),
         _u32_array(slots),
-        _u64_array(columns.step_bytes[steps]),
+        _u64_array(allocation_bytes),
         _u32_array(allocation_aliases),
         _u8_array(columns.step_kinds[steps]),
     )

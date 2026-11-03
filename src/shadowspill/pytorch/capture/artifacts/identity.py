@@ -15,6 +15,10 @@ from torch.utils._pytree import tree_flatten
 from shadowspill.errors import CaptureError
 from shadowspill.pytorch.accelerator import provider_version
 from shadowspill.pytorch.capture.live_storage import live_storage_identity
+from shadowspill.pytorch.capture.pointwise import (
+    pointwise_precision_barrier,
+    saved_outputs,
+)
 from shadowspill.pytorch.capture.storage import (
     TaskStorageContract,
 )
@@ -119,6 +123,12 @@ def _canonical_graph(graph_module: GraphModule) -> list[dict[str, object]]:
         if node.op != "placeholder":
             item["args"] = _canonical_argument(node.args, identities)
             item["kwargs"] = _canonical_argument(node.kwargs, identities)
+        if pointwise_precision_barrier(node):
+            item["low_precision_pointwise_barrier"] = True
+        if saved := saved_outputs(node):
+            item["saved_outputs"] = [
+                (entry.position, entry.index, entry.check_version) for entry in saved
+            ]
         result.append(item)
     return result
 

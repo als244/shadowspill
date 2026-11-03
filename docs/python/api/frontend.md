@@ -308,6 +308,113 @@ across accumulation rounds, and are unrelated to planning reports or runtime-tra
 diagnostics. Applications that do not need auxiliary outputs should return the
 loss tensor directly.
 
+## Graph-pair policies
+
+Pass `graph_pair_policy=policy` to `build_forward_backward` or `build_step` to
+control each checkpoint stage's saved-state cuts independently. `None` means
+`GraphPairPolicy()`. Import `GraphPairPolicy`, `RetentionPolicy`, `RetentionRule`
+and `OperatorClass` from `shadowspill.pytorch`. Forward-only builds do not take
+this argument because they have no backward saved state.
+
+`GraphPairPolicy(save=RetentionPolicy(), recompute=RetentionPolicy(default="recompute"))`
+returns an immutable pair of capture policies:
+
+| Argument | Type | Contract |
+| --- | --- | --- |
+| `save` | `RetentionPolicy` | Policy for the `save` graph pair. The default cost policy permits removals from backward-required forward state. Set `default="retain"` to keep that state without cost-based removals. |
+| `recompute` | `RetentionPolicy` | Policy for the `recompute` graph pair. The default retains checkpoint inputs and regenerates intermediates. Add retain rules to preserve selected operator results and required auxiliary outputs. |
+
+The policies are independent, with no requirement that one cut save more bytes
+than the other. They describe state needed by backward, not every forward
+intermediate: unused results are removed. Required inputs, effects and mutations
+still constrain valid cuts. Retained values are eligible for planner-controlled
+host spill; retention does not require device residency.
+
+`RetentionPolicy(memory_bound_flops_per_byte=16.0, rules=(), default="cost")`
+returns an immutable policy for either graph pair:
+
+| Argument | Type | Contract |
+| --- | --- | --- |
+| `memory_bound_flops_per_byte` | finite nonnegative `float` | Under the cost default, operations at or below this arithmetic intensity may be regenerated. This is not a memory budget or measured execution time. |
+| `rules` | `tuple[RetentionRule, ...]` | Exact operator overrides; each target may appear once. |
+| `default` | `"cost"`, `"retain"` or `"recompute"` | `cost` retains compute-bound and unpriced custom operations, permitting memory-bound replay. `retain` keeps backward-required results. `recompute` regenerates unselected intermediates from checkpoint inputs and selected retained results. Correctness-required state can also remain saved. |
+
+`RetentionRule(target, action)` identifies one exact forward operator overload
+name, such as `"aten.mm.default"`. `target` is a nonempty `str`; `action` is
+`"retain"` or `"recompute"`. The rule includes tuple extraction, so backward can
+receive the selected operation's required auxiliary outputs as well as its
+visible result. Unused outputs are removed. The rule does not request saving the
+operation's inputs: those can be regenerated from earlier saved state.
+Targets absent from an individual stage have no effect there, allowing one
+policy to apply across different stages. Inspect captured graphs and the
+graph-pair manifest to verify the intended operators and regenerated work.
+
+Explicit rules override the default classification. Model checkpoint annotations
+take precedence over the default; contradictory explicit rules fail capture.
+Capture also refuses a requested rule the resulting saved cut cannot satisfy,
+for example when correctness requires saving a value requested for replay.
+Selective cuts retain results of operations tagged as using RNG state or ordered
+effects. Explicit replay rules for those operations fail capture: use retained
+results or expose replayable state through ordinary tensor inputs. This avoids
+implicit generator objects in saved graph signatures.
+Rules select computations, not arbitrary views of their storage. An aliased
+saved output can retain its complete backing allocation.
+
+For example, compare two candidates with the same save policy and toggle
+retention of selected sequence operators in recompute. `attention_operators`
+contains the exact dense-attention overload names supplied by the provider:
+
+```python
+from shadowspill.pytorch import GraphPairPolicy, RetentionPolicy, RetentionRule
+
+save_policy = RetentionPolicy()
+graph_pair_policies = {
+    "inputs_only": GraphPairPolicy(save=save_policy),
+    "attention_retained": GraphPairPolicy(
+        save=save_policy,
+        recompute=RetentionPolicy(
+            default="recompute",
+            rules=tuple(RetentionRule(op, "retain") for op in attention_operators),
+        ),
+    ),
+}
+```
+
+Each candidate offers its two graph pairs to planning. PressureFit chooses
+save/recompute per stage and plans residency for that candidate; program search
+compares the resulting admitted Plans across candidates. The chunk policy's
+`variants` can restrict which outer variants are offered, independently of the
+retention policies. Forward sinks require a `save` choice, so changing only
+`recompute` leaves their paired-loss save policy intact.
+
+| Phase/control | Responsibility |
+| --- | --- |
+| `partition` | Chooses checkpoint boundaries and their inputs. |
+| `graph_pair_policy` during build | Constructs each variant's saved-state cut and backward graph. Both policy identities, operator classifications and graph contracts key capture reuse. |
+| `chunking` during build | Chooses execution regions, axes, sizes and permitted outer variants. It does not change the selected outer saved-state cut. |
+| Profiling | Measures each final complete task, including its chunk loop, assembly and provider workspace. |
+| Planning/PressureFit | Chooses among measured allowed stage variants and decides residency, transfers and execution order under device and spill budgets. Retained does not mean device-resident. |
+| Candidate search | Plans the declared measured candidates at each budget and selects the lowest admitted simulated update time. |
+| Execution | Uses the exact selected saved Plan without invoking retention callbacks or resizing chunks. |
+
+Changing either policy requires building and profiling the resulting task forms;
+CPU replanning can reuse saved candidates for different budgets and transfer
+costs. Equal final task contracts can share code/profiles; a changed saved cut
+cannot borrow another cut's memory evidence. See
+[graph-pair construction](../../architecture/graph-pair-construction.md#save),
+[artifact metadata](artifacts.md#aot-graph-pair-cache), and the
+[candidate example](../../../benchmarking/quickstart.md#searching-chunk-and-retention-policies).
+
+For unusual cost classification, subclass `RetentionPolicy.classify(node)`.
+It receives a traced FX node and returns `OperatorClass.MEMORY_BOUND`,
+`OperatorClass.COMPUTE_BOUND`, `OperatorClass.UNKNOWN`, or `None` for a nonoperator.
+Explicit rules and the retain/recompute defaults resolve before cost classification.
+Override `identity()` with a deterministic JSON-compatible mapping containing
+every extra configuration value; include `super().identity()`. Classification
+must depend only on traced metadata and that configuration, never live payloads
+or runtime memory pressure. `digest(graph_module)` combines this identity with
+custom-operator classifications for capture reuse.
+
 ## PartitionPolicy
 
 `PartitionSpec` accepts `"auto"`, `"whole"`, or an object implementing the
@@ -340,6 +447,191 @@ may also reject unsupported differentiation or mutation boundaries.
 See the [architecture contract](../../architecture/partitioning.md),
 [standalone example](../../examples/custom-partitioning.md), and
 [GLM example](../../../workloads/models/glm53_flash/README.md#partitioning).
+
+
+### IsolateOperations
+
+`IsolateOperations(targets, base="auto")` is a `PartitionPolicy` that gives each
+selected operation and its tuple-unpacking nodes a separate stage. Use it to
+separate sequence operations from surrounding independent computation. `targets` is a
+`tuple[str, ...]` of exact operator overload names in the exported graph; `base`
+is a `PartitionSpec` supplying the other cuts. Overlapping intervals merge.
+Other nodes inside an interval stay with it to preserve execution order.
+`assign_stages(graph_module, module)` returns the normal node-name mapping.
+
+## Axis chunking policies
+
+Pass `chunking=policy` to `build_forward`, `build_forward_backward` or
+`build_step` to run selected effective stages in axis slices. The default `None`
+leaves stage execution unchanged. The public names below are exported from
+`shadowspill.pytorch`, as well as `shadowspill.pytorch.chunking`.
+
+Each region chunks one logical axis at a time. Its tensors can map that axis
+to different physical dimensions, including factored dimensions after a
+reshape. The axis can represent tokens, independent heads, batch items, or
+another independent domain. Operations must preserve chunk independence or
+provide a supported additive reduction; this is not unrestricted multidimensional
+tiling. Each execution region chooses its own axis and chunk size.
+
+`ChunkRegions(partition, chunking, variants=("save", "recompute"))` selects
+execution regions **inside** each checkpoint stage. The builder's `partition=`
+still defines checkpoint boundaries. The arguments are:
+
+| argument | type | meaning |
+|---|---|---|
+| `partition` | `PartitionSpec` | Assigns contiguous execution regions on each explicit forward or backward graph. Its `module` argument is that task's graph module; use graph metadata and operator targets, rather than source-model children. |
+| `chunking` | `ChunkPolicy` | Receives each region's physical tensor ports and chooses its own chunk size and chunk axes, or `None` for whole-region execution. Backward regions receive separate callbacks. |
+| `variants` | `tuple[str, ...]` | Distinct outer training choices from `"save"` and `"recompute"`. Each selected child contract must permit the outer choice. The terminal training stage remains unchanged with its mandatory save choice. |
+
+The callback can choose different sizes by operator, module path, direction,
+input geometry, or `structural_contract`. Equivalent child contracts share
+compilation; each different resolved composition receives its own profile key.
+Execution-region intermediates are local task workspace. They do not add outer
+checkpoint inputs, saved values, or independently scheduled tasks. Cuts must
+pass flat tensor ports: keep tuple unpacking with its producer.
+
+```python
+from shadowspill.pytorch import ChunkRegions, IsolateOperations
+
+# The caller's axis_policy can return a different AxisChunks for every region.
+def execution_policy(axis_policy, sequence_operator_targets):
+    return ChunkRegions(
+        partition=IsolateOperations(sequence_operator_targets, base="whole"),
+        chunking=axis_policy,
+        variants=("recompute",),
+    )
+```
+
+`ChunkPolicy` implements `configure_stage(stage: StageInfo) -> AxisChunks | None`
+to select an
+execution contract after partitioning and control-stage folding. Return `None`
+to leave a stage intact. The callback must be deterministic and read-only;
+it must not run model kernels or mutate capture metadata. Unknown operations
+in a selected region fail capture rather than silently running unchunked.
+
+<!-- source-signature: src/shadowspill/pytorch/chunking/policy.py:ChunkPolicy.configure_stage -->
+```text
+configure_stage(stage: StageInfo) -> AxisChunks | None
+```
+
+`StageInfo` provides these read-only fields:
+
+| field | type | meaning |
+|---|---|---|
+| `stage_id` | `str` | This effective stage occurrence's identifier. |
+| `module_paths` | `tuple[str, ...]` | Source module paths present in the current occurrence. Explicit forward/backward tasks resolve these through source-operation provenance; generated operations without provenance add no path. |
+| `inputs` | tuple of tensor geometries or `None` | Full input shapes, strides, dtype and storage offsets, indexed by effective stage input position. Static values have no tensor geometry. |
+| `input_roles` | `tuple[TaskInputRole, ...]` | Provenance roles such as parameter, buffer, activation or control. |
+| `operators` | `tuple[str, ...]` | Exact operator overload names appearing in this stage. |
+| `terminal` | `bool` | Whether this is the terminal training stage, which generic axis chunking excludes. Forward-only stages have `False`. |
+| `kind` | `str \| None` | For an execution region, the explicit task direction, including `"forward"`, `"backward"` or `"inference"`. A source-stage callback receives `None`. |
+| `checkpoint_stage_id` | `str \| None` | The owning checkpoint occurrence for an execution-region callback. |
+| `structural_contract` | `str \| None` | Unchunked execution-region structural digest, usable for exact per-contract overrides. It excludes the subsequently selected chunk size. |
+| `input_domains` | `tuple[Mapping[str, ChunkAxis], ...]` | Known named axis mappings for each execution-region input, including flattened saved tensors and backward cotangents. Empty for source-stage callbacks. |
+
+`AxisChunks(chunk_size, inputs, variants=("save", "recompute"), rules=(), domain=None, regions=None)` returns
+an immutable chunk specification:
+
+| argument | type | meaning |
+|---|---|---|
+| `chunk_size` | positive `int` | Maximum logical axis positions per invocation. An uneven tail gets its own compiled geometry. |
+| `inputs` | `Mapping[int, int \| ChunkAxis]` | Effective stage input positions and their chunk axes. All selected inputs must describe the same positive logical axis extent. Remaining inputs are shared. |
+| `variants` | `tuple[str, ...]` | Nonempty distinct training retention choices from `"save"` and `"recompute"`. This restricts stage alternatives, independently of residency. Mandatory endpoint choices must remain available. There is no backward retention choice in forward-only builds. |
+| `rules` | `tuple[OperatorRule, ...]` | Caller-certified contracts for opaque operators in this stage. Targets must be unique. |
+| `domain` | `str \| None` | Optional nonempty name for the logical coordinates, such as `"tokens"` or `"heads"`. Matching inherited input mappings are included automatically; an explicit conflicting mapping is refused. `None` leaves mappings local to this region. |
+| `regions` | `ChunkRegions \| None` | Optional execution partition and per-region policies inside each bounded slice. Requires a named domain and must permit every outer variant. Child callbacks receive slice-sized input geometries and inherited axes. `None` compiles one graph per slice. |
+
+Use nested regions when consecutive computations need different chunk bounds
+without a full-axis temporary between them. For example, an outer bound of
+32768 can contain projection regions bounded by 8192 and another region bounded
+by 32768. The intermediate storage then spans at most the outer bound. Each
+inner loop handles its own tail; sizes need not divide one another. Checkpoint
+ports and saved values retain their complete shapes. The whole group must pass
+the outer axis-separability checks, including opaque operator rules.
+
+```python
+from shadowspill.pytorch import AxisChunks, ChunkRegions
+
+def bounded_regions(input_axes, execution_partition, inner_policy):
+    return AxisChunks(
+        32768, input_axes, domain="positions",
+        regions=ChunkRegions(execution_partition, inner_policy),
+    )
+```
+
+An integer input axis is shorthand for `ChunkAxis(dim)`. Negative dimensions are
+resolved against the input rank. `ChunkAxis(dim: int, before: int = 1,
+after: int = 1)` describes an ordered dimension with length
+`before * logical_extent * after`; both factors must be positive. For example,
+flattening a batch and sequence into one dimension uses `ChunkAxis(0, before=B)`
+when each invocation should take the same sequence slice from every batch item.
+The factors specify axis coordinates, not independent microbatches.
+
+Policies should prefer `stage.input_domains[i][domain]` when available over
+inferring an axis from equal dimension lengths. For example, a saved statistic
+can flatten multiple dimensions and still carry the same logical axis. Named
+mappings propagate through chunked children and the outer graph pair's saved
+values. An unchunked operation with unknown semantics does not establish a new
+output mapping; the policy must declare it where execution resumes.
+
+```python
+from shadowspill.pytorch import AxisChunks
+from shadowspill.task.inputs import TaskInputRole
+
+class FeedForwardChunks:
+    def configure_stage(self, stage):
+        if stage.terminal or not any(p.endswith(".ffn") for p in stage.module_paths):
+            return None
+        axes = {
+            i: 1
+            for i, (value, role) in enumerate(zip(stage.inputs, stage.input_roles))
+            if value is not None and len(value.shape) == 3
+            and role not in {TaskInputRole.PARAMETER, TaskInputRole.BUFFER}
+        }
+        return AxisChunks(8192, axes, variants=("recompute",)) if axes else None
+
+# Supply this alongside the partition policy to any public builder.
+chunking = FeedForwardChunks()
+```
+
+`OperatorRule(target, version, output_axes, reductions=())` certifies one opaque
+operator overload's semantics. `target: str` names that exact overload;
+`version: str` is a nonempty semantic version included in executable identity.
+`output_axes` is a tuple of `int | ChunkAxis | AxisFrom | ChunkLocal | None`,
+with one entry per flattened
+output: an integer declares a dimension of exactly the logical axis extent,
+`ChunkAxis` declares a factored dimension, `AxisFrom` derives its layout, and
+`None` declares a shared output.
+`reductions: tuple[int, ...]` instead marks listed `None` outputs as additive
+chunk contributions. Shared outputs must be invariant across chunks. Reduced
+outputs must sum to the full result; an average or normalized statistic does
+not satisfy that requirement. Separate forward and backward overloads need
+separate contracts.
+
+`AxisFrom(input_index: int, trailing_dims: int = 0)` derives an output's ordered
+chunk factor from an operator's positional input geometry. `input_index` is
+nonnegative; `trailing_dims` removes that many trailing feature dimensions
+before reshaping to the output. Normalization statistics flattened from
+`[batch, rows, features]` use `AxisFrom(0, 1)`. This declares a shape relation;
+it cannot certify a data-dependent permutation or global routing statistic.
+
+`ChunkLocal(dim: int | None = None)` declares opaque scratch whose coordinates
+belong to one child invocation, such as a dispatch permutation. An integer
+`dim` names an extent proportional to the logical axis extent; `None` means fixed
+geometry. These values may flow through the child, but cannot escape as saved
+values or public outputs. Mixing local coordinates with ordered axis values
+requires an explicit opaque restoration rule. A save variant that needs local
+scratch is refused; select recompute only when its captured cut does not retain
+that scratch. This contract does not make capacity-limited routing or a global
+auxiliary loss independent along the selected axis. Additive sufficient statistics may escape as
+reductions, with nonlinear aggregation in a separate stage.
+
+Supported built-in rules validate axis propagation, additive parameter VJPs and
+explicit backward gradient mutations. Opaque rules remain the caller's semantic
+responsibility. Generic terminal training stages, RNG operations, wrapped tensor
+components and unsupported mutations are refused. Attention, recurrence and
+convolution must retain their complete semantics outside regions chunked along dependent axes. The [architecture contract](../../architecture/axis-chunking.md)
+explains retention, complete-task profiling and automatic boundary residency.
 
 
 ## Invocation handle

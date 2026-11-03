@@ -51,8 +51,8 @@ def project_runtime_fixed_layout(
 ) -> RuntimeFixedLayout:
     """Translate a layout, retaining its offsets, dependencies and reserved span.
 
-    A shared distributed certificate can reserve larger temporary allocations
-    than this rank's kernel uses. Bind those slots to the exact local size;
+    A reused temporary slot or shared distributed certificate can reserve more
+    than an individual allocation requests. Bind each request to its exact size;
     every byte the runtime may use still lies within the certified range.
     """
 

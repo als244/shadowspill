@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from dataclasses import replace
 
+import pytest
+
 from reference.python.admission import replay_admission
 from shadowspill.ir import (
     AliasGroupSpec,
@@ -203,7 +205,8 @@ def test_admission_replay_treats_shared_input_as_externally_resident() -> None:
     assert all(step.alias_group_id != "shared" for step in replay.operations)
 
 
-def test_task_local_reuse_preserves_one_physical_lease() -> None:
+@pytest.mark.parametrize("sizes", [(32, 32), (16, 32), (32, 16)])
+def test_task_local_reuse_preserves_one_physical_lease(sizes) -> None:
     program = _program(
         (),
         (),
@@ -224,13 +227,13 @@ def test_task_local_reuse_preserves_one_physical_lease() -> None:
                     TaskAllocationStep(
                         0,
                         TaskAllocationStepKind.ALLOCATE,
-                        32,
+                        sizes[0],
                     ),
                     TaskAllocationStep(0, TaskAllocationStepKind.RELEASE),
                     TaskAllocationStep(
                         1,
                         TaskAllocationStepKind.ALLOCATE,
-                        32,
+                        sizes[1],
                         reuses_allocation_ordinal=0,
                     ),
                     TaskAllocationStep(1, TaskAllocationStepKind.RELEASE),

@@ -189,6 +189,10 @@ class TaskMeasurement:
         retired: dict[int, tuple[int, int]] = {}
         reused: set[int] = set()
         output_leaves: set[int] = set()
+        roots: dict[int, int] = {}
+        slot_sizes: dict[int, set[int]] = {}
+        slot_alignments: dict[int, int] = {}
+        output_slots: set[int] = set()
         for event in self.allocation_trace:
             if event.operation is TaskAllocationOperation.ALLOCATE:
                 if event.allocation_ordinal in live:
@@ -203,11 +207,21 @@ class TaskMeasurement:
                         raise ValueError(
                             "task allocation trace reuses an unavailable extent"
                         )
-                    if sizes[1] != event.charged_bytes:
-                        raise ValueError(
-                            "task allocation trace changes a reused physical extent"
-                        )
                     reused.add(event.reuses_ordinal)
+                root = (
+                    event.allocation_ordinal
+                    if event.reuses_ordinal is None
+                    else roots[event.reuses_ordinal]
+                )
+                roots[event.allocation_ordinal] = root
+                slot_sizes.setdefault(root, set()).add(event.charged_bytes)
+                if (
+                    slot_alignments.setdefault(root, event.alignment_bytes)
+                    != event.alignment_bytes
+                ):
+                    raise ValueError("task allocation slot changes alignment")
+                if event.output_leaf_indices:
+                    output_slots.add(root)
                 live[event.allocation_ordinal] = (
                     event.requested_bytes,
                     event.charged_bytes,
@@ -222,6 +236,10 @@ class TaskMeasurement:
                     "task allocation trace changes allocation size on free"
                 )
             retired[event.allocation_ordinal] = sizes
+        if any(len(slot_sizes[root]) != 1 for root in output_slots):
+            raise ValueError(
+                "different-size task slot reuse is restricted to anonymous storage"
+            )
         donated_leaves = [item.output_leaf_index for item in self.output_input_bindings]
         if len(set(donated_leaves)) != len(donated_leaves):
             raise ValueError("task output/input binding names one leaf twice")

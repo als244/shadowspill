@@ -15,7 +15,12 @@ class TaskAllocationOperation(StrEnum):
 
 @dataclass(frozen=True, slots=True)
 class TaskAllocationEvent:
-    """Task-local physical observation normalized away from process IDs."""
+    """Task-local physical observation normalized away from process IDs.
+
+    ``reuses_ordinal`` links disjoint lifetimes at one fixed address. Anonymous
+    requests can differ in size; admission reserves the maximum of the chain.
+    Requested and charged sizes describe this allocation, not the slot capacity.
+    """
 
     allocation_ordinal: int
     operation: TaskAllocationOperation

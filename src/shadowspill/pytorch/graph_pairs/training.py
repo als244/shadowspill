@@ -7,7 +7,6 @@ from collections.abc import Mapping
 import torch
 
 from shadowspill.pytorch.capture.objective import TrainingObjectiveCapture
-from shadowspill.pytorch.capture.retention import RetentionPolicy
 
 from ..partition import PartitionSpec, partition_export
 from ..partition.artifacts import PartitionedExport
@@ -15,6 +14,7 @@ from ..partition.values import StageOutputKey
 from .artifacts import PartitionedTrainingCapture
 from .build import GRAPH_PAIR_VARIANTS
 from .capture import capture_training_stages
+from .policy import GraphPairPolicy
 from .store import GraphPairStore
 
 
@@ -25,7 +25,7 @@ def partition_training_capture(
     graph_pair_store: GraphPairStore | None = None,
     representative_root_inputs: tuple[object, ...] | None = None,
     representative_stage_outputs: Mapping[StageOutputKey, torch.Tensor] | None = None,
-    retention: RetentionPolicy | None = None,
+    graph_pair_policy: GraphPairPolicy | None = None,
     accumulating: bool = False,
     gradient_dtype: torch.dtype | None = None,
     fuse_narrow_gradient_accumulation: bool = True,
@@ -38,8 +38,8 @@ def partition_training_capture(
     ``representative_stage_outputs`` hands the partition authentic control
     values already derived for this exported program, as
     :func:`partition_export` takes them; without them it derives its own.
-    ``retention`` says what each stage's ``save`` variant retains for its
-    backward and what it regenerates; ``None`` is the library's default.
+    ``graph_pair_policy`` says what each stage's variants retain for backward
+    and what they regenerate, independently; ``None`` selects the defaults.
     ``accumulating`` says this capture belongs to a microbatch that adds onto
     gradients its predecessors created, so its stages need the backward form
     that does the adding. ``gradient_dtype`` is the dtype parameter gradients
@@ -71,7 +71,7 @@ def partition_training_capture(
         stages=capture_training_stages(
             partitioned,
             graph_pair_store=graph_pair_store,
-            retention=retention,
+            graph_pair_policy=graph_pair_policy,
             accumulating=accumulating,
             gradient_dtype=gradient_dtype,
             fuse_narrow_gradient_accumulation=fuse_narrow_gradient_accumulation,

@@ -25,11 +25,12 @@ from ..partition.artifacts import PartitionedExport, StageExample
 
 @dataclass(frozen=True, slots=True)
 class GraphPairVariant:
-    """One labeled AOT pair produced under a partition memory budget.
+    """One labeled AOT pair produced from a base partition endpoint.
 
-    ``1.0`` is the ``save`` variant, which retains what is expensive to
-    regenerate; ``0.0`` is ``recompute``, which retains the stage's inputs
-    alone; a budget between the two is PyTorch's knapsack between them.
+    ``memory_budget`` labels the base cut: ``1.0`` for ``save``, ``0.0`` for
+    ``recompute``. Each has an independent retention policy, so zero can retain
+    selected operator results too. This label is not a memory measurement;
+    actual saved values and profiled allocations determine admission.
     """
 
     option_id: str
