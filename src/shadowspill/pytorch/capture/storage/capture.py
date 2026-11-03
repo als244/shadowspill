@@ -13,6 +13,7 @@ from shadowspill.errors import CaptureError
 from shadowspill.pytorch.capture.live_storage import (
     live_storage_bytes,
 )
+from shadowspill.pytorch.operators.materialize import PAD_STORAGE
 from shadowspill.task.storage import (
     MutationBinding,
     OutputView,
@@ -21,7 +22,7 @@ from shadowspill.task.storage import (
     TaskStorageContract,
 )
 
-from .roots import _InputRoot, _SemanticRoot
+from .roots import _FreshRoot, _InputRoot, _SemanticRoot
 from .symbolic import (
     _canonical_input_positions,
     _capture_mutations,
@@ -176,6 +177,13 @@ def _build_root_catalog(
             offset - origin + _view_span_bytes(item.value)
             for offset, item in zip(offsets, values, strict=True)
         )
+        if isinstance(root, _FreshRoot) and root.node.target is PAD_STORAGE:
+            # Equal-shard padding is an explicit physical output requirement,
+            # including elements beyond its logical views. A composed task
+            # must not shrink this allocation when adopting a child's result.
+            minimum_span = max(
+                minimum_span, live_storage_bytes(values[0].value) - origin
+            )
         base_offsets[root] = origin
         roots.append(
             _storage_root_spec(

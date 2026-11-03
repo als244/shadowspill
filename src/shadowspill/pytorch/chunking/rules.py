@@ -219,6 +219,13 @@ def _infer(
         # This allocation changes storage ownership, not coordinates or values.
         # Preserve reductions as well as sliced and shared gradient layouts.
         return args[0]
+    if namespace == "shadowspill" and name == "pad_storage":
+        # Equal-shard gradient padding preserves a shared/reduced tensor's
+        # logical values. Its fixed storage capacity does not describe a
+        # sliced activation, which needs a separate physical-axis contract.
+        if isinstance(args[0], ChunkAxis):
+            raise CaptureError("fixed storage padding cannot follow a chunk axis")
+        return args[0]
     flat = tree_flatten(args)[0]
     axes = [x for x in flat if isinstance(x, ChunkAxis)]
     reduced = REDUCED in flat

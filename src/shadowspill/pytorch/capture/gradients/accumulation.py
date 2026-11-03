@@ -15,6 +15,7 @@ from shadowspill.errors import CaptureError
 from shadowspill.pytorch.capture.artifacts import GraphArtifact, TaskInputProvenance
 from shadowspill.pytorch.capture.storage import ExplicitMutation
 from shadowspill.pytorch.operations import ACCUMULATE_MATMUL, ADDING_INTO
+from shadowspill.pytorch.operators.materialize import PAD_STORAGE
 from shadowspill.task.inputs import TaskInputRole
 
 from ..torch_deprecations import copy_graph_module
@@ -188,6 +189,13 @@ def _add_in_multiply(
     ):
         return None
     running = cast(torch.Tensor, prior.meta["val"])
+    if any(
+        node.target is PAD_STORAGE
+        and running.untyped_storage().nbytes()
+        < cast(int, node.args[1]) * running.element_size()
+        for node in chain
+    ):
+        return None
     adding = ADDING_INTO[cast(torch.Tensor, multiply.meta["val"]).dim()]
     schema = adding._schema
     if not torch._C._dispatch_has_kernel_for_dispatch_key(

@@ -8,6 +8,8 @@ from typing import Any, cast
 import torch
 from torch.fx.passes.shape_prop import _extract_tensor_metadata
 
+from shadowspill.pytorch.operators.materialize import PAD_STORAGE
+
 # Operations that only convert a tensor's dtype.
 _CONVERTING = frozenset(
     {
@@ -29,6 +31,7 @@ _WRITING_AT_DTYPE: dict[object, torch._ops.OpOverload] = {
 # Views and copies preserve values between a gradient producer and its output.
 _MOVING_ONLY = frozenset(
     {
+        PAD_STORAGE,
         torch.ops.aten.alias.default,
         torch.ops.aten.clone.default,
         torch.ops.aten.permute.default,
@@ -63,7 +66,7 @@ def _undo_move(
     arguments after the tensor, or ``None`` for a copy, which moves nothing."""
 
     target = node.target
-    if target is torch.ops.aten.clone.default:
+    if target in (torch.ops.aten.clone.default, PAD_STORAGE):
         return None
     if target in (torch.ops.aten.t.default, torch.ops.aten.transpose.int):
         return cast(Callable[..., Any], target), tuple(node.args[1:])
