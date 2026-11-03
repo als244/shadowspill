@@ -292,6 +292,7 @@ def _region_training(
                     stage_id=stage.example.stage.stage_id,
                     variant=option.option_id,
                     input_domains=tuple(inherited),
+                    domain_rules=forward.regions.domain_rules,
                     fuse_narrow_gradient_accumulation=fuse_narrow_gradient_accumulation,
                     gradient_leaves=tuple(
                         logical

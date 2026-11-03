@@ -295,6 +295,7 @@ def chunk_artifact(
 
         def compose(child: GraphArtifact) -> GraphArtifact:
             assert config.regions is not None
+            assert config.domain is not None
             extra = child.argument_count - len(inputs)
             return region_artifact(
                 child,
@@ -304,6 +305,7 @@ def chunk_artifact(
                 variant=variant,
                 input_domains=(*inherited, *({} for _ in range(extra))),
                 input_reductions=(*reductions, *(frozenset() for _ in range(extra))),
+                domain_rules={config.domain: config.rules},
                 fuse_narrow_gradient_accumulation=fuse_narrow_gradient_accumulation,
             )
 

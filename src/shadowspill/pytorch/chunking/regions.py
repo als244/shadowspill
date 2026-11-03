@@ -27,7 +27,7 @@ from shadowspill.task.storage import TaskStorageContract
 
 from .contract import boundary_metadata, materialized_storage
 from .geometry import REDUCED, ChunkAxis, Layout
-from .policy import ChunkRegions
+from .policy import ChunkRegions, OperatorRule
 
 
 @dataclass(frozen=True, slots=True)
@@ -37,6 +37,7 @@ class RegionTask:
     storage_contract: TaskStorageContract
     input_domains: tuple[dict[str, ChunkAxis], ...]
     output_domains: tuple[dict[str, ChunkAxis], ...]
+    domain_rules: dict[str, tuple[OperatorRule, ...]]
 
 
 def region_artifact(
@@ -48,6 +49,7 @@ def region_artifact(
     checkpoint_stage_id: str | None = None,
     input_domains: tuple[Mapping[str, ChunkAxis], ...] = (),
     input_reductions: tuple[frozenset[str], ...] = (),
+    domain_rules: Mapping[str, tuple[OperatorRule, ...]] | None = None,
     fuse_narrow_gradient_accumulation: bool = True,
     gradient_leaves: tuple[int, ...] | None = None,
 ) -> GraphArtifact:
@@ -55,9 +57,12 @@ def region_artifact(
     from shadowspill.pytorch.capture.artifacts import TensorGeometry
     from shadowspill.pytorch.partition.metadata import module_paths
 
+    from .domains import inherit_nested_rules, merge_rules, whole_output_domains
     from .inputs import resolve_input_axes
     from .policy import AxisChunks, StageInfo
     from .transform import chunk_artifact
+
+    contracts = dict(domain_rules or {})
 
     if any(path for _, path in artifact.input_components):
         raise CaptureError("execution regions require ordinary tensor components")
@@ -191,6 +196,7 @@ def region_artifact(
                     "set ChunkRegions.variants to the intended checkpoint choices"
                 )
             if config.domain is not None:
+                merge_rules(contracts, config.domain, config.rules)
                 declared = dict(config.inputs)
                 for position, available in enumerate(inherited):
                     axis = available.get(config.domain)
@@ -249,6 +255,7 @@ def region_artifact(
                 for slot, axis in zip(input_slots, axes, strict=True):
                     if isinstance(axis, ChunkAxis):
                         domains[slot][config.domain] = axis
+        inherit_nested_rules(child, contracts)
         children.append(child)
         slots = list(range(next_slot, next_slot + child.output_count))
         next_slot += child.output_count
@@ -265,6 +272,7 @@ def region_artifact(
                 elif layout == REDUCED:
                     output_reductions[leaf] = frozenset((config.domain,))
         elif config is None:
+            output_domains = whole_output_domains(child, inherited, contracts)
             output_reductions = _shared_reduction_outputs(
                 child,
                 tuple(reductions[slot] for slot in input_slots),
@@ -331,12 +339,16 @@ def region_artifact(
             {name: asdict(axis) for name, axis in item.items()}
             for item in parent_outputs
         ],
+        "domain_rules": {
+            name: [asdict(rule) for rule in rules]
+            for name, rules in sorted(contracts.items())
+        },
     }
     return replace(
         artifact,
         compatibility_digest=digest(identity),
         regions=RegionTask(
-            tuple(children), identity, storage, parent_inputs, parent_outputs
+            tuple(children), identity, storage, parent_inputs, parent_outputs, contracts
         ),
     )
 

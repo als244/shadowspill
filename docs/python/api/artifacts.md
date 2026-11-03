@@ -98,6 +98,7 @@ For nested execution, `task_metadata[key]["execution_regions"]` contains:
 | `slots` | Number of local binding slots, including outer inputs. |
 | `boundary` | Outer storage contract, input storage offsets, output count and scalar output literals. |
 | `input_domains`, `output_domains` | Per-port maps from a logical domain name to `{dim, before, after}`. These retain known coordinate mappings across execution cuts and forward/backward saved-value bindings. |
+| `domain_rules` | Declared opaque operator contracts per named domain, including versions and output mappings. These support coordinate propagation through whole regions and are inherited by backward and nested compositions. They do not select execution chunking or residency. |
 
 A boundary record's `storage` is a task storage contract. `input_offsets` are
 captured element offsets; `output_count` and `output_literals` describe the flat

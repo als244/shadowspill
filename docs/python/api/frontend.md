@@ -599,9 +599,17 @@ The factors specify axis coordinates, not independent microbatches.
 Policies should prefer `stage.input_domains[i][domain]` when available over
 inferring an axis from equal dimension lengths. For example, a saved statistic
 can flatten multiple dimensions and still carry the same logical axis. Named
-mappings propagate through chunked children and the outer graph pair's saved
-values. An unchunked operation with unknown semantics does not establish a new
-output mapping; the policy must declare it where execution resumes.
+mappings propagate through chunked children, whole regions with supported
+operator contracts, and the outer graph pair's saved values. For example, a
+whole normalization can produce flattened `[batch * sequence * heads]`
+statistics that a later chunked consumer must slice with its token inputs.
+Executing the normalization whole does not make those statistics shared.
+Named domains carry their declared `OperatorRule` contracts from forward into
+backward and into nested compositions. Conflicting contracts for the same
+overload and domain are refused. This propagation does not select chunking for
+the whole region or change checkpoint retention. An operation with unknown
+semantics does not establish an output mapping; the policy must declare it
+where execution resumes.
 
 ```python
 from shadowspill.pytorch import AxisChunks
