@@ -1,5 +1,6 @@
 """Fresh NCCL worker: saved Plans only, bounded shards, eager reference checks."""
 
+import json
 import os
 import sys
 from datetime import timedelta
@@ -63,6 +64,7 @@ try:
         rank_map={0: 1, 1: 0},
         parameter_norms=plan.program.bindings["kind"] == "step",
         spill=spill_pool(plan.memory_budgets.spill_bytes),
+        reject_overbudget=True,
     )
     checkpoint = directory / f"checkpoint-rank-{logical}.ssp"
     if resume:
@@ -89,8 +91,13 @@ try:
             ),
             accumulate_gradients=expected["accumulate"],
             collect_parameter_norms=bool(expected["parameter_metrics"]),
+            runtime_trace=bool(fixture.get("trace")) and index == 0,
         )
         output = pending.result()
+        if fixture.get("trace") and pending.diagnostics is not None:
+            (directory / f"rank-{logical}-trace-{index}.json").write_text(
+                json.dumps(pending.diagnostics.as_dict(), indent=2) + "\n"
+            )
         parameter_metrics = getattr(output, "parameter_metrics", {})
         values = (
             [output] if plan.program.bindings["kind"] == "forward" else output.losses

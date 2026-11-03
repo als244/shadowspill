@@ -5,6 +5,11 @@ from pathlib import Path
 
 
 def build(path, kind, ownership="sharded"):
+    if ownership == "regions":
+        from tests.shadowspill.execution._distributed_regions import build as regions
+
+        return regions(path, kind)
+
     import torch
 
     from shadowspill import (
