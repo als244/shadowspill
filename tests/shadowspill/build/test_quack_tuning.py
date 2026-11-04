@@ -1,4 +1,4 @@
-"""Saved Quack choices: actual CPU call dispatch, no CUDA kernels or tuning."""
+"""Saved Quack choices: CPU dispatch and marked CUDA kernel replay checks."""
 
 import copy
 import json
@@ -341,7 +341,8 @@ def test_unrecognized_call_wrapper_is_not_hidden_by_wrapped_metadata(monkeypatch
 def test_actual_gemm_and_generated_epilogue_replay_without_tuning(monkeypatch):
     if not torch.cuda.is_available():
         pytest.skip("requires CUDA")
-    from quack.gemm_interface import gemm, gemm_add, gemm_tuned
+    from quack.epilogue.library import scaled_residual
+    from quack.gemm_interface import gemm, gemm_tuned
     from quack.gemm_runtime.autotune import _MOD_TUNERS
 
     generator = torch.Generator(device="cuda").manual_seed(731)
@@ -354,14 +355,25 @@ def test_actual_gemm_and_generated_epilogue_replay_without_tuning(monkeypatch):
     )
 
     def invoke(a, b, c):
-        return gemm(a, b, tuned=True), gemm_add(a, b, c, tuned=True)
+        product = gemm(a, b, tuned=True)
+        destination = torch.empty_like(c)
+        scaled_residual.gemm_tuned(
+            a, b, destination, c, epi_args={"alpha": 0.5}, b_kn=True
+        )
+        return product, destination
 
     with capture_choices() as choices:
         initial = invoke(left, right, residual)
-    assert sum(key.startswith("quack/v1/") for key in choices) >= 2
+    kernels = {
+        value["kernel"] for key, value in choices.items() if key.startswith("quack/v1/")
+    }
+    assert any(name.endswith(".gemm_tuned") for name in kernels)
+    assert any(".mod_scaled_residual_" in name for name in kernels)
     expected = left.float() @ right.float()
     torch.testing.assert_close(initial[0], expected.bfloat16())
-    torch.testing.assert_close(initial[1], (expected + residual.float()).bfloat16())
+    torch.testing.assert_close(
+        initial[1], (0.5 * expected + residual.float()).bfloat16()
+    )
     for name in ("_bench", "prune_configs", "check_disk_cache"):
         monkeypatch.setattr(quack.Autotuner, name, forbidden)
     tuners = [gemm_tuned, *_MOD_TUNERS.values()]
