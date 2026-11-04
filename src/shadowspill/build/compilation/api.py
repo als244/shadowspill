@@ -16,6 +16,10 @@ from torch.fx.experimental.symbolic_shapes import ShapeEnv
 from shadowspill.errors import CompilationError
 from shadowspill.pytorch.capture.artifacts import GraphArtifact
 from shadowspill.pytorch.dependencies import operator_dependencies
+from shadowspill.pytorch.numerics import (
+    capture_numerical_settings,
+    validate_numerical_settings,
+)
 from shadowspill.task.manifest import ExecutableTaskManifest
 from shadowspill.task.storage import TaskStorageContract
 
@@ -24,7 +28,7 @@ from .inductor.compiler import compile_graph
 from .inductor.manifest import toolchain
 from .pointwise import native_pointwise_rounding
 
-_BUILD_VERSION = 8
+_BUILD_VERSION = 9
 
 
 @dataclass(frozen=True)
@@ -46,6 +50,7 @@ class _TaskCompiler:
     version: int = _BUILD_VERSION
 
     def __call__(self, graph: Any, inputs: Any, **options: Any) -> Any:
+        validate_numerical_settings(self.numerical_contracts)
         # standalone_compile forces synthetic per-kernel autotuning on. Those
         # buffers cannot represent dependent integer controls. The final build
         # pass instead tunes complete tasks and bundles their selected binaries.
@@ -80,6 +85,7 @@ def _package(
     input_offsets: tuple[tuple[int, int], ...],
     numerical_contracts: tuple[str, ...],
 ) -> BuiltTask | None:
+    validate_numerical_settings(numerical_contracts)
     if not isinstance(compiled, AOTCompiledArtifact):
         return None
     serialize = getattr(compiled.inner_fn.compiled_fn, "serialize", None)
@@ -131,6 +137,7 @@ def compile_task(
     graph, numerical_contracts = native_pointwise_rounding(
         artifact.graph_module, emulate=bool(config.emulate_precision_casts)
     )
+    numerical_contracts = (*numerical_contracts, capture_numerical_settings())
 
     def invoke() -> BuiltTask | None:
         compiled = standalone_compile(

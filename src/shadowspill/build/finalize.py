@@ -13,6 +13,10 @@ from shadowspill.artifacts.tasks import stage_jobs
 from shadowspill.errors import CompilationError
 from shadowspill.pytorch.control_inputs import ControlInputs
 from shadowspill.pytorch.executable import restore_executable
+from shadowspill.pytorch.numerics import (
+    program_numerical_contracts,
+    validate_numerical_settings,
+)
 from shadowspill.pytorch.task_errors import task_error
 from shadowspill.pytorch.task_inputs import prepare_inputs
 from shadowspill.pytorch.tuning import capture_choices
@@ -25,7 +29,11 @@ from .output_devices import resolve_output_devices
 def finalize_tasks(
     program: Program, device: torch.device, *, rank_map: Mapping[int, int] | None = None
 ) -> Program:
-    with prepare_resources(program, device, rank_map):
+    with prepare_resources(program, device, rank_map) as resources:
+        validate_numerical_settings(
+            program_numerical_contracts(program),
+            check=None if resources.groups is None else resources.groups.check,
+        )
         return _finalize_tasks(program, device)
 
 
@@ -42,9 +50,13 @@ def _finalize_tasks(program: Program, device: torch.device) -> Program:
     controls = ControlInputs(program, device)
 
     def finalize(key: str, arguments: Sequence[Any]) -> Any:
+        contracts = program_numerical_contracts(program, (key,))
+        validate_numerical_settings(contracts)
         if key not in functions:
             functions[key] = restore_executable(
-                program.executables[key], dependencies=dependencies.get(key, ())
+                program.executables[key],
+                dependencies=dependencies.get(key, ()),
+                numerical_contracts=contracts,
             )
         if key not in pending:
             return functions[key](*arguments)

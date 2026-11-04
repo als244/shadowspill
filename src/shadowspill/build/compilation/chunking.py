@@ -8,6 +8,7 @@ from typing import Any
 from shadowspill.errors import CompilationError
 from shadowspill.pytorch.capture.artifacts import GraphArtifact
 from shadowspill.pytorch.chunking.executable import ChunkedExecutable
+from shadowspill.pytorch.numerics import compose_numerical_contracts
 from shadowspill.task.manifest import ExecutableRootAllocation, build_manifest
 from shadowspill.task.storage import StorageRootKind
 
@@ -23,14 +24,9 @@ def compile_chunk_task(
 
     task = artifact.chunking
     assert task is not None
-    numerical_contracts = tuple(
-        sorted(
-            {
-                contract
-                for _, child in (*task.children, *task.accumulating_children)
-                for contract in compiled[child.compatibility_digest].numerical_contracts
-            }
-        )
+    numerical_contracts = compose_numerical_contracts(
+        compiled[child.compatibility_digest].numerical_contracts
+        for _, child in (*task.children, *task.accumulating_children)
     )
     storage = task.storage_contract
     manifest = build_manifest(
@@ -66,7 +62,9 @@ def compile_chunk_task(
             host_outputs = locations
             dependencies.extend(built.dependencies)
             functions[size] = restore_executable(
-                built.payload, dependencies=built.dependencies
+                built.payload,
+                dependencies=built.dependencies,
+                numerical_contracts=built.numerical_contracts,
             )
     assert host_outputs is not None
     host_roots = {

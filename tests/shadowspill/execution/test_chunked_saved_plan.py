@@ -184,7 +184,16 @@ def test_many_chunks_reserve_retirements_for_reused_allocation_generations(tmp_p
     _verify_saved(program, model, examples, "forward", tmp_path)
 
 
-def _verify_saved(program, model, examples, kind, tmp_path, *, host_output_leaves=()):
+def _verify_saved(
+    program,
+    model,
+    examples,
+    kind,
+    tmp_path,
+    *,
+    host_output_leaves=(),
+    bf16_reduction=None,
+):
     program.save(tmp_path / "program.ssp")
     program = Program.load(tmp_path / "program.ssp")
     profiles = measure_program(program, warmup_seconds=0.001, measure_seconds=0.003)
@@ -206,6 +215,8 @@ def _verify_saved(program, model, examples, kind, tmp_path, *, host_output_leave
     assert planning.returncode == 0, planning.stdout + planning.stderr
     expected = oracle(model, examples, kind)
     expected["host_output_leaves"] = host_output_leaves
+    if bf16_reduction is not None:
+        expected["bf16_reduction"] = bf16_reduction
     torch.save(expected, tmp_path / "oracle.pt")
     worker = subprocess.run(
         [sys.executable, str(Path(__file__).with_name("_execute.py")), str(tmp_path)],

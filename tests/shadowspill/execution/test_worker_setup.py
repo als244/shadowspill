@@ -44,6 +44,7 @@ def _failing_setup(monkeypatch, runtime, error):
         program=SimpleNamespace(parallelism=None), _accumulation_plan=None
     )
     monkeypatch.setattr(worker, "plan_inventory", lambda plan, plans: {"": plan})
+    monkeypatch.setattr(worker, "plan_numerical_contracts", lambda plan: ())
     monkeypatch.setattr(worker, "worker_headroom", lambda candidates, headroom: 0)
     monkeypatch.setattr(worker, "open_worker", lambda *arguments: runtime)
     monkeypatch.setattr(worker, "resource_inventory", lambda programs: ({}, {}))
@@ -84,3 +85,25 @@ def test_a_cleanup_that_could_not_close_the_runtime_names_the_setup_error(
 
     assert raised.value.__cause__ is error
     assert not runtime._closed
+
+
+def test_numeric_mismatch_precedes_opening_runtime_and_spill_pool(monkeypatch):
+    import torch
+
+    from shadowspill.pytorch.numerics import capture_numerical_settings
+
+    contract = capture_numerical_settings()
+    matmul = torch.backends.cuda.matmul
+    monkeypatch.setattr(
+        matmul,
+        "allow_bf16_reduced_precision_reduction",
+        not matmul.allow_bf16_reduced_precision_reduction,
+    )
+    runtime = _Runtime(refuse=False)
+    plan = _failing_setup(monkeypatch, runtime, AssertionError("opened runtime"))
+    monkeypatch.setattr(worker, "plan_numerical_contracts", lambda plan: (contract,))
+    opened = []
+    monkeypatch.setattr(worker, "open_worker", lambda *args: opened.append(args))
+    with pytest.raises(RuntimeError, match="allow_bf16_reduced_precision_reduction"):
+        worker.create_paths(plan, 0, None)
+    assert not opened and not runtime._closed

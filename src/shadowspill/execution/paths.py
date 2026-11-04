@@ -8,6 +8,10 @@ import torch
 
 from shadowspill.artifacts.device import require_compiled_device
 from shadowspill.artifacts.plan import Plan
+from shadowspill.pytorch.numerics import (
+    program_numerical_contracts,
+    validate_numerical_settings,
+)
 from shadowspill.runtime import Runtime
 from shadowspill.runtime.plan.admission import clear_tasks
 from shadowspill.runtime.plan.bridge import RuntimeBridge
@@ -34,6 +38,7 @@ class ExecutionPath:
     controls: Controls
     tasks: tuple[BoundTask, ...]
     acquisition: int
+    numerical_contracts: tuple[str, ...] = ()
 
     def close(self, runtime: Runtime) -> None:
         # Each step runs whatever the ones before it raised, last registered
@@ -45,6 +50,16 @@ class ExecutionPath:
             cleanup.callback(objects.unregister, objects.registered_aliases())
             cleanup.callback(clear_tasks, self.bridge)
             cleanup.callback(self.storage.clear_views)
+
+
+def plan_numerical_contracts(plan: Plan) -> tuple[str, ...]:
+    selected = {
+        task.task_id for task in plan._costed_program.selected_tasks(plan.selections)
+    }
+    return program_numerical_contracts(
+        plan.program,
+        {task.profile_id for task in plan.program.tasks if task.task_id in selected},
+    )
 
 
 def bind_path(
@@ -60,6 +75,8 @@ def bind_path(
     distributed: DistributedWorker | None = None,
 ) -> ExecutionPath:
     try:
+        contracts = plan_numerical_contracts(plan)
+        validate_numerical_settings(contracts)
         require_compiled_device(plan.program, memory.execution_device)
         storage = Storage(
             plan,
@@ -85,7 +102,7 @@ def bind_path(
         )
         adopt_plan(runtime, memory.plan_handle)
         return ExecutionPath(
-            plan, memory, bridge, storage, controls, tasks, acquisition
+            plan, memory, bridge, storage, controls, tasks, acquisition, contracts
         )
     except BaseException:
         bridge.objects.unregister(bridge.objects.registered_aliases())

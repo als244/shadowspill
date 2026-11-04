@@ -9,6 +9,7 @@ from shadowspill.errors import CompilationError
 from shadowspill.pytorch.capture.artifacts import GraphArtifact
 from shadowspill.pytorch.chunking.region_executable import RegionExecutable
 from shadowspill.pytorch.executable import restore_executable
+from shadowspill.pytorch.numerics import compose_numerical_contracts
 from shadowspill.task.manifest import ExecutableRootAllocation, build_manifest
 from shadowspill.task.storage import StorageRootKind
 
@@ -24,7 +25,10 @@ def compile_region_task(
     metadata = deepcopy(task.identity)
     children = {}
     dependencies = {}
-    contracts: set[str] = set()
+    contracts = compose_numerical_contracts(
+        compiled[child.compatibility_digest].numerical_contracts
+        for child in task.children
+    )
     # A checkpoint can retain an outer host input directly, without a child
     # producing it. Those passthroughs still have no device allocation.
     host_slots = {
@@ -34,7 +38,6 @@ def compile_region_task(
     }
     for index, child in enumerate(task.children):
         built = compiled[child.compatibility_digest]
-        contracts.update(built.numerical_contracts)
         instruction = metadata["regions"][index]
         host_leaves = set(built.memory["off_device_output_leaves"])
         roots = {
@@ -50,7 +53,9 @@ def compile_region_task(
                 )
         host_slots.update(instruction["outputs"][leaf] for leaf in host_leaves)
         children[index] = restore_executable(
-            built.payload, dependencies=built.dependencies
+            built.payload,
+            dependencies=built.dependencies,
+            numerical_contracts=built.numerical_contracts,
         )
         dependencies.update(
             {tuple(sorted(item.items())): item for item in built.dependencies}
@@ -83,7 +88,7 @@ def compile_region_task(
         ),
         capture_ns=0,
         toolchain={
-            **toolchain(tuple(sorted(contracts))),
+            **toolchain(contracts),
             "region_composition": artifact.compatibility_digest,
         },
     )
@@ -99,5 +104,5 @@ def compile_region_task(
             "off_device_output_leaves": tuple(sorted(host_leaves)),
         },
         tuple(dependencies.values()),
-        numerical_contracts=tuple(sorted(contracts)),
+        numerical_contracts=contracts,
     )

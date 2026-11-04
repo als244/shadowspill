@@ -39,12 +39,45 @@ shapes/static metadata. Planning chooses example and optimizer ordering from the
 same built Program; changing ordering does not require rebuilding it.
 
 `bindings["task_metadata"][key]["numerical_contracts"]` lists versioned numerical
-lowering contracts applied during compilation. An empty list means no additional
-native scalar-rounding rule was applied. Composed tasks include contracts from
+contracts applied during compilation. Composed tasks include contracts from
 their children. A precision-emulated sigmoid-backward contract identifies the
 provider's intermediate rounding and multiplication order for BF16/FP16.
-These contracts participate in implementation identity; they are inspection
-metadata, not a runtime setting for changing an already measured task.
+The `torch.numerical_settings.v1:` entry contains a JSON snapshot of the caller's
+backend settings. It participates in compiler-cache, implementation and profile
+identity. These records describe an already built task; editing them does not
+change its implementation.
+
+### Numerical backend settings
+
+Configure PyTorch before building, and use the same settings in finalization,
+profiling and every execution worker. ShadowSpill records and validates:
+
+- deterministic-algorithm and warn-only flags;
+- Device matrix multiplication precision, including the `highest`/`high`/
+  `medium` control and the `fp32_precision` control;
+- BF16/FP16 reduced-precision reduction, their split-K controls, FP16
+  accumulation and preferred BLAS library;
+- cuDNN enablement, determinism, benchmarking/benchmark limit, and convolution
+  and RNN FP32 precision;
+- `CUBLAS_WORKSPACE_CONFIG`, `CUBLASLT_WORKSPACE_SIZE`,
+  `NVIDIA_TF32_OVERRIDE` and `TORCH_ALLOW_TF32_CUBLAS_OVERRIDE` environment values.
+
+ShadowSpill keeps the caller's settings unchanged. A mismatch identifies the
+required and actual values and refuses the task. Restore the build configuration
+or build, profile and plan again under the new configuration. Worker startup and
+each `Executor.run()` validate the selected tasks before input staging or task
+execution. Keep these process-global settings fixed until an asynchronous
+invocation completes; this is not per-thread precision isolation. Resource-group
+build/profiling and distributed execution coordinate configuration refusals.
+
+Set environment variables before starting the process, since libraries may cache
+them during initialization. This snapshot does not inventory every provider flag,
+SDPA backend selector or workspace API override, nor guarantee bitwise equality
+across different GEMM/chunk geometries. Such changes still require fresh build
+and measurement and the appropriate numerical qualification. CPU loading and
+planning carry these settings as plain data and never import PyTorch to check them.
+Artifacts without a snapshot remain readable; rebuild them to obtain
+configuration validation and distinct profile identities.
 
 `bindings["task_inputs"][key]["provenance"]` describes representative input
 policies. Authentic control, constant and optimizer-hyperparameter samples use

@@ -113,7 +113,9 @@ def test_native_cuda_rounding_uses_one_packaged_kernel(
         rounded = compile_task(artifact)
         assert metrics.generated_kernel_count - before == 1
         cached = compile_task(artifact)
-    assert rounded.numerical_contracts and not unrounded.numerical_contracts
+    rounding = "cuda.sigmoid_backward.scalar_rounding.v1"
+    assert rounding in rounded.numerical_contracts
+    assert rounding not in unrounded.numerical_contracts
     assert (
         rounded.manifest.compatibility_digest != unrounded.manifest.compatibility_digest
     )

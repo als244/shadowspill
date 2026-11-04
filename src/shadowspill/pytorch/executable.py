@@ -7,14 +7,17 @@ from torch._inductor.standalone_compile import AOTCompiledArtifact
 
 from . import operations as _operations  # noqa: F401
 from .dependencies import restore_dependencies
+from .numerics import validate_numerical_settings
 
 
 def restore_executable(
     payload: bytes,
     *,
     dependencies: Sequence[Mapping[str, str]] = (),
+    numerical_contracts: Sequence[str] = (),
     triton_choices: Mapping[str, Any] | None = None,
 ) -> Any:
+    validate_numerical_settings(numerical_contracts)
     from .chunking.executable import MAGIC, ChunkedExecutable
     from .chunking.region_executable import MAGIC as REGION_MAGIC
     from .chunking.region_executable import RegionExecutable

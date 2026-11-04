@@ -9,6 +9,7 @@ import torch
 from shadowspill.artifacts.plan import Plan
 from shadowspill.memory import SpillPool
 from shadowspill.planning.shared import shared_memory
+from shadowspill.pytorch.numerics import validate_numerical_settings
 from shadowspill.pytorch.resource_streams import ResourceStreams
 from shadowspill.resources.description import resource_groups
 from shadowspill.resources.inventory import resource_inventory
@@ -18,7 +19,7 @@ from shadowspill.runtime import Runtime
 from .distributed.checks import coordinated
 from .distributed.sequence import check_collective_order
 from .distributed.worker import DistributedWorker
-from .paths import ExecutionPath, bind_path
+from .paths import ExecutionPath, bind_path, plan_numerical_contracts
 from .resources import plan_inventory, seal_paths, worker_headroom, worker_streams
 from .setup import open_path, open_worker
 
@@ -60,13 +61,15 @@ def create_paths(
     providers = ResourceBindings()
     try:
 
-        def validate_observations() -> None:
+        def validate_configuration() -> None:
             if type(parameter_norms) is not bool:
                 raise TypeError("parameter_norms must be a bool")
             if parameter_norms and plan.program.bindings["kind"] != "step":
                 raise ValueError("parameter norms require an optimizer step Plan")
+            for candidate in candidates:
+                validate_numerical_settings(plan_numerical_contracts(candidate))
 
-        coordinated(distributed, validate_observations)
+        coordinated(distributed, validate_configuration)
         if distributed is not None and any(
             value != parameter_norms
             for value in distributed.groups.gather(parameter_norms)

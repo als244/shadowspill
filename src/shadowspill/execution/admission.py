@@ -10,6 +10,7 @@ from shadowspill.communication.contracts import collective_measurement
 from shadowspill.planning.admission.outputs import output_bindings_for_entrypoints
 from shadowspill.profiling.records import measured_task
 from shadowspill.pytorch.executable import restore_executable
+from shadowspill.pytorch.numerics import program_numerical_contracts
 from shadowspill.runtime.plan.admission import (
     admit_caller_acquisition,
     admit_fixed_layout,
@@ -125,6 +126,9 @@ def prepare(
                         triton_choices=plan.program.bindings.get(
                             "triton_choices", {}
                         ).get(key),
+                        numerical_contracts=program_numerical_contracts(
+                            plan.program, (key,)
+                        ),
                     )
             measurement = measurements[key]
             function = functions[key]

@@ -26,6 +26,10 @@ from tests.spill_pool import spill_pool  # noqa: E402
 directory = Path(sys.argv[1])
 plan = Plan.load(directory / "plan.ssp")
 oracle = torch.load(directory / "oracle.pt", weights_only=True)
+if "bf16_reduction" in oracle:
+    torch.backends.cuda.matmul.allow_bf16_reduced_precision_reduction = oracle[
+        "bf16_reduction"
+    ]
 lazy_kernels = set(oracle.get("lazy_kernels", ()))
 norms = oracle.get("parameter_metrics", ())
 norm_kernels = {"norm_partials", "norm_sum"} if norms else set()
@@ -93,6 +97,16 @@ def assert_state(executor, state):
         )
 
 
+if "bf16_reduction" in oracle:
+    torch.backends.cuda.matmul.allow_bf16_reduced_precision_reduction = not oracle[
+        "bf16_reduction"
+    ]
+    with pytest.raises(RuntimeError, match="allow_bf16_reduced_precision_reduction"):
+        Executor(plan)
+    torch.backends.cuda.matmul.allow_bf16_reduced_precision_reduction = oracle[
+        "bf16_reduction"
+    ]
+
 executor = Executor(
     plan, parameter_norms=bool(norms), spill=spill_pool(plan.memory_budgets.spill_bytes)
 )
@@ -108,6 +122,15 @@ assert statistics.physical_budget_sealed
 assert statistics.runtime.event_lease_sealed
 streams = StreamChecks(executor) if oracle.get("check_task_streams") else None
 executor.initialize(fill, chunk_bytes=40, restore=oracle["restore"])
+if "bf16_reduction" in oracle:
+    torch.backends.cuda.matmul.allow_bf16_reduced_precision_reduction = not oracle[
+        "bf16_reduction"
+    ]
+    with pytest.raises(RuntimeError, match="allow_bf16_reduced_precision_reduction"):
+        executor.run(input_loader=lambda i: oracle["examples"][i])
+    torch.backends.cuda.matmul.allow_bf16_reduced_precision_reduction = oracle[
+        "bf16_reduction"
+    ]
 if "initial_state" in oracle:
     assert_state(executor, oracle["initial_state"])
 assert (

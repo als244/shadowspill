@@ -12,6 +12,7 @@ from shadowspill.artifacts.plan import Plan
 from shadowspill.communication.binding.ranks import RankAssignment
 from shadowspill.memory import SpillPool
 from shadowspill.pytorch.invocation import InvocationResult, ReusableCompletionEvent
+from shadowspill.pytorch.numerics import validate_numerical_settings
 from shadowspill.runtime.plan.annotations import TaskBoundaryAnnotations
 
 from .dispatch import dispatch
@@ -205,6 +206,7 @@ class Executor:
                 if plan is None
                 else self._named_paths[plan]
             )
+            validate_numerical_settings(path.numerical_contracts)
             path.bridge.require_initial_residency(path.plan.schedule.initial_residency)
             path.controls.apply(hyperparams or {})
             stage_inputs(path.storage, args, kwargs, input_loader)

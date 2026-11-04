@@ -14,6 +14,10 @@ from shadowspill.communication.binding.groups import GroupBindings
 from shadowspill.errors import ProfilingError
 from shadowspill.pytorch.control_inputs import ControlInputs
 from shadowspill.pytorch.executable import restore_executable
+from shadowspill.pytorch.numerics import (
+    program_numerical_contracts,
+    validate_numerical_settings,
+)
 from shadowspill.pytorch.task_errors import task_error
 from shadowspill.pytorch.task_inputs import prepare_inputs
 
@@ -33,6 +37,10 @@ class MeasurementSession:
         *,
         groups: GroupBindings | None = None,
     ):
+        validate_numerical_settings(
+            program_numerical_contracts(program),
+            check=None if groups is None else groups.check,
+        )
         self.program, self.device, self.inputs = program, device, inputs
         self.groups = groups
         self.warmup, self.measurement = warmup, measurement
@@ -44,6 +52,8 @@ class MeasurementSession:
         self.external = external_device_bytes(device)
 
     def function(self, key: str) -> Any:
+        contracts = program_numerical_contracts(self.program, (key,))
+        validate_numerical_settings(contracts)
         if key not in self.functions:
             before = torch.cuda.memory_allocated(self.device)
             self.functions[key] = restore_executable(
@@ -52,6 +62,7 @@ class MeasurementSession:
                     key, ()
                 ),
                 triton_choices=self.program.bindings.get("triton_choices", {}).get(key),
+                numerical_contracts=contracts,
             )
             self.persistent += max(0, torch.cuda.memory_allocated(self.device) - before)
         return self.functions[key]
