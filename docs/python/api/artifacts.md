@@ -55,6 +55,13 @@ task; editing them does not change its implementation.
 
 ### Numerical backend settings
 
+ShadowSpill does not enable strict arithmetic or determinism by default. It
+inherits the caller's PyTorch and provider configuration, including precision
+emulation. Leave normal training settings in place for throughput measurements;
+enable stricter settings explicitly for the numerical comparisons that need
+them. Deterministic kernels can change both task time and workspace, so profiles
+and memory budgets measured under one configuration do not describe the other.
+
 Configure PyTorch before building, and use the same settings in finalization,
 profiling and every execution worker. ShadowSpill records and validates:
 
