@@ -65,6 +65,12 @@ MEMORY_BOUND_FLOPS_PER_BYTE = 16.0
 #: The namespaces whose operators are PyTorch's own.
 _BUILTIN_NAMESPACES = frozenset({"aten", "prims"})
 
+# Discrete forward choices must survive ordinary recomputation. Tiny changes in
+# replayed logits can change a top-k branch even when all kernels are otherwise
+# deterministic. These are operator contracts, not model-architecture rules.
+# Additional providers can use RetentionRule; explicit rules override defaults.
+_FORWARD_CHOICES = frozenset({"aten.topk.default", "mlops.lora_route.default"})
+
 #: The partitioner bans that encode "recompute is free only when the compiler
 #: fuses it", which is the premise the intensity rule replaces, and the one
 #: that would make a parameter free to keep when a plan pays a fetch for it.
@@ -140,6 +146,9 @@ class RetentionPolicy:
     regenerates them from inputs. ``"cost"`` permits memory-bound replay.
     Explicit rules override the default. Selective cuts retain RNG/effect state;
     explicit replay of those operations is refused. Retention never requests residency.
+    Top-k and the decomposed MLOps router retain their backward-required choices
+    in every variant by default. Explicit rules can override this independently
+    for either variant; model checkpoint annotations retain their precedence.
     """
 
     memory_bound_flops_per_byte: float = MEMORY_BOUND_FLOPS_PER_BYTE
@@ -194,6 +203,8 @@ class RetentionPolicy:
         if node.op != "call_function":
             return None
         action = _source_action(node, self.rules)
+        if action is None and str(node.target) in _FORWARD_CHOICES:
+            action = "retain"
         if action is not None:
             return (
                 OperatorClass.COMPUTE_BOUND
@@ -229,6 +240,17 @@ class RetentionPolicy:
         """Resolve occurrence scopes before structural capture reuse."""
 
         result = {**self.identity(), "operators": self.operator_classes(graph_module)}
+        choices = sorted(
+            {
+                str(node.target)
+                for node in graph_module.graph.nodes
+                if node.op == "call_function" and str(node.target) in _FORWARD_CHOICES
+            }
+        )
+        if choices:
+            # Include ATen too: operator_classes normally omits builtins. Old
+            # graph-pair entries without this default must not answer new cuts.
+            result["forward_choices"] = choices
         if any(rule.module_pattern is not None for rule in self.rules):
             scopes = _resolve_scopes(graph_module, self)
             result["scoped"] = {
@@ -328,7 +350,13 @@ def partition_function(
             for node in joint_module.graph.nodes
         )
         if budget == 0 and (
-            policy.default != "recompute" or policy.rules or annotated_save
+            policy.default != "recompute"
+            or policy.rules
+            or annotated_save
+            or any(
+                str(node.target) in _FORWARD_CHOICES
+                for node in joint_module.graph.nodes
+            )
         ):
             budget = 1.0
         # The inputs-only fast path reads no save marks. Replay annotations
@@ -370,6 +398,7 @@ def _mark_retained(
     marked: list[str] = []
     unknown: set[str] = set()
     actions = _rule_actions(joint_module, policy, scopes)
+    choices = _operator_actions(joint_module, dict.fromkeys(_FORWARD_CHOICES, "retain"))
     required = _operator_actions(
         joint_module,
         {
@@ -410,6 +439,8 @@ def _mark_retained(
                     "the model checkpoint annotation; use one consistent policy"
                 )
             continue
+        if action is None:
+            action = choices.get(node.name)
         if action is None and policy.default in ("retain", "recompute"):
             action = policy.default
         if action is not None:
@@ -579,9 +610,16 @@ def _validate_rules(
     num_fwd_outputs: int,
     scopes: tuple[_RetentionScope, ...],
 ) -> None:
-    if not policy.rules:
-        return
     actions = _rule_actions(joint, policy, scopes)
+    choices = _operator_actions(joint, dict.fromkeys(_FORWARD_CHOICES, "retain"))
+    for node in joint.graph.nodes:
+        if node.name in choices and node.meta.get("recompute") not in (
+            CheckpointPolicy.MUST_RECOMPUTE,
+            CheckpointPolicy.PREFER_RECOMPUTE,
+        ):
+            actions.setdefault(node.name, "retain")
+    if not actions:
+        return
     replayed = {
         node.name
         for node in backward.graph.nodes

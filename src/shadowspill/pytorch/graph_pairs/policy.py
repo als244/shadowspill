@@ -17,6 +17,8 @@ class GraphPairPolicy:
 
     ``save`` uses cost-based removals from backward-required forward state.
     ``recompute`` starts from checkpoint inputs and may retain selected results.
+    Both also retain supported discrete routing choices by default, unless
+    explicitly overridden in that variant's retention policy.
     These are capture decisions; neither policy chooses storage residency or
     which variant a stage executes. Planning chooses among measured variants.
     """
@@ -76,6 +78,13 @@ class GraphPairPolicy:
         }
         if scoped:
             result["scoped"] = scoped
+        choices = {
+            name: identity["forward_choices"]
+            for name, identity in variants.items()
+            if "forward_choices" in identity
+        }
+        if choices:
+            result["forward_choices"] = choices
         return result
 
 
