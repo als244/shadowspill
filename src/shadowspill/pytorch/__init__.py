@@ -29,7 +29,12 @@ if TYPE_CHECKING:
     from .chunking import ChunkLocal as ChunkLocal
     from .chunking import ChunkPolicy as ChunkPolicy
     from .chunking import ChunkRegions as ChunkRegions
+    from .chunking import ExecutionLifetimes as ExecutionLifetimes
+    from .chunking import LifetimeOperation as LifetimeOperation
+    from .chunking import LifetimeRule as LifetimeRule
+    from .chunking import LifetimeSelection as LifetimeSelection
     from .chunking import OperatorRule as OperatorRule
+    from .chunking import ReadonlyOperator as ReadonlyOperator
     from .chunking import StageInfo as StageInfo
     from .contracts import ObjectiveResult as ObjectiveResult
     from .contracts import TensorSpec as TensorSpec
@@ -57,6 +62,11 @@ _GROUPS = {
         "ChunkLocal",
         "ChunkPolicy",
         "ChunkRegions",
+        "ExecutionLifetimes",
+        "LifetimeOperation",
+        "LifetimeRule",
+        "LifetimeSelection",
+        "ReadonlyOperator",
         "OperatorRule",
         "ChunkAxis",
         "AxisChunks",

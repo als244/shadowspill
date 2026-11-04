@@ -67,6 +67,13 @@ class CompiledTasks:
                 self.metadata[key]["row_chunks"] = artifact.chunking.identity
             if artifact.regions is not None:
                 self.metadata[key]["execution_regions"] = artifact.regions.identity
+        if (
+            artifact.regions is not None
+            and artifact.regions.lifetime_report is not None
+        ):
+            reports = self.metadata[key].setdefault("execution_lifetimes", [])
+            if artifact.regions.lifetime_report not in reports:
+                reports.append(artifact.regions.lifetime_report)
         paths = tuple(dict.fromkeys((*definition.module_paths, *paths)))
         self.definitions[key] = replace(
             definition,

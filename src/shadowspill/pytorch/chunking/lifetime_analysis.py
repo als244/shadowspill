@@ -24,6 +24,8 @@ from shadowspill.pytorch.capture.storage import capture_task_storage_contract
 from shadowspill.pytorch.capture.torch_deprecations import copy_graph_module
 from shadowspill.task.storage import StorageRootKind, TaskStorageContract
 
+from .lifetime_policy import ReadonlyOperator
+
 # These exact ATen overloads always alias their labelled input. A dispatcher
 # alias annotation alone permits a fresh return (e.g. reshape/contiguous), so it
 # is not enough to certify a lifetime transformation. Unknown forms are refused.
@@ -55,24 +57,6 @@ _ALWAYS_ALIAS = frozenset(
         "zero_.default",
     )
 )
-
-
-@dataclass(frozen=True, slots=True)
-class ReadonlyOperator:
-    """Versioned assertion of deterministic readonly opaque execution.
-
-    Internal analysis input, not yet a public scheduling policy. This cannot
-    override dispatcher writes, RNG tags, or an unknown alias-return contract.
-    """
-
-    target: str
-    version: str
-
-    def __post_init__(self) -> None:
-        if not isinstance(self.target, str) or not self.target:
-            raise ValueError("a readonly contract requires an exact operator target")
-        if not isinstance(self.version, str) or not self.version:
-            raise ValueError("a readonly contract requires a nonempty version")
 
 
 @dataclass(frozen=True)
@@ -246,7 +230,16 @@ def analyze_lifetimes(
     for original, node in zip(originals, copied, strict=True):
         if node.op != "output":
             if "val" not in node.meta:
-                raise CaptureError(f"missing captured lifetime geometry: {node.name}")
+                schema = getattr(node.target, "_schema", None)
+                if schema is None or schema.returns:
+                    raise CaptureError(
+                        f"missing captured lifetime geometry: {node.name}"
+                    )
+                # Generated in-place gradient producers have no return value
+                # and may carry no val metadata. Their dispatcher contract is
+                # sufficient to establish that there is no output geometry;
+                # their reads/writes and effect fence still participate below.
+                node.meta["val"] = None
             expose(node, node.meta["val"], original)
     output.args = (tuple(tensors),)
     inspection.graph.lint()

@@ -355,8 +355,7 @@ def test_regions_choose_different_logical_axes_and_chunk_sizes(budget):
         for artifact in (pair.forward, pair.backward)
     )
     assert {
-        (c.chunking.inputs[0].dim, c.chunking.size)
-        for c in forward.regions.children
+        (c.chunking.inputs[0].dim, c.chunking.size) for c in forward.regions.children
     } == {(0, 3), (1, 4)}
     with torch.no_grad():
         expected = pair.forward.graph_module(x)

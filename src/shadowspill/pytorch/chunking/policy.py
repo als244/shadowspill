@@ -10,6 +10,7 @@ from typing import TYPE_CHECKING, Protocol, runtime_checkable
 from shadowspill.task.inputs import TaskInputRole
 
 from .geometry import ChunkAxis
+from .lifetime_policy import ExecutionLifetimes
 
 if TYPE_CHECKING:
     from shadowspill.pytorch.capture.artifacts import TensorGeometry
@@ -144,6 +145,11 @@ class AxisChunks:
                 raise TypeError("nested regions must be a ChunkRegions policy")
             if self.domain is None:
                 raise ValueError("nested regions require a named chunk domain")
+            if self.regions.lifetimes is not None:
+                raise ValueError(
+                    "execution lifetimes belong on outer ChunkRegions, "
+                    "not inside AxisChunks.regions"
+                )
             if not set(self.variants) <= set(self.regions.variants):
                 raise ValueError("nested regions must permit every outer chunk variant")
         object.__setattr__(self, "inputs", MappingProxyType(dict(self.inputs)))
@@ -182,13 +188,21 @@ class ChunkRegions:
     ``variants`` restricts outer retention choices; a terminal training stage
     keeps its mandatory save form and is left unchanged. Child axis contracts
     must permit every selected outer variant in which they are used.
+    ``lifetimes`` optionally moves approved readonly operations on the complete
+    task before gradient destinations and execution regions are formed. It is
+    accepted only on outer regions and does not change checkpoint retention.
     """
 
     partition: PartitionSpec
     chunking: ChunkPolicy
     variants: tuple[str, ...] = ("save", "recompute")
+    lifetimes: ExecutionLifetimes | None = None
 
     def __post_init__(self) -> None:
+        if self.lifetimes is not None and not isinstance(
+            self.lifetimes, ExecutionLifetimes
+        ):
+            raise TypeError("lifetimes must be ExecutionLifetimes or None")
         if not isinstance(self.chunking, ChunkPolicy):
             raise TypeError("region chunking must implement configure_stage(StageInfo)")
         if (

@@ -24,6 +24,31 @@ these graphs after their retention cuts and precision conversions are resolved.
 It does not differentiate a Python chunk loop or capture a different autograd
 program for each slice.
 
+An optional outer `ChunkRegions.lifetimes` policy first schedules approved
+readonly operations on the complete task. It resolves declarative rules and
+immutable callback selections before gradient destination routing and execution
+partitioning. Moving a producer toward its consumer can therefore avoid a
+full-axis execution boundary that the original instruction order would create.
+The movement pass does not replay work, alter retained values, or change the
+parent storage contract. The default `None` leaves the schedule unchanged.
+
+Dispatcher ownership and alias contracts determine read/write dependencies;
+fake execution supplies geometry, not alias proof. Unknown opaque effects and
+overlapping writes stop movement. Selected barriers stay in place and every
+candidate is checked against all their complete live backing sets, including
+siblings of partial views. Parameter-gradient conversions are protected before
+chunk reductions. Semantic backing counts exclude external inputs, opaque
+workspace and allocator overhead and are not physical admission estimates.
+
+Normalized resolved choices, used readonly-contract versions and movement
+decisions enter the composed executable identity. Source occurrence reports are
+separate inspection metadata. Cold execution never reloads a policy callback.
+Compilation and profiling see the transformed complete task, and ordinary
+planning still owns variant selection, spill and physical admission. See the
+[lifetime policy reference](../python/api/frontend.md#execution-lifetimes) for
+selectors, contracts and current refusals. Local replay and compaction remain
+outside this movement interface.
+
 Execution policies see source module paths resolved for the current checkpoint
 occurrence, including operations emitted by its derivative or recomputation.
 The [source-provenance contract](graph-pair-construction.md#structural-deduplication)

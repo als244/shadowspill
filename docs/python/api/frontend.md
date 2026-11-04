@@ -502,7 +502,7 @@ another independent domain. Operations must preserve chunk independence or
 provide a supported additive reduction; this is not unrestricted multidimensional
 tiling. Each execution region chooses its own axis and chunk size.
 
-`ChunkRegions(partition, chunking, variants=("save", "recompute"))` selects
+`ChunkRegions(partition, chunking, variants=("save", "recompute"), lifetimes=None)` selects
 execution regions **inside** each checkpoint stage. The builder's `partition=`
 still defines checkpoint boundaries. The arguments are:
 
@@ -511,6 +511,7 @@ still defines checkpoint boundaries. The arguments are:
 | `partition` | `PartitionSpec` | Assigns contiguous execution regions on each explicit forward or backward graph. Its `module` argument is that task's graph module; use graph metadata and operator targets, rather than source-model children. |
 | `chunking` | `ChunkPolicy` | Receives each region's physical tensor ports and chooses its own chunk size and chunk axes, or `None` for whole-region execution. Backward regions receive separate callbacks. |
 | `variants` | `tuple[str, ...]` | Distinct outer training choices from `"save"` and `"recompute"`. Each selected child contract must permit the outer choice. The terminal training stage remains unchanged with its mandatory save choice. |
+| `lifetimes` | `ExecutionLifetimes \| None` | Optional operation scheduling on the complete explicit task, before gradient destination routing and execution partitioning. Default `None` preserves the captured schedule. Only outer `ChunkRegions` accepts it. |
 
 The callback can choose different sizes by operator, module path, direction,
 input geometry, or `structural_contract`. Equivalent child contracts share
@@ -530,6 +531,82 @@ def execution_policy(axis_policy, sequence_operator_targets):
         variants=("recompute",),
     )
 ```
+
+### Execution lifetimes
+
+`ExecutionLifetimes(rules=(), readonly=(), select=None)` controls where approved
+operations run inside an existing checkpoint task. It currently supports moving
+readonly work once toward its first consumer. It never duplicates an operation,
+changes the saved-state cut, or requests device/host residency. Axis selection
+and chunk sizes still belong to `AxisChunks`; retention belongs to
+`GraphPairPolicy`; PressureFit chooses variants and residency from measured tasks.
+
+`LifetimeRule(target, *, move=None, barrier=None, source_target=None,
+module_pattern=None)` selects one exact explicit operator overload. Optional
+`source_target` matches the original source operation; `module_pattern` matches
+any attributed source module path with a case-sensitive shell pattern. An
+unattributed operation does not match a source-scoped rule. Each rule must set
+at least one of these choices:
+
+| choice | meaning |
+|---|---|
+| `move=True` | Permit the readonly operation to move once toward its first consumer, subject to effects, alias writes and protected lifetimes. `False` explicitly disables this permission. |
+| `barrier=True` | Keep this operation in place and require that every proposed move does not increase the internal backing bytes live immediately before it. `False` leaves it unprotected. A barrier takes precedence over movement permission. |
+| `None` | Leave that choice unspecified. Conflicting explicit values from matching rules or the callback fail capture. Rule order does not resolve conflicts. |
+
+```python
+from shadowspill.pytorch import (
+    ChunkRegions, ExecutionLifetimes, IsolateOperations, LifetimeRule,
+)
+
+def scheduled_regions(axis_policy, sequence_targets):
+    return ChunkRegions(
+        IsolateOperations(sequence_targets, base="whole"),
+        axis_policy,
+        lifetimes=ExecutionLifetimes(rules=(
+            LifetimeRule("aten.sin.default", move=True,
+                         module_pattern="model.blocks.*"),
+            *(LifetimeRule(target, barrier=True) for target in sequence_targets),
+        )),
+    )
+```
+
+For unusual selection logic, `select(operation)` returns
+`LifetimeSelection(move=None, barrier=None)` or `None`. The frozen
+`LifetimeOperation` contains `index`, exact `target`, optional `source_target`,
+`module_paths`, `effect_fence`, task `kind`, `variant`, `stage_id`, `checkpoint_stage_id`, and
+flattened `inputs`/`outputs` tensor geometries (`TensorGeometry | None`). It
+contains no tensors or mutable graph nodes. The callback must be deterministic
+and read-only; do not run kernels or mutate global capture state from it. It
+runs once per operation when that task occurrence is built. Profile, plan and
+cold execution use the saved result without calling it again.
+`effect_fence` explains a mutation, RNG or uncertified opaque effect, or is
+`None` for certified readonly work. Absence of an effect fence is not permission
+to cross an aliased writer or increase a protected backing set.
+
+Unknown opaque operations are effect fences. A versioned
+`ReadonlyOperator(target, version)` in `readonly` certifies deterministic,
+readonly execution for that exact overload. It cannot override mutation,
+RNG/effect registrations, or unproved alias ownership. An `OperatorRule` for
+axis independence or an operator's cost classification is not this effects
+contract. Conditional or unknown alias returns are conservatively refused
+when lifetime analysis is needed. Parameter-gradient conversion barriers remain
+protected regardless of user movement choices.
+
+Resolved operation indices, permissions, used contract versions and scheduling
+decisions enter `execution_regions["lifetimes"]` in task metadata and executable
+identity. Occurrence explanations appear separately in the
+`execution_lifetimes` list, including source module paths and semantic backing
+counts. These counts exclude task inputs, opaque workspace and allocator
+overhead; the complete finalized composition still needs profiling and physical
+admission. Different module names with identical resolved behavior can reuse
+compilation. Callbacks and occurrence names are not serialized into executable
+identity.
+
+Only the outer `ChunkRegions` may specify lifetimes. Setting it inside
+`AxisChunks.regions` is refused so scheduling always sees the complete
+checkpoint task once. Local replay and storage compaction are not enabled by
+this interface.
 
 `ChunkPolicy` implements `configure_stage(stage: StageInfo) -> AxisChunks | None`
 to select an

@@ -1,8 +1,8 @@
 """Conservative movement within one complete checkpoint task.
 
-This internal pass only changes operation order. It neither replays work nor
-changes storage or arithmetic. A resolved public policy and build integration
-are separate from the semantic checks here.
+This pass only changes operation order. It neither replays work nor changes
+storage or arithmetic. Public policy resolution and build integration remain
+separate from the semantic checks here.
 """
 
 from __future__ import annotations

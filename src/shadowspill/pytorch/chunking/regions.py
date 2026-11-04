@@ -38,6 +38,7 @@ class RegionTask:
     input_domains: tuple[dict[str, ChunkAxis], ...]
     output_domains: tuple[dict[str, ChunkAxis], ...]
     domain_rules: dict[str, tuple[OperatorRule, ...]]
+    lifetime_report: dict[str, Any] | None = None
 
 
 def region_artifact(
@@ -68,6 +69,19 @@ def region_artifact(
         raise CaptureError("execution regions require ordinary tensor components")
     graph = copy_graph_module(artifact.graph_module)
     _shared_provenance(graph, artifact)
+    lifetime_identity = lifetime_report = None
+    if policy.lifetimes is not None:
+        from .lifetimes import apply_lifetimes
+
+        lifetime_identity, lifetime_report = apply_lifetimes(
+            graph,
+            artifact,
+            policy.lifetimes,
+            stage_id=stage_id,
+            checkpoint_stage_id=checkpoint_stage_id,
+            variant=variant,
+            gradient_leaves=gradient_leaves,
+        )
     from .accumulation import route_gradient_destinations
 
     route_gradient_destinations(
@@ -344,11 +358,19 @@ def region_artifact(
             for name, rules in sorted(contracts.items())
         },
     }
+    if lifetime_identity is not None:
+        identity["lifetimes"] = lifetime_identity
     return replace(
         artifact,
         compatibility_digest=digest(identity),
         regions=RegionTask(
-            tuple(children), identity, storage, parent_inputs, parent_outputs, contracts
+            tuple(children),
+            identity,
+            storage,
+            parent_inputs,
+            parent_outputs,
+            contracts,
+            lifetime_report,
         ),
     )
 

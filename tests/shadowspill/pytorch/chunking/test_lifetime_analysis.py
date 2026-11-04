@@ -227,6 +227,40 @@ def test_unused_pure_values_do_not_extend_storage_lifetimes() -> None:
     assert result.live_bytes(operation(graph, torch.ops.aten.cos.default)) == 0
 
 
+@torch.library.custom_op("lifetime_analysis_test::write", mutates_args=("dest",))
+def opaque_write(dest: torch.Tensor, source: torch.Tensor) -> None:
+    dest.add_(source)
+
+
+@opaque_write.register_fake
+def opaque_write_fake(dest, source):
+    pass
+
+
+def test_void_mutation_without_value_metadata_keeps_reads_writes_and_fence():
+    x, dest = torch.randn(7, 4), torch.randn(7, 4)
+
+    def function(x, dest):
+        source = x.sin()
+        opaque_write(dest, source)
+        return dest
+
+    graph = make_fx(function)(x, dest)
+    writer = operation(graph, torch.ops.lifetime_analysis_test.write.default)
+    writer.meta.pop("val", None)
+    analysis = analyze_lifetimes(graph, (x, dest))
+    source = operation(graph, torch.ops.aten.sin.default)
+    destination = list(graph.graph.nodes)[1]
+    assert not analysis.values[writer]
+    assert analysis.values[source] <= analysis.reads[writer]
+    assert analysis.writes[writer] == analysis.values[destination]
+    assert writer in analysis.fences
+    assert "val" not in writer.meta  # Inspection does not mutate capture metadata.
+    source.meta.pop("val")
+    with pytest.raises(CaptureError, match="missing captured lifetime geometry"):
+        analyze_lifetimes(graph, (x, dest))
+
+
 def test_unknown_python_is_not_evaluated_to_obtain_geometry() -> None:
     x = torch.randn(7)
     graph = make_fx(torch.sin)(x)
