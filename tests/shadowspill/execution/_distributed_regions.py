@@ -33,21 +33,27 @@ class Block(torch.nn.Module):
         dtype=torch.float32,
         gate_dtype=None,
         lifetime_mode=None,
+        features=7,
+        hidden=11,
+        lora_rank=3,
     ):
         super().__init__()
         self.gate_dtype = gate_dtype
         self.lifetime_mode = lifetime_mode
-        width = 18 if lifetime_mode == "replay_compact" else 11
+        self.features, self.hidden = features, hidden
+        width = hidden + features if lifetime_mode == "replay_compact" else hidden
         self.weight = torch.nn.Parameter(
-            torch.randn(7, width, device=device, dtype=dtype) / 7,
+            torch.randn(features, width, device=device, dtype=dtype) / 7,
             requires_grad=not lora,
         )
-        self.a = torch.nn.Parameter(torch.randn(7, 3, device=device, dtype=dtype) / 7)
+        self.a = torch.nn.Parameter(
+            torch.randn(features, lora_rank, device=device, dtype=dtype) / 7
+        )
         self.b = torch.nn.Parameter(
-            torch.randn(3, width, device=device, dtype=dtype) / 7
+            torch.randn(lora_rank, width, device=device, dtype=dtype) / 7
         )
         self.out = torch.nn.Parameter(
-            torch.randn(11, 7, device=device, dtype=dtype) / 11,
+            torch.randn(hidden, features, device=device, dtype=dtype) / 11,
             requires_grad=not lora,
         )
 
@@ -56,7 +62,7 @@ class Block(torch.nn.Module):
         source = early if self.lifetime_mode == "replay_compact" else x
         projected = source @ self.weight + (source @ self.a) @ self.b
         if self.lifetime_mode == "replay_compact":
-            projected, gate = projected.split((11, 7), dim=-1)
+            projected, gate = projected.split((self.hidden, self.features), dim=-1)
         activated = torch.nn.functional.silu(projected.softmax(1) @ self.out)
         if self.lifetime_mode == "replay_compact":
             activated = activated * gate.sin()
@@ -74,6 +80,9 @@ class Network(torch.nn.Module):
         dtype=torch.float32,
         gate_dtype=None,
         lifetime_mode=None,
+        features=7,
+        hidden=11,
+        lora_rank=3,
     ):
         super().__init__()
         self.blocks = torch.nn.ModuleList(
@@ -84,6 +93,9 @@ class Network(torch.nn.Module):
                     dtype=dtype,
                     gate_dtype=gate_dtype,
                     lifetime_mode=lifetime_mode,
+                    features=features,
+                    hidden=hidden,
+                    lora_rank=lora_rank,
                 )
                 for _ in range(2)
             ]
@@ -101,7 +113,7 @@ def objective(model, x, *, labels, sample_weights):
     return ((model(x) - labels).square() * sample_weights).sum(), {}
 
 
-def examples(batch=2, sequence=17):
+def examples(batch=2, sequence=17, features=7):
     generator = torch.Generator().manual_seed(95)
     calls = []
     count = 0
@@ -112,12 +124,14 @@ def examples(batch=2, sequence=17):
                 torch.arange(sequence) < sequence - 3 * rank - 2 * microbatch
             ).float()
             mask = mask.reshape(1, sequence, 1).expand(batch, sequence, 1).clone()
-            count += int(mask.sum()) * 7
+            count += int(mask.sum()) * features
             local.append(
                 (
-                    (torch.randn(batch, sequence, 7, generator=generator),),
+                    (torch.randn(batch, sequence, features, generator=generator),),
                     {
-                        "labels": torch.randn(batch, sequence, 7, generator=generator),
+                        "labels": torch.randn(
+                            batch, sequence, features, generator=generator
+                        ),
                         "sample_weights": mask,
                     },
                 )
@@ -143,13 +157,33 @@ def oracle(
     device="cpu",
     batch=2,
     sequence=17,
+    features=7,
+    hidden=11,
+    lora_rank=3,
+    reference_dtype=None,
 ):
     torch.manual_seed(731)
     model = Network(
-        lora, gate_dtype=gate_dtype, lifetime_mode=lifetime_mode, device=device
+        lora,
+        gate_dtype=gate_dtype,
+        lifetime_mode=lifetime_mode,
+        device=device,
+        features=features,
+        hidden=hidden,
+        lora_rank=lora_rank,
     )
     initial = parameters(model)
-    calls = tree_map(lambda value: value.to(device), examples(batch, sequence))
+    calls = tree_map(
+        lambda value: value.to(device), examples(batch, sequence, features)
+    )
+    reference_calls = calls
+    if reference_dtype is not None:
+        assert reference_dtype == torch.float64 and gate_dtype is None
+        # Keep the actual FP32 initialization and inputs. Widen only the eager
+        # reference: Adam can amplify FP32 reduction error at near-zero gradients
+        # enough to invalidate a weight comparison, despite accurate gradients.
+        model.to(dtype=reference_dtype)
+        reference_calls = tree_map(lambda value: value.to(reference_dtype), calls)
     optimizer = torch.optim.AdamW(model.parameters(), lr=0.001, foreach=False)
     expected = []
     for invocation in range(3):
@@ -157,7 +191,7 @@ def oracle(
         if not accumulate:
             model.zero_grad(set_to_none=True)
         outputs = []
-        for local in calls:
+        for local in reference_calls:
             values = []
             for args, kwargs in local:
                 loss, _ = objective(model, *args, **kwargs)
@@ -196,6 +230,13 @@ def oracle(
                 parameter_metrics=metrics,
             )
         )
+    if reference_dtype is not None:
+        # Compare like dtypes in the cold worker, rounding the high-precision
+        # result once. Capture and execution still receive the original inputs.
+        expected = tree_map(
+            lambda value: value.float() if isinstance(value, torch.Tensor) else value,
+            expected,
+        )
     fixture = dict(
         initial=initial,
         examples=calls,
@@ -206,6 +247,8 @@ def oracle(
             name for name, value in model.named_parameters() if not value.requires_grad
         ],
     )
+    if reference_dtype is not None:
+        fixture["reference_dtype"] = str(reference_dtype).removeprefix("torch.")
     return tree_map(
         lambda value: (
             value.detach().cpu() if isinstance(value, torch.Tensor) else value
@@ -445,6 +488,15 @@ def build(path, kind):
     )
     lifetime_mode = options.get("lifetime_mode")
     emulate = gate_dtype is not None or lifetime_mode is not None
+    dimensions = {
+        name: options.get(name, default)
+        for name, default in (("features", 7), ("hidden", 11), ("lora_rank", 3))
+    }
+    reference_dtype = (
+        getattr(torch, options["reference_dtype"])
+        if options.get("reference_dtype")
+        else None
+    )
     # CUDA's native low-precision derivative differs from the CPU implementation.
     # The independent reference uses ordinary CUDA autograd, never our compiler.
     fixture = oracle(
@@ -455,12 +507,18 @@ def build(path, kind):
         device="cuda" if emulate else "cpu",
         batch=options.get("batch", 2),
         sequence=options.get("sequence", 17),
+        reference_dtype=reference_dtype,
+        **dimensions,
     )
+    for name in ("io_chunk_bytes", "trace_invocations"):
+        if name in options:
+            fixture[name] = options[name]
     template = Network(
         options["lora"],
         device="meta",
         gate_dtype=gate_dtype,
         lifetime_mode=lifetime_mode,
+        **dimensions,
     )
     common = dict(
         objective=objective,

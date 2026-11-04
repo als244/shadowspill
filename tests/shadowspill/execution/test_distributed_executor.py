@@ -29,7 +29,9 @@ import torch
         ("step", "auto", "fp8_cutoff"),
     ],
 )
-def test_distributed_saved_executor(tmp_path, kind, variant, ownership):
+def test_distributed_saved_executor(
+    tmp_path, kind, variant, ownership, *, memory_policy="default"
+):
     if torch.cuda.device_count() < 2:
         pytest.skip("requires two distinct GPUs")
     directory = Path(__file__).parent
@@ -76,7 +78,7 @@ def test_distributed_saved_executor(tmp_path, kind, variant, ownership):
     run("build", False, kind, ownership)
     run("profile")
     run("communicate", True)
-    run("plan", False, variant)
+    run("plan", False, variant, memory_policy)
     run("execute", True)
     if kind == "step":
         run("resume", True, "resume")

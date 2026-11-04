@@ -11,11 +11,13 @@ from tests.shadowspill.execution.test_distributed_executor import (
 )
 
 
-def _check_collective_traces(directory):
+def _check_collective_traces(directory, invocation=0):
     signatures = []
     records_by_rank = []
     for rank in range(2):
-        trace = json.loads((directory / f"rank-{rank}-trace-0.json").read_text())
+        trace = json.loads(
+            (directory / f"rank-{rank}-trace-{invocation}.json").read_text()
+        )
         assert trace["summary"]["trace_complete"]
         assert not trace["allocator"]["overflow"]
         runtime = trace["runtime"]
@@ -263,3 +265,53 @@ def test_dp_independent_batch_axis(tmp_path, kind, lora, retain_sequence):
     )
     _verify(tmp_path, kind, "recompute", "regions")
     _check_collective_traces(tmp_path)
+
+
+@pytest.mark.cuda
+@pytest.mark.parametrize("kind,lora", [("step", False), ("forward_backward", True)])
+def test_dp_parameter_gradient_spill_before_accumulation(tmp_path, kind, lora):
+    if torch.cuda.device_count() < 2:
+        pytest.skip("requires two distinct GPUs")
+    from shadowspill import Plan
+    from tests.shadowspill.execution._distributed_spill import (
+        check_gradient_spill_trace,
+        gradient_spill_evidence,
+    )
+
+    (tmp_path / "regions.json").write_text(
+        json.dumps(
+            dict(
+                storage="sharded",
+                lora=lora,
+                retain_sequence=not lora,
+                nested=True,
+                checkpoint_cuts=False,
+                lifetime_mode="replay_compact",
+                batch=2,
+                sequence=17,
+                features=127,
+                hidden=259,
+                lora_rank=33,
+                io_chunk_bytes=[4096, 4092],
+                trace_invocations=[0, 1, 2],
+                reference_dtype="float64" if kind == "step" else None,
+            ),
+            indent=2,
+        )
+        + "\n"
+    )
+    _verify(tmp_path, kind, "recompute", "regions", memory_policy="gradient_spill")
+    paths = {
+        path["mode"]: path
+        for path in gradient_spill_evidence(Plan.load(tmp_path / "plan.ssp"))
+    }
+    for invocation in range(3):
+        _check_collective_traces(tmp_path, invocation)
+        mode = (
+            "accumulate" if kind == "forward_backward" and invocation == 1 else "fresh"
+        )
+        for rank in range(2):
+            trace = json.loads(
+                (tmp_path / f"rank-{rank}-trace-{invocation}.json").read_text()
+            )
+            check_gradient_spill_trace(trace, paths[mode])

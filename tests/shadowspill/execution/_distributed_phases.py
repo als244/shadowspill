@@ -185,7 +185,7 @@ def select_variants(profiled, variant):
     return replace(profiled, program=replace(profiled.program, bindings=bindings))
 
 
-def plan(path, variant="auto"):
+def plan(path, variant="auto", memory_policy="default"):
     from shadowspill import (
         CommunicationInfo,
         MemoryBudgets,
@@ -194,6 +194,7 @@ def plan(path, variant="auto"):
     )
 
     info = CommunicationInfo.load(path / "communication.ssp")
+    assert memory_policy in {"default", "gradient_spill"}
     for prefix in ("", "evaluation-"):
         archive = path / f"{prefix}profiled.ssp"
         if archive.exists():
@@ -211,6 +212,13 @@ def plan(path, variant="auto"):
             assert not result.simulation_only_reasons, result.simulation_only_reasons
             if prefix == "" and variant == "recompute":
                 assert "recompute" in {choice.option_id for choice in result.selections}
+            if prefix == "" and memory_policy == "gradient_spill":
+                from tests.shadowspill.execution._distributed_spill import (
+                    constrain_gradient_memory,
+                )
+
+                assert variant == "recompute"
+                result = constrain_gradient_memory(profiled, info, result, path)
             result.save(path / f"{prefix}plan.ssp")
     assert "torch" not in sys.modules, "planning imported PyTorch"
 

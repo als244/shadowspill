@@ -27,6 +27,8 @@ from tests.spill_pool import spill_pool  # noqa: E402
 directory = Path(sys.argv[1])
 resume = len(sys.argv) > 2 and sys.argv[2] == "resume"
 fixture = torch.load(directory / "oracle.pt", weights_only=True)
+initialize_chunk_bytes, export_chunk_bytes = fixture.get("io_chunk_bytes", (40, 28))
+assert initialize_chunk_bytes > 0 and export_chunk_bytes > 0
 plan = Plan.load(directory / "plan.ssp")
 evaluation = directory / "evaluation-plan.ssp"
 plans = {"evaluation": Plan.load(evaluation)} if evaluation.exists() else None
@@ -40,7 +42,7 @@ if "initial_by_rank" in fixture:
 
 
 def fill(request, chunk):
-    assert chunk.device.type == "cpu" and chunk.nbytes <= 40
+    assert chunk.device.type == "cpu" and chunk.nbytes <= initialize_chunk_bytes
     source = fixture["initial"][request.name].reshape(-1)
     chunk.copy_(source[request.offset : request.offset + chunk.numel()])
 
@@ -68,9 +70,11 @@ try:
     )
     checkpoint = directory / f"checkpoint-rank-{logical}.ssp"
     if resume:
-        assert load_checkpoint(executor, checkpoint, chunk_bytes=28) == {"completed": 1}
+        assert load_checkpoint(
+            executor, checkpoint, chunk_bytes=export_chunk_bytes
+        ) == {"completed": 1}
     else:
-        executor.initialize(fill, chunk_bytes=40)
+        executor.initialize(fill, chunk_bytes=initialize_chunk_bytes)
     for index, expected in enumerate(fixture["expected"]):
         if resume and index == 0:
             continue
@@ -91,7 +95,8 @@ try:
             ),
             accumulate_gradients=expected["accumulate"],
             collect_parameter_norms=bool(expected["parameter_metrics"]),
-            runtime_trace=bool(fixture.get("trace")) and index == 0,
+            runtime_trace=bool(fixture.get("trace"))
+            and index in fixture.get("trace_invocations", (0,)),
         )
         output = pending.result()
         if fixture.get("trace") and pending.diagnostics is not None:
@@ -119,7 +124,7 @@ try:
         def compare(
             request, chunk, seen=seen, expected=expected, failures=failures, index=index
         ):
-            assert chunk.nbytes <= 28
+            assert chunk.nbytes <= export_chunk_bytes
             seen.add(request.name)
             wanted = expected["state"][request.name].reshape(-1)
             try:
@@ -145,7 +150,7 @@ try:
                     f"{error}"
                 )
 
-        executor.export_tensors(compare, chunk_bytes=28)
+        executor.export_tensors(compare, chunk_bytes=export_chunk_bytes)
         nonempty = expected["state"].keys() - set(
             fixture.get("empty_by_rank", {}).get(logical, ())
         )
@@ -155,13 +160,16 @@ try:
         assert not any(all_failures), all_failures
         if index == 0:
             save_checkpoint(
-                executor, checkpoint, metadata={"completed": 1}, chunk_bytes=40
+                executor,
+                checkpoint,
+                metadata={"completed": 1},
+                chunk_bytes=initialize_chunk_bytes,
             )
             executor.initialize(lambda request, chunk: chunk.zero_(), restore=True)
-            assert load_checkpoint(executor, checkpoint, chunk_bytes=28) == {
-                "completed": 1
-            }
-            executor.export_tensors(compare, chunk_bytes=28)
+            assert load_checkpoint(
+                executor, checkpoint, chunk_bytes=export_chunk_bytes
+            ) == {"completed": 1}
+            executor.export_tensors(compare, chunk_bytes=export_chunk_bytes)
             all_failures = [None] * dist.get_world_size()
             dist.all_gather_object(all_failures, failures)
             assert not any(all_failures), all_failures
