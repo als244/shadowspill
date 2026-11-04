@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Literal
 
 if TYPE_CHECKING:
     from shadowspill.pytorch.capture.artifacts import TensorGeometry
@@ -78,17 +78,20 @@ class LifetimeSelection:
     against increases. Barriers take precedence over movement permission.
     ``compact`` permits preparing and copying an internal view for consumers
     in later execution regions, subject to layout and complete backing proofs.
-    None of these choices duplicates arithmetic or requests retained state.
+    ``replay`` permits repeating this primal computation in consumer regions.
+    No arithmetic is duplicated without explicit replay permission. These
+    choices do not request checkpoint retention or residency.
     """
 
     move: bool | None = None
     barrier: bool | None = None
     compact: bool | None = None
+    replay: bool | None = None
 
     def __post_init__(self) -> None:
         if any(
             value is not None and type(value) is not bool
-            for value in (self.move, self.barrier, self.compact)
+            for value in (self.move, self.barrier, self.compact, self.replay)
         ):
             raise TypeError("lifetime choices must be bool or None")
 
@@ -107,6 +110,7 @@ class LifetimeRule:
     move: bool | None = field(default=None, kw_only=True)
     barrier: bool | None = field(default=None, kw_only=True)
     compact: bool | None = field(default=None, kw_only=True)
+    replay: bool | None = field(default=None, kw_only=True)
     source_target: str | None = field(default=None, kw_only=True)
     module_pattern: str | None = field(default=None, kw_only=True)
 
@@ -114,9 +118,21 @@ class LifetimeRule:
         _name(self.target, "lifetime rule target")
         _name(self.source_target, "source target", optional=True)
         _name(self.module_pattern, "module pattern", optional=True)
-        LifetimeSelection(self.move, self.barrier, self.compact)
-        if self.move is None and self.barrier is None and self.compact is None:
-            raise ValueError("a lifetime rule must set move, barrier or compact")
+        selection = LifetimeSelection(
+            self.move, self.barrier, self.compact, self.replay
+        )
+        if all(
+            value is None
+            for value in (
+                selection.move,
+                selection.barrier,
+                selection.compact,
+                selection.replay,
+            )
+        ):
+            raise ValueError(
+                "a lifetime rule must set move, barrier, compact or replay"
+            )
 
 
 @dataclass(frozen=True, slots=True)
@@ -139,11 +155,12 @@ class LifetimeOperation:
     checkpoint_stage_id: str
     inputs: tuple[TensorGeometry | None, ...]
     outputs: tuple[TensorGeometry | None, ...]
+    phase: Literal["primal", "derivative", "unknown"] = "unknown"
 
 
 @dataclass(frozen=True, slots=True)
 class ExecutionLifetimes:
-    """Control movement and view compaction in an outer ``ChunkRegions`` task.
+    """Control operation lifetimes in an outer ``ChunkRegions`` task.
 
     Resolve rules and ``select`` at build time, before gradient destinations
     and execution regions are formed. The callback runs once per operation in
@@ -160,9 +177,16 @@ class ExecutionLifetimes:
     remain un-copied with recorded reasons. With no barriers, no copy is useful
     under this policy. Input/external aliases and written backings never compact.
 
-    This policy does not enable local replay. Expensive operations may move
-    when certified, but are never duplicated by it. ``move=False`` does not pin
-    a view selected for compaction preparation; ``barrier=True`` pins it.
+    Replay has no default selections or implicit cost-based permissions. An
+    explicit ``replay=True`` allows duplication only for certified immutable
+    primal dependencies. Structural tuple extraction accompanies a selected
+    producer unless explicitly excluded. Copies are shared within each consumer
+    region; regions containing barriers never receive them. Changed dependency
+    versions, externally observed/written outputs and gradient conversions are
+    protected. Value/layout contracts also guard changed alias relationships.
+    Expensive work is duplicated only if explicitly selected, and the final
+    measured composition includes its cost. ``move=False`` does not pin a view
+    selected for compaction preparation; ``barrier=True`` pins an operation.
     """
 
     rules: tuple[LifetimeRule, ...] = ()

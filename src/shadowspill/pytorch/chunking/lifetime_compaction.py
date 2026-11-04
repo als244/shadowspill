@@ -185,12 +185,19 @@ def _layout_check(
     after: LifetimeGraph,
     copies: frozenset[Node],
     contracts: Mapping[str, LayoutIndependentOperator],
+    *,
+    check_copy_inputs: bool = False,
 ) -> tuple[str | None, Node | None, tuple[tuple[str, str, tuple[int, ...]], ...]]:
     originals = {node.name: node for node in before.order}
     tainted = set(copies)
     used: dict[str, LayoutIndependentOperator] = {}
     for node in after.order:
-        if node in copies or not (tainted & set(node.all_input_nodes)):
+        # A compaction seed is an explicit logical clone. A replay seed can
+        # itself consume another replayed value: readonly permission alone
+        # does not justify changing those inputs' alias relationships.
+        if (node in copies and not check_copy_inputs) or not (
+            tainted & set(node.all_input_nodes)
+        ):
             continue
         if node.op == "output":
             return "changed layout reaches a task output", node, ()
@@ -227,7 +234,9 @@ def _layout_check(
             used[target] = contract
         if not changed <= allowed:
             return "changed input lacks layout-independent value semantics", node, ()
-        if not _clean_fresh(originals[node.name], node, before, after):
+        if node in copies or not _clean_fresh(
+            originals[node.name], node, before, after
+        ):
             tainted.add(node)
     return (
         None,

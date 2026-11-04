@@ -536,13 +536,14 @@ def execution_policy(axis_policy, sequence_operator_targets):
 
 `ExecutionLifetimes(rules=(), readonly=(), select=None, *, layout=())` controls
 operation placement and internal view compaction inside a checkpoint task. It
-can move readonly work once toward its first consumer and copy selected views
-into smaller backing storage. It never duplicates arithmetic, changes the
-saved-state cut, or requests device/host residency. Axis selection
+can move readonly work once, copy selected views into smaller backing storage,
+and explicitly repeat selected primal work near consumers. Replay has no default
+selections: expensive work repeats only when explicitly selected. These controls
+do not change the saved-state cut or request device/host residency. Axis selection
 and chunk sizes still belong to `AxisChunks`; retention belongs to
 `GraphPairPolicy`; PressureFit chooses variants and residency from measured tasks.
 
-`LifetimeRule(target, *, move=None, barrier=None, compact=None, source_target=None,
+`LifetimeRule(target, *, move=None, barrier=None, compact=None, replay=None, source_target=None,
 module_pattern=None)` selects one exact explicit operator overload. Optional
 `source_target` matches the original source operation; `module_pattern` matches
 any attributed source module path with a case-sensitive shell pattern. An
@@ -554,6 +555,7 @@ at least one of these choices:
 | `move=True` | Permit the readonly operation to move once toward its first consumer, subject to effects, alias writes and protected lifetimes. `False` explicitly disables this permission. |
 | `barrier=True` | Keep this operation in place and require that every proposed move does not increase the internal backing bytes live immediately before it. `False` leaves it unprotected. A barrier takes precedence over movement and view preparation. |
 | `compact=True` | Prepare this internal alias view near its producer and consider a contiguous copy for later execution-region consumers. Related selected views are considered jointly. At least one protected backing set must shrink and none may grow. Unsupported candidates remain un-copied with recorded reasons. |
+| `replay=True` | Permit repeating this primal operation in later consumer regions. Inputs must still have their original versions; readonly and value/alias checks must pass. `False` excludes it, including implicit tuple extraction from a selected producer. |
 | `None` | Leave that choice unspecified. Conflicting explicit values from matching rules or the callback fail capture. Rule order does not resolve conflicts. |
 
 ```python
@@ -574,9 +576,10 @@ def scheduled_regions(axis_policy, sequence_targets):
 ```
 
 For unusual selection logic, `select(operation)` returns
-`LifetimeSelection(move=None, barrier=None, compact=None)` or `None`. The frozen
+`LifetimeSelection(move=None, barrier=None, compact=None, replay=None)` or `None`. The frozen
 `LifetimeOperation` contains `index`, exact `target`, optional `source_target`,
-`module_paths`, `effect_fence`, task `kind`, `variant`, `stage_id`, `checkpoint_stage_id`, and
+`module_paths`, `effect_fence`, task `kind`, `variant`, `stage_id`, `checkpoint_stage_id`,
+`phase` (`"primal"`, `"derivative"` or `"unknown"`), and
 flattened `inputs`/`outputs` tensor geometries (`TensorGeometry | None`). It
 contains no tensors or mutable graph nodes. The callback must be deterministic
 and read-only; do not run kernels or mutate global capture state from it. It
@@ -624,10 +627,33 @@ remain identical. Execution partition rules are resolved before considering
 cross-region uses, then resolved again after transformation and gradient routing;
 they must cover inserted `aten.clone.default` operations too.
 
+Replay runs after movement and before view preparation/compaction. It uses the
+captured differentiation provenance; operations with missing provenance in a
+backward task cannot replay. Explicit forward/inference tasks identify primal
+work when no differentiation tag is present. Structural tuple extraction follows
+a selected producer automatically unless explicitly excluded. Each selected
+operation is copied at most once per consumer region, and barrier-containing
+regions never receive copies. `replay=True` does not authorize a barrier itself,
+a gradient conversion, an effect, or an externally observed/written result.
+
+Readonly execution alone also cannot justify splitting an alias relationship.
+The same input-value contracts protect replay consumers, including an operation
+that is itself being replayed with copied dependencies. Dependencies must still
+represent the original values at the copied computation; disjoint known tensor
+writes may be crossed, but overlapping writes, RNG and unknown effects block it.
+Every proposal must preserve the outer storage contract and avoid increases at
+all protected memory points. Intermediate proposals need not shrink a live set:
+redirecting a later consumer may release the last use of an original backing.
+With no selected barriers this local memory check is empty, so physical admission
+of the final measured composition remains essential. The profiler measures every
+extra computation. A replayed view inherits its original compaction permission;
+selectors are never called again for generated nodes.
+
 Resolved operation indices, permissions, used contract versions and scheduling
 decisions enter `execution_regions["lifetimes"]` in task metadata and executable
-identity. `schedule`, `views` and `compaction` records use indices from their
-respective input order; movement/view records include their resulting order.
+identity. `schedule`, `replay`, `views` and `compaction` records use indices from their
+respective input order; movement/view records include their resulting order,
+and replay records map original source indices to final copy indices and regions.
 Occurrence explanations appear separately in the
 `execution_lifetimes` list, including source module paths and semantic backing
 counts. These counts exclude task inputs, opaque workspace and allocator
@@ -638,7 +664,8 @@ identity.
 
 Only the outer `ChunkRegions` may specify lifetimes. Setting it inside
 `AxisChunks.regions` is refused so scheduling always sees the complete
-checkpoint task once. Local replay is not enabled by this interface.
+checkpoint task once. Replay permission is independent of ordinary graph-pair
+recomputation and is empty by default.
 
 `ChunkPolicy` implements `configure_stage(stage: StageInfo) -> AxisChunks | None`
 to select an

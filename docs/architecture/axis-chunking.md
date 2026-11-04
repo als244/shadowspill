@@ -56,8 +56,19 @@ are protected. A speculative copy group is accepted only with the same outer
 storage contract, a reduction at a protected barrier and no increase elsewhere.
 Normalized view/copy decisions and used layout versions also enter identity.
 Compilation/profiling measures copies as part of the final composition; the
-semantic inventory does not substitute for physical admission. Local arithmetic
-replay remains outside this interface.
+semantic inventory does not substitute for physical admission.
+
+Explicit `replay=True` selections run between movement and compaction. Captured
+primal provenance, original dependency versions, effects, output aliases/writes
+and gradient-conversion protection constrain each copy. Structural tuple access
+accompanies its selected producer unless excluded. Copies are shared within each
+consumer region and never inserted into regions containing protected barriers.
+Changed alias relationships require input-value semantics even when strides stay
+unchanged. Each proposal preserves the task boundary and cannot increase any
+protected backing inventory. Normalized decisions and copy origins enter identity;
+callbacks run only for the original operations during build. There are no default
+replay selections or implicit permissions based on cost. Profiling includes every
+extra operation before ordinary planning makes its admission/selection decision.
 
 Execution policies see source module paths resolved for the current checkpoint
 occurrence, including operations emitted by its derivative or recomputation.

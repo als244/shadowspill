@@ -51,16 +51,39 @@ class PackedNetwork(RegionNetwork):
         self.blocks = torch.nn.ModuleList([PackedBlock(lora), PackedBlock(lora)])
 
 
+class NormalizedPackedBlock(PackedBlock):
+    def forward(self, x):
+        normalized = x.sin()
+        packed = normalized @ self.weight + (normalized @ self.a) @ self.b
+        q, gate = packed.split(8, dim=-1)
+        return (
+            torch.nn.functional.silu(q.softmax(1) @ self.out) * gate.sin() + normalized
+        )
+
+
+class NormalizedPackedNetwork(RegionNetwork):
+    def __init__(self, lora):
+        torch.nn.Module.__init__(self)
+        self.blocks = torch.nn.ModuleList(
+            [
+                NormalizedPackedBlock(lora),
+                NormalizedPackedBlock(lora),
+            ]
+        )
+
+
 @pytest.mark.cuda
 @pytest.mark.parametrize("compact_views", [False, True])
 @pytest.mark.parametrize("lora,retain_sequence", [(False, False), (True, True)])
 def test_public_lifetimes_profile_plan_and_train_without_serializing_selector(
-    tmp_path, lora, retain_sequence, compact_views
+    tmp_path, lora, retain_sequence, compact_views, replay_work=False
 ):
     if not torch.cuda.is_available():
         pytest.skip("requires an accelerator for task finalization")
     torch.manual_seed(731)
     network = PackedNetwork if compact_views else DelayedNetwork
+    if replay_work:
+        network = NormalizedPackedNetwork
     model = network(lora)
     with torch.device("meta"):
         template = network(lora)
@@ -74,7 +97,11 @@ def test_public_lifetimes_profile_plan_and_train_without_serializing_selector(
         assert building, "selector ran after build"
         calls.append((operation.stage_id, operation.index))
         if operation.target == "aten.sin.default":
-            return LifetimeSelection(move=True)
+            return (
+                LifetimeSelection(replay=True)
+                if replay_work
+                else LifetimeSelection(move=True)
+            )
         if compact_views and operation.target in (
             "aten.view.default",
             "aten._unsafe_view.default",
@@ -123,11 +150,12 @@ def test_public_lifetimes_profile_plan_and_train_without_serializing_selector(
         for report in metadata.get("execution_lifetimes", ())
     ]
     assert reports
-    assert any(
-        decision["applied"]
-        for report in reports
-        for decision in report["schedule"]["decisions"]
-    )
+    if not replay_work:
+        assert any(
+            decision["applied"]
+            for report in reports
+            for decision in report["schedule"]["decisions"]
+        )
     assert all(
         after <= before
         for report in reports
@@ -146,6 +174,28 @@ def test_public_lifetimes_profile_plan_and_train_without_serializing_selector(
                 "barrier_bytes", ()
             )
         )
+    if replay_work:
+        assert any(
+            decision["applied"]
+            for report in reports
+            for decision in report.get("replay", {}).get("decisions", ())
+        )
+        assert any(report.get("replay", {}).get("copies") for report in reports)
+        assert all(
+            after <= before
+            for report in reports
+            for _, before, after in report.get("replay", {}).get("barrier_bytes", ())
+        )
     before = tuple(calls)
     _verify_saved(program, model, examples, "step", tmp_path)
     assert tuple(calls) == before
+
+
+@pytest.mark.cuda
+@pytest.mark.parametrize("lora,retain_sequence", [(False, False), (True, True)])
+def test_public_replay_and_compaction_profile_plan_and_train_cold(
+    tmp_path, lora, retain_sequence
+):
+    test_public_lifetimes_profile_plan_and_train_without_serializing_selector(
+        tmp_path, lora, retain_sequence, compact_views=True, replay_work=True
+    )

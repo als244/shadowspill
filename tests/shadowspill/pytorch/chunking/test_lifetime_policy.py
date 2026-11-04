@@ -210,6 +210,7 @@ def test_readonly_versions_enter_identity_and_unknown_providers_refuse_movement(
     "factory",
     [
         lambda: LifetimeSelection(move=1),
+        lambda: LifetimeSelection(replay="cheap"),
         lambda: LifetimeRule("aten.sin.default"),
         lambda: ExecutionLifetimes(rules=[]),
         lambda: ExecutionLifetimes(select=True),
@@ -398,3 +399,78 @@ def test_layout_contract_versions_and_compact_conflicts_are_public():
                 ),
             ),
         )
+
+
+@pytest.mark.parametrize("save", [False, True])
+@pytest.mark.parametrize("lora", [False, True])
+@pytest.mark.parametrize("batch", [1, 2])
+def test_public_primal_replay_preserves_checkpoint_cut_and_chunked_vjp(
+    save, lora, batch
+):
+    torch.manual_seed(941)
+    inputs = (
+        torch.randn(batch, 17, 5, dtype=torch.float64, requires_grad=True),
+        torch.randn(5, 9, dtype=torch.float64, requires_grad=not lora),
+        torch.randn(5, 3, dtype=torch.float64, requires_grad=True),
+        torch.randn(3, 9, dtype=torch.float64, requires_grad=True),
+        torch.randn(9, 5, dtype=torch.float64, requires_grad=True),
+    )
+
+    def layer(x, weight, a, b, out):
+        normalized = x.sin()
+        q = normalized @ weight + (normalized @ a) @ b
+        return torch.nn.functional.silu(q.softmax(1) @ out) + normalized
+
+    expected = layer(*inputs)
+    tangent = torch.randn_like(expected)
+    reference = torch.autograd.grad(
+        expected, [v for v in inputs if v.requires_grad], tangent
+    )
+    pair = capture_graph_pair(
+        make_fx(layer)(*inputs),
+        inputs,
+        original_output=expected,
+        memory_budget=float(save),
+    )
+    observations = []
+
+    def select(info):
+        observations.append(info)
+        if info.target == "aten.sin.default":
+            return LifetimeSelection(replay=True)
+        return None
+
+    policy = ChunkRegions(
+        IsolateOperations(SOFTMAX, base="whole"),
+        RegionChunks(17, batch),
+        lifetimes=ExecutionLifetimes(
+            rules=tuple(LifetimeRule(target, barrier=True) for target in SOFTMAX),
+            select=select,
+        ),
+    )
+    forward, backward = [
+        region_artifact(
+            artifact,
+            policy,
+            stage_id="block",
+            variant="save" if save else "recompute",
+        )
+        for artifact in (pair.forward, pair.backward)
+    ]
+    assert forward.storage_contract == pair.forward.storage_contract
+    assert backward.storage_contract == pair.backward.storage_contract
+    assert any(info.phase == "primal" for info in observations)
+    assert any(info.phase == "derivative" for info in observations)
+    reports = [a.regions.lifetime_report.get("replay") for a in (forward, backward)]
+    if not save:
+        assert any(d["applied"] for r in reports if r for d in r["decisions"])
+    before = len(observations)
+    with torch.no_grad():
+        actual = region_executable(forward)(*inputs)
+        saved = actual[-pair.saved_value_count :] if pair.saved_value_count else ()
+        gradients = region_executable(backward)(*saved, tangent)
+    assert len(observations) == before
+    torch.testing.assert_close(actual[0], expected, rtol=1e-11, atol=1e-11)
+    torch.testing.assert_close(
+        tuple(g for g in gradients if g is not None), reference, rtol=1e-10, atol=1e-10
+    )
