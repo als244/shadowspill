@@ -123,6 +123,9 @@ def captured(inputs, mode, batch):
 @pytest.mark.parametrize("batch", [1, 2])
 @pytest.mark.parametrize("mode", ["topk_then_softmax", "sigmoid_noaux_tc"])
 def test_sonic_contract_capture_and_local_escape_refusal(batch, mode):
+    # Other suite tests may already own a context. This CPU capture must not
+    # initialize one itself; its assertion is local to this operation.
+    cuda_initialized = torch.cuda.is_initialized()
     values = inputs_for(batch, "random")
     pair, forward, backward = captured(values, mode, batch)
     assert "mlops.lora_route.default" not in pair.backward.operator_targets
@@ -159,7 +162,7 @@ def test_sonic_contract_capture_and_local_escape_refusal(batch, mode):
             37,
             AxisChunks(11, {0: ChunkAxis(0, before=batch)}, rules=sonic_rules(batch)),
         )
-    assert not torch.cuda.is_initialized()
+    assert torch.cuda.is_initialized() == cuda_initialized
 
 
 class Calls(TorchDispatchMode):
