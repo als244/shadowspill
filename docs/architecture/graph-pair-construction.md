@@ -235,6 +235,10 @@ again. The budget, and the partitioner options the `save` variant sets, are
 bound inside the lazy partition callback AOTAutograd invokes, so ambient
 Functorch configuration cannot change the generated pair.
 
+Both variants retain supported [forward routing choices](routing-retention.md)
+by default: top-k expert indices and selected weights survive recomputation.
+This applies to each candidate policy pair and remains independent of residency.
+
 ### Save
 
 The `save` variant is budget `1.0`: the min-cut over saved bytes, which retains
@@ -250,6 +254,13 @@ selected results or require replay, including required auxiliary outputs of
 tuple-valued operations. Model annotations and mandatory effect or mutation
 state constrain the cut; conflicting explicit rules are refused. Permitted
 stage variants remain a separate build control.
+
+The SAVE policy may instead use `default="recompute"` with explicit retain
+rules. Paired with the default RECOMPUTE policy, this offers per-stage
+selection between retaining only those selected operator results and replaying
+them. The budget label `1.0` does not override the explicit SAVE policy. Inputs,
+effects and backward-required auxiliary outputs still constrain the cut, and
+both resulting tasks need their own compatible profiling evidence.
 
 What is expensive is decided by arithmetic intensity, in
 `shadowspill.pytorch.capture.retention`. Below a device's ridge point an
@@ -292,7 +303,8 @@ and is kept for nothing else.
 ### Recompute
 
 The `recompute` base cut, labeled `memory_budget=0.0`, retains the stage's
-inputs and regenerates intermediate results. Its independent policy can add
+inputs and supported routing choices, and regenerates other intermediate results.
+Its independent policy can add
 retained operator results. For example, preserving a sequence operator's
 backward-required outputs can avoid replaying that operator while its input
 projections still regenerate. This choice does not change the `save` policy.

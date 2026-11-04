@@ -90,6 +90,13 @@ def chunked_experiment(*, device):
                 rules=(RetentionRule("aten.tanh.default", "retain"),),
             )
         ),
+        "selected_only_save": GraphPairPolicy(
+            save=RetentionPolicy(
+                default="recompute",
+                rules=(RetentionRule("aten.tanh.default", "retain"),),
+            ),
+            recompute=RetentionPolicy(default="recompute"),
+        ),
     }
     setup["candidates"] = {
         f"{name}-{retention}-chunk{size}": {

@@ -92,8 +92,9 @@ def test_scoped_cut_applies_only_to_selected_source_and_preserves_vjp(default):
 
 
 @pytest.mark.parametrize("disk_restore", [False, True])
+@pytest.mark.parametrize("selected_variant", ["save", "recompute"])
 def test_scoped_policy_keys_structurally_equal_occurrences_before_reuse(
-    tmp_path, disk_restore
+    tmp_path, disk_restore, selected_variant
 ):
     torch.manual_seed(51)
     model = _RepeatedNetwork()
@@ -102,14 +103,16 @@ def test_scoped_policy_keys_structurally_equal_occurrences_before_reuse(
         model, lambda current, x, y: (current(x) - y).square().mean(), inputs
     )
     policy = GraphPairPolicy(
-        recompute=RetentionPolicy(
-            default="recompute",
-            rules=(
-                RetentionRule(
-                    "aten.add.Tensor", "retain", module_pattern="model.blocks.1"
+        **{
+            selected_variant: RetentionPolicy(
+                default="recompute",
+                rules=(
+                    RetentionRule(
+                        "aten.add.Tensor", "retain", module_pattern="model.blocks.1"
+                    ),
                 ),
-            ),
-        )
+            )
+        }
     )
     store = GraphPairStore(tmp_path)
     first = partition_training_capture(
@@ -132,19 +135,20 @@ def test_scoped_policy_keys_structurally_equal_occurrences_before_reuse(
                 == new.graph_pairs.variant(variant).pair.forward.compatibility_digest
             )
     left, right = (stage.graph_pairs for stage in selected.stages[1:3])
+    unchanged_variant = "recompute" if selected_variant == "save" else "save"
     assert (
-        left.variant("save").pair.forward.compatibility_digest
-        == right.variant("save").pair.forward.compatibility_digest
+        left.variant(unchanged_variant).pair.forward.compatibility_digest
+        == right.variant(unchanged_variant).pair.forward.compatibility_digest
     )
     assert (
-        left.variant("recompute").pair.forward.compatibility_digest
-        != right.variant("recompute").pair.forward.compatibility_digest
+        left.variant(selected_variant).pair.forward.compatibility_digest
+        != right.variant(selected_variant).pair.forward.compatibility_digest
     )
     manifests = [
         json.loads(path.read_text()) for path in tmp_path.rglob("manifest.json")
     ]
     indices = [
-        entry["retention"]["scoped"]["recompute"]["rules"][0]["source_indices"]
+        entry["retention"]["scoped"][selected_variant]["rules"][0]["source_indices"]
         for entry in manifests
     ]
     assert sum(bool(value) for value in indices) == 1
@@ -318,9 +322,9 @@ def test_scoped_override_cannot_hide_another_occurrences_changed_cost(monkeypatc
 
     from tests.shadowspill.pytorch.capture.test_retention import _pass_over
 
-    graph = make_fx(
-        lambda x, w: _pass_over(_pass_over(x, w), w), tracing_mode="fake"
-    )(torch.randn(7, 5), torch.randn(5))
+    graph = make_fx(lambda x, w: _pass_over(_pass_over(x, w), w), tracing_mode="fake")(
+        torch.randn(7, 5), torch.randn(5)
+    )
     nodes = [node for node in graph.graph.nodes if node.op == "call_function"]
     assert len(nodes) == 2
     for node, path in zip(nodes, ("model.first", "model.selected"), strict=True):

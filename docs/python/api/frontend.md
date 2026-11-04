@@ -322,7 +322,7 @@ returns an immutable pair of capture policies:
 | Argument | Type | Contract |
 | --- | --- | --- |
 | `save` | `RetentionPolicy` | Policy for the `save` graph pair. The default cost policy permits removals from backward-required forward state. Set `default="retain"` to keep that state without cost-based removals. |
-| `recompute` | `RetentionPolicy` | Policy for the `recompute` graph pair. The default retains checkpoint inputs and regenerates intermediates. Add retain rules to preserve selected operator results and required auxiliary outputs. |
+| `recompute` | `RetentionPolicy` | Policy for the `recompute` graph pair. The default retains checkpoint inputs and supported routing choices, regenerating other intermediates. Add retain rules to preserve selected operator results and required auxiliary outputs. |
 
 The policies are independent, with no requirement that one cut save more bytes
 than the other. They describe state needed by backward, not every forward
@@ -415,6 +415,48 @@ compares the resulting admitted Plans across candidates. The chunk policy's
 `variants` can restrict which outer variants are offered, independently of the
 retention policies. Forward sinks require a `save` choice, so changing only
 `recompute` leaves their paired-loss save policy intact.
+
+To let PressureFit choose whether to retain dense attention **within one
+Program**, put the selective policy on `save` and leave `recompute` at its
+default. Both variants also preserve supported routing choices:
+
+```python
+attention_only_save = GraphPairPolicy(
+    save=RetentionPolicy(
+        default="recompute",
+        rules=tuple(RetentionRule(op, "retain") for op in attention_operators),
+    ),
+    recompute=RetentionPolicy(default="recompute"),
+)
+```
+
+Here `attention_operators` contains only the dense-attention provider overloads
+whose results should be retained. Both variants must remain enabled. The
+`save` name does not force the cost policy: its default is overridden by this
+explicit policy. Required auxiliary outputs, checkpoint inputs and effect state
+still constrain the cut. Attention inputs such as projected Q/K/V may be
+regenerated; inspect the captured backward to verify what replay is avoided.
+
+The three candidate pairs offer different per-stage choices:
+
+| Candidate | SAVE cut | RECOMPUTE cut |
+| --- | --- | --- |
+| Cost / inputs | Cost-based retention | Checkpoint inputs |
+| Cost / attention | Cost-based retention | Selected attention state and checkpoint inputs |
+| Attention / inputs | Selected attention state and checkpoint inputs | Checkpoint inputs |
+
+All three pairs additionally retain supported [routing choices](../../architecture/routing-retention.md)
+by default, including in cuts labeled "inputs" above. An explicit `RetentionRule`
+can override a routing operator independently for each variant. These saved
+tensors use normal placement and spill planning.
+
+The last pair removes other cost-retained results from its SAVE alternative.
+In stages without selected attention operators its two cuts may coincide. It
+can reduce saved state, but may repeat more non-attention work than the cost
+alternatives. Compare their measured admitted Plans rather than assuming an
+ordering. Changing SAVE also applies to the mandatory terminal SAVE choice;
+terminal chunking and backward requirements still need to validate. A separate
+Program candidate does not add a third per-stage variant to another Program.
 
 | Phase/control | Responsibility |
 | --- | --- |

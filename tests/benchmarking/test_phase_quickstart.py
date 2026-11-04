@@ -154,6 +154,38 @@ def test_initial_build_does_not_require_planning_budgets(tmp_path, monkeypatch):
         main(["--phase", "plan", "--output-dir", str(tmp_path)])
 
 
+def test_joint_factory_offers_each_policy_at_each_chunk_and_input_geometry():
+    from benchmarking.quickstart.phases.candidates import build_options, example_inputs
+    from tests.benchmarking._generic_quickstart import chunked_experiment
+
+    setup = chunked_experiment(device="cpu")
+    controls = set()
+    for candidate in setup["candidates"].values():
+        inputs = example_inputs(candidate)
+        options = build_options(setup, candidate)
+        policy = options["graph_pair_policy"]
+        controls.add(
+            (
+                len(inputs["args"]),
+                options["chunking"].chunk_size,
+                policy.save.default,
+                bool(policy.save.rules),
+                bool(policy.recompute.rules),
+            )
+        )
+        assert policy.recompute.default == "recompute"
+    assert controls == {
+        (count, size, save_default, save_rules, recompute_rules)
+        for count in (2, 4)
+        for size in (1, 3)
+        for save_default, save_rules, recompute_rules in (
+            ("cost", False, False),
+            ("cost", False, True),
+            ("recompute", True, False),
+        )
+    }
+
+
 @pytest.mark.parametrize("form", ["both", "args", "kwargs"])
 def test_build_keeps_every_examples_arguments(tmp_path, monkeypatch, form):
     from types import SimpleNamespace

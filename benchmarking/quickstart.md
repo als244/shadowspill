@@ -183,11 +183,42 @@ remain eligible for ordinary residency and spill decisions. Candidate names
 should identify both chunk and graph-pair policies. There is no need to enumerate
 every stage's save/recompute choice as a separate candidate.
 
-A small initial set uses the same cost-based save policy for both candidates,
-with inputs-only recompute in one and selected attention retention in the other.
-Combine these with a short list of chunk configurations. The runner does not
-invent additional policies or expand per-stage combinations. See the
-[graph-pair policy example](../docs/python/api/frontend.md#graph-pair-policies).
+For dense-attention retention, declare three independent policy pairs. Given
+the provider's exact `attention_operators` overload names:
+
+```python
+from shadowspill.pytorch import GraphPairPolicy, RetentionPolicy, RetentionRule
+
+cost = RetentionPolicy()
+inputs_only = RetentionPolicy(default="recompute")
+attention_only = RetentionPolicy(
+    default="recompute",
+    rules=tuple(RetentionRule(op, "retain") for op in attention_operators),
+)
+graph_pair_policies = {
+    "cost_inputs": GraphPairPolicy(save=cost, recompute=inputs_only),
+    "cost_attention": GraphPairPolicy(save=cost, recompute=attention_only),
+    "attention_inputs": GraphPairPolicy(save=attention_only, recompute=inputs_only),
+}
+```
+
+Cross all three with the chunk configurations in the comprehension above.
+Each pair also retains supported routing choices by default, including the
+`inputs_only` policy above. The name describes its base cut; top-k IDs and
+selected routing weights remain ordinary saved tensors eligible for spill.
+Each pair gets its own chunk-size search; the winner is selected over the full
+set at each budget. Do not first choose a retention pair at one chunk size and
+reuse that choice for the others. The best combination can change with sequence
+length, hardware, communication costs and memory budget. Changed task geometry
+or hardware requires compatible build/profile evidence; changed transfer costs
+can be supplied for offline replanning.
+
+The runner measures the declared candidates and does not invent provider
+targets or expand per-stage combinations. These are factory declarations for
+normal training search, not a fixed policy chosen at execution. See the
+[graph-pair policy contract](../docs/python/api/frontend.md#graph-pair-policies)
+for mandatory state and terminal-SAVE behavior. A factory may deliberately use
+a smaller explicit candidate set when preparation latency matters.
 
 Build finalizes each candidate and profile measures its task implementations.
 Planning searches every saved candidate and ordering at each budget, including

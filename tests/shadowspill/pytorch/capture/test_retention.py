@@ -362,6 +362,49 @@ def test_save_removals_and_recompute_additions_are_independent():
     assert _internal_bytes(retained) == BYTES
 
 
+def test_selected_only_save_and_inputs_only_recompute_have_independent_vjps():
+    from shadowspill.pytorch import GraphPairPolicy
+
+    def forward(value, first, second, scale):
+        selected = _sincos(_product(value, first))[0]
+        return _pass_over(_product(selected, second), scale)
+
+    torch.manual_seed(15)
+    inputs = tuple(
+        torch.randn(shape, dtype=torch.float64, requires_grad=True)
+        for shape in ((17, 8), (8, 8), (8, 8), (8,))
+    )
+    target = "shadowspill_retention_test.sincos.default"
+    policy = GraphPairPolicy(
+        save=RetentionPolicy(
+            default="recompute", rules=(RetentionRule(target, "retain"),)
+        ),
+        recompute=RetentionPolicy(default="recompute"),
+    )
+    expected = forward(*inputs)
+    tangent = torch.randn_like(expected)
+    gradients = torch.autograd.grad(expected, inputs, tangent)
+    saved_bytes = {}
+    for variant, budget in (("save", 1.0), ("recompute", 0.0)):
+        pair = _pair(
+            forward, inputs, memory_budget=budget, retention=policy.variant(variant)
+        )
+        with torch.no_grad():
+            values = pair.forward.graph_module(*inputs)
+            actual = pair.backward.graph_module(
+                *values[-pair.saved_value_count :], tangent
+            )
+        torch.testing.assert_close(values[0], expected, rtol=1e-12, atol=1e-12)
+        torch.testing.assert_close(actual, gradients, rtol=1e-11, atol=1e-11)
+        saved_bytes[variant] = _internal_bytes(pair)
+        replayed = pair.retention.regenerated_operators
+        assert (target in replayed) == (variant == "recompute")
+        # The second product is expensive and needed by backward, but neither
+        # policy retains it. SAVE keeps both required results of sincos alone.
+        assert "shadowspill_retention_test.product.default" in replayed
+    assert saved_bytes == {"save": 2 * expected.numel() * 8, "recompute": 0}
+
+
 @pytest.mark.parametrize("memory_budget", [0.0, 1.0])
 def test_selective_cut_keeps_auxiliary_results_without_unnecessary_replay(
     memory_budget,

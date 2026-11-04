@@ -123,7 +123,7 @@ def test_chunk_retention_geometry_search_executes_saved_winner_and_replans(tmp_p
         == 0
     )
     inventory = json.loads((output / "programs/index.json").read_text())
-    assert len(inventory["candidates"]) == 8
+    assert len(inventory["candidates"]) == 12
     for entry in inventory["candidates"]:
         program = Program.load(output / "programs" / entry["file"])
         sizes = {
@@ -133,8 +133,8 @@ def test_chunk_retention_geometry_search_executes_saved_winner_and_replans(tmp_p
         }
         assert sizes == {int(entry["name"].rsplit("chunk", 1)[1])}
     sweep = SweepResult.load(output / "planning/sweep.ssp")
-    # Two chunk sizes, two retention policies, and five example orderings.
-    assert len(sweep.cases) == 20
+    # Each of three policy pairs gets both chunk sizes and five orderings.
+    assert len(sweep.cases) == 30
     assert all(case.plan is not None for case in sweep.cases)
     result = json.loads((output / "execution/budget-0000/result.json").read_text())
     assert result["predicted_seconds"] == pytest.approx(
@@ -162,7 +162,7 @@ def test_chunk_retention_geometry_search_executes_saved_winner_and_replans(tmp_p
         for directory in ("programs", "profiles", "profiled")
         for path in (output / directory).glob("*.ssp")
     }
-    assert len(artifacts) == 24
+    assert len(artifacts) == 36
     assert (
         main(
             [
