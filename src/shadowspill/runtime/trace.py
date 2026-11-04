@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import ctypes
 from collections.abc import Iterable, Sequence
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass, replace
 from enum import IntEnum
 from typing import Any
 
@@ -170,6 +170,21 @@ class CapturedRuntimeTrace:
     allocation_event_overflow: bool
     events: Sequence[RuntimeTraceEvent]
     allocation_events: Sequence[CapturedAllocationEvent]
+
+    def as_dict(self) -> dict[str, Any]:
+        """Project events explicitly for JSON export, preserving raw fields.
+
+        The captured sequences can own packed bytes and a lazy decoder. Expand
+        those sequences only when requested, rather than serializing their
+        internal storage and decoder as dataclass fields.
+        """
+        return asdict(
+            replace(
+                self,
+                events=tuple(self.events),
+                allocation_events=tuple(self.allocation_events),
+            )
+        )
 
 
 def prepare_runtime_trace(

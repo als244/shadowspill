@@ -3,8 +3,9 @@
 from __future__ import annotations
 
 import ctypes
+import json
 import pickle
-from dataclasses import replace
+from dataclasses import asdict, replace
 from pathlib import Path
 
 import pytest
@@ -187,6 +188,27 @@ def test_packed_evidence_can_outlive_its_process_and_handles():
     assert tuple(restored_runtime) == expected_runtime
     assert tuple(restored_allocations) == expected_allocations
     assert not restored_runtime.column("kind").flags.writeable
+
+
+@pytest.mark.parametrize("empty", [False, True])
+def test_raw_trace_json_export_preserves_decoded_fields(monkeypatch, empty):
+    library = _TraceLibrary()
+    if empty:
+        library.runtime = (TraceEvent * 0)()
+        library.allocations = (AllocationEvent * 0)()
+    expected_runtime = decode_runtime_events(library.runtime)
+    expected_allocations = decode_allocation_events(library.allocations)
+    monkeypatch.setattr(trace, "runtime_library", lambda: library)
+    captured = trace.read_runtime_trace(123)
+    expected = asdict(
+        replace(
+            captured, events=expected_runtime, allocation_events=expected_allocations
+        )
+    )
+    serialized = json.dumps(captured.as_dict())
+    assert json.loads(serialized) == json.loads(json.dumps(expected))
+    assert isinstance(captured.events, PackedEventRecords)
+    assert isinstance(captured.allocation_events, PackedEventRecords)
 
 
 def test_empty_records_remain_empty():

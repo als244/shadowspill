@@ -2,7 +2,6 @@
 
 import time
 from collections.abc import Mapping, Sequence
-from dataclasses import asdict
 from typing import Any
 
 import torch
@@ -92,7 +91,7 @@ class Observe:
                 )
             },
         }
-        return result, summary, asdict(trace)
+        return result, summary, trace.as_dict()
 
     def close(self) -> None:
         self.idle()
