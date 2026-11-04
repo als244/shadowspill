@@ -42,6 +42,12 @@ same built Program; changing ordering does not require rebuilding it.
 contracts applied during compilation. Composed tasks include contracts from
 their children. A precision-emulated sigmoid-backward contract identifies the
 provider's intermediate rounding and multiplication order for BF16/FP16.
+A precision-emulated SiLU-backward contract identifies FP32 internal arithmetic,
+round-to-nearest division, and explicit fused multiply-add for supported
+BF16/FP16/FP32 implementations. With `emulate_precision_casts=True`, these
+operations remain eligible for one fused pointwise kernel. The contract changes
+affected compiler and profile identities; it does not imply bitwise agreement for every
+operation, provider, or chunk geometry.
 The `torch.numerical_settings.v1:` entry contains a JSON snapshot of the caller's
 backend settings. It participates in graph-pair cache, compiler-cache,
 implementation and profile identity. These records describe an already built
