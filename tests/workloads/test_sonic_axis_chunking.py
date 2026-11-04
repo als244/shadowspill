@@ -125,6 +125,8 @@ def captured(inputs, mode, batch):
 def test_sonic_contract_capture_and_local_escape_refusal(batch, mode):
     values = inputs_for(batch, "random")
     pair, forward, backward = captured(values, mode, batch)
+    assert "mlops.lora_route.default" not in pair.backward.operator_targets
+    assert "mlops.lora_route.default" not in pair.retention.regenerated_operators
     for artifact in (forward, backward):
         assert artifact.chunking.rows == values[0].shape[1]
         sizes = {
@@ -166,7 +168,7 @@ class Calls(TorchDispatchMode):
         self.counts = Counter()
 
     def __torch_dispatch__(self, func, types, args=(), kwargs=None):
-        if "sonicmoe" in str(func):
+        if "sonicmoe" in str(func) or str(func) == "mlops.lora_route.default":
             self.counts[str(func)] += 1
         return func(*args, **(kwargs or {}))
 
@@ -219,6 +221,8 @@ def test_sonic_chunks_preserve_routing_and_arbitrary_vjp(batch, mode, distributi
             )
             backward_calls = calls.counts.copy()
     chunks = ceil(inputs[0].shape[1] / forward.chunking.size)
+    assert forward_calls["mlops.lora_route.default"] == chunks
+    assert backward_calls["mlops.lora_route.default"] == 0
     for name in ("lora_sonicmoe_up_fwd", "lora_sonicmoe_down_fwd"):
         assert forward_calls[f"mlops.{name}.default"] == chunks
         assert backward_calls[f"mlops.{name}.default"] == chunks
