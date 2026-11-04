@@ -13,10 +13,15 @@ from torch.utils._pytree import tree_flatten, tree_map
 from shadowspill.errors import CaptureError
 from shadowspill.pytorch.capture.artifacts import GraphArtifact, TensorGeometry
 from shadowspill.pytorch.capture.source import source_operation
+from shadowspill.pytorch.partition.policy import (
+    PartitionSpec,
+    resolve_partition_assignments,
+)
 
 from .lifetime_analysis import _effects, analyze_lifetimes
 from .lifetime_policy import ExecutionLifetimes, LifetimeOperation, LifetimeSelection
 from .lifetime_schedule import sink_readonly
+from .lifetime_views import prepare_internal_views
 
 
 def _geometry(values: object) -> tuple[TensorGeometry | None, ...]:
@@ -30,7 +35,7 @@ def _geometry(values: object) -> tuple[TensorGeometry | None, ...]:
 def _accept(
     choices: dict[str, bool], selection: LifetimeSelection, info: LifetimeOperation
 ) -> None:
-    for name in ("move", "barrier"):
+    for name in ("move", "barrier", "compact"):
         value = getattr(selection, name)
         if value is None:
             continue
@@ -47,6 +52,7 @@ def apply_lifetimes(
     artifact: GraphArtifact,
     policy: ExecutionLifetimes,
     *,
+    partition: PartitionSpec,
     stage_id: str,
     checkpoint_stage_id: str | None,
     variant: str | None,
@@ -54,7 +60,7 @@ def apply_lifetimes(
 ) -> tuple[dict[str, Any], dict[str, Any]]:
     """Return separate structural identity and occurrence inspection records."""
     selections, occurrences = [], []
-    movable, barriers = set(), set()
+    movable, barriers, compactable = set(), set(), set()
     fences, contracts = _effects(
         tuple(graph.graph.nodes), {item.target: item for item in policy.readonly}
     )
@@ -99,7 +105,11 @@ def apply_lifetimes(
                     or any(fnmatchcase(path, rule.module_pattern) for path in paths)
                 )
             ):
-                _accept(choices, LifetimeSelection(rule.move, rule.barrier), info)
+                _accept(
+                    choices,
+                    LifetimeSelection(rule.move, rule.barrier, rule.compact),
+                    info,
+                )
         if policy.select is not None:
             selected = policy.select(info)
             if selected is not None:
@@ -123,6 +133,8 @@ def apply_lifetimes(
             movable.add(node)
         if choices.get("barrier"):
             barriers.add(node)
+        if choices.get("compact"):
+            compactable.add(node)
     schedule: dict[str, Any] | None = None
     if movable or barriers:
         analysis = analyze_lifetimes(
@@ -156,4 +168,36 @@ def apply_lifetimes(
             "excludes inputs, opaque workspace and allocator overhead"
         ),
     }
+    if compactable:
+        from .lifetime_compaction import compact_internal_views
+
+        analysis = analyze_lifetimes(
+            graph, artifact.example_arguments, readonly=policy.readonly
+        )
+        preparation = prepare_internal_views(
+            graph,
+            analysis,
+            selected=frozenset(compactable),
+            barriers=frozenset(barriers),
+        )
+        analysis = analyze_lifetimes(
+            graph, artifact.example_arguments, readonly=policy.readonly
+        )
+        assignments, _ = resolve_partition_assignments(graph, graph, partition)
+        changed, compaction = compact_internal_views(
+            graph,
+            analysis,
+            artifact.example_arguments,
+            selected=frozenset(compactable),
+            regions=assignments,
+            barriers=frozenset(barriers),
+            readonly=policy.readonly,
+            layout=policy.layout,
+        )
+        graph.graph = changed.graph
+        graph.recompile()
+        identity.update(
+            schema=2, views=asdict(preparation), compaction=asdict(compaction)
+        )
+        report.update(views=asdict(preparation), compaction=asdict(compaction))
     return identity, report

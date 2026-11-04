@@ -33,17 +33,37 @@ class DelayedNetwork(RegionNetwork):
         self.blocks = torch.nn.ModuleList([DelayedBlock(lora), DelayedBlock(lora)])
 
 
+class PackedBlock(MixerBlock):
+    def __init__(self, lora):
+        super().__init__(lora)
+        self.out = torch.nn.Parameter(torch.randn(8, 8) / 8)
+
+    def forward(self, x):
+        early = x.sin()
+        packed = x @ self.weight + (x @ self.a) @ self.b
+        q, gate = packed.split(8, dim=-1)
+        return torch.nn.functional.silu(q.softmax(1) @ self.out) * gate.sin() + early
+
+
+class PackedNetwork(RegionNetwork):
+    def __init__(self, lora):
+        torch.nn.Module.__init__(self)
+        self.blocks = torch.nn.ModuleList([PackedBlock(lora), PackedBlock(lora)])
+
+
 @pytest.mark.cuda
+@pytest.mark.parametrize("compact_views", [False, True])
 @pytest.mark.parametrize("lora,retain_sequence", [(False, False), (True, True)])
 def test_public_lifetimes_profile_plan_and_train_without_serializing_selector(
-    tmp_path, lora, retain_sequence
+    tmp_path, lora, retain_sequence, compact_views
 ):
     if not torch.cuda.is_available():
         pytest.skip("requires an accelerator for task finalization")
     torch.manual_seed(731)
-    model = DelayedNetwork(lora)
+    network = PackedNetwork if compact_views else DelayedNetwork
+    model = network(lora)
     with torch.device("meta"):
-        template = DelayedNetwork(lora)
+        template = network(lora)
     examples = [
         ((torch.randn(2, 17, 8),), {"labels": torch.randn(2, 17, 8)}) for _ in range(2)
     ]
@@ -55,9 +75,22 @@ def test_public_lifetimes_profile_plan_and_train_without_serializing_selector(
         calls.append((operation.stage_id, operation.index))
         if operation.target == "aten.sin.default":
             return LifetimeSelection(move=True)
+        if compact_views and operation.target in (
+            "aten.view.default",
+            "aten._unsafe_view.default",
+            "aten.slice.Tensor",
+            "aten.split.Tensor",
+            "<built-in function getitem>",
+        ):
+            return LifetimeSelection(compact=True)
         return None
 
     barriers = ("aten._softmax.default", "aten._softmax_backward_data.default")
+    if compact_views:
+        # The softmax VJP uses its output, so both packed inputs have already
+        # died by that barrier. Protect the intervening activation as well:
+        # only the gate slice still needs the packed projection there.
+        barriers += ("aten.silu.default",)
     program = build_step(
         template,
         optimizer=torch.optim.AdamW(template.parameters(), foreach=False),
@@ -100,6 +133,19 @@ def test_public_lifetimes_profile_plan_and_train_without_serializing_selector(
         for report in reports
         for _, before, after in report["schedule"]["barrier_bytes"]
     )
+    if compact_views:
+        assert any(
+            decision["applied"]
+            for report in reports
+            for decision in report.get("compaction", {}).get("decisions", ())
+        )
+        assert all(
+            after <= before
+            for report in reports
+            for _, before, after in report.get("compaction", {}).get(
+                "barrier_bytes", ()
+            )
+        )
     before = tuple(calls)
     _verify_saved(program, model, examples, "step", tmp_path)
     assert tuple(calls) == before

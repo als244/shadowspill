@@ -35,22 +35,60 @@ class ReadonlyOperator:
 
 
 @dataclass(frozen=True, slots=True)
+class LayoutIndependentOperator:
+    """Versioned value semantics for relayout of opaque input arguments.
+
+    ``inputs`` contains dispatcher argument indices, including keyword-only
+    arguments and entire tensor lists. Replacing those inputs by strided tensors
+    with equal logical shape/dtype/device/values must preserve all logical output
+    values, shapes and dtypes, even when their strides, offsets, backing extents
+    or alias relationships differ. Every logical output element is initialized.
+    Output layout may change and is checked transitively. This does not certify
+    effects, numerical bitwise invariance, axis independence or memory use.
+
+    A separate readonly contract is required. Mutation/RNG and unqualified ATen
+    overloads cannot be overridden. These contracts are resolved during build,
+    never during execution.
+    """
+
+    target: str
+    version: str
+    inputs: tuple[int, ...]
+
+    def __post_init__(self) -> None:
+        _name(self.target, "layout operator target")
+        _name(self.version, "layout operator version")
+        if (
+            not isinstance(self.inputs, tuple)
+            or not self.inputs
+            or any(type(index) is not int or index < 0 for index in self.inputs)
+            or len(set(self.inputs)) != len(self.inputs)
+        ):
+            raise ValueError(
+                "layout inputs must be unique nonnegative argument indices"
+            )
+
+
+@dataclass(frozen=True, slots=True)
 class LifetimeSelection:
     """Optional choices for an operation; unspecified choices remain unset.
 
     ``move`` permits moving readonly work once toward its first consumer.
     ``barrier`` pins an operation and protects its live internal backing set
     against increases. Barriers take precedence over movement permission.
-    Neither choice duplicates computation or requests retained state/residency.
+    ``compact`` permits preparing and copying an internal view for consumers
+    in later execution regions, subject to layout and complete backing proofs.
+    None of these choices duplicates arithmetic or requests retained state.
     """
 
     move: bool | None = None
     barrier: bool | None = None
+    compact: bool | None = None
 
     def __post_init__(self) -> None:
         if any(
             value is not None and type(value) is not bool
-            for value in (self.move, self.barrier)
+            for value in (self.move, self.barrier, self.compact)
         ):
             raise TypeError("lifetime choices must be bool or None")
 
@@ -68,6 +106,7 @@ class LifetimeRule:
     target: str
     move: bool | None = field(default=None, kw_only=True)
     barrier: bool | None = field(default=None, kw_only=True)
+    compact: bool | None = field(default=None, kw_only=True)
     source_target: str | None = field(default=None, kw_only=True)
     module_pattern: str | None = field(default=None, kw_only=True)
 
@@ -75,9 +114,9 @@ class LifetimeRule:
         _name(self.target, "lifetime rule target")
         _name(self.source_target, "source target", optional=True)
         _name(self.module_pattern, "module pattern", optional=True)
-        LifetimeSelection(self.move, self.barrier)
-        if self.move is None and self.barrier is None:
-            raise ValueError("a lifetime rule must set move or barrier")
+        LifetimeSelection(self.move, self.barrier, self.compact)
+        if self.move is None and self.barrier is None and self.compact is None:
+            raise ValueError("a lifetime rule must set move, barrier or compact")
 
 
 @dataclass(frozen=True, slots=True)
@@ -104,7 +143,7 @@ class LifetimeOperation:
 
 @dataclass(frozen=True, slots=True)
 class ExecutionLifetimes:
-    """Control movement once within an outer ``ChunkRegions`` task.
+    """Control movement and view compaction in an outer ``ChunkRegions`` task.
 
     Resolve rules and ``select`` at build time, before gradient destinations
     and execution regions are formed. The callback runs once per operation in
@@ -114,18 +153,28 @@ class ExecutionLifetimes:
     fences, and protected backing sets may not increase. Compilation/profiling
     measures the final composition; ordinary planning owns physical admission.
 
-    This policy does not enable local replay or storage compaction. Expensive
-    operations may move when certified, but are never duplicated by it.
+    Compaction prepares selected internal aliases at their producer and considers
+    escaping sibling views together. It needs a strict backing reduction at one
+    selected barrier and no increase at any other. Layout-sensitive consumers
+    require separately qualified input-value semantics. Unsupported candidates
+    remain un-copied with recorded reasons. With no barriers, no copy is useful
+    under this policy. Input/external aliases and written backings never compact.
+
+    This policy does not enable local replay. Expensive operations may move
+    when certified, but are never duplicated by it. ``move=False`` does not pin
+    a view selected for compaction preparation; ``barrier=True`` pins it.
     """
 
     rules: tuple[LifetimeRule, ...] = ()
     readonly: tuple[ReadonlyOperator, ...] = ()
     select: Callable[[LifetimeOperation], LifetimeSelection | None] | None = None
+    layout: tuple[LayoutIndependentOperator, ...] = field(default=(), kw_only=True)
 
     def __post_init__(self) -> None:
         for values, expected, label in (
             (self.rules, LifetimeRule, "rules"),
             (self.readonly, ReadonlyOperator, "readonly"),
+            (self.layout, LayoutIndependentOperator, "layout"),
         ):
             if not isinstance(values, tuple) or any(
                 not isinstance(value, expected) for value in values
@@ -135,5 +184,7 @@ class ExecutionLifetimes:
                 )
         if len({item.target for item in self.readonly}) != len(self.readonly):
             raise ValueError("readonly operator targets must be unique")
+        if len({item.target for item in self.layout}) != len(self.layout):
+            raise ValueError("layout operator targets must be unique")
         if self.select is not None and not callable(self.select):
             raise TypeError("lifetime select must be callable or None")

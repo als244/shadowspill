@@ -12,6 +12,7 @@ from shadowspill.pytorch import (
     AxisChunks,
     ChunkRegions,
     ExecutionLifetimes,
+    LayoutIndependentOperator,
     LifetimeRule,
     LifetimeSelection,
     ReadonlyOperator,
@@ -297,3 +298,103 @@ def test_lifetime_policy_preserves_saved_cut_and_independent_parameter_vjp(
     torch.testing.assert_close(
         tuple(g for g in gradients if g is not None), reference, rtol=1e-10, atol=1e-10
     )
+
+
+def test_public_compaction_retains_checkpoint_contract_and_build_only_decisions():
+    torch.manual_seed(511)
+    inputs = (torch.randn(2, 17, 5), torch.randn(5, 12))
+
+    def layer(x, weight):
+        packed = x @ weight
+        a, gate = packed[..., :8], packed[..., 8:]
+        attended = a.cumsum(1)
+        return attended[..., :4] * gate.sin()
+
+    captured = GraphArtifact.capture(
+        kind="inference", graph_module=make_fx(layer)(*inputs), example_inputs=inputs
+    )
+    building = True
+    calls = []
+
+    def select(info):
+        assert building
+        calls.append(info.index)
+        if info.target == "aten.slice.Tensor":
+            return LifetimeSelection(compact=True)
+        return None
+
+    barriers = ("aten.cumsum.default", "aten.sin.default")
+    policy = ChunkRegions(
+        IsolateOperations(barriers, base="whole"),
+        NoChunks(),
+        lifetimes=ExecutionLifetimes(
+            rules=tuple(LifetimeRule(target, barrier=True) for target in barriers),
+            select=select,
+        ),
+    )
+    changed = region_artifact(captured, policy, stage_id="block", variant="recompute")
+    building = False
+    assert calls
+    assert changed.storage_contract == captured.storage_contract
+    info = changed.regions.identity["lifetimes"]
+    assert info["schema"] == 2 and info["views"]
+    assert any(d["applied"] for d in info["compaction"]["decisions"])
+    assert all(
+        after <= before for _, before, after in info["compaction"]["barrier_bytes"]
+    )
+    torch.testing.assert_close(region_executable(changed)(*inputs)[0], layer(*inputs))
+    json.dumps(changed.regions.lifetime_report)
+
+
+def test_layout_contract_versions_and_compact_conflicts_are_public():
+    from tests.shadowspill.pytorch.chunking._lifetime_ops import logical_consumer
+
+    x = torch.randn(7, 12)
+    captured = GraphArtifact.capture(
+        kind="inference",
+        graph_module=make_fx(lambda x: logical_consumer((x * 2)[:, :4], x[:, :4]))(x),
+        example_inputs=(x,),
+    )
+    target = "lifetime_copy_test.logical_consumer.default"
+    lifetimes = dict(
+        rules=(
+            LifetimeRule("aten.slice.Tensor", compact=True),
+            LifetimeRule(target, barrier=True),
+        ),
+        readonly=(ReadonlyOperator(target, "effects.v1"),),
+    )
+    variants = [
+        region_artifact(
+            captured,
+            ChunkRegions(
+                IsolateOperations((target,), base="whole"),
+                NoChunks(),
+                lifetimes=ExecutionLifetimes(
+                    **lifetimes,
+                    layout=(LayoutIndependentOperator(target, version, (0,)),),
+                ),
+            ),
+            stage_id="block",
+            variant="recompute",
+        )
+        for version in ("values.v1", "values.v2")
+    ]
+    assert variants[0].compatibility_digest != variants[1].compatibility_digest
+    for changed in variants:
+        assert any(
+            d["applied"]
+            for d in changed.regions.identity["lifetimes"]["compaction"]["decisions"]
+        )
+        torch.testing.assert_close(
+            region_executable(changed)(x)[0], captured.graph_module(x)
+        )
+    with pytest.raises(CaptureError, match="conflicting lifetime compact"):
+        compose(
+            captured,
+            ExecutionLifetimes(
+                rules=(
+                    LifetimeRule("aten.slice.Tensor", compact=True),
+                    LifetimeRule("aten.slice.Tensor", compact=False),
+                ),
+            ),
+        )

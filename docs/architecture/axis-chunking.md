@@ -46,8 +46,18 @@ separate inspection metadata. Cold execution never reloads a policy callback.
 Compilation and profiling see the transformed complete task, and ordinary
 planning still owns variant selection, spill and physical admission. See the
 [lifetime policy reference](../python/api/frontend.md#execution-lifetimes) for
-selectors, contracts and current refusals. Local replay and compaction remain
-outside this movement interface.
+selectors, contracts and current refusals. Explicit `compact=True` selections
+prepare internal aliases and consider escaping sibling views jointly. Separate
+versioned input-layout contracts prove logical value preservation; readonly
+execution alone is insufficient. Layout changes propagate through alias and
+fresh operations until a complete dense fresh result has unchanged geometry.
+Input/external aliases, written backings and raw storage-sensitive consumers
+are protected. A speculative copy group is accepted only with the same outer
+storage contract, a reduction at a protected barrier and no increase elsewhere.
+Normalized view/copy decisions and used layout versions also enter identity.
+Compilation/profiling measures copies as part of the final composition; the
+semantic inventory does not substitute for physical admission. Local arithmetic
+replay remains outside this interface.
 
 Execution policies see source module paths resolved for the current checkpoint
 occurrence, including operations emitted by its derivative or recomputation.

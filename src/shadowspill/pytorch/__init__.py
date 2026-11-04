@@ -30,6 +30,7 @@ if TYPE_CHECKING:
     from .chunking import ChunkPolicy as ChunkPolicy
     from .chunking import ChunkRegions as ChunkRegions
     from .chunking import ExecutionLifetimes as ExecutionLifetimes
+    from .chunking import LayoutIndependentOperator as LayoutIndependentOperator
     from .chunking import LifetimeOperation as LifetimeOperation
     from .chunking import LifetimeRule as LifetimeRule
     from .chunking import LifetimeSelection as LifetimeSelection
@@ -63,6 +64,7 @@ _GROUPS = {
         "ChunkPolicy",
         "ChunkRegions",
         "ExecutionLifetimes",
+        "LayoutIndependentOperator",
         "LifetimeOperation",
         "LifetimeRule",
         "LifetimeSelection",

@@ -77,6 +77,7 @@ def region_artifact(
             graph,
             artifact,
             policy.lifetimes,
+            partition=policy.partition,
             stage_id=stage_id,
             checkpoint_stage_id=checkpoint_stage_id,
             variant=variant,

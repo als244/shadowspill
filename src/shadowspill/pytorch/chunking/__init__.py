@@ -3,6 +3,7 @@
 from .geometry import ChunkAxis
 from .lifetime_policy import (
     ExecutionLifetimes,
+    LayoutIndependentOperator,
     LifetimeOperation,
     LifetimeRule,
     LifetimeSelection,
@@ -26,6 +27,7 @@ __all__ = [
     "ChunkPolicy",
     "ChunkRegions",
     "ExecutionLifetimes",
+    "LayoutIndependentOperator",
     "LifetimeOperation",
     "LifetimeRule",
     "LifetimeSelection",

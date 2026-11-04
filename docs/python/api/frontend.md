@@ -534,14 +534,15 @@ def execution_policy(axis_policy, sequence_operator_targets):
 
 ### Execution lifetimes
 
-`ExecutionLifetimes(rules=(), readonly=(), select=None)` controls where approved
-operations run inside an existing checkpoint task. It currently supports moving
-readonly work once toward its first consumer. It never duplicates an operation,
-changes the saved-state cut, or requests device/host residency. Axis selection
+`ExecutionLifetimes(rules=(), readonly=(), select=None, *, layout=())` controls
+operation placement and internal view compaction inside a checkpoint task. It
+can move readonly work once toward its first consumer and copy selected views
+into smaller backing storage. It never duplicates arithmetic, changes the
+saved-state cut, or requests device/host residency. Axis selection
 and chunk sizes still belong to `AxisChunks`; retention belongs to
 `GraphPairPolicy`; PressureFit chooses variants and residency from measured tasks.
 
-`LifetimeRule(target, *, move=None, barrier=None, source_target=None,
+`LifetimeRule(target, *, move=None, barrier=None, compact=None, source_target=None,
 module_pattern=None)` selects one exact explicit operator overload. Optional
 `source_target` matches the original source operation; `module_pattern` matches
 any attributed source module path with a case-sensitive shell pattern. An
@@ -551,7 +552,8 @@ at least one of these choices:
 | choice | meaning |
 |---|---|
 | `move=True` | Permit the readonly operation to move once toward its first consumer, subject to effects, alias writes and protected lifetimes. `False` explicitly disables this permission. |
-| `barrier=True` | Keep this operation in place and require that every proposed move does not increase the internal backing bytes live immediately before it. `False` leaves it unprotected. A barrier takes precedence over movement permission. |
+| `barrier=True` | Keep this operation in place and require that every proposed move does not increase the internal backing bytes live immediately before it. `False` leaves it unprotected. A barrier takes precedence over movement and view preparation. |
+| `compact=True` | Prepare this internal alias view near its producer and consider a contiguous copy for later execution-region consumers. Related selected views are considered jointly. At least one protected backing set must shrink and none may grow. Unsupported candidates remain un-copied with recorded reasons. |
 | `None` | Leave that choice unspecified. Conflicting explicit values from matching rules or the callback fail capture. Rule order does not resolve conflicts. |
 
 ```python
@@ -572,7 +574,7 @@ def scheduled_regions(axis_policy, sequence_targets):
 ```
 
 For unusual selection logic, `select(operation)` returns
-`LifetimeSelection(move=None, barrier=None)` or `None`. The frozen
+`LifetimeSelection(move=None, barrier=None, compact=None)` or `None`. The frozen
 `LifetimeOperation` contains `index`, exact `target`, optional `source_target`,
 `module_paths`, `effect_fence`, task `kind`, `variant`, `stage_id`, `checkpoint_stage_id`, and
 flattened `inputs`/`outputs` tensor geometries (`TensorGeometry | None`). It
@@ -593,9 +595,40 @@ contract. Conditional or unknown alias returns are conservatively refused
 when lifetime analysis is needed. Parameter-gradient conversion barriers remain
 protected regardless of user movement choices.
 
+
+Compaction changes storage layout and therefore needs a separate proof from
+readonly execution. `LayoutIndependentOperator(target, version, inputs)` in
+`layout` certifies value semantics for specified dispatcher argument indices
+(including keyword arguments and tensor lists). Replacing those arguments by
+equal logical tensors with different strides, offsets, backing spans or alias
+relationships must preserve every initialized logical output value, shape and
+dtype. The result layout may differ; the pass follows layout changes through
+fresh computations as well as alias views. Bitwise equality across different
+kernel layouts is not promised by this contract; ordinary numerical qualification
+still applies. A provider needs both readonly and layout contracts. Neither can
+override mutation, RNG or unsupported ATen storage semantics.
+
+For example, add `LifetimeRule("aten.slice.Tensor", compact=True)` to consider
+escaping slices, while marking sequence operators with `barrier=True`. A callback
+can select other view/tuple operations. Selected views may be prepared earlier
+even when `move=False`; use `barrier=True` to pin an operation. Input/parameter
+backings, outer aliases, and written backings cannot compact. With no protected
+barriers there is no qualifying memory reduction, so copies are not applied.
+
+The pass conservatively qualifies known value-based ATen operations. Raw
+`as_strided`, dtype-reinterpreting views and unknown layout-sensitive consumers
+are refused when their input layout changes. An unchanged complete dense fresh
+result ends propagation; a fresh result with changed strides does not. A failed
+candidate is discarded as a group, and the task's outer storage contract must
+remain identical. Execution partition rules are resolved before considering
+cross-region uses, then resolved again after transformation and gradient routing;
+they must cover inserted `aten.clone.default` operations too.
+
 Resolved operation indices, permissions, used contract versions and scheduling
 decisions enter `execution_regions["lifetimes"]` in task metadata and executable
-identity. Occurrence explanations appear separately in the
+identity. `schedule`, `views` and `compaction` records use indices from their
+respective input order; movement/view records include their resulting order.
+Occurrence explanations appear separately in the
 `execution_lifetimes` list, including source module paths and semantic backing
 counts. These counts exclude task inputs, opaque workspace and allocator
 overhead; the complete finalized composition still needs profiling and physical
@@ -605,8 +638,7 @@ identity.
 
 Only the outer `ChunkRegions` may specify lifetimes. Setting it inside
 `AxisChunks.regions` is refused so scheduling always sees the complete
-checkpoint task once. Local replay and storage compaction are not enabled by
-this interface.
+checkpoint task once. Local replay is not enabled by this interface.
 
 `ChunkPolicy` implements `configure_stage(stage: StageInfo) -> AxisChunks | None`
 to select an
