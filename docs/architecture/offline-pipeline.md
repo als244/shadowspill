@@ -460,8 +460,9 @@ qualify these resources.
 Likewise, the registration digest is not a fingerprint of all transitive native
 libraries or proof that a provider's internal autotuning/resources are portable.
 
-For Python providers that use Triton's autotuner, build runs each affected
-task with bounded representative inputs and records its selected configurations.
+For Python providers that use Triton's or the supported Quack autotuner, build
+runs each affected task with bounded representative inputs and records its selected
+configurations.
 Backward uses the corresponding forward's tensors. Kernel source, tuning keys
 and candidate configurations identify each selection, and selections contribute
 to profile compatibility. Measurement and execution bind these saved choices;
@@ -471,8 +472,24 @@ No GPU timing records or runtime pools are produced by this build pass.
 Only compact configuration records belong to the Program archive. Compiler
 caches remain disposable, and provider code remains an external dependency.
 Fixed kernels may compile lazily without selecting a different implementation.
+Quack records also bind the provider's source/ABI fingerprint, registered kernel
+source directories, generated callable closure and epilogue identities, and
+dataclass-valued GEMM configurations. Replay calls the selected configuration
+directly: a different or empty in-memory/disk tuning cache cannot choose another
+implementation. Both backends share the task-local scope, including nested
+execution regions. For archive compatibility the internal binding is still
+named `triton_choices`; Quack entries use versioned `quack/v1/` keys. Its optional
+adapter checks the provider's call contract before recording or replaying it.
+Ordinary provider calls outside these scopes retain their original behavior.
+
+Older Programs with Quack calls but no recorded Quack choices must be rebuilt;
+replay refuses them rather than tuning under an already measured memory layout.
+Unknown callable state and Quack candidates synthesized only by pruning require
+explicit provider support. Saving choices does not package provider binaries or
+certify all provider resources, gradient destinations, or distributed behavior.
+
 Other autotuner systems still need saved-choice support; resource initialization
-must not retune the finalized task. This does not certify arbitrary provider state.
+must not retune the finalized task.
 
 See [repository structure](../development/repository.md) for implementation owners.
 

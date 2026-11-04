@@ -5,9 +5,7 @@ different configurations for the same kernel. Candidate identity and kernel
 source are checked before replay. A missing choice fails before any benchmarking.
 """
 
-from collections.abc import Callable, Iterator, Mapping, Sequence
-from contextlib import contextmanager
-from contextvars import ContextVar
+from collections.abc import Callable, Mapping, Sequence
 from functools import wraps
 from threading import Lock
 from typing import Any
@@ -17,9 +15,8 @@ from triton.runtime.jit import JITFunction  # type: ignore[import-untyped]
 
 from shadowspill.artifacts._values import digest, plain
 
-_active: ContextVar[tuple[str, dict[str, Any]] | None] = ContextVar(
-    "shadowspill_triton_choices", default=None
-)
+from ._scope import active
+
 _lock = Lock()
 _installed = False
 
@@ -51,10 +48,10 @@ def _run(
     args: Sequence[Any],
     kwargs: Mapping[str, Any],
 ) -> Any:
-    active = _active.get()
-    if active is None or len(tuner.configs) <= 1:
+    scope = active.get()
+    if scope is None or len(tuner.configs) <= 1:
         return original(tuner, *args, **kwargs)
-    mode, choices = active
+    mode, choices = scope
     identity, key, name = _identity(tuner, args, kwargs)
     if mode == "capture":
         result = original(tuner, *args, **kwargs)
@@ -89,7 +86,7 @@ def _run(
             tuner.cache[key] = previous
 
 
-def _install() -> None:
+def install() -> None:
     global _installed
     with _lock:
         if not _installed:
@@ -101,31 +98,3 @@ def _install() -> None:
 
             Autotuner.run = run
             _installed = True
-
-
-@contextmanager
-def capture_choices() -> Iterator[dict[str, Any]]:
-    _install()
-    choices: dict[str, Any] = {}
-    token = _active.set(("capture", choices))
-    try:
-        yield choices
-    finally:
-        _active.reset(token)
-
-
-def use_choices(
-    function: Callable[..., Any], choices: Mapping[str, Any]
-) -> Callable[..., Any]:
-    _install()
-    values = plain(choices)
-
-    @wraps(function)
-    def call(*args: Any, **kwargs: Any) -> Any:
-        token = _active.set(("replay", values))
-        try:
-            return function(*args, **kwargs)
-        finally:
-            _active.reset(token)
-
-    return call
