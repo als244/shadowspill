@@ -9,7 +9,14 @@ from torch._inductor import config as inductor_config
 from torch.utils._pytree import tree_map
 
 from shadowspill import Parallelism, build_forward_backward, build_step
-from shadowspill.pytorch import GraphPairPolicy, RetentionPolicy, RetentionRule
+from shadowspill.pytorch import (
+    ExecutionLifetimes,
+    GraphPairPolicy,
+    LifetimeRule,
+    LifetimeSelection,
+    RetentionPolicy,
+    RetentionRule,
+)
 from shadowspill.pytorch.chunking import AxisChunks, ChunkRegions
 from shadowspill.pytorch.partition import IsolateOperations
 from tests.shadowspill.execution._oracle import optimizer_values
@@ -17,34 +24,66 @@ from tests.shadowspill.pytorch.chunking.test_regions import RegionChunks
 
 
 class Block(torch.nn.Module):
-    def __init__(self, lora, *, device="cpu", dtype=torch.float32, gate_dtype=None):
+    def __init__(
+        self,
+        lora,
+        *,
+        device="cpu",
+        dtype=torch.float32,
+        gate_dtype=None,
+        lifetime_mode=None,
+    ):
         super().__init__()
         self.gate_dtype = gate_dtype
+        self.lifetime_mode = lifetime_mode
+        width = 18 if lifetime_mode == "replay_compact" else 11
         self.weight = torch.nn.Parameter(
-            torch.randn(7, 11, device=device, dtype=dtype) / 7,
+            torch.randn(7, width, device=device, dtype=dtype) / 7,
             requires_grad=not lora,
         )
         self.a = torch.nn.Parameter(torch.randn(7, 3, device=device, dtype=dtype) / 7)
-        self.b = torch.nn.Parameter(torch.randn(3, 11, device=device, dtype=dtype) / 7)
+        self.b = torch.nn.Parameter(
+            torch.randn(3, width, device=device, dtype=dtype) / 7
+        )
         self.out = torch.nn.Parameter(
             torch.randn(11, 7, device=device, dtype=dtype) / 11,
             requires_grad=not lora,
         )
 
     def forward(self, x):
-        projected = x @ self.weight + (x @ self.a) @ self.b
+        early = x.sin() if self.lifetime_mode is not None else x
+        source = early if self.lifetime_mode == "replay_compact" else x
+        projected = source @ self.weight + (source @ self.a) @ self.b
+        if self.lifetime_mode == "replay_compact":
+            projected, gate = projected.split((11, 7), dim=-1)
         activated = torch.nn.functional.silu(projected.softmax(1) @ self.out)
+        if self.lifetime_mode == "replay_compact":
+            activated = activated * gate.sin()
         if self.gate_dtype is not None:
             activated = activated * activated.to(self.gate_dtype).sigmoid().float()
-        return activated + x
+        return activated + early
 
 
 class Network(torch.nn.Module):
-    def __init__(self, lora, *, device="cpu", dtype=torch.float32, gate_dtype=None):
+    def __init__(
+        self,
+        lora,
+        *,
+        device="cpu",
+        dtype=torch.float32,
+        gate_dtype=None,
+        lifetime_mode=None,
+    ):
         super().__init__()
         self.blocks = torch.nn.ModuleList(
             [
-                Block(lora, device=device, dtype=dtype, gate_dtype=gate_dtype)
+                Block(
+                    lora,
+                    device=device,
+                    dtype=dtype,
+                    gate_dtype=gate_dtype,
+                    lifetime_mode=lifetime_mode,
+                )
                 for _ in range(2)
             ]
         )
@@ -92,9 +131,11 @@ def parameters(model):
     return {name: value.detach().clone() for name, value in model.named_parameters()}
 
 
-def oracle(kind, lora, *, gate_dtype=None, device="cpu"):
+def oracle(kind, lora, *, gate_dtype=None, lifetime_mode=None, device="cpu"):
     torch.manual_seed(731)
-    model = Network(lora, gate_dtype=gate_dtype, device=device)
+    model = Network(
+        lora, gate_dtype=gate_dtype, lifetime_mode=lifetime_mode, device=device
+    )
     initial = parameters(model)
     calls = tree_map(lambda value: value.to(device), examples())
     optimizer = torch.optim.AdamW(model.parameters(), lr=0.001, foreach=False)
@@ -189,6 +230,65 @@ class ComposedChunks(RegionChunks):
         )
 
 
+class LifetimeChoices:
+    """The selector must be resolved during build, never called by execution."""
+
+    def __init__(self, mode):
+        assert mode in {"move", "replay_compact"}
+        self.mode = mode
+        self.building = True
+        self.calls = 0
+
+    def __call__(self, operation):
+        assert self.building, "lifetime selector ran after build"
+        self.calls += 1
+        if operation.target == "aten.sin.default":
+            return (
+                LifetimeSelection(move=True)
+                if self.mode == "move"
+                else LifetimeSelection(replay=True)
+            )
+        if self.mode == "replay_compact" and operation.target in {
+            "aten.view.default",
+            "aten._unsafe_view.default",
+            "aten.slice.Tensor",
+            "aten.split.Tensor",
+            "aten.split_with_sizes.default",
+            "<built-in function getitem>",
+        }:
+            return LifetimeSelection(compact=True)
+        return None
+
+
+def check_lifetime_reports(reports, mode):
+    """Require real transformations and protected memory evidence, not opt-in alone."""
+    assert reports
+    required = ("schedule",) if mode == "move" else ("compaction", "replay")
+    counts = {}
+    for kind in ("schedule", "compaction", "replay"):
+        parts = [(report.get(kind) or {}) for report in reports]
+        counts[kind] = sum(
+            decision["applied"]
+            for part in parts
+            for decision in part.get("decisions", ())
+        )
+        assert all(
+            after <= before
+            for part in parts
+            for _, before, after in part.get("barrier_bytes", ())
+        ), kind
+    assert all(counts[kind] > 0 for kind in required), counts
+    if mode == "replay_compact":
+        selected = {
+            item["target"]
+            for report in reports
+            for item in report["selections"]
+            if item.get("replay")
+        }
+        assert selected == {"aten.sin.default"}, selected
+    return counts
+
+
 def policies(options):
     storage = {
         "replicated": ("replicated", "replicated", "replicated"),
@@ -210,12 +310,23 @@ def policies(options):
         if options["checkpoint_cuts"]
         else "auto"
     )
+    barriers = ("aten._softmax.default", "aten._softmax_backward_data.default")
+    lifetime_mode = options.get("lifetime_mode")
+    lifetimes = None
+    if lifetime_mode:
+        if lifetime_mode == "replay_compact":
+            barriers += ("aten.silu.default",)
+        lifetimes = ExecutionLifetimes(
+            rules=tuple(LifetimeRule(target, barrier=True) for target in barriers),
+            select=LifetimeChoices(lifetime_mode),
+        )
     execution = ChunkRegions(
         IsolateOperations(
-            ("aten._softmax.default", "aten._softmax_backward_data.default"),
+            barriers,
             base="whole",
         ),
         (ComposedChunks if options["nested"] else RegionChunks)(17, 2),
+        lifetimes=lifetimes,
     )
     retention = GraphPairPolicy(
         save=RetentionPolicy(default="cost"),
@@ -239,22 +350,30 @@ def build(path, kind):
     gate_dtype = (
         getattr(torch, options["gate_dtype"]) if options.get("gate_dtype") else None
     )
+    lifetime_mode = options.get("lifetime_mode")
+    emulate = gate_dtype is not None or lifetime_mode is not None
     # CUDA's native low-precision derivative differs from the CPU implementation.
     # The independent reference uses ordinary CUDA autograd, never our compiler.
     fixture = oracle(
         kind,
         options["lora"],
         gate_dtype=gate_dtype,
-        device="cuda" if gate_dtype is not None else "cpu",
+        lifetime_mode=lifetime_mode,
+        device="cuda" if emulate else "cpu",
     )
-    template = Network(options["lora"], device="meta", gate_dtype=gate_dtype)
+    template = Network(
+        options["lora"],
+        device="meta",
+        gate_dtype=gate_dtype,
+        lifetime_mode=lifetime_mode,
+    )
     common = dict(
         objective=objective,
         example_calls=fixture["examples"][0],
         grad_dtype=torch.float32,
         **policies(options),
     )
-    with inductor_config.patch(emulate_precision_casts=gate_dtype is not None):
+    with inductor_config.patch(emulate_precision_casts=emulate):
         program = (
             build_step(
                 template,
@@ -272,6 +391,24 @@ def build(path, kind):
             "cuda.sigmoid_backward.scalar_rounding.v1" in row["numerical_contracts"]
             for row in program.bindings["task_metadata"].values()
         ), "The fixture did not exercise compiled native scalar rounding"
+    if emulate:
+        assert any(
+            "cuda.silu_backward.opmath.v1" in row["numerical_contracts"]
+            for row in program.bindings["task_metadata"].values()
+        ), "The fixture did not exercise compiled native SiLU opmath"
+    lifetime_counts = {}
+    if lifetime_mode:
+        selector = common["chunking"].lifetimes.select
+        assert selector.calls > 0
+        selector.building = False
+        lifetime_counts = check_lifetime_reports(
+            [
+                report
+                for row in program.bindings["task_metadata"].values()
+                for report in row.get("execution_lifetimes", ())
+            ],
+            lifetime_mode,
+        )
     sizes, nested = set(), []
 
     def inspect(value):
@@ -300,6 +437,7 @@ def build(path, kind):
                 options=options,
                 resolved_chunk_sizes=sorted(sizes),
                 nested_compositions=len(nested),
+                lifetime_decisions=lifetime_counts,
                 graph_pair_policy=common["graph_pair_policy"].identity(),
                 parallelism=common["parallelism"].to_dict(),
             ),

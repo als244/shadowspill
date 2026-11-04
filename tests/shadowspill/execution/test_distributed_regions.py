@@ -166,3 +166,68 @@ def test_dp_native_pointwise_emulation(tmp_path, gate_dtype):
     )
     _verify(tmp_path, "step", "recompute", "regions")
     _check_collective_traces(tmp_path)
+
+
+@pytest.mark.cuda
+@pytest.mark.parametrize(
+    "kind,storage,lora,retain_sequence,nested,lifetime_mode",
+    [
+        pytest.param(
+            "step",
+            "replicated",
+            False,
+            False,
+            False,
+            "move",
+            id="full-replicated-movement",
+        ),
+        pytest.param(
+            "step",
+            "sharded",
+            False,
+            False,
+            True,
+            "replay_compact",
+            id="full-sharded-composed-replay-compaction",
+        ),
+        pytest.param(
+            "step",
+            "gradient_optimizer",
+            True,
+            True,
+            False,
+            "replay_compact",
+            id="lora-retained-replay-compaction",
+        ),
+        pytest.param(
+            "forward_backward",
+            "sharded",
+            True,
+            True,
+            True,
+            "replay_compact",
+            id="lora-continuing-composed-replay-compaction",
+        ),
+    ],
+)
+def test_dp_public_execution_lifetimes(
+    tmp_path, kind, storage, lora, retain_sequence, nested, lifetime_mode
+):
+    if torch.cuda.device_count() < 2:
+        pytest.skip("requires two distinct GPUs")
+    (tmp_path / "regions.json").write_text(
+        json.dumps(
+            dict(
+                storage=storage,
+                lora=lora,
+                retain_sequence=retain_sequence,
+                nested=nested,
+                checkpoint_cuts=False,
+                lifetime_mode=lifetime_mode,
+            ),
+            indent=2,
+        )
+        + "\n"
+    )
+    _verify(tmp_path, kind, "recompute", "regions")
+    _check_collective_traces(tmp_path)
