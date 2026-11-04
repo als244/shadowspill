@@ -17,8 +17,9 @@ from shadowspill.pytorch import (
     RetentionPolicy,
     RetentionRule,
 )
-from shadowspill.pytorch.chunking import AxisChunks, ChunkRegions
+from shadowspill.pytorch.chunking import AxisChunks, ChunkAxis, ChunkRegions
 from shadowspill.pytorch.partition import IsolateOperations
+from shadowspill.task.inputs import TaskInputRole
 from tests.shadowspill.execution._oracle import optimizer_values
 from tests.shadowspill.pytorch.chunking.test_regions import RegionChunks
 
@@ -100,21 +101,23 @@ def objective(model, x, *, labels, sample_weights):
     return ((model(x) - labels).square() * sample_weights).sum(), {}
 
 
-def examples():
+def examples(batch=2, sequence=17):
     generator = torch.Generator().manual_seed(95)
     calls = []
     count = 0
     for rank in range(2):
         local = []
         for microbatch in range(2):
-            mask = (torch.arange(17) < 17 - 3 * rank - 2 * microbatch).float()
-            mask = mask.reshape(1, 17, 1).expand(2, 17, 1).clone()
+            mask = (
+                torch.arange(sequence) < sequence - 3 * rank - 2 * microbatch
+            ).float()
+            mask = mask.reshape(1, sequence, 1).expand(batch, sequence, 1).clone()
             count += int(mask.sum()) * 7
             local.append(
                 (
-                    (torch.randn(2, 17, 7, generator=generator),),
+                    (torch.randn(batch, sequence, 7, generator=generator),),
                     {
-                        "labels": torch.randn(2, 17, 7, generator=generator),
+                        "labels": torch.randn(batch, sequence, 7, generator=generator),
                         "sample_weights": mask,
                     },
                 )
@@ -131,13 +134,22 @@ def parameters(model):
     return {name: value.detach().clone() for name, value in model.named_parameters()}
 
 
-def oracle(kind, lora, *, gate_dtype=None, lifetime_mode=None, device="cpu"):
+def oracle(
+    kind,
+    lora,
+    *,
+    gate_dtype=None,
+    lifetime_mode=None,
+    device="cpu",
+    batch=2,
+    sequence=17,
+):
     torch.manual_seed(731)
     model = Network(
         lora, gate_dtype=gate_dtype, lifetime_mode=lifetime_mode, device=device
     )
     initial = parameters(model)
-    calls = tree_map(lambda value: value.to(device), examples())
+    calls = tree_map(lambda value: value.to(device), examples(batch, sequence))
     optimizer = torch.optim.AdamW(model.parameters(), lr=0.001, foreach=False)
     expected = []
     for invocation in range(3):
@@ -203,31 +215,106 @@ def oracle(kind, lora, *, gate_dtype=None, lifetime_mode=None, device="cpu"):
 
 
 class InnerChunks:
+    def __init__(self, domain="tokens"):
+        self.domain = domain
+
     def configure_stage(self, stage):
         axes = {
-            index: domains["tokens"]
+            index: domains[self.domain]
             for index, domains in enumerate(stage.input_domains)
-            if "tokens" in domains
+            if self.domain in domains
         }
         size = 7 if any("silu" in target for target in stage.operators) else 3
-        return AxisChunks(size, axes, domain="tokens") if axes else None
+        return AxisChunks(size, axes, domain=self.domain) if axes else None
+
+
+def composed_chunks(stage, selected):
+    if selected is None or not any("silu" in target for target in stage.operators):
+        return selected
+    return replace(
+        selected,
+        chunk_size=11,
+        regions=ChunkRegions(
+            IsolateOperations(
+                ("aten.silu.default", "aten.silu_backward.default"), base="whole"
+            ),
+            InnerChunks(selected.domain),
+        ),
+    )
 
 
 class ComposedChunks(RegionChunks):
     def configure_stage(self, stage):
-        selected = super().configure_stage(stage)
-        if selected is None or not any("silu" in target for target in stage.operators):
-            return selected
-        return replace(
-            selected,
-            chunk_size=11,
-            regions=ChunkRegions(
-                IsolateOperations(
-                    ("aten.silu.default", "aten.silu_backward.default"), base="whole"
-                ),
-                InnerChunks(),
-            ),
-        )
+        return composed_chunks(stage, super().configure_stage(stage))
+
+
+class BatchChunks:
+    """Declare sample coordinates, including sample-major flattened activations."""
+
+    def __init__(self, batch, sequence, nested):
+        # Distinct extents make the fixture's initial coordinate declaration
+        # unambiguous; subsequent regions inherit the named domain instead.
+        assert batch not in {3, 7, 11, 18, sequence}
+        self.batch, self.sequence, self.nested = batch, sequence, nested
+
+    def configure_stage(self, stage):
+        if any("softmax" in target for target in stage.operators):
+            return None
+        axes = {}
+        for index, (value, role) in enumerate(
+            zip(stage.inputs, stage.input_roles, strict=True)
+        ):
+            if value is None or role in {TaskInputRole.PARAMETER, TaskInputRole.BUFFER}:
+                continue
+            if stage.input_domains and "samples" in stage.input_domains[index]:
+                axes[index] = stage.input_domains[index]["samples"]
+                continue
+            for dim, extent in enumerate(value.shape):
+                if extent == self.batch:
+                    axes[index] = ChunkAxis(dim)
+                    break
+                if extent == self.batch * self.sequence:
+                    axes[index] = ChunkAxis(dim, after=self.sequence)
+                    break
+        size = 7 if any("silu" in target for target in stage.operators) else 3
+        selected = AxisChunks(size, axes, domain="samples") if axes else None
+        return composed_chunks(stage, selected) if self.nested else selected
+
+
+def check_batch_chunk_metadata(value):
+    """Require actual sample-axis compositions, flattened factors and both tails."""
+    chunks = []
+
+    def visit(value):
+        if isinstance(value, Mapping):
+            if {"domain", "rows", "chunk_size", "inputs", "outputs"} <= value.keys():
+                chunks.append(value)
+            for child in value.values():
+                visit(child)
+        elif isinstance(value, (tuple, list)):
+            for child in value:
+                visit(child)
+
+    visit(value)
+    assert chunks and all(chunk["domain"] == "samples" for chunk in chunks)
+    geometry = {(chunk["rows"], chunk["chunk_size"]) for chunk in chunks}
+    assert {(13, 3), (13, 11), (11, 7), (2, 7)} <= geometry, geometry
+    assert any(
+        isinstance(axis, Mapping) and axis.get("after") == 17
+        for chunk in chunks
+        for axis in (*chunk["inputs"], *chunk["outputs"])
+    ), "flattened activations lost the sample-major sequence factor"
+    assert any(
+        {extent for extent, _ in chunk["children"]} == {2, 11}
+        for chunk in chunks
+        if chunk["rows"] == 13 and chunk["chunk_size"] == 11
+    )
+    assert any(
+        {extent for extent, _ in chunk["children"]} == {4, 7}
+        for chunk in chunks
+        if chunk["rows"] == 11 and chunk["chunk_size"] == 7
+    )
+    return dict(domain="samples", geometries=sorted(geometry), flattened_after=17)
 
 
 class LifetimeChoices:
@@ -320,12 +407,18 @@ def policies(options):
             rules=tuple(LifetimeRule(target, barrier=True) for target in barriers),
             select=LifetimeChoices(lifetime_mode),
         )
+    batch, sequence = options.get("batch", 2), options.get("sequence", 17)
+    chunks = (
+        BatchChunks(batch, sequence, options["nested"])
+        if options.get("chunk_axis") == "batch"
+        else (ComposedChunks if options["nested"] else RegionChunks)(sequence, batch)
+    )
     execution = ChunkRegions(
         IsolateOperations(
             barriers,
             base="whole",
         ),
-        (ComposedChunks if options["nested"] else RegionChunks)(17, 2),
+        chunks,
         lifetimes=lifetimes,
     )
     retention = GraphPairPolicy(
@@ -360,6 +453,8 @@ def build(path, kind):
         gate_dtype=gate_dtype,
         lifetime_mode=lifetime_mode,
         device="cuda" if emulate else "cpu",
+        batch=options.get("batch", 2),
+        sequence=options.get("sequence", 17),
     )
     template = Network(
         options["lora"],
@@ -426,6 +521,11 @@ def build(path, kind):
     inspect(program.bindings["task_metadata"])
     assert {3, 7} <= sizes, sizes
     assert bool(nested) == options["nested"]
+    batch_domains = (
+        check_batch_chunk_metadata(program.bindings["task_metadata"])
+        if options.get("chunk_axis") == "batch"
+        else None
+    )
     assert program.bindings.get("num_examples") == 2
     if options["checkpoint_cuts"]:
         assert all(len(stages) > 2 for stages in program.bindings["training_templates"])
@@ -438,6 +538,7 @@ def build(path, kind):
                 resolved_chunk_sizes=sorted(sizes),
                 nested_compositions=len(nested),
                 lifetime_decisions=lifetime_counts,
+                batch_domains=batch_domains,
                 graph_pair_policy=common["graph_pair_policy"].identity(),
                 parallelism=common["parallelism"].to_dict(),
             ),

@@ -9,6 +9,7 @@ from shadowspill.pytorch.chunking.regions import region_artifact
 from tests.shadowspill.execution._distributed_regions import (
     Block,
     Network,
+    check_batch_chunk_metadata,
     check_lifetime_reports,
     policies,
 )
@@ -16,22 +17,24 @@ from tests.shadowspill.pytorch.chunking.test_composition import executable
 
 
 @pytest.mark.parametrize(
-    "mode,lora,nested,retained",
+    "mode,lora,nested,retained,chunk_axis,batch",
     [
-        ("move", False, False, False),
-        ("replay_compact", False, True, False),
-        ("replay_compact", True, False, True),
-        ("replay_compact", True, True, True),
+        ("move", False, False, False, "sequence", 2),
+        ("replay_compact", False, True, False, "sequence", 2),
+        ("replay_compact", True, False, True, "sequence", 2),
+        ("replay_compact", True, True, True, "sequence", 2),
+        ("replay_compact", False, True, True, "batch", 13),
+        ("replay_compact", True, True, False, "batch", 13),
     ],
 )
 def test_dp_fixture_lifetimes_preserve_checkpoint_cut_and_arbitrary_vjp(
-    mode, lora, nested, retained
+    mode, lora, nested, retained, chunk_axis, batch
 ):
     torch.manual_seed(731)
     block = Block(lora, dtype=torch.float64, lifetime_mode=mode)
     weights = dict(block.named_parameters())
     inputs = (
-        torch.randn(2, 17, 7, dtype=torch.float64, requires_grad=True),
+        torch.randn(batch, 17, 7, dtype=torch.float64, requires_grad=True),
         *weights.values(),
     )
 
@@ -52,6 +55,8 @@ def test_dp_fixture_lifetimes_preserve_checkpoint_cut_and_arbitrary_vjp(
             nested=nested,
             retain_sequence=retained,
             lifetime_mode=mode,
+            chunk_axis=chunk_axis,
+            batch=batch,
         )
     )
     pair = capture_graph_pair(
@@ -72,6 +77,10 @@ def test_dp_fixture_lifetimes_preserve_checkpoint_cut_and_arbitrary_vjp(
     ]
     assert forward.storage_contract == pair.forward.storage_contract
     assert backward.storage_contract == pair.backward.storage_contract
+    if chunk_axis == "batch":
+        check_batch_chunk_metadata(
+            [artifact.regions.identity for artifact in (forward, backward)]
+        )
     check_lifetime_reports(
         [artifact.regions.lifetime_report for artifact in (forward, backward)], mode
     )

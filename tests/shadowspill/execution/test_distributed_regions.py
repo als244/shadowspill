@@ -231,3 +231,35 @@ def test_dp_public_execution_lifetimes(
     )
     _verify(tmp_path, kind, "recompute", "regions")
     _check_collective_traces(tmp_path)
+
+
+@pytest.mark.cuda
+@pytest.mark.parametrize(
+    "kind,lora,retain_sequence",
+    [
+        pytest.param("step", False, True, id="full-nested-retained"),
+        pytest.param("forward_backward", True, False, id="lora-nested-continuing"),
+    ],
+)
+def test_dp_independent_batch_axis(tmp_path, kind, lora, retain_sequence):
+    if torch.cuda.device_count() < 2:
+        pytest.skip("requires two distinct GPUs")
+    (tmp_path / "regions.json").write_text(
+        json.dumps(
+            dict(
+                storage="sharded",
+                lora=lora,
+                retain_sequence=retain_sequence,
+                nested=True,
+                checkpoint_cuts=False,
+                lifetime_mode="replay_compact",
+                chunk_axis="batch",
+                batch=13,
+                sequence=17,
+            ),
+            indent=2,
+        )
+        + "\n"
+    )
+    _verify(tmp_path, kind, "recompute", "regions")
+    _check_collective_traces(tmp_path)
