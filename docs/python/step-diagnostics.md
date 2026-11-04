@@ -509,6 +509,23 @@ it, under the schema `shadowspill.step_events/v1`; `read_step_events(path)`
 decodes them back into the `RuntimeTraceEvent` and `CapturedAllocationEvent`
 records the live trace produced.
 
+Live event ledgers are immutable sequences backed by owned, compact host
+storage. Reading a summary does not construct a Python object for every event.
+Indexing, slicing and iteration produce the same typed records on demand;
+`tuple(diagnostics.runtime.events)` explicitly materializes the whole ledger.
+The copied events remain valid after another invocation reuses the native
+buffers, or after the executor closes. Sequence and enum validation still
+happens when the trace is captured; overflow flags retain their meaning.
+
+For repeated tracing, prefer `write_step_diagnostics` to full JSON export.
+It writes event columns directly from compact storage, without first expanding
+the ledgers. `as_dict()` with its default `events=True` deliberately expands all
+events, which can be expensive for large traces. File writing is synchronous;
+schedule it outside the training loop or use a bounded writer queue if its
+latency matters. The library does not start a background worker or retain an
+unbounded history. Retaining diagnostics retains their host snapshot until the
+caller releases them; it does not retain device markers or runtime buffers.
+
 ## Common investigations
 
 | Symptom | Look here first |

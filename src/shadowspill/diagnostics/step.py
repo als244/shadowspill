@@ -16,7 +16,7 @@ coordinates, so entry delay and accumulated dispatch drift stay visible.
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 
 from shadowspill.runtime.abi.statistics import LaneStatistics
@@ -346,7 +346,7 @@ class Timelines:
 class AllocatorTrace:
     """Ordered allocator lifetimes and before/after slab state."""
 
-    events: tuple[CapturedAllocationEvent, ...]
+    events: Sequence[CapturedAllocationEvent]
     live_allocations_before: int
     live_allocations_after: int
     allocated_bytes_before: int
@@ -416,7 +416,7 @@ class RuntimeTrace:
     allocation_event_capacity: int
     event_overflow: bool
     allocation_event_overflow: bool
-    events: tuple[RuntimeTraceEvent, ...]
+    events: Sequence[RuntimeTraceEvent]
 
     def as_dict(self, *, events: bool = True) -> dict[str, object]:
         """Serialize the counters, and the raw events unless `events` is false."""

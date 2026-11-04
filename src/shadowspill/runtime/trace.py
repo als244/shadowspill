@@ -3,13 +3,16 @@
 from __future__ import annotations
 
 import ctypes
-from collections.abc import Iterable
+from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
 from enum import IntEnum
 from typing import Any
 
+import numpy as np
+
 from shadowspill.status import ABI_VERSION
 
+from ._event_records import PackedEventRecords
 from .abi import (
     AllocationEvent,
     TraceConfig,
@@ -20,7 +23,7 @@ from .abi import (
 from .telemetry import (
     NO_ID,
     CapturedAllocationEvent,
-    decode_allocation_events,
+    pack_allocation_events,
 )
 from .timing import Marker
 
@@ -165,8 +168,8 @@ class CapturedRuntimeTrace:
     allocation_event_capacity: int
     event_overflow: bool
     allocation_event_overflow: bool
-    events: tuple[RuntimeTraceEvent, ...]
-    allocation_events: tuple[CapturedAllocationEvent, ...]
+    events: Sequence[RuntimeTraceEvent]
+    allocation_events: Sequence[CapturedAllocationEvent]
 
 
 def prepare_runtime_trace(
@@ -224,46 +227,55 @@ def decode_runtime_events(events: Iterable[Any]) -> tuple[RuntimeTraceEvent, ...
     for expected_sequence, event in enumerate(events):
         if int(event.sequence) != expected_sequence:
             raise RuntimeError("runtime trace sequence is not contiguous")
-        try:
-            kind = RuntimeTraceEventKind(int(event.kind))
-        except ValueError as exc:
-            raise RuntimeError("runtime trace contains an unknown event kind") from exc
-        decoded.append(
-            RuntimeTraceEvent(
-                sequence=int(event.sequence),
-                timestamp_ns=int(event.timestamp_ns),
-                step_id=int(event.step_id),
-                task_id=None if int(event.task_id) == NO_ID else int(event.task_id),
-                object_id=(
-                    None if int(event.object_id) == NO_ID else int(event.object_id)
-                ),
-                allocation_id=(
-                    None
-                    if int(event.allocation_id) == NO_ID
-                    else int(event.allocation_id)
-                ),
-                bytes=int(event.bytes),
-                kind=kind,
-                detail_0=int(event.detail_0),
-                detail_1=int(event.detail_1),
-                lane_issued_at_ns=(
-                    None
-                    if int(event.lane_issued_at_ns) == NO_STREAM_TIME
-                    else int(event.lane_issued_at_ns)
-                ),
-                lane_started_at_ns=(
-                    None
-                    if int(event.lane_started_at_ns) == NO_STREAM_TIME
-                    else int(event.lane_started_at_ns)
-                ),
-                lane_finished_at_ns=(
-                    None
-                    if int(event.lane_finished_at_ns) == NO_STREAM_TIME
-                    else int(event.lane_finished_at_ns)
-                ),
-            )
-        )
+        decoded.append(_decode_runtime_event(event))
     return tuple(decoded)
+
+
+def _decode_runtime_event(event: Any) -> RuntimeTraceEvent:
+    try:
+        kind = RuntimeTraceEventKind(int(event.kind))
+    except ValueError as exc:
+        raise RuntimeError("runtime trace contains an unknown event kind") from exc
+    return RuntimeTraceEvent(
+        sequence=int(event.sequence),
+        timestamp_ns=int(event.timestamp_ns),
+        step_id=int(event.step_id),
+        task_id=None if int(event.task_id) == NO_ID else int(event.task_id),
+        object_id=(None if int(event.object_id) == NO_ID else int(event.object_id)),
+        allocation_id=(
+            None if int(event.allocation_id) == NO_ID else int(event.allocation_id)
+        ),
+        bytes=int(event.bytes),
+        kind=kind,
+        detail_0=int(event.detail_0),
+        detail_1=int(event.detail_1),
+        lane_issued_at_ns=(
+            None
+            if int(event.lane_issued_at_ns) == NO_STREAM_TIME
+            else int(event.lane_issued_at_ns)
+        ),
+        lane_started_at_ns=(
+            None
+            if int(event.lane_started_at_ns) == NO_STREAM_TIME
+            else int(event.lane_started_at_ns)
+        ),
+        lane_finished_at_ns=(
+            None
+            if int(event.lane_finished_at_ns) == NO_STREAM_TIME
+            else int(event.lane_finished_at_ns)
+        ),
+    )
+
+
+def pack_runtime_events(events: Any) -> PackedEventRecords[RuntimeTraceEvent]:
+    """Copy and validate ABI events without eagerly creating Python records."""
+
+    records = PackedEventRecords(bytes(events), TraceEvent, _decode_runtime_event)
+    if not np.array_equal(records.column("sequence"), np.arange(len(records))):
+        raise RuntimeError("runtime trace sequence is not contiguous")
+    if not np.all(np.isin(records.column("kind"), tuple(RuntimeTraceEventKind))):
+        raise RuntimeError("runtime trace contains an unknown event kind")
+    return records
 
 
 def read_runtime_trace(runtime_handle: int) -> CapturedRuntimeTrace:
@@ -304,6 +316,6 @@ def read_runtime_trace(runtime_handle: int) -> CapturedRuntimeTrace:
         allocation_event_capacity=int(copied.allocation_event_capacity),
         event_overflow=bool(copied.event_overflow),
         allocation_event_overflow=bool(copied.allocation_event_overflow),
-        events=decode_runtime_events(event_buffer),
-        allocation_events=decode_allocation_events(allocation_buffer),
+        events=pack_runtime_events(event_buffer),
+        allocation_events=pack_allocation_events(allocation_buffer),
     )

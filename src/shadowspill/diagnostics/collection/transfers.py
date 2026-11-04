@@ -1,11 +1,13 @@
 """Match ordered transfers to runtime events, preserving incomplete traces."""
 
 from collections import defaultdict, deque
+from collections.abc import Iterator, Sequence
 
 from shadowspill.diagnostics.step import TransferRecord
 from shadowspill.diagnostics.timing import ArmedExecutionTiming
 from shadowspill.ir.indexing import MEMORY_ACTION_CODE
 from shadowspill.ir.program import canonical_index
+from shadowspill.runtime._event_records import PackedEventRecords
 from shadowspill.runtime.plan.bridge import RuntimeBridge
 from shadowspill.runtime.trace import RuntimeTraceEvent, RuntimeTraceEventKind
 from shadowspill.simulator import SimulationResult, TransferInterval
@@ -199,32 +201,39 @@ def _transfer_record(
 
 
 def _direction(event: RuntimeTraceEvent) -> str | None:
-    return {0: "fetch", 1: "evict"}.get(event.detail_0)
+    return "fetch" if event.detail_0 == 0 else "evict" if event.detail_0 == 1 else None
+
+
+def _events_of_kind(
+    events: Sequence[RuntimeTraceEvent], kind: RuntimeTraceEventKind
+) -> Iterator[RuntimeTraceEvent]:
+    if isinstance(events, PackedEventRecords):
+        return events.matching("kind", int(kind))
+    return (event for event in events if event.kind is kind)
 
 
 def _lane_events(
-    events: tuple[RuntimeTraceEvent, ...],
+    events: Sequence[RuntimeTraceEvent],
     kind: RuntimeTraceEventKind,
 ) -> dict[str, tuple[RuntimeTraceEvent, ...]]:
     grouped: dict[str, list[RuntimeTraceEvent]] = {name: [] for name in _DIRECTIONS}
-    for event in events:
+    for event in _events_of_kind(events, kind):
         direction = _direction(event)
-        if event.kind is kind and direction is not None:
+        if direction is not None:
             grouped[direction].append(event)
     return {name: tuple(items) for name, items in grouped.items()}
 
 
 def _boundary_events(
-    events: tuple[RuntimeTraceEvent, ...],
+    events: Sequence[RuntimeTraceEvent],
     kind: RuntimeTraceEventKind,
 ) -> defaultdict[tuple[int, int, int], deque[RuntimeTraceEvent]]:
     grouped: defaultdict[tuple[int, int, int], deque[RuntimeTraceEvent]] = defaultdict(
         deque
     )
-    for event in events:
+    for event in _events_of_kind(events, kind):
         if (
-            event.kind is kind
-            and event.task_id is not None
+            event.task_id is not None
             and event.object_id is not None
             and event.detail_0 in {1, 2}
         ):

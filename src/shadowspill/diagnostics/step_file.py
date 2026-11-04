@@ -22,6 +22,7 @@ import numpy as np
 
 from shadowspill._files import atomic_json, atomic_write
 from shadowspill.diagnostics.step import StepDiagnostics
+from shadowspill.runtime._event_records import PackedEventRecords
 from shadowspill.runtime.telemetry import (
     NO_ID,
     CapturedAllocationEvent,
@@ -137,6 +138,8 @@ def read_step_events(path: Path) -> StepEvents:
 
 
 def _column(records: Sequence[object], name: str, dtype: type) -> np.ndarray:
+    if isinstance(records, PackedEventRecords):
+        return records.column(name).astype(dtype, copy=False)
     absent = _ABSENT.get(name)
     values = (getattr(item, name) for item in records)
     return np.fromiter(

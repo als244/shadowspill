@@ -6,6 +6,9 @@ import ctypes
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 from enum import IntEnum
+from typing import Any
+
+import numpy as np
 
 from shadowspill.task.allocations.events import (
     TaskAllocationEvent,
@@ -13,6 +16,7 @@ from shadowspill.task.allocations.events import (
 )
 from shadowspill.task.profiles import TaskOutputInputBinding
 
+from ._event_records import PackedEventRecords
 from .abi import AllocationEvent as CAllocationEvent
 from .abi import runtime_library
 
@@ -318,28 +322,50 @@ def decode_allocation_events(
             raise AllocationTelemetryError(
                 "allocation telemetry sequence is not contiguous"
             )
-        try:
-            kind = AllocationEventKind(event.kind)
-            category = AllocationCategory(event.category)
-        except ValueError as exc:
-            raise AllocationTelemetryError(
-                "allocation telemetry contains an unknown enum value"
-            ) from exc
-        decoded.append(
-            CapturedAllocationEvent(
-                sequence=event.sequence,
-                task_id=None if event.task_id == NO_ID else event.task_id,
-                allocation_id=event.allocation_id,
-                generation=event.generation,
-                requested_bytes=event.requested_bytes,
-                charged_bytes=event.charged_bytes,
-                alignment_bytes=event.alignment_bytes,
-                slab_offset=event.slab_offset,
-                kind=kind,
-                category=category,
-            )
-        )
+        decoded.append(_decode_allocation_event(event))
     return tuple(decoded)
+
+
+def _decode_allocation_event(event: Any) -> CapturedAllocationEvent:
+    try:
+        kind = AllocationEventKind(event.kind)
+        category = AllocationCategory(event.category)
+    except ValueError as exc:
+        raise AllocationTelemetryError(
+            "allocation telemetry contains an unknown enum value"
+        ) from exc
+    return CapturedAllocationEvent(
+        sequence=event.sequence,
+        task_id=None if event.task_id == NO_ID else event.task_id,
+        allocation_id=event.allocation_id,
+        generation=event.generation,
+        requested_bytes=event.requested_bytes,
+        charged_bytes=event.charged_bytes,
+        alignment_bytes=event.alignment_bytes,
+        slab_offset=event.slab_offset,
+        kind=kind,
+        category=category,
+    )
+
+
+def pack_allocation_events(events: Any) -> PackedEventRecords[CapturedAllocationEvent]:
+    """Copy the complete ledger; validation precedes on-demand projection."""
+
+    records = PackedEventRecords(
+        bytes(events), CAllocationEvent, _decode_allocation_event
+    )
+    if not np.array_equal(records.column("sequence"), np.arange(len(records))):
+        raise AllocationTelemetryError(
+            "allocation telemetry sequence is not contiguous"
+        )
+    if not (
+        np.all(np.isin(records.column("kind"), tuple(AllocationEventKind)))
+        and np.all(np.isin(records.column("category"), tuple(AllocationCategory)))
+    ):
+        raise AllocationTelemetryError(
+            "allocation telemetry contains an unknown enum value"
+        )
+    return records
 
 
 def summarize_task_workspace(
