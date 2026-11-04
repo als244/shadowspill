@@ -41,7 +41,7 @@ class LayoutIndependentOperator:
     ``inputs`` contains dispatcher argument indices, including keyword-only
     arguments and entire tensor lists. Replacing those inputs by strided tensors
     with equal logical shape/dtype/device/values must preserve all logical output
-    values, shapes and dtypes, even when their strides, offsets, backing extents
+    values, shapes and dtypes, even when their strides, offsets, storage extents
     or alias relationships differ. Every logical output element is initialized.
     Output layout may change and is checked transitively. This does not certify
     effects, numerical bitwise invariance, axis independence or memory use.
@@ -74,10 +74,10 @@ class LifetimeSelection:
     """Optional choices for an operation; unspecified choices remain unset.
 
     ``move`` permits moving readonly work once toward its first consumer.
-    ``barrier`` pins an operation and protects its live internal backing set
+    ``barrier`` pins an operation and protects its live internal storage set
     against increases. Barriers take precedence over movement permission.
     ``compact`` permits preparing and copying an internal view for consumers
-    in later execution regions, subject to layout and complete backing proofs.
+    in later execution regions, subject to layout and complete storage proofs.
     ``replay`` permits repeating this primal computation in consumer regions.
     No arithmetic is duplicated without explicit replay permission. These
     choices do not request checkpoint retention or residency.
@@ -167,11 +167,11 @@ class ExecutionLifetimes:
     that occurrence and returns immutable choices or ``None``. Only resolved
     choices, effects contracts and scheduling decisions enter the executable
     identity; callbacks and source module names never do. Unknown effects are
-    fences, and protected backing sets may not increase. Compilation/profiling
+    fences, and protected storage sets may not increase. Compilation/profiling
     measures the final composition; ordinary planning owns physical admission.
 
     Compaction prepares selected internal aliases at their producer and considers
-    escaping sibling views together. It needs a strict backing reduction at one
+    escaping sibling views together. It needs a strict storage reduction at one
     selected barrier and no increase at any other. Layout-sensitive consumers
     require separately qualified input-value semantics. Unsupported candidates
     remain un-copied with recorded reasons. With no barriers, no copy is useful

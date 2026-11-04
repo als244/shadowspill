@@ -1,4 +1,4 @@
-"""Explicit primal replay with dependency-version and backing guards.
+"""Explicit primal replay with dependency-version and storage guards.
 
 No operation is implicitly classified as cheap. A caller supplies permissions
 and primal provenance; only structural tuple extraction accompanies a selected
@@ -88,7 +88,7 @@ def _propose(
         if key in proposed_memo:
             return by_name[proposed_memo[key]]
         # Compare the original read to the proposed new read. An immutable
-        # output does not imply that its source backing still has that version.
+        # output does not imply that its source storage still has that version.
         guarded = analysis.reads[source] | analysis.values[source]
         crossed = analysis.order[indices[source] + 1 : indices[consumer]]
         blocked = tuple(
@@ -157,7 +157,7 @@ def replay_primal(
     Value/layout contracts protect consumers from changed alias relationships.
     Each proposal preserves the outer storage contract and cannot increase any
     selected barrier's internal live span. Nonincreasing intermediate proposals
-    are permitted so the last redirected consumer can release an old backing.
+    are permitted so the last redirected consumer can release an old storage.
     Physical cost and admission still require profiling the final composition.
     """
     original = tuple(graph.graph.nodes)
@@ -200,9 +200,9 @@ def replay_primal(
         elif node.target is operator.getitem and not isinstance(node.args[0], Node):
             reason = "replay requires an explicit tuple producer"
         elif analysis.values[node] & analysis.external_roots:
-            reason = "externally observable output backing"
+            reason = "externally observable output storage"
         elif analysis.values[node] & written:
-            reason = "output backing has an ordered writer"
+            reason = "output storage has an ordered writer"
         if reason is None:
             eligible.add(node)
         else:
@@ -272,7 +272,7 @@ def replay_primal(
                 for node in barrier_nodes
             )
             if reason is None and any(after > before for _, before, after in inventory):
-                reason = "protected backing would increase"
+                reason = "protected storage would increase"
         except (CaptureError, RuntimeError, ValueError) as exc:
             reason = f"candidate geometry is unsupported: {type(exc).__name__}"
         # An obstruction can be a newly replayed consumer. Report its original

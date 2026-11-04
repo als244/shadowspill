@@ -27,9 +27,9 @@ def prepare_internal_views(
     """Place selected internal aliases just after their last dependency.
 
     Semantic roots, rather than FakeTensor storage addresses, establish that a
-    node only exposes an existing backing. Views of inputs and externally
+    node only exposes an existing storage. Views of inputs and externally
     observable backings are left unchanged. Effects and overlapping writes
-    constrain movement; every protected backing inventory must not increase.
+    constrain movement; every protected storage inventory must not increase.
     Decisions' destination indices identify the dependency *after* which a
     view is placed. All indices refer to this pass's original graph.
     """
@@ -63,7 +63,7 @@ def prepare_internal_views(
             analysis.storage.roots[root].kind is not StorageRootKind.FRESH
             for root in roots
         ):
-            reason = "input or externally observable backing"
+            reason = "input or externally observable storage"
         if reason is not None:
             decisions.append(MovementDecision(indices[node], None, False, reason))
             continue
@@ -114,7 +114,7 @@ def prepare_internal_views(
                 indices[node],
                 indices[dependency],
                 not increases,
-                "protected backing would increase"
+                "protected storage would increase"
                 if increases
                 else "prepared internal view",
                 obstructions=increases,

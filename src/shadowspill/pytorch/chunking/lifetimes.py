@@ -184,7 +184,7 @@ def apply_lifetimes(
         "selections": occurrences,
         "schedule": schedule,
         "memory_scope": (
-            "internal semantic backing spans; "
+            "internal semantic storage spans; "
             "excludes inputs, opaque workspace and allocator overhead"
         ),
     }

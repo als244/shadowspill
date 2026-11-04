@@ -486,6 +486,43 @@ must depend only on traced metadata and that configuration, never live payloads
 or runtime memory pressure. `digest(graph_module)` combines this identity with
 custom-operator classifications for capture reuse.
 
+## Custom gradient destinations
+
+`build_step` and `build_forward_backward` accept `gradient_destination_rules`,
+an empty tuple by default. These rules let an opaque backward operator add its
+contribution directly into existing parameter-gradient storage. The first
+contribution creates the gradient; later uses across checkpoint regions,
+execution regions, chunks and microbatches reuse that destination. One replacement
+call handles its selected outputs together; it must not repeat the backward
+computation for each output.
+
+The public types are exported from `shadowspill.pytorch`:
+
+| Type | Contract |
+| --- | --- |
+| `GradientDestinationRule` | Names `target` and `replacement` dispatcher overloads, eligible `output_indices`, a positive `version`, and an optional build-time `mapper`. The replacement receives the original arguments plus mutable `destinations`, `output_indices`, and `contract_version`. |
+| `GradientDestinationContext` | The mapper's input: the FX `producer`, eligible `destinations`, and the `fuse_narrow_gradient_accumulation` precision permission. |
+| `GradientDestination` | One eligible producer `output_index`, its final `gradient`, existing `destination`, and `operations` from that gradient back to the raw producer output. |
+| `GradientDestinationMapping` | The mapper's result: selected `output_indices`, corresponding sequences of destination `views`, and provider-specific `keywords` passed as real operator arguments. Returning `None` declines fusion. |
+| `DestinationView` | A storage-preserving `target` operation and its `arguments`, applied to a supplied destination. It must remain writable without a copying reshape or overlapping elements. |
+
+Without a mapper, the rule handles reversible views at unchanged dtype. A custom
+mapper must preserve layout, scaling, casts, rounding and padding, honor the
+precision permission, and be deterministic without editing the supplied FX graph.
+Unmatched or unsupported outputs keep ordinary accumulation. The accumulating
+overload preserves unconsumed outputs and may return an empty tensor, `None`, or
+the destination at a consumed position, subject to its dispatcher and
+functionalization contract. Fixed Tensor schemas with empty consumed outputs
+are supported by automatic functionalization.
+
+Rules are build inputs, independent of checkpoint retention and execution axes
+or chunk sizes. Replacement calls and contract versions enter artifact identity;
+callbacks are not consulted during saved execution. Their kernels still require
+normal compilation, profiling and physical admission, including any internal
+temporaries. Chunked custom overloads also need `OperatorRule` axis contracts.
+See [custom gradient destinations](../../architecture/custom-gradient-destinations.md)
+for mutation schemas, ownership restrictions, examples and provider qualification.
+
 ## PartitionPolicy
 
 `PartitionSpec` accepts `"auto"`, `"whole"`, or an object implementing the

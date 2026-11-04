@@ -2,7 +2,7 @@
 
 This internal pass returns a new graph. Effect certification alone cannot
 authorize a copy: layout changes must be followed through fresh intermediates,
-and all selected views of one semantic backing are considered together.
+and all selected views of one semantic storage are considered together.
 """
 
 from __future__ import annotations
@@ -27,7 +27,7 @@ from .lifetime_analysis import LifetimeGraph, analyze_lifetimes
 from .lifetime_policy import LayoutIndependentOperator as LayoutIndependentOperator
 from .lifetime_policy import ReadonlyOperator
 
-# These exact overloads compute logical values without reading backing gaps or
+# These exact overloads compute logical values without reading storage gaps or
 # interpreting explicit physical strides. Layout may still propagate through
 # their outputs. In particular, a fresh pointwise result is not a clean boundary
 # unless its complete dense geometry is unchanged. No raw as_strided/dtype-view,
@@ -160,7 +160,7 @@ def _clean_fresh(
         if _geometry(left) != _geometry(right) or not _dense(left):
             return False
     # Only an unchanged, complete, newly allocated dense result resets taint.
-    # Alias views and packed/subset outputs cannot hide changed backing gaps.
+    # Alias views and packed/subset outputs cannot hide changed storage gaps.
     for analysis, node in ((before, old), (after, new)):
         roots = analysis.values[node]
         if not roots or len(roots) != len(old_values):
@@ -259,9 +259,9 @@ def compact_internal_views(
     readonly: tuple[ReadonlyOperator, ...] = (),
     layout: tuple[LayoutIndependentOperator, ...] = (),
 ) -> tuple[GraphModule, CompactionSchedule]:
-    """Copy selected escaping aliases jointly by backing, or record refusal.
+    """Copy selected escaping aliases jointly by storage, or record refusal.
 
-    Input/external roots and any written backing are ineligible. Only uses in
+    Input/external roots and any written storage are ineligible. Only uses in
     another execution region are redirected. Copies are producer-local; no
     arithmetic is replayed or moved. Call view preparation first if appropriate.
     A proposal must preserve the outer storage contract, not increase any
@@ -305,15 +305,15 @@ def compact_internal_views(
             analysis.storage.roots[root].kind is not StorageRootKind.FRESH
             for root in roots
         ):
-            reason = "input or externally observable backing"
+            reason = "input or externally observable storage"
         elif roots & written:
-            reason = "backing has an ordered writer"
+            reason = "storage has an ordered writer"
         elif (
             value.numel() == 0
             or value.numel() * value.element_size()
             >= analysis.storage.roots[next(iter(roots))].minimum_span_bytes
         ):
-            reason = "view does not compact its semantic backing"
+            reason = "view does not compact its semantic storage"
         elif node not in regions or not any(
             user in regions and regions[user] != regions[node] for user in node.users
         ):
@@ -381,9 +381,9 @@ def compact_internal_views(
                     for name in barrier_names
                 )
                 if any(after > before for _, before, after in inventory):
-                    reason = "protected backing would increase"
+                    reason = "protected storage would increase"
                 elif not any(after < before for _, before, after in inventory):
-                    reason = "no protected backing reduction"
+                    reason = "no protected storage reduction"
         except (CaptureError, RuntimeError, ValueError) as exc:
             reason = f"candidate geometry is unsupported: {type(exc).__name__}"
         decisions.append(

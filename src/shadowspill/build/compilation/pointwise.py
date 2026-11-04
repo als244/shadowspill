@@ -1,4 +1,4 @@
-"""Make selected native scalar rounding explicit before AOT decomposition."""
+"""Make selected PyTorch scalar rounding explicit before AOT decomposition."""
 
 from __future__ import annotations
 
@@ -19,9 +19,9 @@ _CUDA_SILU_OPMATH = "cuda.silu_backward.opmath.v1"
 def native_pointwise_rounding(
     graph_module: GraphModule, *, emulate: bool
 ) -> tuple[GraphModule, tuple[str, ...]]:
-    """Preserve selected native CUDA activation derivatives inside fused kernels.
+    """Preserve selected PyTorch CUDA activation derivatives inside fused kernels.
 
-    Native CUDA sigmoid backward rounds the complement and the first product
+    PyTorch CUDA sigmoid backward rounds the complement and the first product
     at the operands' dtype. AOT decomposition uses float32 operator math internally;
     marking its final output alone cannot reproduce those intermediate rounds.
     Explicit casts preserve them inside a fused pointwise kernel. SiLU uses
@@ -95,7 +95,7 @@ def native_pointwise_rounding(
                     torch.ops.aten.addcdiv.default, zero, one, denominator
                 )
                 complement = operation(torch.ops.aten.rsub.Scalar, sigmoid, 1.0)
-                # Make native CUDA's FMA explicit even when general compiler
+                # Make PyTorch CUDA's FMA explicit even when general compiler
                 # contraction is disabled by precision emulation.
                 factor = operation(
                     torch.ops.aten.addcmul.default, one, output_float, complement

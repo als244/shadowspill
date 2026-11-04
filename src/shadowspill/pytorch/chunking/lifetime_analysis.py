@@ -73,7 +73,7 @@ class LifetimeGraph:
     order: tuple[Node, ...]
 
     def live_roots(self, barrier: Node) -> tuple[int, ...]:
-        """Internal backing roots live immediately before a selected operation."""
+        """Internal storage roots live immediately before a selected operation."""
         rank = {node: i for i, node in enumerate(self.order)}
         if barrier not in rank:
             raise ValueError("lifetime barrier does not belong to the analyzed graph")
@@ -93,7 +93,7 @@ class LifetimeGraph:
         )
 
     def live_bytes(self, barrier: Node) -> int:
-        """Semantic backing spans, excluding fixed inputs and opaque workspace."""
+        """Semantic storage spans, excluding fixed inputs and opaque workspace."""
         return sum(
             self.storage.roots[root].minimum_span_bytes
             for root in self.live_roots(barrier)

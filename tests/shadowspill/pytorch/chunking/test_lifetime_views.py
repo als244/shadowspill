@@ -91,7 +91,7 @@ def test_input_and_outer_alias_backings_are_unchanged(external):
     assert graph.code == original
     assert result.decisions
     assert all(
-        not item.applied and item.reason == "input or externally observable backing"
+        not item.applied and item.reason == "input or externally observable storage"
         for item in result.decisions
     )
     actual = graph(x)

@@ -131,7 +131,7 @@ def test_small_reduction_cannot_keep_large_packed_backing_across_barrier() -> No
         barriers=frozenset({barrier}),
     )
     assert graph.code == code
-    assert result.decisions[0].reason == "protected backing would increase"
+    assert result.decisions[0].reason == "protected storage would increase"
     assert result.decisions[0].barrier_bytes[0][1:] == (28, 336)
     assert result.barrier_bytes[0][1:] == (28, 28)
 

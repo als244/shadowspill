@@ -105,7 +105,7 @@ def test_replay_refuses_a_new_live_projection_across_the_barrier():
 
     graph = make_fx(layer)(x, weight)
     changed, report = replay(graph, (x, weight))
-    assert any(d.reason == "protected backing would increase" for d in report.decisions)
+    assert any(d.reason == "protected storage would increase" for d in report.decisions)
     assert not any(d.applied for d in report.decisions)
     assert changed.code == graph.code
     torch.testing.assert_close(changed(x, weight), layer(x, weight), rtol=0, atol=0)

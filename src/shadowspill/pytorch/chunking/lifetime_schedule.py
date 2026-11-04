@@ -113,12 +113,12 @@ def sink_readonly(
     """Move selected readonly nodes toward first use with no duplicated work.
 
     The caller must analyze this exact graph immediately before this pass.
-    Known tensor writes can be crossed only if their backing roots are disjoint
+    Known tensor writes can be crossed only if their storage roots are disjoint
     from the moved operation's reads and outputs. Writers themselves never move.
     Unknown effects, RNG and uncertified opaque providers remain fences.
 
     Every candidate is checked at *all* selected memory barriers using complete
-    internal backing lifetimes, including siblings of partial views. These
+    internal storage lifetimes, including siblings of partial views. These
     barriers are not execution cuts or checkpoint retention choices. Semantic
     nonincrease does not replace profiling and physical memory admission.
     """
@@ -205,7 +205,7 @@ def sink_readonly(
                 index,
                 indices[first],
                 not increases,
-                "protected backing would increase" if increases else "moved",
+                "protected storage would increase" if increases else "moved",
                 obstructions=increases,
                 crossed_writes=tuple(indices[item] for item in writes),
                 barrier_bytes=inventory,

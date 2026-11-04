@@ -133,7 +133,7 @@ def test_one_sibling_cannot_hide_the_original_backing_kept_by_another():
         barriers=(torch.ops.aten.cumsum.default, torch.ops.aten.sin.default),
     )
     assert not any(d.applied for d in report.decisions)
-    assert any(d.reason == "protected backing would increase" for d in report.decisions)
+    assert any(d.reason == "protected storage would increase" for d in report.decisions)
     assert changed.code == graph.code
 
 
@@ -247,7 +247,7 @@ def test_input_external_and_written_backings_are_never_compacted(mode):
     graph = make_fx(function)(x)
     changed, report = compact(graph, (x,), barriers=(torch.ops.aten.sin.default,))
     assert not any(d.applied for d in report.decisions)
-    assert any("backing" in d.reason for d in report.decisions)
+    assert any("storage" in d.reason for d in report.decisions)
     torch.testing.assert_close(changed(x), function(x), rtol=0, atol=0)
 
 

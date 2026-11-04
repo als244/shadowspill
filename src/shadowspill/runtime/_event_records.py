@@ -1,7 +1,7 @@
 """Owned, immutable ABI records with on-demand Python projections.
 
 Only the copied bytes survive the call that captures them. No runtime pointer,
-device marker, mutable native buffer or decoded-record cache is retained.
+device marker, mutable C buffer or decoded-record cache is retained.
 """
 
 from __future__ import annotations
@@ -35,7 +35,7 @@ class PackedEventRecords[T](Sequence[T]):
 
     Construction is internal: the caller validates sequence and enum columns
     before publishing these records. The ABI currently contains unsigned integer
-    fields only. Layout comes from ctypes, including native padding and offsets.
+    fields only. Layout comes from ctypes, including ABI padding and offsets.
     """
 
     _payload: bytes
@@ -87,7 +87,7 @@ class PackedEventRecords[T](Sequence[T]):
         return f"PackedEventRecords(count={len(self)}, bytes={len(self._payload)})"
 
     def column(self, name: str) -> np.ndarray[Any, Any]:
-        """A read-only raw field, with its native sentinel and integer dtype."""
+        """A read-only raw field, with its ABI sentinel and integer dtype."""
 
         records = np.frombuffer(self._payload, dtype=_layout(self._record_type))
         return records[name]
