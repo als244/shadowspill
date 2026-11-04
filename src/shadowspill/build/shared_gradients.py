@@ -1,8 +1,12 @@
 """Put cross-stage gradient additions inside the captured backward."""
 
+from collections.abc import Sequence
 from dataclasses import replace
 
-from shadowspill.pytorch.capture.gradients import accumulate_gradient_outputs
+from shadowspill.pytorch.capture.gradients import (
+    GradientDestinationRule,
+    accumulate_gradient_outputs,
+)
 from shadowspill.pytorch.graph_pairs import PartitionedTrainingCapture
 from shadowspill.task.inputs import TaskInputRole
 
@@ -11,6 +15,7 @@ def include_shared_gradients(
     capture: PartitionedTrainingCapture,
     *,
     fuse_narrow_gradient_accumulation: bool = True,
+    gradient_destination_rules: Sequence[GradientDestinationRule] = (),
 ) -> PartitionedTrainingCapture:
     """Repeated parameter uses and residual branches add to prior gradients.
 
@@ -59,6 +64,7 @@ def include_shared_gradients(
                             pair.backward,
                             prior,
                             fuse_narrow_gradient_accumulation=fuse_narrow_gradient_accumulation,
+                            gradient_destination_rules=gradient_destination_rules,
                         ),
                     ),
                 )

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import operator
+from collections.abc import Sequence
 from dataclasses import asdict, replace
 from typing import Any
 
@@ -17,6 +18,7 @@ from shadowspill.pytorch.capture.artifacts import GraphArtifact
 from shadowspill.pytorch.capture.gradients.accumulation import (
     accumulate_gradient_outputs,
 )
+from shadowspill.pytorch.capture.gradients.destinations import GradientDestinationRule
 from shadowspill.pytorch.capture.storage import ExplicitMutation
 from shadowspill.pytorch.capture.torch_deprecations import copy_graph_module
 from shadowspill.task.inputs import TaskInputRole
@@ -47,6 +49,7 @@ def chunk_artifact(
     config: AxisChunks,
     *,
     fuse_narrow_gradient_accumulation: bool = True,
+    gradient_destination_rules: Sequence[GradientDestinationRule] = (),
     stage_id: str = "chunk",
     checkpoint_stage_id: str | None = None,
     variant: str | None = None,
@@ -277,6 +280,7 @@ def chunk_artifact(
                         captured,
                         accumulation_leaves,
                         fuse_narrow_gradient_accumulation=fuse_narrow_gradient_accumulation,
+                        gradient_destination_rules=gradient_destination_rules,
                     ),
                 )
             )
@@ -307,6 +311,15 @@ def chunk_artifact(
                 input_reductions=(*reductions, *(frozenset() for _ in range(extra))),
                 domain_rules={config.domain: config.rules},
                 fuse_narrow_gradient_accumulation=fuse_narrow_gradient_accumulation,
+                gradient_destination_rules=gradient_destination_rules,
+                # Sliced activation cotangents are assembled in their own
+                # coordinates; only shared/reduced outputs may be donated to
+                # a canonical destination across these inner regions.
+                gradient_leaves=tuple(
+                    i
+                    for i, layout in enumerate(outputs)
+                    if not isinstance(layout, (ChunkAxis, LocalLayout))
+                ),
             )
 
         children = [(size, compose(child)) for size, child in children]

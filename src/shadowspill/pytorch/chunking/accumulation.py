@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import operator
+from collections.abc import Sequence
+
 import torch
 from torch._guards import detect_fake_mode
 from torch._prims_common import get_computation_dtype
@@ -10,6 +13,11 @@ from torch.utils._pytree import tree_flatten
 
 from shadowspill.pytorch.capture.artifacts import GraphArtifact, TaskInputProvenance
 from shadowspill.pytorch.capture.gradients.accumulation import _add_in_multiply
+from shadowspill.pytorch.capture.gradients.destinations import (
+    GradientDestinationRule,
+    fuse_gradient_destinations,
+    normalize_gradient_destination_rules,
+)
 from shadowspill.pytorch.capture.gradients.nodes import _CONVERTING, _MOVING_ONLY
 from shadowspill.task.inputs import TaskInputRole
 
@@ -55,11 +63,29 @@ def _owned(node: Node) -> bool:
         return False
     if node.target in _MOVING_ONLY and node.target is not torch.ops.aten.clone.default:
         return isinstance(node.args[0], Node) and _owned(node.args[0])
-    schema = getattr(node.target, "_schema", None)
+    producer, index = node, 0
+    if node.target is operator.getitem:
+        if len(node.args) != 2:
+            return False
+        candidate, selected = node.args
+        if (
+            not isinstance(candidate, Node)
+            or type(selected) is not int
+            or selected < 0
+            or any(
+                user.target is not operator.getitem or len(user.args) != 2
+                for user in candidate.users
+            )
+            or sum(user.args[1] == selected for user in candidate.users) != 1
+        ):
+            return False
+        producer, index = candidate, selected
+    schema = getattr(producer.target, "_schema", None)
     return (
         schema is not None
-        and len(schema.returns) == 1
-        and schema.returns[0].alias_info is None
+        and index < len(schema.returns)
+        and (producer is not node or len(schema.returns) == 1)
+        and schema.returns[index].alias_info is None
         and isinstance(node.meta.get("val"), torch.Tensor)
     )
 
@@ -69,6 +95,7 @@ def route_gradient_destinations(
     artifact: GraphArtifact,
     *,
     fuse_narrow_gradient_accumulation: bool,
+    gradient_destination_rules: Sequence[GradientDestinationRule] = (),
     gradient_leaves: tuple[int, ...] | None = None,
 ) -> None:
     """Make eligible VJP joins write the same buffer across execution regions.
@@ -77,6 +104,9 @@ def route_gradient_destinations(
     externally aliased priors and expressions read elsewhere retain their graph.
     Narrow sum trees retain their association unless fusion is permitted.
     """
+    gradient_destination_rules = normalize_gradient_destination_rules(
+        gradient_destination_rules
+    )
     if artifact.kind != "backward":
         return
     mode = detect_fake_mode(artifact.example_arguments)
@@ -113,6 +143,8 @@ def route_gradient_destinations(
         expressions.add(value)
         queue.extend(value.all_input_nodes)
 
+    destination_updates: list[Node] = []
+
     def accumulate(prior: Node, produced: Node) -> list[Node]:
         multiply = produced
         while multiply.target in _MOVING_ONLY:
@@ -135,6 +167,7 @@ def route_gradient_destinations(
                     torch.ops.aten.add_.Tensor, (prior, produced)
                 )
             update.meta = dict(prior.meta)
+            destination_updates.append(update)
             return []
         return removed
 
@@ -172,6 +205,7 @@ def route_gradient_destinations(
             continue
         joins, terms = _terms(produced)
         if not joins:
+            destination_updates.append(node)
             continue
         removed = []
         for term in terms:
@@ -181,13 +215,15 @@ def route_gradient_destinations(
         for old in (*joins, *removed):
             graph.graph.erase_node(old)
 
+    owned_destinations: set[Node] = set()
     for node in tuple(graph.graph.nodes):
-        if node not in expressions or not _sum(node):
+        if node not in expressions or not _sum(node) or len(node.users) != 1:
             continue
         operands = sorted(node.args, key=lambda item: positions[item])
         prior, produced = operands
-        if not _owned(prior):
+        if prior not in owned_destinations and not _owned(prior):
             continue
+        owned_destinations.add(prior)
         # The accumulator's geometry must also be writable by the producer.
         # Its public output is normalized by the composed task's boundary.
         prior.meta["execution_provenance"] = provenance
@@ -196,5 +232,27 @@ def route_gradient_destinations(
         graph.graph.erase_node(node)
         for old in removed:
             graph.graph.erase_node(old)
+    # All output joins have chosen their canonical destinations. Fuse opaque
+    # producers only now, so one VJP with several eligible outputs is replaced
+    # once. A prior shared by successive producers remains one ordered buffer.
+    requests = []
+    for node in destination_updates:
+        prior, produced = node.args
+        assert isinstance(prior, Node) and isinstance(produced, Node)
+        requests.append((produced, prior))
+    consumed, dead = fuse_gradient_destinations(
+        graph.graph,
+        requests,
+        gradient_destination_rules,
+        outputs=[produced for produced, _ in requests],
+        fake_mode=mode,
+        fuse_narrow_gradient_accumulation=fuse_narrow_gradient_accumulation,
+    )
+    for node, (produced, prior) in zip(destination_updates, requests, strict=True):
+        if produced in consumed:
+            node.replace_all_uses_with(prior)
+            graph.graph.erase_node(node)
+    for node in dead:
+        graph.graph.erase_node(node)
     graph.graph.lint()
     graph.recompile()

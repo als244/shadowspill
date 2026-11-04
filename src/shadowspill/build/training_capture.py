@@ -11,6 +11,7 @@ from torch import nn
 from torch._subclasses.fake_tensor import FakeTensorMode
 
 from shadowspill.pytorch.capture.fake import fake_device_inputs, fake_device_model
+from shadowspill.pytorch.capture.gradients import GradientDestinationRule
 from shadowspill.pytorch.capture.inputs import flat_runtime_arguments
 from shadowspill.pytorch.capture.objective import (
     capture_training_objective,
@@ -52,6 +53,7 @@ def capture_training_model(
     gradient_dtype: torch.dtype | None,
     device_index: int,
     gradient_shards: Mapping[str, int] | None = None,
+    gradient_destination_rules: Sequence[GradientDestinationRule] = (),
 ) -> TrainingCapture:
     if isinstance(num_examples, bool) or not isinstance(num_examples, int):
         raise TypeError("num_examples must be an integer")
@@ -73,7 +75,10 @@ def capture_training_model(
     replica = fake_device_model(model, mode, device_index=device_index)
     original = nn.Module()
     original.add_module("model", model)
-    pairs = GraphPairStore(gradient_shards=gradient_shards)
+    pairs = GraphPairStore(
+        gradient_shards=gradient_shards,
+        gradient_destination_rules=gradient_destination_rules,
+    )
     captures = []
     constants_by_example = []
     templates: dict[str, tuple[Any, dict[str, torch.Tensor], tuple[Any, ...], Any]] = {}
@@ -129,6 +134,7 @@ def capture_training_model(
                 include_shared_gradients(
                     partitioned,
                     fuse_narrow_gradient_accumulation=fuse_narrow_gradient_accumulation,
+                    gradient_destination_rules=gradient_destination_rules,
                 )
             )
             constants_by_example.append(constants)

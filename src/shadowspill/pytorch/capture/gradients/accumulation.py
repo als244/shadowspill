@@ -19,7 +19,11 @@ from shadowspill.pytorch.operators.materialize import PAD_STORAGE
 from shadowspill.task.inputs import TaskInputRole
 
 from ..torch_deprecations import copy_graph_module
-from .destinations import GradientDestinationRule, fuse_gradient_destinations
+from .destinations import (
+    GradientDestinationRule,
+    fuse_gradient_destinations,
+    normalize_gradient_destination_rules,
+)
 from .nodes import (
     _ADDS_INTO,
     _MOVING_ONLY,
@@ -70,6 +74,9 @@ def accumulate_gradient_outputs(
     the captured task and its normal compilation and memory accounting.
     """
 
+    gradient_destination_rules = normalize_gradient_destination_rules(
+        gradient_destination_rules
+    )
     if not leaf_indices:
         return backward
     if len(set(leaf_indices)) != len(leaf_indices):

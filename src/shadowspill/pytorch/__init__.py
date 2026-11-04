@@ -20,6 +20,15 @@ if TYPE_CHECKING:
         RuntimeFailureDiagnostics as RuntimeFailureDiagnostics,
     )
 
+    from .capture.gradients import DestinationView as DestinationView
+    from .capture.gradients import GradientDestination as GradientDestination
+    from .capture.gradients import (
+        GradientDestinationContext as GradientDestinationContext,
+    )
+    from .capture.gradients import (
+        GradientDestinationMapping as GradientDestinationMapping,
+    )
+    from .capture.gradients import GradientDestinationRule as GradientDestinationRule
     from .capture.retention import OperatorClass as OperatorClass
     from .capture.retention import RetentionPolicy as RetentionPolicy
     from .capture.retention import RetentionRule as RetentionRule
@@ -56,6 +65,13 @@ _GROUPS = {
     "shadowspill.runtime.failures": (
         "RuntimeExecutionError",
         "RuntimeFailureDiagnostics",
+    ),
+    ".capture.gradients": (
+        "DestinationView",
+        "GradientDestination",
+        "GradientDestinationContext",
+        "GradientDestinationMapping",
+        "GradientDestinationRule",
     ),
     ".capture.retention": ("OperatorClass", "RetentionPolicy", "RetentionRule"),
     ".graph_pairs.policy": ("GraphPairPolicy",),

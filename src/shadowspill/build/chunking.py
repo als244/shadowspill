@@ -2,12 +2,14 @@
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from dataclasses import replace
 
 import torch
 
 from shadowspill.errors import CaptureError
 from shadowspill.pytorch.capture.artifacts import GraphArtifact, TensorGeometry
+from shadowspill.pytorch.capture.gradients import GradientDestinationRule
 from shadowspill.pytorch.chunking import (
     AxisChunks,
     ChunkPolicy,
@@ -62,12 +64,14 @@ def chunk_training(
     policy: ChunkPolicy | ChunkRegions,
     *,
     fuse_narrow_gradient_accumulation: bool = True,
+    gradient_destination_rules: Sequence[GradientDestinationRule] = (),
 ) -> TrainingCapture:
     if isinstance(policy, ChunkRegions):
         return _region_training(
             captured,
             policy,
             fuse_narrow_gradient_accumulation=fuse_narrow_gradient_accumulation,
+            gradient_destination_rules=gradient_destination_rules,
         )
     examples = []
     cache: dict[tuple[str, str, tuple[Layout, ...], int], GraphArtifact] = {}
@@ -100,6 +104,7 @@ def chunk_training(
                         axes,
                         rows,
                         config,
+                        gradient_destination_rules=gradient_destination_rules,
                         stage_id=stage_id,
                         variant=option.option_id,
                     )
@@ -169,6 +174,7 @@ def chunk_training(
                         rows,
                         config,
                         fuse_narrow_gradient_accumulation=fuse_narrow_gradient_accumulation,
+                        gradient_destination_rules=gradient_destination_rules,
                         stage_id=stage_id,
                         variant=option.option_id,
                     )
@@ -231,6 +237,7 @@ def _region_training(
     policy: ChunkRegions,
     *,
     fuse_narrow_gradient_accumulation: bool,
+    gradient_destination_rules: Sequence[GradientDestinationRule],
 ) -> TrainingCapture:
     from shadowspill.pytorch.chunking.regions import region_artifact
 
@@ -251,6 +258,7 @@ def _region_training(
                     policy,
                     stage_id=stage.example.stage.stage_id,
                     variant=option.option_id,
+                    gradient_destination_rules=gradient_destination_rules,
                 )
                 assert forward.regions is not None
                 count = pair.saved_value_count
@@ -294,6 +302,7 @@ def _region_training(
                     input_domains=tuple(inherited),
                     domain_rules=forward.regions.domain_rules,
                     fuse_narrow_gradient_accumulation=fuse_narrow_gradient_accumulation,
+                    gradient_destination_rules=gradient_destination_rules,
                     gradient_leaves=tuple(
                         logical
                         for (logical, _), provenance in zip(

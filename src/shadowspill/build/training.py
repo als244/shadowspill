@@ -11,6 +11,10 @@ from shadowspill.artifacts.program import Program
 from shadowspill.build.lowering.training.program import lower_training
 from shadowspill.parallelism import Parallelism
 from shadowspill.pytorch.accelerator import resolve_device
+from shadowspill.pytorch.capture.gradients.destinations import (
+    GradientDestinationRule,
+    normalize_gradient_destination_rules,
+)
 from shadowspill.pytorch.chunking import ChunkPolicy, ChunkRegions
 from shadowspill.pytorch.graph_pairs.policy import GraphPairPolicy
 from shadowspill.pytorch.partition import PartitionSpec
@@ -41,6 +45,7 @@ def build_forward_backward(
     num_examples: int = 1,
     example_calls: Sequence[tuple[Sequence[Any], Mapping[str, Any]]] | None = None,
     fuse_narrow_gradient_accumulation: bool = True,
+    gradient_destination_rules: Sequence[GradientDestinationRule] = (),
     partition: PartitionSpec = "auto",
     chunking: ChunkPolicy | ChunkRegions | None = None,
     graph_pair_policy: GraphPairPolicy | None = None,
@@ -61,6 +66,10 @@ def build_forward_backward(
     may restrict allowed stage variants; planning selects among measured
     alternatives and chooses residency. A different policy requires building
     and profiling its resulting implementations before planning.
+    ``gradient_destination_rules`` supplies versioned opaque-operator contracts
+    for grouped in-place gradient accumulation across shared uses and chunks.
+    It is independent of retention and chunk selection; unmatched outputs keep
+    ordinary accumulation and all selected implementations are still profiled.
     """
     return _build_training(
         model,
@@ -71,6 +80,7 @@ def build_forward_backward(
         num_examples=num_examples,
         example_calls=example_calls,
         fuse_narrow_gradient_accumulation=fuse_narrow_gradient_accumulation,
+        gradient_destination_rules=gradient_destination_rules,
         partition=partition,
         chunking=chunking,
         graph_pair_policy=graph_pair_policy,
@@ -92,6 +102,7 @@ def _build_training(
     num_examples: int,
     example_calls: Sequence[tuple[Sequence[Any], Mapping[str, Any]]] | None,
     fuse_narrow_gradient_accumulation: bool,
+    gradient_destination_rules: Sequence[GradientDestinationRule],
     partition: PartitionSpec,
     graph_pair_policy: GraphPairPolicy | None,
     grad_dtype: torch.dtype | None,
@@ -102,6 +113,9 @@ def _build_training(
     resources: Mapping[str, Resource] | None = None,
     rank_map: Mapping[int, int] | None = None,
 ) -> Program:
+    gradient_destination_rules = normalize_gradient_destination_rules(
+        gradient_destination_rules
+    )
     if graph_pair_policy is not None and not isinstance(
         graph_pair_policy, GraphPairPolicy
     ):
@@ -120,6 +134,7 @@ def _build_training(
         num_examples=num_examples,
         example_calls=example_calls,
         fuse_narrow_gradient_accumulation=fuse_narrow_gradient_accumulation,
+        gradient_destination_rules=gradient_destination_rules,
         partition=partition,
         graph_pair_policy=graph_pair_policy,
         gradient_dtype=grad_dtype,
@@ -139,6 +154,7 @@ def _build_training(
             captured,
             chunking,
             fuse_narrow_gradient_accumulation=fuse_narrow_gradient_accumulation,
+            gradient_destination_rules=gradient_destination_rules,
         )
     artifacts = [
         artifact

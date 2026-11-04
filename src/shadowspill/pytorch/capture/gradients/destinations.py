@@ -8,7 +8,7 @@ compilation paths. No callback or registry is consulted by an executable.
 from __future__ import annotations
 
 import operator
-from collections import Counter, defaultdict
+from collections import defaultdict
 from collections.abc import Callable, Mapping, Sequence
 from contextlib import nullcontext
 from dataclasses import dataclass, field
@@ -75,11 +75,13 @@ class GradientDestinationRule:
     """Map a fresh-output operator to a versioned accumulating overload.
 
     Targets are dispatcher names, e.g. ``provider.backward.default``. The
-    replacement takes the original arguments plus keyword arguments
+    replacement takes the original arguments plus named arguments
     ``destinations: Tensor[]``, ``output_indices: int[]`` and
     ``contract_version: int``. Its schema must declare the destination list
     mutable. It preserves the original result tuple and unconsumed outputs;
-    consumed positions may return ``None``. The graph returns the destinations.
+    consumed positions may return ``None``, an empty tensor or their destination.
+    Empty tensors let providers use fixed Tensor return schemas supported by
+    automatic functionalization. The graph returns the destinations instead.
 
     With no mapper, only reversible views/copies at the same dtype are consumed.
     A mapper may consume a subset and describe a provider's layout/scale/cast
@@ -118,6 +120,23 @@ class GradientDestinationRule:
             )
         if len(set(self.output_indices)) != len(self.output_indices):
             raise ValueError("gradient destination output indices must be distinct")
+        object.__setattr__(self, "output_indices", tuple(self.output_indices))
+        if self.mapper is not None and not callable(self.mapper):
+            raise TypeError("gradient destination mapper must be callable or None")
+
+
+def normalize_gradient_destination_rules(
+    rules: Sequence[GradientDestinationRule],
+) -> tuple[GradientDestinationRule, ...]:
+    """Snapshot one build's rules before capture or accelerator access."""
+    result = tuple(rules)
+    if any(not isinstance(rule, GradientDestinationRule) for rule in result):
+        raise TypeError(
+            "gradient_destination_rules must contain GradientDestinationRule objects"
+        )
+    if len({rule.target for rule in result}) != len(result):
+        raise CaptureError("gradient destination rules repeat an operator target")
+    return result
 
 
 _UNARY_PATH = (
@@ -264,9 +283,9 @@ def fuse_gradient_destinations(
     owners: dict[Node, list[tuple[GradientDestination, tuple[Node, ...]]]] = (
         defaultdict(list)
     )
-    storage = Counter(
-        prior.meta["val"].untyped_storage()._cdata for _, prior in requests
-    )
+    storage: dict[int, set[Node]] = defaultdict(set)
+    for _, prior in requests:
+        storage[prior.meta["val"].untyped_storage()._cdata].add(prior)
     for gradient, prior in requests:
         origin = _origin(gradient)
         if origin is None or outputs.count(gradient) != 1:
@@ -281,7 +300,7 @@ def fuse_gradient_destinations(
             continue
         value = prior.meta["val"]
         identity = value.untyped_storage()._cdata
-        if storage[identity] != 1 or any(
+        if len(storage[identity]) != 1 or any(
             isinstance(n.meta.get("val"), torch.Tensor)
             and n.meta["val"].untyped_storage()._cdata == identity
             for n in producer.all_input_nodes
@@ -295,7 +314,9 @@ def fuse_gradient_destinations(
     for producer, items in owners.items():
         rule = by_target[str(producer.target)]
         candidates = {item.output_index: item for item, _ in items}
-        if len(candidates) != len(items):
+        if len(candidates) != len(items) or len(
+            {item.destination for item, _ in items}
+        ) != len(items):
             continue
         context = GradientDestinationContext(
             producer, tuple(candidates.values()), fuse_narrow_gradient_accumulation
@@ -381,7 +402,20 @@ def fuse_gradient_destinations(
                     contract_version=rule.version,
                 )
             )
-            call = graph.call_function(replacement, producer.args, keywords)
+            # Axis contracts use schema argument positions. Normalize the new
+            # destination list (and other positional-capable keywords) so this
+            # graph remains valid input to subsequent region/chunk transforms.
+            arguments = list(producer.args)
+            for argument in schema.arguments[len(arguments) :]:
+                if argument.kwarg_only:
+                    break
+                if argument.name in keywords:
+                    arguments.append(keywords.pop(argument.name))
+                elif argument.has_default_value():
+                    arguments.append(argument.default_value)
+                else:
+                    break
+            call = graph.call_function(replacement, tuple(arguments), keywords)
             with fake_mode if fake_mode is not None else nullcontext():
                 args, kwargs = torch.fx.node.map_arg(
                     (call.args, call.kwargs), lambda n: n.meta["val"]
@@ -396,13 +430,17 @@ def fuse_gradient_destinations(
             for index, (old, new) in enumerate(zip(before, after, strict=True)):
                 if index in indices:
                     destination = candidates[index].destination.meta["val"]
-                    if new is not None and (
-                        not isinstance(new, torch.Tensor)
-                        or new.untyped_storage()._cdata
-                        != destination.untyped_storage()._cdata
+                    if new is not None and not (
+                        isinstance(new, torch.Tensor)
+                        and (
+                            new.numel() == 0
+                            or new.untyped_storage()._cdata
+                            == destination.untyped_storage()._cdata
+                        )
                     ):
                         raise CaptureError(
-                            "a consumed gradient must return None or its destination"
+                            "a consumed gradient must return None, an empty tensor "
+                            "or its destination"
                         )
                     continue
                 if index not in indices and (

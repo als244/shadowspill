@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, replace
 
 import torch
@@ -12,6 +12,7 @@ from shadowspill.pytorch.capture.artifacts import (
     GraphArtifact,
 )
 from shadowspill.pytorch.capture.gradients import (
+    GradientDestinationRule,
     accumulate_gradient_outputs,
     cast_gradient_outputs,
     materialize_gradient_outputs,
@@ -96,7 +97,10 @@ class GraphPairVariant:
         )
 
     def accumulating(
-        self, *, fuse_narrow_gradient_accumulation: bool = True
+        self,
+        *,
+        fuse_narrow_gradient_accumulation: bool = True,
+        gradient_destination_rules: Sequence[GradientDestinationRule] = (),
     ) -> GraphPairVariant:
         """Return the form of this variant that adds onto the gradients it is given.
 
@@ -115,6 +119,7 @@ class GraphPairVariant:
                     self.pair.backward,
                     parameter_gradient_leaves(self.pair),
                     fuse_narrow_gradient_accumulation=fuse_narrow_gradient_accumulation,
+                    gradient_destination_rules=gradient_destination_rules,
                 ),
             ),
             accumulates=True,
@@ -175,13 +180,17 @@ class TaskGraphPairs:
         )
 
     def accumulating_variants(
-        self, *, fuse_narrow_gradient_accumulation: bool = True
+        self,
+        *,
+        fuse_narrow_gradient_accumulation: bool = True,
+        gradient_destination_rules: Sequence[GradientDestinationRule] = (),
     ) -> tuple[GraphPairVariant, ...]:
         """Derive the accumulating form of every captured variant."""
 
         return tuple(
             item.accumulating(
-                fuse_narrow_gradient_accumulation=fuse_narrow_gradient_accumulation
+                fuse_narrow_gradient_accumulation=fuse_narrow_gradient_accumulation,
+                gradient_destination_rules=gradient_destination_rules,
             )
             for item in self.variants
             if not item.accumulates

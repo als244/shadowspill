@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from dataclasses import asdict, dataclass, replace
 from types import MappingProxyType
 from typing import Any
@@ -16,6 +16,7 @@ from torch.utils._pytree import tree_flatten, tree_map
 from shadowspill.artifacts._values import digest
 from shadowspill.errors import CaptureError
 from shadowspill.pytorch.capture.artifacts import GraphArtifact, TaskInputProvenance
+from shadowspill.pytorch.capture.gradients import GradientDestinationRule
 from shadowspill.pytorch.capture.live_storage import live_storage_identity
 from shadowspill.pytorch.capture.storage import ExplicitMutation
 from shadowspill.pytorch.capture.torch_deprecations import copy_graph_module
@@ -52,6 +53,7 @@ def region_artifact(
     input_reductions: tuple[frozenset[str], ...] = (),
     domain_rules: Mapping[str, tuple[OperatorRule, ...]] | None = None,
     fuse_narrow_gradient_accumulation: bool = True,
+    gradient_destination_rules: Sequence[GradientDestinationRule] = (),
     gradient_leaves: tuple[int, ...] | None = None,
 ) -> GraphArtifact:
     """Split after differentiation; child edges never become checkpoint saves."""
@@ -89,6 +91,7 @@ def region_artifact(
         graph,
         artifact,
         fuse_narrow_gradient_accumulation=fuse_narrow_gradient_accumulation,
+        gradient_destination_rules=gradient_destination_rules,
         gradient_leaves=gradient_leaves,
     )
     assignments, _ = resolve_partition_assignments(graph, graph, policy.partition)
@@ -262,6 +265,7 @@ def region_artifact(
                 rows,
                 config,
                 fuse_narrow_gradient_accumulation=fuse_narrow_gradient_accumulation,
+                gradient_destination_rules=gradient_destination_rules,
                 stage_id=f"{stage_id}/region_{index}",
                 checkpoint_stage_id=checkpoint_stage_id or stage_id,
                 variant=variant,

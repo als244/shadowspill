@@ -1,6 +1,5 @@
 """Grouped custom destinations preserve VJPs, ownership and cached graphs."""
 
-from collections import Counter
 from dataclasses import replace
 
 import pytest
@@ -20,111 +19,25 @@ from shadowspill.pytorch.capture.gradients.destinations import (
 )
 from shadowspill.pytorch.graph_pairs.serialization import CachedGraphArtifact
 from shadowspill.task.storage import StorageRootKind
-
-CALLS = Counter()
-
-
-def interleave(b):
-    return b.view(2, -1, b.shape[-1]).transpose(0, 1).reshape_as(b)
-
-
-def _compute(x, a, b, tangent, scale, destinations, indices, canonical):
-    CALLS["calls"] += 1
-    hidden = x @ a.T
-    hidden_grad = (tangent @ interleave(b)) * scale
-    dx = hidden_grad @ a
-    running = dict(zip(indices, destinations, strict=True))
-    da = running.get(1)
-    if da is None:
-        CALLS["fresh_parameter_buffers"] += 1
-        da = torch.empty_like(a)
-    torch.addmm(da, hidden_grad.T, x, beta=int(1 in running), out=da)
-    db = running.get(2)
-    if db is None:
-        CALLS["fresh_parameter_buffers"] += 1
-        db = torch.empty_like(b)
-    if 2 in running and canonical:
-        width = b.shape[0] // 2
-        for index in range(2):
-            destination = db[index * width : (index + 1) * width]
-            torch.addmm(
-                destination,
-                tangent[:, index::2].T,
-                hidden,
-                alpha=scale,
-                out=destination,
-            )
-    else:
-        torch.addmm(db, tangent.T, hidden, beta=int(2 in running), out=db)
-    return dx, None if 1 in running else da, None if 2 in running else db
-
-
-@torch.library.custom_op("gradient_destination_test::fresh", mutates_args=())
-def fresh(
-    x: torch.Tensor,
-    a: torch.Tensor,
-    b: torch.Tensor,
-    tangent: torch.Tensor,
-    scale: float,
-) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
-    return _compute(x, a, b, tangent, scale, [], [], False)
-
-
-@fresh.register_fake
-def _fresh_fake(x, a, b, tangent, scale):
-    return torch.empty_like(x), torch.empty_like(a), torch.empty_like(b)
-
-
-@torch.library.custom_op(
-    "gradient_destination_test::accumulating",
-    mutates_args=("destinations",),
-    schema="(Tensor x, Tensor a, Tensor b, Tensor tangent, float scale, "
-    "Tensor(a!)[] destinations, int[] output_indices, int contract_version, "
-    "bool canonical_b=False) -> (Tensor, Tensor?, Tensor?)",
+from tests.shadowspill.pytorch.capture._gradient_destination_ops import (
+    CALLS,
+    function,
+    interleave,
 )
-def accumulating(
-    x: torch.Tensor,
-    a: torch.Tensor,
-    b: torch.Tensor,
-    tangent: torch.Tensor,
-    scale: float,
-    destinations: list[torch.Tensor],
-    output_indices: list[int],
-    contract_version: int,
-    canonical_b: bool = False,
-) -> tuple[torch.Tensor, torch.Tensor | None, torch.Tensor | None]:
-    assert contract_version in (1, 2)
-    return _compute(x, a, b, tangent, scale, destinations, output_indices, canonical_b)
-
-
-@accumulating.register_fake
-def _accumulating_fake(
-    x,
-    a,
-    b,
-    tangent,
-    scale,
-    destinations,
-    output_indices,
-    contract_version,
-    canonical_b=False,
-):
-    return (
-        torch.empty_like(x),
-        None if 1 in output_indices else torch.empty_like(a),
-        None if 2 in output_indices else torch.empty_like(b),
-    )
 
 
 def canonical_mapping(context):
     # This provider understands the exact interleave/scale path, without an
     # inverse view or a full raw B-gradient buffer. Other paths decline.
     selected = []
+    canonical_b = False
     for item in context.destinations:
         if item.output_index == 1 and not item.operations:
             selected.append(1)
         elif item.output_index == 2:
             targets = tuple(node.target for node in item.operations)
+            if not targets:
+                selected.append(2)
             if (
                 targets
                 == (
@@ -137,9 +50,10 @@ def canonical_mapping(context):
                 and item.operations[0].args[1] == context.producer.args[4]
             ):
                 selected.append(2)
+                canonical_b = True
     return (
         GradientDestinationMapping(
-            tuple(selected), ((),) * len(selected), {"canonical_b": True}
+            tuple(selected), ((),) * len(selected), {"canonical_b": canonical_b}
         )
         if selected
         else None
@@ -153,12 +67,6 @@ RULE = GradientDestinationRule(
     1,
     canonical_mapping,
 )
-
-
-def function(x, a, b, tangent):
-    dx, da, db = fresh(x, a, b, tangent, 1.75)
-    canonical = db.view(-1, 2, b.shape[-1]).transpose(0, 1).reshape_as(b) * 1.75
-    return dx, da, canonical
 
 
 def artifact(inputs, function=function):
@@ -411,3 +319,28 @@ def test_replacement_must_declare_destination_mutation():
             (1,),
             gradient_destination_rules=(replace(RULE, replacement=RULE.target),),
         )
+
+
+def test_narrow_default_mapper_respects_fusion_permission():
+    inputs = (values(dtype=torch.bfloat16)[0],)
+    rule = GradientDestinationRule(
+        "gradient_destination_test.single.default",
+        "gradient_destination_test.single_accumulating.default",
+        (0,),
+        1,
+    )
+    base = artifact(inputs, lambda x: (single(x),))
+    strict = accumulate_gradient_outputs(
+        base,
+        (0,),
+        fuse_narrow_gradient_accumulation=False,
+        gradient_destination_rules=(rule,),
+    )
+    fused = accumulate_gradient_outputs(base, (0,), gradient_destination_rules=(rule,))
+    assert rule.target in strict.operator_targets
+    assert rule.replacement not in strict.operator_targets
+    assert rule.replacement in fused.operator_targets
+    prior = torch.randn(7, 7).bfloat16()
+    expected = prior + single(*inputs)
+    result = strict.graph_module(*inputs, prior.clone())[0]
+    torch.testing.assert_close(result, expected, rtol=0, atol=0)

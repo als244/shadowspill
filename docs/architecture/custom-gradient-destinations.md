@@ -1,10 +1,16 @@
 # Custom gradient destinations
 
-`capture.gradients.accumulate_gradient_outputs` can replace an opaque backward
-operator with a versioned accumulating overload. This is a low-level capture
-interface. Public training builds, execution-region composition and chunking
-do not yet propagate these rules. The existing ATen multiply fusion and ordinary
-in-place additions remain the default when no rule is supplied.
+`build_step` and `build_forward_backward` accept `gradient_destination_rules`:
+explicit contracts that replace an opaque backward operator with a versioned
+accumulating overload. The rules apply to shared parameters across checkpoint
+regions, execution regions, full/tail chunks and subsequent microbatches. The
+first contribution creates the gradient; later contributions write into its
+canonical buffer. One replacement call handles all eligible outputs together.
+
+The empty tuple is the default. Existing ATen multiply fusion and ordinary
+in-place additions apply when no custom rule matches. A rule does not change
+checkpoint retention or select chunk axes, region boundaries or chunk sizes;
+those remain independent build controls.
 
 ## Operator contract
 
@@ -12,10 +18,8 @@ One rule names a fresh-output dispatcher overload, its accumulating replacement,
 the eligible output indices, and a positive contract version. For example:
 
 ```python
-from shadowspill.pytorch.capture.gradients import (
-    GradientDestinationRule,
-    accumulate_gradient_outputs,
-)
+from shadowspill import build_step
+from shadowspill.pytorch import GradientDestinationRule
 
 rule = GradientDestinationRule(
     target="provider.backward.default",
@@ -23,9 +27,11 @@ rule = GradientDestinationRule(
     output_indices=(1, 2),
     version=1,
 )
-accumulating = accumulate_gradient_outputs(
-    backward,
-    parameter_gradient_leaves,
+program = build_step(
+    model,
+    objective=objective,
+    optimizer=optimizer,
+    example_args=example_args,
     gradient_destination_rules=(rule,),
 )
 ```
@@ -33,18 +39,26 @@ accumulating = accumulate_gradient_outputs(
 The replacement receives the original arguments and three additional arguments:
 `destinations: Tensor[]`, `output_indices: int[]`, and `contract_version: int`.
 Its dispatcher schema must mark `destinations` mutable, for example
-`Tensor(a!)[] destinations`, and permit mutation of no other argument. With
-`torch.library.custom_op`, Tensor-list arguments must be positional-capable in
-the schema even though the generated call supplies these arguments by keyword.
+`Tensor(a!)[] destinations`, and permit mutation of no other argument. The
+destination-list argument must be positional-capable in the schema. The rewrite
+normalizes positional-capable arguments into schema order, so later axis
+contracts can interpret the same call.
 
 The operator adds each selected contribution directly to its supplied buffer.
 It runs once for all selected outputs, preserves the other outputs, and returns
-`None` or the corresponding destination in consumed positions. `custom_op`
-implementations should return `None`, because they cannot return input aliases.
+`None`, a zero-element tensor, or the corresponding destination in consumed
+positions. `custom_op` implementations cannot return input aliases. Prefer a
+fixed `Tensor` return schema with zero-element tensors for consumed positions:
+PyTorch's current automatic functionalization rejects mixed optional-Tensor
+returns on mutable custom operators. A zero-element placeholder allocates no
+tensor storage and its unused extraction is removed. A provider with its own
+functionalization may support other permitted forms.
 The graph returns the prior buffers in place of the consumed gradients.
-The fresh form still creates gradients; this transformation only constructs the
-form that receives existing gradients. It does not allocate zero-filled runtime
-buffers or repeat the backward for each parameter.
+The fresh form still creates gradients. The rewrite constructs the form that
+receives existing gradients and routes later shared-parameter uses to that same
+buffer. It does not allocate zero-filled runtime buffers or repeat the backward
+for each parameter. `capture.gradients.accumulate_gradient_outputs` also accepts
+the rules directly for callers constructing low-level graph artifacts.
 
 ## Layout, scaling and precision
 
@@ -74,17 +88,28 @@ statically remain the provider's responsibility.
 ## Ownership and artifact identity
 
 The pass only consumes single-use gradient expressions. Destinations must exist
-before the producer and must not share storage with another supplied destination
-or an input the producer reads. An externally observed gradient remains intact.
+before the producer and must not share storage with a different supplied
+destination or an input the producer reads. Successive producers may update the
+same canonical destination, in graph order; two outputs of one producer cannot
+write into that same destination. An externally observed gradient or partial sum
+remains intact. Sliced activation cotangents keep their own chunk coordinates.
 These conservative checks protect other graph consumers and preserve the
 fallback path.
 
 Rules and callbacks are build inputs; executables consult no mutable registry.
+Builders snapshot and validate the rules before accelerator preparation. A
+`GraphPairStore` owns one fixed rule set: its persistent base AOT pairs are
+reusable across rule sets, while each store derives its accumulating forms with
+its own rules. Mappers must be deterministic for their context; do not mutate
+callback state during a build.
 The replacement call, arguments and version enter the graph's compatibility
 digest. Change the version when the mapping contract changes. Mutation records
 and aliases pass through normal `GraphArtifact` capture and cached restoration.
 Actual kernel workspace still needs normal compilation, profiling and physical
 admission: a mutation schema does not prove that a provider avoids an internal
-temporary. CPU tests establish grouped rewriting, nonzero LoRA VJPs, full/tail
-accumulation, ownership and artifact round trips. GPU provider kernels and the
-remaining public build integration require separate qualification.
+temporary. Chunked providers also need `OperatorRule` axis/reduction contracts
+for both their fresh and accumulating overloads. Final replacement graphs enter
+ordinary structural compilation and profiling; saved Programs and Plans carry
+the operator registration dependency and implementation digest. Rule callbacks
+are not needed by the saved executor. Each real provider's fused kernels and
+distributed behavior require qualification in addition to generic rewrite tests.

@@ -7,7 +7,7 @@ import json
 import os
 import pickle
 import tempfile
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from contextlib import suppress
 from dataclasses import dataclass, replace
 from pathlib import Path
@@ -17,6 +17,10 @@ from torch._inductor import config as inductor_config
 
 from shadowspill.errors import CaptureError
 from shadowspill.pytorch.capture.artifacts import GraphArtifact
+from shadowspill.pytorch.capture.gradients.destinations import (
+    GradientDestinationRule,
+    normalize_gradient_destination_rules,
+)
 from shadowspill.pytorch.numerics import capture_numerical_settings
 from shadowspill.schema import artifact_schema
 from shadowspill.store import (
@@ -72,6 +76,7 @@ class GraphPairStore:
         policy: StorePolicy = CONTRIBUTE,
         artifact_recorder: ArtifactRecorder | None = None,
         gradient_shards: Mapping[str, int] | None = None,
+        gradient_destination_rules: Sequence[GradientDestinationRule] = (),
     ) -> None:
         self._pairs: dict[_Key, TaskGraphPairs] = {}
         #: The forms a step asks for, derived from the captured pairs.
@@ -80,6 +85,11 @@ class GraphPairStore:
         self._policy = policy
         self._artifact_recorder = artifact_recorder
         self._gradient_shards = dict(gradient_shards or {})
+        # Derived forms are private to this store. Base AOT archives remain
+        # reusable; each build derives its own versioned replacement graphs.
+        self._gradient_destination_rules = normalize_gradient_destination_rules(
+            gradient_destination_rules
+        )
         self._keys_seen: set[_Key] = set()
         self.hits = 0
         self.misses = 0
@@ -200,7 +210,8 @@ class GraphPairStore:
             )
             if form.accumulating:
                 accumulating = derived.accumulating_variants(
-                    fuse_narrow_gradient_accumulation=form.fuse_narrow_gradient_accumulation
+                    fuse_narrow_gradient_accumulation=form.fuse_narrow_gradient_accumulation,
+                    gradient_destination_rules=self._gradient_destination_rules,
                 )
                 derived = replace(derived, variants=(*derived.variants, *accumulating))
             self._derived[(key, form)] = derived
