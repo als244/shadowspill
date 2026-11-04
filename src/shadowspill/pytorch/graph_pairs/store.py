@@ -17,6 +17,7 @@ from torch._inductor import config as inductor_config
 
 from shadowspill.errors import CaptureError
 from shadowspill.pytorch.capture.artifacts import GraphArtifact
+from shadowspill.pytorch.numerics import capture_numerical_settings
 from shadowspill.schema import artifact_schema
 from shadowspill.store import (
     CONTRIBUTE,
@@ -47,7 +48,7 @@ _METADATA_POLICY = "source_precision"
 #: What one entry is keyed by: the structural contract, the differentiation
 #: options, and the retention policy with the classes it gives the stage's
 #: custom operators, as one digest.
-_Key = tuple[str, tuple[int, ...], bool, str, str, tuple[str, ...], bool]
+_Key = tuple[str, tuple[int, ...], bool, str, str, tuple[str, ...], bool, str]
 
 
 @dataclass(frozen=True, slots=True)
@@ -114,7 +115,9 @@ class GraphPairStore:
         the caller or a class changed by an operator's library misses rather
         than reading back a pair built under the old one. So are the
         ``variants`` the pairs carry: an entry holding one endpoint never
-        answers a request for both.
+        answers a request for both. Numerical backend settings also specialize
+        differentiation: an autograd formula can select operations from them
+        even when the stage's forward graph is unchanged.
         """
 
         policy = graph_pair_policy or GraphPairPolicy()
@@ -132,6 +135,7 @@ class GraphPairStore:
             "objective_connected_outputs",
             validate_graph_pair_variants(variants),
             bool(inductor_config.emulate_precision_casts),
+            capture_numerical_settings(),
         )
         shards = self._gradient_shards
         padding = tuple(
@@ -215,6 +219,7 @@ class GraphPairStore:
             "gradient_roots_policy": key[4],
             "variants": list(key[5]),
             "emulate_precision_casts": key[6],
+            "numerical_settings": key[7],
         }
         encoded = json.dumps(payload, sort_keys=True, separators=(",", ":"))
         # The contract, the differentiation options and the retention policy
@@ -328,6 +333,7 @@ class GraphPairStore:
             "retention_digest": key[3],
             "gradient_roots_policy": key[4],
             "emulate_precision_casts": key[6],
+            "numerical_settings": key[7],
             "retention": retention,
             "reference_option_id": pairs.reference_option_id,
             "variants": [

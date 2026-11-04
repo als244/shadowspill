@@ -43,9 +43,9 @@ contracts applied during compilation. Composed tasks include contracts from
 their children. A precision-emulated sigmoid-backward contract identifies the
 provider's intermediate rounding and multiplication order for BF16/FP16.
 The `torch.numerical_settings.v1:` entry contains a JSON snapshot of the caller's
-backend settings. It participates in compiler-cache, implementation and profile
-identity. These records describe an already built task; editing them does not
-change its implementation.
+backend settings. It participates in graph-pair cache, compiler-cache,
+implementation and profile identity. These records describe an already built
+task; editing them does not change its implementation.
 
 ### Numerical backend settings
 
@@ -53,7 +53,7 @@ Configure PyTorch before building, and use the same settings in finalization,
 profiling and every execution worker. ShadowSpill records and validates:
 
 - deterministic-algorithm and warn-only flags;
-- Device matrix multiplication precision, including the `highest`/`high`/
+- device matrix multiplication precision, including the `highest`/`high`/
   `medium` control and the `fp32_precision` control;
 - BF16/FP16 reduced-precision reduction, their split-K controls, FP16
   accumulation and preferred BLAS library;
@@ -78,6 +78,8 @@ and measurement and the appropriate numerical qualification. CPU loading and
 planning carry these settings as plain data and never import PyTorch to check them.
 Artifacts without a snapshot remain readable; rebuild them to obtain
 configuration validation and distinct profile identities.
+
+### Representative task inputs
 
 `bindings["task_inputs"][key]["provenance"]` describes representative input
 policies. Authentic control, constant and optimizer-hyperparameter samples use
@@ -258,6 +260,10 @@ and is not a claim of zero internal saved bytes. Actual saved tensors and task
 profiles determine memory admission.
 The `emulate_precision_casts` boolean is also part of the entry key and manifest;
 it records the requested pointwise rounding policy during differentiation.
+The `numerical_settings` field carries the same versioned backend snapshot as
+compiled task metadata. Differentiation can select a different autograd formula
+under changed settings even when its input forward graph is identical. Both
+memory and disk graph-pair caches therefore require matching settings.
 
 Each serialized FX node retains its `name`, `op`, `target`, `args` and `kwargs`,
 plus these explicit optional fields:
