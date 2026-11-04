@@ -19,6 +19,7 @@ from shadowspill.pytorch.operators.materialize import PAD_STORAGE
 from shadowspill.task.inputs import TaskInputRole
 
 from ..torch_deprecations import copy_graph_module
+from .destinations import GradientDestinationRule, fuse_gradient_destinations
 from .nodes import (
     _ADDS_INTO,
     _MOVING_ONLY,
@@ -33,6 +34,7 @@ def accumulate_gradient_outputs(
     leaf_indices: Sequence[int],
     *,
     fuse_narrow_gradient_accumulation: bool = True,
+    gradient_destination_rules: Sequence[GradientDestinationRule] = (),
 ) -> GraphArtifact:
     """Return a backward that adds its gradients onto ones it is given.
 
@@ -60,10 +62,18 @@ def accumulate_gradient_outputs(
     avoids a product buffer and separate addition, but the BLAS kernel
     controls rounding: even one kernel may round the product before adding
     the prior gradient. The option permits fusion, not a rounding guarantee.
+
+    Explicit ``gradient_destination_rules`` let an opaque provider consume all
+    eligible parameter destinations in one replacement call. Unsupported output
+    paths retain their ordinary addition. A rule's mapper runs only while the
+    graph is built; the replacement's version and mutation schema are part of
+    the captured task and its normal compilation and memory accounting.
     """
 
     if not leaf_indices:
         return backward
+    if len(set(leaf_indices)) != len(leaf_indices):
+        raise CaptureError("gradient output leaves must be distinct")
     graph_module = copy_graph_module(backward.graph_module)
     graph = graph_module.graph
     output_node = next(node for node in graph.nodes if node.op == "output")
@@ -86,7 +96,7 @@ def accumulate_gradient_outputs(
         for m in backward.storage_contract.mutations
         if m.replacement_output_leaf is not None
     ]
-    replaced: list[torch.fx.Node] = []
+    requests: list[tuple[torch.fx.Node, torch.fx.Node]] = []
     for offset, leaf in enumerate(leaf_indices):
         produced = outputs[leaf]
         value = produced.meta.get("val")
@@ -112,6 +122,28 @@ def accumulate_gradient_outputs(
                 prior_value = torch.zeros_like(value)
             _record_value(prior, prior_value)
         anchor = prior
+        requests.append((produced, prior))
+        priors.append(prior.meta["val"])
+        mutations.append(
+            ExplicitMutation(
+                input_position=len(backward.example_arguments) + offset,
+                output_leaf_index=leaf,
+                target=argument_name,
+            )
+        )
+    fused, dead = fuse_gradient_destinations(
+        graph,
+        requests,
+        gradient_destination_rules,
+        outputs=outputs,
+        fake_mode=fake_mode,
+        fuse_narrow_gradient_accumulation=fuse_narrow_gradient_accumulation,
+    )
+    replaced: list[torch.fx.Node] = list(dead)
+    for leaf, (produced, prior) in zip(leaf_indices, requests, strict=True):
+        if produced in fused:
+            outputs[leaf] = prior
+            continue
         adding = _add_in_multiply(
             graph,
             produced,
@@ -130,14 +162,6 @@ def accumulate_gradient_outputs(
                 )
             total.meta = dict(produced.meta)
             outputs[leaf] = total
-        priors.append(prior.meta["val"])
-        mutations.append(
-            ExplicitMutation(
-                input_position=len(backward.example_arguments) + offset,
-                output_leaf_index=leaf,
-                target=argument_name,
-            )
-        )
     output_node.args = (tree_unflatten(outputs, structure),)
     for node in replaced:
         graph.erase_node(node)
