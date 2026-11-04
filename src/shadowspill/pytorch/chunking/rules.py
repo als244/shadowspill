@@ -288,6 +288,7 @@ def _infer(
             "stack",
             "slice_backward",
             "select_backward",
+            "constant_pad_nd",
             "linear",
             "_assert_tensor_metadata",
         }
@@ -348,6 +349,25 @@ def _infer(
             if isinstance(args[0], ChunkAxis)
             else args[0]
         )
+    if name == "constant_pad_nd":
+        padding = arguments[1]
+        fill = arguments[2] if len(arguments) > 2 else keywords.get("value", 0)
+        if not isinstance(padding, (tuple, list)) or any(
+            not isinstance(value, int) for value in padding
+        ):
+            raise CaptureError("constant padding requires static integer widths")
+        if not isinstance(fill, (int, float)):
+            raise CaptureError("constant padding requires a static fill value")
+        axis = args[0]
+        if isinstance(axis, ChunkAxis):
+            pair = 2 * (len(_shape(values[0])) - 1 - axis.dim)
+            if any(padding[pair : pair + 2]):
+                raise CaptureError("constant padding changes the logical chunk axis")
+        if axis == REDUCED and fill != 0 and any(value > 0 for value in padding):
+            raise CaptureError(
+                "constant padding adds a shared value to a row reduction"
+            )
+        return axis
     if name in {"permute", "transpose", "t"}:
         axis = args[0]
         if not isinstance(axis, ChunkAxis):
