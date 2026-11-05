@@ -75,13 +75,22 @@ def reshape_axis(
 ) -> ChunkAxis:
     before = math.prod(old[: axis.dim]) * axis.before
     after = math.prod(old[axis.dim + 1 :]) * axis.after
+    candidates = []
     for dim, extent in enumerate(new):
         prefix, suffix = math.prod(new[:dim]), math.prod(new[dim + 1 :])
         if not prefix or not suffix or before % prefix or after % suffix:
             continue
         left, right = before // prefix, after // suffix
         if extent == left * rows * right:
-            return ChunkAxis(dim, left, right)
+            candidate = ChunkAxis(dim, left, right)
+            if rows != 1:
+                return candidate
+            candidates.append(candidate)
+    if candidates:
+        # A singleton can also be represented inside either neighboring axis.
+        # Prefer its explicit dimension when available: packing it into heads
+        # or features changes its apparent position after a later transpose.
+        return min(candidates, key=lambda item: item.before * item.after)
     raise CaptureError(
         f"reshape {old} -> {new} does not preserve the logical chunk factor"
     )
