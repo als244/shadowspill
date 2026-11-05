@@ -210,22 +210,43 @@ def replay_primal(
                 ReplayDecision(None, None, (indices[node],), False, reason)
             )
 
+    barrier_nodes = tuple(node for node in original if node in barriers)
+    blocked_regions = {regions[node] for node in barriers if node in regions}
+    consumers = tuple(
+        consumer
+        for consumer in original
+        if consumer in regions
+        and regions[consumer] not in blocked_regions
+        and any(
+            source in eligible
+            and source in regions
+            and regions[source] != regions[consumer]
+            for source in consumer.all_input_nodes
+        )
+    )
+    if not consumers:
+        # Eligibility and effect checks above still run. With no cross-region
+        # consumer there is no proposal to validate: the unchanged graph has
+        # exactly the analyzed storage, geometry and barrier inventory. Keep
+        # the independent-copy contract without five more symbolic executions.
+        return copy_graph_module(graph), ReplaySchedule(
+            tuple(decisions),
+            tuple(
+                (indices[node], size, size)
+                for node in barrier_nodes
+                for size in (analysis.live_bytes(node),)
+            ),
+            tuple(indices[node] for node in original if node in protected),
+            (),
+        )
+
     current = copy_graph_module(graph)
     _refresh(current, example_inputs)
     current_analysis = analyze_lifetimes(current, example_inputs, readonly=readonly)
     outer = capture_task_storage_contract(current, example_inputs)
-    barrier_nodes = tuple(node for node in original if node in barriers)
-    blocked_regions = {regions[node] for node in barriers if node in regions}
     memo: dict[tuple[Node, int], str] = {}
-    for consumer in original:
-        if consumer not in regions or regions[consumer] in blocked_regions:
-            continue
+    for consumer in consumers:
         destination = regions[consumer]
-        if not any(
-            source in eligible and source in regions and regions[source] != destination
-            for source in consumer.all_input_nodes
-        ):
-            continue
         proposal = _propose(
             current, analysis, consumer, indices, eligible, regions, memo
         )

@@ -111,6 +111,66 @@ def test_replay_refuses_a_new_live_projection_across_the_barrier():
     torch.testing.assert_close(changed(x, weight), layer(x, weight), rtol=0, atol=0)
 
 
+@pytest.mark.parametrize("case", ["local", "barrier", "missing_primal", "external"])
+def test_no_replay_candidate_keeps_independent_graph_and_analysis(case, monkeypatch):
+    import shadowspill.pytorch.chunking.lifetime_replay as replay_module
+
+    x = torch.randn(17, 5, dtype=torch.float64, requires_grad=True)
+
+    def function(x):
+        early = x.sin()
+        local = early.cos()
+        attention = (early if case == "barrier" else local).softmax(0)
+        result = attention + (early if case in {"missing_primal", "external"} else x)
+        return (result, early) if case == "external" else (result,)
+
+    graph = make_fx(function)(x)
+    analysis = analyze_lifetimes(graph, (x,))
+    regions, _ = resolve_partition_assignments(
+        graph, graph, IsolateOperations((str(SOFTMAX),), base="whole")
+    )
+    barriers = frozenset(n for n in graph.graph.nodes if n.target is SOFTMAX)
+    selected = frozenset(
+        n for n in graph.graph.nodes if n.target is torch.ops.aten.sin.default
+    )
+    nodes = tuple(graph.graph.nodes)
+
+    def unexpected(*args, **kwargs):
+        raise AssertionError("unchanged replay repeated symbolic graph evaluation")
+
+    for name in ("_refresh", "analyze_lifetimes", "capture_task_storage_contract"):
+        monkeypatch.setattr(replay_module, name, unexpected)
+    changed, report = replay_primal(
+        graph,
+        analysis,
+        (x,),
+        selected=selected,
+        primal=frozenset() if case == "missing_primal" else frozenset(nodes),
+        regions=regions,
+        barriers=barriers,
+    )
+    assert changed is not graph and changed.graph is not graph.graph
+    assert not set(changed.graph.nodes).intersection(nodes)
+    assert changed.code == graph.code
+    assert not report.copies and not any(item.applied for item in report.decisions)
+    assert report.barrier_bytes == tuple(
+        (nodes.index(node), analysis.live_bytes(node), analysis.live_bytes(node))
+        for node in nodes
+        if node in barriers
+    )
+    if case in {"missing_primal", "external"}:
+        assert report.decisions
+    expected, actual = function(x), changed(x)
+    tangents = tuple(torch.randn_like(value) for value in expected)
+    torch.testing.assert_close(actual, expected, rtol=0, atol=0)
+    torch.testing.assert_close(
+        torch.autograd.grad(actual, x, tangents),
+        torch.autograd.grad(expected, x, tangents),
+        rtol=0,
+        atol=0,
+    )
+
+
 def test_changed_input_version_cannot_be_recomputed_later():
     x = torch.randn(17, 5)
 
