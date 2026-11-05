@@ -82,6 +82,8 @@ class GradientDestinationRule:
     consumed positions may return ``None``, an empty tensor or their destination.
     Empty tensors let providers use fixed Tensor return schemas supported by
     automatic functionalization. The graph returns the destinations instead.
+    An originally ``None`` output with no graph consumer may also use an empty
+    tensor placeholder. Observed unconsumed outputs must retain their contract.
 
     With no mapper, only reversible views/copies at the same dtype are consumed.
     A mapper may consume a subset and describe a provider's layout/scale/cast
@@ -442,6 +444,23 @@ def fuse_gradient_destinations(
                             "a consumed gradient must return None, an empty tensor "
                             "or its destination"
                         )
+                    continue
+                if (
+                    old is None
+                    and isinstance(new, torch.Tensor)
+                    and new.numel() == 0
+                    and not any(
+                        user.args[1] == index and user.users for user in producer.users
+                    )
+                ):
+                    # Optional inactive gradients have no value in the graph.
+                    # Fixed Tensor returns let the compiler functionalize the
+                    # replacement's mutations; an observed None must not change.
+                    # make_fx can leave a dead getitem even for None results.
+                    # Remove it rather than retain metadata for the old value.
+                    dead.extend(
+                        user for user in producer.users if user.args[1] == index
+                    )
                     continue
                 if index not in indices and (
                     isinstance(old, torch.Tensor) != isinstance(new, torch.Tensor)
