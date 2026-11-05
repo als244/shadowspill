@@ -24,6 +24,7 @@ from shadowspill.pytorch.capture.storage import capture_task_storage_contract
 from shadowspill.pytorch.capture.torch_deprecations import copy_graph_module
 from shadowspill.task.storage import StorageRootKind, TaskStorageContract
 
+from .lifetime_cache import analysis_key, current_analysis_cache
 from .lifetime_policy import ReadonlyOperator
 
 # These exact ATen overloads always alias their labelled input. A dispatcher
@@ -195,6 +196,13 @@ def analyze_lifetimes(
             raise ValueError(f"conflicting readonly contracts for {contract.target}")
     originals = tuple(graph.graph.nodes)
     fences, resolved = _effects(originals, contracts)
+    cache = current_analysis_cache.get()
+    key = None
+    if cache is not None:
+        key = analysis_key(graph, example_inputs, fences, resolved)
+        cached = cache.get(key, originals)
+        if cached is not None:
+            return cached
     inspection = copy_graph_module(graph)
     _check_aliases(inspection)
     copied = tuple(inspection.graph.nodes)
@@ -284,7 +292,7 @@ def analyze_lifetimes(
     reads = {
         node: roots if node in active else frozenset() for node, roots in reads.items()
     }
-    return LifetimeGraph(
+    result = LifetimeGraph(
         storage,
         MappingProxyType(values),
         MappingProxyType(reads),
@@ -294,3 +302,6 @@ def analyze_lifetimes(
         reads[original_output],
         originals,
     )
+    if cache is not None:
+        cache.put(key, result)
+    return result
