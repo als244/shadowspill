@@ -193,7 +193,13 @@ bound to measure, so it is held to an absolute one instead: no element may be
 further from the reference than two learning rates, which is one step whose
 gradient sign the two runs' roundings disagreed on, read at the resolution the
 weight is stored at (a BF16 weight two learning rates away lands on the nearest
-BF16 value, up to one ulp of its largest element past the bound). The gate also
+BF16 value; the error allowance is dtype epsilon times the reference maximum).
+The eligibility comparison against `steps * learning_rate` permits at most two
+storage ULPs at the reference maximum to account for floating-point rounding.
+This eligibility allowance is separate from the unchanged two-learning-rate
+error bound and the relative, cosine, sign and optimizer-moment thresholds.
+Older metric records without exact storage-spacing metadata keep the strict
+eligibility comparison. The gate also
 requires a checkpoint replay to agree with the uninterrupted run within
 tolerance, and records whether it agreed bit for bit besides.
 

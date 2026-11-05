@@ -200,6 +200,93 @@ def test_a_weight_made_only_of_optimizer_steps_is_judged_absolutely() -> None:
     assert not meets_tensor_tolerance(bias, key=moment_key, step_size=lr, steps=steps)
 
 
+@pytest.mark.parametrize("dtype", [torch.float16, torch.bfloat16, torch.float32])
+@pytest.mark.parametrize(
+    "scale", ["zero", "subnormal", "normal", "power", "other", "maximum"]
+)
+def test_reference_maximum_ulp_matches_stored_value_spacing(dtype, scale) -> None:
+    precision = torch.finfo(dtype)
+    value = {
+        "zero": 0,
+        "subnormal": precision.eps * precision.tiny,
+        "normal": precision.tiny,
+        "power": 2**-12,
+        "other": 1e-4,
+        "maximum": precision.max,
+    }[scale]
+    reference = torch.tensor([value], dtype=dtype)
+    direction = float("-inf") if scale == "maximum" else float("inf")
+    neighbor = torch.nextafter(reference, torch.full_like(reference, direction))
+    expected = float((neighbor.double() - reference.double()).abs()[0])
+    metric = tensor_metrics(reference, reference)
+    assert metric.reference_maximum_ulp == expected
+
+
+@pytest.mark.parametrize("dtype", [torch.float16, torch.bfloat16, torch.float32])
+@pytest.mark.parametrize("ulps,eligible", [(0, True), (1, True), (2, True), (3, False)])
+def test_step_scale_eligibility_has_a_two_storage_ulp_boundary(
+    dtype, ulps, eligible
+) -> None:
+    rate = 2**-12  # Exactly representable in every tested dtype.
+    reference = torch.tensor([rate, -rate], dtype=dtype)
+    for _ in range(ulps):
+        reference = torch.nextafter(reference, reference.sign() * float("inf"))
+    # Zero actual state fails the relative rule but meets the existing
+    # absolute-error bound, so only eligibility can decide this test.
+    metric = tensor_metrics(reference, torch.zeros_like(reference))
+    assert metric.cosine == 0 and metric.relative_l2 == 1
+    assert metric.maximum_absolute_error < 2 * rate
+    assert (
+        meets_tensor_tolerance(
+            metric, key="state/model/weight", step_size=rate, steps=1
+        )
+        == eligible
+    )
+
+
+def test_step_scale_allowance_keeps_old_records_and_other_bounds_strict() -> None:
+    from dataclasses import replace
+    from types import SimpleNamespace
+
+    rate = 1e-4
+    # The corrected H100 maximum is below two storage ULPs above nominal.
+    reference = torch.tensor([0.00010000001202570274], dtype=torch.float32)
+    metric = tensor_metrics(reference, torch.zeros_like(reference))
+    controls = dict(key="state/model/weight", step_size=rate, steps=1)
+    assert meets_tensor_tolerance(metric, **controls)
+    assert not meets_tensor_tolerance(
+        replace(metric, reference_maximum_ulp=0), **controls
+    )
+    legacy = SimpleNamespace(
+        cosine=metric.cosine,
+        relative_l2=metric.relative_l2,
+        sign_agreement=metric.sign_agreement,
+        maximum_absolute_error=metric.maximum_absolute_error,
+        reference_maximum_absolute=metric.reference_maximum_absolute,
+        resolution=metric.resolution,
+    )
+    assert not meets_tensor_tolerance(legacy, **controls)
+    assert not meets_tensor_tolerance(metric)
+    for changes in (
+        {"key": "state/optimizer/moment"},
+        {"key": "state/gradients/weight"},
+        {"steps": 0},
+        {"step_size": None},
+    ):
+        assert not meets_tensor_tolerance(metric, **(controls | changes))
+    # Eligibility never increases the maximum permitted weight error.
+    assert not meets_tensor_tolerance(
+        replace(metric, maximum_absolute_error=2 * rate + 2 * metric.resolution),
+        **controls,
+    )
+    # Original Adam pow/subtraction amplification exceeds 300 storage ULPs.
+    # It is refused even though this actual state is within the error bound.
+    old_reference = torch.tensor([0.00010000231850426644], dtype=torch.float32)
+    old_metric = tensor_metrics(old_reference, torch.zeros_like(old_reference))
+    assert old_metric.maximum_absolute_error < 2 * rate
+    assert not meets_tensor_tolerance(old_metric, **controls)
+
+
 def test_recomputation_diagnostics_count_only_retained_physical_savings() -> None:
     groups = (
         TaskAlternativeGroup(

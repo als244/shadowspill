@@ -33,6 +33,11 @@ MINIMUM_SIGN_AGREEMENT = 0.99
 # element's gradient in one step, which moves it by at most two learning
 # rates; so such a weight is held to that absolute bound instead.
 STEP_QUANTUM_DISAGREEMENTS = 2
+# The nominal scale bound is a real-valued learning-rate multiple; weights
+# store the result of floating-point arithmetic. Allow at most two storage
+# ULPs when deciding eligibility, separately from the existing error bound.
+# This does not admit the systematic first-step Adam bias-correction error.
+STEP_QUANTUM_ELIGIBILITY_ULPS = 2
 
 
 def state_half(key: str) -> str:
@@ -53,11 +58,13 @@ def meets_tensor_tolerance(
     The relative bounds decide, except for a weight whose reference is still
     nothing but its optimizer steps: given the run's ``step_size`` and
     ``steps``, one whose every element lies within ``steps`` learning rates of
-    zero passes when no element is further from the reference than
+    zero (plus at most two stored ULPs for eligibility) passes when no element
+    is further from the reference than
     :data:`STEP_QUANTUM_DISAGREEMENTS` learning rates, measured at the
     resolution the weight is stored at: a BF16 weight two learning rates from
-    its reference lands on the nearest BF16 value, up to one ulp of its
-    largest element away from the bound itself.
+    its reference lands on the nearest BF16 value. The existing error-bound
+    allowance is dtype epsilon times the reference maximum. Records without
+    exact storage-spacing metadata retain the strict eligibility check.
     """
 
     half = state_half(key)
@@ -74,7 +81,9 @@ def meets_tensor_tolerance(
         step_size is not None
         and steps > 0
         and half == "model"
-        and metric.reference_maximum_absolute <= steps * step_size
+        and metric.reference_maximum_absolute
+        <= steps * step_size
+        + STEP_QUANTUM_ELIGIBILITY_ULPS * getattr(metric, "reference_maximum_ulp", 0.0)
         and metric.maximum_absolute_error
         <= STEP_QUANTUM_DISAGREEMENTS * step_size + metric.resolution
     )

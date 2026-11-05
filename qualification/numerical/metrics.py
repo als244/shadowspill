@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import math
 from dataclasses import dataclass
 from typing import Any
 
@@ -21,10 +22,12 @@ class TensorMetrics:
     reference_maximum_absolute: float = 0.0
     actual_maximum_absolute: float = 0.0
     numel: int = 0
-    #: One ulp of the stored dtype at the reference's largest element: the
-    #: closest two values held at that dtype can sit, and the slack an
-    #: absolute bound needs when the bound itself is not representable there.
+    #: Precision-scaled reference magnitude, retained for the absolute-error
+    #: bound. This is eps * magnitude, not the exact binary storage spacing.
     resolution: float = 0.0
+    #: Exact binary spacing at the reference maximum (minimum subnormal at
+    #: zero). Older records without this metadata get no eligibility slack.
+    reference_maximum_ulp: float = 0.0
 
 
 def state_digest(value: object) -> str:
@@ -125,11 +128,21 @@ def tensor_metrics(reference: torch.Tensor, actual: torch.Tensor) -> TensorMetri
     right = actual.detach().double().reshape(-1)
     if left.numel() == 0:
         return TensorMetrics(1.0, 0.0, 1.0, 0.0)
-    resolution = (
-        float(torch.finfo(reference.dtype).eps) * float(left.abs().max())
-        if reference.is_floating_point()
-        else 0.0
-    )
+    reference_maximum = float(left.abs().max())
+    resolution = reference_maximum_ulp = 0.0
+    if reference.is_floating_point():
+        precision = torch.finfo(reference.dtype)
+        resolution = precision.eps * reference_maximum
+        if math.isfinite(reference_maximum):
+            minimum_spacing = precision.eps * precision.tiny
+            reference_maximum_ulp = (
+                max(
+                    math.ldexp(precision.eps, math.frexp(reference_maximum)[1] - 1),
+                    minimum_spacing,
+                )
+                if reference_maximum
+                else minimum_spacing
+            )
     difference = right - left
     left_norm = torch.linalg.vector_norm(left)
     right_norm = torch.linalg.vector_norm(right)
@@ -154,10 +167,11 @@ def tensor_metrics(reference: torch.Tensor, actual: torch.Tensor) -> TensorMetri
         reference_norm=float(left_norm),
         actual_norm=float(right_norm),
         difference_norm=float(difference_norm),
-        reference_maximum_absolute=float(left.abs().max()),
+        reference_maximum_absolute=reference_maximum,
         actual_maximum_absolute=float(right.abs().max()),
         numel=left.numel(),
         resolution=resolution,
+        reference_maximum_ulp=reference_maximum_ulp,
     )
 
 
