@@ -119,8 +119,10 @@ def compare_states(
 
 
 def tensor_metrics(reference: torch.Tensor, actual: torch.Tensor) -> TensorMetrics:
-    left = reference.detach().float().reshape(-1)
-    right = actual.detach().float().reshape(-1)
+    # Widen before products and subtraction, not just their reductions. A
+    # small nonzero FP32 product can underflow before an FP64 sum sees it.
+    left = reference.detach().double().reshape(-1)
+    right = actual.detach().double().reshape(-1)
     if left.numel() == 0:
         return TensorMetrics(1.0, 0.0, 1.0, 0.0)
     resolution = (
@@ -129,25 +131,19 @@ def tensor_metrics(reference: torch.Tensor, actual: torch.Tensor) -> TensorMetri
         else 0.0
     )
     difference = right - left
-    # Reduce in float64. A cosine is at most 1, but the numerator and the
-    # denominator are separate reductions with independent rounding, so in
-    # float32 over millions of small elements the ratio drifts either side of
-    # 1 by more than these thresholds allow -- above 1, which is not a number
-    # a cosine can take. The inputs stay float32; only the accumulation
-    # widens.
-    left_norm = torch.linalg.vector_norm(left, dtype=torch.float64)
-    right_norm = torch.linalg.vector_norm(right, dtype=torch.float64)
-    denominator = left_norm * right_norm
-    cosine = (
-        1.0
-        if float(denominator) == 0.0 and torch.equal(left, right)
-        else float(
-            torch.sum(left * right, dtype=torch.float64) / denominator.clamp_min(1e-30)
-        )
-    )
-    relative_l2 = float(
-        torch.linalg.vector_norm(difference, dtype=torch.float64)
-        / left_norm.clamp_min(1e-30)
+    left_norm = torch.linalg.vector_norm(left)
+    right_norm = torch.linalg.vector_norm(right)
+    difference_norm = torch.linalg.vector_norm(difference)
+    # An absolute denominator floor changes both metrics when a tensor is
+    # rescaled. Handle actual zeros explicitly and keep every nonzero norm.
+    if float(left_norm) == 0.0 or float(right_norm) == 0.0:
+        cosine = 1.0 if torch.equal(left, right) else 0.0
+    else:
+        cosine = float((torch.dot(left, right) / (left_norm * right_norm)).clamp(-1, 1))
+    relative_l2 = (
+        (0.0 if float(difference_norm) == 0.0 else float("inf"))
+        if float(left_norm) == 0.0
+        else float(difference_norm / left_norm)
     )
     sign_agreement = float((torch.sign(left) == torch.sign(right)).float().mean())
     return TensorMetrics(
@@ -157,9 +153,7 @@ def tensor_metrics(reference: torch.Tensor, actual: torch.Tensor) -> TensorMetri
         maximum_absolute_error=float(difference.abs().max()),
         reference_norm=float(left_norm),
         actual_norm=float(right_norm),
-        difference_norm=float(
-            torch.linalg.vector_norm(difference, dtype=torch.float64)
-        ),
+        difference_norm=float(difference_norm),
         reference_maximum_absolute=float(left.abs().max()),
         actual_maximum_absolute=float(right.abs().max()),
         numel=left.numel(),

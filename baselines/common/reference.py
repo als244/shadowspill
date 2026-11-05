@@ -64,26 +64,24 @@ class TensorMetrics:
 
 
 def tensor_metrics(reference: torch.Tensor, actual: torch.Tensor) -> TensorMetrics:
-    """The gate's per-tensor metrics, reduced in float64."""
+    """The gate's per-tensor metrics, including products/differences in FP64."""
 
-    left = reference.detach().float().reshape(-1)
-    right = actual.detach().float().reshape(-1)
+    left = reference.detach().double().reshape(-1)
+    right = actual.detach().double().reshape(-1)
     if left.numel() == 0:
         return TensorMetrics(1.0, 0.0, 1.0, 0.0, 0.0)
     difference = right - left
-    left_norm = torch.linalg.vector_norm(left, dtype=torch.float64)
-    right_norm = torch.linalg.vector_norm(right, dtype=torch.float64)
-    denominator = left_norm * right_norm
-    cosine = (
-        1.0
-        if float(denominator) == 0.0 and torch.equal(left, right)
-        else float(
-            torch.sum(left * right, dtype=torch.float64) / denominator.clamp_min(1e-30)
-        )
-    )
-    relative_l2 = float(
-        torch.linalg.vector_norm(difference, dtype=torch.float64)
-        / left_norm.clamp_min(1e-30)
+    left_norm = torch.linalg.vector_norm(left)
+    right_norm = torch.linalg.vector_norm(right)
+    difference_norm = torch.linalg.vector_norm(difference)
+    if float(left_norm) == 0.0 or float(right_norm) == 0.0:
+        cosine = 1.0 if torch.equal(left, right) else 0.0
+    else:
+        cosine = float((torch.dot(left, right) / (left_norm * right_norm)).clamp(-1, 1))
+    relative_l2 = (
+        (0.0 if float(difference_norm) == 0.0 else float("inf"))
+        if float(left_norm) == 0.0
+        else float(difference_norm / left_norm)
     )
     sign_agreement = float((torch.sign(left) == torch.sign(right)).float().mean())
     return TensorMetrics(

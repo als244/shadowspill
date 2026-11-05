@@ -40,6 +40,53 @@ def test_state_metrics_are_path_specific_and_deterministic() -> None:
     assert state_digest(reference) != state_digest(actual)
 
 
+@pytest.mark.parametrize("scale", [1.0, 1e-20, 1e-32, 2**-149])
+def test_metrics_keep_nonzero_fp32_norms_at_every_scale(scale) -> None:
+    reference = torch.tensor([scale, -scale], dtype=torch.float32)
+    identical = tensor_metrics(reference, reference.clone())
+    assert identical.cosine == pytest.approx(1.0)
+    assert identical.relative_l2 == 0
+    assert meets_tensor_tolerance(identical)
+    doubled = tensor_metrics(reference, 2 * reference)
+    assert doubled.cosine == pytest.approx(1.0)
+    assert doubled.relative_l2 == pytest.approx(1.0)
+    assert not meets_tensor_tolerance(doubled)
+    reversed_direction = tensor_metrics(reference, -reference)
+    assert reversed_direction.cosine == pytest.approx(-1.0)
+    assert reversed_direction.relative_l2 == pytest.approx(2.0)
+    assert not meets_tensor_tolerance(reversed_direction)
+
+
+def test_metrics_handle_zero_norms_without_a_scale_floor() -> None:
+    zero = torch.zeros(2)
+    tiny = torch.tensor([1e-32, -1e-32])
+    matched = tensor_metrics(zero, zero)
+    assert (matched.cosine, matched.relative_l2) == (1, 0)
+    unexpected = tensor_metrics(zero, tiny)
+    assert (unexpected.cosine, unexpected.relative_l2) == (0, float("inf"))
+    missing = tensor_metrics(tiny, zero)
+    assert (missing.cosine, missing.relative_l2) == (0, 1)
+    assert not meets_tensor_tolerance(unexpected)
+    assert not meets_tensor_tolerance(missing)
+
+
+def test_metrics_widen_before_fp32_products_and_subtraction() -> None:
+    maximum = torch.finfo(torch.float32).max
+    reference = torch.tensor([maximum, -maximum])
+    metric = tensor_metrics(reference, -reference)
+    assert metric.cosine == pytest.approx(-1.0)
+    assert metric.relative_l2 == pytest.approx(2.0)
+    assert metric.maximum_absolute_error == 2 * maximum
+
+
+def test_metrics_do_not_narrow_double_state_values() -> None:
+    reference = torch.tensor([1.0], dtype=torch.float64)
+    actual = reference + 2**-40
+    metric = tensor_metrics(reference, actual)
+    assert metric.maximum_absolute_error == 2**-40
+    assert metric.relative_l2 == 2**-40
+
+
 def test_state_metrics_separate_value_differences_from_structural_ones() -> None:
     """A different value and a different shape are different findings.
 

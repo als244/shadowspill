@@ -197,4 +197,10 @@ BF16 value, up to one ulp of its largest element past the bound). The gate also
 requires a checkpoint replay to agree with the uninterrupted run within
 tolerance, and records whether it agreed bit for bit besides.
 
+Tensor comparisons widen values to FP64 before products and subtraction, as
+well as reducing in FP64. Nonzero norms have no absolute denominator floor:
+rescaling a small FP32 tensor must not change its cosine or relative error.
+Two zero tensors have cosine 1 and relative error 0; a nonzero result against
+an all-zero reference has infinite relative error.
+
 Use the [nondeterminism probe](../nondeterminism/README.md) to locate a divergence.

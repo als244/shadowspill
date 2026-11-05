@@ -53,8 +53,10 @@ def pairs(seed):
 
 
 @pytest.mark.parametrize("seed", range(3))
-def test_the_metrics_and_the_relative_rule_are_the_numerical_gates(seed):
+@pytest.mark.parametrize("scale", [1.0, 1e-20, 1e-32])
+def test_the_metrics_and_the_relative_rule_are_the_numerical_gates(seed, scale):
     for expected, actual in pairs(seed):
+        expected, actual = expected * scale, actual * scale
         mine = reference.tensor_metrics(expected, actual)
         theirs = metrics.tensor_metrics(expected, actual)
         for field in FIELDS:
