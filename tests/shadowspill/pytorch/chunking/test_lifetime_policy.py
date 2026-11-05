@@ -176,6 +176,65 @@ def test_protected_barriers_override_movement_permission():
     assert decisions[0]["reason"] == "protected memory barrier"
 
 
+@pytest.mark.parametrize("dtype", [torch.bfloat16, torch.float16])
+@pytest.mark.parametrize("scale", ["multiply", "divide", "negate"])
+def test_scaled_gradient_conversion_stays_inside_chunk_reduction(dtype, scale):
+    # The three chunk subtotals are [large, 1, -large]. Accumulating in the
+    # parameter's FP32 dtype preserves 1; summing in the compute dtype loses it.
+    large = 256 if dtype is torch.bfloat16 else 2048
+    x = torch.zeros(7, 2, 2, dtype=dtype)
+    pattern = torch.tensor([[1, 2], [4, 8]], dtype=dtype)
+    x[0], x[3], x[6] = large * pattern, pattern, -large * pattern
+    control = torch.arange(7, dtype=torch.float32)
+
+    def scaled(value):
+        if scale == "multiply":
+            return value * 2.0
+        if scale == "divide":
+            return value / 2.0
+        return -value
+
+    def backward(x, control):
+        contribution = x.sum(0).float()
+        barrier = control.softmax(0)
+        gradient = scaled(contribution).transpose(0, 1).contiguous()
+        return barrier, gradient
+
+    captured = GraphArtifact.capture(
+        kind="backward",
+        graph_module=make_fx(backward)(x, control),
+        example_inputs=(x, control),
+    )
+    transformed = region_artifact(
+        captured,
+        ChunkRegions(
+            IsolateOperations(SOFTMAX, base="whole"),
+            RegionChunks(7),
+            lifetimes=ExecutionLifetimes(
+                rules=(LifetimeRule("aten._to_copy.default", move=True),)
+            ),
+        ),
+        stage_id="packed_projection",
+        variant="recompute",
+        gradient_leaves=(1,),
+    )
+    # Ordinary autograd performs the cast back to the parameter dtype for
+    # each independent chunk, before accumulating into its gradient.
+    weight = torch.zeros(2, 2, dtype=torch.float32, requires_grad=True)
+    loss = sum(
+        scaled((part * weight.transpose(0, 1).to(dtype)).float().sum())
+        for part in x.split(3)
+    )
+    (expected,) = torch.autograd.grad(loss, (weight,))
+    torch.testing.assert_close(
+        expected, scaled(pattern.float().transpose(0, 1)), rtol=0, atol=0
+    )
+    actual = region_executable(transformed)(x, control)
+    torch.testing.assert_close(actual[0], control.softmax(0), rtol=0, atol=0)
+    torch.testing.assert_close(actual[1], expected, rtol=0, atol=0)
+    assert transformed.storage_contract == captured.storage_contract
+
+
 def test_readonly_versions_enter_identity_and_unknown_providers_refuse_movement():
     x = torch.randn(17, 5)
     captured = GraphArtifact.capture(

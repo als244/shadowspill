@@ -37,7 +37,10 @@ fake execution supplies geometry, not alias proof. Unknown opaque effects and
 overlapping writes stop movement. Selected barriers stay in place and every
 candidate is checked against all their complete live backing sets, including
 siblings of partial views. Parameter-gradient conversions are protected before
-chunk reductions. Semantic backing counts exclude external inputs, opaque
+chunk reductions, including conversions followed by literal scalar scaling,
+negation, or gradient layout changes. Moving such a conversion after a chunk
+loop could sum contributions in the compute dtype instead of the parameter's
+wider gradient dtype. Semantic backing counts exclude external inputs, opaque
 workspace and allocator overhead and are not physical admission estimates.
 
 Normalized resolved choices, used readonly-contract versions and movement

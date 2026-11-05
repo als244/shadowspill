@@ -25,6 +25,7 @@ _GRADIENT_ASSEMBLY = (
         torch.ops.aten.add.Tensor,
         torch.ops.aten.add_.Tensor,
         torch.ops.aten.cat.default,
+        torch.ops.aten.neg.default,
         torch.ops.aten.sum.default,
         torch.ops.aten.sum.dim_IntList,
     }
@@ -59,6 +60,28 @@ class LifetimeSchedule:
     protected_conversions: tuple[int, ...]
 
 
+def _literal_gradient_scale(node: Node) -> bool:
+    """Follow scalar adjoints without walking into tensor-product operands.
+
+    A cast before a literal scale still determines the dtype in which gradient
+    chunks accumulate. Moving it past an execution cut can introduce a narrow
+    subtotal, even when the scale is one and the final parameter is FP32.
+    """
+    if len(node.args) != 2:
+        return False
+    left, right = node.args
+    scalar = (int, float, complex)
+    if node.target in (torch.ops.aten.mul.Tensor, torch.ops.aten.mul.Scalar):
+        return (isinstance(left, Node) and isinstance(right, scalar)) or (
+            isinstance(right, Node) and isinstance(left, scalar)
+        )
+    return (
+        node.target in (torch.ops.aten.div.Tensor, torch.ops.aten.div.Scalar)
+        and isinstance(left, Node)
+        and isinstance(right, scalar)
+    )
+
+
 def _gradient_conversions(
     graph: GraphModule, output_leaves: tuple[int, ...] | None
 ) -> frozenset[Node]:
@@ -74,7 +97,10 @@ def _gradient_conversions(
         if (
             not isinstance(node, Node)
             or node in seen
-            or node.target not in _GRADIENT_ASSEMBLY
+            or (
+                node.target not in _GRADIENT_ASSEMBLY
+                and not _literal_gradient_scale(node)
+            )
         ):
             continue
         seen.add(node)
