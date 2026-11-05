@@ -110,16 +110,16 @@ def analysis_key(
             # may carry other literals, but hidden tensor aliases need a richer
             # input contract before their analysis can be reused.
             item = _value_key(value, nodes, tensors=isinstance(value, torch.Tensor))
-            backing = None
+            storage_key = None
             if isinstance(value, torch.Tensor):
                 size = value.untyped_storage().nbytes()
                 if type(size) is not int:
                     raise _Uncacheable
-                backing = (
+                storage_key = (
                     aliases.setdefault(live_storage_identity(value), len(aliases)),
                     size,
                 )
-            arguments.append((item, backing))
+            arguments.append((item, storage_key))
         operations = tuple(
             (
                 node.op,
