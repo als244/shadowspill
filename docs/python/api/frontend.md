@@ -349,6 +349,17 @@ Targets absent from an individual stage have no effect there, allowing one
 policy to apply across different stages. Inspect captured graphs and the
 graph-pair manifest to verify the intended operators and regenerated work.
 
+`retain` prevents the matching forward computation from being replayed in
+backward; it does not require a separate saved port containing its raw result.
+The cut can save that result, save a sufficient derived value instead, or omit
+local backward state when the result is needed only by forward consumers.
+For example, a compact count statistic can cross the cut as integer counts or
+normalized floating-point frequencies. An existing forward output does not
+automatically require a duplicate backward save. Inspect the actual saved
+ports and their storage backings to determine retained bytes; the rule name
+alone does not determine memory use. Profiling and residency planning still
+apply to the resulting graph pair.
+
 `module_pattern` is an optional case-sensitive shell pattern matched against
 the operation's source module paths. Any matching ancestor includes its
 descendants. For example, `"model.blocks.*.experts"` selects operations in each

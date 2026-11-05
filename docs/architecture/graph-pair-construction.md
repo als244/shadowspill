@@ -255,6 +255,13 @@ tuple-valued operations. Model annotations and mandatory effect or mutation
 state constrain the cut; conflicting explicit rules are refused. Permitted
 stage variants remain a separate build control.
 
+An explicit retain rule constrains replay of the selected forward computation,
+not the exact saved signature. The cut may retain its raw result or a derived
+value sufficient for backward. A value needed only by later forward consumers
+can remain an ordinary forward output without an additional backward save.
+Rule validation checks for forbidden forward replay in backward; the resulting
+saved ports, aliases and measured tasks determine actual storage and residency.
+
 The SAVE policy may instead use `default="recompute"` with explicit retain
 rules. Paired with the default RECOMPUTE policy, this offers per-stage
 selection between retaining only those selected operator results and replaying
