@@ -199,6 +199,24 @@ def test_unrecognized_tensor_representation_uses_uncached_analysis():
         assert cache.bypasses == 2 and cache.hits == cache.misses == 0
 
 
+def test_nested_tensor_arguments_do_not_reuse_unrepresented_aliases():
+    from torch._subclasses.fake_tensor import FakeTensorMode
+    from torch.fx import symbolic_trace
+    from torch.fx.passes.fake_tensor_prop import FakeTensorProp
+
+    x = torch.randn(7, 12)
+    graph = symbolic_trace(lambda pair: torch.ops.aten.add.Tensor(pair[0], pair[1]))
+    FakeTensorProp(graph, mode=FakeTensorMode(allow_non_fake_inputs=True)).propagate(
+        [x, x]
+    )
+    inputs = (([x, x],), ([x, x.clone()],))
+    expected = [analyze_lifetimes(graph, args) for args in inputs]
+    with lifetime_analysis_scope() as cache:
+        actual = [analyze_lifetimes(graph, args) for args in inputs]
+        assert actual == expected
+        assert cache.bypasses == 2 and cache.hits == cache.misses == 0
+
+
 def test_training_region_entry_reuses_analysis_across_actual_graph_pair_forms(
     monkeypatch,
 ):

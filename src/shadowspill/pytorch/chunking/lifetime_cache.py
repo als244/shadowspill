@@ -106,7 +106,10 @@ def analysis_key(
     arguments = []
     try:
         for value in inputs:
-            item = _value_key(value, nodes, tensors=True)
+            # The alias catalog below covers flat tensor arguments. Containers
+            # may carry other literals, but hidden tensor aliases need a richer
+            # input contract before their analysis can be reused.
+            item = _value_key(value, nodes, tensors=isinstance(value, torch.Tensor))
             backing = None
             if isinstance(value, torch.Tensor):
                 size = value.untyped_storage().nbytes()
