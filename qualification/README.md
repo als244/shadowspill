@@ -47,10 +47,19 @@ The launcher rejects stale C builds; rebuild before qualification. The explicit
 
 Results live under `qualification/results/`:
 
-- `gates_<run>/`: per-gate logs and the terminal summary.
+- `gates_<run>/`: per-gate logs, incremental `suite.events.jsonl` and the terminal summary.
 - `numerical_<run>/`, `performance_<run>/`: matrix summaries and per-cell results.
 - Each cell's `.phases/`: Program, Profiles, ProfiledProgram, CommunicationInfo,
   Plan, settings and phase timings.
+
+The suite event log records selected/deselected tests, each test's start and
+setup/call/teardown results, failure details and session completion. Records are
+flushed immediately so a process crash does not discard earlier failures or the
+identity of the active test. Sessions have distinct IDs and append to the file;
+an absent `session_finish` means the session is incomplete, not a pass. This
+does not make records durable against machine or storage failure. Ordinary
+pytest runs can opt in with `-p qualification.gates.suite_events --suite-events
+PATH`. Numerical and performance workers do not load this plugin.
 
 Every matrix gate starts with fresh phase artifacts and empty Inductor/Triton
 caches. Compiler caches are disposable; phase archives remain available for

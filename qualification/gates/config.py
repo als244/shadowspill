@@ -69,6 +69,10 @@ def _commands(
             "tests",
             "-p",
             "no:cacheprovider",
+            "-p",
+            "qualification.gates.suite_events",
+            "--suite-events",
+            str(RESULTS / f"gates_{run}" / "suite.events.jsonl"),
             *options,
         )
     matrices = {
