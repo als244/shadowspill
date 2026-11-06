@@ -72,13 +72,13 @@ def shared_memory(primary: Plan, plans: Mapping[str, Plan]) -> SharedMemory:
     overhead = shared_fixed_overhead([plan for _, plan in paths])
     execution = fixed + dynamic + overhead
     spill = _spill_bytes(paths, mappings)
-    if execution > primary.memory_budgets.execution_bytes:
+    if execution > primary.effective_execution_bytes:
         raise PlanInfeasibleError(
             f"shared Plans require {execution} GPU bytes including overhead; "
-            f"budget is {primary.memory_budgets.execution_bytes}",
+            f"effective allowance is {primary.effective_execution_bytes}",
             kind="shared_execution_memory",
             required_bytes=execution,
-            capacity_bytes=primary.memory_budgets.execution_bytes,
+            capacity_bytes=primary.effective_execution_bytes,
         )
     if spill > primary.memory_budgets.spill_bytes:
         raise PlanInfeasibleError(

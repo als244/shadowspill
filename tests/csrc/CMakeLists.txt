@@ -323,6 +323,16 @@ if(TARGET shadowspill_pytorch)
     set_tests_properties(shadowspill_spill_probe_ssd_canary PROPERTIES TIMEOUT 30)
   endif()
   add_executable(shadowspill_external_baseline_canary adapter/external_baseline_canary.c)
+  add_executable(shadowspill_pool_admission_canary adapter/pool_admission_canary.c)
+  target_include_directories(shadowspill_pool_admission_canary
+    PRIVATE ${PROJECT_SOURCE_DIR}/csrc/adapter/pytorch/include)
+  target_link_libraries(shadowspill_pool_admission_canary
+    PRIVATE shadowspill_pytorch shadowspill ${CMAKE_DL_LIBS} shadowspill_build_options)
+  foreach(mode RANGE 0 4)
+    add_test(NAME shadowspill_pool_admission_${mode}
+      COMMAND shadowspill_pool_admission_canary $<TARGET_FILE:shadowspill_test_physical_backend> ${mode})
+    set_tests_properties(shadowspill_pool_admission_${mode} PROPERTIES TIMEOUT 30)
+  endforeach()
   target_include_directories(shadowspill_external_baseline_canary
     PRIVATE ${PROJECT_SOURCE_DIR}/csrc/adapter/pytorch/include)
   target_link_libraries(shadowspill_external_baseline_canary

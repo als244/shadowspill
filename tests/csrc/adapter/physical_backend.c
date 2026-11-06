@@ -4,6 +4,13 @@
 #include <stdint.h>
 
 static uint64_t process_bytes;
+static uint64_t outside_bytes;
+static uint64_t total_bytes = UINT64_C(1) << 40U;
+
+SHADOWSPILL_BACKEND_MOCK_API void shadowspill_test_device_bytes(uint64_t outside, uint64_t total) {
+    outside_bytes = outside;
+    total_bytes = total;
+}
 
 SHADOWSPILL_BACKEND_MOCK_API void shadowspill_test_process_bytes(uint64_t value) {
     process_bytes = value;
@@ -15,8 +22,8 @@ static int physical(void *state, ShadowSpillBackendPhysicalMemory *out) {
     }
     *out = (ShadowSpillBackendPhysicalMemory){
         .process_bytes = process_bytes,
-        .device_used_bytes = process_bytes,
-        .device_total_bytes = UINT64_C(1) << 40U,
+        .device_used_bytes = process_bytes + outside_bytes,
+        .device_total_bytes = total_bytes,
     };
     return 0;
 }

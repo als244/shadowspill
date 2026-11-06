@@ -7,6 +7,7 @@ from shadowspill.artifacts._values import digest
 
 if TYPE_CHECKING:
     from shadowspill.artifacts.plan import Plan
+    from shadowspill.artifacts.pool_memory import PoolMemoryProfile
 
 
 def external_baseline(plans: Sequence["Plan"]) -> int:
@@ -72,4 +73,29 @@ def shared_fixed_overhead(plans: Sequence["Plan"]) -> int:
         communicator = max(communicator, fixed)
         headroom = max(headroom, margin)
         remainder = max(remainder, retained + communication - fixed)
-    return external_baseline(plans) + headroom + communicator + remainder
+    return (
+        external_baseline(plans)
+        + headroom
+        + communicator
+        + remainder
+        + pool_process_reservation(plans)
+    )
+
+
+def shared_pool_memory(plans: Sequence["Plan"]) -> "PoolMemoryProfile | None":
+    """One identical observation record for all invocation paths of a worker.
+
+    Refuse mixing uncalibrated and calibrated Plans. Replanning with one shared
+    calibration is cheap and avoids inventing a composite acquisition history.
+    """
+    profiles = [p.pool_memory for p in plans]
+    if not profiles:
+        return None
+    if any(p != profiles[0] for p in profiles):
+        raise ValueError("shared Plans require identical pool memory evidence")
+    return profiles[0]
+
+
+def pool_process_reservation(plans: Sequence["Plan"]) -> int:
+    profile = shared_pool_memory(plans)
+    return 0 if profile is None else profile.process_reservation_bytes

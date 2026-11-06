@@ -6,7 +6,16 @@ from shadowspill.errors import PlanInfeasibleError, PlanSearchExhaustedError
 from shadowspill.step import StepDataOrdering
 
 
-def search(programs, entries, budgets, communication, options, *, ordering="factors"):
+def search(
+    programs,
+    entries,
+    budgets,
+    communication,
+    options,
+    *,
+    ordering="factors",
+    pool_memory=None,
+):
     cases, choices = [], {}
     for budget in budgets:
         for entry in entries:
@@ -29,6 +38,7 @@ def search(programs, entries, budgets, communication, options, *, ordering="fact
                         communication_info=communication,
                         search_options=options,
                         ordering=choice,
+                        pool_memory=pool_memory,
                     )
                 except (PlanInfeasibleError, PlanSearchExhaustedError) as error:
                     cases.append(

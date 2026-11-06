@@ -21,7 +21,7 @@
 extern "C" {
 #endif
 
-#define SHADOWSPILL_PYTORCH_ADAPTER_ABI_VERSION 2U
+#define SHADOWSPILL_PYTORCH_ADAPTER_ABI_VERSION 3U
 
 /* Independent calibration session using real pool kinds/lanes. Does not install
  * the allocator or bind the process-global Runtime. The session owns bounded
@@ -129,6 +129,12 @@ typedef struct ShadowSpillPytorchAdapterConfig {
     /* Absolute mature process-external footprint; excludes in-pool state.
        Zero preserves sizing from the observed cold baseline alone. */
     uint64_t external_baseline_bytes;
+    /* Independent physical availability with the measured spill pool live.
+       Zero preserves legacy process-budget-only sizing. */
+    uint64_t physical_limit_bytes;
+    /* Device-global cost not attributed to this process, reserved before
+       creating the spill pool. Requires a nonzero physical_limit_bytes. */
+    uint64_t unattributed_reservation_bytes;
 } ShadowSpillPytorchAdapterConfig;
 
 typedef struct ShadowSpillPytorchPhysicalAdmission {
@@ -147,6 +153,11 @@ typedef struct ShadowSpillPytorchPhysicalAdmission {
     /* max(baseline_bytes, config.external_baseline_bytes). The observed
        baseline remains separately visible above. */
     uint64_t reserved_baseline_bytes;
+    uint64_t physical_limit_bytes;
+    uint64_t unattributed_reservation_bytes;
+    /* Cold free + own process, before subtracting the global reservation. */
+    uint64_t available_process_bytes;
+    uint64_t effective_limit_bytes;
 } ShadowSpillPytorchPhysicalAdmission;
 
 /* The three contracts this build was compiled against, and the one thing

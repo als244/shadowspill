@@ -7,6 +7,7 @@ from typing import TYPE_CHECKING, Literal
 
 from shadowspill.artifacts.budgets import MemoryBudgets
 from shadowspill.artifacts.plan import Plan
+from shadowspill.artifacts.pool_memory import PoolMemoryProfile
 from shadowspill.artifacts.profiled_program import ProfiledProgram
 from shadowspill.communication import CommunicationInfo
 from shadowspill.communication.memory import communication_overhead
@@ -26,6 +27,7 @@ def plan_program(
     *,
     memory_budgets: MemoryBudgets,
     communication_info: CommunicationInfo,
+    pool_memory: PoolMemoryProfile | None = None,
     search_options: SearchOptions | None = None,
     ordering: StepDataOrdering | None = None,
     optimizer_ordering: Literal["stage_interleaved", "tail"] = "stage_interleaved",
@@ -53,6 +55,7 @@ def plan_program(
         ),
         memory_budgets=memory_budgets,
         communication_info=communication_info,
+        pool_memory=pool_memory,
         options=options,
     )
     if program.program.bindings.get("kind") != "forward_backward":
@@ -69,6 +72,7 @@ def plan_program(
         ),
         memory_budgets=memory_budgets,
         communication_info=communication_info,
+        pool_memory=pool_memory,
         options=options,
     )
     from .modes import bundle_gradient_modes
@@ -82,13 +86,21 @@ def _plan_bound(
     memory_budgets: MemoryBudgets,
     communication_info: CommunicationInfo,
     options: SearchOptions,
+    pool_memory: PoolMemoryProfile | None = None,
 ) -> Plan:
-    costed, config = simulation_inputs(program, memory_budgets, communication_info)
+    costed, config = simulation_inputs(
+        program, memory_budgets, communication_info, pool_memory
+    )
     facts = program_admission(
         program,
         costed,
-        memory_budgets.execution_bytes
+        (
+            memory_budgets.execution_bytes
+            if pool_memory is None
+            else min(memory_budgets.execution_bytes, pool_memory.physical_limit_bytes)
+        )
         - program.fixed_device_bytes
+        - (0 if pool_memory is None else pool_memory.process_reservation_bytes)
         - communication_overhead(program.program, communication_info)[0],
         communication_info,
     )
@@ -142,4 +154,5 @@ def _plan_bound(
         costed,
         layout,
         facts,
+        pool_memory=pool_memory,
     )

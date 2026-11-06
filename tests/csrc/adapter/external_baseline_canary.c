@@ -48,6 +48,9 @@ int main(int argc, char **argv) {
     config.abi_version = 1U;
     REQUIRE(shadowspill_pytorch_allocator_bootstrap(&config) ==
             SHADOWSPILL_STATUS_INVALID_ARGUMENT);
+    config.abi_version = 2U;
+    REQUIRE(shadowspill_pytorch_allocator_bootstrap(&config) ==
+            SHADOWSPILL_STATUS_INVALID_ARGUMENT);
     config.abi_version = SHADOWSPILL_PYTORCH_ADAPTER_ABI_VERSION;
     REQUIRE(shadowspill_pytorch_allocator_bootstrap(&config) ==
             SHADOWSPILL_STATUS_INVALID_ARGUMENT);

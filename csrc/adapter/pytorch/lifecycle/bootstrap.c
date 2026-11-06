@@ -16,6 +16,8 @@ static int bootstrap_config_is_valid(
         config->abi_version != SHADOWSPILL_PYTORCH_ADAPTER_ABI_VERSION ||
         config->backend_library == NULL || config->backend_library[0] == '\0' ||
         config->device_ordinal < 0 || config->device_budget_bytes == 0U ||
+        (config->physical_limit_bytes == 0U &&
+            config->unattributed_reservation_bytes != 0U) ||
         config->external_headroom_bytes >= config->device_budget_bytes ||
         config->external_baseline_bytes >=
             config->device_budget_bytes - config->external_headroom_bytes ||
@@ -69,6 +71,23 @@ static int bootstrap_config_is_valid(
     return 1;
 }
 
+static uint64_t effective_limit(
+    const ShadowSpillPytorchAdapterConfig *config,
+    const ShadowSpillBackendPhysicalMemory *physical
+) {
+    uint64_t limit = config->device_budget_bytes;
+    if (config->physical_limit_bytes != 0U) {
+        const uint64_t available = physical->device_total_bytes -
+            physical->device_used_bytes + physical->process_bytes;
+        const uint64_t current = available > config->unattributed_reservation_bytes
+            ? available - config->unattributed_reservation_bytes : 0U;
+        if (current < limit) limit = current;
+        if (config->physical_limit_bytes < limit)
+            limit = config->physical_limit_bytes;
+    }
+    return limit;
+}
+
 /* Reserve the larger of the observed cold process and the mature external
    footprint, plus headroom, in whole 2 MiB pages; 0 when nothing fits. */
 static uint64_t allocator_pool_bytes(
@@ -76,15 +95,16 @@ static uint64_t allocator_pool_bytes(
     const ShadowSpillBackendPhysicalMemory *physical
 ) {
     const uint64_t physical_granularity = 2U << 20U;
+    const uint64_t limit = effective_limit(config, physical);
     const uint64_t baseline = physical->process_bytes >
         config->external_baseline_bytes
         ? physical->process_bytes : config->external_baseline_bytes;
     if (config->device_budget_bytes > physical->device_total_bytes ||
-        baseline >
-            config->device_budget_bytes - config->external_headroom_bytes) {
+        config->external_headroom_bytes >= limit ||
+        baseline >= limit - config->external_headroom_bytes) {
         return 0U;
     }
-    const uint64_t available = config->device_budget_bytes -
+    const uint64_t available = limit -
         baseline - config->external_headroom_bytes;
     return available - available % physical_granularity;
 }
@@ -180,6 +200,11 @@ static ShadowSpillStatus create_runtime(
         backend->physical_memory(backend->state, baseline) != 0) {
         return SHADOWSPILL_STATUS_BACKEND_FAILURE;
     }
+    if (baseline->process_bytes > baseline->device_used_bytes ||
+        baseline->device_used_bytes > baseline->device_total_bytes ||
+        baseline->device_total_bytes == 0U) {
+        return SHADOWSPILL_STATUS_BACKEND_FAILURE;
+    }
     *pool_bytes = allocator_pool_bytes(config, baseline);
     if (*pool_bytes == 0U) {
         /* The device is usually far from full here: the budget less what the
@@ -192,7 +217,7 @@ static ShadowSpillStatus create_runtime(
             shadowspill_pytorch_failure_latch_physical_locked(
                 SHADOWSPILL_STATUS_OUT_OF_MEMORY,
                 baseline->process_bytes,
-                config->device_budget_bytes
+                effective_limit(config, baseline)
             );
             adapter.failure.runtime.pool_id = config->allocator_pool_id;
         }
@@ -302,6 +327,11 @@ static ShadowSpillStatus publish(
         .bootstrap_process_bytes = bootstrapped->process_bytes,
         .device_used_bytes = bootstrapped->device_used_bytes,
         .device_total_bytes = bootstrapped->device_total_bytes,
+        .physical_limit_bytes = config->physical_limit_bytes,
+        .unattributed_reservation_bytes = config->unattributed_reservation_bytes,
+        .available_process_bytes = baseline->device_total_bytes -
+            baseline->device_used_bytes + baseline->process_bytes,
+        .effective_limit_bytes = effective_limit(config, baseline),
     };
     adapter.physical_checks = 1U;
     adapter.peak_process_physical_bytes = bootstrapped->process_bytes;

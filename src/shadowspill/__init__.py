@@ -22,6 +22,8 @@ _PUBLIC = {
     "apply_profiles": "profiling.apply",
     "measure_program": "profiling.measure",
     "MemoryBudgets": "artifacts.budgets",
+    "PoolMemoryProfile": "artifacts.pool_memory",
+    "measure_pool_memory": "profiling.pool_memory",
     "CommunicationInfo": "communication",
     "measure_communication": "communication.measure",
     "plan_program": "planning.plan",

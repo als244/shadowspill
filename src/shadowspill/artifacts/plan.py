@@ -11,6 +11,7 @@ from shadowspill.ir import MemorySchedule, ShadowSpillProgram, TaskAlternativeCh
 from shadowspill.simulator import SimulationResult, TransferDirection
 
 from .archive import Artifact
+from .pool_memory import PoolMemoryProfile
 from .profiled_program import ProfiledProgram
 from .program import Program
 
@@ -36,8 +37,18 @@ class Plan(Artifact):
     memory_layout: FixedPhysicalLayout | None = None
     _admission_facts: AdmissionFacts | None = None
     _accumulation_plan: Plan | None = None
+    pool_memory: PoolMemoryProfile | None = None
 
     def __post_init__(self) -> None:
+        if self.pool_memory is not None:
+            self.pool_memory.validate_program(
+                self.memory_budgets.spill_bytes,
+                1
+                if self.program.parallelism is None
+                else self.program.parallelism.world_size,
+                gpu=self.program.setup.get("gpu"),
+                spill_kind=self.communication_info.metadata.get("spill_kind"),
+            )
         layout, facts = self.memory_layout, self._admission_facts
         if (layout is None) != (facts is None):
             raise ValueError("physical layout and admission facts must travel together")
@@ -53,7 +64,7 @@ class Plan(Artifact):
                 raise ValueError("estimated memory cannot carry a physical layout")
             if (
                 layout.required_bytes + self.fixed_device_bytes
-                > self.memory_budgets.execution_bytes
+                > self.effective_execution_bytes
             ):
                 raise ValueError("physical layout exceeds the total GPU allowance")
 
@@ -67,6 +78,7 @@ class Plan(Artifact):
                 or self.program.alias_groups != other.program.alias_groups
                 or self.program.setup != other.program.setup
                 or self.memory_budgets != other.memory_budgets
+                or self.pool_memory != other.pool_memory
             ):
                 raise ValueError("incompatible gradient-accumulation execution path")
 
@@ -107,7 +119,27 @@ class Plan(Artifact):
     @property
     def fixed_device_bytes(self) -> int:
         """Compute/provider overhead plus communication resources and reserves."""
-        return self.profiled_program.fixed_device_bytes + self._communication_memory[0]
+        return (
+            self.profiled_program.fixed_device_bytes
+            + self._communication_memory[0]
+            + (
+                0
+                if self.pool_memory is None
+                else self.pool_memory.process_reservation_bytes
+            )
+        )
+
+    @property
+    def effective_execution_bytes(self) -> int:
+        """Process budget capped by separately measured physical availability."""
+        return (
+            min(
+                self.memory_budgets.execution_bytes,
+                self.pool_memory.physical_limit_bytes,
+            )
+            if self.pool_memory is not None
+            else self.memory_budgets.execution_bytes
+        )
 
     @property
     def simulation_only_reasons(self) -> tuple[str, ...]:
@@ -164,6 +196,12 @@ class Plan(Artifact):
             volumes[f"{direction.value}_collective_bytes"] = collective
         return {
             "duration_seconds": result.makespan_ns / 1e9,
+            "declared_execution_bytes": self.memory_budgets.execution_bytes,
+            "effective_execution_bytes": self.effective_execution_bytes,
+            "pool_process_reservation_bytes": 0
+            if self.pool_memory is None
+            else self.pool_memory.process_reservation_bytes,
+            "pool_startup_peak_bytes": None,
             "execution_peak_bytes": max(p.total_bytes for p in result.device_peaks)
             + self.fixed_device_bytes,
             "fixed_device_bytes": self.fixed_device_bytes,
@@ -183,6 +221,9 @@ class Plan(Artifact):
 
         return {
             "profiled_program": self.profiled_program.to_dict(),
+            "pool_memory": None
+            if self.pool_memory is None
+            else self.pool_memory.to_dict(),
             "memory_budgets": self.memory_budgets.to_dict(),
             "communication_info": self.communication_info.to_dict(),
             "schedule": self.schedule.to_dict(),
@@ -249,4 +290,7 @@ class Plan(Artifact):
                 if value.get("accumulation_plan") is None
                 else cls.from_dict(value["accumulation_plan"], payloads=payloads)
             ),
+            None
+            if value.get("pool_memory") is None
+            else PoolMemoryProfile.from_dict(value["pool_memory"]),
         )

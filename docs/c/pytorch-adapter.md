@@ -76,12 +76,19 @@ the pool the allocator is bound to, inside) and
 `ShadowSpillPytorchAdapterFailure` (the first failure, with the runtime's
 record inside). `SHADOWSPILL_PYTORCH_ADAPTER_ABI_VERSION` versions all of it.
 
-Adapter ABI2 adds `external_baseline_bytes` to the bootstrap configuration and
+Adapter ABI2 added `external_baseline_bytes` to the bootstrap configuration and
 `reserved_baseline_bytes` to physical admission. The latter is the maximum of
 the observed `baseline_bytes` and the requested mature process-external floor.
 Pool sizing subtracts this reservation plus the existing external headroom.
 The floor excludes in-pool retained state and does not change the enforcement
-default. Rebuild the adapter and Python bindings together; ABI1 is refused.
+default. Adapter ABI3 adds independent `physical_limit_bytes` and
+`unattributed_reservation_bytes` to configuration and admission, plus observed
+`available_process_bytes` and resolved `effective_limit_bytes` to admission.
+A zero physical limit preserves process-budget-only sizing. Otherwise the arena
+respects both the saved allowance and current free-plus-own-process capacity
+less the global reservation. The declared process budget remains unchanged.
+Invalid physical counters are backend failures, not fabricated OOM reports.
+Rebuild the adapter and Python bindings together; ABI1/ABI2 are refused.
 
 Two ids the frontend synthesises for work that is not a planned task are
 defined here so the failure report can decode them: allocation scopes take

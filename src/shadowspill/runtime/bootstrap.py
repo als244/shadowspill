@@ -135,6 +135,8 @@ def install_runtime(
     reject_overbudget: bool = False,
     numa_binding: bool = True,
     external_baseline_bytes: int = 0,
+    physical_limit_bytes: int = 0,
+    unattributed_reservation_bytes: int = 0,
 ) -> InstalledRuntime:
     """Install the process-global allocator before the device is initialized.
 
@@ -164,6 +166,8 @@ def install_runtime(
         background_transfer_window_bytes,
         reject_overbudget,
         external_baseline_bytes,
+        physical_limit_bytes,
+        unattributed_reservation_bytes,
     )
     path = _validated_adapter_path(library_path)
     backend_library = _backend_path(backend)
@@ -237,6 +241,8 @@ def install_runtime(
         reject_overbudget=reject_overbudget,
         disable_numa_binding=not numa_binding,
         external_baseline_bytes=external_baseline_bytes,
+        physical_limit_bytes=physical_limit_bytes,
+        unattributed_reservation_bytes=unattributed_reservation_bytes,
     )
     _bootstrap_allocator(library, config)
     admission = _read_physical_admission(
@@ -245,6 +251,8 @@ def install_runtime(
         external_headroom_bytes=external_headroom_bytes,
         reject_overbudget=reject_overbudget,
         external_baseline_bytes=external_baseline_bytes,
+        physical_limit_bytes=physical_limit_bytes,
+        unattributed_reservation_bytes=unattributed_reservation_bytes,
     )
     _validate_physical_usage(library, device_budget_bytes, reject_overbudget)
     frontend.activate_allocator()
@@ -346,6 +354,8 @@ def _validate_install_request(
     background_transfer_window_bytes: int,
     reject_overbudget: bool = False,
     external_baseline_bytes: int = 0,
+    physical_limit_bytes: int = 0,
+    unattributed_reservation_bytes: int = 0,
 ) -> None:
     if not isinstance(reject_overbudget, bool):
         raise RuntimeInstallError("reject_overbudget must be a bool")
@@ -353,6 +363,13 @@ def _validate_install_request(
         raise RuntimeInstallError("device ordinal must be non-negative")
     if device_budget_bytes <= 0:
         raise RuntimeInstallError("device budget must be positive")
+    if any(
+        type(v) is not int or not 0 <= v < 1 << 64
+        for v in (physical_limit_bytes, unattributed_reservation_bytes)
+    ):
+        raise RuntimeInstallError("physical limits must be uint64 byte counts")
+    if unattributed_reservation_bytes and not physical_limit_bytes:
+        raise RuntimeInstallError("unattributed reservation requires a physical limit")
     if external_headroom_bytes < 0 or external_headroom_bytes >= device_budget_bytes:
         raise RuntimeInstallError(
             "external headroom must be non-negative and smaller than device budget"
@@ -560,6 +577,18 @@ def _bootstrap_refusal(library: Any, config: AdapterConfig) -> str:
     # Sizing the device pool latches against that pool, holding no more than
     # the budget; a budget refusal holds more than it.
     sizing = int(failure.runtime.pool_id) == int(config.allocator_pool_id)
+    if sizing and config.physical_limit_bytes:
+        return (
+            f": cold physical admission leaves {format_bytes(budget)} of effective "
+            f"process allowance (declared "
+            f"{format_bytes(int(config.device_budget_bytes))}, "
+            f"saved physical limit {format_bytes(int(config.physical_limit_bytes))}, "
+            f"global pool reservation "
+            f"{format_bytes(int(config.unattributed_reservation_bytes))}). "
+            f"Observed baseline {format_bytes(held)}, reserved external floor "
+            f"{format_bytes(int(config.external_baseline_bytes))}, and headroom "
+            f"{format_bytes(int(config.external_headroom_bytes))} leave no device pool."
+        )
     if sizing and budget > 0 and held <= budget:
         return _sizing_refusal(
             held,
@@ -589,6 +618,8 @@ def _read_physical_admission(
     external_headroom_bytes: int,
     reject_overbudget: bool = False,
     external_baseline_bytes: int = 0,
+    physical_limit_bytes: int = 0,
+    unattributed_reservation_bytes: int = 0,
 ) -> PhysicalAdmission:
     admission = PhysicalAdmission()
     status = int(
@@ -603,6 +634,21 @@ def _read_physical_admission(
         or admission.allocator_pool_bytes == 0
         or admission.reserved_baseline_bytes
         != max(admission.baseline_bytes, external_baseline_bytes)
+        or admission.physical_limit_bytes != physical_limit_bytes
+        or admission.unattributed_reservation_bytes != unattributed_reservation_bytes
+        or admission.effective_limit_bytes
+        != (
+            min(
+                device_budget_bytes,
+                physical_limit_bytes,
+                max(
+                    0,
+                    admission.available_process_bytes - unattributed_reservation_bytes,
+                ),
+            )
+            if physical_limit_bytes
+            else device_budget_bytes
+        )
     ):
         raise RuntimeInstallError("physical admission handshake failed")
     return admission

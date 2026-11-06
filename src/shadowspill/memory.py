@@ -5,7 +5,7 @@ from __future__ import annotations
 import ctypes
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import ClassVar
+from typing import Any, ClassVar
 
 # External memory is device memory outside ShadowSpill's allocation pool,
 # excluding the process baseline measured before the pool is created. Library
@@ -35,6 +35,12 @@ class DevicePool:
     the mature footprint measured during profiling; it excludes allocations
     served inside this pool. Zero leaves sizing based on the observed baseline.
 
+    Optional ``physical_limit`` separately bounds free-plus-own-process device
+    capacity with the spill pool live. ``unattributed_reservation`` is its
+    measured outside-process startup cost, subtracted from current availability
+    before creating pools. The smaller physical/process allowance sizes the
+    arena; ``physical_capacity`` retains its declared process-budget meaning.
+
     ``reject_overbudget=False`` (the default) reports external and whole-process
     memory overruns without rejecting them. Set it to ``True`` to enforce
     those limits. Pool bounds and actual device allocation failures remain
@@ -46,9 +52,20 @@ class DevicePool:
     external_headroom: int = _DEFAULT_EXTERNAL_HEADROOM
     reject_overbudget: bool = False
     external_baseline: int = field(default=0, kw_only=True)
+    physical_limit: int | None = field(default=None, kw_only=True)
+    unattributed_reservation: int = field(default=0, kw_only=True)
 
     def __post_init__(self) -> None:
         _positive_bytes(self.physical_capacity, "physical_capacity")
+        if self.physical_limit is not None:
+            _positive_bytes(self.physical_limit, "physical_limit")
+        if (
+            type(self.unattributed_reservation) is not int
+            or not 0 <= self.unattributed_reservation < 1 << 64
+        ):
+            raise ValueError("unattributed_reservation must be a uint64 byte count")
+        if self.physical_limit is None and self.unattributed_reservation:
+            raise ValueError("unattributed_reservation requires physical_limit")
         if not isinstance(self.reject_overbudget, bool):
             raise TypeError("reject_overbudget must be a bool")
         if isinstance(self.device, bool) or not isinstance(self.device, int):
@@ -142,6 +159,17 @@ class SpillPool:
 
         return None
 
+    def calibration_identity(self) -> dict[str, Any]:
+        """Stable JSON configuration, never bytes containing ctypes pointers.
+
+        Configured extension pools must override this hook. Include every
+        option affecting acquisition or lanes; library hashes are added by
+        the measuring code. Returning an identity does not acquire the pool.
+        """
+        if self.configuration() is not None:
+            raise ValueError("configured spill pools must define calibration_identity")
+        return {}
+
 
 @dataclass(frozen=True, slots=True)
 class PinnedHostPool(SpillPool):
@@ -181,6 +209,8 @@ def device(
     external_headroom: int = _DEFAULT_EXTERNAL_HEADROOM,
     reject_overbudget: bool = False,
     external_baseline: int = 0,
+    physical_limit: int | None = None,
+    unattributed_reservation: int = 0,
 ) -> DevicePool:
     """Return a default accelerator-device pool configuration."""
 
@@ -190,6 +220,8 @@ def device(
         external_headroom=external_headroom,
         reject_overbudget=reject_overbudget,
         external_baseline=external_baseline,
+        physical_limit=physical_limit,
+        unattributed_reservation=unattributed_reservation,
     )
 
 

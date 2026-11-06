@@ -5,6 +5,7 @@ from pathlib import Path
 from shadowspill import (
     CommunicationInfo,
     MemoryBudgets,
+    PoolMemoryProfile,
     ProfiledProgram,
     write_report,
 )
@@ -40,6 +41,9 @@ def run(request):
         communication,
         search_options(request),
         ordering=request.get("orderings", "factors"),
+        pool_memory=None
+        if not request.get("pool_memory")
+        else PoolMemoryProfile.load(request["pool_memory"]),
     )
     result.save(root / "planning" / "sweep.ssp")
     write_report(result, root / "report", plots=request["plots"])

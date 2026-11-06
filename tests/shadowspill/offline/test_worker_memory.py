@@ -25,6 +25,7 @@ def plan(
 ):
     info = communication or CommunicationInfo(1e10, 1e10, fixed_device_bytes=0)
     return SimpleNamespace(
+        pool_memory=None,
         profiled_program=SimpleNamespace(
             fixed_device_bytes=external + headroom + retained,
             metadata=dict(

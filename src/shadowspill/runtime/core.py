@@ -128,6 +128,8 @@ class Runtime:
                 device_budget_bytes=topology.device.physical_capacity,
                 external_headroom_bytes=topology.device.external_headroom,
                 external_baseline_bytes=topology.device.external_baseline,
+                physical_limit_bytes=topology.device.physical_limit or 0,
+                unattributed_reservation_bytes=topology.device.unattributed_reservation,
                 reject_overbudget=topology.device.reject_overbudget,
                 allocator_pool_id=topology.allocator_pool_id,
                 pools=topology.pool_bootstrap,

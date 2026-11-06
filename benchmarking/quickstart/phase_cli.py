@@ -25,6 +25,7 @@ def main(argv=None):
     parser.add_argument("--device")
     parser.add_argument("--steps", type=int)
     parser.add_argument("--communication-info", type=Path)
+    parser.add_argument("--pool-memory", type=Path)
     parser.add_argument("--rank-map", type=json.loads)
     parser.add_argument("--warmup-seconds", type=float)
     parser.add_argument("--measure-seconds", type=float)
@@ -65,6 +66,10 @@ def main(argv=None):
             values["communication_info"] = CommunicationInfo.load(
                 args.communication_info
             )
+        if args.pool_memory is not None:
+            from shadowspill import PoolMemoryProfile
+
+            values["pool_memory"] = PoolMemoryProfile.load(args.pool_memory)
         return run(**values, phase=args.phase)
     request_file = args.output_dir / "request.json"
     if not request_file.is_file():
@@ -113,4 +118,6 @@ def main(argv=None):
         request["spill"]["arguments"]["capacity"] = request["spill_bytes"]
     if args.communication_info is not None:
         request["communication_info"] = str(args.communication_info.resolve())
+    if args.pool_memory is not None:
+        request["pool_memory"] = str(args.pool_memory.resolve())
     return run_request(request, args.phase)

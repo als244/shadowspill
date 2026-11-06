@@ -13,7 +13,7 @@ import ctypes
 import os
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import ClassVar
+from typing import Any, ClassVar
 
 from shadowspill.libraries import resolve_library
 from shadowspill.memory import SpillPool
@@ -136,6 +136,16 @@ class SSDPool(SpillPool):
 
     def configuration(self) -> ctypes.Structure:
         return self._configuration
+
+    def calibration_identity(self) -> dict[str, Any]:
+        if self.image is not None:
+            raise ValueError("pool calibration requires a scratch SSD configuration")
+        return {
+            "directory": str(self.directory),
+            "staging_bytes": self.staging_bytes,
+            "chunk_bytes": self.chunk_bytes,
+            "queue_depth": self.queue_depth,
+        }
 
 
 def ssd(

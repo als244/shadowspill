@@ -1,6 +1,7 @@
 """Convert explicit capacities and host costs to the existing simulator IR."""
 
 from shadowspill.artifacts.budgets import MemoryBudgets
+from shadowspill.artifacts.pool_memory import PoolMemoryProfile
 from shadowspill.artifacts.profiled_program import ProfiledProgram
 from shadowspill.communication import CommunicationInfo
 from shadowspill.communication.memory import communication_overhead
@@ -15,10 +16,18 @@ def simulation_inputs(
     profiled: ProfiledProgram,
     budgets: MemoryBudgets,
     communication: CommunicationInfo,
+    pool_memory: PoolMemoryProfile | None = None,
 ) -> tuple[ShadowSpillProgram, SimulationConfig]:
     program = profiled._costed_ir(communication)
     spec = profiled.program.parallelism
     world_size = 1 if spec is None else spec.world_size
+    if pool_memory is not None:
+        pool_memory.validate_program(
+            budgets.spill_bytes,
+            world_size,
+            gpu=profiled.program.setup.get("gpu"),
+            spill_kind=communication.metadata.get("spill_kind"),
+        )
     if len(program.devices) != 1:
         raise NotImplementedError(
             "offline planning requires one symmetric rank-local program"
@@ -49,14 +58,23 @@ def simulation_inputs(
     ) != list(range(world_size)):
         raise ValueError("topology must contain exactly the declared logical ranks")
     communication_bytes, _ = communication_overhead(profiled.program, communication)
-    fixed_bytes = profiled.fixed_device_bytes + communication_bytes
-    usable = budgets.execution_bytes - fixed_bytes
+    fixed_bytes = (
+        profiled.fixed_device_bytes
+        + communication_bytes
+        + (0 if pool_memory is None else pool_memory.process_reservation_bytes)
+    )
+    capacity = (
+        budgets.execution_bytes
+        if pool_memory is None
+        else min(budgets.execution_bytes, pool_memory.physical_limit_bytes)
+    )
+    usable = capacity - fixed_bytes
     if usable <= 0:
         raise PlanInfeasibleError(
             "fixed device overhead exhausts the total GPU allowance",
             kind="fixed_overhead",
             required_bytes=fixed_bytes,
-            capacity_bytes=budgets.execution_bytes,
+            capacity_bytes=capacity,
         )
 
     # Explicit phases charge both search and exact simulation. Copy and

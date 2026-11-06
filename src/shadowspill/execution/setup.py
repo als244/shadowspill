@@ -20,6 +20,8 @@ def open_worker(
     spill: SpillPool | None = None,
     reject_overbudget: bool = False,
     external_baseline_bytes: int = 0,
+    *,
+    logical_rank: int = 0,
 ) -> Runtime:
     if plan.simulation_only_reasons:
         raise ValueError(
@@ -43,6 +45,23 @@ def open_worker(
         )
     if getattr(spill, "image", None) is not None:
         raise ValueError("Executor does not adopt SSD pool images; use a tensor loader")
+    physical_limit = None
+    global_reservation = 0
+    if plan.pool_memory is not None:
+        from shadowspill.profiling.pool_identity import (
+            deployment_identity,
+            pool_configuration,
+        )
+
+        evidence = plan.pool_memory
+        if plain(evidence.pool) != pool_configuration(spill):
+            raise ValueError("pool memory configuration differs from this worker")
+        if evidence.rank(logical_rank)["identity"] != deployment_identity(
+            spill, device
+        ):
+            raise ValueError("pool memory deployment identity differs from this worker")
+        physical_limit = evidence.physical_limit_bytes
+        global_reservation = evidence.global_reservation_bytes(logical_rank)
     runtime = Runtime(
         frontend=PyTorchFrontend(),
         pools={
@@ -52,6 +71,8 @@ def open_worker(
                 external_headroom=external_headroom_bytes,
                 reject_overbudget=reject_overbudget,
                 external_baseline=external_baseline_bytes,
+                physical_limit=physical_limit,
+                unattributed_reservation=global_reservation,
             ),
             "spill": spill,
         },

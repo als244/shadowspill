@@ -20,6 +20,7 @@ def run(
     device="cuda:0",
     factory_args=None,
     communication_info=None,
+    pool_memory=None,
     rank_map=None,
     warmup_seconds=0.05,
     measure_seconds=0.18,
@@ -43,6 +44,10 @@ def run(
     if communication_info is not None:
         communication = str(root / "supplied-communication.ssp")
         communication_info.save(communication)
+    memory_evidence = None
+    if pool_memory is not None:
+        memory_evidence = str(root / "supplied-pool-memory.ssp")
+        pool_memory.save(memory_evidence)
     request = {
         "factory": reference(factory),
         "factory_args": dict(factory_args or {}),
@@ -56,6 +61,7 @@ def run(
         "spill_bytes": int(spill_gib * (1 << 30)),
         "steps": steps,
         "communication_info": communication,
+        "pool_memory": memory_evidence,
         "rank_map": rank_map,
         "warmup_seconds": warmup_seconds,
         "measure_seconds": measure_seconds,

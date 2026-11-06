@@ -6,6 +6,7 @@ from collections.abc import Mapping, Sequence
 from typing import TYPE_CHECKING, Any
 
 from shadowspill.artifacts.budgets import MemoryBudgets
+from shadowspill.artifacts.pool_memory import PoolMemoryProfile
 from shadowspill.artifacts.profiled_program import ProfiledProgram
 from shadowspill.artifacts.sweep import SweepCase, SweepResult
 from shadowspill.communication import CommunicationInfo
@@ -22,6 +23,7 @@ def sweep_programs(
     *,
     memory_budgets: Sequence[MemoryBudgets],
     communication_info: CommunicationInfo,
+    pool_memory: PoolMemoryProfile | None = None,
     search_options: SearchOptions | None = None,
 ) -> SweepResult:
     """Keep each result. Invalid inputs and implementation errors are not hidden."""
@@ -33,6 +35,7 @@ def sweep_programs(
                     program,
                     memory_budgets=budget,
                     communication_info=communication_info,
+                    pool_memory=pool_memory,
                     search_options=search_options,
                 )
             except (PlanInfeasibleError, PlanSearchExhaustedError) as error:

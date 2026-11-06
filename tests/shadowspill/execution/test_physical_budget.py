@@ -71,6 +71,7 @@ def test_a_worker_reports_overruns_unless_told_to_reject(monkeypatch):
     monkeypatch.setattr(setup, "require_compiled_device", lambda program, device: None)
     monkeypatch.setattr(setup, "build_setup", lambda device: identity)
     plan = SimpleNamespace(
+        pool_memory=None,
         simulation_only_reasons=(),
         program=SimpleNamespace(devices=("cuda_0",), setup=identity),
         memory_budgets=SimpleNamespace(execution_bytes=8 << 30, spill_bytes=1 << 30),

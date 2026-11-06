@@ -9,6 +9,7 @@ from shadowspill.ir import MemoryActionKind
 from shadowspill.planning.worker_memory import (
     communicator_reservation,
     external_baseline,
+    pool_process_reservation,
 )
 from shadowspill.pytorch.resource_streams import ResourceStreams
 from shadowspill.runtime.bootstrap import installed_runtime
@@ -32,7 +33,7 @@ def worker_headroom(plans: Sequence[Plan], requested: int | None) -> int:
             "Executor external_headroom_bytes exceeds the Plan reservation; "
             "replan with profiles that include the requested headroom"
         )
-    return requested + communicator_reservation(plans)
+    return requested + communicator_reservation(plans) + pool_process_reservation(plans)
 
 
 def plan_inventory(plan: Plan, additional: Mapping[str, Plan]) -> dict[str, Plan]:

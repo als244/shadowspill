@@ -5,7 +5,7 @@ from __future__ import annotations
 import ctypes
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import ClassVar
+from typing import Any, ClassVar
 
 from shadowspill.libraries import resolve_library
 from shadowspill.memory import SpillPool
@@ -114,6 +114,9 @@ class RemotePool(SpillPool):
     def configuration(self) -> ctypes.Structure | None:
         return self._configuration
 
+    def calibration_identity(self) -> dict[str, Any]:
+        return {"host": self.host, "port": self.port, "selector": self.selector}
+
 
 def remote(
     *,
@@ -124,9 +127,7 @@ def remote(
 ) -> RemotePool:
     """Return a remote spill-pool configuration served by one daemon."""
 
-    return RemotePool(
-        capacity=capacity, host=host, port=port, selector=selector
-    )
+    return RemotePool(capacity=capacity, host=host, port=port, selector=selector)
 
 
 __all__ = [

@@ -46,6 +46,8 @@ class AdapterConfig(ctypes.Structure):
         ("reject_overbudget", ctypes.c_uint8),
         ("disable_numa_binding", ctypes.c_uint8),
         ("external_baseline_bytes", ctypes.c_uint64),
+        ("physical_limit_bytes", ctypes.c_uint64),
+        ("unattributed_reservation_bytes", ctypes.c_uint64),
     ]
 
 
@@ -64,6 +66,10 @@ class PhysicalAdmission(ctypes.Structure):
         ("device_total_bytes", ctypes.c_uint64),
         ("reject_overbudget", ctypes.c_uint8),
         ("reserved_baseline_bytes", ctypes.c_uint64),
+        ("physical_limit_bytes", ctypes.c_uint64),
+        ("unattributed_reservation_bytes", ctypes.c_uint64),
+        ("available_process_bytes", ctypes.c_uint64),
+        ("effective_limit_bytes", ctypes.c_uint64),
     ]
 
 

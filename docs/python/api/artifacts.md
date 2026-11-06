@@ -10,6 +10,11 @@ plan_program(ProfiledProgram, ...)                 → Plan
 Executor(Plan)                                     → execution worker
 ```
 
+Optional [pool-memory calibration](pool-memory.md) produces a portable
+`PoolMemoryProfile` for the exact spill capacity and deployment. Pass it as
+`pool_memory` to planning or candidate sweeps; the Plan retains both the original
+process budget and the separately measured physical-device allowance.
+
 Import these names from `shadowspill`. Building finalizes task implementations
 and may require a representative GPU. Measurement uses the ordinary PyTorch
 allocator. Applying profiles, planning, inspecting archives and writing reports

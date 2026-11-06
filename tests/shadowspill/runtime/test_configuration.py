@@ -21,6 +21,30 @@ from shadowspill.runtime.configuration import (
 )
 
 
+def test_pool_physical_limit_is_independent_of_process_budget():
+    small = device(
+        physical_capacity=2 << 30,
+        physical_limit=30 << 30,
+        unattributed_reservation=256 << 20,
+    )
+    assert small.physical_capacity == 2 << 30 and small.physical_limit == 30 << 30
+    assert small.external_headroom == 512 << 20 and not small.reject_overbudget
+    with pytest.raises(ValueError, match="requires physical_limit"):
+        device(physical_capacity=2 << 30, unattributed_reservation=1)
+    with pytest.raises(ValueError, match="positive"):
+        device(physical_capacity=2 << 30, physical_limit=0)
+
+
+def test_configured_extension_requires_declarative_identity():
+    class Configured(SpillPool):
+        def configuration(self):
+            return ctypes.c_uint64(0)
+
+    assert pinned_host(capacity=100).calibration_identity() == {}
+    with pytest.raises(ValueError, match="calibration_identity"):
+        Configured(100).calibration_identity()
+
+
 def test_topology_accepts_three_pools_and_sparse_routes() -> None:
     pools, routes = validate_topology(
         {

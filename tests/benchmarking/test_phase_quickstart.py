@@ -12,7 +12,10 @@ from benchmarking.quickstart.phases.common import write
 from tests.shadowspill.offline._example import communication, profiled
 
 
-def test_plan_worker_consumes_saved_profiles_without_torch_or_factory(tmp_path):
+@pytest.mark.parametrize("pool_memory", [False, True])
+def test_plan_worker_consumes_saved_profiles_without_torch_or_factory(
+    tmp_path, pool_memory
+):
     write(
         tmp_path / "profiled/index.json",
         {
@@ -34,6 +37,10 @@ def test_plan_worker_consumes_saved_profiles_without_torch_or_factory(tmp_path):
     profiled().save(tmp_path / "profiled/candidate-0000.ssp")
     (tmp_path / "profiled/absent.ssp").write_bytes(b"stale profile must not be loaded")
     communication().save(tmp_path / "communication.ssp")
+    if pool_memory:
+        from tests.shadowspill.offline.test_pool_memory import evidence
+
+        evidence().save(tmp_path / "pool.ssp")
     request = {
         "output_dir": str(tmp_path),
         "factory": "must_not_import:factory",
@@ -41,6 +48,7 @@ def test_plan_worker_consumes_saved_profiles_without_torch_or_factory(tmp_path):
         "spill_bytes": 64,
         "search_workers": 1,
         "communication_info": None,
+        "pool_memory": str(tmp_path / "pool.ssp") if pool_memory else None,
         "plots": False,
         "spill": {
             "type": "shadowspill.network:RemotePool",
@@ -91,6 +99,10 @@ def test_plan_worker_consumes_saved_profiles_without_torch_or_factory(tmp_path):
     from shadowspill.artifacts.sweep import SweepResult
 
     result = SweepResult.load(tmp_path / "planning/sweep.ssp")
+    if pool_memory:
+        assert all(
+            case.plan.pool_memory is not None for case in result.cases if case.plan
+        )
     failures = [
         case for case in result.cases if case.candidate.startswith("too_large:")
     ]

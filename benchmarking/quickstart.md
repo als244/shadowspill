@@ -313,3 +313,12 @@ task/transfer/step ranges from every worker. Existing validated captures are reu
 only when their inputs and output hashes match. These captures explain execution;
 use the ordinary quickstart measurements for throughput. Device metrics require
 permission on the selected GPUs.
+
+## Optional pool-memory calibration
+
+Pass `--pool-memory pool-memory.ssp` (or `pool_memory=profile` to `run`) to reuse
+one full-capacity pool measurement across all policy/chunk/order/budget candidates.
+The Plan embeds this evidence for cold startup. Measurement is separate from
+transfer timing and never repeats per candidate. See the
+[pool-memory contract](../docs/python/api/pool-memory.md) for measurement,
+distributed composition and the distinction between process and physical limits.

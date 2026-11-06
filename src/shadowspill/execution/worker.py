@@ -108,7 +108,15 @@ def create_paths(
         failure = None
         try:
             runtime = open_worker(
-                plan, device, headroom, spill, reject_overbudget, external_baseline
+                plan,
+                device,
+                headroom,
+                spill,
+                reject_overbudget,
+                external_baseline,
+                logical_rank=0
+                if distributed is None
+                else distributed.groups.logical_rank,
             )
         except Exception as error:
             if distributed is None:
