@@ -40,6 +40,10 @@ def _failing_setup(monkeypatch, runtime, error):
     def seal(candidates):
         raise error
 
+    def open_worker(*arguments, logical_rank):
+        assert logical_rank == 0
+        return runtime
+
     plan = SimpleNamespace(
         program=SimpleNamespace(parallelism=None), _accumulation_plan=None
     )
@@ -47,7 +51,7 @@ def _failing_setup(monkeypatch, runtime, error):
     monkeypatch.setattr(worker, "plan_numerical_contracts", lambda plan: ())
     monkeypatch.setattr(worker, "worker_headroom", lambda candidates, headroom: 0)
     monkeypatch.setattr(worker, "worker_external_baseline", lambda candidates: 0)
-    monkeypatch.setattr(worker, "open_worker", lambda *arguments: runtime)
+    monkeypatch.setattr(worker, "open_worker", open_worker)
     monkeypatch.setattr(worker, "resource_inventory", lambda programs: ({}, {}))
     monkeypatch.setattr(worker, "worker_streams", lambda candidates, device: None)
     monkeypatch.setattr(
@@ -104,7 +108,9 @@ def test_numeric_mismatch_precedes_opening_runtime_and_spill_pool(monkeypatch):
     plan = _failing_setup(monkeypatch, runtime, AssertionError("opened runtime"))
     monkeypatch.setattr(worker, "plan_numerical_contracts", lambda plan: (contract,))
     opened = []
-    monkeypatch.setattr(worker, "open_worker", lambda *args: opened.append(args))
+    monkeypatch.setattr(
+        worker, "open_worker", lambda *args, **options: opened.append((args, options))
+    )
     with pytest.raises(RuntimeError, match="allow_bf16_reduced_precision_reduction"):
         worker.create_paths(plan, 0, None)
     assert not opened and not runtime._closed

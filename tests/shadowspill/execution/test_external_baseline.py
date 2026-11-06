@@ -93,6 +93,7 @@ def test_worker_passes_external_floor_to_pool_without_changing_plan(monkeypatch)
     monkeypatch.setattr(setup, "require_compiled_device", lambda *args: None)
     monkeypatch.setattr(setup, "build_setup", lambda *args: identity)
     plan = SimpleNamespace(
+        pool_memory=None,
         simulation_only_reasons=(),
         program=SimpleNamespace(devices=("cuda_0",), setup=identity),
         memory_budgets=SimpleNamespace(execution_bytes=8 << 30, spill_bytes=64 << 20),
