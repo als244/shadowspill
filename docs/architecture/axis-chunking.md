@@ -235,8 +235,13 @@ different parent compositions.
 
 ## Boundaries and limitations
 
-The supported scope is deterministic, first-order chunked regions with explicit
-additive gradients. Generic terminal training losses, random state replay,
+The supported scope is first-order chunked regions with explicit additive
+gradients and no untracked random or mutable state. This is a semantic
+requirement, not a bitwise reproducibility guarantee: normal fused execution
+can change rounding and near-tied routing or sparse selections across different
+chunk geometries. Discrete choices needed by backward must still agree with
+their own forward execution through the provider's retention contract.
+Generic terminal training losses, random state replay,
 wrapped tensor components and arbitrary mutation protocols require additional
 contracts. Sequence attention, recurrence, convolution and global routing
 statistics must remain outside a selected chunked region unless a provider

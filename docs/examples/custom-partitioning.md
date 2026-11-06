@@ -86,3 +86,47 @@ passes the policy to `build_step` through its build options when asked
 and searches its budgets/orderings without rebuilding the partition.
 Model operators contain no partition API calls. Other architectures can supply
 their own policy in exactly the same way.
+
+## Checkpoint boundaries and execution regions
+
+The builder's `partition=` controls checkpoint stages. Its independent
+`chunking=` argument can split execution inside those stages without creating
+additional saved checkpoint boundaries:
+
+```python
+from shadowspill.pytorch import ChunkRegions, IsolateOperations
+
+execution_policy = ChunkRegions(
+    partition=IsolateOperations(sequence_operator_targets, base="whole"),
+    chunking=axis_policy,
+    variants=("save", "recompute"),
+)
+
+# Supply these alongside the model, objective, optimizer and example inputs.
+build_options = {
+    "partition": checkpoint_policy,
+    "chunking": execution_policy,
+}
+```
+
+Here `sequence_operator_targets` names the application's sequence operations,
+`checkpoint_policy` implements `PartitionPolicy`, and `axis_policy` implements
+[`ChunkPolicy`](../python/api/frontend.md#axis-chunking-policies). Its
+`configure_stage` callback receives each explicit forward or backward region.
+Return `None` for an intact sequence operation, or `AxisChunks` with the region's
+input-axis mappings and chunk size for independent work. Projection and expert
+regions can use different sizes. There is no assumption that the selected axis
+is the leading dimension or represents tokens.
+
+Separate execution regions can still exchange full-axis intermediates. To keep
+intermediates bounded while using different inner chunk sizes, compose the
+inner regions through `AxisChunks.regions`; see
+[bounded composition](../architecture/axis-chunking.md). Optional execution
+lifetime rules control movement and explicitly permitted local replay.
+
+[`GraphPairPolicy`](../python/api/frontend.md#graph-pair-policies) separately
+controls the SAVE and RECOMPUTE cuts. Retention does not pin a tensor to a device:
+the planner still chooses variants, placement and transfers. Quickstart can
+[search each retention policy's chunk candidates](../../benchmarking/quickstart.md#searching-chunk-and-retention-policies),
+profile every resulting Program, and choose the admitted Plan with the lowest
+simulated time across the candidates.
