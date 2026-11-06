@@ -8,6 +8,7 @@ import torch
 
 from shadowspill.artifacts.device import require_compiled_device
 from shadowspill.artifacts.plan import Plan
+from shadowspill.preparation.lifecycle import LoadedPreparations
 from shadowspill.pytorch.numerics import (
     program_numerical_contracts,
     validate_numerical_settings,
@@ -73,6 +74,7 @@ def bind_path(
     extra_initial: tuple[str, ...] = (),
     shared_slice_bytes: int | None = None,
     distributed: DistributedWorker | None = None,
+    preparations: LoadedPreparations | None = None,
 ) -> ExecutionPath:
     try:
         contracts = plan_numerical_contracts(plan)
@@ -99,6 +101,7 @@ def bind_path(
             bridge,
             shared_slice_bytes=shared_slice_bytes,
             groups=None if distributed is None else distributed.groups,
+            preparations=preparations,
         )
         adopt_plan(runtime, memory.plan_handle)
         return ExecutionPath(

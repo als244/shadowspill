@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable, Mapping, Sequence
+from contextlib import closing
 from dataclasses import replace
 from typing import Any
 
@@ -12,6 +13,8 @@ from torch import nn
 from shadowspill.artifacts.program import Program
 from shadowspill.build.lowering.forward.program import lower_forward
 from shadowspill.parallelism import Parallelism
+from shadowspill.preparation import OperatorPreparation
+from shadowspill.preparation.lifecycle import BuildPreparations
 from shadowspill.pytorch.accelerator import resolve_device
 from shadowspill.pytorch.chunking import ChunkPolicy, ChunkRegions
 from shadowspill.pytorch.partition import PartitionSpec
@@ -35,6 +38,7 @@ def build_forward(
     chunking: ChunkPolicy | ChunkRegions | None = None,
     parallelism: Parallelism | None = None,
     resources: Mapping[str, Resource] | None = None,
+    operator_preparation: Sequence[OperatorPreparation] = (),
     rank_map: Mapping[int, int] | None = None,
     target: str | torch.device = "cuda",
 ) -> Program:
@@ -44,35 +48,41 @@ def build_forward(
     one representative GPU. Planning the returned artifact is CPU-only.
     By default capture calls ``model(*args, **kwargs)``. ``forward_fn`` instead
     receives ``(model, *args, **kwargs)``, preserving registered parameter names.
+    ``operator_preparation`` supplies explicit provider factories that capture
+    selected binaries and restore them before measurement/runtime admission.
     """
     spec, parameters = model_parallelism(model, parallelism)
     validate_resources(resources or {}, spec)
     device = resolve_device(target)
     assert device.index is not None
-    captured = capture_forward_model(
-        model,
-        example_args,
-        dict(example_kwargs or {}),
-        forward_fn=forward_fn,
-        partition=partition,
-        device_index=device.index,
-    )
-    if chunking is not None:
-        from .chunking import chunk_forward
+    with closing(BuildPreparations(operator_preparation, device)) as preparations:
+        captured = capture_forward_model(
+            model,
+            example_args,
+            dict(example_kwargs or {}),
+            forward_fn=forward_fn,
+            partition=partition,
+            device_index=device.index,
+        )
+        if chunking is not None:
+            from .chunking import chunk_forward
 
-        captured = chunk_forward(captured, chunking)
-    compiled = compile_artifacts(captured.artifacts, device)
-    program = lower_forward(
-        captured,
-        tuple(compiled[item.compatibility_digest] for item in captured.artifacts),
-        setup=build_setup(device),
-    )
-    program = replace(
-        program, bindings={**program.bindings, "compiled_device_index": device.index}
-    )
-    if spec.world_size > 1 and any(task.mutations for task in program.tasks):
-        raise NotImplementedError("distributed forward requires a read-only model")
-    program = attach_resources(
-        attach_parallelism(program, spec, parameters), resources or {}
-    )
-    return finalize_tasks(program, device, rank_map=rank_map)
+            captured = chunk_forward(captured, chunking)
+        compiled = compile_artifacts(captured.artifacts, device)
+        program = lower_forward(
+            captured,
+            tuple(compiled[item.compatibility_digest] for item in captured.artifacts),
+            setup=build_setup(device),
+        )
+        program = replace(
+            program,
+            bindings={**program.bindings, "compiled_device_index": device.index},
+        )
+        if spec.world_size > 1 and any(task.mutations for task in program.tasks):
+            raise NotImplementedError("distributed forward requires a read-only model")
+        program = attach_resources(
+            attach_parallelism(program, spec, parameters), resources or {}
+        )
+        return finalize_tasks(
+            program, device, rank_map=rank_map, preparations=preparations
+        )

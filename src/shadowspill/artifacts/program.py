@@ -77,6 +77,7 @@ class Program(Artifact):
     bindings: Mapping[str, Any] = field(default_factory=dict)
     parallelism: Parallelism | None = None
     resources: Mapping[str, Resource] = field(default_factory=dict)
+    operator_binaries: Mapping[str, bytes] = field(default_factory=dict, repr=False)
 
     def __post_init__(self) -> None:
         from shadowspill.resources.description import validate_resources
@@ -113,6 +114,12 @@ class Program(Artifact):
             self, "executables", MappingProxyType(dict(self.executables))
         )
         object.__setattr__(self, "bindings", freeze(self.bindings))
+        for checksum, value in self.operator_binaries.items():
+            if not isinstance(value, bytes) or sha256(value).hexdigest() != checksum:
+                raise ValueError("invalid prepared operator binary digest")
+        object.__setattr__(
+            self, "operator_binaries", MappingProxyType(dict(self.operator_binaries))
+        )
         if self.bindings.get("collective_tasks"):
             from shadowspill.communication.task_costs import task_collectives
 
@@ -155,10 +162,15 @@ class Program(Artifact):
             value["resources"] = {
                 name: resource.to_dict() for name, resource in self.resources.items()
             }
+        if self.operator_binaries:
+            value["operator_binaries"] = sorted(self.operator_binaries)
         return value
 
     def _archive_payloads(self) -> Mapping[str, bytes]:
-        return {sha256(value).hexdigest(): value for value in self.executables.values()}
+        return {
+            **self.operator_binaries,
+            **{sha256(value).hexdigest(): value for value in self.executables.values()},
+        }
 
     @classmethod
     def from_dict(
@@ -197,4 +209,11 @@ class Program(Artifact):
             }
         except KeyError as error:
             raise ValueError("program executable payload is missing") from error
+        try:
+            data["operator_binaries"] = {
+                checksum: (payloads or {})[checksum]
+                for checksum in data.get("operator_binaries", ())
+            }
+        except KeyError as error:
+            raise ValueError("program operator binary payload is missing") from error
         return cls(**data)

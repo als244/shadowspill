@@ -45,7 +45,7 @@ def _failing_setup(monkeypatch, runtime, error):
         return runtime
 
     plan = SimpleNamespace(
-        program=SimpleNamespace(parallelism=None), _accumulation_plan=None
+        program=SimpleNamespace(parallelism=None, bindings={}), _accumulation_plan=None
     )
     monkeypatch.setattr(worker, "plan_inventory", lambda plan, plans: {"": plan})
     monkeypatch.setattr(worker, "plan_numerical_contracts", lambda plan: ())
@@ -114,3 +114,32 @@ def test_numeric_mismatch_precedes_opening_runtime_and_spill_pool(monkeypatch):
     with pytest.raises(RuntimeError, match="allow_bf16_reduced_precision_reduction"):
         worker.create_paths(plan, 0, None)
     assert not opened and not runtime._closed
+
+
+def test_prepared_modules_follow_allocator_installation_and_precede_plan_admission(
+    monkeypatch,
+):
+    runtime = _Runtime(refuse=False)
+    error = ValueError("end of setup")
+    plan = _failing_setup(monkeypatch, runtime, error)
+    events = []
+
+    def open_worker(*args, **kwargs):
+        events.append("allocator")
+        return runtime
+
+    def load(providers, candidates):
+        assert events == ["allocator"]
+        events.append("modules")
+
+    def bind(*args, **kwargs):
+        assert events == ["allocator", "modules"]
+        events.append("plan")
+        return _LatchedPath()
+
+    monkeypatch.setattr(worker, "open_worker", open_worker)
+    monkeypatch.setattr(worker.WorkerProviders, "prepare", load)
+    monkeypatch.setattr(worker, "bind_path", bind)
+    with pytest.raises(ValueError, match="end of setup"):
+        worker.create_paths(plan, 0, None)
+    assert events == ["allocator", "modules", "plan"] and runtime._closed

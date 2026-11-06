@@ -1,6 +1,7 @@
 """Measure saved task implementations without build, planning or runtime pools."""
 
 from collections.abc import Mapping, Sequence
+from contextlib import ExitStack
 from typing import Any
 
 import torch
@@ -10,6 +11,7 @@ from shadowspill.artifacts.device import require_compiled_device
 from shadowspill.artifacts.profiles import Profiles, TaskProfile
 from shadowspill.artifacts.program import Program
 from shadowspill.artifacts.tasks import stage_jobs
+from shadowspill.preparation.lifecycle import LoadedPreparations
 from shadowspill.pytorch.accelerator import resolve_device
 from shadowspill.pytorch.task_inputs import prepare_inputs
 from shadowspill.pytorch.toolchain import build_setup
@@ -59,8 +61,21 @@ def measure_program(
         torch.cuda.device(target),
         torch.no_grad(),
         torch.random.fork_rng(devices=[target]),
-        prepare_resources(program, target, rank_map) as resources,
+        ExitStack() as cleanup,
     ):
+        preparations = LoadedPreparations(target)
+        cleanup.callback(preparations.close)
+        # Control-input reconstruction can invoke tasks outside a stage subset.
+        # Load all binaries outside allocation observation, and drain streams
+        # before unloading even if a task's measurement raises.
+        cleanup.callback(torch.cuda.synchronize, target)
+        before = torch.cuda.memory_allocated(target)
+        preparations.add(program, tuple(program.executables))
+        prepared_bytes = max(0, torch.cuda.memory_allocated(target) - before)
+        resources = cleanup.enter_context(prepare_resources(program, target, rank_map))
+        # Resource creation can initialize provider runtimes too. Binaries must
+        # precede it, while the final drain precedes both kinds of cleanup.
+        cleanup.callback(torch.cuda.synchronize, target)
         session = MeasurementSession(
             program,
             target,
@@ -68,8 +83,9 @@ def measure_program(
             warmup_seconds,
             measure_seconds,
             groups=resources.groups,
+            preparations=preparations,
         )
-        session.persistent += resources.retained_bytes
+        session.persistent += resources.retained_bytes + prepared_bytes
         for job in jobs:
             if "optimizer" in job or "gradient" in job:
                 component = job["optimizer"] if "optimizer" in job else job["gradient"]
@@ -107,6 +123,7 @@ def measure_program(
             "resource_streams": session.streams.description,
             "stream_workspace_bytes": session.streams.retained_bytes,
             "provider_resource_bytes": resources.retained_bytes,
+            "prepared_operator_retained_bytes": prepared_bytes,
             "input_policy": "automatic values; geometry preserved; caller overrides",
             "execution_qualification": "pending physical admission",
         }

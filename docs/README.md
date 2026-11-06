@@ -161,6 +161,8 @@ phases.
 - [Provider resources](architecture/resources.md) — the `resources` builder
   argument: buffers and handles a provider creates from an importable factory,
   recreated for build, profiling and execution.
+- [Prepared operator binaries](operator-preparation.md) — selected provider
+  implementations saved with tasks and loaded before memory admission.
 - [Training composition](architecture/training.md) — the boundaries among
   caller code, recipes, Trainer, Executor and planning.
 

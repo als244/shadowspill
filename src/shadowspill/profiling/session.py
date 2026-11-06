@@ -12,6 +12,7 @@ from shadowspill.artifacts.profiles import Profiles
 from shadowspill.artifacts.program import Program
 from shadowspill.communication.binding.groups import GroupBindings
 from shadowspill.errors import ProfilingError
+from shadowspill.preparation.lifecycle import LoadedPreparations
 from shadowspill.pytorch.control_inputs import ControlInputs
 from shadowspill.pytorch.executable import restore_executable
 from shadowspill.pytorch.numerics import (
@@ -36,6 +37,7 @@ class MeasurementSession:
         measurement: float,
         *,
         groups: GroupBindings | None = None,
+        preparations: LoadedPreparations | None = None,
     ):
         validate_numerical_settings(
             program_numerical_contracts(program),
@@ -43,6 +45,7 @@ class MeasurementSession:
         )
         self.program, self.device, self.inputs = program, device, inputs
         self.groups = groups
+        self.preparations = preparations
         self.warmup, self.measurement = warmup, measurement
         self.functions: dict[str, Any] = {}
         self.controls = ControlInputs(program, device, inputs)
@@ -64,6 +67,10 @@ class MeasurementSession:
                 triton_choices=self.program.bindings.get("triton_choices", {}).get(key),
                 numerical_contracts=contracts,
             )
+            if self.preparations is not None:
+                self.functions[key] = self.preparations.wrap(
+                    self.program, key, self.functions[key]
+                )
             self.persistent += max(0, torch.cuda.memory_allocated(self.device) - before)
         return self.functions[key]
 

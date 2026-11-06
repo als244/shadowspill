@@ -13,13 +13,13 @@ from shadowspill.pytorch.numerics import validate_numerical_settings
 from shadowspill.pytorch.resource_streams import ResourceStreams
 from shadowspill.resources.description import resource_groups
 from shadowspill.resources.inventory import resource_inventory
-from shadowspill.resources.lifecycle import ResourceBindings
 from shadowspill.runtime import Runtime
 
 from .distributed.checks import coordinated
 from .distributed.sequence import check_collective_order
 from .distributed.worker import DistributedWorker
 from .paths import ExecutionPath, bind_path, plan_numerical_contracts
+from .providers import WorkerProviders
 from .resources import (
     plan_inventory,
     seal_paths,
@@ -49,7 +49,7 @@ def create_paths(
     ResourceStreams,
     DistributedWorker | None,
     "ParameterNorms | None",
-    ResourceBindings,
+    WorkerProviders,
 ]:
     plans = dict(plans or {})
     inventory = plan_inventory(plan, plans)
@@ -64,7 +64,7 @@ def create_paths(
         else None
     )
     runtime, paths, named, observations = None, [], {}, None
-    providers = ResourceBindings()
+    providers = WorkerProviders(device)
     try:
 
         def validate_configuration() -> None:
@@ -126,12 +126,17 @@ def create_paths(
             distributed.groups.check(failure)
             distributed.prepare(device)
         assert runtime is not None
+        # Allocator selection must precede PyTorch CUDA initialization. The
+        # cold pool already reserves the profiles' mature external footprint,
+        # including modules. Load them now, before fixed-layout Plan admission
+        # and the final physical-budget seal, never inside a task.
+        coordinated(distributed, lambda: providers.prepare(candidates))
         descriptions, sources = coordinated(
             distributed, lambda: resource_inventory(p.program for p in candidates)
         )
         coordinated(
             distributed,
-            lambda: providers.open(
+            lambda: providers.resources.open(
                 descriptions,
                 sources,
                 device=torch.device("cuda", device),
@@ -166,6 +171,7 @@ def create_paths(
                     if joint is None
                     else joint.fixed_slice_bytes,
                     distributed=distributed,
+                    preparations=providers.preparations,
                 )
             )
             owner = memory.plan_handle
@@ -179,6 +185,7 @@ def create_paths(
                         bridge,
                         shared=paths[0].storage,
                         distributed=distributed,
+                        preparations=providers.preparations,
                     )
                 )
             for name, additional in plans.items():
@@ -194,6 +201,7 @@ def create_paths(
                     shared=paths[0].storage,
                     shared_aliases=joint.aliases[name],
                     distributed=distributed,
+                    preparations=providers.preparations,
                 )
             if parameter_norms:
                 from .observations.collector import ParameterNorms

@@ -23,6 +23,7 @@ def test_forward_only_roots_are_dead_when_backward_preparation_starts(
         )
         bindings: dict = field(default_factory=lambda: {"operator_dependencies": {}})
         task_definitions: tuple = ()
+        operator_binaries: dict = field(default_factory=dict)
 
     references = {}
     cache_reclaims = []

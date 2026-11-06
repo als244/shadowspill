@@ -1,6 +1,7 @@
 """Finalize generated and provider kernels using one stage's ordinary tensors."""
 
 from collections.abc import Mapping, Sequence
+from contextlib import nullcontext
 from dataclasses import replace
 from typing import Any
 
@@ -11,6 +12,7 @@ from shadowspill.artifacts._values import digest
 from shadowspill.artifacts.program import Program
 from shadowspill.artifacts.tasks import stage_jobs
 from shadowspill.errors import CompilationError
+from shadowspill.preparation.lifecycle import BuildPreparations
 from shadowspill.pytorch.control_inputs import ControlInputs
 from shadowspill.pytorch.executable import restore_executable
 from shadowspill.pytorch.numerics import (
@@ -27,17 +29,26 @@ from .output_devices import resolve_output_devices
 
 
 def finalize_tasks(
-    program: Program, device: torch.device, *, rank_map: Mapping[int, int] | None = None
+    program: Program,
+    device: torch.device,
+    *,
+    rank_map: Mapping[int, int] | None = None,
+    preparations: BuildPreparations | None = None,
 ) -> Program:
     with prepare_resources(program, device, rank_map) as resources:
         validate_numerical_settings(
             program_numerical_contracts(program),
             check=None if resources.groups is None else resources.groups.check,
         )
-        return _finalize_tasks(program, device)
+        return _finalize_tasks(program, device, preparations=preparations)
 
 
-def _finalize_tasks(program: Program, device: torch.device) -> Program:
+def _finalize_tasks(
+    program: Program,
+    device: torch.device,
+    *,
+    preparations: BuildPreparations | None = None,
+) -> Program:
     dependencies = program.bindings["operator_dependencies"]
     pending = set(program.executables)
     if not pending:
@@ -60,7 +71,11 @@ def _finalize_tasks(program: Program, device: torch.device) -> Program:
             )
         if key not in pending:
             return functions[key](*arguments)
-        with capture_choices() as captured, capture_kernels() as generated:
+        with (
+            preparations.capture(key) if preparations is not None else nullcontext(),
+            capture_choices() as captured,
+            capture_kernels() as generated,
+        ):
             result = functions[key](*arguments)
         leaves, _ = tree_flatten(result)
         output_devices[key] = tuple(
@@ -136,6 +151,12 @@ def _finalize_tasks(program: Program, device: torch.device) -> Program:
     if pending:
         raise ValueError(f"kernel finalization did not cover tasks: {sorted(pending)}")
     program = resolve_output_devices(program, output_devices)
+    prepared = (
+        {}
+        if preparations is None or not preparations.providers
+        else preparations.metadata()
+    )
+    binaries = program.operator_binaries if preparations is None else preparations.blobs
     return replace(
         program,
         task_definitions=tuple(
@@ -147,6 +168,16 @@ def _finalize_tasks(program: Program, device: torch.device) -> Program:
                         "triton_choices": choices[item.profile_key],
                         "inductor_kernels": kernels[item.profile_key],
                         "output_devices": output_devices[item.profile_key],
+                        **(
+                            {
+                                "operator_preparation": {
+                                    "providers": prepared["providers"],
+                                    "task": prepared["tasks"][item.profile_key],
+                                }
+                            }
+                            if prepared
+                            else {}
+                        ),
                     }
                 ),
             )
@@ -159,5 +190,7 @@ def _finalize_tasks(program: Program, device: torch.device) -> Program:
             **program.bindings,
             "triton_choices": choices,
             "inductor_kernels": kernels,
+            **({"operator_preparation": prepared} if prepared else {}),
         },
+        operator_binaries=binaries,
     )

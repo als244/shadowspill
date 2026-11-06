@@ -41,6 +41,7 @@ _PUBLIC = {
     "Sharded": "parallelism",
     "GroupRef": "parallelism",
     "Resource": "resources",
+    "OperatorPreparation": "preparation",
 }
 
 

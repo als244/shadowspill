@@ -8,6 +8,7 @@ from shadowspill.artifacts.plan import Plan
 from shadowspill.communication.binding.groups import GroupBindings
 from shadowspill.communication.contracts import collective_measurement
 from shadowspill.planning.admission.outputs import output_bindings_for_entrypoints
+from shadowspill.preparation.lifecycle import LoadedPreparations
 from shadowspill.profiling.records import measured_task
 from shadowspill.pytorch.executable import restore_executable
 from shadowspill.pytorch.numerics import program_numerical_contracts
@@ -53,6 +54,7 @@ def prepare(
     *,
     shared_slice_bytes: int | None = None,
     groups: GroupBindings | None = None,
+    preparations: LoadedPreparations | None = None,
 ) -> tuple[tuple[BoundTask, ...], int]:
     assert plan.memory_layout is not None
     ir = plan._costed_program
@@ -130,6 +132,14 @@ def prepare(
                             plan.program, (key,)
                         ),
                     )
+                    if preparations is not None:
+                        functions[key] = preparations.wrap(
+                            plan.program, key, functions[key]
+                        )
+                    elif plan.program.bindings.get("operator_preparation"):
+                        raise ValueError(
+                            "prepared operators must load before admission"
+                        )
             measurement = measurements[key]
             function = functions[key]
             description = plan.program.bindings["task_inputs"][key]

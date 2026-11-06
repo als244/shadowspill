@@ -8,6 +8,7 @@ from torch import nn
 
 from shadowspill.artifacts.program import Program
 from shadowspill.parallelism import Parallelism
+from shadowspill.preparation import OperatorPreparation
 from shadowspill.pytorch.capture.gradients import GradientDestinationRule
 from shadowspill.pytorch.chunking import ChunkPolicy, ChunkRegions
 from shadowspill.pytorch.graph_pairs.policy import GraphPairPolicy
@@ -35,6 +36,7 @@ def build_step(
     master_dtype: torch.dtype | None = None,
     parallelism: Parallelism | None = None,
     resources: Mapping[str, Resource] | None = None,
+    operator_preparation: Sequence[OperatorPreparation] = (),
     rank_map: Mapping[int, int] | None = None,
     target: str | torch.device = "cuda",
 ) -> Program:
@@ -62,6 +64,9 @@ def build_step(
     for grouped in-place gradient accumulation across shared uses and chunks.
     It is independent of retention and chunk selection; unmatched outputs keep
     ordinary accumulation and all selected implementations are still profiled.
+    ``operator_preparation`` supplies explicit provider factories that capture
+    selected binaries during existing task finalization, without replaying the
+    task, and restore them before measurement/runtime admission.
     """
     return _build_training(
         model,
@@ -80,6 +85,7 @@ def build_step(
         master_dtype=master_dtype,
         parallelism=parallelism,
         resources=resources,
+        operator_preparation=operator_preparation,
         rank_map=rank_map,
         target=target,
     )
