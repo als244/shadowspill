@@ -354,12 +354,14 @@ def test_varied_keys_are_the_columns_of_the_index():
     assert varied({"a": {"x": 1}}) == []
 
 
-def test_a_resume_refuses_another_world_but_takes_a_grown_matrix(tmp_path, monkeypatch):
+def test_a_resume_refuses_another_world_but_takes_a_grown_matrix(tmp_path, capsys):
     config, output = tmp_path / "config.json", tmp_path / "sweep"
     write_json(config, {"schema_version": 1, "defaults": BIG, "cases": [{}]})
     argv = [
         "--engine",
         "fsdp2",
+        "--python",
+        sys.executable,
         "--config",
         str(config),
         "--output",
@@ -373,8 +375,11 @@ def test_a_resume_refuses_another_world_but_takes_a_grown_matrix(tmp_path, monke
     (first,) = [path.name for path in (output / "cases").iterdir()]
     with pytest.raises(SystemExit):
         main(argv)
+    changed_world = argv.copy()
+    changed_world[changed_world.index("--gpus") + 1] = "4"
     with pytest.raises(SystemExit):
-        main([*argv[:-3], "4", "--dry-run", "--resume"])
+        main([*changed_world, "--resume"])
+    assert "this one differs in world_size" in capsys.readouterr().err
     with pytest.raises(SystemExit):
         main([*argv[:1], "nonesuch", *argv[2:]])
     write_json(
