@@ -460,41 +460,33 @@ qualify these resources.
 Likewise, the registration digest is not a fingerprint of all transitive native
 libraries or proof that a provider's internal autotuning/resources are portable.
 
-For Python providers that use Triton's or the supported Quack autotuner, build
-runs each affected task with bounded representative inputs and records its selected
-configurations.
-Backward uses the corresponding forward's tensors. Kernel source, tuning keys
-and candidate configurations identify each selection, and selections contribute
-to profile compatibility. Measurement and execution bind these saved choices;
-they reject unseen specializations or changed candidates before benchmarking.
-No GPU timing records or runtime pools are produced by this build pass.
+The PyTorch frontend records Triton compiler selections while finalizing each
+unique executable with bounded representative inputs. Backward uses the
+corresponding forward's tensors. Kernel source, tuning keys and candidate
+configurations identify each selection and contribute to profile compatibility.
+Measurement and execution bind these choices and reject unseen specializations
+or changed candidates before benchmarking. Fixed kernels may compile lazily
+without selecting a different implementation. This compiler integration does
+not discover or patch external operation libraries.
 
-Only compact configuration records belong to the Program archive. Compiler
-caches remain disposable, and provider code remains an external dependency.
-Fixed kernels may compile lazily without selecting a different implementation.
-Quack records also bind the provider's source/ABI fingerprint, registered kernel
-source directories, generated callable closure and epilogue identities, and
-dataclass-valued GEMM configurations. Replay calls the selected configuration
-directly: a different or empty in-memory/disk tuning cache cannot choose another
-implementation. Both backends share the task-local scope, including nested
-execution regions. For archive compatibility the internal binding is still
-named `triton_choices`; Quack entries use versioned `quack/v1/` keys. Its optional
-adapter checks the provider's call contract before recording or replaying it.
-Ordinary provider calls outside these scopes retain their original behavior.
-The supported Quack adapter also scopes host launch recipes: each capture starts
-with an empty dispatch cache, and each restored task keeps its own warm cache.
-An eager or previous task's recipe cannot bypass configuration recording or
-select a different saved implementation. This preserves warm launch shortcuts
-within a task and composes with optional prepared-operator bindings.
+External operator tuning and dispatch belong to the operation provider's
+[`OperatorPreparation`](../operator-preparation.md) adapter. Its opaque manifest
+can contain selected configurations together with immutable binaries. The
+provider must observe warm dispatch hits, isolate task-owned host caches,
+validate its source/ABI and reject missing specializations. ShadowSpill only
+owns the generic capture/export/load/activate lifecycle, artifact integrity,
+profile compatibility and physical memory admission. Ordinary calls outside a
+provider's activation retain their ordinary behavior.
 
-Older Programs with Quack calls but no recorded Quack choices must be rebuilt;
-replay refuses them rather than tuning under an already measured memory layout.
-Unknown callable state and Quack candidates synthesized only by pruning require
-explicit provider support. Saving choices does not package provider binaries or
-certify all provider resources, gradient destinations, or distributed behavior.
-
-Other autotuner systems still need saved-choice support; resource initialization
-must not retune the finalized task.
+MLOps supplies its Sonic/Quack adapter in the MLOps package. The maintained MLOps
+baseline and text benchmark factories, and qualification builds, explicitly
+supply its preparation descriptions. Direct build callers must supply the
+appropriate provider description themselves. Provider-specific tests belong
+with that adapter; the engine tests the generic lifecycle and cross-package
+saved training. Historical Programs whose `triton_choices` field contains
+external-provider records must be rebuilt and reprofiled with explicit
+preparation; the frontend refuses these mixed records instead of ignoring them.
+Pure Triton records retain their existing format.
 
 See [repository structure](../development/repository.md) for implementation owners.
 

@@ -1,7 +1,6 @@
-"""Preserve task-local provider choices across disposable compiler caches.
+"""Preserve task-local Triton compiler choices across disposable caches.
 
-Existing Triton record keys and the Program's historical ``triton_choices``
-binding remain compatible. Other backends use namespaced, versioned records.
+External operator selection and dispatch belong to provider-owned preparation.
 """
 
 from ._scope import capture_choices, use_choices

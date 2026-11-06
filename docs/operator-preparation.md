@@ -1,7 +1,8 @@
 # Preparing external operator kernels
 
-`OperatorPreparation` lets an operator provider attach its selected binaries to
-a Program. Pass descriptions through `operator_preparation` on `build_forward`,
+`OperatorPreparation` lets an operator provider attach its selected implementations,
+configuration metadata and binaries to a Program. Pass descriptions through
+`operator_preparation` on `build_forward`,
 `build_forward_backward`, or `build_step`:
 
 ```python
@@ -23,6 +24,15 @@ existing build behavior. This interface does not discover or prepare arbitrary
 external compilers automatically. A provider must qualify the entire dispatch
 surface it claims, including generated epilogues, tails, accumulation forms,
 helper kernels and native launchers.
+
+Provider-specific autotuning, cache layouts, version checks and source hashes
+belong in the provider package. ShadowSpill treats the manifest as opaque: it
+captures it during build, includes it in profile compatibility, loads selected
+bindings before admission and activates them for task execution. It does not
+import an operation library merely because that library is installed. A provider
+may supply a helper that constructs descriptions without initializing a device;
+workloads pass those descriptions explicitly, including in shared search
+`build_options`. The same contract applies to every model and execution region.
 
 ## Contract
 

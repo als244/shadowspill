@@ -6,6 +6,7 @@ from typing import Any
 import torch
 
 from shadowspill import build_step
+from workloads.models.shared.preparation import operator_preparations
 from workloads.models.shared.training import LEARNING_RATE
 
 
@@ -36,12 +37,18 @@ def build_case(
         },
         directory / "inputs.pt",
     )
+    implementation = (
+        case.manifest.implementation
+        if hasattr(case, "manifest")
+        else case.model_implementation
+    )
     program = build_step(
         case.model,
         optimizer=optimizer,
         objective=case.objective,
         example_calls=[(tuple(values), {}) for values in case.microbatches],
         fuse_narrow_gradient_accumulation=not deterministic,
+        operator_preparation=operator_preparations(implementation, dtypes.model_dtype),
         **dtypes.plan_arguments(),
     )
     program.save(directory / "program.ssp")

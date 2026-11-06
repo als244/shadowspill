@@ -28,6 +28,15 @@ def invoke(x):
     return output
 
 
+def test_external_records_require_provider_owned_preparation():
+    # Old mixed-backend records must not silently lose their selected policy.
+    with pytest.raises(ValueError, match=r"rebuild.*operator_preparation"):
+        use_choices(
+            lambda: pytest.fail("task ran"),
+            {"external/v1/key": {"backend": "external"}},
+        )
+
+
 @pytest.mark.cuda
 def test_frozen_choices_override_local_cache_and_refuse_missing_keys(monkeypatch):
     if not torch.cuda.is_available():

@@ -8,6 +8,7 @@ from shadowspill import Parallelism
 from shadowspill.training._model import build_optimizer
 from workloads.full_model import build_model, full_model_objective, spec
 from workloads.lora import configure_lora
+from workloads.models.shared.preparation import operator_preparations
 from workloads.models.shared.training import LEARNING_RATE
 
 from ..initialization import Initialize
@@ -104,7 +105,13 @@ def experiment(
         "objective": objective,
         "candidates": inputs,
         "fill_tensor": initializer,
-        "build_options": {**precision.plan_arguments(), "parallelism": parallelism},
+        "build_options": {
+            **precision.plan_arguments(),
+            "parallelism": parallelism,
+            "operator_preparation": operator_preparations(
+                implementation, precision.model_dtype
+            ),
+        },
         "hyperparams": {"optimizer_group.0.lr": LEARNING_RATE},
         "metric_reducer": metrics,
         "units_per_step": manifest.tokens_per_step * parallelism.world_size,

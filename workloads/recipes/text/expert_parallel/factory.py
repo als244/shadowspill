@@ -98,6 +98,9 @@ def experiment(
     setup["build_options"].update(
         parallelism=parallelism,
         resources={"experts": resource},
+        # EP's resource owns fixed GEMM configurations (gemm_tuned=False).
+        # The ordinary single-device Sonic preparation does not cover EP.
+        operator_preparation=(),
     )
     setup["metadata"].update(
         parallelism=parallelism.to_dict(),

@@ -6,6 +6,7 @@ from baselines.common.runner import Tokens
 from baselines.common.training import TrainingModel
 from benchmarking.quickstart.phases.common import read
 from shadowspill import Parallelism
+from workloads.models.shared.preparation import operator_preparations
 
 from .microbatches import split_microbatches
 from .precision import build_arguments, optimizer_arguments
@@ -69,6 +70,9 @@ def experiment(*, case_file, device):
         "build_options": {
             **build_arguments(precision),
             "parallelism": Parallelism.dp(ranks_per_replica=world),
+            "operator_preparation": operator_preparations(
+                request.implementation, precision.model_dtype
+            ),
         },
         "units_per_step": geometry.tokens_per_step,
         "unit_label": "tokens",

@@ -7,6 +7,7 @@ import mlops
 import torch
 
 from shadowspill import Parallelism
+from workloads.models.shared.preparation import operator_preparations
 from workloads.recipes.text.precision import Precision
 
 from .initialize import Initialize
@@ -153,6 +154,11 @@ def experiment(
         "build_options": {
             **precision.plan_arguments(),
             "parallelism": parallelism,
+            "operator_preparation": (
+                operator_preparations("mlops", precision.model_dtype)
+                if gemm_precision == "bf16" and expert_storage is None
+                else ()
+            ),
             **({"partition": GLMStages()} if partition == "glm_stages" else {}),
         },
         "hyperparams": {"optimizer_group.0.lr": 1e-4},
