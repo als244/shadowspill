@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from hypothesis import given
+from hypothesis import HealthCheck, given, settings
 from hypothesis import strategies as st
 
 from shadowspill.ir import (
@@ -20,6 +20,10 @@ from shadowspill.ir import (
 )
 
 
+# These bounded integer lists test serialization, not generation throughput.
+# Full CUDA suites and debugger runs can pause a draw long enough to trip the
+# health check; keep all examples, assertions and the test-body deadline.
+@settings(suppress_health_check=[HealthCheck.too_slow])
 @given(
     sizes=st.lists(
         st.integers(min_value=0, max_value=1 << 30), min_size=1, max_size=20
