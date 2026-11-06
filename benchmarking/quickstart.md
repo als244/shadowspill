@@ -120,7 +120,7 @@ It returns a plain mapping:
 | `optimizer` | Callable taking model parameters and returning the optimizer used by `build_step`. |
 | `objective` | Called as `objective(model, *args, **kwargs)`. It owns loss normalization. |
 | `candidates` | Names mapped to `{"args": [...], "kwargs": [...], "build_options": {...}}`. `args`/`kwargs` are the same per-example input sequences as Executor; inputs stay on CPU. Candidate `build_options` are optional overrides of the factory defaults. |
-| `build_options` | Optional shared direct builder controls such as `partition`, `chunking`, `graph_pair_policy`, `master_dtype`, `grad_dtype`. |
+| `build_options` | Optional shared direct builder controls such as `partition`, `chunking`, `graph_pair_policy`, `gradient_destination_rules`, `master_dtype`, `grad_dtype`. |
 | `fill_tensor` | Execution callback `(TensorChunk, destination)` filling the bounded CPU buffer supplied by Executor. Checkpoint slices or deterministic random initialization belong here. |
 | `hyperparams` | Optional per-call runtime values using the names declared in the Program. |
 | `metric_reducer` | Optional reducer of host observations to named scalars or MetricSummary. |
@@ -176,6 +176,16 @@ factory-level options; they are not recursively merged. An explicit
 initial state and numerical policy fixed when comparing throughput.
 `parallelism` and `resources` must be declared at factory level: candidate
 overrides for those controls are refused before selecting workers.
+
+Provider accumulation contracts can be shared across these candidates through
+the factory's `build_options["gradient_destination_rules"]`. For example, MLOps
+versions with the optional ShadowSpill integration expose
+`mlops.integrations.shadowspill.sonicmoe_gradient_destination_rules()` for
+SonicMoE LoRA. Include its separate `sonicmoe_chunk_rules()` alongside the other
+operator rules in each applicable chunk policy. The rules do not pick a chunk
+size or retention policy; every candidate still passes ordinary compilation,
+profiling and admission. See [provider contracts](../docs/architecture/custom-gradient-destinations.md#sonicmoe-provider-adapter)
+for precision permissions and unsupported paths that retain ordinary accumulation.
 
 Each graph-pair policy defines independent `save` and `recompute` cuts; the
 planner chooses among the variants each chunk policy permits. Retained values

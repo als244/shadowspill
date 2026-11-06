@@ -113,3 +113,38 @@ ordinary structural compilation and profiling; saved Programs and Plans carry
 the operator registration dependency and implementation digest. Rule callbacks
 are not needed by the saved executor. Each real provider's fused kernels and
 distributed behavior require qualification in addition to generic rewrite tests.
+
+## SonicMoE provider adapter
+
+An MLOps installation with the optional ShadowSpill integration supplies
+`mlops.integrations.shadowspill.sonicmoe_gradient_destination_rules()` and
+`sonicmoe_chunk_rules()`. These are explicit provider contracts consumed by the
+same generic APIs; the core does not select rules by model family.
+
+```python
+from mlops.integrations.shadowspill import (
+    sonicmoe_chunk_rules,
+    sonicmoe_gradient_destination_rules,
+)
+
+gradient_rules = sonicmoe_gradient_destination_rules()
+chunk_rules = (*other_operator_rules, *sonicmoe_chunk_rules())
+# Pass gradient_rules as gradient_destination_rules to the builder.
+# Use chunk_rules in the AxisChunks values returned by the chunk policy.
+```
+
+The model must already select the SonicMoE LoRA provider. The adapter supports
+complete aligned same-dtype destinations, one literal scale and canonical up-B
+layout. Narrow accumulation honors `fuse_narrow_gradient_accumulation`; casts
+through a narrower intermediate, cropped ranks and FP8 containers keep the
+ordinary accumulation path. Its chunk contracts keep sorted rows and routing
+metadata local to a chunk and describe additive parameter reductions. They do
+not choose checkpoint cuts, execution regions, retention or chunk sizes, or
+certify expert-parallel communication as independent across an axis.
+
+The factories run at build time without initializing CUDA. Saved execution
+loads the versioned provider overloads and does not call their mappers. The
+provider must still be installed and compatible with the saved artifact. This
+integration does not package external Triton/CuTe binaries or guarantee no JIT
+at first invocation. See the installed MLOps `docs/SHADOWSPILL.md` for its
+precision, layout and qualification scope.
