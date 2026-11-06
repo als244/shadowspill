@@ -481,6 +481,11 @@ execution regions. For archive compatibility the internal binding is still
 named `triton_choices`; Quack entries use versioned `quack/v1/` keys. Its optional
 adapter checks the provider's call contract before recording or replaying it.
 Ordinary provider calls outside these scopes retain their original behavior.
+The supported Quack adapter also scopes host launch recipes: each capture starts
+with an empty dispatch cache, and each restored task keeps its own warm cache.
+An eager or previous task's recipe cannot bypass configuration recording or
+select a different saved implementation. This preserves warm launch shortcuts
+within a task and composes with optional prepared-operator bindings.
 
 Older Programs with Quack calls but no recorded Quack choices must be rebuilt;
 replay refuses them rather than tuning under an already measured memory layout.

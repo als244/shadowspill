@@ -249,6 +249,11 @@ def install() -> None:
         except (OSError, TypeError):
             supported = False
 
+        if supported:
+            from .quack_dispatch import install as install_dispatch
+
+            install_dispatch()
+
         @wraps(original)
         def call(tuner: Any, *args: Any, **kwargs: Any) -> Any:
             return _run(original, supported, tuner, args, kwargs)

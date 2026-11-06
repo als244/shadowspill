@@ -7,6 +7,7 @@ import subprocess
 import sys
 from dataclasses import replace
 from functools import wraps
+from types import SimpleNamespace
 
 import pytest
 import torch
@@ -204,6 +205,87 @@ def test_generated_epilogue_and_reduction_sink_identities():
     assert identity == adapter._value(_make_tuned_fn(sum_epilogue, ("total",)))
     assert identity != adapter._value(second)
     assert identity != adapter._value(_make_tuned_fn(sum_epilogue, ("total", "extra")))
+
+
+def test_warm_epilogue_records_each_task_and_replay_keeps_its_own_cache(monkeypatch):
+    from quack.epilogue.frontend import EpiMod, gemm_epilogue
+    from quack.gemm_runtime import autotune
+
+    @gemm_epilogue()
+    def epilogue(acc):
+        return {"D": acc}
+
+    tuner, tensor, key = fixture()
+    selections = []
+
+    def launch(plan, a, b, out, c, operands, **kwargs):
+        out.fill_(plan.tile)
+
+    def tuned(mod, a, b, out, c, **kwargs):
+        tile = tuner(tensor, length=4)
+        selections.append(tile)
+        plan = SimpleNamespace(tile=tile)
+        launch(plan, a, b, out, c, {})
+        return SimpleNamespace(
+            plan=plan,
+            sinks={},
+            config=SimpleNamespace(swap_ab=False, is_dynamic_persistent=False),
+        )
+
+    monkeypatch.setitem(
+        EpiMod.__call__.__globals__, "get_device_capacity", lambda d: (9, 0)
+    )
+    monkeypatch.setitem(EpiMod.__call__.__globals__, "run_gemm_epi_plan", launch)
+    monkeypatch.setattr(autotune, "tuned_mod_gemm", tuned)
+    a = torch.ones(2, 2)
+
+    def invoke():
+        return epilogue(a, a, dynamic_scheduler=False)["D"]
+
+    assert torch.all(invoke() == 16)  # Eager cache is already warm at capture.
+    eager = epilogue._call_cache
+    with capture_choices() as first:
+        assert torch.all(invoke() == 16)
+        assert torch.all(invoke() == 16)
+    assert len(first) == 1 and selections == [16, 16]
+    tuner.cache[key] = tuner.configs[1]
+    with capture_choices() as second:
+        assert torch.all(invoke() == 32)
+    assert len(second) == 1
+    left, right = use_choices(invoke, first), use_choices(invoke, second)
+    for name in ("_bench", "prune_configs", "check_disk_cache"):
+        monkeypatch.setattr(tuner, name, forbidden)
+    tuner.cache.clear()
+    for _ in range(3):
+        assert torch.all(left() == 16)
+        assert torch.all(right() == 32)
+    assert selections == [16, 16, 32, 16, 32]  # Warm replay still skips dispatch.
+    assert epilogue._call_cache is eager
+    assert torch.all(invoke() == 16)
+    with pytest.raises(ValueError, match="no finalized configuration"):
+        use_choices(invoke, {})()
+
+
+def test_interface_dispatch_cache_is_nested_and_exception_safe():
+    from quack import gemm_interface
+
+    with capture_choices():  # Install before retaining the ordinary cache.
+        pass
+    cache = gemm_interface._gemm_iface_plan_cache
+    key = object()
+    cache[key] = "eager"
+    try:
+        with capture_choices():
+            assert key not in cache
+            cache[key] = "outer"
+            with pytest.raises(RuntimeError, match="stop"), capture_choices():
+                assert key not in cache
+                cache[key] = "inner"
+                raise RuntimeError("stop")
+            assert cache[key] == "outer"
+        assert cache[key] == "eager"
+    finally:
+        del cache[key]
 
 
 def test_unknown_callable_state_and_changed_provider_contract_refuse():
