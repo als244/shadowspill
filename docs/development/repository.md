@@ -74,6 +74,7 @@ src/shadowspill/
 ├── planning/              CPU-only profile binding, scheduling and physical layout
 │   ├── admission/         resolve saved memory evidence without a live pool
 │   └── training/          bind example/update orderings and gradient completion
+├── preparation/           provider-owned binary capture and saved task binding
 ├── reporting/             CPU-only reports and timeline/summary output
 ├── ir/                    framework-neutral values and indexed projections
 │   └── program/           the program: its vocabularies, specs, alternatives,

@@ -28,6 +28,7 @@ NEUTRAL_MODULES = (
     "shadowspill.planner.program",
     "shadowspill.planner.selection",
     "shadowspill.profiling",
+    "shadowspill.preparation",
     "shadowspill.resources",
     "shadowspill.frontend",
     "shadowspill.runtime",

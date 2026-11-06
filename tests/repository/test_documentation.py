@@ -686,8 +686,8 @@ def test_current_contract_docs_are_backend_and_topology_neutral() -> None:
         r"\b(?:cross-step )?cyclic residency\b",
         re.IGNORECASE,
     )
-    # Concrete workloads/baselines describe their hardware requirements. The
-    # neutral engine contracts must not imply a fixed backend or topology.
+    # Concrete workloads, their integration tests and baselines describe their
+    # hardware requirements. Neutral engine contracts cannot fix a backend/topology.
     violations = {
         path.relative_to(ROOT).as_posix(): sorted(
             set(forbidden.findall(path.read_text()))
@@ -695,6 +695,7 @@ def test_current_contract_docs_are_backend_and_topology_neutral() -> None:
         for path in _normative_markdown_files()
         if not path.is_relative_to(ROOT / "baselines")
         and not path.is_relative_to(ROOT / "workloads")
+        and not path.is_relative_to(ROOT / "tests/workloads")
         and path
         not in {
             ROOT / "benchmarking/quickstart.md",

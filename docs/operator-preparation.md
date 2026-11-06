@@ -94,8 +94,8 @@ executor first installs its allocator and opens the cold pool, reserving the
 profiles' measured mature external footprint, which includes provider modules.
 It then loads only its selected task keys, including continuing-accumulation
 and named Plans, before admitting their fixed layouts and sealing the physical
-budget. Loading before allocator installation would initialize PyTorch CUDA too
-early and is refused. Shared loader ownership lasts
+budget. Loading before allocator installation would initialize the framework's
+device context too early and is refused. Shared loader ownership lasts
 until the executor drains work and removes its task callbacks. Loading or closing
 while a prepared task is active is refused.
 
@@ -110,8 +110,9 @@ failures participate in the existing coordinated startup error protocol.
 
 ## Optional real-provider regression
 
-With the CUDA native backend and MLOps's pinned SonicMoE/Quack dependencies,
-run the maintained saved-Program regression from this repository:
+With the native backend and MLOps dependencies listed in the test's
+[scope and setup](../tests/workloads/prepared_sonic/README.md), run the maintained
+saved-Program regression from this repository:
 
 ```bash
 python -m pytest -m slow tests/workloads/test_prepared_sonic.py
