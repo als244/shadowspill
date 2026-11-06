@@ -15,6 +15,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+from pathlib import Path
 
 
 def main() -> int:
@@ -27,6 +28,15 @@ def main() -> int:
     # Triton keeps its own directory and reads this one; naming it here means a
     # test cannot inherit a kernel another test compiled.
     environment["TRITON_CACHE_DIR"] = os.path.join(root, "triton")
+    # CTest may use an interpreter with a scikit-build editable install of a
+    # different checkout. Its meta-path finder precedes PYTHONPATH, so naming
+    # this tree in PYTHONPATH alone does not select its Python implementation.
+    # Keep this bootstrap inherited by every fresh worker the canary starts.
+    bootstrap = Path(__file__).with_name("source_bootstrap")
+    inherited = environment.get("PYTHONPATH", "")
+    environment["PYTHONPATH"] = os.pathsep.join(
+        [str(bootstrap), *([inherited] if inherited else [])]
+    )
     try:
         return subprocess.call(sys.argv[1:], env=environment)
     finally:

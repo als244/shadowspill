@@ -32,8 +32,10 @@ function(shadowspill_add_pytorch_canary name timeout)
       # a ctest run self-contained, and `_refuse_a_second_runtime` catches
       # whatever still gets past it.
       #
-      # PYTHONPATH is the source tree, so a canary runs what is checked out.
-      # The test wrapper isolates compiler caches outside saved artifacts.
+      # PYTHONPATH names the source tree. The wrapper's inherited bootstrap
+      # also excludes an editable finder for a different checkout, which
+      # otherwise takes precedence over PYTHONPATH in fresh Python workers.
+      # The wrapper isolates compiler caches outside saved artifacts.
       ENVIRONMENT
         "PYTHONPATH=${PROJECT_SOURCE_DIR}/src:${PROJECT_SOURCE_DIR};SHADOWSPILL_CANARY_TIMEOUT=${timeout};SHADOWSPILL_LIBRARY_DIRECTORY=$<TARGET_FILE_DIR:shadowspill>"
       TIMEOUT ${timeout}
