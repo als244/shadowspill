@@ -130,7 +130,7 @@ typedef struct ShadowSpillPytorchAdapterConfig {
        Zero preserves sizing from the observed cold baseline alone. */
     uint64_t external_baseline_bytes;
     /* Independent physical availability with the measured spill pool live.
-       Zero preserves legacy process-budget-only sizing. */
+       Zero selects process-budget-only sizing. */
     uint64_t physical_limit_bytes;
     /* Device-global cost not attributed to this process, reserved before
        creating the spill pool. Requires a nonzero physical_limit_bytes. */

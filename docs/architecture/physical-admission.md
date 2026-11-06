@@ -485,8 +485,8 @@ the maximum total fixed cost can understate what one worker reserves.
 
 Communicator startup is charged once per distinct communication calibration,
 using the same identity rule as runtime startup. It is excluded from the
-per-path communication remainder so it is not counted twice. Legacy profile
-overhead without a component breakdown stays undivided; admission does not
+per-path communication remainder so it is not counted twice. Profile overhead
+without a component breakdown stays undivided; admission does not
 invent a measured split. Spill is charged with shared model tensors once and
 every Plan's own persistent spill storage beside the active Plan's peak. The C
 runtime validates every layout against that arena through

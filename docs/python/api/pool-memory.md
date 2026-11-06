@@ -21,7 +21,8 @@ pool can take tens of seconds. Reuse the saved measurement for all sequence,
 chunk-size and retention candidates using that same configuration and deployment.
 The probe does not install the framework allocator or run model operations.
 
-CPU planning consumes the artifact without CUDA, PyTorch or pool acquisition:
+CPU planning consumes the artifact without PyTorch, device initialization or
+pool acquisition:
 
 ```python
 from shadowspill import PoolMemoryProfile, sweep_programs
@@ -84,8 +85,9 @@ unchanged.
 
 Evidence binds exact capacity, pool kind/configuration, normal NUMA binding,
 physical GPU UUID, driver, host and core/adapter/backend/extension library hashes.
-Cold execution checks these before installing the framework allocator. CUDA's
-process-local device numbering resolves the UUID, including visibility masks.
+Cold execution checks these before installing the framework allocator. The
+backend's process-local device numbering resolves the UUID, including visibility
+masks.
 Changing a relevant resource requires new evidence. Compiling another model or
 changing its chunk size does not by itself change pool identity.
 

@@ -1,7 +1,7 @@
 """Portable, capacity-bound observations of one worker's pools and lanes.
 
 These are retained-memory observations, not a guarantee about transient startup
-peaks. The latter remain explicitly unknown. No framework or native library is
+peaks. The latter remain explicitly unknown. No framework or engine library is
 loaded when reading this evidence or using it for CPU planning.
 """
 

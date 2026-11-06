@@ -142,8 +142,8 @@ metadata local to a chunk and describe additive parameter reductions. They do
 not choose checkpoint cuts, execution regions, retention or chunk sizes, or
 certify expert-parallel communication as independent across an axis.
 
-The factories run at build time without initializing CUDA. Saved execution
-loads the versioned provider overloads and does not call their mappers. The
+The factories run at build time without initializing the accelerator. Saved
+execution loads the versioned provider overloads and does not call their mappers. The
 provider must still be installed and compatible with the saved artifact. This
 integration does not package external Triton/CuTe binaries or guarantee no JIT
 at first invocation. See the installed MLOps `docs/SHADOWSPILL.md` for its
