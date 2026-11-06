@@ -12,6 +12,8 @@ from pathlib import Path
 def _run(directory: Path, source: str, *options: str) -> subprocess.CompletedProcess:
     test = directory / "test_case.py"
     test.write_text(source)
+    configuration = directory / "pytest.ini"
+    configuration.write_text("[pytest]\n")
     root = Path(__file__).resolve().parents[2]
     environment = {
         **os.environ,
@@ -25,7 +27,11 @@ def _run(directory: Path, source: str, *options: str) -> subprocess.CompletedPro
             "-m",
             "pytest",
             "-c",
-            "/dev/null",
+            str(configuration),
+            "--rootdir",
+            str(directory),
+            "--confcutdir",
+            str(directory),
             "-q",
             "-p",
             "no:cacheprovider",
