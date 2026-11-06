@@ -33,6 +33,16 @@ class TaskProfile:
             seconds(self.duration_seconds, "duration_seconds")
         if self.workspace_bytes is not None:
             nonnegative_int(self.workspace_bytes, "workspace_bytes")
+        for name, kind in (
+            ("resource_phases", TaskResourcePhase),
+            ("overlap_costs", TaskOverlapCost),
+        ):
+            values = getattr(self, name)
+            if values is not None:
+                values = tuple(values)
+                if not all(isinstance(value, kind) for value in values):
+                    raise TypeError(f"{name} must contain {kind.__name__} records")
+                object.__setattr__(self, name, values)
         object.__setattr__(self, "metadata", freeze(self.metadata))
         for key in ("duration_kind", "memory_kind"):
             if self.metadata.get(key, "estimated") not in (

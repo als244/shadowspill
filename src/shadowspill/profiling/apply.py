@@ -20,7 +20,9 @@ def apply_profiles(program: Program, profiles: Profiles) -> ProfiledProgram:
     Explicit framework collectives can defer both timing and workspace to
     CommunicationInfo during planning. No process group is needed here.
     """
-    profiles = Profiles.from_dict(profiles.to_dict())
+    # TaskProfile records are immutable. ProfiledProgram snapshots the editable
+    # collection/setup/metadata below; serializing every task here needlessly
+    # copies and freezes potentially large allocation traces a second time.
     if program.setup and freeze(program.setup) != freeze(profiles.setup):
         raise ValueError("profile setup differs from the Program target/build setup")
     missing: list[str] = []
@@ -55,27 +57,33 @@ def apply_profiles(program: Program, profiles: Profiles) -> ProfiledProgram:
             .get(key, {})
             .get("known_workspace_bytes", 0)
         )
-        metadata = dict(record.metadata)
+        metadata = record.metadata
         if workspace is None:
             workspace = definition.workspace_bytes
             if workspace is not None:
-                metadata["memory_kind"] = "static"
-                metadata["memory_source"] = "program"
+                metadata = dict(metadata, memory_kind="static", memory_source="program")
         elif workspace < max(definition.workspace_bytes or 0, known_workspace):
             raise ValueError(
                 f"{key}: workspace is smaller than compiler-visible memory"
             )
         if workspace is None:
             if key in communication:
-                metadata["memory_source"] = "communication_info"
+                metadata = dict(metadata, memory_source="communication_info")
             else:
                 missing.append(f"{key}: workspace_bytes")
-        applied[key] = replace(
-            record,
-            workspace_bytes=workspace,
-            compatibility_digest=definition.compatibility_digest,
-            metadata=metadata,
-        )
+        if (
+            workspace == record.workspace_bytes
+            and definition.compatibility_digest == record.compatibility_digest
+            and metadata is record.metadata
+        ):
+            applied[key] = record
+        else:
+            applied[key] = replace(
+                record,
+                workspace_bytes=workspace,
+                compatibility_digest=definition.compatibility_digest,
+                metadata=metadata,
+            )
     overhead = profiles.fixed_device_bytes
     metadata = dict(profiles.metadata)
     if overhead is None:

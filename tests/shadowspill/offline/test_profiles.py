@@ -3,6 +3,7 @@ from dataclasses import FrozenInstanceError, replace
 import pytest
 
 from shadowspill import Profiles, TaskProfile, apply_profiles
+from shadowspill.ir import TaskOverlapCost, TaskResourcePhase
 
 from ._example import profiles, program
 
@@ -59,6 +60,40 @@ def test_profile_snapshot_and_metadata_are_independent():
         result.setup["gpu"]["name"] = "mutate"
     with pytest.raises(TypeError):
         result.task_profiles["update_impl"] = TaskProfile(2)
+
+
+def test_reapplied_profiles_reuse_immutable_records_with_independent_collections():
+    phases = [TaskResourcePhase(1000)]
+    overlaps = [TaskOverlapCost("fetch", 64, 0.5, 0.75)]
+    trace = {"events": [[1, 2, 3]], "memory_kind": "measured"}
+    inputs = profiles()
+    inputs.metadata["source"] = {"labels": ["measured"]}
+    inputs.tasks["update_impl"] = TaskProfile(
+        1e-6, 16, "implementation-v1", phases, overlaps, trace
+    )
+    result = apply_profiles(program(), inputs)
+    phases.clear()
+    overlaps.clear()
+    trace["events"][0][0] = 99
+    inputs.metadata["source"]["labels"].clear()
+    inputs.tasks.clear()
+    assert result.task_profiles["update_impl"].resource_phases == (
+        TaskResourcePhase(1000),
+    )
+    assert result.task_profiles["update_impl"].metadata["events"] == ((1, 2, 3),)
+    assert result.metadata["source"]["labels"] == ("measured",)
+    reapplied = apply_profiles(result.program, result.profiles)
+    assert reapplied.to_dict() == result.to_dict()
+    assert all(
+        reapplied.task_profiles[key] is record
+        for key, record in result.task_profiles.items()
+    )
+
+
+@pytest.mark.parametrize("name", ["resource_phases", "overlap_costs"])
+def test_task_profile_requires_immutable_timing_records(name):
+    with pytest.raises(TypeError, match=name):
+        TaskProfile(**{name: [{"invalid": []}]})
 
 
 def test_merge_overwrites_values_preserving_only_unchanged_evidence():
