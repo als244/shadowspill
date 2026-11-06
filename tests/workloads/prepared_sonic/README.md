@@ -7,7 +7,9 @@ python -m pytest -m slow tests/workloads/test_prepared_sonic.py
 ```
 
 It requires the CUDA native backend and MLOps with the pinned SonicMoE/Quack
-extras. It runs two BF16 rank-32 cases: recompute with fresh/continuing/fresh
+extras and a GPU supported by normal SonicMoE dispatch (compute capability
+9.x/10.x). It skips RTX 5090/SM120; CPU preparation-contract tests still run on
+that host. It runs two BF16 rank-32 cases: recompute with fresh/continuing/fresh
 gradients, and saved activations with three AdamW updates. Both use shared
 nonzero LoRA factors twice, two empty experts, batch 2, sequence lengths 65/48,
 and nested 33/17/9 execution chunks. It calls the actual Sonic provider directly;

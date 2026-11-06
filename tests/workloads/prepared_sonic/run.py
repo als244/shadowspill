@@ -30,8 +30,9 @@ else:
         print(json.dumps({'reason': 'CUDA is unavailable'}))
     else:
         capability = torch.cuda.get_device_capability()
-        print(json.dumps({'capability': capability, 'reason': None if capability in
-            ((9, 0), (10, 0), (12, 0)) else 'unqualified Sonic preparation target'}))
+        from mlops.providers.sonicmoe.moe import CAPABILITIES
+        print(json.dumps({'capability': capability, 'reason': None if capability[0] in
+            CAPABILITIES else 'SonicMoE dispatch supports compute capability 9.x and 10.x'}))
 """,
         ],
         check=True,
