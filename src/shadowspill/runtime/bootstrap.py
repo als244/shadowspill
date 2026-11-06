@@ -134,6 +134,7 @@ def install_runtime(
     backend: str | None = None,
     reject_overbudget: bool = False,
     numa_binding: bool = True,
+    external_baseline_bytes: int = 0,
 ) -> InstalledRuntime:
     """Install the process-global allocator before the device is initialized.
 
@@ -162,6 +163,7 @@ def install_runtime(
         worker_poll_nanoseconds,
         background_transfer_window_bytes,
         reject_overbudget,
+        external_baseline_bytes,
     )
     path = _validated_adapter_path(library_path)
     backend_library = _backend_path(backend)
@@ -234,6 +236,7 @@ def install_runtime(
         library_count=len(library_paths),
         reject_overbudget=reject_overbudget,
         disable_numa_binding=not numa_binding,
+        external_baseline_bytes=external_baseline_bytes,
     )
     _bootstrap_allocator(library, config)
     admission = _read_physical_admission(
@@ -241,6 +244,7 @@ def install_runtime(
         device_budget_bytes=device_budget_bytes,
         external_headroom_bytes=external_headroom_bytes,
         reject_overbudget=reject_overbudget,
+        external_baseline_bytes=external_baseline_bytes,
     )
     _validate_physical_usage(library, device_budget_bytes, reject_overbudget)
     frontend.activate_allocator()
@@ -341,6 +345,7 @@ def _validate_install_request(
     worker_poll_nanoseconds: int,
     background_transfer_window_bytes: int,
     reject_overbudget: bool = False,
+    external_baseline_bytes: int = 0,
 ) -> None:
     if not isinstance(reject_overbudget, bool):
         raise RuntimeInstallError("reject_overbudget must be a bool")
@@ -351,6 +356,17 @@ def _validate_install_request(
     if external_headroom_bytes < 0 or external_headroom_bytes >= device_budget_bytes:
         raise RuntimeInstallError(
             "external headroom must be non-negative and smaller than device budget"
+        )
+    if (
+        isinstance(external_baseline_bytes, bool)
+        or not isinstance(external_baseline_bytes, int)
+        or not 0
+        <= external_baseline_bytes
+        < device_budget_bytes - external_headroom_bytes
+    ):
+        raise RuntimeInstallError(
+            "external baseline must be a non-negative integer leaving room "
+            "after headroom inside the device budget"
         )
     if not pools:
         raise RuntimeInstallError("pool registry must not be empty")
@@ -496,7 +512,7 @@ def _bootstrap_allocator(library: Any, config: AdapterConfig) -> None:
     )
 
 
-def _sizing_refusal(held: int, budget: int, headroom: int) -> str:
+def _sizing_refusal(held: int, budget: int, headroom: int, floor: int = 0) -> str:
     """Why the budget left no device pool, from what the adapter latched.
 
     The pool is the budget less what the process held when the pools were
@@ -505,15 +521,22 @@ def _sizing_refusal(held: int, budget: int, headroom: int) -> str:
     budget passed the device's own memory, the other refusal sizing makes.
     """
 
-    if budget - held - headroom >= _DEVICE_POOL_GRANULARITY:
+    reserved = max(held, floor)
+    if budget - reserved - headroom >= _DEVICE_POOL_GRANULARITY:
         return (
             f": the declared execution budget of {format_bytes(budget)} is more"
             " than the device holds, so no device pool can be sized inside it."
         )
+    floor_note = (
+        f"; the profiled external baseline reserves {format_bytes(reserved)}"
+        if floor > held
+        else ""
+    )
     return (
         f": this process already held {format_bytes(held)} on the device when its"
         " pools were sized -- mostly its accelerator context, whose size differs by"
-        f" device -- and the external headroom reserves {format_bytes(headroom)}"
+        f" device --{floor_note} and the external headroom reserves"
+        f" {format_bytes(headroom)}"
         f" more, which leaves the declared execution budget of"
         f" {format_bytes(budget)} no room for a device pool. Raise the budget or"
         " lower the external headroom."
@@ -538,7 +561,12 @@ def _bootstrap_refusal(library: Any, config: AdapterConfig) -> str:
     # the budget; a budget refusal holds more than it.
     sizing = int(failure.runtime.pool_id) == int(config.allocator_pool_id)
     if sizing and budget > 0 and held <= budget:
-        return _sizing_refusal(held, budget, int(config.external_headroom_bytes))
+        return _sizing_refusal(
+            held,
+            budget,
+            int(config.external_headroom_bytes),
+            int(config.external_baseline_bytes),
+        )
     if held <= budget or budget == 0:
         return ""
     return (
@@ -560,6 +588,7 @@ def _read_physical_admission(
     device_budget_bytes: int,
     external_headroom_bytes: int,
     reject_overbudget: bool = False,
+    external_baseline_bytes: int = 0,
 ) -> PhysicalAdmission:
     admission = PhysicalAdmission()
     status = int(
@@ -572,6 +601,8 @@ def _read_physical_admission(
         or admission.external_headroom_bytes != external_headroom_bytes
         or bool(admission.reject_overbudget) != reject_overbudget
         or admission.allocator_pool_bytes == 0
+        or admission.reserved_baseline_bytes
+        != max(admission.baseline_bytes, external_baseline_bytes)
     ):
         raise RuntimeInstallError("physical admission handshake failed")
     return admission

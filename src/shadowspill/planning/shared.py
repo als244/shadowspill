@@ -8,6 +8,8 @@ from shadowspill.artifacts.tensors import shared_model_aliases
 from shadowspill.errors import PlanInfeasibleError
 from shadowspill.ir import MemoryLocation
 
+from .worker_memory import shared_fixed_overhead
+
 
 @dataclass(frozen=True)
 class SharedMemory:
@@ -22,7 +24,9 @@ def shared_memory(primary: Plan, plans: Mapping[str, Plan]) -> SharedMemory:
 
     Model storage is shared by registration name. Other tensors remain private.
     Plans execute sequentially, so fixed GPU workspace takes the largest slice.
-    Fixed device overhead is the worker's, counted once at its largest.
+    Fixed overhead follows the worker's external/headroom/retained components;
+    their maxima can come from different Plans. Distinct communicator startup
+    reservations are charged once each, as they are during execution.
     """
     named = {"": primary, **plans}
     if "" in plans or any(not isinstance(name, str) for name in plans):
@@ -65,12 +69,7 @@ def shared_memory(primary: Plan, plans: Mapping[str, Plan]) -> SharedMemory:
         for layout in layouts
         if layout is not None
     )
-    # These plans run in one worker, which opens its CUDA context, provider
-    # handles, stream workspaces, provider resources and reserved headroom
-    # once for every Plan it holds. Each Program's fixed overhead measures
-    # that same worker, so the largest counts once; a Plan whose streams the
-    # others lack adds a workspace the headroom covers.
-    overhead = max(plan.fixed_device_bytes for plan in named.values())
+    overhead = shared_fixed_overhead([plan for _, plan in paths])
     execution = fixed + dynamic + overhead
     spill = _spill_bytes(paths, mappings)
     if execution > primary.memory_budgets.execution_bytes:

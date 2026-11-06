@@ -53,9 +53,11 @@ ShadowSpillStatus shadowspill_pytorch_check_physical_budget(void) {
     uint64_t external = memory.process_bytes > base
         ? memory.process_bytes - base
         : 0U;
+    const uint64_t allowance = admission.external_headroom_bytes +
+        admission.reserved_baseline_bytes - admission.baseline_bytes;
     const uint8_t within_budget =
         memory.process_bytes <= admission.device_budget_bytes &&
-        external <= admission.external_headroom_bytes;
+        external <= allowance;
     const uint8_t report_only = admission.reject_overbudget == 0U;
     ShadowSpillStatus status = within_budget || report_only
         ? SHADOWSPILL_STATUS_OK
@@ -135,19 +137,20 @@ ShadowSpillStatus shadowspill_pytorch_seal_physical_budget(
     }
     pthread_mutex_lock(&adapter.mutex);
     /* The allowance sizes the pool; only this flag controls enforcement. */
+    const uint64_t allowance = adapter.admission.external_headroom_bytes +
+        adapter.admission.reserved_baseline_bytes - adapter.admission.baseline_bytes;
     const uint64_t reported_requirement = !adapter.admission.reject_overbudget &&
-        required_external_headroom_bytes > adapter.admission.external_headroom_bytes
+        required_external_headroom_bytes > allowance
         ? required_external_headroom_bytes
         : 0U;
     if (!adapter.admission.reject_overbudget) {
         adapter.physical_budget_sealed = 1U;
-    } else if (required_external_headroom_bytes >
-        adapter.admission.external_headroom_bytes) {
+    } else if (required_external_headroom_bytes > allowance) {
         status = SHADOWSPILL_STATUS_PLAN_VIOLATION;
         shadowspill_pytorch_failure_latch_physical_locked(
             status,
             required_external_headroom_bytes,
-            adapter.admission.external_headroom_bytes
+            allowance
         );
     } else {
         adapter.physical_budget_sealed = 1U;

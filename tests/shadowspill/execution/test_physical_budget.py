@@ -25,6 +25,7 @@ def test_overbudget_check_reports_memory_without_masking_failure(available):
             ),
             admission=SimpleNamespace(
                 baseline_bytes=100,
+                reserved_baseline_bytes=200,
                 allocator_pool_bytes=600,
                 device_budget_bytes=1000,
                 external_headroom_bytes=300,
@@ -37,6 +38,7 @@ def test_overbudget_check_reports_memory_without_masking_failure(available):
         message = str(failure.value)
         assert "process=1200" in message and "budget=1000" in message
         assert "external=500" in message and "external_headroom=300" in message
+        assert "reserved_baseline=200" in message
 
 
 def test_within_budget_does_not_query_extra_memory():

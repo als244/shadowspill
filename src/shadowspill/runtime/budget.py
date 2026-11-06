@@ -66,6 +66,7 @@ def check_physical_budget(installed: InstalledRuntime) -> None:
                 f"external={external}, "
                 f"external_headroom={int(admission.external_headroom_bytes)}, "
                 f"baseline={int(admission.baseline_bytes)}, "
+                f"reserved_baseline={int(admission.reserved_baseline_bytes)}, "
                 f"allocator_pool={int(admission.allocator_pool_bytes)}"
             )
         raise AdmissionError(f"physical budget check failed (status {status}){details}")
@@ -92,8 +93,13 @@ def seal_worker_budget(
         raise AdmissionError(f"allocator statistics failed with status {status}")
     alignment = 64 * _MIB
     observed = int(statistics.observed_external_high_water_bytes) + alignment
+    allowance = (
+        int(installed.admission.external_headroom_bytes)
+        + int(installed.admission.reserved_baseline_bytes)
+        - int(installed.admission.baseline_bytes)
+    )
     required = max(
-        int(installed.admission.external_headroom_bytes),
+        allowance,
         ((observed + alignment - 1) // alignment) * alignment,
     )
     runtime_record_reserve = _runtime_record_reserve(
@@ -128,7 +134,7 @@ def seal_worker_budget(
         )
     )
     if status != 0:
-        reserved = int(installed.admission.external_headroom_bytes)
+        reserved = allowance
         raise AdmissionError(
             "observed external memory exceeds the reserved headroom: "
             f"required={required}, reserved={reserved}, "

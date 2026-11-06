@@ -22,6 +22,7 @@ from shadowspill import (
 )
 from shadowspill.errors import PlanInfeasibleError
 from shadowspill.planning.shared import shared_memory
+from shadowspill.planning.worker_memory import shared_fixed_overhead
 
 
 class Network(nn.Module):
@@ -113,13 +114,15 @@ def test_shared_evaluation_and_checkpoint_in_cold_workers(tmp_path):
     assert shared.spill_bytes >= max(
         p.timeline.spill_peak_bytes for p in plans.values()
     )
-    # One worker runs both: its fixed overhead, which every Program measured,
-    # counts once, beside the larger fixed slice and the larger dynamic need,
-    # so the pair costs exactly what the plan dominating both already needs
-    # and is admitted at that budget.
-    needed = max(
-        p.memory_layout.required_bytes + p.profiled_program.fixed_device_bytes
-        for p in plans.values()
+    # One worker takes the maximum of each reservation component. They can
+    # come from different Plans; max(total fixed) alone would undercharge it.
+    needed = (
+        shared.fixed_slice_bytes
+        + max(
+            p.memory_layout.required_bytes - p.memory_layout.fixed_slice_bytes
+            for p in plans.values()
+        )
+        + shared_fixed_overhead(tuple(plans.values()))
     )
     assert shared.execution_bytes == needed
     exact = replace(plans["training"].memory_budgets, execution_bytes=needed)

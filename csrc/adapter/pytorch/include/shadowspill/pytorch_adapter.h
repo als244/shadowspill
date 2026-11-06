@@ -21,7 +21,7 @@
 extern "C" {
 #endif
 
-#define SHADOWSPILL_PYTORCH_ADAPTER_ABI_VERSION 1U
+#define SHADOWSPILL_PYTORCH_ADAPTER_ABI_VERSION 2U
 
 /* Independent calibration session using real pool kinds/lanes. Does not install
  * the allocator or bind the process-global Runtime. The session owns bounded
@@ -106,6 +106,9 @@ typedef struct ShadowSpillPytorchAdapterConfig {
     /* Reject external/whole-process memory overruns when nonzero. */
     uint8_t reject_overbudget;
     uint8_t disable_numa_binding;
+    /* Absolute mature process-external footprint; excludes in-pool state.
+       Zero preserves sizing from the observed cold baseline alone. */
+    uint64_t external_baseline_bytes;
 } ShadowSpillPytorchAdapterConfig;
 
 typedef struct ShadowSpillPytorchPhysicalAdmission {
@@ -121,6 +124,9 @@ typedef struct ShadowSpillPytorchPhysicalAdmission {
     uint64_t device_used_bytes;
     uint64_t device_total_bytes;
     uint8_t reject_overbudget;
+    /* max(baseline_bytes, config.external_baseline_bytes). The observed
+       baseline remains separately visible above. */
+    uint64_t reserved_baseline_bytes;
 } ShadowSpillPytorchPhysicalAdmission;
 
 /* The three contracts this build was compiled against, and the one thing

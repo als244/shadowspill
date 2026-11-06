@@ -127,6 +127,7 @@ class Runtime:
                 device_ordinal=topology.device.device,
                 device_budget_bytes=topology.device.physical_capacity,
                 external_headroom_bytes=topology.device.external_headroom,
+                external_baseline_bytes=topology.device.external_baseline,
                 reject_overbudget=topology.device.reject_overbudget,
                 allocator_pool_id=topology.allocator_pool_id,
                 pools=topology.pool_bootstrap,

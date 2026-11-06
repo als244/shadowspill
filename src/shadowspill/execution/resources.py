@@ -4,12 +4,20 @@ from collections.abc import Mapping, Sequence
 
 import torch
 
-from shadowspill.artifacts._values import digest
 from shadowspill.artifacts.plan import Plan
 from shadowspill.ir import MemoryActionKind
+from shadowspill.planning.worker_memory import (
+    communicator_reservation,
+    external_baseline,
+)
 from shadowspill.pytorch.resource_streams import ResourceStreams
 from shadowspill.runtime.bootstrap import installed_runtime
 from shadowspill.runtime.budget import seal_worker_budget
+
+
+def worker_external_baseline(plans: Sequence[Plan]) -> int:
+    """The same process-external floor used by shared CPU admission."""
+    return external_baseline(plans)
 
 
 def worker_headroom(plans: Sequence[Plan], requested: int | None) -> int:
@@ -24,15 +32,7 @@ def worker_headroom(plans: Sequence[Plan], requested: int | None) -> int:
             "Executor external_headroom_bytes exceeds the Plan reservation; "
             "replan with profiles that include the requested headroom"
         )
-    if (
-        plans[0].program.parallelism is not None
-        and plans[0].program.parallelism.world_size > 1
-    ):
-        calibrations = {
-            digest(p.communication_info.to_dict()): p.communication_info for p in plans
-        }
-        requested += sum(info.fixed_device_bytes or 0 for info in calibrations.values())
-    return requested
+    return requested + communicator_reservation(plans)
 
 
 def plan_inventory(plan: Plan, additional: Mapping[str, Plan]) -> dict[str, Plan]:

@@ -46,6 +46,7 @@ def _failing_setup(monkeypatch, runtime, error):
     monkeypatch.setattr(worker, "plan_inventory", lambda plan, plans: {"": plan})
     monkeypatch.setattr(worker, "plan_numerical_contracts", lambda plan: ())
     monkeypatch.setattr(worker, "worker_headroom", lambda candidates, headroom: 0)
+    monkeypatch.setattr(worker, "worker_external_baseline", lambda candidates: 0)
     monkeypatch.setattr(worker, "open_worker", lambda *arguments: runtime)
     monkeypatch.setattr(worker, "resource_inventory", lambda programs: ({}, {}))
     monkeypatch.setattr(worker, "worker_streams", lambda candidates, device: None)

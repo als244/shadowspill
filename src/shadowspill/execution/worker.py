@@ -20,7 +20,13 @@ from .distributed.checks import coordinated
 from .distributed.sequence import check_collective_order
 from .distributed.worker import DistributedWorker
 from .paths import ExecutionPath, bind_path, plan_numerical_contracts
-from .resources import plan_inventory, seal_paths, worker_headroom, worker_streams
+from .resources import (
+    plan_inventory,
+    seal_paths,
+    worker_external_baseline,
+    worker_headroom,
+    worker_streams,
+)
 from .setup import open_path, open_worker
 
 if TYPE_CHECKING:
@@ -86,14 +92,24 @@ def create_paths(
                 )
             check_collective_order(distributed.groups, inventory)
         joint = coordinated(
-            distributed, lambda: shared_memory(plan, plans) if plans else None
+            distributed,
+            lambda: (
+                shared_memory(plan, plans)
+                if plans or plan._accumulation_plan is not None
+                else None
+            ),
         )
         headroom = coordinated(
             distributed, lambda: worker_headroom(candidates, external_headroom_bytes)
         )
+        external_baseline = coordinated(
+            distributed, lambda: worker_external_baseline(candidates)
+        )
         failure = None
         try:
-            runtime = open_worker(plan, device, headroom, spill, reject_overbudget)
+            runtime = open_worker(
+                plan, device, headroom, spill, reject_overbudget, external_baseline
+            )
         except Exception as error:
             if distributed is None:
                 raise

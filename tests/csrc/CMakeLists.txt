@@ -305,6 +305,23 @@ endif()
 # way the frontend loads a provider. Needs no accelerator and no libtorch; the
 # storage operators are the Python canaries' to cover.
 if(TARGET shadowspill_pytorch)
+  add_library(shadowspill_test_physical_backend SHARED adapter/physical_backend.c)
+  target_link_libraries(shadowspill_test_physical_backend
+    PRIVATE shadowspill_backend_mock shadowspill_build_options)
+  add_executable(shadowspill_external_baseline_canary adapter/external_baseline_canary.c)
+  target_include_directories(shadowspill_external_baseline_canary
+    PRIVATE ${PROJECT_SOURCE_DIR}/csrc/adapter/pytorch/include)
+  target_link_libraries(shadowspill_external_baseline_canary
+    PRIVATE shadowspill_pytorch shadowspill ${CMAKE_DL_LIBS} shadowspill_build_options)
+  foreach(floor IN ITEMS 0 2097152 16777216 15728657)
+    foreach(strict IN ITEMS 0 1)
+      add_test(NAME shadowspill_external_baseline_${floor}_${strict}
+        COMMAND shadowspill_external_baseline_canary
+          $<TARGET_FILE:shadowspill_test_physical_backend> ${floor} ${strict})
+      set_tests_properties(shadowspill_external_baseline_${floor}_${strict}
+        PROPERTIES TIMEOUT 30)
+    endforeach()
+  endforeach()
   add_executable(
     shadowspill_pytorch_adapter_canary adapter/pytorch_adapter_canary.c
   )

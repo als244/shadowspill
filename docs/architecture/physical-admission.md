@@ -477,11 +477,18 @@ pointer reaches a backend kernel.
 
 `Executor(training_plan, plans={"evaluation": evaluation_plan})` admits the saved
 layouts into one arena. The joint memory calculation takes the largest fixed
-slice and the largest dynamic and scratch reserve among the Plans, and counts
-the fixed device overhead once, at its largest: that overhead is the worker's,
-which opens its context, streams, provider resources and headroom once for
-every Plan it holds. Spill is charged with shared model tensors once and every
-Plan's own persistent spill storage beside the active Plan's peak. The C
+slice and the largest dynamic and scratch reserve among its invocation paths,
+including the continuing-gradient path. It also reserves the maximum measured
+external footprint, maximum headroom, and largest sum of retained profile cost
+and communication scratch. Those maxima can belong to different Plans; taking only
+the maximum total fixed cost can understate what one worker reserves.
+
+Communicator startup is charged once per distinct communication calibration,
+using the same identity rule as runtime startup. It is excluded from the
+per-path communication remainder so it is not counted twice. Legacy profile
+overhead without a component breakdown stays undivided; admission does not
+invent a measured split. Spill is charged with shared model tensors once and
+every Plan's own persistent spill storage beside the active Plan's peak. The C
 runtime validates every layout against that arena through
 `shadowspill_plan_admit_fixed_layout_in()`.
 

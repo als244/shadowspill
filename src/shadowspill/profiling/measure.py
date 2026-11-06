@@ -36,7 +36,9 @@ def measure_program(
     unknown control semantics require explicit values. Only one pair's tensors
     are retained at a time. No model weights, pools or ArtifactStore are needed.
     Fixed device overhead includes the requested worker headroom in addition to
-    observed library/context memory. Executor inherits this saved reservation.
+    observed library/context memory. Executor inherits the saved headroom and
+    mature process-external footprint when sizing its cold arena. Retained
+    in-arena workspaces are charged separately and never enter that external floor.
     """
     nonnegative_int(external_headroom_bytes, "external_headroom_bytes")
     if program.bindings.get("provider") != "torch-inductor-aot":

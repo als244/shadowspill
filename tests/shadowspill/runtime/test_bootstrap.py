@@ -121,7 +121,8 @@ class _Library:
 def test_declarative_adapter_abi_has_expected_c_layout() -> None:
     # Two pointers and two counts past the original 88: the extension library
     # list, and a per-pool configuration forwarded to its kind.
-    assert ctypes.sizeof(AdapterConfig) == 104
+    assert ctypes.sizeof(AdapterConfig) == 112
+    assert AdapterConfig.external_baseline_bytes.offset == 104
     assert ctypes.sizeof(PoolConfig) == 24
     assert ctypes.sizeof(AdapterCapabilities) == 16
     # A uint32 pool count, padded, then the runtime-wide counters. A pool's own
@@ -147,8 +148,9 @@ def test_declarative_adapter_abi_has_expected_c_layout() -> None:
     assert ctypes.sizeof(FixedLayoutDescription) == 48
     assert ctypes.sizeof(ObjectSnapshot) == 96
     assert ctypes.sizeof(ObjectLocationSnapshot) == 64
-    assert ctypes.sizeof(PhysicalAdmission) == 80
+    assert ctypes.sizeof(PhysicalAdmission) == 88
     assert PhysicalAdmission.reject_overbudget.offset == 72
+    assert PhysicalAdmission.reserved_baseline_bytes.offset == 80
     assert ctypes.sizeof(PhysicalMemory) == 24
     assert ctypes.sizeof(TraceConfig) == 24
     # Each grew by one uint64 when a transfer gained a third instant: the event

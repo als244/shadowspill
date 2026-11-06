@@ -262,10 +262,21 @@ excluded from the capacity available for task layouts. A warmed task that still
 retains an anonymous allocation is refused at capture, as resource setup left
 unresolved.
 
-**External memory.** Device memory outside the allocation pool, excluding the
-initial process baseline, consumes `external_headroom_bytes`. This allowance
-is subtracted before pool creation. It is distinct from persistent in-pool
-allocations. Zero reserves no external allowance. Independently, `reject_overbudget=False`
+**External memory.** Pool creation reserves the larger of the observed cold
+process baseline and the mature process-external footprint from the saved
+profile, then adds `external_headroom_bytes`. The measured external component
+is distinct from retained framework/provider tensors served inside the pool;
+passing all fixed overhead as an external floor would charge those tensors
+twice. Named Plans share the maximum external floor, not the sum.
+
+Low-level callers can set `DevicePool.external_baseline`; its default zero
+preserves observed-baseline sizing. Profiles without a separate external
+observation also preserve that behavior. The observed baseline and the reserved
+baseline are both reported. Raw external-growth statistics continue to measure
+growth from the observed baseline; their allowance includes the difference
+between reserved and observed baselines plus headroom.
+
+Zero headroom reserves no additional growth allowance. Independently, `reject_overbudget=False`
 reports external and whole-process overruns; `True` rejects them. Pool bounds
 and actual device allocation failures remain enforced in both modes.
 
@@ -273,7 +284,7 @@ The pool-sizing partition (enforcement does not change it):
 
 ```text
 device budget
-|-- baseline_bytes           process memory before pool creation
+|-- reserved_baseline_bytes  max(observed baseline, profiled external footprint)
 |-- external_headroom_bytes  allowance for memory outside the pool
 `-- allocation pool
     |-- fixed_execution_bytes  persistent allocations and fixed runtime reserves
@@ -281,6 +292,11 @@ device budget
     |-- dynamic_reserve         caller-owned outputs
     `-- scratch_reserve         unplanned allocator traffic
 ```
+
+The external floor accounts for process-attributed device memory. Additional
+device-global charges from a spill backend, physical availability changes, and
+spill-capacity calibration are separate constraints; this floor does not turn
+them into measured evidence or subtract them from a process budget.
 
 Previous: [Physical admission and offset handling](physical-admission.md).
 Next: [Fixed-offset placement](fixed-placement.md).

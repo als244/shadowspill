@@ -17,6 +17,8 @@ static int bootstrap_config_is_valid(
         config->backend_library == NULL || config->backend_library[0] == '\0' ||
         config->device_ordinal < 0 || config->device_budget_bytes == 0U ||
         config->external_headroom_bytes >= config->device_budget_bytes ||
+        config->external_baseline_bytes >=
+            config->device_budget_bytes - config->external_headroom_bytes ||
         config->reject_overbudget > 1U || config->disable_numa_binding > 1U ||
         config->pools == NULL || config->pool_count == 0U ||
         config->allocator_pool_id >= config->pool_count ||
@@ -67,20 +69,23 @@ static int bootstrap_config_is_valid(
     return 1;
 }
 
-/* The device pool the budget leaves after what the process already holds
-   and the external headroom, in whole 2 MiB pages; 0 when nothing fits. */
+/* Reserve the larger of the observed cold process and the mature external
+   footprint, plus headroom, in whole 2 MiB pages; 0 when nothing fits. */
 static uint64_t allocator_pool_bytes(
     const ShadowSpillPytorchAdapterConfig *config,
     const ShadowSpillBackendPhysicalMemory *physical
 ) {
     const uint64_t physical_granularity = 2U << 20U;
+    const uint64_t baseline = physical->process_bytes >
+        config->external_baseline_bytes
+        ? physical->process_bytes : config->external_baseline_bytes;
     if (config->device_budget_bytes > physical->device_total_bytes ||
-        physical->process_bytes >
+        baseline >
             config->device_budget_bytes - config->external_headroom_bytes) {
         return 0U;
     }
     const uint64_t available = config->device_budget_bytes -
-        physical->process_bytes - config->external_headroom_bytes;
+        baseline - config->external_headroom_bytes;
     return available - available % physical_granularity;
 }
 
@@ -288,6 +293,9 @@ static ShadowSpillStatus publish(
         .baseline_bytes = baseline->process_bytes,
         .external_headroom_bytes = config->external_headroom_bytes,
         .reject_overbudget = config->reject_overbudget,
+        .reserved_baseline_bytes = baseline->process_bytes >
+            config->external_baseline_bytes
+            ? baseline->process_bytes : config->external_baseline_bytes,
         .allocator_pool_id = config->allocator_pool_id,
         .pool_count = config->pool_count,
         .allocator_pool_bytes = pool_bytes,

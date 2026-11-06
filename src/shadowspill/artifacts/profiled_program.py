@@ -36,6 +36,11 @@ class ProfiledProgram(Artifact):
         nonnegative_int(headroom, "external_headroom_bytes")
         if headroom > self.fixed_device_bytes:
             raise ValueError("worker headroom exceeds fixed device overhead")
+        external = self.metadata.get("external_device_bytes")
+        if external is not None:
+            nonnegative_int(external, "external_device_bytes")
+            if external + headroom > self.fixed_device_bytes:
+                raise ValueError("external baseline and headroom exceed fixed overhead")
         if set(self.task_profiles) != {
             d.profile_key for d in self.program.task_definitions
         }:

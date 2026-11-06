@@ -76,6 +76,13 @@ the pool the allocator is bound to, inside) and
 `ShadowSpillPytorchAdapterFailure` (the first failure, with the runtime's
 record inside). `SHADOWSPILL_PYTORCH_ADAPTER_ABI_VERSION` versions all of it.
 
+Adapter ABI2 adds `external_baseline_bytes` to the bootstrap configuration and
+`reserved_baseline_bytes` to physical admission. The latter is the maximum of
+the observed `baseline_bytes` and the requested mature process-external floor.
+Pool sizing subtracts this reservation plus the existing external headroom.
+The floor excludes in-pool retained state and does not change the enforcement
+default. Rebuild the adapter and Python bindings together; ABI1 is refused.
+
 Two ids the frontend synthesises for work that is not a planned task are
 defined here so the failure report can decode them: allocation scopes take
 ids at or above `SHADOWSPILL_PYTORCH_PROFILING_SCOPE_BASE`, and the pre-task
@@ -106,8 +113,9 @@ frontend copies both.
   `shadowspill_pytorch_check_physical_budget()`, and
   `shadowspill_pytorch_seal_physical_budget()` expose and seal physical limits.
   `external_headroom_bytes` is reserved before sizing the pool; zero reserves
-  nothing. A budget that leaves less than one 2 MiB unit once what the process
-  holds at bootstrap and that headroom are taken out, or that exceeds the
+  no additional growth margin. A budget that leaves less than one 2 MiB unit
+  after the larger of the observed baseline and requested external floor,
+  plus headroom, are taken out, or that exceeds the
   device, refuses bootstrap with `SHADOWSPILL_STATUS_OUT_OF_MEMORY` and latches
   the bytes held as `requested_bytes`, the budget as `free_bytes` and the
   allocator pool as `pool_id`, from which the Python bootstrap says which it

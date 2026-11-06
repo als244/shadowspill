@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import ctypes
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import ClassVar
 
@@ -29,8 +29,11 @@ class DevicePool:
     """Configuration for an accelerator execution-capable memory pool.
 
     ``physical_capacity`` is the process-attributable device memory budget.
-    Pool sizing subtracts the initial process baseline and ``external_headroom``
-    (512 MiB by default). Zero headroom reserves no external allowance.
+    Pool sizing subtracts the larger of the initial process baseline and
+    ``external_baseline``, then ``external_headroom`` (512 MiB by default).
+    ``external_baseline`` is an absolute process-external footprint, such as
+    the mature footprint measured during profiling; it excludes allocations
+    served inside this pool. Zero leaves sizing based on the observed baseline.
 
     ``reject_overbudget=False`` (the default) reports external and whole-process
     memory overruns without rejecting them. Set it to ``True`` to enforce
@@ -42,6 +45,7 @@ class DevicePool:
     device: int = 0
     external_headroom: int = _DEFAULT_EXTERNAL_HEADROOM
     reject_overbudget: bool = False
+    external_baseline: int = field(default=0, kw_only=True)
 
     def __post_init__(self) -> None:
         _positive_bytes(self.physical_capacity, "physical_capacity")
@@ -59,6 +63,19 @@ class DevicePool:
             raise ValueError(
                 "external_headroom must be non-negative and smaller than "
                 "physical_capacity"
+            )
+        if isinstance(self.external_baseline, bool) or not isinstance(
+            self.external_baseline, int
+        ):
+            raise TypeError("external_baseline must be an integer byte count")
+        if (
+            not 0
+            <= self.external_baseline
+            < (self.physical_capacity - self.external_headroom)
+        ):
+            raise ValueError(
+                "external_baseline must be non-negative and leave room after "
+                "external_headroom inside physical_capacity"
             )
 
 
@@ -147,12 +164,12 @@ class TransferRoute:
     destination: str
 
     def __post_init__(self) -> None:
-        for field, value in (
+        for name, value in (
             ("source", self.source),
             ("destination", self.destination),
         ):
             if not isinstance(value, str) or not value or not value.isidentifier():
-                raise ValueError(f"route {field} must be a non-empty pool identifier")
+                raise ValueError(f"route {name} must be a non-empty pool identifier")
         if self.source == self.destination:
             raise ValueError("a directed transfer route requires distinct pools")
 
@@ -163,6 +180,7 @@ def device(
     device: int = 0,
     external_headroom: int = _DEFAULT_EXTERNAL_HEADROOM,
     reject_overbudget: bool = False,
+    external_baseline: int = 0,
 ) -> DevicePool:
     """Return a default accelerator-device pool configuration."""
 
@@ -171,6 +189,7 @@ def device(
         device=device,
         external_headroom=external_headroom,
         reject_overbudget=reject_overbudget,
+        external_baseline=external_baseline,
     )
 
 

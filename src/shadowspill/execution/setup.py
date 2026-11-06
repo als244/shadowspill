@@ -19,6 +19,7 @@ def open_worker(
     external_headroom_bytes: int,
     spill: SpillPool | None = None,
     reject_overbudget: bool = False,
+    external_baseline_bytes: int = 0,
 ) -> Runtime:
     if plan.simulation_only_reasons:
         raise ValueError(
@@ -50,6 +51,7 @@ def open_worker(
                 device=device,
                 external_headroom=external_headroom_bytes,
                 reject_overbudget=reject_overbudget,
+                external_baseline=external_baseline_bytes,
             ),
             "spill": spill,
         },
