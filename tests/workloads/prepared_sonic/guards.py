@@ -4,9 +4,6 @@ import os
 
 
 def forbid_provider_tuning(capability):
-    from mlops.quack_runtime._benchmark_scope import install
-
-    install()
     # Quack creates normalization tuner inventories at import. Its ordinary
     # architecture query initializes CUDA before the executor can install the
     # allocator. Select the saved Program's target using Quack's supported
@@ -29,6 +26,9 @@ def forbid_provider_tuning(capability):
     os.environ["QUACK_ARCH"] = architecture
     # Registration is part of the external provider contract, not model build.
     # Install its checked patches before refusing further selection work.
+    from mlops.quack_runtime._benchmark_scope import install
+
+    install()
     from mlops.quack_runtime import initialize
     from mlops.quack_runtime.autotune import sonicmoe_functional
     from quack.autotuner import Autotuner as QuackAutotuner
