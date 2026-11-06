@@ -107,3 +107,19 @@ alter gradient initialization/accumulation or replay expensive computation an
 additional time. Logical distributed ownership is unchanged: each rank loads
 its own selected artifacts on its assigned local device, and preparation
 failures participate in the existing coordinated startup error protocol.
+
+## Optional real-provider regression
+
+With the CUDA native backend and MLOps's pinned SonicMoE/Quack dependencies,
+run the maintained saved-Program regression from this repository:
+
+```bash
+python -m pytest -m slow tests/workloads/test_prepared_sonic.py
+```
+
+It covers both saved and recomputed BF16 LoRA training, nested chunks, fused
+gradient destinations, cold profiling/execution, strict physical admission,
+and checkpoint resume in another process. It uses independent CPU references
+and forbids external compilation or autotuning during saved phases. The slow
+test is opt-in and does not replace the complete qualification gates or
+distributed/full-model checks. See its [scope and setup](../tests/workloads/prepared_sonic/README.md).
