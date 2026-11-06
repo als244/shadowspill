@@ -31,6 +31,26 @@ SHADOWSPILL_PYTORCH_API ShadowSpillStatus shadowspill_pytorch_spill_probe_create
     const char *backend_path, int32_t device, const char *library_path,
     uint8_t kind, void *configuration, uint64_t capacity, void **out
 );
+/* Split lifecycle for capacity-bound memory calibration. Open loads only the
+ * backend/libraries; acquire creates both pools and their real transfer lanes.
+ * The device control pool is sized independently of the spill pool. Release
+ * destroys pools/lanes but keeps the backend alive for post-release snapshots
+ * and another acquisition. None of these calls installs the global allocator.
+ * Calls on a handle must be serialized. Snapshot counters are cumulative from
+ * open, including after release. A failed acquisition leaves the handle open. */
+SHADOWSPILL_PYTORCH_API ShadowSpillStatus shadowspill_pytorch_spill_probe_open(
+    const char *backend_path, int32_t device, const char *library_path, void **out
+);
+SHADOWSPILL_PYTORCH_API ShadowSpillStatus shadowspill_pytorch_spill_probe_acquire(
+    void *handle, uint8_t kind, void *configuration,
+    uint64_t execution_capacity, uint64_t spill_capacity,
+    uint8_t disable_numa_binding
+);
+SHADOWSPILL_PYTORCH_API ShadowSpillStatus shadowspill_pytorch_spill_probe_snapshot(
+    void *handle, ShadowSpillBackendPhysicalMemory *physical,
+    ShadowSpillBackendStatistics *statistics
+);
+SHADOWSPILL_PYTORCH_API void shadowspill_pytorch_spill_probe_release(void *handle);
 SHADOWSPILL_PYTORCH_API ShadowSpillStatus shadowspill_pytorch_spill_probe_measure(
     void *handle, uint64_t small, uint64_t large,
     uint32_t warmup, uint32_t measured, uint64_t *values

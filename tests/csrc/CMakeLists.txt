@@ -308,6 +308,20 @@ if(TARGET shadowspill_pytorch)
   add_library(shadowspill_test_physical_backend SHARED adapter/physical_backend.c)
   target_link_libraries(shadowspill_test_physical_backend
     PRIVATE shadowspill_backend_mock shadowspill_build_options)
+  add_executable(shadowspill_spill_probe_canary adapter/spill_probe_canary.c)
+  target_include_directories(shadowspill_spill_probe_canary
+    PRIVATE ${PROJECT_SOURCE_DIR}/csrc/adapter/pytorch/include)
+  target_link_libraries(shadowspill_spill_probe_canary
+    PRIVATE shadowspill_pytorch shadowspill shadowspill_build_options)
+  add_test(NAME shadowspill_spill_probe_canary
+    COMMAND shadowspill_spill_probe_canary $<TARGET_FILE:shadowspill_backend_mock>)
+  set_tests_properties(shadowspill_spill_probe_canary PROPERTIES TIMEOUT 30)
+  if(TARGET shadowspill_ssd)
+    add_test(NAME shadowspill_spill_probe_ssd_canary
+      COMMAND shadowspill_spill_probe_canary $<TARGET_FILE:shadowspill_backend_mock>
+        $<TARGET_FILE:shadowspill_ssd> ${PROJECT_BINARY_DIR})
+    set_tests_properties(shadowspill_spill_probe_ssd_canary PROPERTIES TIMEOUT 30)
+  endif()
   add_executable(shadowspill_external_baseline_canary adapter/external_baseline_canary.c)
   target_include_directories(shadowspill_external_baseline_canary
     PRIVATE ${PROJECT_SOURCE_DIR}/csrc/adapter/pytorch/include)

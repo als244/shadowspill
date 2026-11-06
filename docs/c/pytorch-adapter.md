@@ -289,3 +289,38 @@ runtime with the selected spill extension and its fetch/evict lanes. They never
 install or modify the adapter's global PyTorch allocator. The Python public entry
 point is `measure_communication(spill=...)`; returned rates and latencies include
 backend staging/completion and can be saved independently of execution pools.
+
+Capacity-bound memory observations use a split lifecycle on the same probe:
+
+1. `shadowspill_pytorch_spill_probe_open()` loads the backend and optional
+   extension, without creating pools or lanes.
+2. `shadowspill_pytorch_spill_probe_snapshot()` returns the backend's physical
+   memory observation and cumulative backend counters. It works before
+   acquisition, while the pools exist, and after release. A failed physical
+   query returns an error; zeroed output is not evidence of zero memory use.
+3. `shadowspill_pytorch_spill_probe_acquire()` takes separate execution and
+   spill capacities, the pool kind/configuration, and the NUMA-binding choice.
+   A small execution control pool can therefore accompany a full-capacity
+   spill pool. Both real transfer lanes are created, including their staging
+   resources. An acquisition failure unwinds the runtime and leaves the probe
+   open for observation or another attempt.
+4. `shadowspill_pytorch_spill_probe_measure()` can exercise the routes to expose
+   lazy resources. Bounded warmup copies do not replace production transfer
+   calibration.
+5. `shadowspill_pytorch_spill_probe_release()` destroys pools and lanes while
+   retaining the backend for post-release observations. It is idempotent.
+   `shadowspill_pytorch_spill_probe_destroy()` also releases any live runtime
+   before unloading libraries and closing the handle.
+
+Serialize calls on each handle, and destroy it before starting execution.
+Configuration storage must remain valid through acquisition. The existing
+`create()` entry point retains its equal-capacity behavior. These additions
+change no existing ABI structures and do not bind the global allocator.
+
+The internal Python `profiling.pool_probe.PoolProbe` exposes this lifecycle
+and refuses persistent SSD images. Use disposable configurations for probes;
+the native layer forwards configuration unchanged and cannot decide whether a
+backend resource is safe to create. Raw observations are not a saved physical
+admission certificate: configuration identity, deployment scope, uncertainty,
+interference and transient peaks still need to be resolved by a higher layer.
+No planner budget or default headroom changes when a probe is run.

@@ -1,4 +1,4 @@
-/* Independent route calibration. Never touches the adapter's global allocator. */
+/* Independent pool/route calibration. Never touches the global allocator. */
 #include "../lifecycle/internal.h"
 
 #include <stdlib.h>
@@ -10,28 +10,34 @@ typedef struct SpillProbe {
     uint32_t library_count;
 } SpillProbe;
 
+void shadowspill_pytorch_spill_probe_release(void *handle) {
+    SpillProbe *probe = handle;
+    if (probe == NULL) return;
+    if (probe->runtime != NULL) {
+        shadowspill_runtime_destroy(probe->runtime);
+        probe->runtime = NULL;
+    }
+}
+
 void shadowspill_pytorch_spill_probe_destroy(void *handle) {
     SpillProbe *probe = handle;
     if (probe == NULL) return;
-    if (probe->runtime != NULL) shadowspill_runtime_destroy(probe->runtime);
+    shadowspill_pytorch_spill_probe_release(probe);
     shadowspill_pytorch_libraries_unload(probe->libraries, probe->library_count);
     free(probe->libraries);
     shadowspill_pytorch_backend_unload(&probe->backend);
     free(probe);
 }
 
-ShadowSpillStatus shadowspill_pytorch_spill_probe_create(
-    const char *backend_path, int32_t device, const char *library_path,
-    uint8_t kind, void *configuration, uint64_t capacity, void **out
+ShadowSpillStatus shadowspill_pytorch_spill_probe_open(
+    const char *backend_path, int32_t device, const char *library_path, void **out
 ) {
-    if (out == NULL || backend_path == NULL || capacity == 0U)
-        return SHADOWSPILL_STATUS_INVALID_ARGUMENT;
+    if (out == NULL) return SHADOWSPILL_STATUS_INVALID_ARGUMENT;
     *out = NULL;
+    if (backend_path == NULL || device < 0)
+        return SHADOWSPILL_STATUS_INVALID_ARGUMENT;
     SpillProbe *probe = calloc(1U, sizeof(*probe));
     if (probe == NULL) return SHADOWSPILL_STATUS_INTERNAL_FAILURE;
-    ShadowSpillPoolMemoryDescription *memory = NULL;
-    ShadowSpillLaneDescription *lanes = NULL;
-    uint32_t memory_count = 0U, lane_count = 0U;
     ShadowSpillStatus status = shadowspill_pytorch_backend_load(
         backend_path, device, &probe->backend
     );
@@ -40,20 +46,39 @@ ShadowSpillStatus shadowspill_pytorch_spill_probe_create(
         status = shadowspill_pytorch_libraries_load(&library_path, 1U, &probe->libraries);
         if (status != SHADOWSPILL_STATUS_OK) goto done;
         probe->library_count = 1U;
-        status = shadowspill_pytorch_library_entries(
-            probe->libraries, 1U, &memory, &memory_count, &lanes, &lane_count
-        );
-        if (status != SHADOWSPILL_STATUS_OK) goto done;
     }
+done:
+    if (status == SHADOWSPILL_STATUS_OK) *out = probe;
+    else shadowspill_pytorch_spill_probe_destroy(probe);
+    return status;
+}
+
+ShadowSpillStatus shadowspill_pytorch_spill_probe_acquire(
+    void *handle, uint8_t kind, void *configuration,
+    uint64_t execution_capacity, uint64_t spill_capacity,
+    uint8_t disable_numa_binding
+) {
+    SpillProbe *probe = handle;
+    if (probe == NULL || probe->runtime != NULL || execution_capacity == 0U ||
+        spill_capacity == 0U || disable_numa_binding > 1U)
+        return SHADOWSPILL_STATUS_INVALID_ARGUMENT;
+    ShadowSpillPoolMemoryDescription *memory = NULL;
+    ShadowSpillLaneDescription *lanes = NULL;
+    uint32_t memory_count = 0U, lane_count = 0U;
+    ShadowSpillStatus status = shadowspill_pytorch_library_entries(
+        probe->libraries, probe->library_count,
+        &memory, &memory_count, &lanes, &lane_count
+    );
+    if (status != SHADOWSPILL_STATUS_OK) goto done;
     ShadowSpillBackendCapabilities capabilities = {0};
     if (probe->backend.table.capabilities(probe->backend.table.state, &capabilities) != 0) {
         status = SHADOWSPILL_STATUS_BACKEND_FAILURE;
         goto done;
     }
     const ShadowSpillMemoryPoolDescription pools[] = {
-        {.pool_id = 0U, .kind = SHADOWSPILL_POOL_DEVICE, .capacity_bytes = capacity,
+        {.pool_id = 0U, .kind = SHADOWSPILL_POOL_DEVICE, .capacity_bytes = execution_capacity,
          .minimum_alignment = capabilities.minimum_alignment},
-        {.pool_id = 1U, .kind = kind, .capacity_bytes = capacity,
+        {.pool_id = 1U, .kind = kind, .capacity_bytes = spill_capacity,
          .minimum_alignment = 1U, .configuration = configuration},
     };
     const ShadowSpillTransferRouteDescription routes[] = {
@@ -66,12 +91,46 @@ ShadowSpillStatus shadowspill_pytorch_spill_probe_create(
         .pool_memory = memory, .pool_memory_count = memory_count,
         .lanes = lanes, .lane_count = lane_count,
         .worker_poll_nanoseconds = 1000U,
-        .disable_numa_binding = 1U,
+        .disable_numa_binding = disable_numa_binding,
     };
     status = shadowspill_runtime_create(&config, &probe->runtime);
 done:
     free(memory);
     free(lanes);
+    return status;
+}
+
+ShadowSpillStatus shadowspill_pytorch_spill_probe_snapshot(
+    void *handle, ShadowSpillBackendPhysicalMemory *physical,
+    ShadowSpillBackendStatistics *statistics
+) {
+    SpillProbe *probe = handle;
+    if (probe == NULL || physical == NULL || statistics == NULL)
+        return SHADOWSPILL_STATUS_INVALID_ARGUMENT;
+    *physical = (ShadowSpillBackendPhysicalMemory){0};
+    *statistics = (ShadowSpillBackendStatistics){0};
+    const ShadowSpillBackend *backend = &probe->backend.table;
+    if (backend->physical_memory(backend->state, physical) != 0)
+        return SHADOWSPILL_STATUS_BACKEND_FAILURE;
+    backend->statistics(backend->state, statistics);
+    return SHADOWSPILL_STATUS_OK;
+}
+
+ShadowSpillStatus shadowspill_pytorch_spill_probe_create(
+    const char *backend_path, int32_t device, const char *library_path,
+    uint8_t kind, void *configuration, uint64_t capacity, void **out
+) {
+    if (out == NULL) return SHADOWSPILL_STATUS_INVALID_ARGUMENT;
+    *out = NULL;
+    if (capacity == 0U) return SHADOWSPILL_STATUS_INVALID_ARGUMENT;
+    void *probe = NULL;
+    ShadowSpillStatus status = shadowspill_pytorch_spill_probe_open(
+        backend_path, device, library_path, &probe
+    );
+    if (status == SHADOWSPILL_STATUS_OK)
+        status = shadowspill_pytorch_spill_probe_acquire(
+            probe, kind, configuration, capacity, capacity, 1U
+        );
     if (status == SHADOWSPILL_STATUS_OK) *out = probe;
     else shadowspill_pytorch_spill_probe_destroy(probe);
     return status;
@@ -82,7 +141,8 @@ ShadowSpillStatus shadowspill_pytorch_spill_probe_measure(
     uint32_t warmup, uint32_t measured, uint64_t *values
 ) {
     SpillProbe *probe = handle;
-    if (probe == NULL || values == NULL) return SHADOWSPILL_STATUS_INVALID_ARGUMENT;
+    if (probe == NULL || probe->runtime == NULL || values == NULL)
+        return SHADOWSPILL_STATUS_INVALID_ARGUMENT;
     const ShadowSpillTransferCalibrationConfig config = {
         .abi_version = SHADOWSPILL_ABI_VERSION,
         .small_copy_bytes = small, .large_copy_bytes = large,
