@@ -42,14 +42,23 @@ class RegionNetwork(torch.nn.Module):
 
 @pytest.mark.cuda
 @pytest.mark.parametrize(
-    "variant, retain_sequence",
-    [("recompute", False), ("save", False), ("recompute", True)],
+    "variant, retain_sequence, lora, optimizer",
+    [
+        pytest.param("recompute", False, False, False, id="full-backward-recompute"),
+        pytest.param("save", False, False, True, id="full-step-save"),
+        pytest.param("recompute", True, False, True, id="full-step-retained"),
+        pytest.param("recompute", False, True, True, id="lora-step-recompute"),
+        pytest.param("save", False, True, False, id="lora-backward-save"),
+        pytest.param("recompute", True, True, False, id="lora-backward-retained"),
+    ],
 )
-@pytest.mark.parametrize("lora", [False, True])
-@pytest.mark.parametrize("optimizer", [False, True])
 def test_regions_retain_outer_checkpoints_and_train_after_cold_reload(
     tmp_path, variant, retain_sequence, lora, optimizer
 ):
+    # Cover every pair of retention choice, full/LoRA and backward/step without
+    # rebuilding all twelve products. CPU region VJPs cover the full/LoRA x
+    # save/recompute x geometry product; maintained DP cases additionally cover
+    # retained LoRA with optimizer state. All saved execution assertions remain.
     if not torch.cuda.is_available():
         pytest.skip("requires an accelerator for task finalization")
     torch.manual_seed(731)

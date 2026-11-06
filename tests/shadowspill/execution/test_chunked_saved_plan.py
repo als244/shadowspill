@@ -43,12 +43,25 @@ class ChunkRows:
 
 
 @pytest.mark.cuda
-@pytest.mark.parametrize("variant", ["save", "recompute"])
-@pytest.mark.parametrize("with_optimizer", [None, False, True])
-@pytest.mark.parametrize("network", [Network, ResidualNetwork])
+@pytest.mark.parametrize(
+    "network, with_optimizer, variant",
+    [
+        pytest.param(Network, None, "save", id="linear-forward"),
+        pytest.param(ResidualNetwork, None, "save", id="residual-forward"),
+        pytest.param(Network, False, "recompute", id="linear-backward-recompute"),
+        pytest.param(ResidualNetwork, False, "save", id="residual-backward-save"),
+        pytest.param(Network, True, "save", id="linear-step-save"),
+        pytest.param(ResidualNetwork, True, "recompute", id="residual-step-recompute"),
+    ],
+)
 def test_chunked_plan_reloads_and_matches_repeated_training(
     tmp_path, variant, with_optimizer, network
 ):
+    # Keep both topologies through each public builder, and both retention
+    # variants through backward and optimizer execution. A forward-only Plan
+    # has no retention decision, so repeating it for RECOMPUTE adds no coverage.
+    # The CPU VJP/accumulation matrices cover the combinatorial math; these
+    # cases test saved-phase integration, mixed extents and tied parameters.
     if not torch.cuda.is_available():
         pytest.skip("requires an accelerator for task finalization")
     torch.manual_seed(731)
