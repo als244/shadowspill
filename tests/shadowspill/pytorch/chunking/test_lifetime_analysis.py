@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import operator
+from dataclasses import replace
 
 import pytest
 import torch
@@ -41,6 +42,41 @@ def test_packed_backing_is_preserved_when_small_reduction_moves() -> None:
     after = analyze_lifetimes(changed, (x, weight, control))
     assert after.live_bytes(operation(changed, torch.ops.aten.cos.default)) == 336
     torch.testing.assert_close(graph(x, weight, control), changed(x, weight, control))
+
+
+def test_live_byte_inventory_tracks_aliases_writes_and_each_order_snapshot() -> None:
+    x, control = torch.randn(7, 12), torch.randn(7)
+
+    def function(x, control):
+        packed = x.sin()
+        left, right = packed.split(6, -1)
+        left.add_(1)
+        reduced = right.sum(-1)
+        barrier = control.cos()
+        unused = x.cos()
+        empty = unused[:0]
+        return reduced + barrier, empty, x
+
+    graph = make_fx(function)(x, control)
+    analysis = analyze_lifetimes(graph, (x, control))
+    barrier = operation(graph, torch.ops.aten.cos.default)
+    reduced = operation(graph, torch.ops.aten.sum.dim_IntList)
+    order = list(analysis.order)
+    order.remove(reduced)
+    order.insert(order.index(barrier) + 1, reduced)
+    # Populate the original inventory before making a movement trial. A new
+    # immutable analysis must not inherit byte totals for the previous order.
+    assert analysis.live_bytes(barrier) == 28
+    moved = replace(analysis, order=tuple(order))
+    assert moved.live_bytes(barrier) == 336
+    assert analysis.live_bytes(barrier) == 28
+    for snapshot in (analysis, moved):
+        for node in snapshot.order:
+            expected = sum(
+                snapshot.storage.roots[root].minimum_span_bytes
+                for root in snapshot.live_roots(node)
+            )
+            assert snapshot.live_bytes(node) == expected
 
 
 def test_intermediate_metadata_addresses_do_not_define_ownership() -> None:

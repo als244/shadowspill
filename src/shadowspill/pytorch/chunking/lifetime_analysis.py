@@ -12,6 +12,7 @@ import operator
 from collections import defaultdict
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
+from functools import cached_property
 from types import MappingProxyType
 
 import torch
@@ -95,10 +96,42 @@ class LifetimeGraph:
 
     def live_bytes(self, barrier: Node) -> int:
         """Semantic storage spans, excluding fixed inputs and opaque workspace."""
-        return sum(
-            self.storage.roots[root].minimum_span_bytes
-            for root in self.live_roots(barrier)
-        )
+        try:
+            return self._live_bytes_by_node[barrier]
+        except KeyError:
+            raise ValueError(
+                "lifetime barrier does not belong to the analyzed graph"
+            ) from None
+
+    @cached_property
+    def _live_bytes_by_node(self) -> Mapping[Node, int]:
+        """Sweep storage intervals once for this immutable order snapshot.
+
+        Movement trials use dataclasses.replace with a new order, so their
+        inventories are independent. No graph or policy transformation is
+        reused: only repeated queries of this analysis share the byte totals.
+        """
+        rank = {node: i for i, node in enumerate(self.order)}
+        names = {node.name: i for i, node in enumerate(self.order)}
+        last: dict[int, int] = {}
+        for node, roots in self.reads.items():
+            for root in roots:
+                last[root] = max(last.get(root, -1), rank[node])
+        changes = [0] * (len(self.order) + 1)
+        for root in self.storage.roots:
+            if root.kind is not StorageRootKind.FRESH:
+                continue
+            produced = names.get(root.producer_node)
+            final_read = last.get(root.root_id, -1)
+            if produced is not None and produced < final_read:
+                changes[produced + 1] += root.minimum_span_bytes
+                changes[final_read + 1] -= root.minimum_span_bytes
+        live = 0
+        result = {}
+        for index, node in enumerate(self.order):
+            live += changes[index]
+            result[node] = live
+        return MappingProxyType(result)
 
 
 def _effects(
