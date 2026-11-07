@@ -432,7 +432,8 @@ retention policies. Forward sinks require a `save` choice, so changing only
 
 To let PressureFit choose whether to retain dense attention **within one
 Program**, put the selective policy on `save` and leave `recompute` at its
-default. Both variants also preserve supported routing choices:
+default. Both variants also preserve ATen top-k and
+[provider-declared routing choices](../../architecture/routing-retention.md#provider-owned-default):
 
 ```python
 attention_only_save = GraphPairPolicy(

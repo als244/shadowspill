@@ -1,8 +1,9 @@
 # Retaining forward routing choices
 
 Both graph-pair variants retain backward-required outputs of `aten.topk.default`
-and `mlops.lora_route.default` by default. For the MLOps router these are the
-selected expert IDs and routing weights. The default applies even when a
+and operators whose providers declare the saved-state default described below.
+MLOps declares it for `mlops.lora_route.default`: the selected expert IDs and
+routing weights. The default applies even when a
 variant uses `RetentionPolicy(default="recompute")`, and when its explicit
 rules select only dense-attention retention.
 
@@ -15,12 +16,36 @@ example, a routing derivative may also need regenerated logits for its softmax
 or sigmoid normalization. Retaining choices does not freeze all intermediate
 values or make a whole training step bitwise deterministic.
 
-These defaults name operator contracts, independently of model architecture.
+These defaults describe operator contracts, independently of model architecture.
 They cover architectures using these graph-visible operators. A provider that
 hides routing inside an opaque whole-MoE operation needs to expose a separate
 routing operation or an appropriate saved-state contract. ShadowSpill cannot
 infer internal routing tensors from that opaque call. An additional visible
-provider can use the existing declarative `RetentionRule` interface.
+provider can declare its default or use an explicit `RetentionRule`.
+
+## Provider-owned default
+
+A provider may set the static boolean attribute
+`shadowspill_retain_for_backward = True` on its public `torch.ops` overload
+after registering the operator:
+
+```python
+torch.ops.my_provider.route.default.shadowspill_retain_for_backward = True
+```
+
+No ShadowSpill import, provider discovery or engine-side operation list is
+needed. Absence or `False` leaves the ordinary retention policy in control;
+non-boolean declarations are rejected. Set the declaration when registering
+the operator, before capture, and keep it stable during build. The annotation
+retains only backward-required outputs. It does not certify effects, layouts,
+axis independence, or the correctness of an opaque operator's backward.
+It cannot reveal choices hidden inside a whole-MoE kernel.
+
+The resolved declaration is included in capture identity and in the resulting
+saved cut. Explicit user rules and model checkpoint annotations keep their
+existing precedence. Saved execution does not query the declaration again.
+MLOps owns its router declaration; core does not recognize its namespace or
+router name. Use matching provider sources when rebuilding older workloads.
 
 ## Advanced overrides
 
