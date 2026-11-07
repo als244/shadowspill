@@ -108,7 +108,10 @@ if "bf16_reduction" in oracle:
     ]
 
 executor = Executor(
-    plan, parameter_norms=bool(norms), spill=spill_pool(plan.memory_budgets.spill_bytes)
+    plan,
+    parameter_norms=bool(norms),
+    spill=spill_pool(plan.memory_budgets.spill_bytes),
+    reject_overbudget=oracle.get("reject_overbudget", False),
 )
 annotations_enabled = executor._paths[
     0

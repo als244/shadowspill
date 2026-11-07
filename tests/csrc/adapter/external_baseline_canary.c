@@ -65,7 +65,9 @@ int main(int argc, char **argv) {
             SHADOWSPILL_STATUS_OK);
     const uint64_t reserved = floor > MIB(4) ? floor : MIB(4);
     const uint64_t available = MIB(64) - reserved - MIB(4);
-    const uint64_t pool = available - available % MIB(2);
+    /* The mock backend requires 256-byte alignment. A non-page-aligned
+       budget must keep its usable tail rather than discard a whole page. */
+    const uint64_t pool = available - available % 256U;
     REQUIRE(admission.baseline_bytes == MIB(4));
     REQUIRE(admission.reserved_baseline_bytes == reserved);
     REQUIRE(admission.allocator_pool_bytes == pool);
@@ -84,8 +86,8 @@ int main(int argc, char **argv) {
     REQUIRE(shadowspill_pytorch_seal_physical_budget(allowance, 256) ==
             SHADOWSPILL_STATUS_OK);
 
-    /* A non-page-aligned floor leaves a little unused physical budget. The
-       external allowance still applies, independently of the whole-process cap. */
+    /* A non-aligned floor leaves a little unused physical budget. The external
+       allowance still applies, independently of the whole-process cap. */
     set_process(pool + reserved + MIB(4) + 1);
     REQUIRE(shadowspill_pytorch_check_physical_budget() ==
             (strict ? SHADOWSPILL_STATUS_PLAN_VIOLATION : SHADOWSPILL_STATUS_OK));

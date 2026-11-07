@@ -81,6 +81,9 @@ External memory is process-attributable device memory outside ShadowSpill's
 allocation pool, excluding the baseline measured before pool creation. Pool
 sizing subtracts `external_headroom` (512 MiB by default) and the initial
 baseline from `physical_capacity`. Zero headroom reserves no allowance.
+The remaining pool is aligned to the backend's allocation requirement. It does
+not discard a partial physical page; any driver allocation padding is observed
+as external usage and must fit the headroom when enforcement is enabled.
 
 Enforcement is independent: `reject_overbudget=False` (the default) reports
 external and whole-process memory overruns without rejecting them. Set it to

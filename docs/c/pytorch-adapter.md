@@ -120,13 +120,17 @@ frontend copies both.
   `shadowspill_pytorch_check_physical_budget()`, and
   `shadowspill_pytorch_seal_physical_budget()` expose and seal physical limits.
   `external_headroom_bytes` is reserved before sizing the pool; zero reserves
-  no additional growth margin. A budget that leaves less than one 2 MiB unit
-  after the larger of the observed baseline and requested external floor,
-  plus headroom, are taken out, or that exceeds the
-  device, refuses bootstrap with `SHADOWSPILL_STATUS_OUT_OF_MEMORY` and latches
+  no additional growth margin. Pool sizing subtracts the larger of the observed
+  baseline and requested external floor, plus headroom, then aligns the remaining
+  bytes to the backend's minimum allocation alignment. If no aligned bytes remain,
+  or the budget exceeds the device, bootstrap refuses with
+  `SHADOWSPILL_STATUS_OUT_OF_MEMORY` and latches
   the bytes held as `requested_bytes`, the budget as `free_bytes` and the
   allocator pool as `pool_id`, from which the Python bootstrap says which it
-  was. The independent `reject_overbudget` flag controls enforcement:
+  was. Pool sizing preserves partial physical pages, rounding only to that
+  backend alignment. Driver allocation padding is observed in the physical
+  ledger and consumes external headroom. The independent `reject_overbudget`
+  flag controls enforcement:
   zero reports external and whole-process overruns, one rejects them. This
   applies at bootstrap, sealing, and subsequent checks. Pool bounds and device
   allocation failures remain enforced. Sealing never resizes the pool. Its second argument is

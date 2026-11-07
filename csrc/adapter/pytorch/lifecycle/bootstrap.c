@@ -89,12 +89,15 @@ static uint64_t effective_limit(
 }
 
 /* Reserve the larger of the observed cold process and the mature external
-   footprint, plus headroom, in whole 2 MiB pages; 0 when nothing fits. */
+   footprint, plus headroom. Align the usable pool to the backend's contract,
+   not an assumed physical page size: discarding a partial page can remove
+   storage that offline admission counted. Driver allocation padding remains
+   visible to the physical ledger and consumes external headroom. */
 static uint64_t allocator_pool_bytes(
     const ShadowSpillPytorchAdapterConfig *config,
-    const ShadowSpillBackendPhysicalMemory *physical
+    const ShadowSpillBackendPhysicalMemory *physical,
+    uint64_t alignment
 ) {
-    const uint64_t physical_granularity = 2U << 20U;
     const uint64_t limit = effective_limit(config, physical);
     const uint64_t baseline = physical->process_bytes >
         config->external_baseline_bytes
@@ -106,7 +109,7 @@ static uint64_t allocator_pool_bytes(
     }
     const uint64_t available = limit -
         baseline - config->external_headroom_bytes;
-    return available - available % physical_granularity;
+    return available - available % alignment;
 }
 
 static ShadowSpillStatus build_runtime_topology(
@@ -197,6 +200,7 @@ static ShadowSpillStatus create_runtime(
 ) {
     ShadowSpillBackendCapabilities capabilities = {0};
     if (backend->capabilities(backend->state, &capabilities) != 0 ||
+        capabilities.minimum_alignment == 0U ||
         backend->physical_memory(backend->state, baseline) != 0) {
         return SHADOWSPILL_STATUS_BACKEND_FAILURE;
     }
@@ -205,7 +209,9 @@ static ShadowSpillStatus create_runtime(
         baseline->device_total_bytes == 0U) {
         return SHADOWSPILL_STATUS_BACKEND_FAILURE;
     }
-    *pool_bytes = allocator_pool_bytes(config, baseline);
+    *pool_bytes = allocator_pool_bytes(
+        config, baseline, capabilities.minimum_alignment
+    );
     if (*pool_bytes == 0U) {
         /* The device is usually far from full here: the budget less what the
            process already holds, mostly its accelerator context, and less the

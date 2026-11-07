@@ -120,7 +120,7 @@ def test_saved_plan_executes_without_build_or_measurement(
     # tensor allowance, including more than one resource stream. Startup must
     # fit alongside the measured retained workspace, not need a large GEMM's
     # unrelated temporary matrices before it can run this small saved Plan.
-    budget = profiled.fixed_device_bytes + (1 << 20) if kind == "forward" else 2 << 30
+    budget = profiled.fixed_device_bytes + (512 << 10) if kind == "forward" else 2 << 30
     plan = plan_program(
         profiled,
         memory_budgets=MemoryBudgets(budget, 64 << 20),
@@ -132,6 +132,7 @@ def test_saved_plan_executes_without_build_or_measurement(
     oracle_kind = "forward_backward" if kind.startswith("backward_") else kind
     expected = oracle(model, examples, oracle_kind)
     expected["check_task_streams"] = variant == "streams"
+    expected["reject_overbudget"] = kind == "forward"
     torch.save(expected, tmp_path / "oracle.pt")
     worker = subprocess.run(
         [

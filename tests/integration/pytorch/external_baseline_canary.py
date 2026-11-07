@@ -15,7 +15,9 @@ from shadowspill.runtime.budget import check_physical_budget
 def main():
     floor = 2 << 30
     headroom = 256 << 20
-    budget = 4 << 30
+    # The usable tail is real capacity; it must not disappear through an
+    # assumed 2 MiB physical-page rounding before Plan admission.
+    budget = (4 << 30) + (512 << 10)
     runtime = Runtime(
         frontend=PyTorchFrontend(),
         library_path=Path(sys.argv[1]),
