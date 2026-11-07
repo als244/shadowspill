@@ -73,6 +73,13 @@ during standalone compilation. Selected binaries are saved in the Program;
 measurement and execution do not select new kernels or depend on an earlier
 process's compiler cache.
 
+The saved Inductor tuners also disable post-load reduction tile expansion,
+coordinate-descent and combination searches, and lookup of a different cached
+winner. Those controls apply to the saved copies after build finishes tuning;
+ordinary build and eager autotuning keep their configured behavior. Retaining
+one binary alone is insufficient because Inductor can otherwise introduce new
+reduction candidates when loading it in a fresh process.
+
 When building with PyTorch's `emulate_precision_casts=True`, compilation also
 preserves native CUDA BF16/FP16 `sigmoid_backward` scalar rounding for matching
 strided operands. The native kernel rounds the complement and first product;

@@ -110,6 +110,22 @@ def freeze_kernels(
         bundle, _ = TritonBundler.collect()
     finally:
         TritonBundler.end_compile()
+    for saved in bundle.static_autotuners:
+        # Loading even a single selected binary calls precompile again. Inductor
+        # can then add reduction tiles for occupancy and benchmark them on the
+        # first invocation. Freeze only the saved copy, after ordinary build
+        # tuning has chosen its winner; eager tuners keep their normal policy.
+        tuner = saved.kernel
+        tuner.inductor_meta = {
+            **tuner.inductor_meta,
+            "dynamic_scale_rblock": False,
+            "coordinate_descent_tuning": False,
+            "force_disable_caches": True,
+        }
+        tuner.inductor_meta.pop("combo_tuning_groups", None)
+        # This eligibility predicate is a cached_property and may already be
+        # True in the serialized tuner. Changing its input metadata is not enough.
+        tuner._could_rblock_scale = False
     compiled.set_triton_bundle(bundle)
     return selected
 
