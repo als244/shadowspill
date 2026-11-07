@@ -32,7 +32,7 @@ def _run_commands(
         if not (is_warm or is_reference) and options.detailed_artifacts:
             command.append("--detailed-artifacts")
         phase = (
-            "kernel warm-up: compile and tune, record nothing"
+            "kernel warm-up: record or replay shared configurations"
             if is_warm
             else "compiled reference generation"
             if is_reference
