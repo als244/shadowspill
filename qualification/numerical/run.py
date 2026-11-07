@@ -273,9 +273,11 @@ def _dispatch(
             spill_options=spill_arguments(spill),
         )
     elif arguments.mode == "_warm":
-        if arguments.paths:
-            parser.error("_warm takes no paths")
-        warm_worker(case)
+        if len(arguments.paths) != 1:
+            parser.error("_warm requires one kernel-selection output path")
+        warm_worker(
+            case, Path(arguments.paths[0]), regenerate=arguments.regenerate_reference
+        )
     elif arguments.mode == "_reference":
         if len(arguments.paths) != 1:
             parser.error("_reference requires one output path")

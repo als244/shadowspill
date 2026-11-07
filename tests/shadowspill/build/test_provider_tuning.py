@@ -9,7 +9,7 @@ import triton
 import triton.language as tl
 from triton.runtime.autotuner import Autotuner
 
-from shadowspill.pytorch.tuning import capture_choices, use_choices
+from shadowspill.pytorch.tuning import capture_choices, pin_choices, use_choices
 
 
 @triton.autotune(
@@ -60,6 +60,20 @@ def test_frozen_choices_override_local_cache_and_refuse_missing_keys(monkeypatch
     square.cache[key] = square.configs[1 - selected]
     torch.testing.assert_close(restored(x), x.square())
     assert square.best_config is square.configs[selected]
+    assert square.cache[key] is square.configs[1 - selected]
+    with pin_choices(choices):
+        # A build opens its own capture. It must inherit the numerical gate's
+        # frozen choices even when ordinary caches contain another winner.
+        with capture_choices() as captured:
+            torch.testing.assert_close(invoke(x), x.square())
+        assert captured == choices
+        assert square.cache[key] is square.configs[1 - selected]
+        with pytest.raises(ValueError, match="no finalized configuration"):
+            invoke(torch.ones(512, device="cuda"))
+        conflicting = copy.deepcopy(choices)
+        next(iter(conflicting.values()))["candidate"] = 1 - selected
+        with pytest.raises(ValueError, match="differs from pinned"):
+            use_choices(invoke, conflicting)(x)
     assert square.cache[key] is square.configs[1 - selected]
     with pytest.raises(ValueError, match="no finalized configuration"):
         restored(torch.ones(512, device="cuda"))

@@ -78,8 +78,11 @@ in the suite gate.
 
 Numerical references are reused from
 `qualification/results/references/approximately_1b` (`pre_sm80` on older GPUs),
-or the explicit `--reference-dir`. Keep `reference.pt` and its `inputs.pt` sidecar
-together on local SSD. Missing references are generated on first use. Use
+or the explicit `--reference-dir`. Keep `reference.pt`, `inputs.pt` and the
+`kernel-selection.json` sidecar together on local SSD. Numerical warm-up records
+external kernel configurations; both comparison arms use those fixed choices
+without autotuning. Missing references are generated on first use. References
+from before this selection contract require regeneration. Use
 `--regenerate-reference` only for an intentional baseline replacement, then remove
 that option from subsequent runs. A new reference checks planned/reference
 agreement but cannot establish agreement with the previous baseline.

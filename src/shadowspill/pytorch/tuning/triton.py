@@ -15,7 +15,7 @@ from triton.runtime.jit import JITFunction  # type: ignore[import-untyped]
 
 from shadowspill.artifacts._values import digest, plain
 
-from ._scope import active
+from ._scope import active, pinned
 
 _lock = Lock()
 _installed = False
@@ -49,12 +49,22 @@ def _run(
     kwargs: Mapping[str, Any],
 ) -> Any:
     scope = active.get()
+    fixed = pinned.get()
+    if scope is None and fixed is not None:
+        scope = ("replay", fixed)
     if scope is None or len(tuner.configs) <= 1:
         return original(tuner, *args, **kwargs)
     mode, choices = scope
     identity, key, name = _identity(tuner, args, kwargs)
     if mode == "capture":
-        result = original(tuner, *args, **kwargs)
+        if fixed is None:
+            result = original(tuner, *args, **kwargs)
+        else:
+            token = active.set(("replay", fixed))
+            try:
+                result = _run(original, tuner, args, kwargs)
+            finally:
+                active.reset(token)
         selected = _config(tuner.best_config)
         indices = [
             i for i, value in enumerate(tuner.configs) if _config(value) == selected
@@ -72,6 +82,8 @@ def _run(
     if identity not in choices:
         raise ValueError(f"{name}: no finalized configuration for this task input")
     choice = choices[identity]
+    if fixed is not None and fixed.get(identity) != choice:
+        raise ValueError(f"{name}: saved choice differs from pinned configuration")
     index = choice["candidate"]
     if index >= len(tuner.configs) or _config(tuner.configs[index]) != choice["config"]:
         raise ValueError(f"{name}: Triton candidates differ from the saved Program")

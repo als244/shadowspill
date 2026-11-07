@@ -6,6 +6,8 @@ from pathlib import Path
 
 from shadowspill.schema import artifact_schema
 
+from .kernel_selection import selection_path
+
 REFERENCE_SCHEMA = artifact_schema("compiled_reference")
 DEFAULT_REFERENCE_DIRECTORY = Path("qualification/results/references/approximately_1b")
 
@@ -28,9 +30,13 @@ def reference_inputs_path(reference: Path) -> Path:
 
 
 def reference_artifact_exists(reference: Path) -> bool:
-    """Return whether both required files of a compact reference exist."""
+    """Return whether state, exact inputs and frozen kernel selection exist."""
 
-    return reference.is_file() and reference_inputs_path(reference).is_file()
+    return (
+        reference.is_file()
+        and reference_inputs_path(reference).is_file()
+        and selection_path(reference).is_file()
+    )
 
 
 __all__ = [

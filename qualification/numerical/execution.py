@@ -22,6 +22,7 @@ class PlannedRun:
     phase_seconds: dict[str, float]
     workload_metadata: list[object]
     requested_input_digest: str
+    kernel_selection_digest: str
     plan_path: Path
     losses: list[list[float]]
     timings: list[float]
@@ -118,6 +119,7 @@ def run_planned_case(request: PlannedRequest, directory: Path) -> PlannedRun:
         phases,
         metadata["workload_metadata"],
         metadata["input_digest"],
+        metadata["kernel_selection_digest"],
         directory / "plan.ssp",
         losses,
         timings,

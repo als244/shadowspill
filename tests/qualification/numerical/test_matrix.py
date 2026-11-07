@@ -9,6 +9,7 @@ from pathlib import Path
 import pytest
 
 from qualification.numerical.cases import DEFAULT_DEVICE_BUDGETS
+from qualification.numerical.kernel_selection import selection_path
 from qualification.numerical.matrix.arguments import (
     DEFAULT_IMPLEMENTATIONS,
     parse_budget_overrides,
@@ -104,4 +105,6 @@ def test_reference_artifact_requires_state_and_exact_inputs(tmp_path: Path) -> N
     reference.touch()
     assert not reference_artifact_exists(reference)
     reference_inputs_path(reference).touch()
+    assert not reference_artifact_exists(reference)
+    selection_path(reference).touch()
     assert reference_artifact_exists(reference)

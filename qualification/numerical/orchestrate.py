@@ -17,6 +17,7 @@ from qualification.pipeline.process import python_command
 from qualification.precision import dtype_arguments
 from workloads.numerical import ModelImplementation
 
+from .kernel_selection import selection_path
 from .references import canonical_reference_path, reference_artifact_exists
 
 
@@ -90,21 +91,23 @@ def orchestrate(
     for value in case_option_arguments:
         options.extend(("--case-option", value))
     environment = dict(os.environ)
-    # The warm-up process tunes and compiles first, so neither arm is the
-    # process that tuned (matrix.commands.case_commands says why).
+    make_reference = regenerate_reference or not reference_artifact_exists(reference)
+    # Freeze one external-kernel selection before either comparison arm runs.
     subprocess.run(
         [
             *base,
             "_warm",
             family,
+            str(selection_path(reference)),
             "--model-implementation",
             model_implementation,
             *options,
+            *(["--regenerate-reference"] if regenerate_reference else []),
         ],
         check=True,
         env=environment,
     )
-    if regenerate_reference or not reference_artifact_exists(reference):
+    if make_reference:
         subprocess.run(
             [
                 *base,

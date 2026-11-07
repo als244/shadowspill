@@ -9,6 +9,7 @@ import torch
 
 from benchmarking.spill import record, resolve
 
+from . import kernel_selection
 from .metrics import state_digest
 from .references import reference_artifact_exists, reference_inputs_path
 from .request import CaseRequest, PlannedRequest, workload_metadata_for
@@ -55,6 +56,19 @@ def run(directory: Path) -> None:
     if not reference_artifact_exists(request.reference_path):
         raise RuntimeError("compiled reference is incomplete; regenerate it first")
     case = request.case.build()
+    selection = kernel_selection.load(
+        kernel_selection.selection_path(request.reference_path), request.case
+    )
+    reference_metadata = torch.load(
+        request.reference_path, map_location="cpu", weights_only=True, mmap=True
+    )
+    if reference_metadata.get(
+        "kernel_selection_digest"
+    ) != kernel_selection.selection_digest(selection):
+        raise RuntimeError(
+            "reference kernel selection differs; use --regenerate-reference"
+        )
+    del reference_metadata
     reference = torch.load(
         reference_inputs_path(request.reference_path),
         map_location="cpu",
@@ -70,12 +84,16 @@ def run(directory: Path) -> None:
                 "workload_metadata": workload_metadata_for(
                     case, request.profiling_metadata
                 ),
+                "kernel_selection_digest": kernel_selection.selection_digest(selection),
             },
             indent=2,
         )
         + "\n"
     )
-    with case.implementations(deterministic=True):
+    with (
+        case.implementations(deterministic=True),
+        kernel_selection.frozen(selection, request.case),
+    ):
         build_case(case, directory, dtypes=request.case.dtypes, deterministic=True)
 
 

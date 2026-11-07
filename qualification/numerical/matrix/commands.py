@@ -5,6 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from pathlib import Path
 
+from qualification.numerical.kernel_selection import selection_path
 from qualification.numerical.references import reference_artifact_exists
 from qualification.numerical.spill import spill_arguments
 from qualification.pipeline.process import python_command
@@ -74,17 +75,24 @@ def case_commands(
 ) -> list[list[str]]:
     """The warm-up, the reference arm when one must be made, and the planned arm.
 
-    The warm-up process compiles and runs every microbatch once and exits, so
-    kernels that tune on first use (Quack's autotuner under the SonicMoE
-    implementations) are tuned before either arm starts: a process that tunes
-    a kernel computes slightly differently from one that reads the tuned
-    choice, for the rest of its life, and both arms must be readers.
+    Warm-up records the shared external-kernel selection, or replays the one
+    accompanying a cached reference. Both reference execution and nested build
+    captures then pin it; mutable tuning caches are not the numerical contract.
     """
 
     base = python_command("qualification.numerical.run")
     shared = options.case_arguments()
     commands: list[list[str]] = [
-        [*base, "_warm", family, "--model-implementation", implementation, *shared]
+        [
+            *base,
+            "_warm",
+            family,
+            str(selection_path(reference)),
+            "--model-implementation",
+            implementation,
+            *shared,
+            *(["--regenerate-reference"] if options.regenerate_reference else []),
+        ]
     ]
     if options.regenerate_reference or not reference_artifact_exists(reference):
         commands.append(

@@ -109,6 +109,7 @@ def _case_identity(
             "schema": comparison.reference["schema"],
             "inputs_path": str(reference_inputs_path(request.reference_path).resolve()),
             "microbatch_digest": run.requested_input_digest,
+            "kernel_selection_digest": run.kernel_selection_digest,
         },
         "steps": request.case.steps,
         "checkpoint_step": request.checkpoint_step,

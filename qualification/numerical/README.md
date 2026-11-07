@@ -8,15 +8,24 @@ python -m qualification.numerical.run run llama3 qualification/results/numerical
 ```
 
 The reference is the same model and optimizer run by PyTorch alone, compiled
-with `torch.compile` in Inductor fullgraph mode and with no part of ShadowSpill
-involved: no planner, no runtime, no pools. It is not an eager run. Before
-either arm, a warm-up process compiles and runs every microbatch once and
-exits: kernels that tune on first use (Quack's autotuner under the SonicMoE
-implementations) are tuned there, because a process that tunes a kernel
-computes slightly differently from one that reads the tuned choice, for the
-rest of its life, and both arms must be readers of the same cached choices.
+with `torch.compile` in Inductor fullgraph mode: no planner, runtime or memory
+pools. It is not an eager run. Before either arm, a disposable warm-up process
+compiles and runs every microbatch once, recording external Triton and SonicMoE
+GEMM configurations in `kernel-selection.json`. Both reference execution and
+planned build then pin those configurations: they bypass autotuning and ignore
+mutable winner caches. Nested build captures record the pinned choices for
+each task; profiling and execution replay the choices packaged in the Program.
 What the gate asserts is that planning a step does not change what that step
 computes.
+
+Reusing a reference also reuses its kernel selection. A missing specialization,
+changed target or incompatible kernel source/configuration refuses instead of
+silently retuning. `--regenerate-reference` permits a fresh warm-up selection
+and replaces the reference with the resulting baseline. The selection digest
+is checked against the reference and recorded in the planned result. This
+contract covers external autotuners, including the SonicMoE token-gather
+reduction; it does not force identical Inductor fusion or vendor BLAS heuristics.
+Ordinary training and performance qualification retain their normal tuning.
 
 The default matrix uses pinned-host spill. SSD/remote settings flow through the
 same saved phases to communication calibration and Executor; build/task profiling
@@ -41,8 +50,9 @@ Custom factories configure their model and optimizer with `--case-option`.
 The default reference root is
 `qualification/results/references/approximately_1b/`; below SM80 the default
 is `qualification/results/references/pre_sm80/`. Each contains one
-identity-checked final state plus an exact-input `inputs.pt` sidecar under each
-`<model>/<implementation>` directory.
+identity-checked final state, exact-input `inputs.pt`, and `kernel-selection.json`
+under each `<model>/<implementation>` directory. Keep all three files together.
+Older references without a selection manifest must be regenerated.
 Pass `--reference-dir` to read that canonical set from elsewhere, or
 `--regenerate-reference` to record it instead of reusing it. A reference is
 specific to what produced it -- the machine, and the kernels that machine
@@ -169,6 +179,10 @@ anything. The ordered kernels cost
 throughput, so they are not the default outside this gate. The request covers
 reference generation as well as the planned run, so a regenerated reference is
 itself reproducible.
+
+Ordered reduction and fixed autotuner selection are separate requirements:
+`deterministic_kernels` alone does not freeze a kernel's tile configuration or
+reduction association. The shared selection above supplies that second control.
 
 The request is baked into a compiled graph without a guard. The integrated gates
 pass `--empty-caches`, giving each worker fresh Inductor/Triton caches removed

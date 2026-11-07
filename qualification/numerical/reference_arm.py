@@ -18,6 +18,7 @@ from qualification.precision import dtype_overrides
 from shadowspill.pytorch.accelerator import DEVICE_TYPE
 from workloads.models.shared.training import LEARNING_RATE
 
+from . import kernel_selection
 from .metrics import cpu_state, state_digest
 from .reference_state import ReferenceState
 from .references import REFERENCE_SCHEMA, reference_inputs_path
@@ -36,14 +37,15 @@ def device_microbatches(values: list[list[Any]]) -> list[list[Any]]:
     ]
 
 
-def warm_worker(request: CaseRequest) -> None:
+def warm_worker(
+    request: CaseRequest, selection_path: Path, *, regenerate: bool = False
+) -> None:
     """Run every microbatch once, compiled as the reference arm is, and exit.
 
-    Kernels that compile or tune on their first use do so here, in a process
-    that records nothing. A process that tunes a kernel computes slightly
-    differently from one that reads the tuned choice, for the rest of its
-    life, so neither arm may be the process that tuned: both start after this
-    one, read the same cached choices, and agree with each other.
+    This disposable process records external autotuner choices, never reference
+    model state. Both later arms pin those choices, including nested build
+    captures. Reusing a reference also reuses its selection; only explicit
+    regeneration permits a new tuning pass.
     """
 
     case = request.build()
@@ -56,10 +58,22 @@ def warm_worker(request: CaseRequest) -> None:
     compiled_objective: Callable[..., torch.Tensor] = torch.compile(
         objective, fullgraph=True, dynamic=False
     )
-    with case.implementations(deterministic=True):
+    selection = (
+        None
+        if regenerate or not selection_path.is_file()
+        else kernel_selection.load(selection_path, request)
+    )
+    selection_scope = (
+        kernel_selection.capture(request)
+        if selection is None
+        else kernel_selection.frozen(selection, request)
+    )
+    with case.implementations(deterministic=True), selection_scope as captured:
         for microbatch in microbatches:
             compiled_objective(*microbatch).backward()  # type: ignore[no-untyped-call]
     torch.cuda.synchronize()
+    if selection is None:
+        kernel_selection.save(selection_path, captured)
     print(
         f"warm {request.model_implementation}/{request.family}: "
         f"{len(microbatches)} microbatches compiled and run",
@@ -71,6 +85,7 @@ def reference_worker(request: CaseRequest, output: Path) -> None:
     """Train the reference arm and write its artifact and inputs."""
 
     case = request.build()
+    selection = kernel_selection.load(kernel_selection.selection_path(output), request)
     model = case.model.to(DEVICE_TYPE)
     microbatches = device_microbatches(case.microbatches)
     state = ReferenceState(model, case.optimizer, **request.dtypes.plan_arguments())
@@ -92,7 +107,10 @@ def reference_worker(request: CaseRequest, output: Path) -> None:
     timings: list[float] = []
     compute_timings: list[float] = []
     execution_timings: list[dict[str, object]] = []
-    with case.implementations(deterministic=True):
+    with (
+        case.implementations(deterministic=True),
+        kernel_selection.frozen(selection, request),
+    ):
         for step in range(request.steps):
             state.begin_step()
             event_factory: Any = torch.cuda.Event
@@ -160,6 +178,7 @@ def reference_worker(request: CaseRequest, output: Path) -> None:
         "family": request.family,
         "model_implementation": request.model_implementation,
         "case_identity": request.identity(),
+        "kernel_selection_digest": kernel_selection.selection_digest(selection),
         "losses": losses,
         "step_seconds": timings,
         "compute_step_seconds": compute_timings,

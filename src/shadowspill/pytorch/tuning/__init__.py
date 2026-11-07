@@ -3,6 +3,6 @@
 External operator selection and dispatch belong to provider-owned preparation.
 """
 
-from ._scope import capture_choices, use_choices
+from ._scope import capture_choices, pin_choices, use_choices
 
-__all__ = ["capture_choices", "use_choices"]
+__all__ = ["capture_choices", "pin_choices", "use_choices"]

@@ -64,6 +64,7 @@ def compare_planned_run(request: PlannedRequest, run: PlannedRun) -> Comparison:
         or reference.get("family") != request.case.family
         or reference.get("model_implementation") != request.case.model_implementation
         or reference.get("case_identity") != request.case.identity()
+        or reference.get("kernel_selection_digest") != run.kernel_selection_digest
         or (
             reference.get("schema") == REFERENCE_SCHEMA
             and reference.get("microbatch_digest") != run.requested_input_digest
