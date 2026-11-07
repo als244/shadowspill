@@ -146,15 +146,34 @@ def test_qwen_recipe_builds_profiles_replans_and_executes_saved_plan(tmp_path, r
         "0.002",
         "--no-plots",
     ]
-    child = subprocess.run(
-        command,
-        env={**os.environ, "OMP_NUM_THREADS": "1"},
-        capture_output=True,
-        text=True,
-        timeout=900,
-    )
-    logs = "\n".join(path.read_text() for path in (root / "logs").glob("*.log"))
-    assert child.returncode == 0, child.stdout + child.stderr + logs
+    phases = [
+        "build",
+        "profile",
+        *(["communicate"] if ranks > 1 else []),
+        "plan",
+        "execute",
+    ]
+    for phase in phases:
+        # Separate cold workers must consume the saved implementations. A shared
+        # eager cache can conceal an omitted provider-preparation description:
+        # runtime tuning then changes the profiled task's allocation trace.
+        cache = tmp_path / "caches" / phase
+        child = subprocess.run(
+            [*command, "--phase", phase],
+            env={
+                **os.environ,
+                "OMP_NUM_THREADS": "1",
+                "TORCHINDUCTOR_CACHE_DIR": str(cache / "inductor"),
+                "TRITON_CACHE_DIR": str(cache / "triton"),
+                "QUACK_CACHE_DIR": str(cache / "quack"),
+                "XDG_CACHE_HOME": str(cache / "xdg"),
+            },
+            capture_output=True,
+            text=True,
+            timeout=900,
+        )
+        logs = "\n".join(path.read_text() for path in (root / "logs").glob("*.log"))
+        assert child.returncode == 0, child.stdout + child.stderr + logs
     rows = json.loads((root / "search.json").read_text())
     assert len(rows) == 3 and all("duration_seconds" in row for row in rows)
     assert (root / "report/index.html").is_file()

@@ -55,7 +55,10 @@ rather than the module-reset traversal order.
 profiling also measures host copies, so it needs no communicate phase. Such a
 check does not qualify the 30B model's performance or memory use on eight GPUs.
 The underlying common DP Executor is qualified on two H100s, and the recipe's
-test runs the tiny model through every phase on one and two GPUs. Saved
-Programs keep the Triton autotuner winners their build chose; an external
-autotuner such as Quack's chooses outside them, so a saved Program does not fix
-its kernels' choices.
+test runs the tiny model through every phase on one and two GPUs, with separate
+compiler caches for each phase. The recipe opts into MLOps' supported
+[operator preparation](../../../../docs/operator-preparation.md): BF16 SonicMoE
+builds archive their selected provider kernels and tuning choices. Profiling
+and execution load those artifacts without retuning inside a task. An eager
+compiler cache is not a substitute for these saved bindings. Other providers
+keep their own preparation contracts.

@@ -8,6 +8,7 @@ from mlops.optim import AdamW
 
 from shadowspill import Parallelism, build_step
 from workloads.models.qwen3moe.implementations.mlops import Model
+from workloads.models.shared.preparation import operator_preparations
 from workloads.recipes.phases import settings
 from workloads.recipes.text.data.calls import Inputs
 from workloads.recipes.text.objectives import normalized_next_token_prediction as loss
@@ -44,6 +45,7 @@ def run(directory):
             example_kwargs=examples["kwargs"][0],
             num_examples=len(examples["args"]),
             parallelism=parallelism,
+            operator_preparation=operator_preparations("mlops", "bfloat16"),
             master_dtype=torch.float32,
             grad_dtype=torch.float32,
         )
