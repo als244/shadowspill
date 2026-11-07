@@ -113,11 +113,14 @@ def test_qwen_recipe_builds_profiles_replans_and_executes_saved_plan(tmp_path, r
     data.mkdir()
     (np.arange(4096, dtype=np.uint32) % 32).tofile(data / "train.bin")
     (data / "meta.json").write_text(json.dumps({"vocab_size": 1024}))
-    command = [
+    entrypoint = [
         sys.executable,
         *(["-S"] if sys.flags.no_site else []),
         "-m",
         "workloads.recipes.text.train_qwen3_distributed",
+    ]
+    command = [
+        *entrypoint,
         "--data",
         str(data),
         "--run-dir",
@@ -158,8 +161,11 @@ def test_qwen_recipe_builds_profiles_replans_and_executes_saved_plan(tmp_path, r
         # eager cache can conceal an omitted provider-preparation description:
         # runtime tuning then changes the profiled task's allocation trace.
         cache = tmp_path / "caches" / phase
+        arguments = (
+            command if phase == "build" else [*entrypoint, "--run-dir", str(root)]
+        )
         child = subprocess.run(
-            [*command, "--phase", phase],
+            [*arguments, "--phase", phase],
             env={
                 **os.environ,
                 "OMP_NUM_THREADS": "1",
