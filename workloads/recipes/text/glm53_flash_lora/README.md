@@ -23,6 +23,11 @@ LoRA path. Adapters compute in BF16 with FP32 gradients, masters and moments.
 Only direct checkpoint storage is supported by the bounded loader; a requested
 expert-format conversion fails before execution.
 
+Build records provider-owned bindings for the BF16 operations in both training
+and evaluation Programs. These bindings keep their measured kernel choices when
+later phases use fresh compiler caches. Frozen FP8 storage is preserved; this
+BF16 preparation hook does not cover the custom FP8 kernels.
+
 The corpus must contain `train.bin`, `val.bin` and `meta.json` from the
 [text preparation tool](../data/README.md), including the base tokenizer's hash.
 Each worker reads different rank-local windows. Training and validation losses

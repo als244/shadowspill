@@ -8,6 +8,7 @@ import torch
 from mlops.optim import AdamW
 
 from shadowspill import Parallelism, build_forward, build_step
+from workloads.models.shared.preparation import operator_preparations
 from workloads.recipes.phases import settings
 from workloads.recipes.text.phases.candidates import batch_sizes
 from workloads.recipes.text.precision import Precision
@@ -24,6 +25,10 @@ def run(directory):
     precision.apply()
     objective = partial(loss, head_chunk_size=options["head_chunk_size"])
     parallelism = Parallelism.dp(ranks_per_replica=options["ranks"])
+    # The BF16 LoRA products and routing use the provider's saved bindings even
+    # when the frozen experts retain FP8 storage. Custom FP8 kernels keep their
+    # own provider contract; this does not convert the checkpoint representation.
+    preparation = operator_preparations("mlops", "bfloat16")
     with checkpoint(options) as (model, source, _initialize):
         metadata = describe(options, model, source)
         (root / "model.json").write_text(json.dumps(metadata, indent=2) + "\n")
@@ -50,6 +55,7 @@ def run(directory):
                 example_kwargs=kwargs,
                 num_examples=len(examples["args"]),
                 parallelism=parallelism,
+                operator_preparation=preparation,
                 **precision.plan_arguments(),
             )
             training.save(root / f"programs/batch-{size}/training.ssp")
@@ -67,6 +73,7 @@ def run(directory):
                     example_args=args,
                     example_kwargs=kwargs,
                     parallelism=parallelism,
+                    operator_preparation=preparation,
                 )
                 evaluation.save(root / f"programs/batch-{size}/evaluation.ssp")
                 model.train()

@@ -160,26 +160,30 @@ def test_glm_checkpoint_training_evaluation_and_cold_resume(recipe, tmp_path):
         pytest.skip("requires CUDA")
     root, cli = recipe
     cache = tmp_path / "preparation-cache"
-    environment = {
-        **os.environ,
-        "TRITON_CACHE_DIR": str(cache / "triton"),
-        "TORCHINDUCTOR_CACHE_DIR": str(cache / "inductor"),
-    }
-    child = subprocess.run(
-        [
-            sys.executable,
-            *(["-S"] if sys.flags.no_site else []),
-            "-m",
-            "workloads.recipes.text.train_glm53_flash_lora",
-            *cli,
-        ],
-        env=environment,
-        capture_output=True,
-        text=True,
-        timeout=900,
-    )
-    logs = "\n".join(path.read_text() for path in (root / "logs").glob("*.log"))
-    assert child.returncode == 0, child.stdout + child.stderr + logs
+    entrypoint = [
+        sys.executable,
+        *(["-S"] if sys.flags.no_site else []),
+        "-m",
+        "workloads.recipes.text.train_glm53_flash_lora",
+    ]
+    for phase in ("build", "profile", "plan", "execute"):
+        arguments = cli if phase == "build" else ["--run-dir", str(root)]
+        at = cache / phase
+        child = subprocess.run(
+            [*entrypoint, *arguments, "--phase", phase],
+            env={
+                **os.environ,
+                "TRITON_CACHE_DIR": str(at / "triton"),
+                "TORCHINDUCTOR_CACHE_DIR": str(at / "inductor"),
+                "QUACK_CACHE_DIR": str(at / "quack"),
+                "XDG_CACHE_HOME": str(at / "xdg"),
+            },
+            capture_output=True,
+            text=True,
+            timeout=900,
+        )
+        logs = "\n".join(path.read_text() for path in (root / "logs").glob("*.log"))
+        assert child.returncode == 0, child.stdout + child.stderr + logs
     learning = json.loads((root / "learning.json").read_text())
     assert learning["relative_drop"] > 0
     assert json.loads((root / "completed.json").read_text())["next_data_step"] == 4
@@ -208,6 +212,8 @@ def test_glm_checkpoint_training_evaluation_and_cold_resume(recipe, tmp_path):
             **os.environ,
             "TRITON_CACHE_DIR": str(tmp_path / "cold-triton"),
             "TORCHINDUCTOR_CACHE_DIR": str(tmp_path / "cold-inductor"),
+            "QUACK_CACHE_DIR": str(tmp_path / "cold-quack"),
+            "XDG_CACHE_HOME": str(tmp_path / "cold-xdg"),
         },
         capture_output=True,
         text=True,
