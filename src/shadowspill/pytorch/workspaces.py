@@ -6,7 +6,10 @@ import torch
 def initialize_blas(device: torch.device) -> None:
     with torch.cuda.device(device), torch.no_grad():
         torch.cuda.current_blas_handle()  # type: ignore[no-untyped-call]
-        left = torch.empty((2048, 2048), dtype=torch.bfloat16, device=device)
+        # Exercise the library with minimal scratch space. The retained BLAS
+        # workspace is charged separately; large temporary matrices would
+        # impose an unrelated startup floor on otherwise admissible Plans.
+        left = torch.empty((32, 32), dtype=torch.bfloat16, device=device)
         right = torch.empty_like(left)
         output = torch.empty_like(left)
         try:

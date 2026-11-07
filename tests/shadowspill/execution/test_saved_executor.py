@@ -115,9 +115,15 @@ def test_saved_plan_executes_without_build_or_measurement(
             for example in bindings["training_templates"]
         ]
         program = replace(program, bindings=bindings)
+    profiled = apply_profiles(program, profiles)
+    # The forward fixtures also exercise cold BLAS setup with a small live
+    # tensor allowance, including more than one resource stream. Startup must
+    # fit alongside the measured retained workspace, not need a large GEMM's
+    # unrelated temporary matrices before it can run this small saved Plan.
+    budget = profiled.fixed_device_bytes + (1 << 20) if kind == "forward" else 2 << 30
     plan = plan_program(
-        apply_profiles(program, profiles),
-        memory_budgets=MemoryBudgets(2 << 30, 64 << 20),
+        profiled,
+        memory_budgets=MemoryBudgets(budget, 64 << 20),
         communication_info=CommunicationInfo(
             fetch_bytes_per_second=1e10, evict_bytes_per_second=1e10
         ),

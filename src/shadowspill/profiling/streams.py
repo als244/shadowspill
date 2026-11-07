@@ -14,7 +14,10 @@ class MeasurementStreams:
         for task in reversed(program.tasks):
             if task.profile_id in self.resources:
                 self.resources[task.profile_id] = task.resource
-        all_resources = set(self.resources.values()) | {
+        # Allocator bootstrap initializes the default compute stream even if
+        # every executable is assigned to another lane. Reserve that workspace
+        # too, so cold execution cannot need an unprofiled extra BLAS handle.
+        all_resources = {fallback, *self.resources.values()} | {
             task.resource
             for task in program.tasks
             if task.profile_id in program.executables
