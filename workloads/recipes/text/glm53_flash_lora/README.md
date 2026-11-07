@@ -27,6 +27,10 @@ Build records provider-owned bindings for the BF16 operations in both training
 and evaluation Programs. These bindings keep their measured kernel choices when
 later phases use fresh compiler caches. Frozen FP8 storage is preserved; this
 BF16 preparation hook does not cover the custom FP8 kernels.
+The provider also records sparse forward's backend and FlashMLA LSE convention,
+so execution does not repeat its first-call detection problem inside a task.
+This selection binding does not package the attention binaries or its backward
+compiler.
 
 The corpus must contain `train.bin`, `val.bin` and `meta.json` from the
 [text preparation tool](../data/README.md), including the base tokenizer's hash.
