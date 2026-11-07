@@ -1660,6 +1660,146 @@ static int admitted_task_reconciles_ordered_scratch_and_omissions(void) {
     return failed ? -1 : 0;
 }
 
+static int admitted_task_accepts_permuted_free_group(void) {
+    Fixture fixture = {0};
+    if (fixture_create(&fixture) != 0) {
+        return -1;
+    }
+    const ShadowSpillTaskAllocationContractStep steps[] = {
+        {0U, 8U, 8U, 1U, SHADOWSPILL_TASK_ALLOCATION_ALLOCATE, 0U},
+        {0U, 8U, 8U, 1U, SHADOWSPILL_TASK_ALLOCATION_FREE, 0U},
+        {1U, 16U, 16U, 1U, SHADOWSPILL_TASK_ALLOCATION_ALLOCATE, 1U},
+        {2U, 32U, 32U, 1U, SHADOWSPILL_TASK_ALLOCATION_ALLOCATE, 1U},
+        {3U, 48U, 48U, 1U, SHADOWSPILL_TASK_ALLOCATION_ALLOCATE, 1U},
+        {3U, 48U, 48U, 1U, SHADOWSPILL_TASK_ALLOCATION_FREE, 0U},
+        {1U, 16U, 16U, 1U, SHADOWSPILL_TASK_ALLOCATION_FREE, 0U},
+        {2U, 32U, 32U, 1U, SHADOWSPILL_TASK_ALLOCATION_FREE, 0U},
+        {4U, 24U, 24U, 1U, SHADOWSPILL_TASK_ALLOCATION_ALLOCATE, 1U},
+        {4U, 24U, 24U, 1U, SHADOWSPILL_TASK_ALLOCATION_FREE, 0U},
+    };
+    const ShadowSpillTaskDescription execution = {
+        .task_id = 59U,
+        .allocation_contract_steps = steps,
+        .allocation_contract_step_count = 10U,
+        .enforce_allocation_contract = 1U,
+        .maximum_requested_allocation_bytes = 48U,
+        .maximum_charged_allocation_bytes = 48U,
+        .live_requested_allocation_limit_bytes = 96U,
+        .live_charged_allocation_limit_bytes = 96U,
+    };
+    int failed = shadowspill_test_admit_task(
+        fixture.runtime, &execution
+    ) != SHADOWSPILL_STATUS_OK;
+    /* Omit the first optional allocation and exercise fresh matcher state on
+     * each invocation, including the original order and two permutations. */
+    const uint32_t orders[][3] = {{0U, 1U, 2U}, {1U, 2U, 0U}, {2U, 0U, 1U}};
+    const uint64_t sizes[] = {16U, 32U, 48U};
+    for (uint32_t run = 0U; run < 3U && !failed; ++run) {
+        ShadowSpillAllocation values[3] = {{0}};
+        ShadowSpillAllocation following = {0};
+        failed = shadowspill_test_before_task(
+            fixture.runtime, execution.task_id, fixture.compute, NULL, 0U
+        ) != SHADOWSPILL_STATUS_OK;
+        for (uint32_t index = 0U; index < 3U && !failed; ++index) {
+            failed = shadowspill_memory_pool_allocate(
+                fixture.runtime, 0U, sizes[index], 1U, fixture.compute,
+                &values[index]
+            ) != SHADOWSPILL_STATUS_OK;
+        }
+        for (uint32_t index = 0U; index < 3U && !failed; ++index) {
+            failed = shadowspill_memory_pool_free(
+                fixture.runtime, 0U, values[orders[run][index]].allocation_id,
+                fixture.compute
+            ) != SHADOWSPILL_STATUS_OK;
+        }
+        failed = failed || shadowspill_memory_pool_allocate(
+                fixture.runtime, 0U, 24U, 1U, fixture.compute, &following
+            ) != SHADOWSPILL_STATUS_OK || shadowspill_memory_pool_free(
+                fixture.runtime, 0U, following.allocation_id, fixture.compute
+            ) != SHADOWSPILL_STATUS_OK || shadowspill_test_after_task(
+                fixture.runtime, execution.task_id, fixture.compute
+            ) != SHADOWSPILL_STATUS_OK || shadowspill_runtime_wait_idle(
+                fixture.runtime
+            ) != SHADOWSPILL_STATUS_OK;
+    }
+    fixture_destroy(&fixture);
+    return failed ? -1 : 0;
+}
+
+static int admitted_free_groups_preserve_allocation_deadlines(void) {
+    /* An early free of a later group, allocating before a group is complete,
+     * and ending the task with a missing free must all remain refusals. */
+    for (uint32_t mode = 0U; mode < 5U; ++mode) {
+        Fixture fixture = {0};
+        if (fixture_create(&fixture) != 0) {
+            return -1;
+        }
+        ShadowSpillTaskAllocationContractStep steps[] = {
+            {0U, 16U, 16U, 1U, SHADOWSPILL_TASK_ALLOCATION_ALLOCATE, 1U},
+            {1U, 32U, 32U, 1U, SHADOWSPILL_TASK_ALLOCATION_ALLOCATE, 1U},
+            {0U, 16U, 16U, 1U, SHADOWSPILL_TASK_ALLOCATION_FREE, 0U},
+            {2U, 24U, 24U, 1U, SHADOWSPILL_TASK_ALLOCATION_ALLOCATE, 1U},
+            {1U, 32U, 32U, 1U, SHADOWSPILL_TASK_ALLOCATION_FREE, 0U},
+            {2U, 24U, 24U, 1U, SHADOWSPILL_TASK_ALLOCATION_FREE, 0U},
+        };
+        if (mode >= 3U) {
+            /* A partially consumed, permuted group must also retain its
+             * outstanding free deadline before allocation/completion. */
+            const ShadowSpillTaskAllocationContractStep next = steps[3];
+            steps[3] = steps[4];
+            steps[4] = next;
+        }
+        const ShadowSpillTaskDescription execution = {
+            .task_id = 60U,
+            .allocation_contract_steps = steps,
+            .allocation_contract_step_count = 6U,
+            .enforce_allocation_contract = 1U,
+            .maximum_requested_allocation_bytes = 32U,
+            .maximum_charged_allocation_bytes = 32U,
+            .live_requested_allocation_limit_bytes = 96U,
+            .live_charged_allocation_limit_bytes = 96U,
+        };
+        ShadowSpillAllocation a = {0}, b = {0}, c = {0};
+        int failed = shadowspill_test_admit_task(
+                fixture.runtime, &execution
+            ) != SHADOWSPILL_STATUS_OK || shadowspill_test_before_task(
+                fixture.runtime, execution.task_id, fixture.compute, NULL, 0U
+            ) != SHADOWSPILL_STATUS_OK || shadowspill_memory_pool_allocate(
+                fixture.runtime, 0U, 16U, 1U, fixture.compute, &a
+            ) != SHADOWSPILL_STATUS_OK || shadowspill_memory_pool_allocate(
+                fixture.runtime, 0U, 32U, 1U, fixture.compute, &b
+            ) != SHADOWSPILL_STATUS_OK;
+        ShadowSpillStatus actual = SHADOWSPILL_STATUS_OK;
+        if (!failed && mode >= 3U) {
+            failed = shadowspill_memory_pool_free(
+                fixture.runtime, 0U, b.allocation_id, fixture.compute
+            ) != SHADOWSPILL_STATUS_OK;
+        }
+        if (!failed) {
+            if (mode == 0U) {
+                actual = shadowspill_memory_pool_free(
+                    fixture.runtime, 0U, b.allocation_id, fixture.compute
+                );
+            } else if (mode == 1U || mode == 3U) {
+                actual = shadowspill_memory_pool_allocate(
+                    fixture.runtime, 0U, 24U, 1U, fixture.compute, &c
+                );
+            } else {
+                actual = shadowspill_test_after_task(
+                    fixture.runtime, execution.task_id, fixture.compute
+                );
+            }
+        }
+        failed = failed || actual !=
+            SHADOWSPILL_STATUS_TASK_ALLOCATION_CONTRACT_MISMATCH;
+        fixture_destroy(&fixture);
+        if (failed) {
+            return -1;
+        }
+    }
+    return 0;
+}
+
 static int admitted_fetch_reserves_dynamic_capacity(void) {
     Fixture fixture = {0};
     if (fixture_create(&fixture) != 0) {
@@ -2534,6 +2674,8 @@ int main(void) {
     REQUIRE_CANARY(admitted_task_rejects_allocation_contract_geometry_mismatch());
     REQUIRE_CANARY(admitted_task_rejects_incomplete_allocation_contract());
     REQUIRE_CANARY(admitted_task_reconciles_ordered_scratch_and_omissions());
+    REQUIRE_CANARY(admitted_task_accepts_permuted_free_group());
+    REQUIRE_CANARY(admitted_free_groups_preserve_allocation_deadlines());
     REQUIRE_CANARY(admitted_fetch_reserves_dynamic_capacity());
     REQUIRE_CANARY(execution_plan_lifecycle());
     REQUIRE_CANARY(functional_mutation_replaces_lease_without_copy());

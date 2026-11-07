@@ -55,6 +55,12 @@ allocator. Its delayed `free_completed` notifications are bookkeeping, not
 part of the compiled task's request contract. A freed tensor is not retained
 provider state merely because that notification has not arrived.
 
+Consecutive frees may arrive in a different order from the profile. The runtime
+checks the same allocation identities and geometry within that group, and
+requires all of them before the next invariant allocation or task completion.
+It does not move free deadlines across allocation steps or enlarge the admitted
+workspace.
+
 Within a task, nonoverlapping temporary requests on the same allocation stream
 may share a fixed-address slot. The slot reserves its largest request; each
 allocation retains its exact requested size. At reuse, Executor joins any other

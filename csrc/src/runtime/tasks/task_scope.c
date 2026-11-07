@@ -40,6 +40,7 @@ enum {
     SHADOWSPILL_TASK_ALLOCATION_MATCHED = 1U,
     SHADOWSPILL_TASK_ALLOCATION_OMITTED = 2U,
     SHADOWSPILL_TASK_ALLOCATION_OMIT_CANDIDATE = 3U,
+    SHADOWSPILL_TASK_ALLOCATION_FREED = 4U,
 };
 
 static _Thread_local ShadowSpillTaskScope task_scope = {
@@ -337,15 +338,17 @@ static int allocation_geometry_matches(
         step->alignment_bytes == alignment_bytes;
 }
 
-static void skip_omitted_free_operations(void) {
+static void skip_resolved_free_operations(void) {
     for (;;) {
         const ShadowSpillTaskAllocationContractStep *step =
             expected_allocation_step();
         if (step == NULL ||
             step->operation != SHADOWSPILL_TASK_ALLOCATION_FREE ||
             step->allocation_ordinal >= task_scope.allocation_state_count ||
-            task_scope.allocation_states[step->allocation_ordinal] !=
-                SHADOWSPILL_TASK_ALLOCATION_OMITTED) {
+            (task_scope.allocation_states[step->allocation_ordinal] !=
+                 SHADOWSPILL_TASK_ALLOCATION_OMITTED &&
+             task_scope.allocation_states[step->allocation_ordinal] !=
+                 SHADOWSPILL_TASK_ALLOCATION_FREED)) {
             return;
         }
         ++task_scope.operation_index;
@@ -360,7 +363,7 @@ static void classify_task_allocation(
     task_scope.pending_allocation = 1U;
     task_scope.pending_is_scratch = 1U;
     task_scope.pending_invariant_ordinal = SHADOWSPILL_RUNTIME_NO_ID;
-    skip_omitted_free_operations();
+    skip_resolved_free_operations();
     const uint64_t start = task_scope.operation_index;
     uint64_t scan = start;
     while (scan < task_scope.task->allocation_contract_step_count) {
@@ -549,12 +552,29 @@ ShadowSpillStatus shadowspill_release_task_allocation(
     }
     if (task_scope.task->enforce_allocation_contract &&
         !allocation_is_scratch) {
-        skip_omitted_free_operations();
-        const ShadowSpillTaskAllocationContractStep *expected =
-            expected_allocation_step();
+        skip_resolved_free_operations();
+        const ShadowSpillTaskAllocationContractStep *expected = NULL;
+        /* Consecutive frees have no intervening allocation that could reuse
+         * their ranges. Python/compiler wrapper cleanup may permute that group
+         * without changing its live set at the next allocation. Match only
+         * inside this group, and advance past each free only once it occurred.
+         * Allocation geometry, reuse deadlines and completion remain checked. */
+        for (uint64_t index = task_scope.operation_index;
+             index < task_scope.task->allocation_contract_step_count; ++index) {
+            const ShadowSpillTaskAllocationContractStep *step =
+                &task_scope.task->allocation_contract_steps[index];
+            if (step->operation != SHADOWSPILL_TASK_ALLOCATION_FREE) {
+                break;
+            }
+            if (step->allocation_ordinal == allocation_ordinal) {
+                expected = step;
+                break;
+            }
+        }
         if (expected == NULL ||
-            expected->operation != SHADOWSPILL_TASK_ALLOCATION_FREE ||
-            expected->allocation_ordinal != allocation_ordinal ||
+            allocation_ordinal >= task_scope.allocation_state_count ||
+            task_scope.allocation_states[allocation_ordinal] !=
+                SHADOWSPILL_TASK_ALLOCATION_MATCHED ||
             expected->requested_bytes != requested_bytes ||
             expected->charged_bytes != charged_bytes ||
             expected->alignment_bytes != alignment_bytes) {
@@ -567,7 +587,9 @@ ShadowSpillStatus shadowspill_release_task_allocation(
                 alignment_bytes
             );
         }
-        ++task_scope.operation_index;
+        task_scope.allocation_states[allocation_ordinal] =
+            SHADOWSPILL_TASK_ALLOCATION_FREED;
+        skip_resolved_free_operations();
     }
     if (allocation_is_scratch) {
         if (requested_bytes <= task_scope.scratch_live_requested_bytes) {
@@ -603,7 +625,7 @@ ShadowSpillStatus shadowspill_validate_task_allocation_complete(
         return SHADOWSPILL_STATUS_OK;
     }
     for (;;) {
-        skip_omitted_free_operations();
+        skip_resolved_free_operations();
         const ShadowSpillTaskAllocationContractStep *expected =
             expected_allocation_step();
         if (expected == NULL) {

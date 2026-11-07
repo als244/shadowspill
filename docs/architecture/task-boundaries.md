@@ -266,6 +266,13 @@ memory_pool_allocate(...)
     commit: charge the scope, advance the allocation ordinal
 ```
 
+Within an uninterrupted group of frees, the runtime accepts any order of the
+same allocation identities and geometry. Host wrappers can release their
+references in a different order without changing the live set at the next
+allocation. Each free is consumed once; an unresolved free still blocks the
+next invariant allocation and task completion. Frees cannot move across an
+allocation step. The recorded trace and fixed offsets remain unchanged.
+
 Three consequences follow from the scope being thread-local:
 
 - An allocation made by a framework callback - PyTorch's allocator calling
