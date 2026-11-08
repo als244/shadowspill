@@ -7,12 +7,19 @@ import shutil
 import subprocess
 import sys
 import zipfile
+from dataclasses import asdict
 from pathlib import Path
 
 import numpy as np
 import pytest
 import torch
 
+from qualification.numerical.metrics import tensor_metrics
+from qualification.numerical.tolerances import (
+    LOSS_ABSOLUTE_TOLERANCE,
+    LOSS_RELATIVE_TOLERANCE,
+    meets_tensor_tolerance,
+)
 from tests.workloads.test_glm53_checkpoint import _write
 from workloads.recipes.text.data.tokenizer import tokenizer_identity
 from workloads.recipes.text.glm53_flash_lora.arguments import parser
@@ -153,6 +160,56 @@ def manifest(root, step):
         return json.loads(archive.read("manifest.json"))
 
 
+def compare_replay(reference, actual, *, learning_rate, steps):
+    """Hold fast-kernel replay to the numerical gate's existing state bounds."""
+    records = {}
+    with zipfile.ZipFile(reference) as left, zipfile.ZipFile(actual) as right:
+        expected, observed = (
+            json.loads(archive.read("manifest.json")) for archive in (left, right)
+        )
+        assert observed["state"] == expected["state"]
+        entries = {item["name"]: item for item in observed["tensors"]}
+        assert set(entries) == {item["name"] for item in expected["tensors"]}
+        for before in expected["tensors"]:
+            name = before["name"]
+            after = entries[name]
+            geometry = {
+                key: value
+                for key, value in before.items()
+                if key not in {"sha256", "member"}
+            }
+            assert all(after[key] == value for key, value in geometry.items()), name
+            values = tuple(
+                torch.frombuffer(
+                    bytearray(archive.read(entry["member"])),
+                    dtype=getattr(torch, entry["dtype"].removeprefix("torch.")),
+                ).as_strided(entry["shape"], entry["stride"], entry["storage_offset"])
+                for archive, entry in ((left, before), (right, after))
+            )
+            exact = before["sha256"] == after["sha256"]
+            if (
+                not values[0].is_floating_point()
+                or name.startswith("optimizer_group.")
+                or name.endswith(".step")
+            ):
+                records[name] = {"passed": exact, "bitwise_equal": exact}
+            else:
+                metric = tensor_metrics(*values)
+                category = "optimizer" if name.startswith("optimizer.") else "model"
+                passed = meets_tensor_tolerance(
+                    metric,
+                    key=f"state/{category}/{name}",
+                    step_size=learning_rate,
+                    steps=steps,
+                )
+                records[name] = {
+                    "passed": passed,
+                    "bitwise_equal": exact,
+                    **asdict(metric),
+                }
+    return records
+
+
 @pytest.mark.cuda
 @pytest.mark.slow
 def test_glm_checkpoint_training_evaluation_and_cold_resume(recipe, tmp_path):
@@ -220,9 +277,15 @@ def test_glm_checkpoint_training_evaluation_and_cold_resume(recipe, tmp_path):
         timeout=300,
     )
     assert child.returncode == 0, child.stdout + child.stderr
-    actual = manifest(cold, 4)
-    assert {x["name"]: x["sha256"] for x in actual["tensors"]} == {
-        x["name"]: x["sha256"] for x in expected["tensors"]
+    comparisons = compare_replay(
+        root / "training/checkpoints/step_00000004.ssp",
+        cold / "training/checkpoints/step_00000004.ssp",
+        learning_rate=options["learning_rate"],
+        steps=4,
+    )
+    (tmp_path / "replay-comparison.json").write_text(json.dumps(comparisons, indent=2))
+    assert not {
+        name: value for name, value in comparisons.items() if not value["passed"]
     }
     for name, metric in (
         ("metrics", "train/global_mean_loss"),
@@ -237,4 +300,8 @@ def test_glm_checkpoint_training_evaluation_and_cold_resume(recipe, tmp_path):
             for row in (cold / f"training/{name}.jsonl").read_text().splitlines()
         ]
         assert math.isfinite(original[-1][metric])
-        assert resumed[-1][metric] == original[-1][metric]
+        assert resumed[-1][metric] == pytest.approx(
+            original[-1][metric],
+            rel=LOSS_RELATIVE_TOLERANCE,
+            abs=LOSS_ABSOLUTE_TOLERANCE,
+        )
