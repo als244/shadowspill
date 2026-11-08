@@ -1,7 +1,7 @@
-"""Calibrate the union of saved candidates' communication, independently of compute."""
+"""Calibrate communication and paired interference for saved candidates."""
 
 from benchmarking.spill import resolve as spill_pool
-from shadowspill import CommunicationInfo, Program
+from shadowspill import CommunicationInfo, ProfiledProgram, Program, apply_profiles
 from shadowspill.communication.requests import collective_requests
 
 from .common import paths
@@ -36,7 +36,7 @@ def run(request):
         print("communicate: no built candidates; skipping calibration", flush=True)
         return
     program, collectives = probes(root, index)
-    from shadowspill import measure_communication
+    from shadowspill import measure_communication, measure_overlap
 
     with workers(request, index) as group:
         print(
@@ -54,3 +54,20 @@ def run(request):
         )
         if group.rank == 0:
             communication.save(root / "communication.ssp")
+        for entry in index["candidates"]:
+            path = root / "profiled" / entry["file"]
+            if "failure" in entry or not path.is_file():
+                continue
+            print(f"overlap: {entry['name']}", flush=True)
+            profiled = ProfiledProgram.load(path)
+            overlap = measure_overlap(
+                profiled,
+                communication,
+                device=request["device"],
+                rank_map=group.rank_map,
+            )
+            if group.rank == 0:
+                overlap.save(root / "overlap" / entry["file"])
+                profiles = profiled.profiles.merge(overlap)
+                profiles.save(root / "profiles" / entry["file"])
+                apply_profiles(profiled.program, profiles).save(path)

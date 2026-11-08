@@ -159,17 +159,23 @@ rank, initialize CPU rendezvous and call:
 
 ```python
 import torch.distributed as dist
-from shadowspill import Program, measure_communication
+from shadowspill import ProfiledProgram, apply_profiles, measure_communication, measure_overlap
 
 dist.init_process_group("gloo")
 try:
+    profiled = ProfiledProgram.load("profiled.ssp")
     info = measure_communication(
-        program=Program.load("program.ssp"),
+        program=profiled.program,
         rank_map={rank: rank for rank in range(8)},
         device="cuda:0",
     )
+    overlap = measure_overlap(
+        profiled, info, rank_map={rank: rank for rank in range(8)}, device="cuda:0",
+    )
     if dist.get_rank() == 0:
         info.save("communication.ssp")
+        overlap.save("overlap.ssp")
+        apply_profiles(profiled.program, profiled.profiles.merge(overlap)).save("profiled.ssp")
 finally:
     dist.destroy_process_group()
 ```
@@ -179,6 +185,9 @@ Calibration derives all-gather, reduce-scatter and all-reduce requests from the
 Program. An explicit `collectives=[...]` overrides those probes. It measures host
 copies concurrently across workers, then collective groups separately; each
 worker receives the same combined result. It runs no compiled compute tasks.
+The subsequent `measure_overlap` call runs saved task/collective pairs on those
+workers and adds supported interference measurements to the compute profiles.
+This preserves single-GPU build/ordinary profiling and CPU-only planning.
 
 `CommunicationInfo` contains node membership, rates/latencies, measured collective
 costs and communication memory evidence. Collective bytes describe the full

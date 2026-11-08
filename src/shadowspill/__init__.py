@@ -21,6 +21,7 @@ _PUBLIC = {
     "SweepResult": "artifacts",
     "apply_profiles": "profiling.apply",
     "measure_program": "profiling.measure",
+    "measure_overlap": "profiling.overlap",
     "MemoryBudgets": "artifacts.budgets",
     "PoolMemoryProfile": "artifacts.pool_memory",
     "measure_pool_memory": "profiling.pool_memory",

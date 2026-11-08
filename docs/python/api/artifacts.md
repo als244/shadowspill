@@ -186,6 +186,42 @@ simulation only. Timing estimates can reuse complete measured memory evidence.
 it never silently fills missing values. Framework collective costs and resources
 come separately from `CommunicationInfo` during planning.
 
+`measure_overlap(profiled_program, communication_info, device="cuda:0",
+rank_map=..., stages=None, inputs=None)` returns a `Profiles` overlay containing
+paired task/collective progress measurements. Call it on all participating ranks
+after communication calibration, then merge and apply it:
+
+```python
+from shadowspill import measure_overlap, apply_profiles
+
+overlap = measure_overlap(profiled, communication, rank_map=rank_map)
+profiles = profiled.profiles.merge(overlap)
+profiled = apply_profiles(profiled.program, profiles)
+```
+
+The overlay preserves isolated task durations, allocation contracts and fixed
+memory evidence. It restores saved code with ordinary allocations, measures each
+unique form against small/middle/large actual transfer sizes, and records paired
+trial statistics in `TaskProfile.metadata["overlap_calibration"]`. It does not
+build, create execution pools, fit full-step timings or choose a Plan. Both save
+and recompute forms and complete composed/chunked tasks are measured as built.
+
+Supported rates apply only while compute and the corresponding collective phase
+actually overlap. Route identity includes operation, dtype, ordered groups,
+in-place layout, topology and backend setup. Recalibrate when those change.
+Calibration excludes the first collective and tails after local compute when
+estimating collective progress; unsupported or unstable trials remain missing.
+Insufficient memory and tasks that communicate are explicitly reported as skipped.
+Programs with model-owned collective resources and heterogeneous task forms are
+outside this measurement's current scope. Host-copy interference is not inferred.
+No sharded collective transfers means an empty overlay requiring no GPU work.
+
+The normal distributed quickstart and homogeneous text recipes perform this
+enrichment during `communicate`, save `overlap/*.ssp`, and update their saved
+Profiles/ProfiledProgram before CPU planning. A caller-supplied quickstart
+CommunicationInfo retains the existing no-GPU shortcut: supply compatible
+overlap profiles separately if needed.
+
 ## ProfiledProgram
 
 `apply_profiles(program, profiles)` returns a read-only `ProfiledProgram`.

@@ -6,6 +6,7 @@ from typing import Any
 _PUBLIC = {
     "apply_profiles": ".apply",
     "measure_program": ".measure",
+    "measure_overlap": ".overlap",
     "measure_pool_memory": ".pool_memory",
 }
 

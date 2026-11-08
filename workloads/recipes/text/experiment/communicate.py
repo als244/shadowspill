@@ -6,7 +6,12 @@ from datetime import timedelta
 
 import torch.distributed as dist
 
-from shadowspill import Program, measure_communication
+from shadowspill import (
+    ProfiledProgram,
+    apply_profiles,
+    measure_communication,
+    measure_overlap,
+)
 from workloads.recipes.phases import settings
 
 from .group import ranks
@@ -23,15 +28,28 @@ def run(directory):
             for name in names:
                 relative = f"{candidate}/{name}.ssp"
                 print(f"calibrating {relative}", flush=True)
+                profiled = ProfiledProgram.load(root / "profiled" / relative)
                 communication = measure_communication(
-                    program=Program.load(root / "programs" / relative),
+                    program=profiled.program,
                     rank_map={rank: rank for rank in range(count)},
                     device="cuda:0",
                     warmup_seconds=options.get("warmup_seconds", 0.05),
                     measure_seconds=options.get("measure_seconds", 0.18),
                 )
+                overlap = measure_overlap(
+                    profiled,
+                    communication,
+                    rank_map={rank: rank for rank in range(count)},
+                    device="cuda:0",
+                )
                 if dist.get_rank() == 0:
                     communication.save(root / "communication" / relative)
+                    overlap.save(root / "overlap" / relative)
+                    profiles = profiled.profiles.merge(overlap)
+                    profiles.save(root / "profiles" / relative)
+                    apply_profiles(profiled.program, profiles).save(
+                        root / "profiled" / relative
+                    )
     finally:
         dist.destroy_process_group()
 

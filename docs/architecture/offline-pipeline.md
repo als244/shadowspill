@@ -229,6 +229,18 @@ variables naming where something is installed or written, which are recorded
 per worker. Changing the setup invalidates matching communication timings and
 memory records without invalidating single-GPU compute profiles.
 
+`measure_overlap(profiled_program, communication_info, ...)` then measures saved
+compute tasks alone, transfers alone, and both together on all participants.
+It returns an additive Profiles overlay for merge/apply before planning. The
+distributed quickstart and homogeneous text recipes include this step in their
+communication phase. Solo task profiles remain reusable; overlap evidence is
+specific to the task implementation and collective configuration. Calibration
+uses actual NCCL work events and bounded actual message sizes, excludes arrival
+skew and post-compute tails, and never fits observed full-training-step times.
+See [profile artifacts](../python/api/artifacts.md#profiles-and-taskprofile) for
+coverage, missing-sample reporting and the current model-owned/heterogeneous
+communication exclusions.
+
 ```python
 # All workers have initialized rendezvous and loaded the same Program.
 communication = measure_communication(

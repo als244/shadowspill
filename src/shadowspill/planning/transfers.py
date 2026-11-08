@@ -5,6 +5,7 @@ from dataclasses import replace
 from shadowspill.artifacts.program import Program
 from shadowspill.communication import CommunicationInfo
 from shadowspill.communication.collectives import matching_measurements
+from shadowspill.communication.overlap import timing_class
 from shadowspill.communication.requests import CollectiveRequest
 from shadowspill.communication.task_costs import task_collective_cost
 from shadowspill.communication.transfers import transfer_collectives
@@ -68,7 +69,7 @@ def communication_transfers(
                     ),
                     resource="sharded_collectives",
                     submission_ordered=True,
-                    timing_class="+".join(f"{op}_{cost.source}" for op, cost in costs),
+                    timing_class=timing_class(requests[key], info),
                 ),
             )
             size = record["shard_bytes"]

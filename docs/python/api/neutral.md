@@ -81,9 +81,11 @@ for shared resources and the limits of pairwise interference modeling.
 
 Both fields are serialized and included in program identity. The neutral
 `TaskMeasurement` record carries the same fields into lowering. Custom callers
-can supply this evidence explicitly; the public phase pipeline measures tasks
-and communications independently and does not measure pairwise interference.
-Empty overlap evidence retains isolated timing. For communication calibration,
+can supply this evidence explicitly. `measure_overlap` adds independently measured
+task/NCCL interference to existing profiles after communication calibration.
+The standard distributed quickstart and text recipes run it during their
+communication phase. Empty overlap evidence retains isolated timing and is
+reported as unmeasured, not a measured absence of interference. For calibration,
 see [distributed phases](../../architecture/offline-pipeline.md#logical-parallelism-and-distributed-plans).
 
 Indexed compiled projections:
