@@ -15,7 +15,7 @@ from shadowspill.planning.shared import shared_memory
 from shadowspill.step import StepDataOrdering
 from workloads.recipes.phases import settings
 
-from .candidates import batch_sizes
+from .candidates import build_candidates
 from .search import search_options
 
 
@@ -35,13 +35,13 @@ def run(directory):
         "search_options": search_options(options),
     }
     best, rows = None, []
-    for size in batch_sizes(options):
-        at = root / f"profiled/batch-{size}"
+    for candidate in build_candidates(options):
+        size, path = candidate["sequences_per_example"], candidate["path"]
+        selection = {key: value for key, value in candidate.items() if key != "path"}
+        at = root / "profiled" / path
 
-        def communication(kind, size=size):
-            return CommunicationInfo.load(
-                root / f"communication/batch-{size}/{kind}.ssp"
-            )
+        def communication(kind, path=path):
+            return CommunicationInfo.load(root / "communication" / path / f"{kind}.ssp")
 
         evaluation = None
         try:
@@ -52,13 +52,13 @@ def run(directory):
                     **inputs,
                 )
         except (PlanInfeasibleError, PlanSearchExhaustedError) as error:
-            rows.append({"sequences_per_example": size, "evaluation_error": str(error)})
+            rows.append({**selection, "evaluation_error": str(error)})
             continue
         profiled = ProfiledProgram.load(at / "training.ssp")
         count = options["sequences_per_step"] // size
         for depth in (d for d in range(1, count + 1) if count % d == 0):
             ordering = StepDataOrdering(depth=depth, breadth=count // depth)
-            row = {"sequences_per_example": size, "ordering": ordering.label}
+            row = {**selection, "ordering": ordering.label}
             print(f"planning {row}", flush=True)
             try:
                 training = plan_program(
@@ -73,7 +73,7 @@ def run(directory):
                 row["error"] = str(error)
             else:
                 row["duration_seconds"] = training.summary["duration_seconds"]
-                destination = root / f"plans/candidates/batch-{size}/{ordering.label}"
+                destination = root / "plans/candidates" / path / ordering.label
                 training.save(destination / "training.ssp")
                 if evaluation is not None:
                     evaluation.save(destination / "evaluation.ssp")

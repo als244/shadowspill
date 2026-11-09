@@ -4,6 +4,46 @@ import json
 from fractions import Fraction
 from pathlib import Path
 
+
+def build_variants(options):
+    """Persist a bounded, deduplicated candidate product without importing Torch."""
+    result = {}
+    for policy in options.get("graph_pair_policies", ["cost-input"]):
+        if policy not in {"cost-input", "cost-attention", "attention-input"}:
+            raise ValueError("unknown graph-pair policy")
+        for size in options.get("chunk_sizes", [0]):
+            for requested in options.get("moe_chunk_sizes", [0]):
+                if (
+                    type(size) is not int
+                    or type(requested) is not int
+                    or min(size, requested) < 0
+                ):
+                    raise ValueError(
+                        "execution chunk sizes must be nonnegative integers"
+                    )
+                expert = (requested or size) if size else 0
+                if size and any(
+                    value % 32 for value in (size, expert, options["sequence_length"])
+                ):
+                    raise ValueError(
+                        "fused mHC needs sequence and chunk sizes divisible by 32"
+                    )
+                if size and expert < size:
+                    raise ValueError(
+                        "MoE chunk size must be at least the projection chunk size"
+                    )
+                name = f"{policy}-chunk-{size}-moe-{expert}"
+                result[name] = dict(
+                    name=name,
+                    chunk_size=size,
+                    moe_chunk_size=expert,
+                    graph_pair_policy=policy,
+                )
+    if not result:
+        raise ValueError("at least one build candidate is required")
+    return list(result.values())
+
+
 DEFAULTS = {
     "steps": 5,
     "execution_gib": 76,
@@ -42,6 +82,14 @@ def configure(args):
         for key in ("data", "checkpoint"):
             options[key] = str(Path(options[key]).expanduser().resolve())
         options["minimum_evict_bytes"] = 128 << 10
+        variants = build_variants(options)
+        # Preserve historical single-candidate artifact paths for default builds.
+        if (
+            len(variants) != 1
+            or variants[0]["chunk_size"]
+            or variants[0]["graph_pair_policy"] != "cost-input"
+        ):
+            options["build_variants"] = variants
     validate(options)
     if args.phase == "communicate" and options["ranks"] == 1:
         raise ValueError("single-GPU profiling already measures host communication")

@@ -41,6 +41,27 @@ def parser():
     result.add_argument("--learning-rate", type=float, default=1e-4)
     result.add_argument("--head-chunk-size", type=int, default=1024)
     result.add_argument(
+        "--chunk-sizes",
+        type=int,
+        nargs="+",
+        default=[0],
+        help="Explicit execution candidates (multiples of32); 0 keeps full regions",
+    )
+    result.add_argument(
+        "--moe-chunk-sizes",
+        type=int,
+        nargs="+",
+        default=[0],
+        help="Expert chunk candidates crossed with chunk-sizes; 0 uses that chunk size",
+    )
+    result.add_argument(
+        "--graph-pair-policies",
+        nargs="+",
+        default=["cost-input"],
+        choices=["cost-input", "cost-attention", "attention-input"],
+        help="Independent SAVE/RECOMPUTE policies, crossed with each chunk candidate",
+    )
+    result.add_argument(
         "--layer-limit", type=int, help="Debug prefix; omit for full model"
     )
     result.add_argument(

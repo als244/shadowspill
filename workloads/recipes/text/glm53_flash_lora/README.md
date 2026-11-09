@@ -62,12 +62,62 @@ New task implementations or a changed communication setup require matching
 measurements. Unsupported or unstable paired samples are recorded as missing;
 see [distributed calibration](../../../../docs/python/api/distributed.md#communication-calibration-and-cpu-planning).
 
+## Explicit chunk and retention candidates
+
+The default is one unchunked build with the ordinary cost/input graph pair.
+For an explicit search, add for example:
+
+```bash
+--chunk-sizes 0 4096 8192 --moe-chunk-sizes 32768 \
+--graph-pair-policies cost-input cost-attention attention-input \
+--resolution-options 0 1/2 1
+```
+
+Each distinct chunk/retention combination gets its own build, task profiles and
+overlap calibration. Planning crosses these with the configured microbatch sizes
+and orderings, runs PressureFit for each, and selects the fastest admitted
+training/evaluation pair. `search.json` records every result, including refusals.
+Keep the list bounded: more candidates increase preparation time. `0` in
+`--moe-chunk-sizes` uses the projection chunk size; repeated unchunked combinations
+are deduplicated. A new candidate needs a fresh build directory.
+`--resolution-options` allows SAVE/RECOMPUTE mixtures within each candidate;
+the historical default `1` permits full recomputation only.
+
+| Policy | SAVE variant | RECOMPUTE variant |
+| --- | --- | --- |
+| `cost-input` | Cost-based retention | Inputs and routing choices |
+| `cost-attention` | Cost-based retention | Inputs, routing choices and attention's backward-required state |
+| `attention-input` | Attention's backward-required state and routing choices | Inputs and routing choices |
+
+These attention rules cover this recipe's KDA and sparse-attention overloads.
+They retain the state required by backward, which can exceed the attention
+output alone. They do not move checkpoint cuts or request device residency;
+PressureFit still decides placement/offload. With chunking enabled, SAVE also
+regenerates Sonic's sorted expert rows and routing metadata inside each chunk:
+the current `ChunkLocal` contract cannot retain those coordinates across the
+enclosing boundary. Supporting that would require separate saved data and
+routing metadata for each chunk. The chosen route IDs remain retained. Both
+variants remain available for planning.
+
+The example policy uses the public `ChunkRegions` and `AxisChunks` interfaces
+inside unchanged checkpoint regions. Sequence-wide KDA, convolution, sparse
+selection and attention stay whole; shared compressed dense weights decode
+outside token loops. Larger expert chunks can contain smaller projection/mHC
+regions, without creating a sequence-sized intermediate between their children.
+The fused mHC path requires sequence and chunk sizes divisible by32; invalid
+tails fail at capture. See [the policy](policies.py) for the explicit provider
+contracts and [the text helper](../../../models/shared/execution.py) for the
+region selector. Advanced callers can provide their own policies to the builders.
+
+The full-model measurements below are **unchunked controls**. Full FP8 chunked
+training, its minimum budget and throughput are undergoing separate qualification.
+
 Artifacts stay separate from compiler caches:
 
 | Path under the run directory | Contents |
 | --- | --- |
 | `config.json`, `model.json` | Recipe settings, checkpoint/tokenizer identities and tensor inventory |
-| `programs/batch-N/` | Training and optional evaluation Programs |
+| `programs/batch-N/` or `programs/CANDIDATE/batch-N/` | Training and optional evaluation Programs |
 | `profiles/`, `profiled/`, `communication/`, `overlap/` | Reusable task/transfer/paired measurements and fully profiled Programs |
 | `search.json`, `selected.json` | Candidate outcomes and selected geometry/ordering |
 | `plans/`, `reports/` | Saved executable Plans and simulated timelines |

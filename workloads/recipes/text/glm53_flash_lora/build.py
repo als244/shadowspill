@@ -10,11 +10,12 @@ from mlops.optim import AdamW
 from shadowspill import Parallelism, build_forward, build_step
 from workloads.models.shared.preparation import operator_preparations
 from workloads.recipes.phases import settings
-from workloads.recipes.text.phases.candidates import batch_sizes
+from workloads.recipes.text.phases.candidates import build_candidates
 from workloads.recipes.text.precision import Precision
 
 from .inputs import Inputs, loss
 from .model import checkpoint, describe
+from .policies import build_options
 
 
 def run(directory):
@@ -37,8 +38,10 @@ def run(directory):
             lr=torch.tensor(options["learning_rate"]),
             **precision.optimizer_arguments(),
         )
-        for size in batch_sizes(options):
-            configured = {**options, "sequences_per_example": size}
+        for candidate in build_candidates(options):
+            size, path = candidate["sequences_per_example"], candidate["path"]
+            configured = {**options, **candidate}
+            policy = build_options(configured, size)
             data = Inputs(configured, world_size=options["ranks"])
             if len(data.data) < options["steps"]:
                 raise ValueError(
@@ -46,7 +49,7 @@ def run(directory):
                 )
             examples = data.example()
             args, kwargs = examples["args"][0], examples["kwargs"][0]
-            print(f"building batch-{size}", flush=True)
+            print(f"building {path}", flush=True)
             training = build_step(
                 model,
                 optimizer=optimizer,
@@ -56,9 +59,10 @@ def run(directory):
                 num_examples=len(examples["args"]),
                 parallelism=parallelism,
                 operator_preparation=preparation,
+                **policy,
                 **precision.plan_arguments(),
             )
-            training.save(root / f"programs/batch-{size}/training.ssp")
+            training.save(root / "programs" / path / "training.ssp")
             if options["eval_every"]:
                 validation = Inputs(
                     configured, split="val", world_size=options["ranks"]
@@ -74,8 +78,13 @@ def run(directory):
                     example_kwargs=kwargs,
                     parallelism=parallelism,
                     operator_preparation=preparation,
+                    **{
+                        key: value
+                        for key, value in policy.items()
+                        if key != "graph_pair_policy"
+                    },
                 )
-                evaluation.save(root / f"programs/batch-{size}/evaluation.ssp")
+                evaluation.save(root / "programs" / path / "evaluation.ssp")
                 model.train()
 
 

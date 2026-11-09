@@ -125,7 +125,12 @@ def linear_attention_head_chunks(stage, chunk_size, variants):
 def is_barrier(target):
     # Stacking per-stage statistics combines complete row reductions with
     # earlier stages' summaries. Keep that aggregation outside a row region.
-    return target == "aten.stack.default" or any(
+    return target in {
+        "aten.stack.default",
+        # Frozen compressed dense weights are shared by all token slices.
+        # Decode once outside their loops, not once per chunk.
+        "mlops_seqmoe.decode_weight.default",
+    } or any(
         marker in target
         for marker in (
             "flash_attention",
