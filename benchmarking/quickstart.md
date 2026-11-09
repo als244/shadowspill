@@ -6,6 +6,7 @@ Quickstart composes the public library APIs in separate processes:
 build_step → Program
 measure_program → Profiles → apply_profiles → ProfiledProgram
 measure_communication → CommunicationInfo
+measure_overlap → Profiles overlay → enriched ProfiledProgram
 plan_program over build policies/geometries/orderings/budgets → Plans + simulated reports
 Trainer(Plan) → execution measurements
 ```
@@ -91,10 +92,22 @@ this worker. `--no-plots` keeps numeric reports/HTML while skipping figure files
 `--phase profile` loads saved Programs without the model factory. Use
 `--warmup-seconds` and `--measure-seconds` to control measurement; defaults are
 0.05 and 0.18 seconds. `--phase communicate` calibrates host copies and the union
-of collective probes required by the candidates. This calibration can be replaced with
+of collective probes required by the candidates. For sharded DP, it then calls
+`measure_overlap` for each successfully profiled candidate, using its saved
+tasks and actual collective routes. Repeated task-only, transfer-only and paired
+trials produce computation/communication progress rates for the simulator.
+The phase saves `overlap/` overlays and merges them into `profiles/` and
+`profiled/`, preserving isolated timing and memory evidence. It does not rebuild
+kernels or fit costs to a complete training step. Unsupported or unstable
+measurements remain missing; see the
+[measurement contract](../docs/python/api/artifacts.md#profiles-and-taskprofile).
+
+The measurement phase can be replaced with
 `--communication-info /path/to/communication.ssp`, saved by
-`CommunicationInfo.save`. The same option overrides communication inputs during
-CPU replanning. Supplied task durations or memory estimates should be applied
+`CommunicationInfo.save`. That path copies supplied communication information
+without measuring paired interference; reuse compatible enriched profiles or
+measure and merge an overlay explicitly. The same option overrides communication
+inputs during CPU replanning. Supplied task durations or memory estimates should be applied
 through `Profiles` / `apply_profiles` and saved to the corresponding `profiled/`
 archive; estimated memory produces simulation-only plans and cannot execute.
 For a manual profile pass, copy `programs/index.json` to `profiled/index.json`
@@ -277,6 +290,7 @@ programs/                    # one Program archive per geometry + small index
 profiles/                    # reusable measured task records
 profiled/                    # independent Program + Profiles archives + outcome index
 communication.ssp            # measured or supplied transfer information
+overlap/                     # paired task/collective measurements and coverage
 planning/sweep.ssp           # all cases, plans and failures
 plans/                       # one selected portable Plan per feasible budget
 report/index.html            # simulated timelines, memory and transfer tables

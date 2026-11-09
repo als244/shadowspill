@@ -54,13 +54,21 @@ Execution budgets include reserved external headroom; `--external-headroom-mib`
 is recorded during profiling. Training and evaluation share parameters and are
 jointly checked against those budgets. `--eval-every 0` omits evaluation entirely.
 
+With several ranks, `communicate` measures host copies and collectives, then
+paired task/NCCL interference for each saved training and evaluation Program.
+It saves `overlap/` overlays and enriches `profiles/` and `profiled/` before
+planning. The same compatible measurements can be reused across memory budgets.
+New task implementations or a changed communication setup require matching
+measurements. Unsupported or unstable paired samples are recorded as missing;
+see [distributed calibration](../../../../docs/python/api/distributed.md#communication-calibration-and-cpu-planning).
+
 Artifacts stay separate from compiler caches:
 
 | Path under the run directory | Contents |
 | --- | --- |
 | `config.json`, `model.json` | Recipe settings, checkpoint/tokenizer identities and tensor inventory |
 | `programs/batch-N/` | Training and optional evaluation Programs |
-| `profiles/`, `profiled/`, `communication/` | Reusable measurements and fully profiled Programs |
+| `profiles/`, `profiled/`, `communication/`, `overlap/` | Reusable task/transfer/paired measurements and fully profiled Programs |
 | `search.json`, `selected.json` | Candidate outcomes and selected geometry/ordering |
 | `plans/`, `reports/` | Saved executable Plans and simulated timelines |
 | `logs/` | A log for each phase |

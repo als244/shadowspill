@@ -34,13 +34,23 @@ CUDA_VISIBLE_DEVICES= python -m workloads.recipes.text.train_qwen3_distributed \
   --run-dir runs/qwen3-dp8 --phase plan --execution-gib 60
 ```
 
+The distributed `communicate` phase measures host copies and collectives, then
+paired task/NCCL interference for each saved batch candidate. It saves
+`overlap/batch-N.ssp` and merges the measurements into the corresponding profiles.
+Planning uses these measured progress rates when transfers overlap computation;
+the original isolated task timing and memory contracts stay intact. Changing
+budgets reuses this evidence. Changing task implementations or the communication
+setup requires compatible new measurements. See
+[distributed calibration](../../../../docs/python/api/distributed.md#communication-calibration-and-cpu-planning)
+for the public API and measurement limits.
+
 The files have one purpose each:
 
 | File | Responsibility | Saved output |
 | --- | --- | --- |
 | `build.py` | Meta model, local task compilation, DP declarations | `programs/batch-N.ssp` |
 | `profile.py` | Task timing and memory on one representative GPU | `profiles/`, `profiled/` |
-| `communicate.py` | Host copies, declared collectives and communication memory | `communication/batch-N.ssp` |
+| `communicate.py` | Host copies, collectives, communication memory and paired task interference | `communication/`, `overlap/`, enriched `profiles/` and `profiled/` |
 | `plan.py` | All factor sizes/orderings under the supplied memory budget | `search.json`, `plans/`, selected `plan.ssp`, `report/` |
 | `execute.py` | Fresh worker, bounded initialization, Trainer updates/checkpoint | `training/rank-NNNNN/` |
 | `../initialization.py` | Identical random tensor values across shards/chunk sizes | Fills Executor buffers |
