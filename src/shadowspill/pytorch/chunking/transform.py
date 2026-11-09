@@ -57,7 +57,10 @@ def chunk_artifact(
     """Build reusable chunk graphs without differentiating an outer loop."""
     if len(inputs) != artifact.argument_count:
         raise CaptureError("chunk input mapping differs from task argument count")
-    if any(path for _, path in artifact.input_components):
+    if artifact.input_components and any(
+        path and layout is not None
+        for (_, path), layout in zip(artifact.input_components, inputs, strict=True)
+    ):
         raise CaptureError(
             "axis chunking of wrapped tensor components needs a representation rule"
         )

@@ -887,16 +887,24 @@ belong to one child invocation, such as a dispatch permutation. An integer
 `dim` names an extent proportional to the logical axis extent; `None` means fixed
 geometry. These values may flow through the child, but cannot escape as saved
 values or public outputs. Mixing local coordinates with ordered axis values
-requires an explicit opaque restoration rule. A save variant that needs local
-scratch is refused; select recompute only when its captured cut does not retain
-that scratch. This contract does not make capacity-limited routing or a global
+requires an explicit opaque restoration rule. A SAVE or RECOMPUTE cut that
+retains this scratch is refused; use a retention policy that regenerates it
+inside each chunk. For example, expert-sorted rows from two token chunks have two
+separate routing orders; concatenating them does not produce the full-domain
+expert order. Retaining them would require segmented per-chunk saved state and
+its metadata, which this contract does not represent. A selective SAVE policy
+can regenerate just those intermediates while retaining other backward state,
+including the route choices. This contract does not make capacity-limited routing or a global
 auxiliary loss independent along the selected axis. Additive sufficient statistics may escape as
 reductions, with nonlinear aggregation in a separate stage.
 
 Supported built-in rules validate axis propagation, additive parameter VJPs and
 explicit backward gradient mutations. Opaque rules remain the caller's semantic
 responsibility. Generic terminal training stages, RNG operations, wrapped tensor
-components and unsupported mutations are refused. Attention, recurrence and
+component slicing and unsupported mutations are refused. Wrapped weights may
+remain shared: capture lowers their payloads and scales to ordinary physical
+inputs, and chunking preserves that mapping. This does not infer how to split
+a logical quantized weight or its scales. Attention, recurrence and
 convolution must retain their complete semantics outside regions chunked along dependent axes. The [architecture contract](../../architecture/axis-chunking.md)
 explains retention, complete-task profiling and automatic boundary residency.
 

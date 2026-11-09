@@ -23,6 +23,7 @@ from shadowspill.pytorch.capture.torch_deprecations import copy_graph_module
 from shadowspill.pytorch.partition.policy import resolve_partition_assignments
 from shadowspill.pytorch.partition.sources import stage_value_source
 from shadowspill.pytorch.partition.split import observe_split_root
+from shadowspill.pytorch.representations import is_wrapper
 from shadowspill.task.inputs import TaskInputRole
 from shadowspill.task.storage import StorageRootKind, TaskStorageContract
 
@@ -67,7 +68,7 @@ def region_artifact(
 
     contracts = dict(domain_rules or {})
 
-    if any(path for _, path in artifact.input_components):
+    if any(is_wrapper(value) for value in artifact.example_arguments):
         raise CaptureError("execution regions require ordinary tensor components")
     graph = copy_graph_module(artifact.graph_module)
     _shared_provenance(graph, artifact)
@@ -396,6 +397,16 @@ def region_artifact(
         ]
     storage = materialized_storage(artifact, full_values)
     parent_inputs = tuple(domains[: artifact.argument_count])
+    if artifact.input_components and any(
+        path and domains
+        for (_, path), domains in zip(
+            artifact.input_components, parent_inputs, strict=True
+        )
+    ):
+        raise CaptureError(
+            "execution regions may share wrapped tensor components, "
+            "but slicing them needs a representation rule"
+        )
     parent_outputs = tuple(
         dict(domains[item["slot"]]) if "slot" in item else {} for item in outputs
     )
