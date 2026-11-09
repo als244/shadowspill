@@ -15,6 +15,9 @@ API boundaries and the [Python reference](../python/README.md) for details.
    profiles and produce simulated reports without a GPU.
 4. [Custom stage partitioning](custom-partitioning.md) — control build-time FX
    boundaries through a small policy.
+5. [Commented GLM LoRA script](../../workloads/recipes/text/glm53_flash_lora/example.py)
+   — real checkpoint/data, chunk and retention search, pinned-host budgets,
+   evaluation and checkpointing through the normal saved phases.
 
 The [README recipes](../../README.md#real-model-training) cover Llama, Qwen3.5 LoRA,
 Qwen3 distributed training and GLM Flash LoRA. The [model catalog](../../workloads/MODELS.md)

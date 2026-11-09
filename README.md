@@ -109,7 +109,8 @@ program = ss.build_step(model, optimizer=optimizer, objective=next_token_loss,
                         parallelism=ss.Parallelism.dp(ranks_per_replica=8))
 ```
 
-[Complete recipe](workloads/recipes/text/glm53_flash_lora/README.md)
+[Commented training script](workloads/recipes/text/glm53_flash_lora/example.py) ·
+[Recipe and measured results](workloads/recipes/text/glm53_flash_lora/README.md)
 
 </details>
 

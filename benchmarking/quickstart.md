@@ -29,12 +29,22 @@ The core APIs can be used directly without quickstart; see the
 
 ## Complete example
 
-```bash
-python -u -m benchmarking.quickstart \
-  --factory workloads.recipes.regression.benchmark:experiment \
-  --factory-args '{"rows":64,"width":16,"outputs":8}' \
-  --search-budget-gib 2 3 --run-budget-gib 2 3 --spill-gib 2 \
-  --steps 5 --device cuda:0 --output-dir runs/regression
+```python
+from benchmarking.quickstart import run
+
+run(
+    # An importable factory supplies the model, objective, data and candidates.
+    factory="workloads.recipes.regression.benchmark:experiment",
+    factory_args={"rows": 64, "width": 16, "outputs": 8},
+
+    # Search each device budget with the same measured candidates and host pool.
+    search_budget_gib=[2, 3],
+    spill_gib=2,
+
+    # Execute every admitted winner for five updates and keep the evidence.
+    steps=5,
+    output_dir="runs/regression",
+)
 ```
 
 This builds two example geometries, profiles every unique task form, measures
@@ -43,11 +53,16 @@ selected plans. Budgets mean total GPU allowances in GiB. `--run-budget-gib`
 with no values skips execution; omitted values run every requested search budget.
 Infeasible cases stay in the planning report and are skipped for execution.
 
-A Python caller can use `benchmarking.quickstart.run` with the same argument
-names, using underscores and numeric lists instead of CLI syntax. The factory
+`benchmarking.quickstart.run` accepts ordinary Python values, using underscores
+in argument names and numeric lists for budgets. The equivalent CLI is
+`python -m benchmarking.quickstart`. The factory
 must be importable (a module function or `module:function` string), because
 workers reconstruct setup independently. Closures returned *by* that factory
 are fine; no callback pickle or model object is sent between workers.
+
+For full-checkpoint text training with evaluation and checkpointing, start with
+the [commented GLM LoRA script](../workloads/recipes/text/glm53_flash_lora/example.py)
+and its [recipe guide](../workloads/recipes/text/glm53_flash_lora/README.md).
 
 ## Spill storage
 

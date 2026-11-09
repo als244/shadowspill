@@ -6,14 +6,48 @@ precision, LoRA targets and the KDA input metadata. The shared
 [text phases](../phases/) perform profiling, communication calibration and
 candidate planning; the [recipe driver](../../phases.py) starts fresh workers.
 
-```bash
-python -m workloads.recipes.text.train_glm53_flash_lora \
-  --data /path/to/tokenized-text --checkpoint /path/to/GLM-5.3-Flash \
-  --frozen-state-id exact-base-revision --run-dir runs/glm-lora \
-  --ranks 8 --sequence-length 32768 --sequences-per-step 1
+Start with the [commented Python script](example.py). Edit its paths and the
+settings you want to compare. Its main configuration looks like this:
+
+```python
+from workloads.recipes.text.glm53_flash_lora.api import run
+
+config = {
+    # Load the real checkpoint and text prepared with its tokenizer.
+    "checkpoint": "/path/to/GLM-5.3-Flash",
+    "frozen_state_id": "exact-checkpoint-revision",
+    "data": "/path/to/tokenized-fineweb",
+    "run_dir": "runs/glm-lora",
+
+    # One 32K sequence per GPU and update; LoRA rank/alpha default to 32.
+    "ranks": 8,
+    "sequence_length": 32768,
+    "sequences_per_step": 1,
+    "steps": 100,
+    "schedule_steps": 100,
+
+    # Per-GPU memory and per-rank pinned-host spill, in GiB.
+    "execution_gib": 48,
+    "spill_gib": 96,
+
+    # Measure unchunked, 4K and 8K candidates under each retention policy.
+    "chunk_sizes": [0, 4096, 8192],
+    "moe_chunk_sizes": [0],  # Inherit each projection chunk size.
+    "graph_pair_policies": ["cost-input", "cost-attention", "attention-input"],
+    "resolution_options": ["0", "1/4", "1/2", "3/4", "1"],
+    "eval_every": 10,
+    "checkpoint_every": 10,
+}
+
+# Prepare the candidates, select the fastest admitted Plan, then train.
+run(config)
 ```
 
-Run this command once, outside `torchrun`. Build and profiling use one
+Run the script once, outside `torchrun`, using a fresh run directory. Importing
+the example does not start training. `run` shares the CLI's defaults, settings
+validation and phase workers; configuration keys use underscores and accept
+`Path` objects for paths. Unknown options fail before creating a run.
+Build and profiling use one
 representative GPU; communication calibration and execution launch eight workers.
 The [32K launcher](../glm53_flash_lora_32k_8gpu.sh) supplies the eight-GPU defaults
 and a 100-update schedule. Weights, gradients, masters and optimizer data are
@@ -38,18 +72,29 @@ Each worker reads different rank-local windows. Training and validation losses
 are normalized by the global token count once. `train/global_mean_loss` sums
 rank contributions; `train/loss` is the worker's own contribution.
 
-To run phases separately, start the first command with `--phase build`, then:
+To schedule preparation and training separately, replace `run(config)` with
+individual phase calls. Build starts a fresh directory; later calls read its
+saved settings and artifacts:
 
-```bash
-python -m workloads.recipes.text.train_glm53_flash_lora --run-dir runs/glm-lora --phase profile
-python -m workloads.recipes.text.train_glm53_flash_lora --run-dir runs/glm-lora --phase communicate
-python -m workloads.recipes.text.train_glm53_flash_lora --run-dir runs/glm-lora --phase plan
-python -m workloads.recipes.text.train_glm53_flash_lora --run-dir runs/glm-lora --phase execute
+```python
+run(config, phase="build")                  # One representative GPU.
+saved = {"run_dir": config["run_dir"]}
+run(saved, phase="profile")                 # Measure the saved task implementations.
+run(saved, phase="communicate")             # Eight GPUs: transfers and overlap.
+run(saved, phase="plan")                    # CPU only: search and admission.
+run(saved, phase="execute")                 # Eight GPUs: load Plans and train.
+
+# Later, reuse those measurements for another budget. No rebuild or profiling.
+run({**saved, "execution_gib": 40}, phase="plan")
+run(saved, phase="execute")
 ```
 
+On a scheduler, invoke only the phase for the current allocation; no GPU is
+needed for `plan`. The CLI remains available through
+`workloads.recipes.text.train_glm53_flash_lora` with the same option names.
 Single-GPU profiling measures host transfers itself; skip `communicate` for
-`--ranks 1`. CPU-only `plan` reads saved artifacts and can change
-`--execution-gib` and `--spill-gib` without importing Torch or the model.
+`ranks=1`. CPU-only `plan` reads saved artifacts and can change
+`execution_gib` and `spill_gib` without importing Torch or the model.
 Execution budgets include reserved external headroom; `--external-headroom-mib`
 is recorded during profiling. Training and evaluation share parameters and are
 jointly checked against those budgets. `--eval-every 0` omits evaluation entirely.
@@ -65,12 +110,16 @@ see [distributed calibration](../../../../docs/python/api/distributed.md#communi
 ## Explicit chunk and retention candidates
 
 The default is one unchunked build with the ordinary cost/input graph pair.
-For an explicit search, add for example:
+The example script enables search explicitly, by setting these configuration
+entries before the first `run`:
 
-```bash
---chunk-sizes 0 4096 8192 --moe-chunk-sizes 0 \
---graph-pair-policies cost-input cost-attention attention-input \
---resolution-options 0 1/2 1
+```python
+config.update(
+    chunk_sizes=[0, 4096, 8192],
+    moe_chunk_sizes=[0],
+    graph_pair_policies=["cost-input", "cost-attention", "attention-input"],
+    resolution_options=["0", "1/4", "1/2", "3/4", "1"],
+)
 ```
 
 Each distinct chunk/retention combination gets its own build, task profiles and
@@ -78,17 +127,17 @@ overlap calibration. Planning crosses these with the configured microbatch sizes
 and orderings, runs PressureFit for each, and selects the fastest admitted
 training/evaluation pair. `search.json` records every result, including refusals.
 Keep the list bounded: more candidates increase preparation time. `0` in
-`--moe-chunk-sizes` uses the projection chunk size; repeated unchunked combinations
+`moe_chunk_sizes` uses the projection chunk size; repeated unchunked combinations
 are deduplicated. A new candidate needs a fresh build directory.
 The example builds nine candidates: an unchunked control and two smaller MoE
 chunk sizes under each policy. Keep the unchunked controls when comparing
 throughput across memory budgets; adding chunked candidates should expand the
-search choices. Add `32768` to `--moe-chunk-sizes` to compare larger expert
+search choices. Add `32768` to `moe_chunk_sizes` to compare larger expert
 chunks. At sequence length 32768 those experts run in one chunk, but the
 composition and chunk-local retention restrictions still apply, so this is
 distinct from an unchunked build. For a smaller comparison, select one
 graph-pair policy while retaining both unchunked and chunked candidates.
-`--resolution-options` allows SAVE/RECOMPUTE mixtures within each candidate;
+`resolution_options` allows SAVE/RECOMPUTE mixtures within each candidate;
 the historical default `1` permits full recomputation only.
 
 | Policy | SAVE variant | RECOMPUTE variant |
@@ -139,10 +188,14 @@ For one GPU, metrics/checkpoints live directly under `training/`. Checkpoints
 contain adapters, optimizer state and loop/data progress, with frozen weights
 reloaded through bounded buffers from the same base checkpoint. For example:
 
-```bash
-python -m workloads.recipes.text.train_glm53_flash_lora \
-  --run-dir runs/glm-lora --phase execute \
-  --resume 'runs/glm-lora/training/rank-{rank:05d}/checkpoints/step_00000002.ssp'
+```python
+run(
+    {
+        "run_dir": "runs/glm-lora",
+        "resume": "runs/glm-lora/training/rank-{rank:05d}/checkpoints/step_00000002.ssp",
+    },
+    phase="execute",
+)
 ```
 
 `--steps` is a total completed-update target and must fit the original
