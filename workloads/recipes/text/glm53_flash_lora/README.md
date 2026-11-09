@@ -117,8 +117,9 @@ tails fail at capture. See [the policy](policies.py) for the explicit provider
 contracts and [the text helper](../../../models/shared/execution.py) for the
 region selector. Advanced callers can provide their own policies to the builders.
 
-The full-model measurements below are **unchunked controls**. Full FP8 chunked
-training, its minimum budget and throughput are undergoing separate qualification.
+The full-model measurements below cover separate unchunked and chunked campaigns.
+The combined search across both execution modes is still undergoing qualification;
+the chunked results do not establish the fastest overall candidate or minimum budget.
 
 Artifacts stay separate from compiler caches:
 
@@ -201,3 +202,40 @@ timing behavior; they do not establish convergence or full-tensor gradient
 equivalence. Measurements used core `b512b262` and provider `e516a61` on one
 eight-H100 node. The calibrated three-budget execution allocation lasted
 22m29s, including staging the original checkpoint to local SSD.
+
+### Chunked execution
+
+A separate campaign used the same full model, corpus, 32K sequence length,
+LoRA rank/alpha32 and eight-rank geometry with 96 GiB pinned-host spill per rank.
+Its search compared six 4K/8K chunk/policy combinations and two cost-input
+controls with 32K expert chunks. At both admitted budgets it selected
+`attention-input`, with 8192-token projection and expert chunks. The Plans chose
+RECOMPUTE for all 45 model checkpoint stages and SAVE for the required final
+stage; the policy name does not mean attention state was retained in those
+RECOMPUTE stages. Routing choices remain retained by the provider contract.
+
+| Device budget per rank | Predicted update | Measured update | Difference |
+| --- | ---: | ---: | ---: |
+| 40 GiB | 14.49 s | 14.50 s | +0.12% |
+| 48 GiB | 13.43 s | 13.92 s | +3.71% |
+
+Each Plan completed eight real updates, held-out evaluation and checkpointing
+on all eight ranks. An independent audit verified the exact Plan identities,
+all-rank progress and loss aggregation, optimizer counters and finite bounded
+checkpoint samples. Timing uses the same updates-two-through-six clock as the
+unchunked table. These checks establish pipeline and timing behavior, not a full
+numerical oracle or convergence result.
+
+Training Plan device peaks were 38.29/42.71 GiB and spill peaks were
+88.49/87.48 GiB, respectively. Timestamped NVML samples stayed below each device
+budget, at 37.53/45.53 GiB per GPU; these include reserved memory and initialization
+and are not exact allocation peaks. The shared 980 GiB host allocation recorded
+no OOM events. Checkpoints and datasets used node-local SSD; spill used pinned
+host memory.
+
+This campaign used core `b4792dcd` and provider `403cb240`; the allocation lasted
+15m43s including staging and checkpoint checks. Its winners belong to the
+eight-candidate **chunked subset**. Three matching-source fully unchunked policy
+controls have since completed build/profile; their calibration and the combined
+11-candidate selection remain pending. The historical unchunked table uses older
+sources, so it is not a controlled measurement of chunking's throughput cost.
