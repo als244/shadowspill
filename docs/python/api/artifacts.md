@@ -186,7 +186,7 @@ simulation only. Timing estimates can reuse complete measured memory evidence.
 it never silently fills missing values. Framework collective costs and resources
 come separately from `CommunicationInfo` during planning.
 
-`measure_overlap(profiled_program, communication_info, device="cuda:0",
+`measure_overlap(profiled_program, communication_info, device=device,
 rank_map=..., stages=None, inputs=None)` returns a `Profiles` overlay containing
 paired task/collective progress measurements. Call it on all participating ranks
 after communication calibration, then merge and apply it:

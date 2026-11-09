@@ -33,6 +33,7 @@ def test_top_level_public_surface_is_explicit() -> None:
         "MemoryBudgets",
         "CommunicationInfo",
         "measure_communication",
+        "measure_overlap",
         "plan_program",
         "sweep_programs",
         "write_report",
