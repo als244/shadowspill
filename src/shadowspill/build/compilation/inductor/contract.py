@@ -124,7 +124,7 @@ def _graph_lowering_contract(
     )
     input_position_by_name = _graph_input_positions(graph, optimized_graph)
     # Inductor indexes an input from its data pointer; task views are relative
-    # to the backing storage. Use the actual task examples, before the optional
+    # to the underlying storage. Use the actual task examples, before the optional
     # alignment-only offsets supplied to code generation for optimizer shards.
     input_storage_offsets = {
         name: int(value.storage_offset()) * value.element_size()
