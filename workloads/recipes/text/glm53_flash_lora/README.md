@@ -107,3 +107,39 @@ rejects conflicts. Inductor/Triton caches remain in node-local temporary storage
 Small fixture tests establish pipeline behavior; they do not qualify full-size
 pretrained 32K training, distributed evaluation/resume on H100s or full-model
 throughput.
+
+## Measured eight-H100 training
+
+A full-checkpoint run exercised all 45 text layers at sequence length 32,768,
+LoRA rank/alpha 32, one sequence per rank per update, and 96 GiB of pinned-host
+spill per rank. Each admitted budget completed eight updates through the public
+execution CLI, held-out evaluation and checkpointing on all eight ranks.
+The corpus was FineWeb-Edu, tokenized with the checkpoint's tokenizer, with
+5,242,522 training tokens and 1,057,080 held-out tokens. The base retains its
+original FP8/BF16/FP32 storage. A preceding full-model run
+also passed cold resume from update four to six, preserving the schedule, data
+position and per-rank adapter/optimizer state.
+
+| Device budget per rank | Predicted update | Measured update | Difference |
+| --- | ---: | ---: | ---: |
+| 48 GiB | 11.59 s | 11.71 s | +1.11% |
+| 64 GiB | 11.45 s | 11.58 s | +1.15% |
+| 76 GiB | 11.34 s | 11.51 s | +1.47% |
+
+Measured times are the median of maximum-rank Trainer wall times for updates
+two through six; first-update setup and final evaluation/checkpoint writes are
+excluded. The `communicate` phase measured task/NCCL overlap before CPU planning.
+The same budget comparison with isolated-task profiles underestimated runtime
+by 12.8–13.3%. No full-training timing multiplier was fitted.
+
+CPU planning rejected 20, 24 and 32 GiB with these task implementations and
+96 GiB of spill; those budgets were not executed. This campaign used the
+existing batch-one form and default graph-pair policy. It does not establish
+the minimum possible budget with other chunk or retention policies.
+
+All-rank metrics, checkpoint metadata, optimizer counters and bounded tensor
+samples passed inspection. These short runs establish pipeline, capacity and
+timing behavior; they do not establish convergence or full-tensor gradient
+equivalence. Measurements used core `b512b262` and provider `e516a61` on one
+eight-H100 node. The calibrated three-budget execution allocation lasted
+22m29s, including staging the original checkpoint to local SSD.
