@@ -177,6 +177,10 @@ class TextExecutionChunks:
                     TaskInputRole.PARAMETER,
                     TaskInputRole.BUFFER,
                     TaskInputRole.CONTROL,
+                    # Parameter gradients may have a feature extent equal to
+                    # the sequence length. Only inherited forward coordinates
+                    # prove that a gradient destination contains token slices.
+                    TaskInputRole.GRADIENT,
                 )
             ):
                 continue

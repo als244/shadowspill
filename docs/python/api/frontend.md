@@ -834,6 +834,10 @@ operator contracts, and the outer graph pair's saved values. For example, a
 whole normalization can produce flattened `[batch * sequence * heads]`
 statistics that a later chunked consumer must slice with its token inputs.
 Executing the normalization whole does not make those statistics shared.
+Gradient destinations also need proven coordinates: a parameter-gradient
+feature dimension can equal the sequence length without representing tokens.
+The text execution policy slices a gradient destination only when it inherits
+the corresponding named domain, including activation-gradient destinations.
 Named domains carry their declared `OperatorRule` contracts from forward into
 backward and into nested compositions. Conflicting contracts for the same
 overload and domain are refused. This propagation does not select chunking for
