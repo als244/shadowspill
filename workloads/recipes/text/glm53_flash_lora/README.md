@@ -68,7 +68,7 @@ The default is one unchunked build with the ordinary cost/input graph pair.
 For an explicit search, add for example:
 
 ```bash
---chunk-sizes 0 4096 8192 --moe-chunk-sizes 32768 \
+--chunk-sizes 4096 8192 --moe-chunk-sizes 0 \
 --graph-pair-policies cost-input cost-attention attention-input \
 --resolution-options 0 1/2 1
 ```
@@ -80,6 +80,10 @@ training/evaluation pair. `search.json` records every result, including refusals
 Keep the list bounded: more candidates increase preparation time. `0` in
 `--moe-chunk-sizes` uses the projection chunk size; repeated unchunked combinations
 are deduplicated. A new candidate needs a fresh build directory.
+The example builds six candidates, including smaller MoE chunks. Add `32768`
+to `--moe-chunk-sizes` to compare larger expert chunks, or add `0` to
+`--chunk-sizes` to include unchunked controls. For a smaller comparison of chunk
+sizes, select one graph-pair policy.
 `--resolution-options` allows SAVE/RECOMPUTE mixtures within each candidate;
 the historical default `1` permits full recomputation only.
 
