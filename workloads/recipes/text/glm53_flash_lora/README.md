@@ -166,9 +166,10 @@ tails fail at capture. See [the policy](policies.py) for the explicit provider
 contracts and [the text helper](../../../models/shared/execution.py) for the
 region selector. Advanced callers can provide their own policies to the builders.
 
-The full-model measurements below cover separate unchunked and chunked campaigns.
-The combined search across both execution modes is still undergoing qualification;
-the chunked results do not establish the fastest overall candidate or minimum budget.
+The full-model measurements below include a combined search across unchunked and
+chunked candidates. It selects 4K chunks at 32 GiB and unchunked execution at
+40/48 GiB. All three selected Plans completed real training through the Python
+entry point. These sampled budgets do not establish an absolute memory minimum.
 
 Artifacts stay separate from compiler caches:
 
@@ -288,7 +289,48 @@ host memory.
 
 This campaign used core `b4792dcd` and provider `403cb240`; the allocation lasted
 15m43s including staging and checkpoint checks. Its winners belong to the
-eight-candidate **chunked subset**. Three matching-source fully unchunked policy
-controls have since completed build/profile; their calibration and the combined
-11-candidate selection remain pending. The historical unchunked table uses older
+eight-candidate **chunked subset**. The historical unchunked table uses older
 sources, so it is not a controlled measurement of chunking's throughput cost.
+
+### Combined chunk and retention search
+
+The expanded campaign adds fully unchunked controls under all three policies to
+the same measured candidates. All 11 candidates have their own training and
+evaluation Programs, task profiles and paired NCCL calibration. CPU planning
+compared 55 candidate/budget cases at 24/28/32/40/48 GiB, using the five resolution
+options shown in the example. Fifteen cases admitted; 40 refused. No candidate
+admitted at 24 or 28 GiB with 96 GiB pinned host per rank.
+
+| Device budget per rank | Selected execution | Predicted update | Measured update | Difference |
+| --- | --- | ---: | ---: | ---: |
+| 32 GiB | 4K projection / 4K MoE chunks | 18.77 s | 19.31 s | +2.88% |
+| 40 GiB | Unchunked | 12.08 s | 12.46 s | +3.13% |
+| 48 GiB | Unchunked | 11.25 s | 11.98 s | +6.48% |
+
+Each selected Plan completed eight FineWeb-Edu updates, held-out evaluation and
+checkpointing through `run(config, phase="execute")`, with normal fast defaults.
+All use the `attention-input` candidate, but inspection of the saved Plans shows
+45 RECOMPUTE model stages and the required final SAVE stage. Attention is replayed
+in these winners; the candidate name describes the available SAVE policy.
+The unchanged 10% simulator band passes at every budget, using the same median
+maximum-rank wall time over updates two through six. At this geometry there is
+one sequence per rank, so only microbatch size one and ordering `1x1rp` are legal.
+
+An independent audit checks the minimum admitted prediction, preservation of
+previous candidate choices, exact Plan/source identities, all-rank loss and
+progress, checkpoint metadata, optimizer counters and finite samples from the
+first 4 KiB of each tensor. These samples are not a complete numerical oracle.
+Native runtime reports contained no physical-budget or external-headroom overruns. Training
+Plan device peaks were 31.73/39.85/47.77 GiB and planned spill peaks were
+89.49/88.49/87.48 GiB. Sampled NVML maxima were 30.04/38.03/46.03 GiB; samples are
+not exact allocation peaks. Whole-node host usage reached 961.28 GiB of 980 GiB,
+including eight pinned pools, process memory and checkpoint page cache, with no
+OOM events or hits to the host memory limit.
+
+The shared training/evaluation check uses one compatible measured NCCL startup
+reservation when a calibration covers their complete request union. Core
+`d732059a` corrects an earlier duplicate reservation; individual task profiles
+and costs are unchanged. The campaign uses that runtime and public Python entry
+with frozen Programs measured at `b4792dcd`, and provider `403cb240` throughout.
+The eight-H100 allocation lasted 22m26s, including 3m59s staging the original
+checkpoint and corpus to local SSD. Spill remained pinned host memory.
