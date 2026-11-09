@@ -43,6 +43,13 @@ allocation extents and offsets. Build also records compiler-visible workspace
 and unresolved external allocation requirements. These physical facts validate
 logical identities; they do not replace them.
 
+Output view offsets are relative to their backing storage. Inductor describes
+input aliases relative to the input's data pointer, which can start inside that
+storage. The adapter adds the captured input storage offset before publishing
+the contract. A view preceding the canonical input can therefore have a negative
+Inductor offset and a valid nonnegative storage offset, without a copy. Offsets
+introduced only for optimizer-shard alignment do not change the task contract.
+
 Code, contracts and memory facts share one AOT cache entry. A foreign entry
 missing build facts is recompiled in a temporary compiler cache. There is no
 separate manifest sidecar cache. Finalization warms complete tasks with valid

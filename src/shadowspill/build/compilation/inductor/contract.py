@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+from collections.abc import Sequence
+
+import torch
 from torch._inductor.graph import GraphLowering
 from torch.fx import GraphModule
 
@@ -112,6 +115,7 @@ def _graph_lowering_contract(
     optimized_graph: GraphModule,
     inner_contract: TaskStorageContract,
     semantic_contract: TaskStorageContract,
+    inputs: Sequence[object],
 ) -> _GraphLoweringManifest:
     """Project Inductor's returned buffers into an executable storage contract."""
 
@@ -119,12 +123,21 @@ def _graph_lowering_contract(
         graph, optimized_graph, inner_contract, semantic_contract
     )
     input_position_by_name = _graph_input_positions(graph, optimized_graph)
+    # Inductor indexes an input from its data pointer; task views are relative
+    # to the backing storage. Use the actual task examples, before the optional
+    # alignment-only offsets supplied to code generation for optimizer shards.
+    input_storage_offsets = {
+        name: int(value.storage_offset()) * value.element_size()
+        for name, position in input_position_by_name.items()
+        if isinstance(value := inputs[position], torch.Tensor)
+    }
     records = _lower_graph_outputs(
         graph,
         outputs,
         visible,
         inner_contract,
         semantic_contract,
+        input_storage_offsets,
     )
     roots, allocations = _build_executable_roots(graph, records, input_position_by_name)
     output_views = _lowered_output_views(records, roots)

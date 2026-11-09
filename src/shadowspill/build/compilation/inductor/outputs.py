@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from typing import Any
 
 import torch
@@ -66,6 +67,7 @@ def _lower_graph_outputs(
     visible: tuple[int, ...],
     inner_contract: TaskStorageContract,
     semantic_contract: TaskStorageContract,
+    input_storage_offsets: Mapping[str, int],
 ) -> tuple[_LoweredOutput, ...]:
     inner_view_by_leaf = {view.leaf_index: view for view in inner_contract.output_views}
     optimized_views = tuple(
@@ -82,6 +84,7 @@ def _lower_graph_outputs(
             optimized_view,
             output,
             root_by_id[optimized_view.root_id],
+            input_storage_offsets,
         )
         for semantic_view, optimized_view, output in zip(
             semantic_views, optimized_views, outputs, strict=True
@@ -95,6 +98,7 @@ def _lower_graph_output(
     optimized_view: OutputView,
     output: Any,
     provenance: StorageRoot,
+    input_storage_offsets: Mapping[str, int],
 ) -> _LoweredOutput:
     if not output.has_tensor_output():
         raise CaptureError(
@@ -102,7 +106,7 @@ def _lower_graph_output(
             f"leaf={semantic_view.leaf_index}"
         )
     root_name, shape, stride, dtype, offset_bytes, span_bytes = _graph_output_geometry(
-        graph, semantic_view, output
+        graph, semantic_view, output, input_storage_offsets
     )
     _validate_graph_output_geometry(semantic_view, shape, stride, dtype)
     return _LoweredOutput(
@@ -122,6 +126,7 @@ def _graph_output_geometry(
     graph: GraphLowering,
     semantic_view: OutputView,
     output: Any,
+    input_storage_offsets: Mapping[str, int],
 ) -> tuple[str, tuple[int, ...], tuple[int, ...], torch.dtype, int, int]:
     try:
         root_name = str(output.get_name())
@@ -139,18 +144,20 @@ def _graph_output_geometry(
             "Inductor GraphLowering output has no concrete strided layout: "
             f"leaf={semantic_view.leaf_index}, type={type(output).__name__}"
         ) from error
-    if offset_elements < 0 or any(value < 0 for value in (*shape, *stride)):
+    item_size = torch.empty((), device="meta", dtype=dtype).element_size()
+    offset_bytes = offset_elements * item_size + input_storage_offsets.get(root_name, 0)
+    if offset_bytes < 0 or any(value < 0 for value in (*shape, *stride)):
         raise CaptureError(
             "Inductor GraphLowering produced a negative output geometry: "
-            f"leaf={semantic_view.leaf_index}"
+            f"leaf={semantic_view.leaf_index}, root={root_name}, "
+            f"shape={shape}, stride={stride}, offset_bytes={offset_bytes}"
         )
-    item_size = torch.empty((), device="meta", dtype=dtype).element_size()
     return (
         root_name,
         shape,
         stride,
         dtype,
-        offset_elements * item_size,
+        offset_bytes,
         _span_bytes(shape, stride, item_size),
     )
 

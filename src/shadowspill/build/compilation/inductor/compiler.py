@@ -65,7 +65,9 @@ def compile_graph(
 
     lowering = lowerings[0]
     started = time.perf_counter_ns()
-    executable = _graph_lowering_contract(lowering, graph, inner, semantic_contract)
+    executable = _graph_lowering_contract(
+        lowering, graph, inner, semantic_contract, inputs
+    )
     manifest = _make_manifest(
         semantic_contract,
         optimized,

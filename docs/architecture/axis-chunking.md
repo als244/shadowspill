@@ -16,6 +16,13 @@ whole-sequence operations and chunked regions with different chunk sizes.
 The [policy reference](../python/api/frontend.md#axis-chunking-policies) describes
 these controls. The library does not select boundaries from a model name.
 
+Execution-region chunk loops belong to ShadowSpill's builder and saved
+executable. Models express the full tensor computation. Providers implement
+operators and may supply versioned rules describing axis independence, local
+scratch and gradient reductions; these rules do not implement the loops.
+Recipe policies choose region boundaries and chunk sizes. Provider-internal
+kernel tiling and an existing model's chunked loss head are separate mechanisms.
+
 ## Capture and differentiation
 
 Training capture constructs explicit full-stage forward and backward graphs,
