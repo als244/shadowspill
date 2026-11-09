@@ -169,6 +169,78 @@ def test_nested_chunks_reuse_gradient_destinations_across_microbatches(prior_lea
     assert all(final[i].data_ptr() == actual[i].data_ptr() for i in (1, 2))
 
 
+@pytest.mark.parametrize("prior", [False, True])
+def test_owned_activation_gradient_crosses_an_inner_cut_with_returned_view(prior):
+    from shadowspill.pytorch.chunking.regions import region_artifact
+
+    torch.manual_seed(129)
+    inputs = tuple(torch.randn(29, 5, dtype=torch.float64) for _ in range(2))
+
+    def backward(x, dy):
+        first = dy * x
+        activated = torch.nn.functional.silu(dy)
+        return (first + activated * x).view(1, 29, 5), x.T @ activated
+
+    with FakeTensorMode() as mode:
+        examples = tuple(mode.from_tensor(value) for value in inputs)
+        base = GraphArtifact.capture(
+            kind="backward",
+            graph_module=make_fx(backward)(*examples),
+            example_inputs=examples,
+        )
+    artifact = accumulate_gradient_outputs(base, (1,)) if prior else base
+
+    class Outer:
+        def configure_stage(self, stage):
+            return AxisChunks(
+                11,
+                {0: 0, 1: 0},
+                domain="positions",
+                regions=ChunkRegions(
+                    IsolateOperations(("aten.silu.default",), base="whole"), Inner()
+                ),
+            )
+
+    nested = region_artifact(
+        artifact,
+        ChunkRegions(IsolateOperations((), base="whole"), Outer()),
+        stage_id="layer",
+        variant="recompute",
+    )
+    initial = torch.randn(5, 5, dtype=torch.float64)
+    expected = list(backward(*inputs))
+    if prior:
+        expected[1] += initial
+    actual = executable(nested)(*inputs, *((initial,) if prior else ()))
+    torch.testing.assert_close(actual, tuple(expected), rtol=1e-12, atol=1e-12)
+    if prior:
+        assert actual[1].data_ptr() == initial.data_ptr()
+
+
+def test_shared_cotangent_broadcast_keeps_its_axis_across_inner_cuts():
+    torch.manual_seed(817)
+    inputs = tuple(
+        torch.randn(shape, dtype=torch.float64) for shape in ((29, 5), (29, 5), (5,))
+    )
+
+    def backward(x, dy, statistics_tangent):
+        broadcast = statistics_tangent.unsqueeze(0).expand(29, 5)
+        activated = torch.nn.functional.silu(x)
+        return activated * broadcast + dy, x.T @ dy
+
+    with FakeTensorMode() as mode:
+        examples = tuple(mode.from_tensor(value) for value in inputs)
+        base = GraphArtifact.capture(
+            kind="backward",
+            graph_module=make_fx(backward)(*examples),
+            example_inputs=examples,
+        )
+    nested = compose(base, (ChunkAxis(0), ChunkAxis(0), None), 29)
+    torch.testing.assert_close(
+        executable(nested)(*inputs), backward(*inputs), rtol=1e-12, atol=1e-12
+    )
+
+
 @pytest.mark.parametrize("save", [False, True])
 def test_nested_shared_output_cotangent_contributes_once(save):
     x = torch.randn(2, 29, 5, dtype=torch.float64, requires_grad=True)

@@ -199,6 +199,16 @@ def chunk_artifact(
         child = copy_graph_module(graph)
         for old, node in zip(graph.graph.nodes, child.graph.nodes, strict=True):
             layout = layouts.get(old)
+            if config.domain is not None:
+                # Preserve proven coordinates through inner cuts, including
+                # broadcasts of shared cotangents. Their producer can have no
+                # sliced input from which an inner region could infer a domain.
+                domains = dict(node.meta.get("execution_domains", {}))
+                if isinstance(layout, ChunkAxis):
+                    domains[config.domain] = layout
+                else:
+                    domains.pop(config.domain, None)
+                node.meta["execution_domains"] = domains
             if isinstance(layout, LocalLayout):
                 layout = layout.axis
             target = str(old.target)

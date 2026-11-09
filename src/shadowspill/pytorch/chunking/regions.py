@@ -24,7 +24,7 @@ from shadowspill.pytorch.partition.policy import resolve_partition_assignments
 from shadowspill.pytorch.partition.sources import stage_value_source
 from shadowspill.pytorch.partition.split import observe_split_root
 from shadowspill.task.inputs import TaskInputRole
-from shadowspill.task.storage import TaskStorageContract
+from shadowspill.task.storage import StorageRootKind, TaskStorageContract
 
 from .contract import boundary_metadata, materialized_storage
 from .geometry import REDUCED, ChunkAxis, Layout
@@ -189,6 +189,44 @@ def region_artifact(
                 input_provenance=provenance,
                 explicit_mutations=tuple(explicit),
             )
+            # A destination created inside the parent has no parent input
+            # mutation to inherit. Once a cut exposes it as a child input,
+            # retain its returned alias as an explicit handoff too. Sliced
+            # gradient destinations need that return to assemble their updates.
+            inherited_count = len(explicit)
+            handed_off = {m.input_position for m in explicit}
+            for mutation in child.storage_contract.mutations:
+                position = mutation.input_position
+                if (
+                    artifact.kind != "backward"
+                    or mutation.replacement_output_leaf is not None
+                    or position in handed_off
+                    or provenance[position].role is not TaskInputRole.GRADIENT
+                ):
+                    continue
+                for view in child.storage_contract.output_views:
+                    storage_root = child.storage_contract.roots[view.root_id]
+                    if (
+                        storage_root.kind is StorageRootKind.INPUT
+                        and storage_root.source_input == position
+                    ):
+                        explicit.append(
+                            ExplicitMutation(
+                                position,
+                                view.leaf_index,
+                                str(placeholders[position].target),
+                            )
+                        )
+                        handed_off.add(position)
+                        break
+            if len(explicit) > inherited_count:
+                child = GraphArtifact.capture(
+                    kind=artifact.kind,
+                    graph_module=record.graph_module,
+                    example_inputs=record.inputs,
+                    input_provenance=provenance,
+                    explicit_mutations=tuple(explicit),
+                )
         input_slots = [source_slot(source) for source in record.input_sources]
         inherited = [domains[slot] for slot in input_slots]
         config = policy.chunking.configure_stage(
@@ -297,6 +335,25 @@ def region_artifact(
                 tuple(reductions[slot] for slot in input_slots),
                 inherited,
             )
+        # The enclosing chunk transform has already proved coordinates for
+        # internal values. A broadcast from a shared scalar/vector has no
+        # sliced input, but its output still needs slicing at the next cut.
+        output_nodes, _ = tree_flatten(
+            next(n for n in record.graph_module.graph.nodes if n.op == "output").args[0]
+        )
+        for node, known in zip(output_nodes, output_domains, strict=True):
+            if isinstance(node, Node):
+                for name, axis in node.meta.get("execution_domains", {}).items():
+                    if name in contracts:
+                        from .rules import _same_axis
+
+                        if name in known and not _same_axis(
+                            known[name], axis, tuple(node.meta["val"].shape)
+                        ):
+                            raise CaptureError(
+                                f"execution output disagrees with chunk domain {name!r}"
+                            )
+                        known[name] = axis
         domains.extend(output_domains)
         reductions.extend(output_reductions)
         instructions.append(
