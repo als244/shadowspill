@@ -72,3 +72,38 @@ builds archive their selected provider kernels and tuning choices. Profiling
 and execution load those artifacts without retuning inside a task. An eager
 compiler cache is not a substitute for these saved bindings. Other providers
 keep their own preparation contracts.
+
+## Measured eight-H100 run
+
+The November 9, 2026 full-model check used FineWeb-Edu text encoded with the
+official Qwen tokenizer, 4,096-token sequences, 64 sequences per rank per update,
+and **20 GiB execution / 96 GiB pinned host spill per rank**. All 27 batch/order
+combinations were considered; 25 were admitted. Both batch-32 choices exceeded
+the required input/output capacity. The lowest predicted duration selected
+batch 16 with `1x4rp` ordering.
+
+| Same-node comparison | Predicted update | Measured update |
+| --- | ---: | ---: |
+| Original `2x2rp` Plan without paired rates | 18.163 s | 19.568 s |
+| Recalibrated `2x2rp` Plan | 19.934 s | 19.416 s |
+| Recalibrated `1x4rp` Plan | 19.344 s | 18.705 s |
+| Selected `1x4rp` through the normal public CLI | 19.344 s | **18.732 s** |
+
+Each case completed seven updates. Measured time is the median maximum-rank
+Trainer wall time over updates 2–6, excluding startup, final tracing and
+checkpoint I/O. The public winner reached approximately **111,956 tokens/s**;
+measured time was 3.2% below prediction. Calibration used independent paired
+task/collective measurements and refreshed communication measurements, with no
+correction fitted to the training step. All eight public-run checkpoints passed
+metadata, optimizer-counter and finite-state sample checks.
+
+This search used the default graph-pair policy and no explicit axis-chunk policy.
+It searched batch/order choices and PressureFit's placement/variant decisions.
+For independent chunk-size and graph-pair-policy candidates, use the
+[quickstart candidate search](../../../../benchmarking/quickstart.md).
+
+The eight host pools alone require 768 GiB. The test used a 980 GiB node host
+limit to allow process memory and checkpoint page cache; observed whole-job host
+peak was 943.93 GiB. The public execution phase, including initialization and
+writing its full checkpoint to local SSD, took 595 s. Checkpoint throughput is
+separate from steady training throughput.
