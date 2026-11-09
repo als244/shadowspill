@@ -3,11 +3,58 @@
 from collections.abc import Sequence
 from typing import TYPE_CHECKING
 
-from shadowspill.artifacts._values import digest
+from shadowspill.artifacts._values import digest, plain
 
 if TYPE_CHECKING:
     from shadowspill.artifacts.plan import Plan
     from shadowspill.artifacts.pool_memory import PoolMemoryProfile
+    from shadowspill.communication import CommunicationInfo
+    from shadowspill.communication.requests import CollectiveRequest
+
+
+def _communicator_coverage(
+    plan: "Plan",
+) -> tuple[str, frozenset["CollectiveRequest"]] | None:
+    """One measured startup's scope and exact warmed collective forms.
+
+    A shared worker creates each process group once and warms the union of its
+    Plans' requests. A calibration covering that union already observed those
+    resources. Incomplete or incompatible records retain additive accounting.
+    """
+    from shadowspill.communication.requests import (
+        CollectiveRequest,
+        collective_requests,
+    )
+
+    info = plan.communication_info
+    if info.metadata.get("memory_kind") != "measured" or not info.measurements:
+        return None
+    scope = info.metadata["memory_scope"]
+    if plain(scope.get("backend_setup", {})) != plain(
+        info.metadata.get("backend_setup", {})
+    ) or plain(scope["topology"]) != plain(info.topology):
+        return None
+    requests = set()
+    for row in info.measurements:
+        if row.get("memory", {}).get("memory_kind") != "measured" or any(
+            plain(row.get(key, {})) != plain(scope.get(key, {}))
+            for key in ("setup", "topology", "backend_setup")
+        ):
+            return None
+        requests.add(
+            CollectiveRequest(
+                row["operation"],
+                tuple(row["ranks"]),
+                row["tensor_bytes"],
+                row["dtype"],
+                row.get("inplace"),
+            )
+        )
+    if {request.ranks for request in requests} != {
+        tuple(group) for group in scope["groups"]
+    } or not set(collective_requests(plan.program, None)) <= requests:
+        return None
+    return digest(scope), frozenset(requests)
 
 
 def external_baseline(plans: Sequence["Plan"]) -> int:
@@ -23,21 +70,46 @@ def external_baseline(plans: Sequence["Plan"]) -> int:
 
 
 def communicator_reservation(plans: Sequence["Plan"]) -> int:
-    """Distinct distributed calibrations warmed by the same worker, once each.
+    """Reserve measured startup for the worker's shared process groups.
 
     This is the startup reservation, not collective task/transfer workspace.
     Keep CPU admission and runtime headroom on the same identity/deduplication
-    rule. An independent named forward path may share a distributed worker.
+    rule. Compatible measured calibrations share their largest reservation only
+    when one covers every warmed request in their union. Otherwise add them.
     """
     if not plans:
         return 0
     parallelism = plans[0].program.parallelism
     if parallelism is None or parallelism.world_size <= 1:
         return 0
-    calibrations = {
-        digest(p.communication_info.to_dict()): p.communication_info for p in plans
-    }
-    return sum(info.fixed_device_bytes or 0 for info in calibrations.values())
+    calibrations: dict[str, list[Plan]] = {}
+    for plan in plans:
+        calibrations.setdefault(digest(plan.communication_info.to_dict()), []).append(
+            plan
+        )
+    measured: dict[
+        str, list[tuple[frozenset[CollectiveRequest], CommunicationInfo]]
+    ] = {}
+    total = 0
+    for users in calibrations.values():
+        info = users[0].communication_info
+        coverage = [_communicator_coverage(plan) for plan in users]
+        if any(item is None for item in coverage):
+            total += info.fixed_device_bytes or 0
+            continue
+        first = coverage[0]
+        assert first is not None
+        scope, requests = first
+        measured.setdefault(scope, []).append((requests, info))
+    for records in measured.values():
+        union = frozenset().union(*(requests for requests, _ in records))
+        sizes = [info.fixed_device_bytes or 0 for _, info in records]
+        total += (
+            max(sizes)
+            if any(requests == union for requests, _ in records)
+            else sum(sizes)
+        )
+    return total
 
 
 def shared_fixed_overhead(plans: Sequence["Plan"]) -> int:
@@ -46,7 +118,7 @@ def shared_fixed_overhead(plans: Sequence["Plan"]) -> int:
     External baseline and headroom each take their worker-wide maximum. The
     remaining fixed profile cost stays inside the arena, together with the
     separately charged communication scratch. Communicator startup follows the
-    same distinct-calibration reservation as execution; it is not counted again
+    same shared-calibration reservation as execution; it is not counted again
     in that remainder. Invocation paths, including continuing gradients, belong
     in ``plans`` even when there are no additional named Plans.
 

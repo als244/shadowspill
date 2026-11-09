@@ -483,9 +483,15 @@ external footprint, maximum headroom, and largest sum of retained profile cost
 and communication scratch. Those maxima can belong to different Plans; taking only
 the maximum total fixed cost can understate what one worker reserves.
 
-Communicator startup is charged once per distinct communication calibration,
-using the same identity rule as runtime startup. It is excluded from the
-per-path communication remainder so it is not counted twice. Profile overhead
+Communicator startup follows the same accounting as runtime startup. The worker
+creates each process group once and warms the union of its Plans' collective
+requests. If one measured calibration covers that union with identical
+group, hardware, topology and backend settings, admission reserves the largest
+startup observation among those calibrations. Separately measured training and
+evaluation timings do not require duplicate communicator storage. If no single
+calibration covers the union, or its memory evidence is incomplete, distinct
+records remain additive. Startup is excluded from the per-path communication
+remainder so it is not counted twice. Profile overhead
 without a component breakdown stays undivided; admission does not
 invent a measured split. Spill is charged with shared model tensors once and
 every Plan's own persistent spill storage beside the active Plan's peak. The C

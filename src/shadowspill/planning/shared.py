@@ -25,8 +25,9 @@ def shared_memory(primary: Plan, plans: Mapping[str, Plan]) -> SharedMemory:
     Model storage is shared by registration name. Other tensors remain private.
     Plans execute sequentially, so fixed GPU workspace takes the largest slice.
     Fixed overhead follows the worker's external/headroom/retained components;
-    their maxima can come from different Plans. Distinct communicator startup
-    reservations are charged once each, as they are during execution.
+    their maxima can come from different Plans. Measured communicator startup
+    shares a reservation when one compatible calibration covers the worker's
+    request union; other reservations remain additive, as during execution.
     """
     named = {"": primary, **plans}
     if "" in plans or any(not isinstance(name, str) for name in plans):
