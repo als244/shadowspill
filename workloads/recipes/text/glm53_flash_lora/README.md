@@ -107,6 +107,42 @@ New task implementations or a changed communication setup require matching
 measurements. Unsupported or unstable paired samples are recorded as missing;
 see [distributed calibration](../../../../docs/python/api/distributed.md#communication-calibration-and-cpu-planning).
 
+## Microbatch sizes and orderings
+
+`sequences_per_step` fixes the number of sequences per rank and optimizer update.
+`max_sequences_per_example` bounds how many sequences each microbatch contains;
+it defaults to one. Before building a fresh run, for example:
+
+```python
+config.update(
+    sequences_per_step=8,          # Same total batch for every candidate.
+    max_sequences_per_example=4,  # Build divisors 1, 2 and 4.
+)
+```
+
+Each size is crossed with the chunk/retention combinations below and gets its
+own training Program and task measurements. At size two, an update contains four
+microbatches. CPU planning tries `1x4rp`, `2x2rp` and `4x1rp`: one pass over four,
+two passes over two, or four passes over one. Within a pass, each stage processes
+all its microbatches before advancing. The `r` flag reverses their backward order;
+`p` pairs each terminal loss forward/backward. Both flags are enabled here.
+Orderings reuse the saved Program and profiles. Search selects the lowest
+predicted training time among jointly admitted training/evaluation Plans.
+
+The total global batch is `ranks * sequences_per_step`; changing microbatch size
+does not change it. The input source uses the selected geometry, while `Trainer`
+executes the resulting Plan without searching or changing its input contract.
+The one-sequence example and qualification below therefore have only size one
+and ordering `1x1rp`.
+
+This recipe currently accepts a size upper bound and searches all factor
+orderings; it has no explicit size or ordering allowlist. For exact candidate
+lists, a [quickstart factory](../../../../benchmarking/quickstart.md#factory-inputs)
+can declare named input geometries and build controls. For an explicit ordering
+list, call `plan_program(ordering=StepDataOrdering(...))` for each desired choice;
+depth times breadth must equal that Program's microbatch count. See
+[step ordering](../../../../docs/architecture/step.md).
+
 ## Explicit chunk and retention candidates
 
 The default is one unchunked build with the ordinary cost/input graph pair.

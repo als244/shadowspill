@@ -165,6 +165,17 @@ permitted by each candidate's policies remain available. Runtime hyperparameters
 example, construct the optimizer with a tensor-valued learning rate to change it
 at execution time. There is no automatic alias from `lr` to an optimizer group.
 
+Microbatch size is part of each candidate's input shapes; the number of calls
+is its microbatch count. Declare only the geometries you want built. The ordinary
+Python runner tries every depth/breadth factorization of that count during CPU
+planning, with paired loss and reverse backward order. An explicit ordering
+allowlist can instead be implemented by looping over
+`plan_program(ordering=StepDataOrdering(...))`; quickstart's Python `run` does
+not expose an ordering selector, and candidate fields do not accept one.
+Reordering reuses the built tasks and profiles. The selected Plan fixes the
+input geometry and traversal that Trainer executes.
+See [step ordering](../docs/architecture/step.md).
+
 The launcher reads the factory's declarations before build to select its worker
 count; build and execution also reconstruct the setup. It should return a lazy
 model factory, or declare only meta tensors when the initializer needs their
