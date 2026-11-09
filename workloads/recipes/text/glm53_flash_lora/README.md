@@ -23,6 +23,7 @@ config = {
     "ranks": 8,
     "sequence_length": 32768,
     "sequences_per_step": 1,
+    "microbatch_sizes": [1],  # Exact sizes to build and compare.
     "steps": 100,
     "schedule_steps": 100,
 
@@ -110,15 +111,21 @@ see [distributed calibration](../../../../docs/python/api/distributed.md#communi
 ## Microbatch sizes and orderings
 
 `sequences_per_step` fixes the number of sequences per rank and optimizer update.
-`max_sequences_per_example` bounds how many sequences each microbatch contains;
-it defaults to one. Before building a fresh run, for example:
+`microbatch_sizes` lists exactly how many sequences each candidate microbatch
+contains; it defaults to `[1]`. Before building a fresh run, for example:
 
 ```python
 config.update(
-    sequences_per_step=8,          # Same total batch for every candidate.
-    max_sequences_per_example=4,  # Build divisors 1, 2 and 4.
+    sequences_per_step=8,       # Same total batch for every candidate.
+    microbatch_sizes=[2, 4],    # Build only sizes 2 and 4.
 )
 ```
+
+The list must be nonempty, and every size must be a positive integer dividing
+`sequences_per_step`. Repeated sizes are built once, in their first-seen order.
+Invalid sizes fail before workers start. The CLI equivalent is
+`--microbatch-sizes 2 4`. Changing the list requires a fresh build directory;
+later phases reuse the saved list. The former maximum-size option is removed.
 
 Each size is crossed with the chunk/retention combinations below and gets its
 own training Program and task measurements. At size two, an update contains four
@@ -135,11 +142,11 @@ executes the resulting Plan without searching or changing its input contract.
 The one-sequence example and qualification below therefore have only size one
 and ordering `1x1rp`.
 
-This recipe currently accepts a size upper bound and searches all factor
-orderings; it has no explicit size or ordering allowlist. For exact candidate
-lists, a [quickstart factory](../../../../benchmarking/quickstart.md#factory-inputs)
-can declare named input geometries and build controls. For an explicit ordering
-list, call `plan_program(ordering=StepDataOrdering(...))` for each desired choice;
+This recipe searches all factor orderings for the selected sizes; it has no
+ordering allowlist. A
+[quickstart factory](../../../../benchmarking/quickstart.md#factory-inputs)
+can also declare named input geometries and build controls. For an explicit
+ordering list, call `plan_program(ordering=StepDataOrdering(...))` for each desired choice;
 depth times breadth must equal that Program's microbatch count. See
 [step ordering](../../../../docs/architecture/step.md).
 

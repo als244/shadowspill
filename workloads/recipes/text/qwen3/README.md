@@ -51,12 +51,18 @@ The files have one purpose each:
 | `build.py` | Meta model, local task compilation, DP declarations | `programs/batch-N.ssp` |
 | `profile.py` | Task timing and memory on one representative GPU | `profiles/`, `profiled/` |
 | `communicate.py` | Host copies, collectives, communication memory and paired task interference | `communication/`, `overlap/`, enriched `profiles/` and `profiled/` |
-| `plan.py` | All factor sizes/orderings under the supplied memory budget | `search.json`, `plans/`, selected `plan.ssp`, `report/` |
+| `plan.py` | Selected microbatch sizes and all factor orderings under the memory budget | `search.json`, `plans/`, selected `plan.ssp`, `report/` |
 | `execute.py` | Fresh worker, bounded initialization, Trainer updates/checkpoint | `training/rank-NNNNN/` |
 | `../initialization.py` | Identical random tensor values across shards/chunk sizes | Fills Executor buffers |
 
-The default candidates contain 1, 2, 4, 8, 16 and 32 sequences per example;
-planning selects their execution order without rebuilding. Inputs are rank-local
+`--microbatch-sizes` lists the exact candidates to build and profile. The default
+is `1 2 4 8 16 32`; for example, `--microbatch-sizes 4 16` builds only those two
+sizes. Every size must be a positive integer dividing `--sequences-per-step`.
+Repeated entries are built once. When reducing the step size, supply a list of
+valid sizes as well. Changing the list requires a fresh build directory; later
+phases reuse the saved list. The former maximum-size option is removed.
+Planning searches all factor orderings for each size without rebuilding.
+Inputs are rank-local
 and disjoint. Loss normalization uses the global token count. Random initialization
 draws Hugging Face's initial distributions, from a stable per-tensor RNG stream
 rather than the module-reset traversal order.

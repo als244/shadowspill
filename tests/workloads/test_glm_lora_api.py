@@ -7,6 +7,7 @@ import sys
 import pytest
 
 from workloads.recipes.text.glm53_flash_lora import api
+from workloads.recipes.text.phases.candidates import build_candidates
 
 
 def test_python_configuration_preserves_candidates_and_saved_phase_overrides(
@@ -22,6 +23,8 @@ def test_python_configuration_preserves_candidates_and_saved_phase_overrides(
         "data": tmp_path / "data",
         "frozen_state_id": "fixture",
         "ranks": 8,
+        "sequences_per_step": 8,
+        "microbatch_sizes": [2, 4],
         "chunk_sizes": [0, 4096, 8192],
         "graph_pair_policies": ["cost-input", "cost-attention", "attention-input"],
         "execution_gib": 48,
@@ -30,6 +33,10 @@ def test_python_configuration_preserves_candidates_and_saved_phase_overrides(
     root = api.run(config, phase="build")
     saved = json.loads((root / "config.json").read_text())
     assert len(saved["build_variants"]) == 9
+    assert saved["microbatch_sizes"] == [2, 4]
+    candidates = build_candidates(saved)
+    assert len(candidates) == 18
+    assert {c["sequences_per_example"] for c in candidates} == {2, 4}
     assert saved["lora_rank"] == saved["lora_alpha"] == 32
     assert saved["checkpoint"] == str(config["checkpoint"])
     assert config["run_dir"] == root  # Caller-owned Path remains a Path.
@@ -51,6 +58,10 @@ def test_python_configuration_preserves_candidates_and_saved_phase_overrides(
     with pytest.raises(ValueError, match="changed budgets"):
         api.run({"run_dir": root, "execution_gib": 48}, phase="execute")
     assert json.loads((root / "config.json").read_text()) == resumed
+    with pytest.raises(ValueError, match="changed microbatch sizes"):
+        api.run({"run_dir": root, "microbatch_sizes": [1, 2, 4]}, phase="plan")
+    assert json.loads((root / "config.json").read_text()) == resumed
+    assert [call[0][-1] for call in launches] == ["build", "plan", "execute"]
 
 
 def test_unknown_options_and_invalid_phases_fail_before_creating_a_run(tmp_path):
@@ -61,6 +72,30 @@ def test_unknown_options_and_invalid_phases_fail_before_creating_a_run(tmp_path)
         api.run({"run_dir": root}, phase="planning")
     with pytest.raises(ValueError, match="pass phase"):
         api.run({"run_dir": root, "phase": "build"})
+    with pytest.raises(ValueError, match="unknown recipe options: max_sequences"):
+        api.run({"run_dir": root, "max_sequences_per_example": 4})
+    assert not root.exists()
+
+
+def test_invalid_microbatch_geometry_fails_before_creating_or_launching_a_run(
+    tmp_path, monkeypatch
+):
+    def refuse(*args, **kwargs):
+        pytest.fail("invalid configuration launched a worker")
+
+    monkeypatch.setattr(api, "run_phases", refuse)
+    root = tmp_path / "run"
+    with pytest.raises(ValueError, match="must divide sequences_per_step"):
+        api.run(
+            dict(
+                run_dir=root,
+                checkpoint=tmp_path / "checkpoint",
+                data=tmp_path / "data",
+                frozen_state_id="fixture",
+                sequences_per_step=8,
+                microbatch_sizes=[3],
+            )
+        )
     assert not root.exists()
 
 
@@ -80,6 +115,7 @@ api.run_phases = refuse
 example = runpy.run_module('workloads.recipes.text.glm53_flash_lora.example')
 assert example['config']['chunk_sizes'][0] == 0
 assert example['config']['spill_gib'] == 96
+assert example['config']['microbatch_sizes'] == [1]
 assert sys.modules['torch'] is None and sys.modules['mlops'] is None
 """,
         ],

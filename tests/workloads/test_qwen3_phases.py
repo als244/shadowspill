@@ -92,13 +92,9 @@ def test_rank_local_calls_normalize_by_global_tokens_and_restore_cursor(tmp_path
         restored = Inputs(options, rank=rank, world_size=2)
         restored.load_state_dict(source.state_dict())
         torch.testing.assert_close(next(source), next(restored))
-    assert batch_sizes({"sequences_per_step": 64, "max_sequences_per_example": 32}) == (
-        1,
-        2,
+    assert batch_sizes({"sequences_per_step": 64, "microbatch_sizes": [4, 16]}) == (
         4,
-        8,
         16,
-        32,
     )
 
 
@@ -132,9 +128,10 @@ def test_qwen_recipe_builds_profiles_replans_and_executes_saved_plan(tmp_path, r
         "--sequence-length",
         "16",
         "--sequences-per-step",
+        "8",
+        "--microbatch-sizes",
         "2",
-        "--max-sequences-per-example",
-        "2",
+        "4",
         "--steps",
         "3",
         "--learning-rate",
@@ -181,7 +178,12 @@ def test_qwen_recipe_builds_profiles_replans_and_executes_saved_plan(tmp_path, r
         logs = "\n".join(path.read_text() for path in (root / "logs").glob("*.log"))
         assert child.returncode == 0, child.stdout + child.stderr + logs
     rows = json.loads((root / "search.json").read_text())
-    assert len(rows) == 3 and all("duration_seconds" in row for row in rows)
+    assert len(rows) == 5 and all("duration_seconds" in row for row in rows)
+    assert {row["sequences_per_example"] for row in rows} == {2, 4}
+    assert {path.name for path in (root / "programs").glob("*.ssp")} == {
+        "batch-2.ssp",
+        "batch-4.ssp",
+    }
     assert (root / "report/index.html").is_file()
     for rank in range(ranks):
         directory = root / f"training/rank-{rank:05d}"

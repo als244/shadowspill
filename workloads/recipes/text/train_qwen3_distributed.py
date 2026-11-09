@@ -9,6 +9,7 @@ import json
 from pathlib import Path
 
 from workloads.recipes.phases import run_phases
+from workloads.recipes.text.phases.candidates import batch_sizes, check_batch_sizes
 
 
 def main(argv=None):
@@ -33,7 +34,13 @@ def main(argv=None):
         default=64,
         help="number of sequences per rank in one update",
     )
-    parser.add_argument("--max-sequences-per-example", type=int, default=32)
+    parser.add_argument(
+        "--microbatch-sizes",
+        type=int,
+        nargs="+",
+        help="Exact sequences-per-microbatch candidates; each must divide "
+        "sequences-per-step; default: 1 2 4 8 16 32",
+    )
     parser.add_argument("--steps", type=int, default=5)
     parser.add_argument("--learning-rate", type=float, default=3e-4)
     parser.add_argument("--seed", type=int, default=0)
@@ -50,6 +57,8 @@ def main(argv=None):
         if config.exists() or not args.data:
             parser.error("start with --data and a fresh run directory")
         options = vars(args).copy()
+        if options["microbatch_sizes"] is None:
+            options["microbatch_sizes"] = [1, 2, 4, 8, 16, 32]
         options["run_dir"] = str(root)
         options["data"] = str(Path(args.data).resolve())
         options["execution_gib"] = (
@@ -60,6 +69,10 @@ def main(argv=None):
         if not config.exists():
             parser.error("run the build phase first")
         options = json.loads(config.read_text())
+        try:
+            check_batch_sizes(options, args.microbatch_sizes)
+        except ValueError as error:
+            parser.error(str(error))
         # A saved config without external_headroom_mib holds profiles taken
         # with 512 MiB. Replanning must retain that reservation rather than
         # silently claiming the profiling default.
@@ -76,7 +89,6 @@ def main(argv=None):
                 "ranks",
                 "sequence_length",
                 "sequences_per_step",
-                "max_sequences_per_example",
                 "steps",
                 "learning_rate",
                 "execution_gib",
@@ -87,6 +99,10 @@ def main(argv=None):
         <= 0
     ):
         parser.error("counts, learning rate and memory budgets must be positive")
+    try:
+        options["microbatch_sizes"] = list(batch_sizes(options))
+    except ValueError as error:
+        parser.error(str(error))
     if args.phase == "communicate" and options["ranks"] == 1:
         parser.error("single-rank host-copy calibration is included in --phase profile")
     root.mkdir(parents=True, exist_ok=True)

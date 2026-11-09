@@ -4,6 +4,8 @@ import json
 from fractions import Fraction
 from pathlib import Path
 
+from workloads.recipes.text.phases.candidates import batch_sizes, check_batch_sizes
+
 
 def build_variants(options):
     """Persist a bounded, deduplicated candidate product without importing Torch."""
@@ -60,6 +62,7 @@ def configure(args):
         if args.phase in {"all", "build"}:
             raise ValueError("use a fresh run directory for a new build")
         options = json.loads(path.read_text())
+        check_batch_sizes(options, args.microbatch_sizes)
         for key in (*DEFAULTS, "resume"):
             value = getattr(args, key)
             if value is not None:
@@ -76,6 +79,8 @@ def configure(args):
         ):
             raise ValueError("start with --data, --checkpoint and --frozen-state-id")
         options = vars(args).copy()
+        if options["microbatch_sizes"] is None:
+            options["microbatch_sizes"] = [1]
         for key, default in DEFAULTS.items():
             if options[key] is None:
                 options[key] = default
@@ -91,6 +96,7 @@ def configure(args):
         ):
             options["build_variants"] = variants
     validate(options)
+    options["microbatch_sizes"] = list(batch_sizes(options))
     if args.phase == "communicate" and options["ranks"] == 1:
         raise ValueError("single-GPU profiling already measures host communication")
     root.mkdir(parents=True, exist_ok=True)
@@ -102,7 +108,6 @@ def validate(options):
     positive = (
         "sequence_length",
         "sequences_per_step",
-        "max_sequences_per_example",
         "steps",
         "lora_rank",
         "head_chunk_size",
@@ -119,6 +124,7 @@ def validate(options):
             "shapes, steps, ranks, budgets, rates and measurement duration "
             "must be positive"
         )
+    batch_sizes(options)
     if any(
         options[key] < 0
         for key in (

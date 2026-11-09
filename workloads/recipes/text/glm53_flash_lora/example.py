@@ -14,6 +14,7 @@ config = {
     "ranks": 8,
     "sequence_length": 32768,
     "sequences_per_step": 1,
+    "microbatch_sizes": [1],  # Exact candidate sizes; each divides sequences_per_step.
     "steps": 100,
     "schedule_steps": 100,
     # Per-GPU allowance and per-rank pinned-host spill pool, in GiB.

@@ -19,6 +19,8 @@ def run(config: Mapping[str, object], *, phase: str = "all") -> Path:
     checkpoint, frozen_state_id and data. Later phases can supply only run_dir
     and supported budget, step, resume or capture overrides; preparation choices
     are reloaded from config.json. Changed budgets require phase="plan".
+    microbatch_sizes lists exactly which geometries to build (default [1]);
+    every size must divide sequences_per_step. Changing it requires a new build.
 
     Each GPU phase runs in a fresh process. Planning remains CPU-only, and this
     entry point neither imports the model nor initializes CUDA in the caller.

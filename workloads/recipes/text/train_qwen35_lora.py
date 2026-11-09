@@ -5,6 +5,7 @@ import json
 from pathlib import Path
 
 from workloads.recipes.phases import run_phases
+from workloads.recipes.text.phases.candidates import batch_sizes, check_batch_sizes
 
 
 def main(argv=None):
@@ -18,6 +19,13 @@ def main(argv=None):
     )
     parser.add_argument("--sequence-length", type=int, default=32768)
     parser.add_argument("--sequences-per-step", type=int, default=8)
+    parser.add_argument(
+        "--microbatch-sizes",
+        type=int,
+        nargs="+",
+        help="Exact sequences-per-microbatch candidates; each must divide "
+        "sequences-per-step; default: 1 2 4 8",
+    )
     parser.add_argument("--lora-rank", type=int, default=32)
     parser.add_argument("--lora-alpha", type=float, default=32)
     parser.add_argument("--steps", type=int, default=5)
@@ -37,6 +45,10 @@ def main(argv=None):
         if args.phase in {"all", "build"}:
             parser.error("use a fresh run directory for a new build")
         options = json.loads(config_path.read_text())
+        try:
+            check_batch_sizes(options, args.microbatch_sizes)
+        except ValueError as error:
+            parser.error(str(error))
         for key in ("execution_gib", "spill_gib", "resume"):
             if getattr(args, key) is not None:
                 if key != "resume" and args.phase != "plan":
@@ -48,6 +60,8 @@ def main(argv=None):
         ):
             parser.error("start with --data, --checkpoint and --frozen-state-id")
         options = vars(args).copy()
+        if options["microbatch_sizes"] is None:
+            options["microbatch_sizes"] = [1, 2, 4, 8]
         for key in ("data", "checkpoint"):
             options[key] = str(Path(options[key]).resolve())
         options["execution_gib"] = (
@@ -69,6 +83,10 @@ def main(argv=None):
         <= 0
     ):
         parser.error("shapes, steps, rank and budgets must be positive")
+    try:
+        options["microbatch_sizes"] = list(batch_sizes(options))
+    except ValueError as error:
+        parser.error(str(error))
     root.mkdir(parents=True, exist_ok=True)
     config_path.write_text(json.dumps(options, indent=2) + "\n")
     run_phases("workloads.recipes.text.qwen35_lora", root, args.phase)

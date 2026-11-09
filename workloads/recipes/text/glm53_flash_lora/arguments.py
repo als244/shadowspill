@@ -24,7 +24,13 @@ def parser():
     )
     result.add_argument("--sequence-length", type=int, default=32768)
     result.add_argument("--sequences-per-step", type=int, default=1, help="Per rank")
-    result.add_argument("--max-sequences-per-example", type=int, default=1)
+    result.add_argument(
+        "--microbatch-sizes",
+        type=int,
+        nargs="+",
+        help="Exact sequences-per-microbatch candidates; each must divide "
+        "sequences-per-step; default: 1",
+    )
     result.add_argument(
         "--steps",
         type=int,

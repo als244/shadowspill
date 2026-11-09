@@ -9,22 +9,23 @@ from workloads.recipes.text.phases.candidates import build_candidates, program_p
 def test_candidate_product_deduplicates_unchunked_and_preserves_batch_paths():
     options = dict(
         sequence_length=32768,
-        sequences_per_step=2,
-        max_sequences_per_example=2,
+        sequences_per_step=8,
+        microbatch_sizes=[2, 4],
         chunk_sizes=[0, 4096, 8192],
         moe_chunk_sizes=[0, 32768],
         graph_pair_policies=["cost-input", "cost-attention", "attention-input"],
     )
     assert program_paths(options) == (
-        "batch-1/training.ssp",
-        "batch-1/evaluation.ssp",
         "batch-2/training.ssp",
         "batch-2/evaluation.ssp",
+        "batch-4/training.ssp",
+        "batch-4/evaluation.ssp",
     )
     options["build_variants"] = build_variants(options)
     assert len(options["build_variants"]) == 15
     candidates = build_candidates(options)
     assert len(candidates) == 30
+    assert {c["sequences_per_example"] for c in candidates} == {2, 4}
     assert len(set(program_paths(options))) == 60
     for policy in options["graph_pair_policies"]:
         assert {
