@@ -115,11 +115,11 @@ class LifetimeGraph:
         names = {node.name: i for i, node in enumerate(self.order)}
         last: dict[int, int] = {}
         for node, roots in self.reads.items():
-            for root in roots:
-                last[root] = max(last.get(root, -1), rank[node])
+            for root_id in roots:
+                last[root_id] = max(last.get(root_id, -1), rank[node])
         changes = [0] * (len(self.order) + 1)
         for root in self.storage.roots:
-            if root.kind is not StorageRootKind.FRESH:
+            if root.kind is not StorageRootKind.FRESH or root.producer_node is None:
                 continue
             produced = names.get(root.producer_node)
             final_read = last.get(root.root_id, -1)
