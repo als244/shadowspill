@@ -16,10 +16,13 @@ DEFAULTS = dict(
     schedule_steps=10,
     learning_rate=2e-4,
     seed=0,
+    initialization="checkpoint",
 )
 
 
 def validate(options):
+    if options["initialization"] not in {"checkpoint", "random"}:
+        raise ValueError("initialization must be checkpoint or random")
     if not options["data"]:
         raise ValueError("data is required")
     for name in ("sequence_length", "schedule_steps"):
@@ -34,6 +37,24 @@ def validate(options):
         not 0 <= Fraction(value) <= 1 for value in (options["resolution_options"] or ())
     ):
         raise ValueError("recomputation fractions must lie in [0, 1]")
+
+
+def frozen_state_identity(options, metadata):
+    """Keep generated bases distinct from pretrained checkpoint identities."""
+    if options["initialization"] == "checkpoint":
+        return options["frozen_state_id"]
+    import hashlib
+    import json
+
+    value = json.dumps(
+        {
+            "initializer": "bounded-random-v1",
+            "seed": options["seed"],
+            "model": metadata,
+        },
+        sort_keys=True,
+    ).encode()
+    return "random-v1:" + hashlib.sha256(value).hexdigest()
 
 
 def candidates(options, *, alignment=1):

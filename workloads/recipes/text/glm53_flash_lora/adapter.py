@@ -21,8 +21,10 @@ path_options = ("data", "checkpoint")
 
 def validate(options):
     training.validate(options)
-    if not options["checkpoint"] or not options["frozen_state_id"]:
-        raise ValueError("checkpoint and frozen_state_id are required")
+    if not options["checkpoint"]:
+        raise ValueError("checkpoint metadata is required")
+    if options["initialization"] == "checkpoint" and not options["frozen_state_id"]:
+        raise ValueError("frozen_state_id is required for checkpoint initialization")
     validate_glm(options)
 
 

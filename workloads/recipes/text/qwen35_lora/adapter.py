@@ -25,8 +25,10 @@ defaults = {
 
 def validate(options):
     training.validate(options)
-    if not options["checkpoint"] or not options["frozen_state_id"]:
-        raise ValueError("checkpoint and frozen_state_id are required")
+    if not options["checkpoint"]:
+        raise ValueError("checkpoint metadata is required")
+    if options["initialization"] == "checkpoint" and not options["frozen_state_id"]:
+        raise ValueError("frozen_state_id is required for checkpoint initialization")
     if (
         type(options["lora_rank"]) is not int
         or options["lora_rank"] <= 0
@@ -46,11 +48,11 @@ def inputs(options, *, rank=0, split="train"):
 
 
 def describe(options):
+    metadata = json.loads((Path(options["checkpoint"]) / "config.json").read_text())
     return dict(
-        frozen_state_id=options["frozen_state_id"],
-        checkpoint_config=json.loads(
-            (Path(options["checkpoint"]) / "config.json").read_text()
-        ),
+        frozen_state_id=training.frozen_state_identity(options, metadata),
+        initialization=options["initialization"],
+        checkpoint_config=metadata,
         dataset=json.loads((Path(options["data"]) / "meta.json").read_text()),
     )
 
@@ -63,7 +65,7 @@ def setup(options, *, rank=0):
 
     from shadowspill import Parallelism
     from workloads.models.construction import build_on_meta
-    from workloads.models.qwen35moe.checkpoint import Qwen35MoECheckpoint
+    from workloads.models.qwen35moe.config import from_huggingface
     from workloads.models.qwen35moe.implementations.mlops import Model
     from workloads.models.shared.preparation import operator_preparations
     from workloads.recipes.text.objectives import normalized_next_token_prediction
@@ -76,11 +78,10 @@ def setup(options, *, rank=0):
         master_dtype="float32", grad_dtype="float32", opt_state_dtype="float32"
     )
     precision.apply()
-    with Qwen35MoECheckpoint(
-        options["checkpoint"], max_seq_len=options["sequence_length"]
-    ) as checkpoint:
-        config = checkpoint.config
     metadata = describe(options)
+    config = from_huggingface(
+        metadata["checkpoint_config"], max_seq_len=options["sequence_length"]
+    )
     if metadata["dataset"]["vocab_size"] > config.vocab_size:
         raise ValueError("corpus vocabulary exceeds model vocabulary")
     model = build_on_meta(
@@ -115,5 +116,14 @@ def initializer(options, metadata, *, rank=0):
 
     if metadata != describe(options):
         raise ValueError("checkpoint/corpus metadata differs from the build")
+    if options["initialization"] == "random":
+        from workloads.models.qwen35moe.config import from_huggingface
+        from workloads.recipes.text.initialization import Initialize as RandomInitialize
+
+        config = from_huggingface(
+            metadata["checkpoint_config"], max_seq_len=options["sequence_length"]
+        )
+        yield RandomInitialize("qwen35moe", config, seed=options["seed"])
+        return
     with Initialize(options) as initialize:
         yield initialize

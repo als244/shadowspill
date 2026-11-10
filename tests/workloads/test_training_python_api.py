@@ -90,6 +90,47 @@ def test_ep_geometry_declares_collective_preparation_before_launch(
     saved = json.loads((root / "config.json").read_text())
     assert launches[0][1] == {"ranks": 8, "preparation_ranks": 8}
     assert [c["num_examples"] for c in saved["candidates"]] == [16, 4]
+    assert saved["initialization"] == "random"
+
+
+@pytest.mark.parametrize("model_type", ["qwen3_5_moe", "glm5_next"])
+def test_benchmark_configuration_uses_random_host_values_without_checkpoints(
+    tmp_path, monkeypatch, model_type
+):
+    directory = tmp_path / "model"
+    directory.mkdir()
+    (directory / "config.json").write_text(json.dumps({"model_type": model_type}))
+    model = Model.from_checkpoint(directory, lora=LoRA())
+    monkeypatch.setattr(runner, "run_phases", lambda *a, **k: None)
+    root = train(
+        model,
+        dict(
+            run_dir=tmp_path / "benchmark",
+            data=tmp_path / "data",
+            initialization="random",
+            seed=17,
+            checkpoint_every=0,
+            eval_every=0,
+        ),
+        phase="build",
+    )
+    options = json.loads((root / "config.json").read_text())
+    assert options["initialization"] == "random"
+    assert options["checkpoint_every"] == options["eval_every"] == 0
+    assert options["frozen_state_id"] is None
+    from workloads.recipes.text.training import frozen_state_identity
+
+    first = frozen_state_identity(options, {"model_type": model_type})
+    assert first.startswith("random-v1:")
+    assert first != frozen_state_identity(
+        {**options, "seed": 18}, {"model_type": model_type}
+    )
+    with pytest.raises(ValueError, match="frozen_state_id"):
+        train(
+            model,
+            {"run_dir": tmp_path / "real", "data": tmp_path / "data"},
+            phase="build",
+        )
 
 
 def test_budget_runs_reuse_completed_measurements_without_mutating_source(
@@ -121,13 +162,19 @@ def test_budget_runs_reuse_completed_measurements_without_mutating_source(
         (parent / "programs" / candidate["path"] / "metadata.json").write_text("{}")
     child = train(
         model,
-        dict(run_dir=tmp_path / "budget20", prepared_from=parent, execution_gib=20),
+        dict(
+            run_dir=tmp_path / "budget20",
+            prepared_from=parent,
+            execution_gib=20,
+            checkpoint_every=0,
+        ),
         phase="plan",
     )
     selected = json.loads((child / "config.json").read_text())
     assert selected["candidates"] == options["candidates"]
     assert selected["resume"] is None
     assert selected["execution_gib"] == 20
+    assert selected["checkpoint_every"] == 0
     assert (child / "profiled").is_symlink()
     assert (parent / "config.json").read_bytes() == source_config
     for phase in ("build", "profile", "communicate"):

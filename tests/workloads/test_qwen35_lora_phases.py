@@ -66,6 +66,38 @@ def test_bounded_initializer_preserves_base_and_adapter_distributions(checkpoint
     assert initialize.checkpoint.reader._closed
 
 
+def test_random_public_initializer_needs_only_configuration(checkpoint, tmp_path):
+    from workloads.recipes.text.qwen35_lora.adapter import describe, initializer
+
+    root, base = checkpoint
+    (root / "model.safetensors").unlink()
+    data = tmp_path / "data"
+    data.mkdir()
+    (data / "meta.json").write_text(json.dumps({"vocab_size": 32}))
+    options = dict(
+        checkpoint=root, data=data, initialization="random", seed=17, sequence_length=32
+    )
+    info = describe(options)
+    assert info["initialization"] == "random"
+    assert info["frozen_state_id"].startswith("random-v1:")
+    expected = base.embed.weight
+    request = TensorChunk(
+        "embed.weight", tuple(expected.shape), expected.dtype, 0, expected.numel()
+    )
+    with initializer(options, info) as fill:
+        whole = torch.empty(257, dtype=expected.dtype, device="cpu")
+        fill(request, whole)
+        piece = torch.empty(100, dtype=expected.dtype, device="cpu")
+        fill(
+            TensorChunk(
+                request.name, request.shape, request.dtype, 31, request.storage_elements
+            ),
+            piece,
+        )
+    assert torch.equal(piece, whole[31:131])
+    assert torch.isfinite(whole).all() and whole.count_nonzero() > 0
+
+
 def manifest(root, step):
     with zipfile.ZipFile(root / f"training/checkpoints/step_{step:08d}.ssp") as archive:
         return json.loads(archive.read("manifest.json"))

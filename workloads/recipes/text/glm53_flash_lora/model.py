@@ -9,6 +9,7 @@ import torch
 from workloads.models.glm53_flash.checkpoint import GLMCheckpoint
 from workloads.recipes.text.data.tokenizer import tokenizer_identity
 from workloads.recipes.text.glm.initialize import Initialize
+from workloads.recipes.text.training import frozen_state_identity
 
 
 @contextmanager
@@ -26,7 +27,10 @@ def checkpoint(options):
             ),
         )
         initialize = Initialize(
-            model, source=source, initialization="checkpoint", seed=options["seed"]
+            model,
+            source=source,
+            initialization=options["initialization"],
+            seed=options["seed"],
         )
         yield model, source, initialize
 
@@ -48,7 +52,10 @@ def describe(options, model, source):
         "lora_alpha": options["lora_alpha"],
     }
     return {
-        "frozen_state_id": options["frozen_state_id"]
+        "initialization": options["initialization"],
+        "frozen_state_id": frozen_state_identity(
+            options, {"metadata": source.metadata, **base}
+        )
         + ":"
         + json.dumps(base, sort_keys=True),
         "inventory": source.inventory,

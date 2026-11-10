@@ -88,6 +88,36 @@ they add no build or profile candidates and do not change GPU-versus-host placem
 Nonzero tails require non-interleaved forward/backward passes, as emitted by the
 training orderings. They use generic task phases, without recognizing model types.
 
+For performance sweeps, generate weights in host memory and omit evaluation and
+checkpoint I/O:
+
+```python
+model = Model.from_checkpoint(model_path, lora=LoRA(rank=32, alpha=32))
+train(model, {
+    **config,
+    "initialization": "random",  # Bounded host generation; no weight payload reads.
+    "seed": 0,
+    "eval_every": 0,
+    "checkpoint_every": 0,
+})
+```
+
+Qwen3 `Model.from_config(...)` already uses random host initialization. Checkpoint
+recipes default to `"checkpoint"`; choose `"random"` explicitly for a benchmark.
+Qwen35 needs only `config.json` for this mode. GLM also reads tensor headers to
+preserve its mixed BF16/FP8 storage and scale geometry, plus tokenizer metadata;
+it does not load pretrained tensor values. Existing bounded family initializers
+generate correct norm, gate, scale and LoRA values, with the seed independent of
+load chunks and rank shards. No full extra model is materialized on GPU or host.
+Generated frozen bases get a separate seed/configuration identity. Initialization
+is recorded with the build; benchmark losses are not pretrained-model quality
+measurements. Real training retains its checkpoint initialization default.
+
+Set evaluation and checkpoint cadences to zero before preparation for a benchmark.
+Checkpoint cadence and retention count can also change on a prepared run without
+rebuilding or replanning. Checkpoint reload tests and reference/state audits are
+separate opt-in validation work, not part of a throughput sweep.
+
 Local build/profile GPU exhaustion is recorded in `candidate-failures.json`
 and `search.json`, and other candidates remain eligible. Other errors fail the
 phase. Collective preparation failures terminate the worker group; a rank must

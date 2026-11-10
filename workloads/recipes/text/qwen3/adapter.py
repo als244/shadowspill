@@ -22,6 +22,7 @@ defaults = {
     "external_headroom_mib": 768,
     "eval_every": 0,
     "checkpoint_every": 5,
+    "initialization": "random",
 }
 evaluation_metric = training.global_loss
 path_options = ("data",)
@@ -29,6 +30,8 @@ path_options = ("data",)
 
 def validate(options):
     training.validate(options)
+    if options["initialization"] != "random":
+        raise ValueError("Qwen3 from_config uses random initialization")
     if options["parallelism"] not in {"dp", "ep"}:
         raise ValueError("parallelism must be dp or ep")
     if options["parallelism"] == "ep":

@@ -11,6 +11,12 @@ def parser():
         "--data", help="Corpus prepared with this checkpoint's tokenizer"
     )
     result.add_argument("--checkpoint", help="Local Hugging Face base checkpoint")
+    result.add_argument(
+        "--initialization",
+        choices=["checkpoint", "random"],
+        default="checkpoint",
+        help="Read pretrained values or generate host values using only metadata",
+    )
     result.add_argument("--frozen-state-id", help="Immutable base checkpoint identity")
     result.add_argument("--run-dir", required=True)
     result.add_argument(

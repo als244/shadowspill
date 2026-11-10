@@ -43,6 +43,8 @@ MUTABLE = {
     "spill_gib",
     "pool_memory",
     "refresh_profiles",
+    "checkpoint_every",
+    "keep_last",
 }
 
 
@@ -91,6 +93,7 @@ def configure(recipe, config, phase):
             options = source_settings(requested["prepared_from"], root)
         else:
             options = json.loads(path.read_text())
+        options = {**defaults, **options}
         if options.get("prepared_from") and phase not in {"plan", "execute"}:
             raise ValueError("a prepared_from run may only plan or execute")
         if options["recipe"] != recipe:
