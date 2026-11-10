@@ -176,7 +176,6 @@ class TextExecutionChunks:
                 in (
                     TaskInputRole.PARAMETER,
                     TaskInputRole.BUFFER,
-                    TaskInputRole.CONTROL,
                     # Parameter gradients may have a feature extent equal to
                     # the sequence length. Only inherited forward coordinates
                     # prove that a gradient destination contains token slices.
@@ -184,6 +183,10 @@ class TextExecutionChunks:
                 )
             ):
                 continue
+            # Integer/control tensors can carry token coordinates too (for
+            # example packed RoPE positions). Slice matching token geometry;
+            # shared parameter/buffer tables and complete sequence mixers stay
+            # outside this inference. CONTROL does not imply a shared axis.
             shape = geometry.shape
             if len(shape) > 1 and shape[:2] == (batch, sequence):
                 axes[index] = ChunkAxis(1)

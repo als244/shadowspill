@@ -13,6 +13,45 @@ from tests.shadowspill.pytorch.chunking.test_composition import executable
 from workloads.models.shared.execution import text_execution_chunks
 
 
+def test_token_position_controls_are_sliced_but_rotary_tables_are_shared():
+    from shadowspill.pytorch import ChunkAxis, StageInfo
+    from shadowspill.pytorch.capture.artifacts import TensorGeometry
+
+    # Positions belong to each token. Tables have the same extent but use
+    # absolute positions, so slicing them would give wrong values or OOB reads.
+    values = (
+        torch.empty(2, 17, 4, 32),
+        torch.arange(17).repeat(2),
+        torch.empty(17, 8),
+        torch.tensor([0, 17, 34]),
+    )
+    policy = text_execution_chunks(
+        sequence_length=17,
+        batch_size=2,
+        chunk_size=8,
+        expert_chunk_size=16,
+        rules=(),
+        expert_targets=(),
+    )
+    chunks = policy.chunking.configure_stage(
+        StageInfo(
+            "rope",
+            (),
+            tuple(TensorGeometry.from_tensor(value) for value in values),
+            (
+                TaskInputRole.ACTIVATION,
+                TaskInputRole.CONTROL,
+                TaskInputRole.BUFFER,
+                TaskInputRole.CONTROL,
+            ),
+            ("mlops.partial_rope_builtin_triton_fwd.default",),
+            False,
+        )
+    )
+    assert chunks is not None
+    assert dict(chunks.inputs) == {0: ChunkAxis(1), 1: ChunkAxis(0, before=2)}
+
+
 @pytest.mark.parametrize("save", [False, True])
 def test_parameter_extent_matching_tokens_keeps_shared_accumulation(save):
     torch.manual_seed(317)

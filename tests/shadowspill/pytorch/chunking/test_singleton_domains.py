@@ -9,6 +9,43 @@ from shadowspill.pytorch.chunking import ChunkAxis
 from tests.shadowspill.pytorch.chunking.test_composition import compose, executable
 
 
+@pytest.mark.parametrize("save", [False, True])
+def test_packed_singleton_domain_broadcast_gate_preserves_vjp(save):
+    torch.manual_seed(732)
+    values = (
+        torch.randn(1, 2, 32, dtype=torch.float64, requires_grad=True),
+        torch.randn(32, 1, dtype=torch.float64, requires_grad=True),
+    )
+
+    def gated(x, weight):
+        return x * torch.sigmoid(x @ weight)
+
+    expected = gated(*values)
+    tangent = torch.randn_like(expected)
+    gradients = torch.autograd.grad(expected, values, tangent)
+    pair = capture_graph_pair(
+        make_fx(gated)(*values),
+        values,
+        original_output=expected,
+        memory_budget=float(save),
+    )
+    # Two independent sequences, each with one remaining token. The scalar
+    # gate reshapes onto a singleton feature dimension before broadcasting.
+    axis = ChunkAxis(1, before=2)
+    forward = compose(pair.forward, (axis, None), 1, size=8)
+    with torch.no_grad():
+        actual = executable(forward)(*values)
+        torch.testing.assert_close(actual[0], expected)
+        saved = forward.chunking.outputs[-pair.saved_value_count :]
+        backward = compose(pair.backward, (*saved, axis), 1, size=8)
+        torch.testing.assert_close(
+            executable(backward)(*actual[-pair.saved_value_count :], tangent),
+            gradients,
+            rtol=1e-10,
+            atol=1e-10,
+        )
+
+
 @pytest.mark.parametrize("batch,extent", [(1, 1), (1, 257), (2, 257)])
 @pytest.mark.parametrize("save", [False, True])
 def test_packed_projection_singleton_tail_vjp(batch, extent, save):

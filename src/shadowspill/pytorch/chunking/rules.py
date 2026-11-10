@@ -91,6 +91,22 @@ def _same_axis(left: ChunkAxis, right: ChunkAxis, shape: tuple[int, ...]) -> boo
     return coordinates(left) == coordinates(right)
 
 
+def _axis_on_dimension(
+    axis: ChunkAxis, shape: tuple[int, ...], dim: int
+) -> ChunkAxis | None:
+    """Represent the same ordered factor on a particular physical dimension."""
+    before = math.prod(shape[: axis.dim]) * axis.before
+    after = math.prod(shape[axis.dim + 1 :]) * axis.after
+    prefix, suffix = math.prod(shape[:dim]), math.prod(shape[dim + 1 :])
+    if not prefix or not suffix or before % prefix or after % suffix:
+        return None
+    rows = shape[axis.dim] // (axis.before * axis.after)
+    left, right = before // prefix, after // suffix
+    if shape[dim] != left * rows * right:
+        return None
+    return ChunkAxis(dim, left, right)
+
+
 def infer(
     node: Node,
     layouts: Mapping[Node, Any],
@@ -333,11 +349,15 @@ def _infer(
         mapped_axes = []
         for a, v in zip(args, values, strict=True):
             if isinstance(a, ChunkAxis):
-                mapped_axes.append(
-                    ChunkAxis(
-                        a.dim + len(_shape(result)) - len(_shape(v)), a.before, a.after
-                    )
-                )
+                dim = a.dim + len(_shape(result)) - len(_shape(v))
+                after = a.after
+                if _shape(v)[a.dim] == 1 and _shape(result)[dim] != 1:
+                    # An extent-one domain can be spelled on a singleton
+                    # feature dimension after reshape. Broadcasting that
+                    # feature repeats values after the logical factor; it
+                    # does not turn features into additional chunk elements.
+                    after *= _shape(result)[dim]
+                mapped_axes.append(ChunkAxis(dim, a.before, after))
         if mapped_axes and any(
             not _same_axis(a, mapped_axes[0], _shape(result)) for a in mapped_axes
         ):
@@ -601,7 +621,41 @@ def _matmul_layout(
         return REDUCED
     lc = isinstance(left, ChunkAxis) and left.dim == lr - 1
     rc = isinstance(right, ChunkAxis) and right.dim == rr - 2
+    if lc and isinstance(left, ChunkAxis) and right is None:
+        # The same singleton ambiguity occurs in an activation gradient:
+        # [batch, 1] @ [1, features]. Preserve a provably equivalent free
+        # coordinate when the other matrix is shared.
+        free = next(
+            (
+                axis
+                for dim in reversed(range(lr - 1))
+                if (axis := _axis_on_dimension(left, _shape(lv), dim)) is not None
+            ),
+            None,
+        )
+        if free is not None:
+            left, lc = free, False
+    if rc and isinstance(right, ChunkAxis) and left is None:
+        free = next(
+            (
+                axis
+                for dim in (rr - 1, *reversed(range(rr - 2)))
+                if (axis := _axis_on_dimension(right, _shape(rv), dim)) is not None
+            ),
+            None,
+        )
+        if free is not None:
+            right, rc = free, False
     if lc or rc:
+        # Reshaping an extent-one tail may spell its domain on an adjacent
+        # singleton feature axis. Contraction follows the ordered factor,
+        # rather than that ambiguous physical dimension spelling.
+        if isinstance(left, ChunkAxis) and isinstance(right, ChunkAxis):
+            lcontract = _axis_on_dimension(left, _shape(lv), lr - 1)
+            rcontract = _axis_on_dimension(right, _shape(rv), rr - 2)
+            if lcontract is not None and rcontract is not None:
+                left, right = lcontract, rcontract
+                lc = rc = True
         if (
             not (lc and rc)
             or not isinstance(left, ChunkAxis)
