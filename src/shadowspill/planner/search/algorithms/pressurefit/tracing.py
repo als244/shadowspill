@@ -96,7 +96,11 @@ def record_plan_trace(
     resolutions = {
         _selection_id(resolution): (index, resolution)
         for index, resolution in enumerate(
-            ordered_resolutions(result.program, algorithm.resolution_options)
+            ordered_resolutions(
+                result.program,
+                algorithm.resolution_options,
+                algorithm.tail_save_counts,
+            )
         )
     }
     candidates = {

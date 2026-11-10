@@ -11,6 +11,8 @@ config = {
     "sequence_length": 4096,
     "sequences_per_step": 64,  # Per rank: 2,097,152 global tokens per update.
     "microbatch_sizes": [4, 16],
+    # Cross saved tails with evenly distributed SAVE/RECOMPUTE choices on CPU.
+    "tail_save_counts": [0, 1, 2, 4, 8, 16],
     "execution_gib": 20,
     "spill_gib": 96,  # Per rank: allow additional host RAM beyond the eight pools.
     "steps": 100,

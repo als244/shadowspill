@@ -31,6 +31,11 @@ def main(argv=None):
     parser.add_argument("--measure-seconds", type=float)
     parser.add_argument("--external-headroom-gib", type=float)
     parser.add_argument("--search-workers", type=int)
+    parser.add_argument(
+        "--resolution-options",
+        help="comma-separated recompute shares, or quarters/eighths/halves",
+    )
+    parser.add_argument("--tail-save-counts", type=int, nargs="+")
     parser.add_argument("--plots", action=argparse.BooleanOptionalAction, default=None)
     add_arguments(parser)
     args = parser.parse_args(argv)
@@ -75,6 +80,12 @@ def main(argv=None):
     if not request_file.is_file():
         parser.error("a named phase needs an existing output-dir/request.json")
     request = read(request_file)
+    for name in ("resolution_options", "tail_save_counts"):
+        value = getattr(args, name)
+        if value is not None:
+            if args.phase != "plan":
+                parser.error("changed resolution/tail choices require --phase plan")
+            request[name] = value
     for name in (
         "factory",
         "factory_args",

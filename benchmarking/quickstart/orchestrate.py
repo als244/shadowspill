@@ -25,6 +25,8 @@ def run(
     warmup_seconds=0.05,
     measure_seconds=0.18,
     search_workers=1,
+    resolution_options="quarters",
+    tail_save_counts=(0,),
     external_headroom_gib=0.5,
     plots=True,
     phase="all",
@@ -66,6 +68,8 @@ def run(
         "warmup_seconds": warmup_seconds,
         "measure_seconds": measure_seconds,
         "search_workers": search_workers,
+        "resolution_options": resolution_options,
+        "tail_save_counts": tail_save_counts,
         "plots": plots,
         "external_headroom_bytes": int(external_headroom_gib * (1 << 30)),
         "spill": spill_record(spill),
@@ -98,6 +102,8 @@ def run_request(request, phase):
 
 
 def _validate(request, phase):
+    from shadowspill.planner import named_resolution_options, validate_tail_save_counts
+
     if phase not in {"all", "build", "profile", "communicate", "plan", "execute"}:
         raise ValueError("unknown quickstart phase")
     if phase in {"all", "plan"} and (
@@ -119,3 +125,9 @@ def _validate(request, phase):
         raise ValueError("spill capacity must match spill_gib")
     if not request["device"].startswith("cuda:") or not request["device"][5:].isdigit():
         raise ValueError("device must name a CUDA ordinal, for example cuda:0")
+    request["resolution_options"] = list(
+        named_resolution_options(request.get("resolution_options", "quarters"))
+    )
+    request["tail_save_counts"] = list(
+        validate_tail_save_counts(request.get("tail_save_counts", (0,)))
+    )

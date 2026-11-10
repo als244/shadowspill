@@ -178,6 +178,41 @@ def test_normal_api_traces_cached_winner_without_changing_key(tmp_path):
             assert by_id[interval.task_id]["plan_end_ns"] == interval.end_ns
 
 
+def test_tail_selection_replays_with_its_serialized_search_options(tmp_path):
+    from ...toolkit.test_resolution import _repeated_passes
+
+    options = SearchOptions(
+        generic=GenericPlanningOptions(deterministic=True),
+        algorithm=PressureFit(
+            PressureFitOptions(resolution_options=(1,), tail_save_counts=(2,))
+        ),
+        workers=1,
+    )
+    restored = SearchOptions.from_dict(options.to_dict(), "search")
+    assert restored.to_dict() == options.to_dict()
+    without_tails = replace(
+        options, algorithm=PressureFit(PressureFitOptions(resolution_options=(1,)))
+    )
+    assert restored.to_dict() != without_tails.to_dict()
+    algorithm = restored.resolved_algorithm
+    result = algorithm(
+        _repeated_passes(),
+        initial_residency=(),
+        config=training_chain_config(2048),
+        generic=restored.generic,
+        workers=1,
+    )
+    directory = record_plan_trace(
+        result, options=replace(restored, trace_directory=str(tmp_path))
+    )
+    manifest = read_manifest(directory)
+    assert manifest["answer"]["schedule_digest"] == result.schedule.digest
+    assert manifest["search_options"] == options.to_dict()
+    (candidate,) = manifest["candidates"]
+    assert candidate["verified_against_original"]
+    PressureFitTrace.read(directory / candidate["file"]).verify()
+
+
 def test_ranked_alternatives_match_exhaustive_reference(tmp_path):
     result, directory = _record(tmp_path, 3, 256)
     facts = build_facts(

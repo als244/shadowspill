@@ -104,6 +104,22 @@ It reads the saved ProfiledPrograms and does not import a model, Torch, runtime
 pools, or the factory. The process orchestrator also explicitly hides CUDA for
 this worker. `--no-plots` keeps numeric reports/HTML while skipping figure files.
 
+The Python `run` accepts `tail_save_counts=[0, 1, 2, 4, 8, 16]` and
+`resolution_options=["0", "1/4", "1/2", "3/4", "1"]`. Each tail count crosses
+every resolution for each measured candidate and ordering. A count saves the
+last K eligible forward invocations within each forward/backward pass, repeated
+at every depth. The resolution's recompute fraction applies to the remaining
+flexible invocations. Required saves do not consume K; zero retains the original
+distribution. Defaults are `(0,)` and quarter shares. These choices reuse the
+same build/profile artifacts; they only expand CPU planning. Saved values can
+still spill according to PressureFit, and every selected schedule must pass
+physical admission. See the [complete contract](../docs/architecture/graph-pair-selection.md).
+
+For a saved quickstart run, set `--tail-save-counts 0 1 2 4 8 16` and
+`--resolution-options 0,1/4,1/2,3/4,1` during `--phase plan`. The choices are
+recorded in `request.json` and the Plan's search key. Execution uses that Plan;
+changing these choices requires replanning.
+
 `--phase profile` loads saved Programs without the model factory. Use
 `--warmup-seconds` and `--measure-seconds` to control measurement; defaults are
 0.05 and 0.18 seconds. `--phase communicate` calibrates host copies and the union

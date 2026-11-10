@@ -88,6 +88,20 @@ they add no build or profile candidates and do not change GPU-versus-host placem
 Nonzero tails require non-interleaved forward/backward passes, as emitted by the
 training orderings. They use generic task phases, without recognizing model types.
 
+For example, if an update has two passes with eight eligible invocations each,
+K=2 forces four tail saves across the update. A recompute share of `"1/2"` then
+recomputes six of the twelve remaining invocations and saves the other six.
+The two controls therefore produce ten flexible saves, plus any required saves.
+They choose a graph-pair variant per invocation; they do not force those saved
+tensors to remain on GPU. The graph-pair policy decides what each variant retains,
+and PressureFit chooses residency and transfers within the device/spill budgets.
+
+The saved config and Plan search key record both lists. Change them using
+`train(model, {"run_dir": saved_run, "tail_save_counts": [0, 1, 2, 4, 8, 16]},
+phase="plan")`; the runner rejects changing them only at execution time.
+Planning takes the minimum admitted predicted duration over the crossed search.
+It is a finite heuristic search, not an exhaustive optimization of all schedules.
+
 For performance sweeps, generate weights in host memory and omit evaluation and
 checkpoint I/O:
 

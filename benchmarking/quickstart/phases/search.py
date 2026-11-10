@@ -91,6 +91,9 @@ def search_options(request):
     return SearchOptions(
         workers=request["search_workers"],
         algorithm=PressureFit(
-            PressureFitOptions(resolution_options=tuple(Fraction(v) for v in shares))
+            PressureFitOptions(
+                resolution_options=tuple(Fraction(v) for v in shares),
+                tail_save_counts=tuple(request.get("tail_save_counts", (0,))),
+            )
         ),
     )

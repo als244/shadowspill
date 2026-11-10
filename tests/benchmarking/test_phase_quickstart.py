@@ -166,6 +166,68 @@ def test_initial_build_does_not_require_planning_budgets(tmp_path, monkeypatch):
         main(["--phase", "plan", "--output-dir", str(tmp_path)])
 
 
+def test_public_tail_controls_reach_planning_and_require_replanning(
+    tmp_path, monkeypatch
+):
+    from benchmarking.quickstart import main, orchestrate, run
+    from benchmarking.quickstart.phases.search import search_options
+
+    phases = []
+    monkeypatch.setattr(orchestrate, "_launch", lambda phase, *a: phases.append(phase))
+    run(
+        factory="unused:factory",
+        output_dir=tmp_path,
+        phase="build",
+        resolution_options=["1", "1/2"],
+        tail_save_counts=[4, 0, 1, 4],
+    )
+    request = json.loads((tmp_path / "request.json").read_text())
+    assert request["tail_save_counts"] == [0, 1, 4]
+    assert request["resolution_options"] == ["1/2", "1"]
+    assert search_options(request).resolved_algorithm.options.tail_save_counts == (
+        0,
+        1,
+        4,
+    )
+    main(
+        [
+            "--phase",
+            "plan",
+            "--output-dir",
+            str(tmp_path),
+            "--search-budget-gib",
+            "2",
+            "--spill-gib",
+            "2",
+            "--tail-save-counts",
+            "0",
+            "2",
+            "8",
+            "--resolution-options",
+            "quarters",
+        ]
+    )
+    request = json.loads((tmp_path / "request.json").read_text())
+    assert request["tail_save_counts"] == [0, 2, 8]
+    assert (
+        len(search_options(request).resolved_algorithm.options.resolution_options) == 5
+    )
+    assert phases == ["build", "plan"]
+    with pytest.raises(SystemExit):
+        main(
+            [
+                "--phase",
+                "execute",
+                "--output-dir",
+                str(tmp_path),
+                "--tail-save-counts",
+                "0",
+                "4",
+            ]
+        )
+    assert json.loads((tmp_path / "request.json").read_text()) == request
+
+
 def test_joint_factory_offers_each_policy_at_each_chunk_and_input_geometry():
     from benchmarking.quickstart.phases.candidates import build_options, example_inputs
     from tests.benchmarking._generic_quickstart import chunked_experiment
