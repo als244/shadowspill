@@ -2272,6 +2272,71 @@ static int nonretained_fetch_then_evict_reserves_fresh_spill(void) {
     return failed ? -1 : 0;
 }
 
+static int nonretained_publication_reuses_unfetched_spill(void) {
+    Fixture fixture = {0};
+    if (fixture_create(&fixture) != 0) {
+        return -1;
+    }
+    const ShadowSpillObjectDescription object = {
+        .object_id = 105U,
+        .size_bytes = 32U,
+        .initial_pool_id = 1U,
+        .initially_resident = 1U,
+        .retain_spill_copy = 0U,
+    };
+    const ShadowSpillObjectUpdate update = {
+        .object_id = object.object_id,
+        .version_delta = 1U,
+    };
+    const ShadowSpillRuntimeAction evict = {
+        .object_id = object.object_id,
+        .kind = SHADOWSPILL_RUNTIME_EVICT,
+    };
+    const ShadowSpillTaskDescription task = {
+        .task_id = 105U,
+        .updates = &update,
+        .update_count = 1U,
+        .actions = &evict,
+        .action_count = 1U,
+    };
+    int failed = shadowspill_register_object(fixture.runtime, &object) !=
+            SHADOWSPILL_STATUS_OK ||
+        shadowspill_test_admit_task(fixture.runtime, &task) != SHADOWSPILL_STATUS_OK;
+    for (uint32_t iteration = 0U; !failed && iteration < 16U; ++iteration) {
+        ShadowSpillAllocation value = {0};
+        ShadowSpillTestStatistics statistics = {0};
+        uint8_t actual[32] = {0};
+        failed = shadowspill_memory_pool_allocate(
+                fixture.runtime, 0U, object.size_bytes, 1U, fixture.compute, &value
+            ) != SHADOWSPILL_STATUS_OK ||
+            shadowspill_test_publish_initial(
+                fixture.runtime, object.object_id, value.pointer, NULL
+            ) != SHADOWSPILL_STATUS_OK ||
+            shadowspill_test_before_task(
+                fixture.runtime, task.task_id, fixture.compute, NULL, 0U
+            ) != SHADOWSPILL_STATUS_OK;
+        if (failed) {
+            break;
+        }
+        memset(value.pointer, (int)iteration + 1, sizeof(actual));
+        failed = shadowspill_test_after_task(
+                fixture.runtime, task.task_id, fixture.compute
+            ) != SHADOWSPILL_STATUS_OK ||
+            shadowspill_runtime_wait_idle(fixture.runtime) != SHADOWSPILL_STATUS_OK ||
+            shadowspill_test_statistics(fixture.runtime, &statistics) !=
+                SHADOWSPILL_STATUS_OK ||
+            statistics.spill.allocated_bytes != object.size_bytes ||
+            shadowspill_read_object(
+                fixture.runtime, object.object_id, 1U, actual, sizeof(actual)
+            ) != SHADOWSPILL_STATUS_OK;
+        for (uint32_t index = 0U; !failed && index < sizeof(actual); ++index) {
+            failed = actual[index] != iteration + 1U;
+        }
+    }
+    fixture_destroy(&fixture);
+    return failed ? -1 : 0;
+}
+
 static int completed_evict_preserves_later_submitted_fetch(void) {
     ShadowSpillBackend mock = {0};
     ShadowSpillRuntime *runtime = NULL;
@@ -2682,6 +2747,7 @@ int main(void) {
     REQUIRE_CANARY(functional_mutation_supersedes_inflight_fetch());
     REQUIRE_CANARY(queued_release_causally_precedes_fetch());
     REQUIRE_CANARY(nonretained_fetch_then_evict_reserves_fresh_spill());
+    REQUIRE_CANARY(nonretained_publication_reuses_unfetched_spill());
     REQUIRE_CANARY(completed_evict_preserves_later_submitted_fetch());
     REQUIRE_CANARY(consumer_waits_for_latest_queued_fetch_generation());
     REQUIRE_CANARY(write_back_keeps_execution_and_refreshes_spill());

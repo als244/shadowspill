@@ -7,6 +7,30 @@ typedef struct ShadowSpillActionBatch {
     ShadowSpillQueuedAction *tail;
 } ShadowSpillActionBatch;
 
+/* Object lock held. Predict storage presence after the preceding actions,
+ * independently of whether its bytes still hold the authoritative version.
+ * A fresh publication may overwrite a spill value without fetching it first;
+ * that existing range remains reusable even when retain_spill_copy is false. */
+static int spill_destination_available(
+    const ShadowSpillPlan *plan,
+    ShadowSpillObject *object,
+    const ShadowSpillQueuedAction *before
+) {
+    int available = shadowspill_plan_spill_location(plan, object)->lease != NULL;
+    for (const ShadowSpillQueuedAction *queued = object->action_head;
+         queued != NULL && queued != before;
+         queued = queued->object_next) {
+        if (queued->kind == SHADOWSPILL_RUNTIME_FETCH &&
+            !object->retain_spill_copy) {
+            available = 0;
+        } else if (queued->kind == SHADOWSPILL_RUNTIME_EVICT ||
+                   queued->kind == SHADOWSPILL_RUNTIME_WRITE_BACK) {
+            available = 1;
+        }
+    }
+    return available;
+}
+
 static void release_reserved_destination(
     ShadowSpillRuntime *runtime,
     ShadowSpillQueuedAction *action
@@ -472,10 +496,9 @@ static ShadowSpillStatus instantiate_actions_locked(
         const uint64_t expected_generation = object->generation;
         const uint64_t expected_version = object->authoritative_version;
         /*
-         * A non-retained spill lease belongs to the preceding fetch and is
-         * retired when that fetch completes.  It may still be visible here
-         * while the dispatcher runs ahead, but it cannot serve a later
-         * eviction.  Reserve the next spill generation at this trigger.
+         * A preceding non-retained fetch retires its spill lease. A preceding
+         * copy recreates one; a publication without a fetch keeps its old
+         * range. Reserve only when this action will actually need a new one.
          */
         const int copies_to_spill =
             action->kind == SHADOWSPILL_RUNTIME_EVICT ||
@@ -483,10 +506,7 @@ static ShadowSpillStatus instantiate_actions_locked(
         const int destination_required =
             action->kind == SHADOWSPILL_RUNTIME_FETCH ||
             (copies_to_spill &&
-             (shadowspill_plan_spill_location(
-                  record->plan_owner, object
-              )->lease == NULL ||
-              !object->retain_spill_copy));
+             !spill_destination_available(record->plan_owner, object, queued));
         queued->active = 1U;
         queued->activation_generation =
             shadowspill_current_task_invocation(runtime);
