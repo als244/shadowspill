@@ -1,7 +1,10 @@
 """Text-policy axis selection distinguishes tokens from matching feature sizes."""
 
+from dataclasses import replace
+
 import pytest
 import torch
+from torch._subclasses.fake_tensor import FakeTensorMode
 from torch.fx.experimental.proxy_tensor import make_fx
 
 from shadowspill.pytorch.capture.aot import capture_graph_pair
@@ -10,7 +13,10 @@ from shadowspill.pytorch.capture.gradients import accumulate_gradient_outputs
 from shadowspill.pytorch.chunking.regions import region_artifact
 from shadowspill.task.inputs import TaskInputRole
 from tests.shadowspill.pytorch.chunking.test_composition import executable
-from workloads.models.shared.execution import text_execution_chunks
+from workloads.models.shared.execution import (
+    TextExecutionBoundaries,
+    text_execution_chunks,
+)
 
 
 @pytest.mark.parametrize("batch", [1, 2])
@@ -175,3 +181,92 @@ def test_parameter_extent_matching_tokens_keeps_shared_accumulation(save):
             )
             assert result[1].data_ptr() == priors[1].data_ptr()
             priors = list(result)
+
+
+@torch.library.custom_op("text_execution_tests::projection_vjp", mutates_args=())
+def projection_vjp(
+    value: torch.Tensor, tangent: torch.Tensor, weight: torch.Tensor
+) -> tuple[torch.Tensor, torch.Tensor]:
+    return tangent @ weight.T, value.T @ tangent
+
+
+@projection_vjp.register_fake
+def projection_vjp_fake(value, tangent, weight):
+    return torch.empty_like(value), torch.empty_like(weight)
+
+
+@pytest.mark.parametrize("batch", [1, 2])
+def test_opaque_parameter_gradient_matching_tokens_remains_shared(batch):
+    torch.manual_seed(731)
+    sequence = 17
+    rows = batch * sequence
+    value = torch.randn(rows, 3, dtype=torch.float64, requires_grad=True)
+    weight = torch.randn(3, rows, dtype=torch.float64, requires_grad=True)
+    tangent = torch.randn(rows, rows, dtype=torch.float64)
+    expected = torch.autograd.grad(value.sin() @ weight, (value, weight), tangent)
+
+    def backward(value, tangent, weight):
+        dx, dw = projection_vjp(value.sin(), tangent, weight)
+        return dx * value.cos(), dw.clone()
+
+    arguments = (value.detach(), tangent, weight.detach())
+    with FakeTensorMode() as mode:
+        examples = tuple(mode.from_tensor(value) for value in arguments)
+        base = GraphArtifact.capture(
+            kind="backward",
+            graph_module=make_fx(backward)(*examples),
+            example_inputs=examples,
+            input_provenance=(
+                TaskInputProvenance(TaskInputRole.ACTIVATION),
+                TaskInputProvenance(TaskInputRole.ACTIVATION),
+                TaskInputProvenance(TaskInputRole.PARAMETER),
+            ),
+        )
+    policy = text_execution_chunks(
+        sequence_length=sequence,
+        batch_size=batch,
+        chunk_size=5,
+        expert_chunk_size=5,
+        rules=(),
+        expert_targets=(),
+    )
+    target = "text_execution_tests.projection_vjp.default"
+
+    class WholeProjection:
+        def configure_stage(self, stage):
+            if target in stage.operators:
+                return None
+            return policy.chunking.configure_stage(stage)
+
+    regions = replace(
+        policy,
+        partition=TextExecutionBoundaries(sequence, (), (target, "aten.add_.Tensor")),
+        chunking=WholeProjection(),
+    )
+    with torch.no_grad():
+        creator = region_artifact(
+            base,
+            regions,
+            stage_id="projection",
+            variant="recompute",
+            gradient_leaves=(1,),
+        )
+        torch.testing.assert_close(executable(creator)(*arguments), expected)
+        # The opaque VJP returns both a token adjoint and a parameter adjoint.
+        # Marking its entire output tuple as shared would hide a second bug.
+        assert any(child.chunking for child in creator.regions.children)
+        accumulating = region_artifact(
+            accumulate_gradient_outputs(base, (1,)),
+            regions,
+            stage_id="projection",
+            variant="recompute",
+            gradient_leaves=(1,),
+        )
+        prior = torch.randn_like(weight)
+        initial = prior.clone()
+        runner = executable(accumulating)
+        for count in (1, 2):
+            result = runner(*arguments, prior)
+            torch.testing.assert_close(result[0], expected[0])
+            torch.testing.assert_close(result[1], initial + count * expected[1])
+            assert result[1].data_ptr() == prior.data_ptr()

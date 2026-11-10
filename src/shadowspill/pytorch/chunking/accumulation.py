@@ -134,11 +134,20 @@ def route_gradient_destinations(
     )
     while queue:
         value = queue.pop()
+        if not isinstance(value, Node) or value in expressions:
+            continue
+        # Explicit parameter-gradient leaves also identify contributions from
+        # opaque VJPs. Preserve that fact at cuts through views or accumulation;
+        # a matching feature extent must not invent a token axis. Stop at the
+        # contribution itself: another output of its producer can be a token
+        # adjoint, and its operands can be recomputed forward activations.
         if (
-            not isinstance(value, Node)
-            or value in expressions
-            or value.target not in assembly
+            gradient_leaves is not None
+            and value.op == "call_function"
+            and isinstance(value.meta.get("val"), torch.Tensor)
         ):
+            value.meta.setdefault("execution_provenance", provenance)
+        if value.target not in assembly:
             continue
         expressions.add(value)
         queue.extend(value.all_input_nodes)

@@ -150,6 +150,12 @@ producers. It does not turn intermediate activation adjoints into parameter
 destinations. Narrow sum trees keep their association when narrow fusion is
 disabled. Aliased or externally observed contributions remain explicit sums.
 
+Explicit parameter-gradient outputs retain their gradient role through assembly
+and execution cuts, including individual tensor outputs of opaque backward
+operators. A feature extent equal to an activation axis length does not establish
+that the parameter gradient contains independent activation slices. Other outputs
+of the same opaque operator retain their own roles and axis contracts.
+
 An axis-independent forward output is assembled once. Its upstream cotangent
 enters only the first child backward; later children receive zeros for that
 port. This adds its contribution once when it meets a chunk-summed parameter
