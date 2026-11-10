@@ -28,6 +28,7 @@ DEFAULTS = dict(
     resume=None,
     wandb_project=None,
     pool_memory=None,
+    prepared_from=None,
 )
 MUTABLE = {
     "steps",
@@ -63,16 +64,31 @@ def configure(recipe, config, phase):
         key: fspath(value) if isinstance(value, PathLike) else value
         for key, value in config.items()
     }
-    for key in ("pool_memory", "resume", *getattr(definition, "path_options", ())):
+    for key in (
+        "pool_memory",
+        "resume",
+        "prepared_from",
+        *getattr(definition, "path_options", ()),
+    ):
         if requested.get(key):
             requested[key] = str(Path(requested[key]).expanduser().resolve())
     root = Path(requested["run_dir"]).expanduser().resolve()
     requested["run_dir"] = str(root)
     path = root / "config.json"
-    if path.exists():
+    reused = not path.exists() and requested.get("prepared_from")
+    if reused and phase != "plan":
+        raise ValueError("start a prepared_from run with phase='plan'")
+    if path.exists() or reused:
         if phase in {"all", "build"}:
             raise ValueError("use a fresh run directory for a new build")
-        options = json.loads(path.read_text())
+        if reused:
+            from .reuse import source_settings
+
+            options = source_settings(requested["prepared_from"], root)
+        else:
+            options = json.loads(path.read_text())
+        if options.get("prepared_from") and phase not in {"plan", "execute"}:
+            raise ValueError("a prepared_from run may only plan or execute")
         if options["recipe"] != recipe:
             raise ValueError("saved run belongs to a different recipe")
         for key, value in requested.items():
@@ -114,7 +130,7 @@ def configure(recipe, config, phase):
     if options["preparation_ranks"] not in (1, options["ranks"]):
         raise ValueError("preparation requires one worker or the entire worker group")
     definition.validate(options)
-    if not path.exists():
+    if not path.exists() and not reused:
         candidates = list(definition.candidates(options))
         paths = set()
         for candidate in candidates:
@@ -139,5 +155,9 @@ def configure(recipe, config, phase):
     if phase == "communicate" and options["ranks"] == 1:
         raise ValueError("single-GPU profiling already measures host communication")
     root.mkdir(parents=True, exist_ok=True)
+    if reused:
+        from .reuse import link_artifacts
+
+        link_artifacts(options["prepared_from"], root)
     path.write_text(json.dumps(options, indent=2) + "\n")
     return root, options

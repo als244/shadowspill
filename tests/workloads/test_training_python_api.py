@@ -66,6 +66,66 @@ def test_ep_geometry_declares_collective_preparation_before_launch(
     assert [c["num_examples"] for c in saved["candidates"]] == [16, 4]
 
 
+def test_budget_runs_reuse_completed_measurements_without_mutating_source(
+    tmp_path, monkeypatch
+):
+    from workloads.recipes.training.candidates import program_paths
+
+    monkeypatch.setattr(runner, "run_phases", lambda *a, **k: None)
+    model = Model.from_config("qwen3moe-tiny")
+    parent = train(
+        model,
+        dict(
+            run_dir=tmp_path / "prepared",
+            data=tmp_path / "data",
+            ranks=1,
+            microbatch_sizes=[4, 16],
+            resume=tmp_path / "old-checkpoint.ssp",
+        ),
+        phase="build",
+    )
+    source_config = (parent / "config.json").read_bytes()
+    options = json.loads(source_config)
+    for relative in program_paths(options):
+        for name in ("programs", "profiled", "communication"):
+            path = parent / name / relative
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_bytes(b"prepared artifact")
+    for candidate in options["candidates"]:
+        (parent / "programs" / candidate["path"] / "metadata.json").write_text("{}")
+    child = train(
+        model,
+        dict(run_dir=tmp_path / "budget20", prepared_from=parent, execution_gib=20),
+        phase="plan",
+    )
+    selected = json.loads((child / "config.json").read_text())
+    assert selected["candidates"] == options["candidates"]
+    assert selected["resume"] is None
+    assert selected["execution_gib"] == 20
+    assert (child / "profiled").is_symlink()
+    assert (parent / "config.json").read_bytes() == source_config
+    for phase in ("profile", "communicate"):
+        with pytest.raises(ValueError, match="only plan or execute"):
+            train(model, {"run_dir": child}, phase=phase)
+    with pytest.raises(ValueError, match="fresh run"):
+        train(model, {"run_dir": child, "microbatch_sizes": [8]}, phase="plan")
+    for destination in (parent / "profiled/child", parent / "plans/child"):
+        with pytest.raises(ValueError, match="outside prepared_from"):
+            train(
+                model,
+                {"run_dir": destination, "prepared_from": parent},
+                phase="plan",
+            )
+    (parent / "communication" / program_paths(options)[0]).unlink()
+    with pytest.raises(ValueError, match="completed measurement"):
+        train(
+            model,
+            {"run_dir": tmp_path / "incomplete", "prepared_from": parent},
+            phase="plan",
+        )
+    assert not (tmp_path / "incomplete").exists()
+
+
 def test_public_imports_and_examples_do_not_import_frameworks():
     subprocess.run(
         [

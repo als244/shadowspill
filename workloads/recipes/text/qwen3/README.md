@@ -2,8 +2,10 @@
 
 This recipe uses the [shared Python runner](../../README.md) with sharded DP or
 expert parallelism. The default model is Qwen3-30B-A3B: BF16 compute weights, FP32 gradients,
-FP32 master weights and FP32 AdamW moments. Weights, gradients and optimizer data
-are sharded across eight GPUs. It starts from random weights and reads real,
+FP32 master weights and FP32 AdamW moments. DP shards weights, gradients and
+optimizer data across eight GPUs. EP owns each expert shard locally, replicates
+shared weights and gradients, and shards the shared optimizer state. The recipe
+starts from random weights and reads real,
 already-tokenized text from `train.bin` plus `meta.json`.
 
 Start with the [commented Python script](example.py):
@@ -37,6 +39,12 @@ own token-capacity resource. EP execution chunks are currently refused because
 the provider has no declared axis-chunk contract. This is independent of DP
 execution chunking and checkpoint recomputation. The new public EP campaign is
 pending; the historical performance table below covers DP only.
+
+For full-training DP, chunk candidates currently split the surrounding dense
+projections. Its opaque MoE operations contain sequence-length metadata and
+nonlinear statistics, so they remain whole-sequence barriers. `moe_chunk_sizes`
+does not split those opaque operations. The LoRA adapters have separate provider
+contracts that support chunked expert execution.
 
 Profiling reserves 768 MiB of external GPU headroom (configurable with
 `--external-headroom-mib` when creating the run), in addition to calibrated

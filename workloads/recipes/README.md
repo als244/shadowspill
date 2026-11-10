@@ -82,6 +82,27 @@ train(model, {**saved, "execution_gib": 40}, phase="plan")
 train(model, saved, phase="execute")
 ```
 
+To compare several budgets on CPU before requesting GPUs, reuse one completed
+preparation in separate run directories:
+
+```python
+for budget in (20, 40, 77):
+    train(model, {
+        "run_dir": f"runs/budget-{budget}",
+        "prepared_from": "runs/prepared",
+        "execution_gib": budget,
+    }, phase="plan")
+# Later, on the matching hardware:
+train(model, {"run_dir": "runs/budget-20"}, phase="execute")
+```
+
+`prepared_from` requires completed task and communication measurements and
+inherits frozen build choices. The new run links the prepared artifacts and
+owns its Plans, reports, logs and checkpoints. Keep the source available for
+replanning. Such a run may only plan or execute, so it cannot overwrite its
+source measurements. Its directory must be outside the source run. Training
+starts fresh unless `resume` is explicit.
+
 Phases are `build`, `profile`, `communicate`, `plan` and `execute`. With one rank,
 profiling also measures host transfers, so omit `communicate`. Multi-rank runs
 calibrate communication and computation overlap on the participating devices.
