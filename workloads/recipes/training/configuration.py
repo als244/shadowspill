@@ -81,7 +81,7 @@ def configure(recipe, config, phase):
     if reused and phase != "plan":
         raise ValueError("start a prepared_from run with phase='plan'")
     if path.exists() or reused:
-        if phase in {"all", "build"}:
+        if phase == "all":
             raise ValueError("use a fresh run directory for a new build")
         if reused:
             from .reuse import source_settings

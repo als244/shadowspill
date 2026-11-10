@@ -109,6 +109,13 @@ calibrate communication and computation overlap on the participating devices.
 DP build/profile uses one representative GPU; EP preparation needs all resource
 participants. Planning reads saved artifacts on CPU without importing Torch.
 
+Repeat `train(model, saved, phase="build")` to continue an interrupted build.
+Completed training and evaluation Programs are checked independently against
+the frozen configuration, adapter metadata, current target and numerical settings.
+Missing Programs are built; invalid completed artifacts stop with an error.
+Collective workers agree on reuse. Recorded exhausted candidates remain excluded.
+This preserves completed work across allocations; it does not shorten a fresh build.
+
 Repeating `phase="profile"` reuses completed per-Program measurements after
 validating their implementation, memory evidence, headroom and current target.
 An interrupted candidate is measured again; completed ones are preserved. All

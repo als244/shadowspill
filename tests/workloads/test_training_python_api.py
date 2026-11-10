@@ -35,8 +35,14 @@ def test_checkpoint_model_and_method_select_frozen_candidates(tmp_path, monkeypa
     saved = json.loads((root / "config.json").read_text())
     assert len(saved["candidates"]) == 12
     assert {c["num_examples"] for c in saved["candidates"]} == {2, 4}
+    train(model, {"run_dir": root}, phase="build")
+    assert json.loads((root / "config.json").read_text()) == saved
+    with pytest.raises(ValueError, match="fresh run"):
+        train(model, {"run_dir": root}, phase="all")
+    with pytest.raises(ValueError, match="fresh run"):
+        train(model, {"run_dir": root, "chunk_sizes": [4]}, phase="build")
     train(model, {"run_dir": root, "execution_gib": 24}, phase="plan")
-    assert [call[0][0] for call in launches] == ["workloads.recipes.training"] * 2
+    assert [call[0][0] for call in launches] == ["workloads.recipes.training"] * 3
     assert (
         json.loads((root / "config.json").read_text())["candidates"]
         == saved["candidates"]
@@ -109,7 +115,7 @@ def test_budget_runs_reuse_completed_measurements_without_mutating_source(
     assert selected["execution_gib"] == 20
     assert (child / "profiled").is_symlink()
     assert (parent / "config.json").read_bytes() == source_config
-    for phase in ("profile", "communicate"):
+    for phase in ("build", "profile", "communicate"):
         with pytest.raises(ValueError, match="only plan or execute"):
             train(model, {"run_dir": child}, phase=phase)
     with pytest.raises(ValueError, match="fresh run"):
