@@ -10,7 +10,6 @@ from typing import Any
 import torch
 from torch._guards import detect_fake_mode
 from torch.fx import Node
-from torch.fx.passes.split_module import split_module
 from torch.utils._pytree import tree_flatten, tree_map
 
 from shadowspill.artifacts._values import digest
@@ -22,14 +21,15 @@ from shadowspill.pytorch.capture.storage import ExplicitMutation
 from shadowspill.pytorch.capture.torch_deprecations import copy_graph_module
 from shadowspill.pytorch.partition.policy import resolve_partition_assignments
 from shadowspill.pytorch.partition.sources import stage_value_source
-from shadowspill.pytorch.partition.split import observe_split_root
 from shadowspill.pytorch.representations import is_wrapper
 from shadowspill.task.inputs import TaskInputRole
 from shadowspill.task.storage import StorageRootKind, TaskStorageContract
 
 from .contract import boundary_metadata, materialized_storage
 from .geometry import REDUCED, ChunkAxis, Layout
+from .observations import split_and_observe, split_output_values
 from .policy import ChunkRegions, OperatorRule
+from .transform_cache import current_transform_cache
 
 
 @dataclass(frozen=True, slots=True)
@@ -96,17 +96,21 @@ def region_artifact(
         gradient_leaves=gradient_leaves,
     )
     assignments, _ = resolve_partition_assignments(graph, graph, policy.partition)
-    root = split_module(
-        graph, graph, lambda node: assignments[node], keep_original_order=True
-    )
     mode = detect_fake_mode(artifact.example_arguments)
     if mode is None:
         from torch._subclasses.fake_tensor import FakeTensorMode
 
         mode = FakeTensorMode(allow_non_fake_inputs=True)
     with mode, torch.no_grad():
-        split = observe_split_root(root, artifact.example_arguments)
-        full_values, _ = tree_flatten(graph(*artifact.example_arguments))
+        cache = current_transform_cache.get()
+        split = (
+            split_and_observe(graph, assignments, artifact.example_arguments)
+            if cache is None
+            else cache.observations.observe(
+                graph, assignments, artifact.example_arguments
+            )
+        )
+        full_values = split_output_values(split, artifact.example_arguments)
     parent_roles = {
         live_storage_identity(value): provenance
         for value, provenance in zip(
@@ -366,7 +370,7 @@ def region_artifact(
         )
         if child.chunking is not None:
             instructions[-1]["row_chunks"] = child.chunking.identity
-    output_node = next(n for n in root.graph.nodes if n.op == "output")
+    output_node = next(n for n in split.root.graph.nodes if n.op == "output")
     leaves, _ = tree_flatten(output_node.args[0])
     outputs = []
     for leaf in leaves:

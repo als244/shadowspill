@@ -138,3 +138,126 @@ def test_cache_is_bounded_and_released_after_failure():
             assert nested is cache
         raise RuntimeError("end build")
     assert not cache._entries and current_transform_cache.get() is None
+
+
+def test_nested_slices_reuse_transforms_but_resolve_each_inner_policy(monkeypatch):
+    from torch._subclasses.fake_tensor import FakeTensorMode
+
+    from shadowspill.pytorch.chunking import transform
+
+    seen = []
+
+    class Inner:
+        def configure_stage(self, info):
+            seen.append(info)
+            axes = {
+                i: d["tokens"]
+                for i, d in enumerate(info.input_domains)
+                if "tokens" in d
+            }
+            size = 2 if info.checkpoint_stage_id == "small" else 3
+            return AxisChunks(size, axes, domain="tokens") if axes else None
+
+    config = AxisChunks(
+        7, {0: 0}, domain="tokens", regions=ChunkRegions("whole", Inner())
+    )
+    original = transform._chunk_artifact
+    with FakeTensorMode():
+        first = artifact(torch.empty(11, 5))
+        second = first.rebind_examples((torch.empty(11, 5),))
+        with execution_analysis_scope() as cache:
+            a = chunk_artifact(
+                first, (ChunkAxis(0),), 11, config, checkpoint_stage_id="small"
+            )
+
+            def only_inner(*args, **kwargs):
+                assert args[3].regions is None, "outer slices were transformed twice"
+                return original(*args, **kwargs)
+
+            monkeypatch.setattr(transform, "_chunk_artifact", only_inner)
+            start = len(seen)
+            b = chunk_artifact(
+                second, (ChunkAxis(0),), 11, config, checkpoint_stage_id="large"
+            )
+            assert len(seen) > start
+            assert all(info.checkpoint_stage_id == "large" for info in seen[start:])
+            assert a.compatibility_digest != b.compatibility_digest
+            assert b.example_arguments[0] is second.example_arguments[0]
+            assert cache.hits > 0 and cache.bypasses == 0
+    x = torch.randn(11, 5)
+    torch.testing.assert_close(executable(a)(x), (x.sin(), x.cos()))
+    torch.testing.assert_close(executable(b)(x), (x.sin(), x.cos()))
+
+
+def test_nested_metadata_and_representative_values_are_not_substituted():
+    from torch._subclasses.fake_tensor import FakeTensorMode
+
+    from shadowspill.pytorch.capture.torch_deprecations import copy_graph_module
+
+    seen = []
+    sources = []
+
+    class Partition:
+        def assign_stages(self, graph, module):
+            sources.append(
+                (dict(graph.meta), tuple(dict(n.meta) for n in graph.graph.nodes))
+            )
+            return {n.name: 0 for n in graph.graph.nodes if n.op == "call_function"}
+
+    class Inner:
+        def configure_stage(self, info):
+            seen.append(info)
+            return None
+
+    config = AxisChunks(
+        7, {0: 0}, domain="tokens", regions=ChunkRegions(Partition(), Inner())
+    )
+    old_value, new_value = torch.ones(11, 5), torch.zeros(11, 5)
+    opaque = object()
+    with FakeTensorMode():
+        first = artifact(torch.empty(11, 5))
+        first = replace(
+            first,
+            input_provenance=(
+                TaskInputProvenance(
+                    TaskInputRole.ACTIVATION, "old", representative_value=old_value
+                ),
+            ),
+        )
+        changed = replace(
+            first,
+            graph_module=copy_graph_module(first.graph_module),
+            input_provenance=(
+                TaskInputProvenance(
+                    TaskInputRole.ACTIVATION, "new", representative_value=new_value
+                ),
+            ),
+        )
+        changed.graph_module.meta["selector"] = "second"
+        node = next(
+            n for n in changed.graph_module.graph.nodes if n.op == "call_function"
+        )
+        node.meta["nn_module_stack"] = {"source": ("other.block", torch.nn.Linear)}
+        node.meta["custom_selector_state"] = opaque
+        with execution_analysis_scope() as cache:
+            chunk_artifact(first, (ChunkAxis(0),), 11, config)
+            start, source_start = len(seen), len(sources)
+            result = chunk_artifact(changed, (ChunkAxis(0),), 11, config)
+            assert cache.hits > 0
+            assert len(seen) > start
+            assert all("other.block" in info.module_paths for info in seen[start:])
+            assert all(
+                meta["selector"] == "second" for meta, _ in sources[source_start:]
+            )
+            assert all(
+                any(item.get("custom_selector_state") is opaque for item in nodes)
+                for _, nodes in sources[source_start:]
+            )
+            assert all(
+                child.input_provenance[0].representative_value is new_value
+                for _, child in result.chunking.children
+            )
+            assert all(
+                child.input_provenance[0].source == "new"
+                for _, child in result.chunking.children
+            )

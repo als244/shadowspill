@@ -1,8 +1,9 @@
-"""Build-local reuse after a leaf region's axis policy has been resolved.
+"""Build-local reuse after a region's outer axis policy has been resolved.
 
 Partition, lifetime and chunk-policy callbacks still run for every occurrence,
-including nested regions. Only a leaf's explicit, resolved tensor transform is
-shared. The cache owns no persistent files and is discarded after the build.
+including nested regions. Only the explicit, resolved tensor transform is shared.
+Nested policies run after reusing compatible outer slices. The cache owns no
+persistent files and is discarded after the build.
 """
 
 from __future__ import annotations
@@ -20,7 +21,9 @@ from shadowspill.pytorch.capture.storage.cache import storage_contract_scope
 
 from .geometry import Layout
 from .lifetime_cache import analysis_key, lifetime_analysis_scope
+from .observations import SplitObservations, _rebindable
 from .policy import AxisChunks
+from .sources import bind_chunk_sources
 
 
 def transform_key(
@@ -31,13 +34,11 @@ def transform_key(
     fuse_narrow_gradient_accumulation: bool,
     gradient_destination_rules: Sequence[GradientDestinationRule],
 ) -> tuple[Any, ...] | None:
-    if config.regions is not None:
-        return None  # Inner policies must resolve against this occurrence.
     graph = artifact.graph_module
     key = analysis_key(graph, artifact.example_arguments, {}, {})
     if key is None:
         return None
-    result = (
+    result: tuple[Any, ...] = (
         artifact.compatibility_digest,
         key,
         tuple(p.role for p in artifact.input_provenance),
@@ -50,8 +51,13 @@ def transform_key(
         config.rules,
         fuse_narrow_gradient_accumulation,
         tuple(gradient_destination_rules),
+        config.regions is not None,
     )
     try:
+        if config.regions is not None and not _rebindable(artifact.example_arguments):
+            return None
+        if config.regions is not None:
+            result += (tuple((n.name, str(n.target)) for n in graph.graph.nodes),)
         hash(result)
     except TypeError:
         return None  # Callable rule objects need not be hashable.
@@ -65,11 +71,14 @@ class ChunkTransformCache:
         if max_entries < 1:
             raise ValueError("chunk transform cache capacity must be positive")
         self.max_entries = max_entries
-        self._entries: OrderedDict[tuple[Any, ...], GraphArtifact] = OrderedDict()
+        self._entries: OrderedDict[
+            tuple[Any, ...], tuple[GraphArtifact, GraphArtifact]
+        ] = OrderedDict()
         self.hits = self.misses = self.bypasses = 0
+        self.observations = SplitObservations(max_entries)
 
     def get(
-        self, key: tuple[Any, ...] | None, artifact: GraphArtifact
+        self, key: tuple[Any, ...] | None, artifact: GraphArtifact, config: AxisChunks
     ) -> GraphArtifact | None:
         if key is None:
             self.bypasses += 1
@@ -80,26 +89,32 @@ class ChunkTransformCache:
             return None
         self.hits += 1
         self._entries.move_to_end(key)
-        # Child code is a structural template, just as it is during compile
-        # deduplication. No policy receives its first occurrence's metadata:
-        # nested regions never enter this cache. The parent retains the current
-        # graph, source provenance, real representative values and fake inputs.
+        template, source = previous
+        chunks = template.chunking
+        if config.regions is not None:
+            chunks = bind_chunk_sources(template, source, artifact, config.domain)
         return replace(
             artifact,
-            compatibility_digest=previous.compatibility_digest,
-            chunking=previous.chunking,
+            compatibility_digest=template.compatibility_digest,
+            chunking=chunks,
         )
 
-    def put(self, key: tuple[Any, ...] | None, artifact: GraphArtifact) -> None:
+    def put(
+        self,
+        key: tuple[Any, ...] | None,
+        artifact: GraphArtifact,
+        source: GraphArtifact,
+    ) -> None:
         if key is None:
             return
-        self._entries[key] = artifact
+        self._entries[key] = (artifact, source)
         self._entries.move_to_end(key)
         if len(self._entries) > self.max_entries:
             self._entries.popitem(last=False)
 
     def clear(self) -> None:
         self._entries.clear()
+        self.observations.entries.clear()
 
 
 current_transform_cache: ContextVar[ChunkTransformCache | None] = ContextVar(

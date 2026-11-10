@@ -93,16 +93,25 @@ offset, preserving permutation order needed by captured views. Full and tail
 child graphs are specialized for their actual
 geometry; compatible child contracts share compilation.
 
-During a build, identical resolved leaf transforms and semantic storage contracts
-also share bounded caches. Keys include explicit graph semantics, dispatcher
-schemas, tensor geometry, input aliases/backing sizes, roles, axis/rule contracts
-and gradient accumulation settings. Storage producer names bind to the current
-graph. Parent inputs and source provenance remain occurrence-specific. Partition,
-lifetime and chunk-policy callbacks still resolve every execution-region
-occurrence, including nested regions; callbacks themselves are not cached.
-Unsupported representations use the uncached path. Both caches are discarded
-when the build completes or fails. This avoids repeated fake evaluation without
-changing saved-state cuts, executable identity or measured physical admission.
+During a build, identical resolved axis transforms, split templates and semantic
+storage contracts share bounded caches. Outer slicing is separate from inner
+region composition: full/tail slice graphs can be reused while inner policies
+resolve again for the current occurrence. Keys include explicit graph semantics,
+dispatcher schemas, tensor geometry, input aliases/backing sizes, roles,
+axis/rule contracts and gradient accumulation settings. Nested slice source
+metadata and representative-value provenance bind to the current occurrence;
+the template preserves its sliced geometry and transformation overrides.
+
+Split templates are reusable only after lifetime processing, gradient routing
+and partition assignments have resolved. Fake observations rebind complete
+storage aliases to the current inputs, and child graphs receive current source
+metadata. Their already observed outputs also supply the parent boundary facts;
+the complete graph need not run a second time just to recover output geometry.
+Concrete tensors, unsupported representations and symbolic geometry use the
+ordinary observation path. These caches are released on normal or exceptional
+build exit. Partition, lifetime and chunk-policy callbacks still run for every
+occurrence. Saved-state cuts, executable identities and physical admission remain
+unchanged; the complete composed tasks are still compiled and profiled normally.
 
 Built-in rules accept supported elementwise operations, feature reductions,
 views and matrix products. A shared parameter gradient is a sum of chunk VJPs.

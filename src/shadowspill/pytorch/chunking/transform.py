@@ -29,6 +29,7 @@ from .contract import materialized_storage
 from .geometry import ChunkAxis, ChunkTask, Layout, LocalLayout
 from .policy import AxisChunks
 from .rules import infer
+from .sources import CHUNK_SOURCE_INDEX
 from .transform_cache import current_transform_cache, transform_key
 
 
@@ -67,23 +68,31 @@ def chunk_artifact(
             fuse_narrow_gradient_accumulation,
             gradient_destination_rules,
         )
-        previous = cache.get(key, artifact)
-        if previous is not None:
-            return previous
-    result = _chunk_artifact(
-        artifact,
-        inputs,
-        rows,
+        result = cache.get(key, artifact, config)
+    else:
+        result = None
+    if result is None:
+        result = _chunk_artifact(
+            artifact,
+            inputs,
+            rows,
+            config,
+            fuse_narrow_gradient_accumulation=fuse_narrow_gradient_accumulation,
+            gradient_destination_rules=gradient_destination_rules,
+        )
+        if cache is not None:
+            cache.put(key, result, artifact)
+    if config.regions is None:
+        return result
+    return _compose_chunk(
+        result,
         config,
-        fuse_narrow_gradient_accumulation=fuse_narrow_gradient_accumulation,
-        gradient_destination_rules=gradient_destination_rules,
         stage_id=stage_id,
         checkpoint_stage_id=checkpoint_stage_id,
         variant=variant,
+        fuse_narrow_gradient_accumulation=fuse_narrow_gradient_accumulation,
+        gradient_destination_rules=gradient_destination_rules,
     )
-    if cache is not None:
-        cache.put(key, result)
-    return result
 
 
 def _chunk_artifact(
@@ -94,9 +103,6 @@ def _chunk_artifact(
     *,
     fuse_narrow_gradient_accumulation: bool,
     gradient_destination_rules: Sequence[GradientDestinationRule],
-    stage_id: str,
-    checkpoint_stage_id: str | None,
-    variant: str | None,
 ) -> GraphArtifact:
     if len(inputs) != artifact.argument_count:
         raise CaptureError("chunk input mapping differs from task argument count")
@@ -126,6 +132,8 @@ def _chunk_artifact(
                 "axis chunking only supports explicit backward gradient mutations"
             )
     graph = copy_graph_module(artifact.graph_module)
+    for index, node in enumerate(graph.graph.nodes):
+        node.meta[CHUNK_SOURCE_INDEX] = index
     mode = detect_fake_mode(artifact.example_arguments)
     if mode is None:
         from torch._subclasses.fake_tensor import FakeTensorMode
@@ -340,48 +348,6 @@ def _chunk_artifact(
                     ),
                 )
             )
-    if config.regions is not None:
-        from .regions import region_artifact
-
-        assert config.domain is not None
-        inherited = tuple(
-            {config.domain: layout} if isinstance(layout, ChunkAxis) else {}
-            for layout in inputs
-        )
-        reductions = tuple(
-            frozenset((config.domain,)) if layout == "sum" else frozenset()
-            for layout in inputs
-        )
-
-        def compose(child: GraphArtifact) -> GraphArtifact:
-            assert config.regions is not None
-            assert config.domain is not None
-            extra = child.argument_count - len(inputs)
-            return region_artifact(
-                child,
-                config.regions,
-                stage_id=stage_id,
-                checkpoint_stage_id=checkpoint_stage_id,
-                variant=variant,
-                input_domains=(*inherited, *({} for _ in range(extra))),
-                input_reductions=(*reductions, *(frozenset() for _ in range(extra))),
-                domain_rules={config.domain: config.rules},
-                fuse_narrow_gradient_accumulation=fuse_narrow_gradient_accumulation,
-                gradient_destination_rules=gradient_destination_rules,
-                # Sliced activation cotangents are assembled in their own
-                # coordinates; only shared/reduced outputs may be donated to
-                # a canonical destination across these inner regions.
-                gradient_leaves=tuple(
-                    i
-                    for i, layout in enumerate(outputs)
-                    if not isinstance(layout, (ChunkAxis, LocalLayout))
-                ),
-            )
-
-        children = [(size, compose(child)) for size, child in children]
-        accumulating_children = [
-            (size, compose(child)) for size, child in accumulating_children
-        ]
     identity = {
         "schema": 5,
         "graph": artifact.compatibility_digest,
@@ -399,18 +365,6 @@ def _chunk_artifact(
         "storage_contract": composed_storage.compatibility_digest,
         "output_literals": literals,
     }
-    if config.regions is not None:
-        identity["child_regions"] = {
-            name: [
-                (size, child.regions.identity)
-                for size, child in group
-                if child.regions is not None
-            ]
-            for name, group in (
-                ("creators", children),
-                ("accumulators", accumulating_children),
-            )
-        }
     return replace(
         artifact,
         compatibility_digest=digest(identity),
@@ -423,5 +377,92 @@ def _chunk_artifact(
             tuple(accumulating_children),
             identity,
             composed_storage,
+        ),
+    )
+
+
+def _compose_chunk(
+    artifact: GraphArtifact,
+    config: AxisChunks,
+    *,
+    stage_id: str,
+    checkpoint_stage_id: str | None,
+    variant: str | None,
+    fuse_narrow_gradient_accumulation: bool,
+    gradient_destination_rules: Sequence[GradientDestinationRule],
+) -> GraphArtifact:
+    """Resolve inner policies on reusable outer slices for this occurrence."""
+    task = artifact.chunking
+    assert task is not None
+    inputs, outputs = task.inputs, task.outputs
+    children = list(task.children)
+    accumulating_children = list(task.accumulating_children)
+    from .regions import region_artifact
+
+    assert config.domain is not None
+    inherited = tuple(
+        {config.domain: layout} if isinstance(layout, ChunkAxis) else {}
+        for layout in inputs
+    )
+    reductions = tuple(
+        frozenset((config.domain,)) if layout == "sum" else frozenset()
+        for layout in inputs
+    )
+
+    def compose(child: GraphArtifact) -> GraphArtifact:
+        assert config.regions is not None
+        assert config.domain is not None
+        extra = child.argument_count - len(inputs)
+        return region_artifact(
+            child,
+            config.regions,
+            stage_id=stage_id,
+            checkpoint_stage_id=checkpoint_stage_id,
+            variant=variant,
+            input_domains=(*inherited, *({} for _ in range(extra))),
+            input_reductions=(*reductions, *(frozenset() for _ in range(extra))),
+            domain_rules={config.domain: config.rules},
+            fuse_narrow_gradient_accumulation=fuse_narrow_gradient_accumulation,
+            gradient_destination_rules=gradient_destination_rules,
+            # Sliced activation cotangents are assembled in their own
+            # coordinates; only shared/reduced outputs may be donated to
+            # a canonical destination across these inner regions.
+            gradient_leaves=tuple(
+                i
+                for i, layout in enumerate(outputs)
+                if not isinstance(layout, (ChunkAxis, LocalLayout))
+            ),
+        )
+
+    children = [(size, compose(child)) for size, child in children]
+    accumulating_children = [
+        (size, compose(child)) for size, child in accumulating_children
+    ]
+    identity = {
+        **task.identity,
+        "children": [(size, child.compatibility_digest) for size, child in children],
+        "accumulating_children": [
+            (size, child.compatibility_digest) for size, child in accumulating_children
+        ],
+        "child_regions": {
+            name: [
+                (size, child.regions.identity)
+                for size, child in group
+                if child.regions is not None
+            ]
+            for name, group in (
+                ("creators", children),
+                ("accumulators", accumulating_children),
+            )
+        },
+    }
+    return replace(
+        artifact,
+        compatibility_digest=digest(identity),
+        chunking=replace(
+            task,
+            children=tuple(children),
+            accumulating_children=tuple(accumulating_children),
+            identity=identity,
         ),
     )
