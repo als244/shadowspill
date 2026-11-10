@@ -40,8 +40,9 @@ def _failing_setup(monkeypatch, runtime, error):
     def seal(candidates):
         raise error
 
-    def open_worker(*arguments, logical_rank):
+    def open_worker(*arguments, logical_rank, required_spill_bytes):
         assert logical_rank == 0
+        assert required_spill_bytes is None
         return runtime
 
     plan = SimpleNamespace(

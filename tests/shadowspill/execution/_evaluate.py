@@ -17,7 +17,13 @@ def compilation_finished(**event):
 
 triton.knobs.compilation.listener = compilation_finished
 forbid_preparation()
-from shadowspill import Executor, Plan, Trainer, load_checkpoint, save_checkpoint  # noqa: E402
+from shadowspill import (  # noqa: E402
+    Executor,
+    Plan,
+    Trainer,
+    load_checkpoint,
+    save_checkpoint,
+)
 from shadowspill.planning.shared import shared_memory  # noqa: E402
 from shadowspill.runtime.occupancy import plan_slices  # noqa: E402
 
@@ -67,6 +73,10 @@ executor = (
 )
 executor.initialize(fill, chunk_bytes=40)
 joint = shared_memory(plan, {"evaluation": evaluation})
+assert executor.spill_capacity_bytes == min(
+    plan.memory_budgets.spill_bytes, max(1, (joint.spill_bytes * 21 + 19) // 20)
+)
+assert executor.spill_capacity_bytes < plan.memory_budgets.spill_bytes
 slices = plan_slices(executor.runtime)
 assert len(slices) == 2
 assert len({item.offset for item in slices}) == 1

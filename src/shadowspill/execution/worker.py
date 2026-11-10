@@ -117,6 +117,7 @@ def create_paths(
                 logical_rank=0
                 if distributed is None
                 else distributed.groups.logical_rank,
+                required_spill_bytes=None if joint is None else joint.spill_bytes,
             )
         except Exception as error:
             if distributed is None:

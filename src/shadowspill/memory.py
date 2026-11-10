@@ -170,10 +170,26 @@ class SpillPool:
             raise ValueError("configured spill pools must define calibration_identity")
         return {}
 
+    def accepts_memory_profile_capacity(self, measured_capacity: int) -> bool:
+        """Whether the measured capacity covers this pool's retained overhead.
+
+        Configuration and implementation identity are checked separately.
+        Extension pools require the exact capacity unless their implementation
+        can guarantee that a larger pool's resource reservations also cover a
+        smaller one. This concerns pool-memory evidence, not task timings.
+        """
+        return self.capacity == measured_capacity
+
 
 @dataclass(frozen=True, slots=True)
 class PinnedHostPool(SpillPool):
     """Configuration for a bounded pinned-memory spill pool."""
+
+    def accepts_memory_profile_capacity(self, measured_capacity: int) -> bool:
+        # One host arena is registered in full; lanes and their fixed resources
+        # do not grow when the arena shrinks. Retain all larger-pool device
+        # reservations instead of scaling or inventing a smaller observation.
+        return self.capacity <= measured_capacity
 
 
 MemoryPoolConfig = DevicePool | SpillPool

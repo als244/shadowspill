@@ -85,7 +85,21 @@ unchanged.
 
 Evidence records exact capacity, pool kind/configuration, normal NUMA binding,
 GPU model and core/adapter/backend/extension library hashes. Cold execution
-checks these before installing the framework allocator. GPU UUID, hostname
+checks these before installing the framework allocator. Planning still requires
+the measured capacity to equal the spill budget. Execution may use a smaller
+built-in pinned-host pool: its single registered arena shrinks while its lane
+resources remain fixed. All measured device reservations and the saved physical
+allowance are retained conservatively; no cost is scaled down or remeasured.
+The default capacity is the selected worker's joint spill peak plus 5%, capped
+by that budget. This does not change the saved placement, schedule or simulation.
+
+Extension pools require exact measured capacity by default. A backend may
+override `SpillPool.accepts_memory_profile_capacity(measured_capacity)` only when
+its implementation guarantees that the measured resource reservation covers the
+requested capacity. Pool configuration and implementation checks still apply.
+Larger capacities are not covered by built-in pinned-host measurements.
+
+GPU UUID, hostname
 and driver version are retained as measurement provenance, not compatibility
 requirements: a saved Plan can run on another equivalent GPU or host without
 recalibrating, rebuilding or profiling again. `validate_worker` checks this

@@ -133,6 +133,7 @@ def test_saved_plan_executes_without_build_or_measurement(
     expected = oracle(model, examples, oracle_kind)
     expected["check_task_streams"] = variant == "streams"
     expected["reject_overbudget"] = kind == "forward"
+    expected["default_spill"] = kind == "backward_resume"
     torch.save(expected, tmp_path / "oracle.pt")
     worker = subprocess.run(
         [

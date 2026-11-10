@@ -97,6 +97,7 @@ def test_worker_passes_external_floor_to_pool_without_changing_plan(monkeypatch)
         simulation_only_reasons=(),
         program=SimpleNamespace(devices=("cuda_0",), setup=identity),
         memory_budgets=SimpleNamespace(execution_bytes=8 << 30, spill_bytes=64 << 20),
+        timeline=SimpleNamespace(spill_peak_bytes=16 << 20),
         communication_info=SimpleNamespace(metadata={}),
     )
     setup.open_worker(plan, 0, 512 << 20, external_baseline_bytes=900 << 20)

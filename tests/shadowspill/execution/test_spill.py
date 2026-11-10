@@ -108,6 +108,7 @@ def test_invalid_spill_rejected_before_runtime_setup(tmp_path, monkeypatch, case
             devices=(0,), setup={"torch": torch.__version__}, bindings={}
         ),
         memory_budgets=SimpleNamespace(spill_bytes=64 << 20),
+        timeline=SimpleNamespace(spill_peak_bytes=16 << 20),
         communication_info=SimpleNamespace(metadata={}),
     )
     monkeypatch.setattr(setup, "require_compiled_device", lambda *args: None)

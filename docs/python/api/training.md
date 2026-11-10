@@ -39,8 +39,17 @@ either way.
 
 `spill=SSDPool(...)` or `spill=RemotePool(...)` selects storage when Trainer creates
 its Executor; a supplied Executor takes it at construction. Pinned-host storage
-is the default. Capacity must equal the Plan's spill budget, and its communication
-costs must describe the selected backend. Build/profile/planning open no spill pool.
+is the default. Its capacity is `min(ceil(1.05 * required_peak), spill_budget)`:
+the selected worker's peak plus 5%, capped by the planning budget. The requirement
+includes shared evaluation and gradient-accumulation paths and their persistent
+storage, not just the training Plan's individual peak. An otherwise unused pool
+has a one-byte logical minimum; the backend may round its physical registration
+to host pages. The saved Plan, schedule and planning budget are unchanged.
+
+An explicitly supplied pool retains its requested capacity. It must cover the
+worker's joint requirement and cannot exceed the Plan's spill budget; communication
+costs must describe its backend. Inspect `trainer.executor.spill_capacity_bytes`
+for the actual capacity. Build/profile/planning open no execution spill pool.
 See [SSD storage](ssd.md) for setup, bounded I/O and sharded transfers.
 
 ## Inputs, objectives and results

@@ -18,6 +18,8 @@ forbid_preparation(
 )
 from qualification.runtime_evidence import adapter_statistics  # noqa: E402
 from shadowspill import Executor, load_checkpoint, save_checkpoint  # noqa: E402
+from shadowspill.memory import PinnedHostPool  # noqa: E402
+from shadowspill.planning.shared import shared_memory  # noqa: E402
 from shadowspill.runtime.occupancy import plan_slices  # noqa: E402
 from tests.shadowspill.execution._stream_checks import StreamChecks  # noqa: E402
 from tests.shadowspill.execution._trace_checks import check_trace  # noqa: E402
@@ -107,12 +109,22 @@ if "bf16_reduction" in oracle:
         "bf16_reduction"
     ]
 
+spill = spill_pool(plan.memory_budgets.spill_bytes)
+if oracle.get("default_spill") and type(spill) is PinnedHostPool:
+    spill = None
 executor = Executor(
     plan,
     parameter_norms=bool(norms),
-    spill=spill_pool(plan.memory_budgets.spill_bytes),
+    spill=spill,
     reject_overbudget=oracle.get("reject_overbudget", False),
 )
+if spill is None:
+    assert plan._accumulation_plan is not None
+    joint = shared_memory(plan, {})
+    assert executor.spill_capacity_bytes == min(
+        plan.memory_budgets.spill_bytes, max(1, (joint.spill_bytes * 21 + 19) // 20)
+    )
+    assert executor.spill_capacity_bytes < plan.memory_budgets.spill_bytes
 annotations_enabled = executor._paths[
     0
 ].bridge.runtime_library.shadowspill_profiler_annotations_enabled

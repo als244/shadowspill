@@ -44,7 +44,8 @@ def run(directory):
                 trainer.initialize(initialize)
         print(
             f"rank {group.logical_rank}: initialized in "
-            f"{time.monotonic() - started:.1f}s",
+            f"{time.monotonic() - started:.1f}s; "
+            f"spill pool {trainer.executor.spill_capacity_bytes / (1 << 30):.3f} GiB",
             flush=True,
         )
         source = definition.inputs(options, rank=group.logical_rank)
@@ -122,7 +123,13 @@ def run(directory):
         finish = getattr(definition, "finish", None)
         if finish is not None:
             finish(root, options, records, rank=group.logical_rank)
-        per_rank = group.gather(dict(rank=group.logical_rank, steps=records))
+        per_rank = group.gather(
+            dict(
+                rank=group.logical_rank,
+                steps=records,
+                spill_capacity_bytes=trainer.executor.spill_capacity_bytes,
+            )
+        )
         if group.rank == 0:
             (root / "completed.json").write_text(
                 json.dumps(

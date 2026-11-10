@@ -51,7 +51,10 @@ def test_within_budget_does_not_query_extra_memory():
 
 
 @pytest.mark.parametrize("calibrated", [False, True])
-def test_a_worker_reports_overruns_unless_told_to_reject(monkeypatch, calibrated):
+@pytest.mark.parametrize("capacity", [None, 128 << 20, 1 << 30])
+def test_a_worker_reports_overruns_unless_told_to_reject(
+    monkeypatch, calibrated, capacity
+):
     import torch
 
     from shadowspill import PoolMemoryProfile
@@ -59,11 +62,12 @@ def test_a_worker_reports_overruns_unless_told_to_reject(monkeypatch, calibrated
     from shadowspill.memory import PinnedHostPool
     from shadowspill.profiling import pool_identity
 
-    seen = []
+    seen, spill_sizes = [], []
 
     class Runtime:
         def __init__(self, *, frontend, pools, routes, calibrate):
             seen.append(pools["execution"])
+            spill_sizes.append(pools["spill"].capacity)
 
         def close(self):
             pass
@@ -110,10 +114,16 @@ def test_a_worker_reports_overruns_unless_told_to_reject(monkeypatch, calibrated
         simulation_only_reasons=(),
         program=SimpleNamespace(devices=("cuda_0",), setup=identity),
         memory_budgets=SimpleNamespace(execution_bytes=8 << 30, spill_bytes=1 << 30),
+        timeline=SimpleNamespace(spill_peak_bytes=64 << 20),
         communication_info=SimpleNamespace(metadata={}),
     )
-    setup.open_worker(plan, 0, 512 << 20, spill)
-    setup.open_worker(plan, 0, 512 << 20, spill, True)
+    supplied = None if capacity is None else PinnedHostPool(capacity)
+    setup.open_worker(plan, 0, 512 << 20, supplied)
+    setup.open_worker(plan, 0, 512 << 20, supplied, True)
+    assert spill_sizes == [
+        capacity if capacity is not None else ((64 << 20) * 21 + 19) // 20
+    ] * 2
+    assert Evidence.pool["capacity"] == 1 << 30
     assert [pool.reject_overbudget for pool in seen] == [False, True]
     assert all(pool.external_headroom == 512 << 20 for pool in seen)
     assert all(pool.physical_capacity == 8 << 30 for pool in seen)

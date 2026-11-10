@@ -132,7 +132,13 @@ allowance already includes the observed global pool-registration charge.
 See [pool calibration](../../docs/python/api/pool-memory.md).
 
 Execution loads the selected Plans, initializes their buffers using bounded
-adapter callbacks, and calls the ordinary `Trainer`. `checkpoint_every`,
+adapter callbacks, and calls the ordinary `Trainer`. The default pinned spill
+pool reserves the selected worker's required peak plus 5%, capped by `spill_gib`;
+the configured spill budget remains the search ceiling. Joint training/evaluation
+and accumulation storage is included. The actual per-rank `spill_capacity_bytes`
+is printed at initialization and recorded in `completed.json`. See
+[execution memory](../../docs/python/api/training.md) for explicit pool sizing.
+`checkpoint_every`,
 `keep_last` and `resume` control checkpoints. A distributed resume path may
 contain `{rank}`. `steps` is the total desired update count, including restored
 updates; keep `schedule_steps` fixed across a continuation.

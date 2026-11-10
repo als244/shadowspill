@@ -87,6 +87,11 @@ class Executor:
         )
 
     @property
+    def spill_capacity_bytes(self) -> int:
+        """Actual worker spill capacity, which may be below the planning budget."""
+        return self.runtime.pools["spill"].capacity
+
+    @property
     def logical_rank(self) -> int:
         """This worker's identity in the saved Plan, independent of launcher rank."""
         return 0 if self._distributed is None else self._distributed.groups.logical_rank
