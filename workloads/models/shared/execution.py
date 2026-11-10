@@ -112,22 +112,16 @@ class TextExecutionBoundaries:
         assigned = IsolateOperations(targets, base="whole").assign_stages(
             graph_module, module
         )
-        # Complete parameter reductions meeting across regions run once, outside
-        # token loops. An activation adjoint still carries a token dimension.
-        previous, index, adjoints, result = None, -1, set(), {}
+        # Joins of shared values and completed reductions run once, outside
+        # token loops. This covers both parameter adjoints and forward loss /
+        # metric combinations. Token-valued joins still carry their axis.
+        previous, index, result = None, -1, {}
         for node in graph_module.graph.nodes:
-            provenance = node.meta.get("execution_provenance")
-            if (
-                provenance is not None
-                and provenance.role in (TaskInputRole.TANGENT, TaskInputRole.GRADIENT)
-            ) or any(parent in adjoints for parent in node.all_input_nodes):
-                adjoints.add(node)
             if node.name not in assigned:
                 continue
             value = node.meta.get("val")
             shared = (
-                node in adjoints
-                and str(node.target)
+                str(node.target)
                 in ("aten.add.Tensor", "aten.sub.Tensor", "aten.cat.default")
                 and hasattr(value, "shape")
                 and not any(

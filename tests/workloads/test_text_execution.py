@@ -5,12 +5,47 @@ import torch
 from torch.fx.experimental.proxy_tensor import make_fx
 
 from shadowspill.pytorch.capture.aot import capture_graph_pair
-from shadowspill.pytorch.capture.artifacts import TaskInputProvenance
+from shadowspill.pytorch.capture.artifacts import GraphArtifact, TaskInputProvenance
 from shadowspill.pytorch.capture.gradients import accumulate_gradient_outputs
 from shadowspill.pytorch.chunking.regions import region_artifact
 from shadowspill.task.inputs import TaskInputRole
 from tests.shadowspill.pytorch.chunking.test_composition import executable
 from workloads.models.shared.execution import text_execution_chunks
+
+
+@pytest.mark.parametrize("batch", [1, 2])
+def test_forward_loss_joins_completed_token_reduction_once(batch):
+    # Evaluation combines a complete head loss with auxiliary * valid tokens.
+    # A shared loss inside the token loop would be counted once per chunk.
+    targets = torch.arange(batch * 17).reshape(batch, 17)
+    targets[:, 3::5] = -100
+    inputs = (targets, torch.tensor(2.5), torch.tensor(7.0))
+
+    def loss(targets, auxiliary, head):
+        return (head + 0.001 * auxiliary * targets.ne(-100).sum()) / (batch * 17)
+
+    artifact = GraphArtifact.capture(
+        kind="inference",
+        graph_module=make_fx(loss)(*inputs),
+        example_inputs=inputs,
+    )
+    policy = text_execution_chunks(
+        sequence_length=17,
+        batch_size=batch,
+        chunk_size=8,
+        expert_chunk_size=16,
+        rules=(),
+        expert_targets=(),
+    )
+    result = region_artifact(artifact, policy, stage_id="loss", variant=None)
+    assert any(child.chunking for child in result.regions.children)
+    joins = [
+        child
+        for child in result.regions.children
+        if "aten.add.Tensor" in child.operator_targets
+    ]
+    assert len(joins) == 1 and joins[0].chunking is None
+    torch.testing.assert_close(executable(result)(*inputs), (loss(*inputs),))
 
 
 def test_token_position_controls_are_sliced_but_rotary_tables_are_shared():
