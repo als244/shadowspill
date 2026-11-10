@@ -93,6 +93,17 @@ offset, preserving permutation order needed by captured views. Full and tail
 child graphs are specialized for their actual
 geometry; compatible child contracts share compilation.
 
+During a build, identical resolved leaf transforms and semantic storage contracts
+also share bounded caches. Keys include explicit graph semantics, dispatcher
+schemas, tensor geometry, input aliases/backing sizes, roles, axis/rule contracts
+and gradient accumulation settings. Storage producer names bind to the current
+graph. Parent inputs and source provenance remain occurrence-specific. Partition,
+lifetime and chunk-policy callbacks still resolve every execution-region
+occurrence, including nested regions; callbacks themselves are not cached.
+Unsupported representations use the uncached path. Both caches are discarded
+when the build completes or fails. This avoids repeated fake evaluation without
+changing saved-state cuts, executable identity or measured physical admission.
+
 Built-in rules accept supported elementwise operations, feature reductions,
 views and matrix products. A shared parameter gradient is a sum of chunk VJPs.
 Sliced outputs concatenate into the full boundary geometry. Unknown operations,

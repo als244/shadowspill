@@ -29,6 +29,7 @@ from .contract import materialized_storage
 from .geometry import ChunkAxis, ChunkTask, Layout, LocalLayout
 from .policy import AxisChunks
 from .rules import infer
+from .transform_cache import current_transform_cache, transform_key
 
 
 class _Values(Interpreter):
@@ -55,6 +56,48 @@ def chunk_artifact(
     variant: str | None = None,
 ) -> GraphArtifact:
     """Build reusable chunk graphs without differentiating an outer loop."""
+    cache = current_transform_cache.get()
+    key = None
+    if cache is not None:
+        key = transform_key(
+            artifact,
+            inputs,
+            rows,
+            config,
+            fuse_narrow_gradient_accumulation,
+            gradient_destination_rules,
+        )
+        previous = cache.get(key, artifact)
+        if previous is not None:
+            return previous
+    result = _chunk_artifact(
+        artifact,
+        inputs,
+        rows,
+        config,
+        fuse_narrow_gradient_accumulation=fuse_narrow_gradient_accumulation,
+        gradient_destination_rules=gradient_destination_rules,
+        stage_id=stage_id,
+        checkpoint_stage_id=checkpoint_stage_id,
+        variant=variant,
+    )
+    if cache is not None:
+        cache.put(key, result)
+    return result
+
+
+def _chunk_artifact(
+    artifact: GraphArtifact,
+    inputs: tuple[Layout, ...],
+    rows: int,
+    config: AxisChunks,
+    *,
+    fuse_narrow_gradient_accumulation: bool,
+    gradient_destination_rules: Sequence[GradientDestinationRule],
+    stage_id: str,
+    checkpoint_stage_id: str | None,
+    variant: str | None,
+) -> GraphArtifact:
     if len(inputs) != artifact.argument_count:
         raise CaptureError("chunk input mapping differs from task argument count")
     if artifact.input_components and any(

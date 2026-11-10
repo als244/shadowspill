@@ -22,6 +22,7 @@ from shadowspill.task.storage import (
     TaskStorageContract,
 )
 
+from .cache import current_storage_cache, graph_input_key
 from .roots import _FreshRoot, _InputRoot, _SemanticRoot
 from .symbolic import (
     _canonical_input_positions,
@@ -78,6 +79,14 @@ def capture_task_storage_contract(
     """
 
     _reject_tensor_getattrs(graph_module)
+    cache = current_storage_cache.get()
+    key = None
+    if cache is not None:
+        semantic = graph_input_key(graph_module, example_inputs)
+        key = (semantic, explicit_mutations) if semantic is not None else None
+        previous = cache.get(key, graph_module)
+        if previous is not None:
+            return previous
     leaves, values = _task_output_values(graph_module, example_inputs)
     canonical_inputs, placeholder_positions = _input_positions(
         graph_module, example_inputs
@@ -99,11 +108,14 @@ def capture_task_storage_contract(
         output_views,
         catalog.roots,
     )
-    return TaskStorageContract.build(
+    contract = TaskStorageContract.build(
         catalog.roots,
         output_views,
         (*schema_mutations, *mutation_bindings),
     )
+    if cache is not None:
+        cache.put(key, graph_module, contract)
+    return contract
 
 
 def _task_output_values(

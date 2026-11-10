@@ -18,8 +18,8 @@ from shadowspill.pytorch.chunking import (
 )
 from shadowspill.pytorch.chunking.geometry import Layout
 from shadowspill.pytorch.chunking.inputs import resolve_input_axes
-from shadowspill.pytorch.chunking.lifetime_cache import lifetime_analysis_scope
 from shadowspill.pytorch.chunking.transform import chunk_artifact
+from shadowspill.pytorch.chunking.transform_cache import execution_analysis_scope
 from shadowspill.pytorch.partition.artifacts import StageExample
 from shadowspill.task.inputs import TaskInputRole
 
@@ -60,7 +60,7 @@ def stage_config(
     return result
 
 
-@lifetime_analysis_scope()
+@execution_analysis_scope()
 def chunk_training(
     captured: TrainingCapture,
     policy: ChunkPolicy | ChunkRegions,
@@ -208,7 +208,7 @@ def chunk_training(
     return replace(captured, examples=tuple(examples))
 
 
-@lifetime_analysis_scope()
+@execution_analysis_scope()
 def chunk_forward(
     captured: ForwardCapture, policy: ChunkPolicy | ChunkRegions
 ) -> ForwardCapture:

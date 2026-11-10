@@ -18,80 +18,13 @@ from dataclasses import dataclass, replace
 from types import MappingProxyType
 from typing import TYPE_CHECKING, Any
 
-import torch
-from torch._subclasses.fake_tensor import FakeTensor
 from torch.fx import GraphModule, Node
-from torch.fx.immutable_collections import immutable_dict, immutable_list
 
-from shadowspill.pytorch.capture.live_storage import live_storage_identity
+from shadowspill.pytorch.capture.structural_key import graph_input_key
 from shadowspill.task.storage import TaskStorageContract
 
 if TYPE_CHECKING:
     from .lifetime_analysis import LifetimeGraph
-
-
-class _Uncacheable(Exception):
-    pass
-
-
-_MISSING = object()
-
-
-def _value_key(value: Any, nodes: Mapping[Node, int], *, tensors: bool) -> Any:
-    if isinstance(value, Node):
-        return (Node, nodes[value])
-    if isinstance(value, torch.Tensor):
-        if not tensors or type(value) not in (
-            torch.Tensor,
-            torch.nn.Parameter,
-            FakeTensor,
-        ):
-            raise _Uncacheable
-        if value.layout is not torch.strided:
-            raise _Uncacheable
-        shape, stride, offset = (
-            tuple(value.shape),
-            tuple(value.stride()),
-            value.storage_offset(),
-        )
-        if any(type(item) is not int for item in (*shape, *stride, offset)):
-            raise _Uncacheable
-        return (
-            torch.Tensor,
-            shape,
-            stride,
-            offset,
-            value.dtype,
-            value.device,
-            value.requires_grad,
-            value.is_conj(),
-            value.is_neg(),
-        )
-    if value is _MISSING:
-        return _MISSING
-    if value is None or type(value) in (bool, int, str):
-        return (type(value), value)
-    if type(value) is float:
-        return (float, value.hex())
-    if type(value) in (tuple, list, immutable_list):
-        return (
-            tuple if isinstance(value, tuple) else list,
-            tuple(_value_key(v, nodes, tensors=tensors) for v in value),
-        )
-    if type(value) in (dict, immutable_dict):
-        return (
-            dict,
-            tuple(
-                (
-                    _value_key(k, nodes, tensors=False),
-                    _value_key(v, nodes, tensors=tensors),
-                )
-                for k, v in value.items()
-            ),
-        )
-    if type(value) in (torch.dtype, torch.device, torch.layout, torch.memory_format):
-        return (type(value), value)
-    raise _Uncacheable
 
 
 def analysis_key(
@@ -100,41 +33,16 @@ def analysis_key(
     fences: Mapping[Node, str],
     readonly: Mapping[str, str],
 ) -> tuple[Any, ...] | None:
-    """Return a conservative in-process key; never identify real tensor values."""
-    nodes = {node: index for index, node in enumerate(graph.graph.nodes)}
-    aliases: dict[int, int] = {}
-    arguments = []
-    try:
-        for value in inputs:
-            # The alias catalog below covers flat tensor arguments. Containers
-            # may carry other literals, but hidden tensor aliases need a richer
-            # input contract before their analysis can be reused.
-            item = _value_key(value, nodes, tensors=isinstance(value, torch.Tensor))
-            storage_key = None
-            if isinstance(value, torch.Tensor):
-                size = value.untyped_storage().nbytes()
-                if type(size) is not int:
-                    raise _Uncacheable
-                storage_key = (
-                    aliases.setdefault(live_storage_identity(value), len(aliases)),
-                    size,
-                )
-            arguments.append((item, storage_key))
-        operations = tuple(
-            (
-                node.op,
-                node.target if node.op == "call_function" else None,
-                str(getattr(node.target, "_schema", "")),
-                _value_key(node.args, nodes, tensors=False),
-                _value_key(node.kwargs, nodes, tensors=False),
-                _value_key(node.meta.get("val", _MISSING), nodes, tensors=True),
-                fences.get(node),
-            )
-            for node in nodes
+    key = graph_input_key(graph, inputs)
+    return (
+        (
+            key,
+            tuple(fences.get(n) for n in graph.graph.nodes),
+            tuple(sorted(readonly.items())),
         )
-    except _Uncacheable:
-        return None
-    return operations, tuple(arguments), tuple(sorted(readonly.items()))
+        if key is not None
+        else None
+    )
 
 
 @dataclass(frozen=True)
