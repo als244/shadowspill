@@ -14,6 +14,9 @@ policies.
   nested data and explicit microbatch weighting.
 - [Benchmark quickstart](../benchmarking/quickstart.md): search, execution,
   tracing and plots for a supplied experiment.
+- [Shared Python recipes](../workloads/recipes/README.md): `Model`, `LoRA` and
+  `train` with explicit microbatch/chunk/retention candidates for Qwen35, GLM and
+  Qwen3 MoE. Includes short scripts and DP/EP preparation requirements.
 - [Qwen3.5 MoE LoRA](qwen35_lora.md): bounded HF initialization, independent
   phases, batch/ordering selection, held-out evaluation and frozen-base resume.
 

@@ -75,8 +75,8 @@ See the [training guide](training/README.md).
 
 ## Real model training
 
-Use these model/input sketches with the phases above. Linked recipes include
-real text preparation and loading; optimizer setup is abbreviated.
+The [shared Python runner](workloads/recipes/README.md) accepts a model source and
+readable configuration. Linked recipes include data, search and training setup.
 
 <details>
 <summary><strong>Llama 3 8B — full training</strong></summary>
@@ -118,16 +118,15 @@ program = ss.build_step(model, optimizer=optimizer, objective=next_token_loss,
 <summary><strong>Qwen3.5-35B-A3B — LoRA at 32K</strong></summary>
 
 ```python
-from workloads.models.catalog import build_on_meta
+from workloads.recipes import LoRA, Model, train
 
-model = build_on_meta("qwen35moe-35b-a3b", dtype="bfloat16", max_seq_len=32768,
-                      lora={"rank": 32, "alpha": 32})
-# Eight examples of 1 × 32K tokens; load the frozen checkpoint and initialize adapters.
-program = ss.build_step(model, optimizer=optimizer, objective=next_token_loss,
-                        example_args=(tokens, targets), num_examples=8)
+model = Model.from_checkpoint(checkpoint_path, lora=LoRA(rank=32, alpha=32))
+# The commented script supplies data, candidate lists and memory budgets.
+train(model, config)
 ```
 
-[Complete recipe](workloads/recipes/text/train_qwen35_lora.py)
+[Commented training script](workloads/recipes/text/qwen35_lora/example.py) ·
+[Recipe and search controls](workloads/recipes/text/qwen35_lora/README.md)
 
 </details>
 

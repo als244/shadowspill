@@ -1,20 +1,27 @@
 # Qwen3.5 MoE LoRA through saved phases
 
-The [recipe](../workloads/recipes/text/train_qwen35_lora.py) defaults to 32K-token
+The [Python recipe](../workloads/recipes/text/qwen35_lora/example.py) defaults to 32K-token
 sequences, eight sequences per update, rank/alpha 32, BF16 compute weights and
 FP32 adapter masters, gradients and Adam moments. It loads a local Hugging Face
 base and uses prepared `train.bin`, `val.bin` and `meta.json` token files.
 
-```bash
-python -m workloads.recipes.text.train_qwen35_lora \
-  --data /path/to/tokenized-corpus \
-  --checkpoint /path/to/Qwen3.5-35B-A3B \
-  --frozen-state-id qwen-base-revision-and-config \
-  --run-dir runs/qwen35-lora
+```python
+from workloads.recipes import LoRA, Model, train
+
+model = Model.from_checkpoint("/checkpoints/Qwen3.5-35B-A3B", lora=LoRA())
+train(model, {
+    "data": "/data/tokenized-corpus",
+    "frozen_state_id": "qwen-base-revision-and-config",
+    "run_dir": "runs/qwen35-lora",
+    "microbatch_sizes": [1, 2, 4, 8],
+})
 ```
 
 Each phase runs in a fresh process. Build constructs one training Program and
-one evaluation Program for every divisor of the sequence count. Profiling uses
+one evaluation Program for every explicitly requested microbatch size, crossed
+with any chunk and retention candidates. Each size must divide the sequence
+count. See [search controls](../workloads/recipes/README.md#search-and-saved-phases).
+Profiling uses
 the ordinary PyTorch allocator. CPU planning compares batch sizes and depth /
 breadth orderings, including joint memory admission for training and evaluation.
 Execution loads only the chosen Plans and initializes Executor-provided buffers.
@@ -25,12 +32,12 @@ sequence geometry fits. Use `--execution-gib` and `--spill-gib` to change them.
 
 Phases can also run separately. Later phases read the saved configuration:
 
-```bash
-# Start with the base/data arguments above and --phase build, then:
-python -m workloads.recipes.text.train_qwen35_lora --run-dir runs/qwen35-lora --phase profile
-CUDA_VISIBLE_DEVICES='' python -m workloads.recipes.text.train_qwen35_lora \
-  --run-dir runs/qwen35-lora --phase plan --execution-gib 40
-python -m workloads.recipes.text.train_qwen35_lora --run-dir runs/qwen35-lora --phase execute
+```python
+# Start with the configuration above and phase="build", then:
+saved = {"run_dir": "runs/qwen35-lora"}
+train(model, saved, phase="profile")
+train(model, {**saved, "execution_gib": 40}, phase="plan")
+train(model, saved, phase="execute")
 ```
 
 | Output | Contents |
@@ -52,9 +59,11 @@ base identity. They retain buffers, trainable compute weights, FP32 masters,
 optimizer tensors, data position and RNG state. Resume supplies the same base
 through the bounded loader; no full-model snapshot is created:
 
-```bash
-python -m workloads.recipes.text.train_qwen35_lora --run-dir runs/qwen35-lora \
-  --phase execute --resume runs/qwen35-lora/training/checkpoints/step_00000002.ssp
+```python
+train(model, {
+    **saved,
+    "resume": "runs/qwen35-lora/training/checkpoints/step_00000002.ssp",
+}, phase="execute")
 ```
 
 The loader preserves checkpoint values, copies transformed projections directly

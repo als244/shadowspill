@@ -101,11 +101,20 @@ def _readers(path: Path) -> list[Path]:
 
     recipe_packages = {
         ROOT / "workloads/recipes/text/train_llama3.py": ("llama3",),
-        ROOT / "workloads/recipes/text/train_qwen3_distributed.py": ("qwen3",),
-        ROOT / "workloads/recipes/text/train_qwen35_lora.py": ("qwen35_lora", "phases"),
+        ROOT / "workloads/recipes/text/qwen3/arguments.py": (
+            ".",
+            "../phases",
+            "../../training",
+        ),
+        ROOT / "workloads/recipes/text/qwen35_lora/arguments.py": (
+            ".",
+            "../phases",
+            "../../training",
+        ),
         ROOT / "workloads/recipes/text/glm53_flash_lora/arguments.py": (
             ".",
             "../phases",
+            "../../training",
         ),
         ROOT / "workloads/recipes/distributed_training.py": ("regression",),
     }
