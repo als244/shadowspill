@@ -2,7 +2,7 @@
 
 from functools import partial
 
-from shadowspill import Program, apply_profiles, measure_program
+from shadowspill import Program, TaskProfileCache, apply_profiles, measure_program
 
 from .candidates import attempt
 from .common import paths, write
@@ -24,6 +24,7 @@ def _profile(request, root, index, group):
         "warmup_seconds": request["warmup_seconds"],
         "measure_seconds": request["measure_seconds"],
     }
+    cache = TaskProfileCache(root / "cache")
     for entry in index["candidates"]:
         if "failure" in entry:
             continue
@@ -35,6 +36,7 @@ def _profile(request, root, index, group):
             device=request["device"],
             rank_map=group.rank_map if group.count > 1 else None,
             external_headroom_bytes=request["external_headroom_bytes"],
+            cache=cache,
             **timing,
         )
         profiles = (

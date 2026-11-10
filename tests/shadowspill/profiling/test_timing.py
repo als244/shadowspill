@@ -69,7 +69,7 @@ def test_default_sampling_bounds_long_tasks_and_still_sustains_short_tasks() -> 
     options = ProfilingOptions()
     long = Clock(device_ns=4_000_000_000, wall_ns=4_000_000_000)
     measured = collect_timing_samples(long.sample, options=options, clock=long)
-    assert measured.window == TimingWindow(20_000_000_000, 20_000_000_000, 5, True)
+    assert measured.window == TimingWindow(12_000_000_000, 12_000_000_000, 3, True)
     assert not measured.unstable(options)
 
     short = Clock(device_ns=1_000_000, wall_ns=1_000_000)

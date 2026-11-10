@@ -22,6 +22,7 @@ class AllocationObservation:
     input_bindings: tuple[TaskOutputInputBinding, ...]
     persistent_bytes: tuple[int, ...]
     off_device_outputs: tuple[int, ...]
+    phase_timings_ns: tuple[tuple[str, int], ...] = ()
 
     @property
     def workspace_bytes(self) -> int:

@@ -6,7 +6,13 @@ from pathlib import Path
 import pytest
 import torch
 
-from shadowspill import Profiles, Program, apply_profiles, measure_program
+from shadowspill import (
+    Profiles,
+    Program,
+    TaskProfileCache,
+    apply_profiles,
+    measure_program,
+)
 from shadowspill.build import build_forward_backward, build_step
 from tests.shadowspill.build.test_training import Network, objective
 
@@ -15,7 +21,7 @@ from tests.shadowspill.build.test_training import Network, objective
 @pytest.mark.parametrize("with_optimizer", [False, True])
 @pytest.mark.fresh_process
 def test_saved_training_program_measurement_without_runtime_pools(
-    tmp_path, with_optimizer
+    tmp_path, with_optimizer, monkeypatch
 ):
     if not torch.cuda.is_available():
         pytest.skip("needs CUDA")
@@ -38,7 +44,12 @@ def test_saved_training_program_measurement_without_runtime_pools(
     program.save(tmp_path / "program.ssp")
     program = Program.load(tmp_path / "program.ssp")
     before = program.digest
-    profiles = measure_program(program, warmup_seconds=0.001, measure_seconds=0.003)
+    profiles = measure_program(
+        program,
+        warmup_seconds=0.001,
+        measure_seconds=0.003,
+        cache=TaskProfileCache(tmp_path / "cache"),
+    )
     assert set(profiles.tasks) == {
         item.profile_key for item in program.task_definitions
     }
@@ -55,11 +66,50 @@ def test_saved_training_program_measurement_without_runtime_pools(
     )
     profiled = apply_profiles(program, profiles)
     assert not profiled.estimated_memory
+    eligible = {
+        key
+        for key, profile in profiles.tasks.items()
+        if key != "invocation_start"
+        and not sum(profile.metadata["warmup_persistent_bytes"])
+    }
+    from shadowspill.profiling import session
+
+    actual_measure = session.measure_task
+    measured = []
+
+    def count_measurements(*args, **kwargs):
+        measured.append(True)
+        return actual_measure(*args, **kwargs)
+
+    with monkeypatch.context() as patch:
+        patch.setattr(session, "measure_task", count_measurements)
+        replay = measure_program(
+            program,
+            warmup_seconds=0.001,
+            measure_seconds=0.003,
+            external_headroom_bytes=(512 << 20) + 4096,
+            cache=TaskProfileCache(tmp_path / "cache"),
+        )
+    assert eligible and set(replay.metadata["task_cache"]["hits"]) == eligible
+    assert len(measured) == len(replay.metadata["task_cache"]["misses"])
+    assert replay.metadata["external_headroom_bytes"] == (512 << 20) + 4096
+    assert replay.fixed_device_bytes == (
+        replay.metadata["external_device_bytes"]
+        + replay.metadata["retained_device_bytes"]
+        + replay.metadata["external_headroom_bytes"]
+    )
+    assert not apply_profiles(program, replay).estimated_memory
     for key, profile in profiles.tasks.items():
         if key != "invocation_start":
             assert profile.duration_seconds > 0
             assert profile.metadata["allocation_contract"]
             assert profile.metadata["compiled_layout"]
+            assert (
+                sum(profile.metadata["phase_timings_ns"].values())
+                == (profile.metadata["profiling_wall_ns"])
+            )
+            assert len(profile.metadata["allocation_observation_timings_ns"]) == 4
+            assert profile.metadata["profiling_options"]["minimum_samples"] == 3
     subset = measure_program(
         program, stages=[0], warmup_seconds=0, measure_seconds=0.001
     )

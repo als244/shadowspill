@@ -1,8 +1,11 @@
 """One profiling session: restore finalized tasks and measure paired executions."""
 
+from __future__ import annotations
+
+import os
 from collections.abc import Mapping, Sequence
 from dataclasses import replace
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import torch
 from torch.utils._pytree import tree_flatten
@@ -21,10 +24,15 @@ from shadowspill.pytorch.numerics import (
 )
 from shadowspill.pytorch.task_errors import task_error
 from shadowspill.pytorch.task_inputs import prepare_inputs
+from shadowspill.task.profiling import ProfilingOptions
 
+from .cache_identity import task_identities
 from .device_memory import external_device_bytes
 from .streams import MeasurementStreams
 from .task import measure_task
+
+if TYPE_CHECKING:
+    from .cache import TaskProfileCache
 
 
 class MeasurementSession:
@@ -38,6 +46,7 @@ class MeasurementSession:
         *,
         groups: GroupBindings | None = None,
         preparations: LoadedPreparations | None = None,
+        cache: TaskProfileCache | None = None,
     ):
         validate_numerical_settings(
             program_numerical_contracts(program),
@@ -53,6 +62,89 @@ class MeasurementSession:
         self.streams = MeasurementStreams(program, device)
         self.persistent = self.streams.retained_bytes
         self.external = external_device_bytes(device)
+        self.cache = cache
+        self.cache_allowed = not inputs
+        self.cache_identities: dict[str, dict[str, Any]] = {}
+        self.cache_hits: list[str] = []
+        self.cache_misses: list[str] = []
+
+    def reuse(self, jobs: Sequence[Mapping[str, Any]]) -> None:
+        """All participants agree on hits before any task enters a collective."""
+        enabled = self.cache is not None and self.cache_allowed
+        votes = [enabled] if self.groups is None else self.groups.gather(enabled)
+        if not all(votes):
+            error = (
+                "required task cache is unavailable or explicit inputs disable reuse"
+                if self.cache is not None and self.cache.policy.require_hit
+                else None
+            )
+            if self.groups is not None:
+                self.groups.check(error)
+            if error is not None:
+                raise ValueError(error)
+            self.cache = None
+            return
+        if self.cache is None:
+            return
+        options = ProfilingOptions(
+            conditioning_seconds=self.warmup, measurement_seconds=self.measurement
+        )
+        self.cache_identities = task_identities(
+            self.program,
+            jobs,
+            options=options,
+            environment={
+                "allocator_config": os.environ.get(
+                    "PYTORCH_ALLOC_CONF", os.environ.get("PYTORCH_CUDA_ALLOC_CONF")
+                ),
+                "streams": self.streams.description,
+                "rank_assignment": None
+                if self.groups is None
+                else self.groups.assignment.logical_by_worker,
+                "logical_rank": None
+                if self.groups is None
+                else self.groups.logical_rank,
+                "topology": None if self.groups is None else self.groups.topology,
+            },
+        )
+        hits, error = {}, None
+        try:
+            for key, identity in self.cache_identities.items():
+                if (
+                    record := self.cache.get(
+                        identity,
+                        self.program.bindings["manifests"][key],
+                        minimum_samples=options.minimum_samples,
+                    )
+                ) is not None:
+                    hits[key] = record
+        except Exception as failure:
+            error = str(failure)
+        if self.groups is not None:
+            self.groups.check(error)
+        if error is not None:
+            raise ValueError(error)
+        accepted = set(hits)
+        if self.groups is not None:
+            accepted.intersection_update(*map(set, self.groups.gather(sorted(hits))))
+        self.cache_misses = sorted(self.cache_identities.keys() - accepted)
+        # Restore every reused function so its retained data is charged in this
+        # candidate, just as when measuring. Do not reuse aggregate fixed bytes.
+        try:
+            for key in self.cache_misses:
+                self.cache.policy.refuse_miss("task measurement", key)
+            for key in sorted(accepted):
+                self.function(key)
+                record = hits[key]
+                self.profiles.tasks[key] = record.profile
+                self.external = max(self.external or 0, record.external_device_bytes)
+                self.cache_hits.append(key)
+        except Exception as failure:
+            error = str(failure)
+        if self.groups is not None:
+            self.groups.check(error)
+        if error is not None:
+            raise ValueError(error)
 
     def function(self, key: str) -> Any:
         contracts = program_numerical_contracts(self.program, (key,))
@@ -105,6 +197,21 @@ class MeasurementSession:
         external = external_device_bytes(self.device)
         if external is not None:
             self.external = max(external, self.external or 0)
+        if self.cache is not None:
+            cache_error = None
+            try:
+                self.cache.put(
+                    self.cache_identities[key],
+                    self.program.bindings["manifests"][key],
+                    self.profiles.tasks[key],
+                    self.external,
+                )
+            except Exception as failure:
+                cache_error = str(failure)
+            if self.groups is not None:
+                self.groups.check(cache_error)
+            if cache_error is not None:
+                raise ValueError(cache_error)
 
     def pair(self, job: Mapping[str, Any]) -> None:
         forward, backward = job["forward"], job.get("backward")

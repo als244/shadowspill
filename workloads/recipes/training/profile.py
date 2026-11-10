@@ -3,14 +3,20 @@
 import sys
 
 from benchmarking.quickstart.phases.distributed import workers
-from shadowspill import Program, apply_profiles, measure_communication, measure_program
+from shadowspill import (
+    Program,
+    TaskProfileCache,
+    apply_profiles,
+    measure_communication,
+    measure_program,
+)
 from workloads.recipes.phases import settings
 
 from .candidates import attempt_candidate, available, program_paths
 from .profile_reuse import completed
 
 
-def profile_candidate(root, options, candidate, group, timing):
+def profile_candidate(root, options, candidate, group, timing, cache=None):
     for kind in ("training", "evaluation") if options["eval_every"] else ("training",):
         relative = f"{candidate['path']}/{kind}.ssp"
         print(f"profiling {relative}", flush=True)
@@ -21,6 +27,7 @@ def profile_candidate(root, options, candidate, group, timing):
                 program,
                 rank_map=group.rank_map if group.count > 1 else None,
                 external_headroom_bytes=options["external_headroom_mib"] << 20,
+                cache=cache,
                 **timing,
             )
             if group.rank == 0:
@@ -37,13 +44,17 @@ def run(directory):
     root, options = settings(directory)
     timing = {key: options[key] for key in ("warmup_seconds", "measure_seconds")}
     with workers({}, {"world_size": options["preparation_ranks"]}) as group:
+        cache = TaskProfileCache(
+            root / "cache",
+            mode="refresh" if options.get("refresh_profiles", False) else "contribute",
+        )
         for candidate in available(root, options):
             attempt_candidate(
                 root,
                 candidate,
                 "profile",
                 lambda candidate=candidate: profile_candidate(
-                    root, options, candidate, group, timing
+                    root, options, candidate, group, timing, cache
                 ),
                 group,
             )

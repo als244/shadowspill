@@ -1,8 +1,11 @@
 """Measure saved task implementations without build, planning or runtime pools."""
 
+from __future__ import annotations
+
 from collections.abc import Mapping, Sequence
 from contextlib import ExitStack
-from typing import Any
+from time import perf_counter_ns
+from typing import TYPE_CHECKING, Any
 
 import torch
 
@@ -19,6 +22,9 @@ from shadowspill.resources.preparation import prepare_resources
 
 from .session import MeasurementSession
 
+if TYPE_CHECKING:
+    from .cache import TaskProfileCache
+
 
 def measure_program(
     program: Program,
@@ -30,6 +36,7 @@ def measure_program(
     warmup_seconds: float = 0.05,
     measure_seconds: float = 0.18,
     external_headroom_bytes: int = 512 << 20,
+    cache: TaskProfileCache | None = None,
 ) -> Profiles:
     """Profile all unique forms, or the explicitly selected stage indices.
 
@@ -41,7 +48,11 @@ def measure_program(
     observed library/context memory. Executor inherits the saved headroom and
     mature process-external footprint when sizing its cold arena. Retained
     in-arena workspaces are charged separately and never enter that external floor.
+    A shared TaskProfileCache reuses compatible finalized task measurements;
+    supplying explicit inputs disables reuse. Candidate-wide fixed costs are
+    always measured afresh, and physical planning admission is still required.
     """
+    started = perf_counter_ns()
     nonnegative_int(external_headroom_bytes, "external_headroom_bytes")
     if program.bindings.get("provider") != "torch-inductor-aot":
         raise ValueError("Program has no supported finalized task implementation")
@@ -84,8 +95,13 @@ def measure_program(
             measure_seconds,
             groups=resources.groups,
             preparations=preparations,
+            cache=cache,
         )
         session.persistent += resources.retained_bytes + prepared_bytes
+        cache_started = perf_counter_ns()
+        session.reuse(jobs)
+        tasks_started = perf_counter_ns()
+        cache_wall_ns = tasks_started - cache_started
         for job in jobs:
             if "optimizer" in job or "gradient" in job:
                 component = job["optimizer"] if "optimizer" in job else job["gradient"]
@@ -99,6 +115,7 @@ def measure_program(
                     del arguments
             else:
                 session.pair(job)
+        tasks_finished = perf_counter_ns()
         for definition in program.task_definitions:
             if definition.profile_key == "invocation_start":
                 session.profiles.tasks[definition.profile_key] = TaskProfile(
@@ -112,6 +129,17 @@ def measure_program(
                 session.external + session.persistent + external_headroom_bytes
             )
         session.profiles.metadata = {
+            "profiling_phase_timings_ns": {
+                "validation_and_preparation": cache_started - started,
+                "cache_lookup_and_load": cache_wall_ns,
+                "task_loop": tasks_finished - tasks_started,
+            },
+            "task_cache": {
+                "enabled": session.cache is not None,
+                "hits": session.cache_hits,
+                "misses": session.cache_misses,
+                "lookup_and_load_wall_ns": cache_wall_ns,
+            },
             "memory_kind": "measured",
             "allocator": "native",
             "fixed_device_source": (

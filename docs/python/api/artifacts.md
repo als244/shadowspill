@@ -168,14 +168,17 @@ ordinary metadata. `fixed_device_bytes` accounts for retained context/provider
 memory and declared worker headroom. Measurement records allocation/lifetime
 contracts and output aliases in addition to peak sizes.
 
-Task timing takes at least five samples and continues until the requested device
+Task timing takes at least three samples and continues until the requested device
 time is covered and median variability/drift pass their thresholds, subject to
-the wall-time limit. The minimum count takes precedence over that limit: five
-four-second invocations still take twenty seconds. Short tasks typically need
+the wall-time limit. The minimum count takes precedence over that limit: three
+four-second invocations still take twelve seconds. Short tasks typically need
 many more samples to cover the duration target. Allocation validation separately
 observes one cold invocation and three warmed invocations; reducing the timing
 minimum does not remove those checks. Profiles retain actual sample counts,
-durations and stability diagnostics.
+durations and stability diagnostics. Task metadata also separates wall time for
+cold observation, conditioning, warmed observations, validation, timing and
+layout reconciliation. Each allocation observation reports execution/collection,
+decoding and initial synchronization time.
 
 ```python
 from shadowspill import Profiles, TaskProfile
@@ -194,6 +197,46 @@ simulation only. Timing estimates can reuse complete measured memory evidence.
 `apply_profiles` requires every compute task's duration and unresolved memory;
 it never silently fills missing values. Framework collective costs and resources
 come separately from `CommunicationInfo` during planning.
+
+`TaskProfileCache` shares compatible task measurements across candidates and
+processes. The recipe runner and quickstart each create one automatically under
+`<run>/cache/v<artifact-version>/profiling/tasks`. Direct callers can share one
+explicitly, including across runs:
+
+```python
+from shadowspill import TaskProfileCache, measure_program, apply_profiles
+
+cache = TaskProfileCache("/local-ssd/shadowspill-cache")
+profiled_candidates = [
+    apply_profiles(program, measure_program(program, cache=cache))
+    for program in candidate_programs
+]
+```
+
+A cache hit requires the finalized task digest (including selected generated
+kernels and provider preparations), hardware/toolchain setup, tensor geometry
+and aliases, representative input policy and producer lineage, numerical
+contracts, resources/rank topology, allocator configuration and measurement
+policy to match. More samples can satisfy a smaller requested minimum. Different
+chunk implementations or kernel choices are distinct entries even when their
+original graphs match. Caller-supplied `inputs` disable reuse for that call.
+
+The cache saves raw task timing and complete allocation evidence. It validates
+that evidence on load. Tasks that retain anonymous cold allocations or lack an
+external-memory measurement are measured again. Every candidate still loads its
+executables and provider resources and accounts for its own streams, retained
+data and worker headroom. Cached external context memory supplies a conservative
+floor; aggregate `fixed_device_bytes` is never copied from another candidate.
+Planning, physical memory admission and overlap calibration remain independent.
+
+`TaskProfileCache(root, mode="refresh")` ignores preexisting disk entries while
+reusing new measurements within that cache instance. `reuse` reads without
+writing; `require` refuses a miss. Default `contribute` reads hits and writes
+misses. Recipe `refresh_profiles=True` uses the refresh behavior for the entire
+candidate sweep. Distributed participants intersect their cache hits before
+launching any task collectives. `Profiles.metadata["task_cache"]` records hits
+and misses; original sample counts and timing diagnostics stay with each task.
+Cache directories are optional; saved public Profiles remain self-contained.
 
 `measure_overlap(profiled_program, communication_info, device=device,
 rank_map=..., stages=None, inputs=None)` returns a `Profiles` overlay containing

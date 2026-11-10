@@ -1,6 +1,8 @@
 """Observe one invocation while preserving its actual output/input aliasing."""
 
 from collections.abc import Callable, Sequence
+from dataclasses import replace
+from time import perf_counter_ns
 from typing import Any
 
 import torch
@@ -20,13 +22,24 @@ def observe_task(
     capacity: int = 131072,
 ) -> AllocationObservation:
     assert device.index is not None
+    started = perf_counter_ns()
     torch.cuda.synchronize(device)
+    synchronized = perf_counter_ns()
     with observe_allocations(device.index, capacity=capacity) as events:
         output = function(*arguments)
         views, bindings, off_device = _output_views(arguments, output)
         del output
         torch.cuda.synchronize(device)
-    return decode_allocations(events, views, bindings, off_device)
+    collected = perf_counter_ns()
+    result = decode_allocations(events, views, bindings, off_device)
+    return replace(
+        result,
+        phase_timings_ns=(
+            ("synchronize", synchronized - started),
+            ("execute_and_collect", collected - synchronized),
+            ("decode", perf_counter_ns() - collected),
+        ),
+    )
 
 
 def _output_views(

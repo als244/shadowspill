@@ -2,6 +2,7 @@
 
 from collections.abc import Callable, Mapping, Sequence
 from statistics import median
+from time import perf_counter_ns
 from typing import Any
 
 import torch
@@ -33,13 +34,19 @@ def measure_task(
     continue_while: Callable[[bool, bool], bool] | None = None,
     check: Callable[[str | None], None] | None = None,
 ) -> TaskProfile:
+    started = perf_counter_ns()
     cold = observe_task(function, arguments, device=device)
+    cold_done = perf_counter_ns()
     timer = EventTimer(lambda: function(*arguments))
     options = ProfilingOptions(
         conditioning_seconds=warmup_seconds, measurement_seconds=measure_seconds
     )
-    condition_task(timer.sample, options=options, continue_while=continue_while)
+    conditioning = condition_task(
+        timer.sample, options=options, continue_while=continue_while
+    )
+    conditioned = perf_counter_ns()
     observations = [observe_task(function, arguments, device=device) for _ in range(3)]
+    observed = perf_counter_ns()
     # All ranks must validate before any rank starts more communicating samples.
     # Otherwise one worker can enter provider cleanup while its peers keep timing.
     try:
@@ -69,9 +76,11 @@ def measure_task(
         raise
     if check is not None:
         check(None)
+    validated = perf_counter_ns()
     timing = collect_timing_samples(
         timer.sample, options=options, continue_while=continue_while
     )
+    timed = perf_counter_ns()
     samples = tuple(sample / 1e9 for sample in timing.samples)
     duration = median(samples)
     output_ordinals = {
@@ -107,6 +116,7 @@ def measure_task(
             for value in manifest["root_allocations"]
         ),
     )
+    finished = perf_counter_ns()
     return TaskProfile(
         duration_seconds=duration,
         workspace_bytes=baseline.workspace_bytes,
@@ -126,6 +136,20 @@ def measure_task(
             "timing_half_drift": timing.half_drift,
             "timing_unstable": timing.unstable(options),
             "sampling": timing.window.to_dict(),
+            "conditioning": conditioning.to_dict(),
+            "profiling_options": options.to_dict(),
+            "profiling_wall_ns": finished - started,
+            "phase_timings_ns": {
+                "cold_observation": cold_done - started,
+                "conditioning": conditioned - cold_done,
+                "warm_observations": observed - conditioned,
+                "validation": validated - observed,
+                "timing": timed - validated,
+                "layout": finished - timed,
+            },
+            "allocation_observation_timings_ns": [
+                dict(item.phase_timings_ns) for item in (cold, *observations)
+            ],
             "warmup_persistent_bytes": cold.persistent_bytes,
             "coverage": "observed paths; physical execution admission is separate",
         },
