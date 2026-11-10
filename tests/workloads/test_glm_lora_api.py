@@ -46,10 +46,20 @@ def test_python_configuration_preserves_candidates_and_saved_phase_overrides(
         {"ranks": 8, "preparation_ranks": 1},
     )
 
-    api.run({"run_dir": root, "execution_gib": 40}, phase="plan")
+    api.run(
+        {
+            "run_dir": root,
+            "execution_gib": 40,
+            "program_workers": 3,
+            "search_workers": 0,
+        },
+        phase="plan",
+    )
     assert json.loads((root / "config.json").read_text()) == {
         **saved,
         "execution_gib": 40,
+        "program_workers": 3,
+        "search_workers": 0,
     }
     api.run({"run_dir": root, "resume": tmp_path / "step.ssp"}, phase="execute")
     resumed = json.loads((root / "config.json").read_text())

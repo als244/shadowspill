@@ -24,7 +24,8 @@ DEFAULTS = dict(
     eval_updates=1,
     checkpoint_every=2,
     keep_last=2,
-    search_workers=0,
+    program_workers=8,
+    search_workers=8,
     resolution_options=None,
     tail_save_counts=None,
     resume=None,
@@ -37,6 +38,7 @@ MUTABLE = {
     "resume",
     "plots",
     "search_workers",
+    "program_workers",
     "resolution_options",
     "tail_save_counts",
     "execution_gib",
@@ -126,7 +128,14 @@ def configure(recipe, config, phase):
         if phase not in {"all", "build"}:
             raise ValueError("run the build phase first")
         options = {**defaults, **requested, "recipe": recipe}
-    for key in ("steps", "ranks", "preparation_ranks", "eval_updates", "keep_last"):
+    for key in (
+        "steps",
+        "ranks",
+        "preparation_ranks",
+        "eval_updates",
+        "keep_last",
+        "program_workers",
+    ):
         if type(options[key]) is not int or options[key] <= 0:
             raise ValueError(f"{key} must be a positive integer")
     for key in ("eval_every", "checkpoint_every", "search_workers"):

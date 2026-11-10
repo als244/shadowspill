@@ -47,7 +47,6 @@ def validate(options):
         "spill_gib",
         "ranks",
         "eval_updates",
-        "search_workers",
         "measure_seconds",
         "learning_rate",
     )

@@ -102,6 +102,32 @@ phase="plan")`; the runner rejects changing them only at execution time.
 Planning takes the minimum admitted predicted duration over the crossed search.
 It is a finite heuristic search, not an exhaustive optimization of all schedules.
 
+CPU planning has two independent concurrency controls:
+
+| Option | Default | Work assigned to each worker |
+|---|---:|---|
+| `program_workers` | `8` | One built/profiled Program, searching its factor orderings sequentially in a separate process |
+| `search_workers` | `8` | Native PressureFit worker threads within each Program process, searching the resolutions and placement policies for the current ordering |
+
+For example, three graph-pair policies, two chunk choices and three microbatch
+sizes produce 18 Programs. Their factor orderings may produce more than 18
+planning cases. A Program worker loads its measurements once, processes all its
+orderings, and saves admitted Plans directly; it does not send large Plans
+between processes. All cases remain eligible, and selection uses the minimum
+predicted duration with ties resolved in configured candidate/ordering order.
+Known capacity failures remain in `search.json`; other worker errors fail the
+phase and leave no runnable selection.
+
+The two counts are not divided into a shared CPU quota: eight Program workers
+with eight search workers permit up to 64 native search threads, plus their
+Python processes. This allows other Programs to progress while one is preparing
+search inputs or saving a Plan. Concurrent Programs also use more host RAM.
+Set `program_workers=1` for serial Program processing; `search_workers=0` selects
+the native library's automatic thread count in each process. Both controls may
+change without rebuilding. They apply only to CPU planning. `planning-work.json`
+records actual process concurrency, per-Program elapsed time and case counts,
+and total planning wall time; summed worker time is not wall time.
+
 For performance sweeps, generate weights in host memory and omit evaluation and
 checkpoint I/O:
 

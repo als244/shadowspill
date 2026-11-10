@@ -40,7 +40,7 @@ def parser():
     parser.add_argument("--eval-updates", type=int, default=2)
     parser.add_argument("--checkpoint-every", type=int, default=2)
     parser.add_argument("--external-headroom-mib", type=int, default=512)
-    parser.add_argument("--search-workers", type=int, default=0)
+    parser.add_argument("--search-workers", type=int, default=8)
     parser.add_argument("--resolution-options", nargs="+")
     parser.add_argument("--learning-rate", type=float, default=2e-4)
     parser.add_argument("--seed", type=int, default=0)

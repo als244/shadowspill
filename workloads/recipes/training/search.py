@@ -1,4 +1,4 @@
-"""Optional search controls; defaults remain the public planner's defaults."""
+"""Recipe concurrency and optional PressureFit search-space controls."""
 
 from fractions import Fraction
 
@@ -18,7 +18,7 @@ def search_options(options):
     if tails is not None:
         controls["tail_save_counts"] = tuple(tails)
     return SearchOptions(
-        workers=options.get("search_workers", 0),
+        workers=options.get("search_workers", 8),
         algorithm=None if not controls else PressureFit(PressureFitOptions(**controls)),
         generic=GenericPlanningOptions(
             minimum_object_bytes_evict_eligible=options.get(
