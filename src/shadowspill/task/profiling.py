@@ -22,7 +22,7 @@ class ProfilingOptions:
     stabilization_iterations: int = 16
     conditioning_seconds: float = 1.0
     conditioning_wall_seconds: float = 3.0
-    minimum_samples: int = 15
+    minimum_samples: int = 5
     measurement_seconds: float = 0.3
     measurement_wall_seconds: float = 2.0
     relative_mad_threshold: float = 0.03

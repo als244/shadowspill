@@ -65,6 +65,20 @@ def test_minimum_sample_count_survives_wall_cap() -> None:
     assert measured.unstable(options)
 
 
+def test_default_sampling_bounds_long_tasks_and_still_sustains_short_tasks() -> None:
+    options = ProfilingOptions()
+    long = Clock(device_ns=4_000_000_000, wall_ns=4_000_000_000)
+    measured = collect_timing_samples(long.sample, options=options, clock=long)
+    assert measured.window == TimingWindow(20_000_000_000, 20_000_000_000, 5, True)
+    assert not measured.unstable(options)
+
+    short = Clock(device_ns=1_000_000, wall_ns=1_000_000)
+    measured = collect_timing_samples(short.sample, options=options, clock=short)
+    assert measured.window.gpu_ns >= options.measurement_seconds * 1e9
+    assert measured.window.iterations == 300
+    assert not measured.unstable(options)
+
+
 def test_zero_device_times_are_bounded_by_wall_time() -> None:
     clock = Clock(device_ns=0, wall_ns=100)
     options = ProfilingOptions(

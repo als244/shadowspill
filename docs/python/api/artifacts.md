@@ -168,6 +168,15 @@ ordinary metadata. `fixed_device_bytes` accounts for retained context/provider
 memory and declared worker headroom. Measurement records allocation/lifetime
 contracts and output aliases in addition to peak sizes.
 
+Task timing takes at least five samples and continues until the requested device
+time is covered and median variability/drift pass their thresholds, subject to
+the wall-time limit. The minimum count takes precedence over that limit: five
+four-second invocations still take twenty seconds. Short tasks typically need
+many more samples to cover the duration target. Allocation validation separately
+observes one cold invocation and three warmed invocations; reducing the timing
+minimum does not remove those checks. Profiles retain actual sample counts,
+durations and stability diagnostics.
+
 ```python
 from shadowspill import Profiles, TaskProfile
 
