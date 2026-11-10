@@ -102,6 +102,7 @@ def test_a_worker_reports_overruns_unless_told_to_reject(monkeypatch, calibrated
             **measured_identity,
             "gpu_uuid": "GPU-moved",
             "host": "other-host",
+            "driver": "different-compatible-driver",
         },
     )
     plan = SimpleNamespace(

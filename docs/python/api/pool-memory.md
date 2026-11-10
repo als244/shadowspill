@@ -84,12 +84,14 @@ unchanged.
 ## Identity, distributed use and limits
 
 Evidence records exact capacity, pool kind/configuration, normal NUMA binding,
-GPU model, driver and core/adapter/backend/extension library hashes. Cold
-execution checks these before installing the framework allocator. GPU UUID
-and hostname are retained as measurement provenance, not compatibility
+GPU model and core/adapter/backend/extension library hashes. Cold execution
+checks these before installing the framework allocator. GPU UUID, hostname
+and driver version are retained as measurement provenance, not compatibility
 requirements: a saved Plan can run on another equivalent GPU or host without
 recalibrating, rebuilding or profiling again. `validate_worker` checks this
-hardware/software contract for the selected logical rank.
+GPU/pool implementation contract for the selected logical rank. Device runtime
+and kernel loading still require a compatible driver; its version need not equal
+the one used during calibration. Program build/target checks also remain.
 
 Saved capacity is an observed planning ceiling, not a promise of free memory on
 the new device. Cold admission still takes the minimum of the declared budget,

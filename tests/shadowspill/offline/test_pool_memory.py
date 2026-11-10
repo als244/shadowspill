@@ -82,17 +82,20 @@ def test_profile_roundtrip_keeps_raw_unknowns_and_separate_scopes(tmp_path):
     assert loaded.resource_identity == profile.resource_identity
 
 
-def test_worker_can_move_to_equivalent_gpu_and_host_without_rewriting_evidence():
+@pytest.mark.parametrize(
+    "updates", [{"gpu_uuid": "GPU-b", "host": "h2"}, {"driver": "new-driver"}]
+)
+def test_worker_reuses_calibration_when_only_provenance_changes(updates):
     profile = evidence()
     original = profile.to_dict()
-    identity = {**original["ranks"][0]["identity"], "gpu_uuid": "GPU-b", "host": "h2"}
+    identity = {**original["ranks"][0]["identity"], **updates}
     profile.validate_worker(0, identity)
     assert profile.to_dict() == original
     assert profile.physical_limit_bytes == 964
     assert profile.global_reservation_bytes(0) == 16
 
 
-@pytest.mark.parametrize("field", ["gpu_name", "driver", "libraries"])
+@pytest.mark.parametrize("field", ["gpu_name", "libraries"])
 def test_worker_still_requires_compatible_pool_hardware_and_software(field):
     profile = evidence()
     identity = profile.to_dict()["ranks"][0]["identity"]

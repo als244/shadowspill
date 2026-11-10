@@ -12,7 +12,8 @@ Executor(Plan)                                     → execution worker
 
 Optional [pool-memory calibration](pool-memory.md) produces a portable
 `PoolMemoryProfile` for the exact spill capacity and compatible hardware/software.
-GPU UUID and hostname record provenance without restricting Plan portability.
+GPU UUID, hostname and driver version record provenance without restricting
+Plan portability to those exact values.
 Pass it as
 `pool_memory` to planning or candidate sweeps; the Plan retains both the original
 process budget and the separately measured physical-device allowance.

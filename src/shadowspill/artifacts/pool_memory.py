@@ -225,16 +225,17 @@ class PoolMemoryProfile(Artifact):
             raise ValueError("pool memory backend differs from communication timing")
 
     def validate_worker(self, logical_rank: int, identity: Mapping[str, Any]) -> None:
-        """Require equivalent hardware/software, preserving deployment provenance.
+        """Require matching GPU/pool implementations, preserving provenance.
 
-        UUID and hostname identify where observations were collected. They do
-        not constrain where a saved Plan can execute. Cold runtime admission
-        still caps the arena by current availability and enforces its layout.
+        UUID, hostname and driver version describe the measurement environment.
+        The device runtime validates driver compatibility when loading code;
+        exact version equality is not required. Cold runtime admission still
+        caps the arena by current availability and enforces its layout.
         """
         measured = self.rank(logical_rank)["identity"]
         mismatches = [
             name
-            for name in ("gpu_name", "driver", "libraries")
+            for name in ("gpu_name", "libraries")
             if measured[name] != identity.get(name)
         ]
         if mismatches:
