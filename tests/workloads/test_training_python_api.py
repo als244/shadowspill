@@ -43,6 +43,11 @@ def test_checkpoint_model_and_method_select_frozen_candidates(tmp_path, monkeypa
     )
     with pytest.raises(ValueError, match="fresh run"):
         train(model, {"run_dir": root, "chunk_sizes": [4]}, phase="plan")
+    train(model, {"run_dir": root, "refresh_profiles": True}, phase="profile")
+    with pytest.raises(ValueError, match="phase='profile'"):
+        train(model, {"run_dir": root, "refresh_profiles": False}, phase="execute")
+    with pytest.raises(ValueError, match="boolean"):
+        train(model, {"run_dir": root, "refresh_profiles": "yes"}, phase="profile")
 
 
 def test_ep_geometry_declares_collective_preparation_before_launch(

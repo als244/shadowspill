@@ -18,6 +18,7 @@ DEFAULTS = dict(
     external_headroom_mib=512,
     warmup_seconds=0.05,
     measure_seconds=0.18,
+    refresh_profiles=False,
     plots=True,
     eval_every=2,
     eval_updates=1,
@@ -39,6 +40,7 @@ MUTABLE = {
     "execution_gib",
     "spill_gib",
     "pool_memory",
+    "refresh_profiles",
 }
 
 
@@ -98,6 +100,8 @@ def configure(recipe, config, phase):
                 raise ValueError(
                     f"changed {key} requires a fresh run directory and build"
                 )
+            if key == "refresh_profiles" and phase != "profile":
+                raise ValueError("changed refresh_profiles requires phase='profile'")
             if (
                 key
                 in {"execution_gib", "spill_gib", "resolution_options", "pool_memory"}
@@ -127,6 +131,8 @@ def configure(recipe, config, phase):
             raise ValueError(f"{key} must be positive")
     if options["warmup_seconds"] < 0 or options["external_headroom_mib"] < 0:
         raise ValueError("warmup and headroom must be nonnegative")
+    if type(options.get("refresh_profiles", False)) is not bool:
+        raise ValueError("refresh_profiles must be a boolean")
     if options["preparation_ranks"] not in (1, options["ranks"]):
         raise ValueError("preparation requires one worker or the entire worker group")
     definition.validate(options)

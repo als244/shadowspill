@@ -7,6 +7,7 @@ from shadowspill import Program, apply_profiles, measure_communication, measure_
 from workloads.recipes.phases import settings
 
 from .candidates import attempt_candidate, available, program_paths
+from .profile_reuse import completed
 
 
 def profile_candidate(root, options, candidate, group, timing):
@@ -14,15 +15,21 @@ def profile_candidate(root, options, candidate, group, timing):
         relative = f"{candidate['path']}/{kind}.ssp"
         print(f"profiling {relative}", flush=True)
         program = Program.load(root / "programs" / relative)
-        profiles = measure_program(
-            program,
-            rank_map=group.rank_map if group.count > 1 else None,
-            external_headroom_bytes=options["external_headroom_mib"] << 20,
-            **timing,
-        )
+        profiled = completed(root / "profiles" / relative, program, options, group)
+        if profiled is None:
+            profiles = measure_program(
+                program,
+                rank_map=group.rank_map if group.count > 1 else None,
+                external_headroom_bytes=options["external_headroom_mib"] << 20,
+                **timing,
+            )
+            if group.rank == 0:
+                profiles.save(root / "profiles" / relative)
+                profiled = apply_profiles(program, profiles)
+        elif group.rank == 0:
+            print(f"reusing completed measurements for {relative}", flush=True)
         if group.rank == 0:
-            profiles.save(root / "profiles" / relative)
-            apply_profiles(program, profiles).save(root / "profiled" / relative)
+            profiled.save(root / "profiled" / relative)
     return True
 
 

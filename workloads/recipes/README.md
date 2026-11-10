@@ -109,6 +109,14 @@ calibrate communication and computation overlap on the participating devices.
 DP build/profile uses one representative GPU; EP preparation needs all resource
 participants. Planning reads saved artifacts on CPU without importing Torch.
 
+Repeating `phase="profile"` reuses completed per-Program measurements after
+validating their implementation, memory evidence, headroom and current target.
+An interrupted candidate is measured again; completed ones are preserved. All
+collective workers agree on reuse before invoking tasks. Set `refresh_profiles=True`
+in that phase's configuration to request fresh measurements. Run `communicate`
+(multiple ranks) and `plan` before executing refreshed measurements. Single-rank
+profiling also recalibrates host transfers.
+
 Build settings are frozen. Changing shape, precision, candidates or profiling
 headroom requires a fresh build. Planning may change budgets, search settings
 or the optional `pool_memory` path to a measured `PoolMemoryProfile`. That

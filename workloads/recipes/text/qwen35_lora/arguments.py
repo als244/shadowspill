@@ -48,6 +48,7 @@ def parser():
     parser.add_argument("--spill-gib", type=float)
     parser.add_argument("--warmup-seconds", type=float, default=0.05)
     parser.add_argument("--measure-seconds", type=float, default=0.18)
+    parser.add_argument("--refresh-profiles", action=argparse.BooleanOptionalAction)
     parser.add_argument("--no-plots", dest="plots", action="store_false")
     parser.add_argument("--resume", help="Saved Trainer checkpoint archive")
     parser.add_argument("--wandb-project")

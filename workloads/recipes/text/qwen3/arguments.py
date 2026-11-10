@@ -53,5 +53,6 @@ def parser():
     parser.add_argument("--external-headroom-mib", type=int, default=768)
     parser.add_argument("--warmup-seconds", type=float, default=0.05)
     parser.add_argument("--measure-seconds", type=float, default=0.18)
+    parser.add_argument("--refresh-profiles", action=argparse.BooleanOptionalAction)
     parser.add_argument("--no-plots", dest="plots", action="store_false")
     return parser
