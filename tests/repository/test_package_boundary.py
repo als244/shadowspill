@@ -26,6 +26,7 @@ def test_top_level_public_surface_is_explicit() -> None:
         "ProfiledProgram",
         "Plan",
         "TaskProfile",
+        "TaskProfileCache",
         "SweepResult",
         "apply_profiles",
         "measure_program",

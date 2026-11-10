@@ -102,9 +102,10 @@ class _ArtifactLedger:
 class ArtifactStore:
     """Optional content-addressed caches for capture, measurement and planning.
 
-    ``build`` holds graph pairs and optimizer captures;
-    ``planning`` holds costed IR inputs, search requests and results. Either
-    tree can use its own root and read/write policy. Saved public phase
+    ``build`` holds graph pairs and optimizer captures; ``profiling/tasks``
+    holds optional TaskProfileCache entries; ``planning`` holds costed IR inputs,
+    search requests and results. Build and planning can use separate roots and
+    policies; TaskProfileCache owns its measurement policy. Saved public phase
     artifacts are independent of these directories.
     """
 

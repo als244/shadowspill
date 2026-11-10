@@ -18,6 +18,7 @@ def test_planning_cache_has_stable_human_readable_layout(tmp_path: Path) -> None
     assert cache.build == root / "build"
     assert cache.planning == root / "planning"
     assert cache.graph_pairs == root / "build" / "graph_pairs"
+    assert cache.task_profiles == root / "profiling" / "tasks"
 
     assert cache.programs_archive == root / "planning" / "programs"
     assert cache.plan_requests == root / "planning" / "requests"
