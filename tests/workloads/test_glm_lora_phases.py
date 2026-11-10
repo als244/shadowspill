@@ -243,7 +243,8 @@ def test_glm_checkpoint_training_evaluation_and_cold_resume(recipe, tmp_path):
         assert child.returncode == 0, child.stdout + child.stderr + logs
     learning = json.loads((root / "learning.json").read_text())
     assert learning["relative_drop"] > 0
-    assert json.loads((root / "completed.json").read_text())["next_data_step"] == 4
+    completed = json.loads((root / "completed.json").read_text())
+    assert completed["data_state"]["data"]["next_step"] == 4
     assert (root / "reports/training/index.html").is_file()
     assert (root / "reports/evaluation/index.html").is_file()
     expected = manifest(root, 4)

@@ -145,7 +145,7 @@ def test_qwen_recipe_cold_execution_and_partial_resume(tmp_path, checkpoint):
     shutil.rmtree(cache)
     cold = tmp_path / "cold"
     shutil.copytree(root / "plans", cold / "plans")
-    for name in ("config.json", "selected.json"):
+    for name in ("config.json", "selected.json", "model.json"):
         shutil.copy2(root / name, cold / name)
     options = json.loads((cold / "config.json").read_text())
     options["resume"] = str(root / "training/checkpoints/step_00000002.ssp")

@@ -33,7 +33,8 @@ def test_qwen_cli_preserves_exact_candidates_and_rejects_shape_changes(
 ):
     recipe = importlib.import_module(f"workloads.recipes.text.{name}")
     launches = []
-    monkeypatch.setattr(recipe, "run_phases", lambda *a, **k: launches.append((a, k)))
+    launcher = importlib.import_module("workloads.recipes.training.api")
+    monkeypatch.setattr(launcher, "run_phases", lambda *a, **k: launches.append((a, k)))
     root = tmp_path / "run"
     build = [
         "--data",

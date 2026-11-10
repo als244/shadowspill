@@ -13,7 +13,7 @@ def settings(directory):
     return root, json.loads((root / "config.json").read_text())
 
 
-def run_phases(package, root, selected, *, ranks=1):
+def run_phases(package, root, selected, *, ranks=1, preparation_ranks=1):
     phases = ["build", "profile"]
     if ranks > 1:
         phases.append("communicate")
@@ -26,7 +26,11 @@ def run_phases(package, root, selected, *, ranks=1):
         environment = dict(os.environ)
         if phase == "plan":
             environment["CUDA_VISIBLE_DEVICES"] = ""
-        workers = ranks if phase in {"communicate", "execute"} else 1
+        workers = (
+            ranks if phase in {"communicate", "execute"}
+            else preparation_ranks if phase in {"build", "profile"}
+            else 1
+        )
         command = worker_command(f"{package}.{phase}", [root], ranks=workers)
         if workers > 1:
             environment.setdefault("OMP_NUM_THREADS", "1")

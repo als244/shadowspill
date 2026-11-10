@@ -1,23 +1,17 @@
-"""GLM-5.3-Flash checkpoint LoRA through independently runnable saved phases."""
+"""Optional CLI spelling; the model-independent runner owns all phases."""
 
-from workloads.recipes.phases import run_phases
+from workloads.recipes.text.glm53_flash_lora.api import run
 from workloads.recipes.text.glm53_flash_lora.arguments import parser
-from workloads.recipes.text.glm53_flash_lora.settings import configure
+from workloads.recipes.training.cli import arguments
 
 
 def main(argv=None):
-    cli = parser()
-    args = cli.parse_args(argv)
+    command = parser()
+    phase, config = arguments(command, argv)
     try:
-        root, options = configure(args)
+        run(config, phase=phase)
     except ValueError as error:
-        cli.error(str(error))
-    run_phases(
-        "workloads.recipes.text.glm53_flash_lora",
-        root,
-        args.phase,
-        ranks=options["ranks"],
-    )
+        command.error(str(error))
     return 0
 
 

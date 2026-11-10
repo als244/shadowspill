@@ -1,21 +1,42 @@
 # Qwen3 MoE full training
 
-This recipe uses the public build/profile/plan/execute pipeline with ordinary
-sharded DP. The default model is Qwen3-30B-A3B: BF16 compute weights, FP32 gradients,
+This recipe uses the [shared Python runner](../../README.md) with sharded DP or
+expert parallelism. The default model is Qwen3-30B-A3B: BF16 compute weights, FP32 gradients,
 FP32 master weights and FP32 AdamW moments. Weights, gradients and optimizer data
 are sharded across eight GPUs. It starts from random weights and reads real,
 already-tokenized text from `train.bin` plus `meta.json`.
 
-```bash
-python -m workloads.recipes.text.train_qwen3_distributed \
-  --data /path/to/qwen3-tokens --run-dir runs/qwen3-dp8
+Start with the [commented Python script](example.py):
+
+```python
+from workloads.recipes import Model, train
+
+model = Model.from_config("qwen3moe-30b-a3b")
+train(model, {
+    "data": "/data/fineweb-qwen3",
+    "run_dir": "runs/qwen3-dp8",
+    "ranks": 8,
+    "parallelism": "dp",
+    "sequence_length": 4096,
+    "sequences_per_step": 64,  # 2,097,152 global tokens/update.
+    "microbatch_sizes": [4, 16],
+    "execution_gib": 20,
+    "spill_gib": 96,
+})
 ```
 
-Launch this command once, without an outer torchrun. The orchestrator uses one
+Launch this script once, without an outer torchrun. DP uses one
 GPU for build/profile, hides GPUs for planning, and launches all eight workers
 for communication calibration and execution. Defaults are 4K tokens, 64 sequences
 per rank, five updates, and 77 GiB GPU / 96 GiB host spill per rank. The latter
 requires 768 GiB of host pools across the node.
+
+Set `parallelism="ep"` to distribute experts across the rank group. EP build and
+profiling require every resource participant; each microbatch candidate gets its
+own token-capacity resource. EP execution chunks are currently refused because
+the provider has no declared axis-chunk contract. This is independent of DP
+execution chunking and checkpoint recomputation. The new public EP campaign is
+pending; the historical performance table below covers DP only.
 
 Profiling reserves 768 MiB of external GPU headroom (configurable with
 `--external-headroom-mib` when creating the run), in addition to calibrated
@@ -29,14 +50,15 @@ Each phase also runs independently with `--phase build`, `profile`, `communicate
 phases read saved settings; a new build requires a fresh directory. Change memory
 budgets only during planning:
 
-```bash
-CUDA_VISIBLE_DEVICES= python -m workloads.recipes.text.train_qwen3_distributed \
-  --run-dir runs/qwen3-dp8 --phase plan --execution-gib 60
+```python
+saved = {"run_dir": "runs/qwen3-dp8"}
+train(model, {**saved, "execution_gib": 40}, phase="plan")
+train(model, saved, phase="execute")
 ```
 
 The distributed `communicate` phase measures host copies and collectives, then
 paired task/NCCL interference for each saved batch candidate. It saves
-`overlap/batch-N.ssp` and merges the measurements into the corresponding profiles.
+`overlap/{candidate}/training.ssp` and merges the measurements into the profiles.
 Planning uses these measured progress rates when transfers overlap computation;
 the original isolated task timing and memory contracts stay intact. Changing
 budgets reuses this evidence. Changing task implementations or the communication
@@ -44,14 +66,14 @@ setup requires compatible new measurements. See
 [distributed calibration](../../../../docs/python/api/distributed.md#communication-calibration-and-cpu-planning)
 for the public API and measurement limits.
 
-The files have one purpose each:
+The shared workers have one purpose each; recipe modules delegate to them:
 
 | File | Responsibility | Saved output |
 | --- | --- | --- |
-| `build.py` | Meta model, local task compilation, DP declarations | `programs/batch-N.ssp` |
+| `build.py` | Adapter setup, task compilation, resource declarations | `programs/{candidate}/training.ssp` |
 | `profile.py` | Task timing and memory on one representative GPU | `profiles/`, `profiled/` |
 | `communicate.py` | Host copies, collectives, communication memory and paired task interference | `communication/`, `overlap/`, enriched `profiles/` and `profiled/` |
-| `plan.py` | Selected microbatch sizes and all factor orderings under the memory budget | `search.json`, `plans/`, selected `plan.ssp`, `report/` |
+| `plan.py` | Microbatch, chunk, retention and ordering search under memory budgets | `search.json`, `selected.json`, `plans/training.ssp`, `reports/` |
 | `execute.py` | Fresh worker, bounded initialization, Trainer updates/checkpoint | `training/rank-NNNNN/` |
 | `../initialization.py` | Identical random tensor values across shards/chunk sizes | Fills Executor buffers |
 
@@ -105,8 +127,10 @@ metadata, optimizer-counter and finite-state sample checks.
 
 This search used the default graph-pair policy and no explicit axis-chunk policy.
 It searched batch/order choices and PressureFit's placement/variant decisions.
-For independent chunk-size and graph-pair-policy candidates, use the
-[quickstart candidate search](../../../../benchmarking/quickstart.md).
+The current shared runner also accepts independent `chunk_sizes`,
+`moe_chunk_sizes` and `graph_pair_policies` lists for DP; see its
+[search contract](../../README.md#search-and-saved-phases). The table above does
+not qualify those additional candidates.
 
 The eight host pools alone require 768 GiB. The test used a 980 GiB node host
 limit to allow process memory and checkpoint page cache; observed whole-job host

@@ -21,19 +21,19 @@ from workloads.recipes.text.qwen3.common import batch_sizes
 
 def test_replanning_preserves_prior_profile_headroom(tmp_path, monkeypatch):
     from workloads.recipes.text import train_qwen3_distributed as recipe
+    from workloads.recipes.training import api as runner
 
     calls = []
-    monkeypatch.setattr(recipe, "run_phases", lambda *a, **k: calls.append((a, k)))
+    monkeypatch.setattr(runner, "run_phases", lambda *a, **k: calls.append((a, k)))
     data = tmp_path / "tokens"
     root = tmp_path / "run"
     recipe.main(["--phase", "build", "--data", str(data), "--run-dir", str(root)])
     path = root / "config.json"
     options = json.loads(path.read_text())
-    assert options.pop("external_headroom_mib") == 768
-    path.write_text(json.dumps(options))
+    assert options["external_headroom_mib"] == 768
     recipe.main(["--phase", "plan", "--run-dir", str(root), "--execution-gib", "4"])
     restored = json.loads(path.read_text())
-    assert restored["external_headroom_mib"] == 512
+    assert restored["external_headroom_mib"] == 768
     assert restored["execution_gib"] == 4
     assert [call[0][2] for call in calls] == ["build", "plan"]
 
@@ -180,13 +180,17 @@ def test_qwen_recipe_builds_profiles_replans_and_executes_saved_plan(tmp_path, r
     rows = json.loads((root / "search.json").read_text())
     assert len(rows) == 5 and all("duration_seconds" in row for row in rows)
     assert {row["sequences_per_example"] for row in rows} == {2, 4}
-    assert {path.name for path in (root / "programs").glob("*.ssp")} == {
-        "batch-2.ssp",
-        "batch-4.ssp",
+    assert {
+        path.parent.name for path in (root / "programs").glob("*/training.ssp")
+    } == {
+        "batch-2",
+        "batch-4",
     }
-    assert (root / "report/index.html").is_file()
+    assert (root / "reports/training/index.html").is_file()
     for rank in range(ranks):
-        directory = root / f"training/rank-{rank:05d}"
+        directory = (
+            root / f"training/rank-{rank:05d}" if ranks > 1 else root / "training"
+        )
         metrics = [
             json.loads(line)
             for line in (directory / "metrics.jsonl").read_text().splitlines()

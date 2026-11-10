@@ -1,8 +1,8 @@
-"""Run the shared text recipe profile phase."""
+"""Module entry point for the shared profile worker."""
 
 import sys
 
-from workloads.recipes.text.phases.profile import run
+from workloads.recipes.training.profile import run
 
 if __name__ == "__main__":
     run(sys.argv[1])

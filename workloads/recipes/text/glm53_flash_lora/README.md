@@ -2,19 +2,20 @@
 
 This recipe uses the same public build, measurement, planning and saved-Plan
 execution APIs as other text models. Model-specific files describe checkpoint
-precision, LoRA targets and the KDA input metadata. The shared
-[text phases](../phases/) perform profiling, communication calibration and
-candidate planning; the [recipe driver](../../phases.py) starts fresh workers.
+precision, LoRA targets and the KDA input metadata. The
+[shared runner](../../README.md) performs profiling, communication calibration,
+candidate planning and saved-Plan training in fresh workers.
 
 Start with the [commented Python script](example.py). Edit its paths and the
 settings you want to compare. Its main configuration looks like this:
 
 ```python
-from workloads.recipes.text.glm53_flash_lora.api import run
+from workloads.recipes import LoRA, Model, train
+
+model = Model.from_checkpoint("/path/to/GLM-5.3-Flash", lora=LoRA())
 
 config = {
     # Load the real checkpoint and text prepared with its tokenizer.
-    "checkpoint": "/path/to/GLM-5.3-Flash",
     "frozen_state_id": "exact-checkpoint-revision",
     "data": "/path/to/tokenized-fineweb",
     "run_dir": "runs/glm-lora",
@@ -41,11 +42,11 @@ config = {
 }
 
 # Prepare the candidates, select the fastest admitted Plan, then train.
-run(config)
+train(model, config)
 ```
 
 Run the script once, outside `torchrun`, using a fresh run directory. Importing
-the example does not start training. `run` shares the CLI's defaults, settings
+the example does not start training. `train` shares the CLI's defaults, settings
 validation and phase workers; configuration keys use underscores and accept
 `Path` objects for paths. Unknown options fail before creating a run.
 Build and profiling use one
@@ -73,21 +74,21 @@ Each worker reads different rank-local windows. Training and validation losses
 are normalized by the global token count once. `train/global_mean_loss` sums
 rank contributions; `train/loss` is the worker's own contribution.
 
-To schedule preparation and training separately, replace `run(config)` with
+To schedule preparation and training separately, replace `train(model, config)` with
 individual phase calls. Build starts a fresh directory; later calls read its
 saved settings and artifacts:
 
 ```python
-run(config, phase="build")                  # One representative GPU.
+train(model, config, phase="build")          # One representative GPU.
 saved = {"run_dir": config["run_dir"]}
-run(saved, phase="profile")                 # Measure the saved task implementations.
-run(saved, phase="communicate")             # Eight GPUs: transfers and overlap.
-run(saved, phase="plan")                    # CPU only: search and admission.
-run(saved, phase="execute")                 # Eight GPUs: load Plans and train.
+train(model, saved, phase="profile")         # Measure saved task implementations.
+train(model, saved, phase="communicate")     # Eight GPUs: transfers and overlap.
+train(model, saved, phase="plan")            # CPU only: search and admission.
+train(model, saved, phase="execute")         # Eight GPUs: load Plans and train.
 
 # Later, reuse those measurements for another budget. No rebuild or profiling.
-run({**saved, "execution_gib": 40}, phase="plan")
-run(saved, phase="execute")
+train(model, {**saved, "execution_gib": 40}, phase="plan")
+train(model, saved, phase="execute")
 ```
 
 On a scheduler, invoke only the phase for the current allocation; no GPU is
@@ -180,8 +181,9 @@ chunks. At sequence length 32768 those experts run in one chunk, but the
 composition and chunk-local retention restrictions still apply, so this is
 distinct from an unchunked build. For a smaller comparison, select one
 graph-pair policy while retaining both unchunked and chunked candidates.
-`resolution_options` allows SAVE/RECOMPUTE mixtures within each candidate;
-the historical default `1` permits full recomputation only.
+`resolution_options` allows SAVE/RECOMPUTE mixtures within each candidate.
+This recipe defaults to full recomputation; the example explicitly includes
+quarter increments from no recomputation to full recomputation.
 
 | Policy | SAVE variant | RECOMPUTE variant |
 | --- | --- | --- |

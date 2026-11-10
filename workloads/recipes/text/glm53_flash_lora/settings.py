@@ -1,49 +1,14 @@
 """Persist recipe choices and reject inconsistent phase/resume settings."""
 
-import json
 from fractions import Fraction
-from pathlib import Path
 
-from workloads.recipes.text.phases.candidates import batch_sizes, check_batch_sizes
+from workloads.recipes.text.phases.candidates import batch_sizes
 
 
 def build_variants(options):
-    """Persist a bounded, deduplicated candidate product without importing Torch."""
-    result = {}
-    for policy in options.get("graph_pair_policies", ["cost-input"]):
-        if policy not in {"cost-input", "cost-attention", "attention-input"}:
-            raise ValueError("unknown graph-pair policy")
-        for size in options.get("chunk_sizes", [0]):
-            for requested in options.get("moe_chunk_sizes", [0]):
-                if (
-                    type(size) is not int
-                    or type(requested) is not int
-                    or min(size, requested) < 0
-                ):
-                    raise ValueError(
-                        "execution chunk sizes must be nonnegative integers"
-                    )
-                expert = (requested or size) if size else 0
-                if size and any(
-                    value % 32 for value in (size, expert, options["sequence_length"])
-                ):
-                    raise ValueError(
-                        "fused mHC needs sequence and chunk sizes divisible by 32"
-                    )
-                if size and expert < size:
-                    raise ValueError(
-                        "MoE chunk size must be at least the projection chunk size"
-                    )
-                name = f"{policy}-chunk-{size}-moe-{expert}"
-                result[name] = dict(
-                    name=name,
-                    chunk_size=size,
-                    moe_chunk_size=expert,
-                    graph_pair_policy=policy,
-                )
-    if not result:
-        raise ValueError("at least one build candidate is required")
-    return list(result.values())
+    from workloads.recipes.text.phases.variants import build_variants as variants
+
+    return variants(options, alignment=32)
 
 
 DEFAULTS = {
@@ -56,52 +21,19 @@ DEFAULTS = {
 
 
 def configure(args):
-    root = Path(args.run_dir).resolve()
-    path = root / "config.json"
-    if path.exists():
-        if args.phase in {"all", "build"}:
-            raise ValueError("use a fresh run directory for a new build")
-        options = json.loads(path.read_text())
-        check_batch_sizes(options, args.microbatch_sizes)
-        for key in (*DEFAULTS, "resume"):
-            value = getattr(args, key)
-            if value is not None:
-                if (
-                    key in {"execution_gib", "spill_gib"}
-                    and value != options[key]
-                    and args.phase != "plan"
-                ):
-                    raise ValueError("changed budgets require --phase plan")
-                options[key] = value
-    else:
-        if args.phase not in {"all", "build"} or not all(
-            (args.data, args.checkpoint, args.frozen_state_id)
-        ):
-            raise ValueError("start with --data, --checkpoint and --frozen-state-id")
-        options = vars(args).copy()
-        if options["microbatch_sizes"] is None:
-            options["microbatch_sizes"] = [1]
-        for key, default in DEFAULTS.items():
-            if options[key] is None:
-                options[key] = default
-        for key in ("data", "checkpoint"):
-            options[key] = str(Path(options[key]).expanduser().resolve())
-        options["minimum_evict_bytes"] = 128 << 10
-        variants = build_variants(options)
-        # Preserve historical single-candidate artifact paths for default builds.
-        if (
-            len(variants) != 1
-            or variants[0]["chunk_size"]
-            or variants[0]["graph_pair_policy"] != "cost-input"
-        ):
-            options["build_variants"] = variants
-    validate(options)
-    options["microbatch_sizes"] = list(batch_sizes(options))
-    if args.phase == "communicate" and options["ranks"] == 1:
-        raise ValueError("single-GPU profiling already measures host communication")
-    root.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(options, indent=2) + "\n")
-    return root, options
+    """CLI test/helper spelling of the centralized configuration contract."""
+    from workloads.recipes.training.configuration import configure as shared
+
+    values = vars(args).copy()
+    phase = values.pop("phase")
+    values = {key: value for key, value in values.items() if value is not None}
+    if phase not in {"all", "build"}:
+        values = {
+            key: value
+            for key, value in values.items()
+            if key in {"run_dir", *DEFAULTS, "resume", "microbatch_sizes"}
+        }
+    return shared("workloads.recipes.text.glm53_flash_lora.adapter", values, phase)
 
 
 def validate(options):

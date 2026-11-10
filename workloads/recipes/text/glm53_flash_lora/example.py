@@ -2,11 +2,12 @@
 
 from pathlib import Path
 
-from workloads.recipes.text.glm53_flash_lora.api import run
+from workloads.recipes import LoRA, Model, train
+
+model_path = Path("/path/to/GLM-5.3-Flash")
 
 config = {
     # Real checkpoint and corpus prepared with its tokenizer.
-    "checkpoint": Path("/path/to/GLM-5.3-Flash"),
     "frozen_state_id": "exact-checkpoint-revision",
     "data": Path("/path/to/tokenized-fineweb"),
     "run_dir": Path("runs/glm-lora"),
@@ -35,9 +36,10 @@ config = {
 if __name__ == "__main__":
     # Build and profile every candidate; measure communication overlap;
     # select the fastest Plan that fits; train through the ordinary Trainer.
-    run(config)
+    model = Model.from_checkpoint(model_path, lora=LoRA(rank=32, alpha=32))
+    train(model, config)
 
     # To prepare now and train later, use phase="build", "profile",
     # "communicate", "plan" and "execute" separately with the same run_dir.
     # Replan a new budget using saved measurements, without rebuilding:
-    # run({"run_dir": config["run_dir"], "execution_gib": 40}, phase="plan")
+    # train(model, {"run_dir": config["run_dir"], "execution_gib": 40}, phase="plan")
