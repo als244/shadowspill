@@ -76,6 +76,38 @@ def test_input_aliases_backing_extents_and_cuts_distinguish_templates():
         assert cache.misses == 4 and cache.hits == 0
 
 
+def test_rebound_wrapper_is_deferred_but_executes_and_tracks_graph_edits(monkeypatch):
+    from torch.fx import GraphModule
+
+    with FakeTensorMode():
+        x, y = torch.empty(5, 4), torch.empty(5, 4)
+        graph = make_fx(lambda x: x.sin())(x)
+        assignments = assignments_for(graph)
+        cache = SplitObservations(2)
+        cache.observe(graph, assignments, (x,))
+        calls = []
+        recompile = GraphModule.recompile
+
+        def record(self):
+            calls.append(self)
+            return recompile(self)
+
+        monkeypatch.setattr(GraphModule, "recompile", record)
+        rebound = cache.observe(graph, assignments, (y,))
+        assert cache.hits == 1 and not calls
+    child = rebound.stages[0].graph_module
+    value = torch.randn(5, 4)
+    torch.testing.assert_close(child(value), value.sin())
+    assert len(calls) == 1
+    operation = next(n for n in child.graph.nodes if n.op == "call_function")
+    operation.target = torch.ops.aten.cos.default
+    child.recompile()
+    assert len(calls) == 1
+    assert "cos" in child.code
+    torch.testing.assert_close(child(value), value.cos())
+    assert len(calls) == 2
+
+
 def test_real_values_are_observed_and_cache_scope_releases_templates():
     x = torch.randn(5, 4)
     graph = make_fx(lambda x: (x.sin(), x))(x)

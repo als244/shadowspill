@@ -8,6 +8,7 @@ from typing import Any
 import torch
 from torch._subclasses.fake_tensor import FakeTensor
 from torch.fx import GraphModule, Node
+from torch.fx._lazy_graph_module import _use_lazy_graph_module
 from torch.fx.passes.split_module import split_module
 from torch.utils._pytree import tree_flatten
 
@@ -120,9 +121,13 @@ def split_and_observe(
     assignments: Mapping[Node, int],
     inputs: tuple[object, ...],
 ) -> SplitExportGraph:
-    root = split_module(
-        graph, graph, lambda node: assignments[node], keep_original_order=True
-    )
+    # Most rebound copies are only inspected, then deduplicated before
+    # compilation. Keep their wrappers lazy; execution and .code inspection
+    # still generate current code through PyTorch's ordinary lazy dispatch.
+    with _use_lazy_graph_module(True):
+        root = split_module(
+            graph, graph, lambda node: assignments[node], keep_original_order=True
+        )
     return observe_split_root(root, inputs)
 
 

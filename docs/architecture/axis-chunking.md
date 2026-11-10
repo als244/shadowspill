@@ -112,6 +112,10 @@ ordinary observation path. These caches are released on normal or exceptional
 build exit. Partition, lifetime and chunk-policy callbacks still run for every
 occurrence. Saved-state cuts, executable identities and physical admission remain
 unchanged; the complete composed tasks are still compiled and profiled normally.
+Split graphs use PyTorch's deferred FX wrapper generation: copying or inspecting
+their structure need not regenerate Python code. Calling the graph or reading
+its `.code` generates the current wrapper, including after graph edits. This
+changes construction cost, not task compilation or runtime kernel selection.
 
 Built-in rules accept supported elementwise operations, feature reductions,
 views and matrix products. A shared parameter gradient is a sum of chunk VJPs.
