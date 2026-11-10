@@ -18,7 +18,7 @@ pool_memory.save("pool-memory.ssp")
 The probe acquires and releases the full spill capacity twice. It uses a separate
 4 MiB device control pool, regardless of spill capacity. Acquiring a large pinned
 pool can take tens of seconds. Reuse the saved measurement for all sequence,
-chunk-size and retention candidates using that same configuration and deployment.
+chunk-size and retention candidates using that configuration on compatible GPUs.
 The probe does not install the framework allocator or run model operations.
 
 CPU planning consumes the artifact without PyTorch, device initialization or
@@ -83,13 +83,24 @@ unchanged.
 
 ## Identity, distributed use and limits
 
-Evidence binds exact capacity, pool kind/configuration, normal NUMA binding,
-physical GPU UUID, driver, host and core/adapter/backend/extension library hashes.
-Cold execution checks these before installing the framework allocator. The
-backend's process-local device numbering resolves the UUID, including visibility
-masks.
-Changing a relevant resource requires new evidence. Compiling another model or
-changing its chunk size does not by itself change pool identity.
+Evidence records exact capacity, pool kind/configuration, normal NUMA binding,
+GPU model, driver and core/adapter/backend/extension library hashes. Cold
+execution checks these before installing the framework allocator. GPU UUID
+and hostname are retained as measurement provenance, not compatibility
+requirements: a saved Plan can run on another equivalent GPU or host without
+recalibrating, rebuilding or profiling again. `validate_worker` checks this
+hardware/software contract for the selected logical rank.
+
+Saved capacity is an observed planning ceiling, not a promise of free memory on
+the new device. Cold admission still takes the minimum of the declared budget,
+saved physical allowance and current availability after the measured global
+spill reservation. It then checks that the fixed layout fits the actual arena;
+pool acquisition and device-allocation failures remain enforced. Less current
+capacity can therefore refuse a portable Plan. Recalibration and CPU replanning
+can use a different measured allowance; execution does not do either implicitly.
+
+Changing a checked resource requires new evidence. Compiling another model or
+changing its chunk size does not by itself invalidate pool measurements.
 
 Measure each logical DP rank using `logical_rank=...`, then combine records with
 `PoolMemoryProfile.combine(*rank_profiles)`. Planning requires exactly the

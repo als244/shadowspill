@@ -56,10 +56,7 @@ def open_worker(
         evidence = plan.pool_memory
         if plain(evidence.pool) != pool_configuration(spill):
             raise ValueError("pool memory configuration differs from this worker")
-        if evidence.rank(logical_rank)["identity"] != deployment_identity(
-            spill, device
-        ):
-            raise ValueError("pool memory deployment identity differs from this worker")
+        evidence.validate_worker(logical_rank, deployment_identity(spill, device))
         physical_limit = evidence.physical_limit_bytes
         global_reservation = evidence.global_reservation_bytes(logical_rank)
     runtime = Runtime(

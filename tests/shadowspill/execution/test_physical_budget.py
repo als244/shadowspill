@@ -50,11 +50,14 @@ def test_within_budget_does_not_query_extra_memory():
     check_external_budget(runtime)
 
 
-def test_a_worker_reports_overruns_unless_told_to_reject(monkeypatch):
+@pytest.mark.parametrize("calibrated", [False, True])
+def test_a_worker_reports_overruns_unless_told_to_reject(monkeypatch, calibrated):
     import torch
 
+    from shadowspill import PoolMemoryProfile
     from shadowspill.execution import setup
     from shadowspill.memory import PinnedHostPool
+    from shadowspill.profiling import pool_identity
 
     seen = []
 
@@ -70,14 +73,53 @@ def test_a_worker_reports_overruns_unless_told_to_reject(monkeypatch):
     monkeypatch.setattr(setup, "PyTorchFrontend", lambda: None)
     monkeypatch.setattr(setup, "require_compiled_device", lambda program, device: None)
     monkeypatch.setattr(setup, "build_setup", lambda device: identity)
+    spill = PinnedHostPool(1 << 30)
+    measured_identity = dict(
+        gpu_uuid="GPU-original",
+        host="original-host",
+        gpu_name="test GPU",
+        driver="d",
+        libraries={"backend": "abc"},
+    )
+
+    class Evidence:
+        pool = pool_identity.pool_configuration(spill)
+        physical_limit_bytes = 6 << 30
+        validate_worker = PoolMemoryProfile.validate_worker
+
+        def rank(self, rank):
+            assert rank == 0
+            return {"identity": measured_identity}
+
+        def global_reservation_bytes(self, rank):
+            assert rank == 0
+            return 256 << 20
+
+    monkeypatch.setattr(
+        pool_identity,
+        "deployment_identity",
+        lambda spill, device: {
+            **measured_identity,
+            "gpu_uuid": "GPU-moved",
+            "host": "other-host",
+        },
+    )
     plan = SimpleNamespace(
-        pool_memory=None,
+        pool_memory=Evidence() if calibrated else None,
         simulation_only_reasons=(),
         program=SimpleNamespace(devices=("cuda_0",), setup=identity),
         memory_budgets=SimpleNamespace(execution_bytes=8 << 30, spill_bytes=1 << 30),
         communication_info=SimpleNamespace(metadata={}),
     )
-    setup.open_worker(plan, 0, 512 << 20, PinnedHostPool(1 << 30))
-    setup.open_worker(plan, 0, 512 << 20, PinnedHostPool(1 << 30), True)
+    setup.open_worker(plan, 0, 512 << 20, spill)
+    setup.open_worker(plan, 0, 512 << 20, spill, True)
     assert [pool.reject_overbudget for pool in seen] == [False, True]
     assert all(pool.external_headroom == 512 << 20 for pool in seen)
+    assert all(pool.physical_capacity == 8 << 30 for pool in seen)
+    assert all(
+        pool.physical_limit == (6 << 30 if calibrated else None) for pool in seen
+    )
+    assert all(
+        pool.unattributed_reservation == (256 << 20 if calibrated else 0)
+        for pool in seen
+    )

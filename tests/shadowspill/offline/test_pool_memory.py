@@ -82,6 +82,25 @@ def test_profile_roundtrip_keeps_raw_unknowns_and_separate_scopes(tmp_path):
     assert loaded.resource_identity == profile.resource_identity
 
 
+def test_worker_can_move_to_equivalent_gpu_and_host_without_rewriting_evidence():
+    profile = evidence()
+    original = profile.to_dict()
+    identity = {**original["ranks"][0]["identity"], "gpu_uuid": "GPU-b", "host": "h2"}
+    profile.validate_worker(0, identity)
+    assert profile.to_dict() == original
+    assert profile.physical_limit_bytes == 964
+    assert profile.global_reservation_bytes(0) == 16
+
+
+@pytest.mark.parametrize("field", ["gpu_name", "driver", "libraries"])
+def test_worker_still_requires_compatible_pool_hardware_and_software(field):
+    profile = evidence()
+    identity = profile.to_dict()["ranks"][0]["identity"]
+    identity[field] = {"backend": "changed"} if field == "libraries" else "changed"
+    with pytest.raises(ValueError, match=field):
+        profile.validate_worker(0, identity)
+
+
 def test_process_budget_stays_independent_and_global_is_not_double_charged(tmp_path):
     profile = evidence(total=200, global_bytes=16)  # Physical allowance=164.
     plan = plan_program(

@@ -224,6 +224,24 @@ class PoolMemoryProfile(Artifact):
         if spill_kind is not None and self.pool["kind_name"] != spill_kind:
             raise ValueError("pool memory backend differs from communication timing")
 
+    def validate_worker(self, logical_rank: int, identity: Mapping[str, Any]) -> None:
+        """Require equivalent hardware/software, preserving deployment provenance.
+
+        UUID and hostname identify where observations were collected. They do
+        not constrain where a saved Plan can execute. Cold runtime admission
+        still caps the arena by current availability and enforces its layout.
+        """
+        measured = self.rank(logical_rank)["identity"]
+        mismatches = [
+            name
+            for name in ("gpu_name", "driver", "libraries")
+            if measured[name] != identity.get(name)
+        ]
+        if mismatches:
+            raise ValueError(
+                "pool memory is incompatible with this worker: " + ", ".join(mismatches)
+            )
+
     def to_dict(self) -> dict[str, Any]:
         return {"pool": plain(self.pool), "ranks": plain(self.ranks)}
 
