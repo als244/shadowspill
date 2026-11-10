@@ -3,6 +3,7 @@
 import json
 import subprocess
 import sys
+from fractions import Fraction
 
 import pytest
 
@@ -29,11 +30,18 @@ def test_checkpoint_model_and_method_select_frozen_candidates(tmp_path, monkeypa
             chunk_sizes=[8],
             moe_chunk_sizes=[8, 16],
             graph_pair_policies=["cost-input", "cost-attention", "attention-input"],
+            tail_save_counts=[4, 0, 1, 4],
         ),
         phase="build",
     )
     saved = json.loads((root / "config.json").read_text())
     assert len(saved["candidates"]) == 12
+    assert saved["tail_save_counts"] == [0, 1, 4]
+    from workloads.recipes.training.search import search_options
+
+    planner = search_options(saved).resolved_algorithm
+    assert planner.options.tail_save_counts == (0, 1, 4)
+    assert planner.options.resolution_options == tuple(Fraction(n, 4) for n in range(5))
     assert {c["num_examples"] for c in saved["candidates"]} == {2, 4}
     train(model, {"run_dir": root}, phase="build")
     assert json.loads((root / "config.json").read_text()) == saved
@@ -54,6 +62,13 @@ def test_checkpoint_model_and_method_select_frozen_candidates(tmp_path, monkeypa
         train(model, {"run_dir": root, "refresh_profiles": False}, phase="execute")
     with pytest.raises(ValueError, match="boolean"):
         train(model, {"run_dir": root, "refresh_profiles": "yes"}, phase="profile")
+    train(model, {"run_dir": root, "tail_save_counts": [0, 3]}, phase="plan")
+    assert (
+        json.loads((root / "config.json").read_text())["candidates"]
+        == saved["candidates"]
+    )
+    with pytest.raises(ValueError, match="phase='plan'"):
+        train(model, {"run_dir": root, "tail_save_counts": [0, 2]}, phase="execute")
 
 
 def test_ep_geometry_declares_collective_preparation_before_launch(

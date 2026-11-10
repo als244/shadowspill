@@ -38,6 +38,7 @@ _PUBLIC = {
     "named_resolution_options": ".search.toolkit",
     "resolutions": ".search.toolkit",
     "validate_resolution_options": ".search.toolkit",
+    "validate_tail_save_counts": ".search.toolkit",
     "validate_search_inputs": ".search.toolkit",
 }
 

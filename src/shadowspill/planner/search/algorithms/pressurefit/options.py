@@ -11,6 +11,7 @@ from ....request import OptionRecord
 from ...toolkit.resolution import (
     DEFAULT_RESOLUTION_OPTIONS,
     validate_resolution_options,
+    validate_tail_save_counts,
 )
 
 #: The residency strategies PressureFit knows how to build a candidate for.
@@ -47,6 +48,11 @@ class PressureFitOptions(OptionRecord):
     #: business, which is why the share list is one of its options rather
     #: than the planner's.
     resolution_options: tuple[Fraction, ...] = DEFAULT_RESOLUTION_OPTIONS
+    #: Counts of final flexible forward invocations to save in every pass.
+    #: Every count crosses every resolution share; that share applies to the
+    #: remaining flexible groups. (0,) preserves the original search space.
+    #: Required saves do not consume the count. This is a planning-only axis.
+    tail_save_counts: tuple[int, ...] = (0,)
     #: The strategies and rules a winner comes from. Naming more of the
     #: strategies or rules above widens the candidate set, and every
     #: candidate in it is searched.
@@ -112,6 +118,9 @@ class PressureFitOptions(OptionRecord):
             self,
             "resolution_options",
             validate_resolution_options(self.resolution_options),
+        )
+        object.__setattr__(
+            self, "tail_save_counts", validate_tail_save_counts(self.tail_save_counts)
         )
 
     @classmethod

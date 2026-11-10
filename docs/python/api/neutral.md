@@ -606,8 +606,9 @@ the rest. Reached as `shadowspill.planner.toolkit`, and every name below except
 | name | signature | what it does |
 |---|---|---|
 | `validate_search_inputs` | `(program, initial_residency, final_residency, config, admission) -> None` | Refuses malformed inputs, and a capacity that does not reconcile with the pool's declared object capacity. Raises `TypeError` or `ValueError`. |
-| `resolutions` | `(program, resolution_options) -> tuple[Resolution, ...]` | Expands a program into resolved programs, one per share of the flexible groups recomputing. `resolution_options` is required. |
+| `resolutions` | `(program, resolution_options, *, tail_save_counts=(0,)) -> tuple[Resolution, ...]` | Crosses per-pass save-tail counts with recompute shares for the remaining flexible groups. `resolution_options` is required. |
 | `validate_resolution_options` | `(values) -> tuple[Fraction, ...]` | Exact fractions in `[0, 1]`, sorted and deduplicated. Floats are refused: `0.1` is not one tenth. |
+| `validate_tail_save_counts` | `(values) -> tuple[int, ...]` | Nonempty explicit list of nonnegative integer counts, sorted and deduplicated. Booleans and floats are refused. |
 | `CostedAlternatives` | `.from_program(program)` | What each alternative group offers and what each option costs, in bytes retained and runtime. `groups`, `forced`, `flexible_count`, `binary_endpoints` and `combination_count` say whether a group is a real decision at all. |
 | `Resolution` | `tuple[TaskAlternativeChoice, ...]` | One option chosen per group -- what makes a program concrete. |
 | `ShareValue` | `Fraction \| int \| str` | How a caller may spell one share: `Fraction(3, 8)`, `0`, `1`, or `"3/8"`. |
@@ -678,7 +679,8 @@ budget, and `ValueError` when the incumbent is a plan for a different program.
 
 | field | type | default | meaning |
 |---|---|---|---|
-| `resolution_options` | `tuple[Fraction, ...]` | `DEFAULT_RESOLUTION_OPTIONS` | Which resolved programs exist: the shares of flexible alternative groups to recompute, as exact fractions, one resolved program per share. |
+| `resolution_options` | `tuple[Fraction, ...]` | `DEFAULT_RESOLUTION_OPTIONS` | Shares of remaining flexible groups to recompute after the chosen tail is retained. Crossed with every tail count. |
+| `tail_save_counts` | `tuple[int, ...]` | `(0,)` | Counts of final eligible forward invocations to save in each forward/backward pass, repeated at every depth. Zero preserves the original distribution. |
 | `residency_strategies` | `tuple[str, ...]` | `("headroom-stall", "tight-stall")` | Which residency policies the candidate set is built from. |
 | `fetch_rules` | `tuple[str, ...]` | `("packed-fifo", "packed-fit", "latest-safe", "demand")` | Which fetch orderings the candidate set is built from. |
 | `max_repair_attempts` | `int` | `256` | How many monotonic repairs one candidate may make before answering with the best plan it reached. |
@@ -701,6 +703,19 @@ planner because expanding a program into resolved programs is a search's own
 work. Every plan is keyed by the options it was searched under, so a plan found
 under one set is never read back for another; inventories small enough to
 enumerate are planned exhaustively whatever options are named.
+
+Tail counts are explicit choices, for example `(0, 1, 2, 4, 8, 16)`. Each count
+crosses every resolution share automatically. Required saves are excluded from
+the count and share; counts exceeding a pass saturate. The remaining recompute
+share is rounded and distributed in the existing stable group order across the
+remaining flexible invocations. Duplicate selections are searched once. Tails
+change alternative selection only; residency, transfer timing and physical
+admission remain ordinary PressureFit decisions. Graphs and task profiles are reused.
+
+Nonzero tails in a non-exhaustive search require binary SAVE/RECOMPUTE alternatives
+and sequential forward/backward passes identified by generic task phases. Paired
+terminal loss groups do not split a pass. Interleaved or unlabelled traversals
+raise a descriptive error; use `(0,)` or a custom search for those programs.
 
 ### Where the work happens
 

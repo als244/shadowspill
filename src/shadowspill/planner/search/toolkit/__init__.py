@@ -29,6 +29,7 @@ from .resolution import (
     named_resolution_options,
     resolutions,
     validate_resolution_options,
+    validate_tail_save_counts,
 )
 from .validation import validate_search_inputs
 
@@ -42,4 +43,5 @@ __all__ = [
     "resolutions",
     "validate_resolution_options",
     "validate_search_inputs",
+    "validate_tail_save_counts",
 ]

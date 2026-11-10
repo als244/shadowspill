@@ -27,6 +27,8 @@ config = {
     "moe_chunk_sizes": [0],
     "graph_pair_policies": ["cost-input", "cost-attention", "attention-input"],
     "resolution_options": ["0", "1/4", "1/2", "3/4", "1"],
+    # Each tail count crosses every resolution; zero keeps pure even mixtures.
+    "tail_save_counts": [0, 1, 2, 4, 8, 16],
     # Evaluate and save adapters, optimizer state and data progress periodically.
     "eval_every": 10,
     "checkpoint_every": 10,

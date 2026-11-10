@@ -27,6 +27,7 @@ from shadowspill.planner.search.toolkit.resolution import (
     CostedAlternatives,
     resolutions,
     validate_resolution_options,
+    validate_tail_save_counts,
 )
 from shadowspill.simulator import SimulationConfig
 
@@ -238,6 +239,105 @@ def test_resolution_options_are_validated() -> None:
         validate_resolution_options("1/2")
     with pytest.raises(ValueError, match="outside"):
         resolutions(_binary_program(64), ("2",))
+
+
+def _repeated_passes(depth: int = 2, width: int = 8) -> ShadowSpillProgram:
+    """Unrelated group names and a required paired terminal group per pass."""
+    source = _binary_program(depth * (width + 1))
+    tasks, groups = [], []
+    for pass_index in range(depth):
+        indices = range(pass_index * (width + 1), (pass_index + 1) * (width + 1))
+        forward = []
+        backward = []
+        after = ()
+        for index in indices:
+            group = source.task_alternative_groups[index]
+            names = tuple(f"f_{option.option_id}_{index}" for option in group.options)
+            forward.extend(
+                TaskSpec(
+                    name, COMPUTE, "save_profile", phase="forward", dependencies=after
+                )
+                for name in names
+            )
+            pairs = tuple(
+                replace(task, phase="backward")
+                for task in source.tasks[index * 2 : index * 2 + 2]
+            )
+            backward[0:0] = pairs
+            groups.append(
+                replace(
+                    group,
+                    options=tuple(
+                        replace(option, active_task_ids=(name, task.task_id))
+                        for option, name, task in zip(
+                            group.options, names, pairs, strict=True
+                        )
+                    ),
+                )
+            )
+            after = names
+        tasks.extend((*forward, *backward))
+    # Stored group order deliberately differs from forward traversal order.
+    return replace(
+        source, tasks=tuple(tasks), task_alternative_groups=tuple(reversed(groups))
+    )
+
+
+def _saved(selection) -> set[str]:
+    return {item.group_id for item in selection if item.option_id == "save"}
+
+
+def test_tail_counts_cross_shares_and_repeat_each_pass() -> None:
+    program = _repeated_passes()
+    forced = {"choice_8", "choice_17"}
+    tail = {"choice_6", "choice_7", "choice_15", "choice_16"}
+    selections = resolutions(program, ("1", "1/2"), tail_save_counts=(0, 2))
+    assert len(selections) == 4
+    flexible_saves = [_saved(row) - forced for row in selections]
+    assert sorted(map(len, flexible_saves)) == [0, 4, 8, 10]
+    assert tail in flexible_saves
+    combined = next(saved for saved in flexible_saves if len(saved) == 10)
+    assert tail < combined  # Both the tail and six earlier saves are present.
+    assert all(forced <= _saved(row) for row in selections)
+    assert set(resolutions(program, ("1", "1/2"))) <= set(selections)
+
+
+def test_tail_saturation_deduplicates_and_required_saves_do_not_use_count() -> None:
+    program = _repeated_passes(depth=3)
+    selections = resolutions(
+        program, DEFAULT_RESOLUTION_OPTIONS, tail_save_counts=(8, 100)
+    )
+    assert len(selections) == 1
+    assert all(item.option_id == "save" for item in selections[0])
+    tail_only = resolutions(program, (1,), tail_save_counts=(1,))
+    assert _saved(tail_only[0]) == {
+        f"choice_{p * 9 + stage}" for p in range(3) for stage in (7, 8)
+    }
+
+
+def test_tail_requires_a_declared_unambiguous_traversal() -> None:
+    with pytest.raises(ValueError, match="forward/backward task phases"):
+        resolutions(_binary_program(8), (1,), tail_save_counts=(1,))
+    program = _repeated_passes()
+    tasks = list(program.tasks)
+    # Begin pass two after the first backward of pass one but before it drains.
+    early = next(i for i, task in enumerate(tasks) if task.task_id == "save_task_7")
+    moved = [task for task in tasks if task.task_id in {"f_save_9", "f_recompute_9"}]
+    tasks = [task for task in tasks if task not in moved]
+    tasks[early + 1 : early + 1] = moved
+    with pytest.raises(ValueError, match="non-interleaved"):
+        resolutions(replace(program, tasks=tuple(tasks)), (1,), tail_save_counts=(1,))
+
+
+def test_tail_options_validate_roundtrip_and_keep_small_products_exhaustive() -> None:
+    assert validate_tail_save_counts([4, 0, 1, 4]) == (0, 1, 4)
+    for bad in ([], [-1], [True], [1.5], "0,1", 1):
+        with pytest.raises(ValueError, match="tail save counts"):
+            validate_tail_save_counts(bad)
+    options = PressureFitOptions(tail_save_counts=(8, 0, 8, 2))
+    assert options.tail_save_counts == (0, 2, 8)
+    assert PressureFitOptions.from_dict(options.to_dict()) == options
+    assert len(resolutions(_binary_program(6), (1,), tail_save_counts=(2,))) == 64
 
 
 def _ladder_program(stages: int) -> ShadowSpillProgram:

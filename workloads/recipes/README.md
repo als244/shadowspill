@@ -68,6 +68,25 @@ GLM's covers its KDA and sparse attention operations. Chunk-local expert scratch
 must be regenerated within chunks. These choices do not change checkpoint cuts
 or require GPU residency; PressureFit controls saving, recomputation and spill.
 `resolution_options` controls which SAVE/RECOMPUTE mixtures planning considers.
+`tail_save_counts` is a list of additional planning choices, automatically crossed
+with every resolution option:
+
+```python
+"tail_save_counts": [0, 1, 2, 4, 8, 16],
+"resolution_options": ["0", "1/4", "1/2", "3/4", "1"],
+```
+
+For each chosen count, save the last K eligible forward invocations in **each**
+forward/backward pass, repeated at every depth. Apply the resolution's recompute
+fraction to the remaining flexible invocations, evenly distributed in their
+stable group order. Thus one choice can retain both a tail and earlier values.
+Required saves do not count toward K. Counts larger than a pass saturate, and
+identical complete selections are planned once. The default is `[0]`, preserving
+the original search space; include zero to keep it when adding tail choices.
+Small inventories are still exhaustive. These controls only require replanning:
+they add no build or profile candidates and do not change GPU-versus-host placement.
+Nonzero tails require non-interleaved forward/backward passes, as emitted by the
+training orderings. They use generic task phases, without recognizing model types.
 
 Local build/profile GPU exhaustion is recorded in `candidate-failures.json`
 and `search.json`, and other candidates remain eligible. Other errors fail the

@@ -606,6 +606,7 @@ schedule is infeasible.
 | PressureFit option | Default | Role |
 |---|---|---|
 | `resolution_options` | Shares 0, 0.25, 0.5, 0.75, 1 | Which task-alternative resolutions to search. |
+| `tail_save_counts` | `(0,)` | Per-pass saved-tail counts, crossed with every resolution share over the remaining flexible invocations. |
 | `residency_strategies` | `headroom-stall`, `tight-stall` | Memory accounting and cut ranking. |
 | `fetch_rules` | `packed-fifo`, `packed-fit`, `latest-safe`, `demand` | Fetch-trigger assignment. |
 | `max_repair_attempts` | 256 | Bound fetch/pressure repair attempts. |

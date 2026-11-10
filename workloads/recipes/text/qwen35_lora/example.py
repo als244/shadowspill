@@ -18,6 +18,8 @@ config = {
     "moe_chunk_sizes": [8192, 32768],
     "graph_pair_policies": ["cost-input", "cost-attention", "attention-input"],
     "resolution_options": ["0", "1/4", "1/2", "3/4", "1"],
+    # Cross per-pass saved tails with the mixtures above; this only adds planning.
+    "tail_save_counts": [0, 1, 2, 4, 8, 16],
     "execution_gib": 77,
     "spill_gib": 200,  # Pinned host memory; reserve extra RAM for the process.
     "steps": 100,

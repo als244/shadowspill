@@ -26,6 +26,7 @@ DEFAULTS = dict(
     keep_last=2,
     search_workers=0,
     resolution_options=None,
+    tail_save_counts=None,
     resume=None,
     wandb_project=None,
     pool_memory=None,
@@ -37,6 +38,7 @@ MUTABLE = {
     "plots",
     "search_workers",
     "resolution_options",
+    "tail_save_counts",
     "execution_gib",
     "spill_gib",
     "pool_memory",
@@ -104,7 +106,13 @@ def configure(recipe, config, phase):
                 raise ValueError("changed refresh_profiles requires phase='profile'")
             if (
                 key
-                in {"execution_gib", "spill_gib", "resolution_options", "pool_memory"}
+                in {
+                    "execution_gib",
+                    "spill_gib",
+                    "resolution_options",
+                    "tail_save_counts",
+                    "pool_memory",
+                }
                 and phase != "plan"
             ):
                 raise ValueError(
@@ -135,6 +143,12 @@ def configure(recipe, config, phase):
         raise ValueError("refresh_profiles must be a boolean")
     if options["preparation_ranks"] not in (1, options["ranks"]):
         raise ValueError("preparation requires one worker or the entire worker group")
+    if options.get("tail_save_counts") is not None:
+        from shadowspill.planner import validate_tail_save_counts
+
+        options["tail_save_counts"] = list(
+            validate_tail_save_counts(options["tail_save_counts"])
+        )
     definition.validate(options)
     if not path.exists() and not reused:
         candidates = list(definition.candidates(options))

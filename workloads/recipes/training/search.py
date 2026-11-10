@@ -11,15 +11,15 @@ from shadowspill.planner.search.algorithms.pressurefit import (
 
 def search_options(options):
     resolutions = options.get("resolution_options")
+    tails = options.get("tail_save_counts")
+    controls = {}
+    if resolutions is not None:
+        controls["resolution_options"] = tuple(Fraction(value) for value in resolutions)
+    if tails is not None:
+        controls["tail_save_counts"] = tuple(tails)
     return SearchOptions(
         workers=options.get("search_workers", 0),
-        algorithm=None
-        if resolutions is None
-        else PressureFit(
-            PressureFitOptions(
-                resolution_options=tuple(Fraction(value) for value in resolutions)
-            )
-        ),
+        algorithm=None if not controls else PressureFit(PressureFitOptions(**controls)),
         generic=GenericPlanningOptions(
             minimum_object_bytes_evict_eligible=options.get(
                 "minimum_evict_bytes",

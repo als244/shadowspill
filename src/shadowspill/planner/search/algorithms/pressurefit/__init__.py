@@ -126,6 +126,7 @@ def _evaluate_resolutions(
 def ordered_resolutions(
     program: ShadowSpillProgram,
     resolution_options: tuple[Fraction, ...],
+    tail_save_counts: tuple[int, ...] = (0,),
 ) -> tuple[Resolution, ...]:
     """Return the resolved programs to try, most recomputed first.
 
@@ -140,7 +141,9 @@ def ordered_resolutions(
     one that wins.
     """
 
-    resolved = resolutions(program, resolution_options)
+    resolved = resolutions(
+        program, resolution_options, tail_save_counts=tail_save_counts
+    )
     if len(resolved) < 2:
         return resolved
     ranked = sorted(
@@ -201,7 +204,9 @@ class PressureFit(SearchAlgorithm):
                 config,
                 admission,
                 resolutions=ordered_resolutions(
-                    program, self.options.resolution_options
+                    program,
+                    self.options.resolution_options,
+                    self.options.tail_save_counts,
                 ),
                 progress=None,
             )
@@ -220,8 +225,11 @@ class PressureFit(SearchAlgorithm):
         from .tracing import record_plan_trace
 
         record_plan_trace(
-            result, options=options, admission=admission,
-            placement=placement, progress=progress,
+            result,
+            options=options,
+            admission=admission,
+            placement=placement,
+            progress=progress,
         )
 
     def __call__(
@@ -269,7 +277,9 @@ class PressureFit(SearchAlgorithm):
         )
         if incumbent is not None and incumbent.program.digest != program.digest:
             raise ValueError("the plan to beat is a plan for a different program")
-        resolved = ordered_resolutions(program, self.options.resolution_options)
+        resolved = ordered_resolutions(
+            program, self.options.resolution_options, self.options.tail_save_counts
+        )
         if progress is not None:
             progress(
                 "PressureFit resolutions: "

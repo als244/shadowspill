@@ -174,6 +174,21 @@ trade of planning time for makespan that the caller makes knowingly. Under the
 deterministic gate a rung answers the same in every set of options it belongs
 to, so a superset is never worse than its subset, only slower.
 
+`PressureFitOptions.tail_save_counts` adds a crossed planning dimension. Its
+default `(0,)` keeps the original distribution. With `(0, 2, 8)`, every resolution
+share is tried with no tail, the last two eligible forward invocations retained
+in each pass, and the last eight retained in each pass. Repeat the chosen count
+at every depth. Required saves do not consume the tail count. The resolution
+share applies to the remaining flexible groups, so tails and even mixtures can
+coexist in a single selection. For two passes of eight flexible groups, tail two
+and recompute share one-half save four tail groups plus six earlier groups.
+
+The traversal uses task phases and task order, without model, operator or stage
+names. It ignores required terminal groups, including paired loss, and refuses
+interleaved or unlabelled sweeps when nonzero tails are requested. Counts saturate
+at each pass's eligible length; complete selections are deduplicated. Small
+products remain exhaustive. No build or profiling work is added by this control.
+
 Shares are exact fractions in $[0, 1]$, sorted and deduplicated, and the count
 a share selects is rounded half up, so two shares of a small group count can
 name the same selection, which is then planned once.

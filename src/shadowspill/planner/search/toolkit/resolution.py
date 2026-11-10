@@ -115,9 +115,23 @@ def named_resolution_options(value: str | Iterable[ShareValue]) -> tuple[str, ..
     return tuple(str(share) for share in validate_resolution_options(shares))
 
 
+def validate_tail_save_counts(values: Iterable[int]) -> tuple[int, ...]:
+    """Normalize explicit per-pass tail counts; zero keeps the original policy."""
+    if isinstance(values, str) or not isinstance(values, Iterable):
+        raise ValueError("tail save counts must be a sequence of nonnegative integers")
+    counts = tuple(values)
+    if not counts:
+        raise ValueError("tail save counts must name at least one count")
+    if any(type(value) is not int or value < 0 for value in counts):
+        raise ValueError("tail save counts must be nonnegative integers")
+    return tuple(sorted(set(counts)))
+
+
 def resolutions(
     program: ShadowSpillProgram,
     resolution_options: Iterable[ShareValue],
+    *,
+    tail_save_counts: Iterable[int] = (0,),
 ) -> tuple[Resolution, ...]:
     """Return a small deterministic set of legal resolutions.
 
@@ -126,12 +140,38 @@ def resolutions(
     a search that wants the usual set asks for
     `DEFAULT_RESOLUTION_OPTIONS` by name, so there is no reading of this
     call that silently plans something other than what was asked for.
+
+    Each tail count crosses every share. A tail saves the final eligible
+    forward invocations in each forward/backward pass; the share recomputes
+    evenly spaced groups among the remaining flexible invocations. Zero
+    gives the original distribution. This changes neither graphs nor profiles.
     """
 
     chosen = validate_resolution_options(resolution_options)
+    counts = validate_tail_save_counts(tail_save_counts)
     if not program.task_alternative_groups:
         return ((),)
-    return _select(CostedAlternatives.from_program(program), chosen)
+    costed = CostedAlternatives.from_program(program)
+    if counts == (0,) or costed.combination_count <= _EXHAUSTIVE_COMBINATION_LIMIT:
+        return _select(costed, chosen)
+    endpoints = costed.binary_endpoints
+    if endpoints is None:
+        raise ValueError("tail saves require binary save/recompute alternatives")
+    from .traversals import alternative_traversals
+
+    flexible = tuple(
+        i for i, group in enumerate(costed.groups) if group.forced_index is None
+    )
+    passes = alternative_traversals(program, flexible)
+    selected: list[Resolution] = []
+    for count in counts:
+        saved = {i for group in passes for i in group[-count:]} if count else set()
+        forced = {**costed.forced, **{i: endpoints[i][0] for i in saved}}
+        selected.extend(
+            _resolution(costed, indices)
+            for indices in _group_fractions(endpoints, forced, chosen)
+        )
+    return tuple(dict.fromkeys(selected))
 
 
 def recompute_share(
@@ -524,4 +564,5 @@ __all__ = [
     "recompute_share",
     "resolutions",
     "validate_resolution_options",
+    "validate_tail_save_counts",
 ]
