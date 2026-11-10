@@ -89,7 +89,9 @@ def parser():
     )
     result.add_argument("--warmup-seconds", type=float, default=0.05)
     result.add_argument("--measure-seconds", type=float, default=0.18)
-    result.add_argument("--refresh-profiles", action=argparse.BooleanOptionalAction)
+    result.add_argument(
+        "--refresh-profiles", action=argparse.BooleanOptionalAction, default=False
+    )
     result.add_argument("--no-plots", dest="plots", action="store_false")
     result.add_argument(
         "--nsys-steps",
