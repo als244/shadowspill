@@ -158,6 +158,25 @@ Checkpoint cadence and retention count can also change on a prepared run without
 rebuilding or replanning. Checkpoint reload tests and reference/state audits are
 separate opt-in validation work, not part of a throughput sweep.
 
+Execution also writes small host-side lifecycle journals under `logs/`:
+`execute-launcher.jsonl` records the worker process lifetime, and
+`execution-rank-00000.jsonl` (one per launcher rank) records imports, Plan loading,
+runtime construction, initialization, input/logger setup, training, result
+gathering and teardown. Runtime construction includes pool allocation,
+communication setup and saved-kernel restoration. Each record has wall and
+monotonic timestamps, hostname, PID and rank. Phase begin/end records pair within
+one process; phases can nest and their durations must not be summed blindly.
+Repeated executions append new process records.
+
+The journals do not query or synchronize CUDA, collect task traces, or run extra
+updates. Step-completion markers follow normal scalar/table logging; their
+`seconds` field is the existing Trainer update timer, not a duration inferred
+from adjacent markers. The training phase also includes input and logging work,
+plus evaluation/checkpoint work when enabled. Combine wall timestamps with an
+external device-utilization sampler to distinguish startup and cleanup from
+training. Sampled GPU activity is not a measurement of achieved FLOPs. Journals
+end before Python process teardown; the launcher includes that remaining time.
+
 Local build/profile GPU exhaustion is recorded in `candidate-failures.json`
 and `search.json`, and other candidates remain eligible. Other errors fail the
 phase. Collective preparation failures terminate the worker group; a rank must

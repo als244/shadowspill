@@ -1,40 +1,66 @@
 """Execute saved Plans with bounded initialization and stateful real inputs."""
 
 import json
+import os
 import sys
 import time
 from contextlib import ExitStack
+from pathlib import Path
 
-from benchmarking.quickstart.phases.distributed import workers
-from shadowspill import Plan, Trainer
-from shadowspill.training.logging import DistributedLogger, Wandb
-from workloads.recipes.phases import settings
-
-from .configuration import adapter
+from workloads.recipes.lifecycle import Lifecycle
 
 
 def run(directory):
-    root, options = settings(directory)
-    options.update(json.loads((root / "selected.json").read_text()))
-    metadata = json.loads((root / "model.json").read_text())
-    definition = adapter(options["recipe"])
+    rank = int(os.environ.get("RANK", "0"))
+    path = Path(directory) / "logs" / f"execution-rank-{rank:05d}.jsonl"
+    with Lifecycle(path, rank=rank) as timing, timing.phase("execution"):
+        _execute(directory, timing)
+
+
+def _execute(directory, timing):
+    with timing.phase("imports"):
+        from benchmarking.quickstart.phases.distributed import workers
+        from shadowspill import Plan, Trainer
+        from shadowspill.training.logging import DistributedLogger, Wandb
+        from workloads.recipes.phases import settings
+
+        from .configuration import adapter
+
+    with timing.phase("configuration"):
+        root, options = settings(directory)
+        options.update(json.loads((root / "selected.json").read_text()))
+        metadata = json.loads((root / "model.json").read_text())
+        definition = adapter(options["recipe"])
     started = time.monotonic()
-    with workers({}, {"world_size": options["ranks"]}) as group, ExitStack() as stack:
-        trainer_type = getattr(definition, "trainer_type", lambda: Trainer)()
-        trainer = stack.enter_context(
-            trainer_type(
-                Plan.load(root / "plans/training.ssp"),
-                evaluation_plan=Plan.load(root / "plans/evaluation.ssp")
+    with (
+        timing.managed(
+            "control_group", workers({}, {"world_size": options["ranks"]})
+        ) as group,
+        ExitStack() as stack,
+    ):
+        with timing.phase("plans.load"):
+            plan = Plan.load(root / "plans/training.ssp")
+            evaluation = (
+                Plan.load(root / "plans/evaluation.ssp")
                 if options["eval_every"]
-                else None,
+                else None
+            )
+        with timing.phase("runtime.create"):
+            trainer_type = getattr(definition, "trainer_type", lambda: Trainer)()
+            trainer = trainer_type(
+                plan,
+                evaluation_plan=evaluation,
                 rank_map=group.rank_map,
                 **definition.trainer_options(options, metadata),
             )
-        )
+            trainer = stack.enter_context(timing.managed("runtime", trainer))
         # The execution allocator is installed before an adapter may load weights.
-        with definition.initializer(
-            options, metadata, rank=group.logical_rank
-        ) as initialize:
+        with (
+            timing.phase("weights.initialize"),
+            definition.initializer(
+                options, metadata, rank=group.logical_rank
+            ) as initialize,
+        ):
             if options["resume"]:
                 trainer.load(
                     options["resume"].format(rank=group.logical_rank),
@@ -48,33 +74,44 @@ def run(directory):
             f"spill pool {trainer.executor.spill_capacity_bytes / (1 << 30):.3f} GiB",
             flush=True,
         )
-        source = definition.inputs(options, rank=group.logical_rank)
+        with timing.phase("inputs.create"):
+            source = definition.inputs(options, rank=group.logical_rank)
         training = root / "training"
         training.mkdir(exist_ok=True)
         local = (
             training / f"rank-{group.logical_rank:05d}" if group.count > 1 else training
         )
-        logger = None
-        if group.count > 1:
-            import torch.distributed as dist
+        with timing.phase("logging.setup"):
+            logger = None
+            if group.count > 1:
+                import torch.distributed as dist
 
-            logger = stack.enter_context(
-                DistributedLogger(
-                    dist.group.WORLD,
-                    run_dir=training,
-                    wandb={"project": options["wandb_project"], "config": options}
-                    if options["wandb_project"]
-                    else None,
+                logger = stack.enter_context(
+                    timing.managed(
+                        "logging",
+                        DistributedLogger(
+                            dist.group.WORLD,
+                            run_dir=training,
+                            wandb={
+                                "project": options["wandb_project"],
+                                "config": options,
+                            }
+                            if options["wandb_project"]
+                            else None,
+                        ),
+                    )
                 )
-            )
-        elif options["wandb_project"]:
-            logger = stack.enter_context(
-                Wandb(
-                    project=options["wandb_project"],
-                    run_dir=training,
-                    config=options,
+            elif options["wandb_project"]:
+                logger = stack.enter_context(
+                    timing.managed(
+                        "logging",
+                        Wandb(
+                            project=options["wandb_project"],
+                            run_dir=training,
+                            config=options,
+                        ),
+                    )
                 )
-            )
         stream = (
             stack.enter_context((training / "evaluation.jsonl").open("a", buffering=1))
             if group.rank == 0 and options["eval_every"]
@@ -83,6 +120,11 @@ def run(directory):
         records = []
 
         def completed(owner, result):
+            # This callback follows the existing scalar/table logging. It is a
+            # host progress marker; result.seconds is Trainer's update timer.
+            timing.event(
+                "training.step_completed", step=result.step, seconds=result.seconds
+            )
             records.append(
                 dict(
                     step=result.step,
@@ -111,38 +153,42 @@ def run(directory):
                     stream.write(json.dumps(record) + "\n")
                     print(record, flush=True)
 
-        trainer.fit(
-            source,
-            steps=options["steps"],
-            run_dir=local,
-            logger=logger,
-            callbacks=[completed],
-            checkpoint_every=options["checkpoint_every"],
-            keep_last=options["keep_last"],
-        )
-        finish = getattr(definition, "finish", None)
-        if finish is not None:
-            finish(root, options, records, rank=group.logical_rank)
-        per_rank = group.gather(
-            dict(
-                rank=group.logical_rank,
-                steps=records,
-                spill_capacity_bytes=trainer.executor.spill_capacity_bytes,
+        with timing.phase("training.fit"):
+            trainer.fit(
+                source,
+                steps=options["steps"],
+                run_dir=local,
+                logger=logger,
+                callbacks=[completed],
+                checkpoint_every=options["checkpoint_every"],
+                keep_last=options["keep_last"],
             )
-        )
-        if group.rank == 0:
-            (root / "completed.json").write_text(
-                json.dumps(
-                    dict(
-                        steps=trainer.step_count,
-                        elapsed_seconds=time.monotonic() - started,
-                        data_state=source.state_dict(),
-                        per_rank=per_rank,
-                    ),
-                    indent=2,
+        with timing.phase("adapter.finish"):
+            finish = getattr(definition, "finish", None)
+            if finish is not None:
+                finish(root, options, records, rank=group.logical_rank)
+        with timing.phase("results.gather"):
+            per_rank = group.gather(
+                dict(
+                    rank=group.logical_rank,
+                    steps=records,
+                    spill_capacity_bytes=trainer.executor.spill_capacity_bytes,
                 )
-                + "\n"
             )
+        with timing.phase("results.write"):
+            if group.rank == 0:
+                (root / "completed.json").write_text(
+                    json.dumps(
+                        dict(
+                            steps=trainer.step_count,
+                            elapsed_seconds=time.monotonic() - started,
+                            data_state=source.state_dict(),
+                            per_rank=per_rank,
+                        ),
+                        indent=2,
+                    )
+                    + "\n"
+                )
 
 
 if __name__ == "__main__":

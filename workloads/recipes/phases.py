@@ -7,6 +7,8 @@ from pathlib import Path
 
 from benchmarking.processes import worker_command
 
+from .lifecycle import Lifecycle
+
 
 def settings(directory):
     root = Path(directory)
@@ -34,10 +36,15 @@ def run_phases(package, root, selected, *, ranks=1, preparation_ranks=1):
         command = worker_command(f"{package}.{phase}", [root], ranks=workers)
         if workers > 1:
             environment.setdefault("OMP_NUM_THREADS", "1")
-        with log_path.open("w") as log:
+        with (
+            Lifecycle(root / f"logs/{phase}-launcher.jsonl") as timing,
+            timing.phase("workers"),
+            log_path.open("w") as log,
+        ):
             result = subprocess.run(
                 command, env=environment, stdout=log, stderr=subprocess.STDOUT
             )
+            timing.event("workers.returned", returncode=result.returncode)
         if result.returncode:
             # The phase ran in a worker whose output is its log; name the
             # failure where the caller is looking.
