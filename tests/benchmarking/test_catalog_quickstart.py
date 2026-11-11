@@ -115,9 +115,14 @@ def test_initialize_qwen35_norms_and_decay():
     initialize = setup["fill_tensor"]
 
     def values(name, shape):
-        return initialize.values(
-            name, shape, 0, shape[-1], torch.Generator().manual_seed(1)
+        from shadowspill import TensorChunk
+
+        destination = torch.empty(shape).reshape(-1)
+        initialize(
+            TensorChunk(name, shape, destination.dtype, 0, destination.numel()),
+            destination,
         )
+        return destination
 
     assert torch.equal(values("blocks.0.attn_norm.weight", (8,)), torch.zeros(8))
     assert torch.equal(values("blocks.0.mixer.lin_norm.weight", (8,)), torch.ones(8))
