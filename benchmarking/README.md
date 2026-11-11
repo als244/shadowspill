@@ -14,6 +14,7 @@ benchmarking/
 ├── quickstart.md                       its guide: flags, phases, terms
 ├── bandwidth_frontier/                 CPU sweeps from ProfiledProgram archives
 ├── stage_traces/                       Nsight traces of isolated compiled stages
+├── plan_runner/                        saved-Plan execution and lifecycle/device evidence
 ├── host_memory/                        host-memory preflight before spill pools
 ├── quickstart_reports/                 one directory per quickstart run
 ├── program_collection/
@@ -30,6 +31,11 @@ benchmarking/
 ```
 
 ## Entry points
+
+[**Saved-Plan runner**](plan_runner/README.md) benchmarks an existing selected
+training Plan with a short Python script. It supports single-device and
+distributed workers, workload-owned initialization/data hooks, per-phase timing
+and GPU sampling, without running build/profile/search again.
 
 [**Quickstart**](quickstart.md) takes one model end to end on this machine:
 it searches microbatch geometries across execution budgets, optionally

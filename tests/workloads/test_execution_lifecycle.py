@@ -6,7 +6,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from workloads.recipes.lifecycle import Lifecycle
+from benchmarking.plan_runner.lifecycle import Lifecycle
 from workloads.recipes.training import configuration, execute
 
 

@@ -5,9 +5,8 @@ import os
 import subprocess
 from pathlib import Path
 
+from benchmarking.plan_runner.lifecycle import Lifecycle
 from benchmarking.processes import worker_command
-
-from .lifecycle import Lifecycle
 
 
 def settings(directory):
@@ -29,8 +28,10 @@ def run_phases(package, root, selected, *, ranks=1, preparation_ranks=1):
         if phase == "plan":
             environment["CUDA_VISIBLE_DEVICES"] = ""
         workers = (
-            ranks if phase in {"communicate", "execute"}
-            else preparation_ranks if phase in {"build", "profile"}
+            ranks
+            if phase in {"communicate", "execute"}
+            else preparation_ranks
+            if phase in {"build", "profile"}
             else 1
         )
         command = worker_command(f"{package}.{phase}", [root], ranks=workers)

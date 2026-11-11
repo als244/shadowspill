@@ -1,4 +1,4 @@
-"""Small host-side phase journals, separate from device/runtime tracing."""
+"""Shared host phase journals, separate from device/runtime tracing."""
 
 import json
 import os

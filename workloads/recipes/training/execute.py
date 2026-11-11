@@ -7,7 +7,7 @@ import time
 from contextlib import ExitStack
 from pathlib import Path
 
-from workloads.recipes.lifecycle import Lifecycle
+from benchmarking.plan_runner.lifecycle import Lifecycle
 
 
 def run(directory):

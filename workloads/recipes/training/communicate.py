@@ -4,6 +4,7 @@ from datetime import timedelta
 
 import torch.distributed as dist
 
+from benchmarking.plan_runner.lifecycle import Lifecycle
 from shadowspill import (
     OverlapProfileCache,
     ProfiledProgram,
@@ -11,7 +12,6 @@ from shadowspill import (
     measure_communication,
     measure_overlap,
 )
-from workloads.recipes.lifecycle import Lifecycle
 from workloads.recipes.phases import settings
 
 from .candidates import program_paths
