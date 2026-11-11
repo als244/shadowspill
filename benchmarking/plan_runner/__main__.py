@@ -26,6 +26,10 @@ def main():
     )
     parser.add_argument("--nsys-steps", type=int, default=0, help="0 disables Nsight")
     parser.add_argument("--nsys-start-step", type=int, default=2)
+    parser.add_argument(
+        "--nsys-output-dir",
+        help="common capture folder (default: OUTPUT_DIR/profiling)",
+    )
     options = parser.parse_args()
     if options.nsys_steps < 0:
         parser.error("--nsys-steps must be nonnegative")
@@ -38,7 +42,11 @@ def main():
         unit_label=options.unit_label,
         monitor=options.monitor,
         trace_final_step=options.trace_final_step,
-        nsys=NsysCapture(start_step=options.nsys_start_step, steps=options.nsys_steps)
+        nsys=NsysCapture(
+            start_step=options.nsys_start_step,
+            steps=options.nsys_steps,
+            output_dir=options.nsys_output_dir,
+        )
         if options.nsys_steps
         else None,
     )

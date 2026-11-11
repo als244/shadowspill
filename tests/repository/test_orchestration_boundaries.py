@@ -49,7 +49,7 @@ class Block(importlib.abc.MetaPathFinder):
 block = Block()
 sys.meta_path.insert(0, block)
 for module in ('processes', 'device_worker', 'rank_device',
-               'workers', 'lifecycle', 'candidates', 'nsys'):
+               'workers', 'lifecycle', 'candidates', 'nsys', 'nsys_worker'):
     importlib.import_module('orchestration.' + module)
 block.blocked = {'benchmarking', 'qualification'}
 for module in ('workloads.recipes', 'workloads.recipes.phases',

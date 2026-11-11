@@ -118,26 +118,42 @@ def test_nsight_and_runtime_trace_exclusions_can_overlap():
 
 
 @pytest.mark.parametrize("report_exists", [False, True])
+@pytest.mark.parametrize("external", [False, True])
 def test_recipe_launcher_requires_nsight_report_and_records_capture(
-    tmp_path, monkeypatch, report_exists
+    tmp_path, monkeypatch, report_exists, external
 ):
     from benchmarking.plan_runner import recipe
 
     source, output = tmp_path / "source", tmp_path / "output"
+    capture_dir = tmp_path / "shared" if external else output / "profiling"
     (source / "plans").mkdir(parents=True)
     (source / "plans/training.ssp").touch()
     for name, value in (("config", {"ranks": 2}), ("model", {}), ("selected", {})):
         (source / f"{name}.json").write_text(json.dumps(value))
 
     def launch(command, **options):
-        assert command[1] == "profile"
-        assert "torch.distributed.run" in command
-        assert "--gpu-metrics-devices=cuda-visible" in command
+        assert command.index("torch.distributed.run") < command.index(
+            "orchestration.nsys_worker"
+        )
+        assert command[command.index("--output-dir") + 1] == str(capture_dir)
         request = json.loads((output / "request.json").read_text())
         assert request["nsys"]["start_step"] == 3
         (output / "result.json").write_text('{"status":"PASS"}')
         if report_exists:
-            (output / "nsys/trace.nsys-rep").write_bytes(b"test-report")
+            for rank in range(2):
+                folder = capture_dir / f"rank-{rank:05d}"
+                folder.mkdir(parents=True)
+                (folder / "trace.nsys-rep").write_bytes(b"test-report")
+                (folder / "capture.json").write_text(
+                    json.dumps(
+                        dict(
+                            rank=rank,
+                            world_size=2,
+                            status="complete",
+                            report_bytes=len(b"test-report"),
+                        )
+                    )
+                )
         return SimpleNamespace(returncode=0)
 
     monkeypatch.setattr(recipe.subprocess, "run", launch)
@@ -145,14 +161,21 @@ def test_recipe_launcher_requires_nsight_report_and_records_capture(
         output_dir=output,
         steps=5,
         monitor=False,
-        nsys=NsysCapture(start_step=3, executable="/bin/true"),
+        nsys=NsysCapture(
+            start_step=3,
+            executable="/bin/true",
+            output_dir=capture_dir if external else None,
+        ),
     )
     if not report_exists:
-        with pytest.raises(RuntimeError, match="without a nonempty report"):
+        with pytest.raises(RuntimeError, match="missing Nsight rank"):
             recipe.benchmark(source, **options)
     else:
         result = recipe.benchmark(source, **options)
-        assert result["nsys"]["report_bytes"] == len(b"test-report")
+        assert len(result["nsys"]["reports"]) == 2
+        for record in result["nsys"]["reports"]:
+            assert record["report_bytes"] == len(b"test-report")
+            assert (output / record["report_path"]).is_file()
         assert result["nsys"]["content_verified"] is False
 
 
@@ -500,7 +523,8 @@ def test_real_saved_plan_benchmark_matches_eager_without_preparation(tmp_path, n
         > 0
     )
     if nsys is not None:
-        capture = output / result["nsys"]["report_path"]
+        assert len(result["nsys"]["reports"]) == 1
+        capture = output / result["nsys"]["reports"][0]["report_path"]
         database = capture.with_suffix(".sqlite")
         exported = subprocess.run(
             [

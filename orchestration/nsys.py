@@ -1,6 +1,8 @@
 """CPU-only Nsight launch settings and the shared Trainer capture adapter."""
 
-from dataclasses import dataclass
+import json
+import sys
+from dataclasses import asdict, dataclass
 from pathlib import Path
 from shutil import which
 
@@ -9,9 +11,11 @@ from shutil import which
 class NsysCapture:
     """Collect a contiguous interval of one-based, complete training updates.
 
-    ``command`` wraps a worker launcher (including torchrun) in one Nsight
-    process-tree capture. The worker uses the existing cudaProfilerApi capture
-    boundaries and ShadowSpill's independent ``profiler_annotations`` toggle.
+    ``rank_command`` runs inside the distributed launcher, before CUDA imports,
+    to isolate one GPU and start one collector per rank. The worker uses the
+    existing cudaProfilerApi boundaries and independent ``profiler_annotations``
+    toggle. ``output_dir=None`` defaults to the benchmark run's profiling folder;
+    custom launchers supply their common output directory to ``rank_command``.
     Hardware metrics require permission on the selected devices.
     """
 
@@ -20,6 +24,7 @@ class NsysCapture:
     gpu_metrics: bool = True
     gpu_metrics_frequency: int = 1000
     executable: str = "nsys"
+    output_dir: str | Path | None = None
 
     def __post_init__(self):
         for name in ("start_step", "steps"):
@@ -34,13 +39,21 @@ class NsysCapture:
             raise ValueError("gpu_metrics_frequency must be 10-200000 Hz")
         if not isinstance(self.executable, str) or not self.executable:
             raise ValueError("executable must be a nonempty Nsight executable name")
+        if self.output_dir is not None:
+            if not isinstance(self.output_dir, (str, Path)) or not str(self.output_dir):
+                raise ValueError("output_dir must be a nonempty path or None")
+            object.__setattr__(self, "output_dir", str(self.output_dir))
 
     @property
     def step_numbers(self):
         return range(self.start_step, self.start_step + self.steps)
 
     def command(self, worker_command, *, output):
-        """Launch one collector around all workers; ``output`` is a report stem."""
+        """Collector command for one already isolated rank; output is a stem.
+
+        Prefer ``rank_command`` to mask devices and check the resulting report.
+        Do not wrap torchrun itself: each rank needs its own collector.
+        """
         executable = which(self.executable)
         if executable is None:
             raise FileNotFoundError(f"Nsight Systems executable: {self.executable}")
@@ -63,6 +76,33 @@ class NsysCapture:
                 f"--gpu-metrics-frequency={self.gpu_metrics_frequency}",
             ]
         return command + list(map(str, worker_command))
+
+    def rank_command(self, worker_command, *, output_dir=None):
+        """Wrap one worker command, suitable for torchrun's ``--no-python``.
+
+        Each rank writes ``output_dir/rank-NNNNN/{trace.nsys-rep,capture.json}``.
+        The directory may be shared across nodes or collected from each node
+        afterward. Global rank names do not collide between nodes. Capture
+        boundaries still belong to the worker's Trainer configuration.
+        """
+        directory = self.output_dir if output_dir is None else output_dir
+        if directory is None:
+            raise ValueError(
+                "rank_command needs output_dir or NsysCapture(output_dir=...)"
+            )
+        return [
+            sys.executable,
+            *(["-S"] if sys.flags.no_site else []),
+            "-u",
+            "-m",
+            "orchestration.nsys_worker",
+            "--config",
+            json.dumps(asdict(self)),
+            "--output-dir",
+            str(directory),
+            "--",
+            *map(str, worker_command),
+        ]
 
 
 def nsight_trainer(base):

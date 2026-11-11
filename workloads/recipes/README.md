@@ -266,9 +266,10 @@ updates; keep `schedule_steps` fixed across a continuation.
 
 Nsight boundaries are shared execution options for every recipe:
 `nsys_steps=0` disables them by default, while `nsys_start_step=2` identifies the
-first one-based update when enabled. Launch the execute worker tree under
-`nsys profile --capture-range=cudaProfilerApi --capture-range-end=stop`;
-the shared adapter adds per-rank update ranges and ShadowSpill task/transfer
+first one-based update when enabled. Launch each execute worker under its own
+collector using `NsysCapture.rank_command` **inside** the distributed launcher;
+this isolates the worker's GPU before starting Nsight. Every rank controls its
+own cudaProfilerApi capture. The shared adapter adds per-rank update ranges and ShadowSpill task/transfer
 annotations. Evaluation/checkpoint cadences must fall outside the captured
 interval. For automatic collector launch, device metrics and saved-report
 handling, use the [saved-Plan benchmark API](../../benchmarking/plan_runner/README.md#nsight-systems).

@@ -249,16 +249,11 @@ run(
 building and optionally require `--minimum-relative-loss-drop 0.01`. That check
 requires at least four newly executed updates, including when resuming.
 
-Profile only execution after preparing the plans:
-
-```bash
-nsys profile --capture-range=cudaProfilerApi --capture-range-end=stop \
-  -o /path/to/glm-training \
-  python -m workloads.recipes.text.train_glm53_flash_lora \
-  --run-dir runs/glm-lora --phase execute --nsys-start-step 3 --nsys-steps 2
-```
-
-Capture spans completed updates, with per-rank NVTX ranges. Evaluation and
+Profile execution after preparing the plans with the shared
+[saved-Plan benchmark API](../../../../benchmarking/plan_runner/README.md#nsight-systems).
+It launches one collector per global rank, masks each collector to its worker's
+GPU, and saves reports under a configurable common directory. No GLM-specific
+capture path is needed. Capture spans completed updates, with per-rank NVTX ranges. Evaluation and
 checkpoint cadences must fall outside the interior of that capture; the CLI
 rejects conflicts. Inductor/Triton caches remain in node-local temporary storage.
 

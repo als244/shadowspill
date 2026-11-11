@@ -7,6 +7,24 @@ def worker_command(module, arguments, *, ranks=1):
     python = [sys.executable, *(["-S"] if sys.flags.no_site else [])]
     if ranks == 1:
         return [*python, "-u", "-m", module, *map(str, arguments)]
+    return distributed_command(
+        [
+            *python,
+            "-u",
+            "-m",
+            "orchestration.device_worker",
+            module,
+            *map(str, arguments),
+        ],
+        ranks=ranks,
+    )
+
+
+def distributed_command(command, *, ranks):
+    """Launch an already wrapped per-rank command on one node."""
+    if ranks == 1:
+        return list(command)
+    python = [sys.executable, *(["-S"] if sys.flags.no_site else [])]
     return [
         *python,
         "-m",
@@ -14,10 +32,5 @@ def worker_command(module, arguments, *, ranks=1):
         "--standalone",
         f"--nproc-per-node={ranks}",
         "--no-python",
-        *python,
-        "-u",
-        "-m",
-        "orchestration.device_worker",
-        module,
-        *map(str, arguments),
+        *command,
     ]

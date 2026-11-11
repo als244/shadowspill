@@ -93,9 +93,9 @@ def run(
     train, but are excluded from the reported steady median. Trace files are
     written after runtime cleanup; set ``trace_final_step=False`` to disable.
     ``nsys=NsysCapture(...)`` bounds an external capture and enables semantic
-    annotations. Launch the worker tree with ``nsys.command`` (or use
-    ``benchmark`` to launch automatically). Captured updates are excluded from
-    steady timing; run() does not launch a collector inside an existing worker.
+    annotations. Launch each worker with ``nsys.rank_command`` inside torchrun
+    (or use ``benchmark`` to launch automatically). Captured updates are excluded
+    from steady timing; run() does not launch a collector inside an existing worker.
     """
     validate(steps, warmup_steps, units_per_step, trace_final_step, nsys)
     worker_rank = int(os.environ.get("RANK", "0"))

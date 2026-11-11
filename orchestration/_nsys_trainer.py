@@ -9,8 +9,8 @@ import torch.distributed as dist
 class NsightTrainerMixin:
     """Use under nsys --capture-range=cudaProfilerApi --capture-range-end=stop.
 
-    Rank zero controls the process-tree session. Barriers bound the interval
-    across workers; per-worker NVTX ranges identify each complete update.
+    Every rank controls its own collector. Barriers bound the interval across
+    workers; per-worker NVTX ranges identify each complete update.
     Trainer.fit evaluation/checkpoint work occurs after step returns.
     """
 
@@ -28,8 +28,7 @@ class NsightTrainerMixin:
         distributed = dist.is_initialized()
         if distributed:
             dist.barrier()
-        if not distributed or dist.get_rank() == 0:
-            action()
+        action()
         if distributed:
             dist.barrier()
 

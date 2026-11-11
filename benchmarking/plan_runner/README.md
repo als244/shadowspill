@@ -63,9 +63,13 @@ if __name__ == "__main__":
         "runs/selected",
         output_dir="benchmarks/capture",
         steps=7,
-        nsys=NsysCapture(start_step=5, steps=2),
+        nsys=NsysCapture(
+            start_step=5, steps=2,
+            # output_dir="/shared/captures/experiment",  # Optional override.
+        ),
     )
-    print(result["nsys"]["report_path"])  # nsys/trace.nsys-rep
+    for capture in result["nsys"]["reports"]:
+        print(capture["rank"], capture["report_path"])
 ```
 
 This runs updates 1–7 normally: warmup 1, timing 2–4, Nsight 5–6, and the default
@@ -80,26 +84,62 @@ compare a separate capture-disabled run for an uninstrumented baseline.
 and device metrics on CUDA-visible GPUs at 1,000 Hz. It accepts `gpu_metrics`,
 `gpu_metrics_frequency` and `executable` overrides. GPU metrics require the
 appropriate host permissions; this API does not elevate privileges. One Nsight
-process wraps the entire worker tree, including torchrun workers. The shared
-Trainer adapter uses rank barriers and rank-zero cudaProfilerApi start/stop,
+collector runs **inside the distributed launcher for each global rank**. Before
+starting that collector, the wrapper restricts `CUDA_VISIBLE_DEVICES` to the
+rank's assigned GPU. `--gpu-metrics-devices=cuda-visible` therefore samples only
+that device. The shared Trainer adapter uses rank barriers and **each rank's**
+cudaProfilerApi start/stop,
 labels `train/step=N/rank=R`, and enables the existing
 `profiler_annotations=True` task/transfer ranges only during captured updates.
 Collection stops without terminating the remaining updates.
 
-The launcher waits for workers and collector to exit and requires a nonempty
-`nsys/trace.nsys-rep`. `command.json` records the launch, and `result.json`
-records capture settings, steps, report path and size. `content_verified=False`
+The launcher waits for every worker and collector to exit and requires a
+nonempty report from **every rank**. By default the common capture directory is
+`OUTPUT_DIR/profiling`, where `OUTPUT_DIR` is this benchmark run's directory.
+Set `NsysCapture(output_dir=...)` to choose a different common directory (relative
+paths resolve from the launcher's working directory). Each collector creates
+`rank-NNNNN/trace.nsys-rep`, `capture.json` and `collector.log` there. Global rank
+names avoid collisions between nodes, and existing rank folders are never
+overwritten. The manifest records hostname, global/local rank, device mask,
+collector command, completion status and report size.
+
+`command.json` records the launch, and `result.json` includes the per-rank
+`nsys.reports` list. Report paths are relative to the benchmark run when inside
+it, absolute otherwise. `content_verified=False`
 means the report's ranges/kernels/metric samples still need offline inspection;
 a requested metric flag alone is not evidence of successful collection. Export
 or inspect the report after releasing the GPU allocation. The default runner
 does not add SQLite export or report processing to execution.
 
 Custom `run(...)` users pass the same `nsys=NsysCapture(...)` in each worker and
-launch their script with `capture.command(worker_command, output=report_stem)`.
+launch their script with `capture.rank_command(worker_command, output_dir=...)`
+**inside** torchrun, using its `--no-python` option. For example, the node launcher
+can construct this command in Python:
+
+```python
+import subprocess
+import sys
+from orchestration.nsys import NsysCapture
+
+capture = NsysCapture(start_step=5, steps=2, output_dir="/shared/captures/experiment")
+worker = capture.rank_command([sys.executable, "worker.py"])
+# torchrun_options contains this job's nnodes, node-rank, rendezvous and nproc settings.
+subprocess.run(["torchrun", *torchrun_options, "--no-python", *worker], check=True)
+```
+
+This wrapper preserves global/local rank identities and needs no cross-node
+collector. Use a shared capture directory, or the same node-local path and gather
+the globally named rank folders after the job. The capture interval must agree
+with the worker's `run(..., nsys=capture)` settings. Barriers align the selected
+updates; they do not synchronize the hosts' clocks for cross-node timeline
+analysis. Actual multi-node capture still requires qualification on that setup.
+
 The low-level worker API cannot relaunch arbitrary Python hooks; it controls
 capture boundaries only. It does not claim to have saved an Nsight report.
 The saved-run `benchmark(...)` handles that launch and report check automatically.
-The optional CLI equivalents are `--nsys-steps 2 --nsys-start-step 5`.
+It auto-launches one node; use the worker API under your external launcher for
+multiple nodes. The optional CLI equivalents are `--nsys-steps 2
+--nsys-start-step 5` and `--nsys-output-dir /shared/captures/experiment`.
 
 ## Any saved training Plan
 
@@ -207,6 +247,7 @@ path. Interrupted runs keep their partial journals for this report too.
 | `api.py` | Model-independent, rank-local saved-Plan execution and aggregation |
 | `recipe.py` | Fresh-worker launcher and bridge to existing saved recipe hooks |
 | [`orchestration/nsys.py`](../../orchestration/nsys.py) | Shared external-profiler launch settings and capture adapter |
+| [`orchestration/nsys_worker.py`](../../orchestration/nsys_worker.py) | One isolated collector and report per global rank |
 | [`orchestration/lifecycle.py`](../../orchestration/lifecycle.py) | Shared host phase journal used by recipes and benchmarks |
 | `monitor.py` | External GPU sampling with explicit process cleanup |
 | `report.py` | Offline CPU phase/device analysis |

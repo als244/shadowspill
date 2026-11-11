@@ -64,23 +64,23 @@ def test_capture_boundaries_and_per_rank_step_ranges(monkeypatch, rank, count):
 
     expected = [("step", 1)]
     if count:
-        expected += ["barrier", *(["start"] if rank == 0 else []), "barrier"]
+        expected += ["barrier", "start", "barrier"]
         for number in range(2, 7):
             label = f"train/step={number}/rank={rank}"
             expected += [("enter", label), ("step", number), ("exit", label)]
-        expected += ["barrier", *(["stop"] if rank == 0 else []), "barrier"]
+        expected += ["barrier", "stop", "barrier"]
     else:
         expected += [("step", number) for number in range(2, 7)]
     expected.append(("step", 7))
     assert events == expected
 
 
-def test_capture_launch_wraps_worker_tree_and_preserves_device_mask(tmp_path):
+def test_capture_launch_scopes_metrics_to_the_rank_device(tmp_path):
     capture = NsysCapture(executable="/bin/true", start_step=5)
     command = capture.command(
-        ["python", "-m", "torch.distributed.run"], output=tmp_path / "trace"
+        ["python", "worker.py"], output=tmp_path / "trace"
     )
-    assert command[-3:] == ["python", "-m", "torch.distributed.run"]
+    assert command[-2:] == ["python", "worker.py"]
     assert "--capture-range=cudaProfilerApi" in command
     assert "--capture-range-end=stop" in command
     assert "--wait=all" in command

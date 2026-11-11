@@ -14,6 +14,7 @@ choose a training or measurement protocol, or interpret a saved recipe directory
 | `lifecycle` | Append-only host phase journals, including context entry/cleanup and failures |
 | `candidates` | Record a local candidate's device exhaustion after releasing its traceback; other failures propagate |
 | `nsys` | CPU-only Nsight command configuration and a lazy Trainer adapter for shared capture boundaries |
+| `nsys_worker` | Pre-CUDA per-rank GPU masking, collector launch and report validation; global rank paths support external multi-node launchers |
 
 These modules import no model, recipe, benchmark or qualification implementation.
 Imports are CPU-only; `workers` imports PyTorch when a distributed group is

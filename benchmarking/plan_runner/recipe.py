@@ -9,7 +9,8 @@ from pathlib import Path
 
 from orchestration.lifecycle import Lifecycle
 from orchestration.nsys import NsysCapture
-from orchestration.processes import worker_command
+from orchestration.nsys_worker import reports
+from orchestration.processes import distributed_command, worker_command
 
 from .api import run, validate
 from .monitor import GpuMonitor
@@ -33,8 +34,9 @@ def benchmark(
     options come from the saved run. No build/search/calibration is performed.
     This benchmark always disables evaluation, checkpoint writes and resume.
     ``output_dir`` must be new; the original training run is read-only.
-    ``nsys=NsysCapture(...)`` launches one collector around the worker tree,
-    records hardware metrics by default, and saves ``nsys/trace.nsys-rep``.
+    ``nsys=NsysCapture(...)`` launches one collector per global rank, recording
+    metrics on that rank's GPU and saving ``profiling/rank-NNNNN/trace.nsys-rep``.
+    ``NsysCapture(output_dir=...)`` overrides that common capture directory.
     """
     validate(steps, warmup_steps, units_per_step, trace_final_step, nsys)
     if int(os.environ.get("WORLD_SIZE", "1")) > 1:
@@ -45,14 +47,24 @@ def benchmark(
             raise FileNotFoundError(source / name)
     options = json.loads((source / "config.json").read_text())
     root = Path(output_dir).resolve()
-    command = worker_command(
-        "benchmarking.plan_runner.recipe", [root], ranks=options["ranks"]
-    )
     if nsys is not None:
-        command = nsys.command(command, output=root / "nsys/trace")
+        capture_dir = (
+            Path(nsys.output_dir).expanduser().resolve()
+            if nsys.output_dir is not None
+            else root / "profiling"
+        )
+        command = distributed_command(
+            nsys.rank_command(
+                worker_command("benchmarking.plan_runner.recipe", [root]),
+                output_dir=capture_dir,
+            ),
+            ranks=options["ranks"],
+        )
+    else:
+        command = worker_command(
+            "benchmarking.plan_runner.recipe", [root], ranks=options["ranks"]
+        )
     root.mkdir(parents=True, exist_ok=False)
-    if nsys is not None:
-        (root / "nsys").mkdir()
     request = dict(
         run_dir=str(source),
         steps=steps,
@@ -85,13 +97,15 @@ def benchmark(
         )
     result = json.loads((root / "result.json").read_text())
     if nsys is not None:
-        report = root / "nsys/trace.nsys-rep"
-        if not report.is_file() or not report.stat().st_size:
-            raise RuntimeError(f"Nsight exited without a nonempty report: {report}")
+        captures = reports(capture_dir, ranks=options["ranks"])
+        for capture in captures:
+            path = capture_dir / capture["report_path"]
+            capture["report_path"] = str(
+                path.relative_to(root) if path.is_relative_to(root) else path
+            )
         result["nsys"] = dict(
             **asdict(nsys),
-            report_path=str(report.relative_to(root)),
-            report_bytes=report.stat().st_size,
+            reports=captures,
             # A real report is required here. Inspect its ranges, kernels and
             # device-metric samples offline; a requested flag is not evidence.
             content_verified=False,
