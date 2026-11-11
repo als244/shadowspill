@@ -7,9 +7,13 @@ import sys
 import pytest
 
 
-@pytest.mark.parametrize("recipe", ["llama3", "qwen35_lora", "glm53_flash_lora"])
+@pytest.mark.parametrize(
+    "package",
+    ["workloads.recipes.text.llama3", "workloads.recipes.training"],
+    ids=["llama3", "shared"],
+)
 @pytest.mark.parametrize("phase", ["plan", "execute"])
-def test_recipe_import_boundary(recipe, phase):
+def test_recipe_import_boundary(package, phase):
     result = subprocess.run(
         [
             sys.executable,
@@ -18,16 +22,16 @@ def test_recipe_import_boundary(recipe, phase):
             """
 import importlib
 import sys
-recipe, phase = sys.argv[1:]
+package, phase = sys.argv[1:]
 if phase == "execute":
     from tests.shadowspill.execution._cold import forbid_preparation
     forbid_preparation()
-importlib.import_module(f"workloads.recipes.text.{recipe}.{phase}")
+importlib.import_module(f"{package}.{phase}")
 if phase == "plan":
     assert "torch" not in sys.modules
     assert "workloads.models" not in sys.modules
 """,
-            recipe,
+            package,
             phase,
         ],
         env={**os.environ, "CUDA_VISIBLE_DEVICES": ""},

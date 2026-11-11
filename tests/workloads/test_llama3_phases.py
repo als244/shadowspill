@@ -6,7 +6,7 @@ import os
 import shutil
 import subprocess
 import sys
-import zipfile
+import tarfile
 from pathlib import Path
 
 import numpy as np
@@ -187,11 +187,9 @@ def test_recipe_runs_with_saved_plans_after_original_caches_are_deleted(tmp_path
         )
         assert worker.returncode == 0, worker.stdout + worker.stderr
         assert "Qualified cold text execution" in worker.stdout
-        with zipfile.ZipFile(
-            cold / "training/checkpoints/step_00000003.ssp"
-        ) as archive:
-            manifest = json.loads(archive.read("manifest.json"))
-        hashes.append({e["name"]: e["sha256"] for e in manifest["tensors"]})
+        with tarfile.open(cold / "training/checkpoints/step_00000003.ssp") as archive:
+            manifest = json.loads(archive.extractfile("manifest.json").read())
+        hashes.append({e["name"]: e["blake3"] for e in manifest["tensors"]})
     assert hashes[0] == hashes[1]
     repeated = [
         json.loads(line)

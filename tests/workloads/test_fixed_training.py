@@ -4,7 +4,7 @@ import json
 import os
 import subprocess
 import sys
-import zipfile
+import tarfile
 from pathlib import Path
 
 import pytest
@@ -31,8 +31,8 @@ def records(path):
 
 
 def checkpoint(path):
-    with zipfile.ZipFile(path) as archive:
-        return json.loads(archive.read("manifest.json"))
+    with tarfile.open(path) as archive:
+        return json.loads(archive.extractfile("manifest.json").read())
 
 
 @pytest.mark.cuda
@@ -107,8 +107,8 @@ def test_fixed_updates_evaluate_log_and_resume_with_identical_next_update(
     if partial_checkpoint:
         assert "embed.weight" in expected["omitted_parameters"]
         assert "lm_head.weight" not in expected["omitted_parameters"]
-    assert {x["name"]: x["sha256"] for x in actual["tensors"]} == {
-        x["name"]: x["sha256"] for x in expected["tensors"]
+    assert {x["name"]: x["blake3"] for x in actual["tensors"]} == {
+        x["name"]: x["blake3"] for x in expected["tensors"]
     }
     assert sorted(p.name for p in (whole / "checkpoints").iterdir()) == [
         "step_00000004.ssp",
