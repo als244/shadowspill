@@ -1,65 +1,21 @@
-"""Explicit row contracts for the supplied deterministic text operators.
+"""Text policies select domains and boundaries using provider-owned contracts.
 
-These are provider contracts, independent of a model family. Unknown operators
-remain errors in selected regions. Sequence mixers retain their complete inputs.
+Unknown operators remain errors in selected regions. Sequence mixers retain
+their complete inputs unless an explicit provider contract permits splitting.
 """
 
 from dataclasses import dataclass
+
+from mlops.integrations.shadowspill import operator_chunk_rules
 
 from shadowspill.pytorch.chunking import (
     AxisChunks,
     AxisFrom,
     ChunkAxis,
-    ChunkLocal,
     OperatorRule,
 )
 from shadowspill.pytorch.partition import IsolateOperations
 from shadowspill.task.inputs import TaskInputRole
-
-
-def operator_rules(batch_size=1):
-    same = AxisFrom(0)
-    flat = ChunkAxis(0, before=batch_size)
-    local = ChunkLocal(0)
-    specs = {
-        "rms_norm_builtin_triton_fwd": ((same, AxisFrom(0, 1)), ()),
-        "rms_norm_builtin_triton_bwd": ((same, None), (1,)),
-        "swiglu_builtin_triton_fwd": ((same,), ()),
-        "swiglu_builtin_triton_bwd": ((same, same), ()),
-        "packed_swiglu_builtin_triton_fwd": ((flat,), ()),
-        "packed_swiglu_builtin_triton_bwd": ((flat,), ()),
-        "partial_rope_builtin_triton_fwd": ((same,), ()),
-        "partial_rope_builtin_triton_bwd": ((same,), ()),
-        "rope_builtin_triton_table_fwd": ((same,), ()),
-        "rope_builtin_triton_table_bwd": ((same,), ()),
-        "rope_builtin_triton_analytic_fwd": ((same,), ()),
-        "rope_builtin_triton_analytic_bwd": ((same,), ()),
-        "l2_norm_fla_fwd": ((same, AxisFrom(0, 1)), ()),
-        "l2_norm_fla_bwd": ((same,), ()),
-        "gated_rms_norm_fla_fwd": ((same, AxisFrom(0, 1)), ()),
-        "gated_rms_norm_fla_bwd": ((same, same, None), (2,)),
-        "mhc_mix_four": ((flat,), ()),
-        "mhc_post_four": ((flat,), ()),
-        "mhc_post_four_input_grads": ((flat, flat), ()),
-        "mhc_post_four_coefficient_grads": ((flat, flat), ()),
-        "lora_router_logits": ((flat,), ()),
-        "lora_router_logits_bwd": ((flat, None), (1,)),
-        "lora_route": ((flat, flat), ()),
-        "lora_route_bwd": ((flat,), ()),
-        # Prefix counts add across chunks; sort/slot indices stay chunk-local.
-        "lora_assignment_layout": ((local, None, local), (1,)),
-        "lora_dispatch": ((local,), ()),
-        "lora_dispatch_bwd": ((flat,), ()),
-        "lora_grouped_linear_fwd": ((local,), ()),
-        "lora_grouped_linear_bwd": ((local, None), (1,)),
-        "lora_combine": ((flat,), ()),
-        "lora_combine_bwd": ((local, flat), ()),
-    }
-    return tuple(
-        OperatorRule(f"mlops.{name}.default", "1", axes, reductions)
-        for name, (axes, reductions) in specs.items()
-    )
-
 
 _LINEAR_ATTENTION = "mlops.linear_attention_fla_gated_delta_rule_fwd.default"
 
@@ -216,7 +172,10 @@ class TextAxisChunks:
                 axes[i] = ChunkAxis(0, before=self.batch_size)
         return (
             AxisChunks(
-                self.chunk_size, axes, self.variants, operator_rules(self.batch_size)
+                self.chunk_size,
+                axes,
+                self.variants,
+                operator_chunk_rules(self.batch_size),
             )
             if axes
             else None

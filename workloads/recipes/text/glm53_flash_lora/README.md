@@ -374,3 +374,9 @@ and costs are unchanged. The campaign uses that runtime and public Python entry
 with frozen Programs measured at `b4792dcd`, and provider `403cb240` throughout.
 The eight-H100 allocation lasted 22m26s, including 3m59s staging the original
 checkpoint and corpus to local SSD. Spill remained pinned host memory.
+
+Python configuration is authoritative: shared runner/text defaults plus explicit
+[GLM settings](settings.py) supply both the Python API and CLI. This recipe keeps
+`resolution_options=["1"]` as its default; pass an explicit list to explore other
+SAVE/RECOMPUTE mixtures. CLI phases pass only explicitly supplied options, so
+replanning does not replace previously saved build choices with parser defaults.

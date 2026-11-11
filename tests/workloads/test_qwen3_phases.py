@@ -209,7 +209,7 @@ def test_qwen_recipe_builds_profiles_replans_and_executes_saved_plan(tmp_path, r
             *(["-S"] if sys.flags.no_site else []),
             "-c",
             "import sys; sys.modules['torch'] = None; "
-            "from workloads.recipes.text.qwen3.plan import run; run(sys.argv[1])",
+            "from workloads.recipes.training.plan import run; run(sys.argv[1])",
             str(root),
         ],
         env={**os.environ, "CUDA_VISIBLE_DEVICES": ""},

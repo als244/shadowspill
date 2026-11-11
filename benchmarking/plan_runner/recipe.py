@@ -145,7 +145,6 @@ def worker(directory):
         ),
         inputs=lambda context: definition.inputs(options, rank=context.rank),
         trainer_options=lambda context: definition.trainer_options(options, metadata),
-        trainer_type=getattr(definition, "trainer_type", lambda: None)(),
     )
 
 

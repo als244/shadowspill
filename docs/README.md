@@ -176,6 +176,9 @@ reports and execution through Executor or Trainer. The
 
 Task-oriented pages: how to do something, and how to read what comes back.
 
+- [Integrating an operator library](python/operator-integration.md) — capture and
+  derivative requirements, independent axes, additive reductions, local scratch,
+  and provider contracts through compilation, profiling and saved execution.
 - [Independent build, profile and planning phases](architecture/offline-pipeline.md)
   — the public phase APIs end to end: build, measurement and profile overrides,
   communication, CPU planning and sweeps, execution, Trainer, and distributed

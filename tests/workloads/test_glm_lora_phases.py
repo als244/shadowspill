@@ -25,7 +25,15 @@ from workloads.recipes.text.data.tokenizer import tokenizer_identity
 from workloads.recipes.text.glm53_flash_lora.arguments import parser
 from workloads.recipes.text.glm53_flash_lora.inputs import Inputs
 from workloads.recipes.text.glm53_flash_lora.model import checkpoint, describe
-from workloads.recipes.text.glm53_flash_lora.settings import configure
+from workloads.recipes.training.cli import arguments
+from workloads.recipes.training.configuration import configure as configure_shared
+
+
+def configure(argv):
+    phase, values = arguments(parser(), argv)
+    return configure_shared(
+        "workloads.recipes.text.glm53_flash_lora.adapter", values, phase
+    )
 
 
 @pytest.fixture
@@ -86,7 +94,7 @@ def recipe(tmp_path):
 
 
 def test_rank_local_calls_preserve_global_normalization_and_resume(recipe):
-    _, options = configure(parser().parse_args(recipe[1]))
+    _, options = configure(recipe[1])
     options.update(sequences_per_example=1, ranks=2)
     seen = []
     for rank in range(2):
@@ -110,7 +118,7 @@ def test_rank_local_calls_preserve_global_normalization_and_resume(recipe):
 
 
 def test_checkpoint_metadata_rejects_changed_tokenizer(recipe):
-    _, options = configure(parser().parse_args(recipe[1]))
+    _, options = configure(recipe[1])
     with checkpoint(options) as (model, source, _):
         metadata = describe(options, model, source)
         assert metadata["frozen_state_id"].startswith("tiny-glm-base:")
@@ -125,33 +133,24 @@ def test_checkpoint_metadata_rejects_changed_tokenizer(recipe):
 
 
 def test_cli_replan_preserves_preparation_settings_and_capture_validation(recipe):
-    root, options = configure(parser().parse_args(recipe[1]))
-    cli = parser()
+    root, options = configure(recipe[1])
     _, replanned = configure(
-        cli.parse_args(
-            [
-                "--run-dir",
-                str(root),
-                "--phase",
-                "plan",
-                "--execution-gib",
-                "5",
-            ]
-        )
+        [
+            "--run-dir",
+            str(root),
+            "--phase",
+            "plan",
+            "--execution-gib",
+            "5",
+        ]
     )
     assert replanned == {**options, "execution_gib": 5}
     with pytest.raises(ValueError, match="changed budgets"):
         configure(
-            cli.parse_args(
-                ["--run-dir", str(root), "--phase", "execute", "--execution-gib", "7"]
-            )
+            ["--run-dir", str(root), "--phase", "execute", "--execution-gib", "7"]
         )
     with pytest.raises(ValueError, match="cadence"):
-        configure(
-            cli.parse_args(
-                ["--run-dir", str(root), "--phase", "execute", "--nsys-steps", "3"]
-            )
-        )
+        configure(["--run-dir", str(root), "--phase", "execute", "--nsys-steps", "3"])
     assert json.loads((root / "config.json").read_text()) == replanned
 
 

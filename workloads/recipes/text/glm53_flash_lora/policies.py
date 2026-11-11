@@ -1,10 +1,13 @@
 """Explicit provider contracts for GLM's ordinary packed-token recipe."""
 
-from mlops.integrations.shadowspill import mhc_chunk_rules, sonicmoe_chunk_rules
+from mlops.integrations.shadowspill import (
+    mhc_chunk_rules,
+    operator_chunk_rules,
+    sonicmoe_chunk_rules,
+)
 
-from shadowspill.pytorch import GraphPairPolicy, RetentionPolicy, RetentionRule
-from workloads.models.shared.chunking import operator_rules
 from workloads.models.shared.execution import text_execution_chunks
+from workloads.recipes.text.retention import graph_pair_policy
 
 EXPERT_TARGETS = tuple(
     f"mlops.lora_sonicmoe_{direction}_{phase}.default"
@@ -23,28 +26,16 @@ ATTENTION_TARGETS = (
 def build_options(options, batch_size):
     size = options.get("chunk_size", 0)
     policy = options.get("graph_pair_policy", "cost-input")
-    if policy not in {"cost-input", "cost-attention", "attention-input"}:
-        raise ValueError("unknown GLM graph-pair policy")
-    retained = tuple(RetentionRule(target, "retain") for target in ATTENTION_TARGETS)
-    local = (
-        tuple(
-            RetentionRule(target, "recompute")
-            for target in (
-                "mlops.sonicmoe_routing_metadata.default",
-                "mlops.lora_sonicmoe_up_fwd.default",
-                "mlops.lora_sonicmoe_down_fwd.default",
-            )
+    pair = graph_pair_policy(
+        policy,
+        retained_targets=ATTENTION_TARGETS,
+        local_targets=(
+            "mlops.sonicmoe_routing_metadata.default",
+            "mlops.lora_sonicmoe_up_fwd.default",
+            "mlops.lora_sonicmoe_down_fwd.default",
         )
         if size
-        else ()
-    )
-    pair = GraphPairPolicy(
-        save=RetentionPolicy(default="recompute", rules=(*retained, *local))
-        if policy == "attention-input"
-        else RetentionPolicy(rules=local),
-        recompute=RetentionPolicy(default="recompute", rules=retained)
-        if policy == "cost-attention"
-        else RetentionPolicy(default="recompute"),
+        else (),
     )
     result = {"graph_pair_policy": pair}
     if not size:
@@ -57,7 +48,7 @@ def build_options(options, batch_size):
             "GLM fused mHC execution requires sequence and chunk sizes divisible by 32"
         )
     rules = (
-        *operator_rules(batch_size),
+        *operator_chunk_rules(batch_size),
         *mhc_chunk_rules(batch_size=batch_size),
         *sonicmoe_chunk_rules(compute_precision="fp8_block"),
     )

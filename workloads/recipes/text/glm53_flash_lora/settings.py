@@ -1,84 +1,37 @@
-"""Persist recipe choices and reject inconsistent phase/resume settings."""
-
-from fractions import Fraction
-
-from workloads.recipes.text.phases.candidates import batch_sizes
-
-
-def build_variants(options):
-    from workloads.recipes.text.phases.variants import build_variants as variants
-
-    return variants(options, alignment=32)
-
+"""GLM-specific Python defaults and validation for the shared runner."""
 
 DEFAULTS = {
     "steps": 5,
     "execution_gib": 76,
     "spill_gib": 96,
+    "checkpoint": None,
+    "frozen_state_id": None,
+    "lora_rank": 32,
+    "lora_alpha": 32,
+    "router_weight_dtype": None,
+    "learning_rate": 1e-4,
+    "head_chunk_size": 1024,
+    "layer_limit": None,
+    "external_headroom_mib": 2048,
+    "resolution_options": ["1"],
+    "repeat_training_batch": False,
+    "minimum_relative_loss_drop": None,
+    "minimum_evict_bytes": 128 << 10,
 }
 
 
-def configure(args):
-    """CLI test/helper spelling of the centralized configuration contract."""
-    from workloads.recipes.training.configuration import configure as shared
-
-    values = vars(args).copy()
-    phase = values.pop("phase")
-    values = {key: value for key, value in values.items() if value is not None}
-    if phase not in {"all", "build"}:
-        values = {
-            key: value
-            for key, value in values.items()
-            if key
-            in {
-                "run_dir",
-                *DEFAULTS,
-                "resume",
-                "microbatch_sizes",
-                "nsys_steps",
-                "nsys_start_step",
-            }
-        }
-    return shared("workloads.recipes.text.glm53_flash_lora.adapter", values, phase)
-
-
 def validate(options):
-    positive = (
-        "sequence_length",
-        "sequences_per_step",
-        "steps",
-        "lora_rank",
-        "head_chunk_size",
-        "execution_gib",
-        "spill_gib",
-        "ranks",
-        "eval_updates",
-        "measure_seconds",
-        "learning_rate",
-    )
-    if any(options[key] <= 0 for key in positive):
-        raise ValueError(
-            "shapes, steps, ranks, budgets, rates and measurement duration "
-            "must be positive"
-        )
-    batch_sizes(options)
-    if any(
-        options[key] < 0
-        for key in (
-            "eval_every",
-            "checkpoint_every",
-            "external_headroom_mib",
-            "warmup_seconds",
-        )
+    if (
+        type(options["lora_rank"]) is not int
+        or options["lora_rank"] <= 0
+        or options["lora_alpha"] <= 0
+        or type(options["head_chunk_size"]) is not int
+        or options["head_chunk_size"] <= 0
     ):
-        raise ValueError("cadences, headroom and warmup must be nonnegative")
-    if options["schedule_steps"] < max(2, options["steps"]):
-        raise ValueError("schedule-steps must exceed one and cover steps")
+        raise ValueError("LoRA rank, alpha and head chunk size must be positive")
     threshold = options["minimum_relative_loss_drop"]
     if threshold is not None:
         if not options["repeat_training_batch"]:
             raise ValueError("a loss-drop requirement needs --repeat-training-batch")
         if not 0 <= threshold < 1 or options["steps"] < 4:
             raise ValueError("loss-drop must lie in [0, 1), with at least four steps")
-    if any(not 0 <= Fraction(value) <= 1 for value in options["resolution_options"]):
-        raise ValueError("recomputation fractions must lie in [0, 1]")

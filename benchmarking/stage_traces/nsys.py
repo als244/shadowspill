@@ -5,6 +5,7 @@ import time
 from pathlib import Path
 
 from benchmarking._serialization import atomic_json
+from orchestration.nsys import NsysCapture
 from orchestration.processes import worker_command
 
 from .process import launch, stamp, worker_environment
@@ -13,27 +14,12 @@ from .report import verify
 
 def capture_command(case, options):
     attempt = Path(case["attempt"])
-    command = [
-        options["nsys"],
-        "profile",
-        "--trace=cuda,nvtx,osrt",
-        "--sample=none",
-        "--cpuctxsw=none",
-        "--osrt-threshold=10000",
-        "--capture-range=cudaProfilerApi",
-        "--capture-range-end=stop",
-        "--force-overwrite=false",
-        "--output=" + str(attempt / "nsys/trace"),
-    ]
-    if options["gpu_metrics"]:
-        # Let Nsight resolve the worker's physical device/UUID mask.
-        command.extend(
-            [
-                "--gpu-metrics-devices=cuda-visible",
-                f"--gpu-metrics-frequency={options['gpu_metrics_frequency']}",
-            ]
-        )
-    return command + worker_command(
+    capture = NsysCapture(
+        executable=options["nsys"],
+        gpu_metrics=options["gpu_metrics"],
+        gpu_metrics_frequency=options["gpu_metrics_frequency"],
+    )
+    command = worker_command(
         "benchmarking.stage_traces.worker",
         [
             "--artifact",
@@ -51,6 +37,8 @@ def capture_command(case, options):
             "--capture",
         ],
     )
+
+    return capture.command(command, output=attempt / "nsys/trace")
 
 
 def verify_capture(attempt, options, env):

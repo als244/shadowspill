@@ -1,9 +1,13 @@
 """The recipe crosses explicit execution/retention controls without CUDA."""
 
+from functools import partial
+
 import pytest
 
-from workloads.recipes.text.glm53_flash_lora.settings import build_variants
 from workloads.recipes.text.phases.candidates import build_candidates, program_paths
+from workloads.recipes.text.phases.variants import build_variants as variants
+
+build_variants = partial(variants, alignment=32)
 
 
 def test_candidate_product_deduplicates_unchunked_and_preserves_batch_paths():

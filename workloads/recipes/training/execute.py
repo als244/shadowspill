@@ -44,7 +44,7 @@ def _execute(directory, timing):
                 else None
             )
         with timing.phase("runtime.create"):
-            trainer_type = getattr(definition, "trainer_type", lambda: Trainer)()
+            trainer_type = Trainer
             trainer_options = dict(definition.trainer_options(options, metadata))
             if options.get("nsys_steps", 0):
                 from orchestration.nsys import nsight_trainer

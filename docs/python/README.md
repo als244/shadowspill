@@ -9,6 +9,7 @@ and the `api/` reference.
 
 How to use the system and how to read what it produces.
 
+- [Integrating an operator library](operator-integration.md)
 - [Training with saved plans](../examples/generic-training.md)
 - [Independent build, profile, plan and execution APIs](../architecture/offline-pipeline.md)
 - [Artifacts and caches](artifact-store.md)

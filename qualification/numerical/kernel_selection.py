@@ -50,10 +50,10 @@ def _provider(request: Any) -> Any:
 
     if torch.cuda.get_device_capability()[0] not in CAPABILITIES or not available():
         return None
-    from mlops.quack_runtime import _choices, initialize
+    from mlops import quack_runtime
 
-    initialize()
-    return _choices
+    quack_runtime.initialize()
+    return quack_runtime
 
 
 @contextmanager
@@ -106,7 +106,7 @@ def frozen(selection: dict[str, Any], request: Any) -> Iterator[None]:
     with ExitStack() as stack:
         stack.enter_context(pin_choices(selection["triton"]))
         if provider:
-            stack.enter_context(provider.BoundChoices(selection["mlops_sonic"]).pin())
+            stack.enter_context(provider.pin_choices(selection["mlops_sonic"]))
         yield
 
 

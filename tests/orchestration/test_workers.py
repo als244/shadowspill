@@ -11,9 +11,10 @@ def test_worker_commands_use_one_process_until_distributed_execution():
     assert "torch.distributed.run" not in local
     distributed = worker_command("a.b", ["phase", "request"], ranks=2)
     assert "--nproc-per-node=2" in distributed
-    assert distributed[-5:] == [
+    assert distributed[-6:] == [
         "-m",
-        "orchestration.device_worker",
+        "orchestration.rank_device",
+        "-m",
         "a.b",
         "phase",
         "request",

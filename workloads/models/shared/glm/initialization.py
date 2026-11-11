@@ -8,7 +8,7 @@ from mlops.sequential_moe.precision.linear import FrozenLinear
 from .moe import MoE
 
 
-def _roles(model, tensors):
+def physical_state_roles(model, tensors):
     roles = {}
     for name, module in model.named_modules():
         if isinstance(module, FrozenLinear):

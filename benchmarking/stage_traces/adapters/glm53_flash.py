@@ -11,7 +11,7 @@ from workloads.models.glm53_flash.checkpoint import GLMCheckpoint
 from workloads.models.glm53_flash.config import Config
 from workloads.models.glm53_flash.implementations.mlops import Model
 from workloads.models.shared.glm.checkpoint import physical_state
-from workloads.models.shared.glm.initialization import _roles
+from workloads.models.shared.glm.initialization import physical_state_roles
 
 
 def workload(
@@ -48,7 +48,7 @@ def workload(
             )
         config = model.config
     state = physical_state(model)
-    roles = _roles(model, state)
+    roles = physical_state_roles(model, state)
     initializers = {}
     for name in state:
         tensor_seed = (

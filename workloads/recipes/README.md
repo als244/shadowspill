@@ -290,7 +290,7 @@ format or provider-cache knowledge. Internal adapters supply:
 | `trainer_options(options, metadata)` | Schedules, metrics and frozen-state identity |
 | `evaluation_metric(value)` | Workload metric reduction when evaluation is enabled |
 
-Optional `trainer_type`, `finish` and `runtime_options` hooks serve specialized
+Optional `finish` and `runtime_options` hooks serve specialized
 instrumentation and receipts. Setup runs separately for every candidate so
 token-dependent collective resources retain the correct capacity. Model and
 provider code do not implement execution chunk loops; adapters choose explicit

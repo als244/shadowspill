@@ -78,7 +78,8 @@ def worker_command(
         python,
         "-u",
         "-m",
-        "orchestration.device_worker",
+        "orchestration.rank_device",
+        "-m",
         module,
         str(root),
     ]

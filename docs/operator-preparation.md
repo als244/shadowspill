@@ -1,5 +1,9 @@
 # Preparing external operator kernels
 
+For capture, derivative and independent-axis requirements, start with
+[Integrating an operator library](python/operator-integration.md). Preparation
+packages selected implementations; it does not certify chunking semantics.
+
 `OperatorPreparation` lets an operator provider attach its selected implementations,
 configuration metadata and binaries to a Program. Pass descriptions through
 `operator_preparation` on `build_forward`,

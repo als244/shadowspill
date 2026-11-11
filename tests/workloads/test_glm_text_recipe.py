@@ -6,7 +6,8 @@ import numpy as np
 import pytest
 import torch
 
-from workloads.recipes.text.glm.data import GLMTokenUpdates, fixed_batch_learning_report
+from workloads.recipes.text.diagnostics import fixed_batch_learning_report
+from workloads.recipes.text.glm.data import GLMTokenUpdates
 
 
 def test_glm_updates_preserve_shift_rank_ownership_and_resume(tmp_path):
@@ -100,34 +101,3 @@ def test_prepared_corpus_records_checkpoint_tokenizer_identity(tmp_path):
     # A changed special-token policy must fail the recipe's exact identity check.
     config.write_text('{"eos_token": "b"}')
     assert meta["tokenizer_sha256"] != tokenizer_identity(checkpoint)
-
-
-@pytest.mark.parametrize("visible,selected", [("GPU-a,GPU-b", "GPU-b"), (None, "1")])
-def test_recipe_worker_keeps_global_rank_and_maps_assigned_device(
-    monkeypatch, visible, selected
-):
-    import os
-    import sys
-
-    from benchmarking import device_worker as worker
-
-    # Worker setup mutates the mapping directly, including previously absent keys.
-    monkeypatch.setattr(os, "environ", dict(os.environ))
-    monkeypatch.setenv("LOCAL_RANK", "1")
-    monkeypatch.setenv("RANK", "5")
-    monkeypatch.setenv("WORLD_SIZE", "8")
-    if visible is None:
-        monkeypatch.delenv("CUDA_VISIBLE_DEVICES", raising=False)
-    else:
-        monkeypatch.setenv("CUDA_VISIBLE_DEVICES", visible)
-    monkeypatch.setattr(sys, "argv", ["worker", "target.module", "--steps", "12"])
-    calls = []
-    monkeypatch.setattr(
-        worker.runpy, "run_module", lambda *a, **k: calls.append((a, k))
-    )
-    worker.main()
-    assert os.environ["CUDA_VISIBLE_DEVICES"] == selected
-    assert os.environ["LOCAL_RANK"] == "0"
-    assert (os.environ["RANK"], os.environ["WORLD_SIZE"]) == ("5", "8")
-    assert sys.argv == ["target.module", "--steps", "12"]
-    assert calls == [(("target.module",), dict(run_name="__main__", alter_sys=True))]

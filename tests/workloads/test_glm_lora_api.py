@@ -11,6 +11,41 @@ from workloads.recipes.training import api as runner
 from workloads.recipes.training.candidates import build_candidates
 
 
+def test_cli_and_python_defaults_have_the_same_saved_configuration(tmp_path):
+    from workloads.recipes.text.glm53_flash_lora.arguments import parser
+    from workloads.recipes.training.cli import arguments
+    from workloads.recipes.training.configuration import configure
+
+    config = {
+        "run_dir": tmp_path / "python",
+        "checkpoint": tmp_path / "checkpoint",
+        "data": tmp_path / "data",
+        "frozen_state_id": "fixture",
+    }
+    recipe = "workloads.recipes.text.glm53_flash_lora.adapter"
+    _, python = configure(recipe, config, "build")
+    phase, explicit = arguments(
+        parser(),
+        [
+            "--phase",
+            "build",
+            "--run-dir",
+            str(tmp_path / "cli"),
+            "--checkpoint",
+            str(config["checkpoint"]),
+            "--data",
+            str(config["data"]),
+            "--frozen-state-id",
+            "fixture",
+        ],
+    )
+    assert set(explicit) == set(config)
+    _, cli = configure(recipe, explicit, phase)
+    assert cli == {**python, "run_dir": str(tmp_path / "cli")}
+    assert cli["resolution_options"] == ["1"]
+    assert cli["lora_rank"] == cli["lora_alpha"] == 32
+
+
 def test_python_configuration_preserves_candidates_and_saved_phase_overrides(
     tmp_path, monkeypatch
 ):

@@ -1,5 +1,9 @@
 # Axis chunking within a stage
 
+Operator-library authors can start with the
+[integration guide](../python/operator-integration.md), which explains which
+contracts are required and how to qualify their forward/backward behavior.
+
 A stage whose operations act independently on logical axis positions can execute a bounded
 slice at a time. This limits transient activations and backward recomputation
 workspace. Public inputs and outputs retain their complete shapes, so their

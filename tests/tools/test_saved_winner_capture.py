@@ -121,11 +121,11 @@ def test_capture_reuses_checked_archives_and_not_changed_outputs(saved_winner):
         verified_capture(case, inputs)
 
 
-def test_capture_command_uses_existing_device_worker(saved_winner):
+def test_capture_command_uses_shared_rank_device(saved_winner):
     root = saved_winner
     argv = command(settings(root), root / "winner", 4, 2, plan_digest="saved")
     assert "--nproc-per-node=2" in argv
-    assert "orchestration.device_worker" in argv
+    assert "orchestration.rank_device" in argv
     assert "tools.pressurefit_trace.profile_winners" in argv
     assert "--flush-on-cudaprofilerstop=false" in argv
     assert "--capture-range=cudaProfilerApi" in argv

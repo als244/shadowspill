@@ -8,8 +8,7 @@ choose a training or measurement protocol, or interpret a saved recipe directory
 | Module | Responsibility |
 | --- | --- |
 | `processes` | Fresh Python / single-node torchrun command construction |
-| `device_worker` | Existing recipe worker convention: one assigned GPU visible as `cuda:0`, with `LOCAL_RANK=0` and global ranks preserved |
-| `rank_device` | Optional script/module wrapper that isolates the assigned GPU while preserving both global and local rank identities |
+| `rank_device` | Shared ordinary/profiled script/module wrapper that isolates the assigned GPU while preserving both global and local rank identities |
 | `workers` | Host Gloo rendezvous, launcher-to-logical rank mapping and small result gathers |
 | `lifecycle` | Append-only host phase journals, including context entry/cleanup and failures |
 | `candidates` | Record a local candidate's device exhaustion after releasing its traceback; other failures propagate |

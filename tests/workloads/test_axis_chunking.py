@@ -2,6 +2,7 @@
 
 import pytest
 import torch
+from mlops.integrations.shadowspill import operator_chunk_rules
 from torch.fx.experimental.proxy_tensor import make_fx
 
 from shadowspill.pytorch.capture.aot import capture_graph_pair
@@ -10,7 +11,7 @@ from shadowspill.pytorch.chunking import AxisChunks, ChunkAxis, StageInfo
 from shadowspill.pytorch.chunking.transform import chunk_artifact
 from shadowspill.task.inputs import TaskInputRole
 from tests.shadowspill.pytorch.chunking.test_axis_vjp import executable
-from workloads.models.shared.chunking import TextAxisChunks, is_barrier, operator_rules
+from workloads.models.shared.chunking import TextAxisChunks, is_barrier
 
 
 @pytest.mark.parametrize("provider", ["fla", "fla_ieee", "cula"])
@@ -66,7 +67,7 @@ def test_mhc_stream_expansion_preserves_token_coordinates_and_vjps(
         )
         axis = ChunkAxis(0, before=batch)
         config = AxisChunks(
-            11, {i: axis for i in range(4)}, rules=operator_rules(batch)
+            11, {i: axis for i in range(4)}, rules=operator_chunk_rules(batch)
         )
         forward = chunk_artifact(pair.forward, (axis,) * 4, 37, config)
         with torch.no_grad():
@@ -267,7 +268,7 @@ def test_routed_rows_restore_order_and_accumulate_statistics_and_gradients(
             original_output=region(*inputs),
             memory_budget=0.0,
         )
-        config = AxisChunks(11, {0: 1, 1: 1}, rules=operator_rules(batch))
+        config = AxisChunks(11, {0: 1, 1: 1}, rules=operator_chunk_rules(batch))
         forward = chunk_artifact(
             pair.forward, (ChunkAxis(1), ChunkAxis(1), *(None,) * 7), rows, config
         )

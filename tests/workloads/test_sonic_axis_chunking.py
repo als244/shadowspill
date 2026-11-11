@@ -6,6 +6,7 @@ from math import ceil
 
 import pytest
 import torch
+from mlops.integrations.shadowspill import operator_chunk_rules
 from torch._subclasses.fake_tensor import FakeTensorMode
 from torch.fx.experimental.proxy_tensor import make_fx
 from torch.utils._python_dispatch import TorchDispatchMode
@@ -23,7 +24,6 @@ from shadowspill.pytorch.chunking import (
 from shadowspill.pytorch.chunking.geometry import LocalLayout
 from shadowspill.pytorch.chunking.transform import chunk_artifact
 from tests.shadowspill.pytorch.chunking.test_axis_vjp import executable
-from workloads.models.shared.chunking import operator_rules
 
 
 def sonic_rules(batch):
@@ -40,7 +40,7 @@ def sonic_rules(batch):
         ),
     }
     return (
-        *operator_rules(batch),
+        *operator_chunk_rules(batch),
         *(
             OperatorRule(
                 f"mlops.{name}.default", "bf16-lora-candidate-1", axes, reductions

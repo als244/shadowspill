@@ -29,7 +29,7 @@ def prepare_run(args):
         *package.glob("*.py"),
         *package.glob("adapters/*.py"),
         repository / "orchestration" / "processes.py",
-        repository / "orchestration" / "device_worker.py",
+        repository / "orchestration" / "rank_device.py",
         package.parent / "_serialization.py",
     ]
     manifest = {

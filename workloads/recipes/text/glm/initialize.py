@@ -5,7 +5,7 @@ import math
 import torch
 
 from workloads.models.shared.glm.checkpoint import physical_state
-from workloads.models.shared.glm.initialization import _roles
+from workloads.models.shared.glm.initialization import physical_state_roles
 from workloads.models.shared.initialization import fill_generated, validate_chunk
 
 
@@ -21,7 +21,7 @@ class Initialize:
             for name, tensor in tensors.items()
         }
         if self.source is None:
-            self.roles = _roles(model, tensors)
+            self.roles = physical_state_roles(model, tensors)
         else:
             if source.conversions:
                 raise ValueError(

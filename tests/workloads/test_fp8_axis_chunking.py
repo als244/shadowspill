@@ -5,6 +5,7 @@ from math import ceil
 
 import pytest
 import torch
+from mlops.integrations.shadowspill import operator_chunk_rules
 from torch._subclasses.fake_tensor import FakeTensorMode
 from torch.fx.experimental.proxy_tensor import make_fx
 
@@ -14,7 +15,6 @@ from shadowspill.pytorch.capture.aot import capture_graph_pair
 from shadowspill.pytorch.chunking.transform import chunk_artifact
 from tests.shadowspill.pytorch.chunking.test_axis_vjp import executable
 from tests.workloads.test_sonic_axis_chunking import Calls, close
-from workloads.models.shared.chunking import operator_rules
 
 
 def fp8_inputs(batch=1, *, device="cpu", empty_experts=False):
@@ -115,7 +115,10 @@ def fp8_capture(values, batch, size):
         values,
         size,
         (axis, axis, *(None,) * 9),
-        (*operator_rules(batch), *sonicmoe_chunk_rules(compute_precision="fp8_block")),
+        (
+            *operator_chunk_rules(batch),
+            *sonicmoe_chunk_rules(compute_precision="fp8_block"),
+        ),
         (axis, None),
     )
 

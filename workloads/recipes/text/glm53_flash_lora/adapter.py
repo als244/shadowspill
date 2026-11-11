@@ -6,16 +6,10 @@ from functools import partial
 from workloads.recipes.text import training
 from workloads.recipes.text.training import trainer_options as trainer_options
 
-from .arguments import parser
 from .settings import DEFAULTS
 from .settings import validate as validate_glm
 
-defaults = vars(parser().parse_args(["--run-dir=."]))
-defaults.pop("phase")
-for _key, _value in DEFAULTS.items():
-    defaults[_key] = _value
-defaults["microbatch_sizes"] = [1]
-defaults["minimum_evict_bytes"] = 128 << 10
+defaults = {**training.DEFAULTS, **DEFAULTS}
 path_options = ("data", "checkpoint")
 
 
