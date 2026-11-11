@@ -68,12 +68,14 @@ def copy_chunk(reader, name, shape, offset, destination):
         target = destination[left - offset : right - offset]
         source = reader.weights.source
         try:
-            value = source.tensor(copy.source).view(-1)[left - start : right - start]
             if copy.reciprocal:
+                value = source.tensor(copy.source).view(-1)[
+                    left - start : right - start
+                ]
                 if not bool(torch.isfinite(value).all() & (value > 0).all()):
                     raise ValueError(f"Invalid NVFP4 global scale: {copy.source}")
                 target.copy_(value).reciprocal_()
             else:
-                target.copy_(value)
+                source.copy_into(copy.source, left - start, target)
         finally:
             source.release_pages(copy.source)

@@ -72,6 +72,15 @@ The application must also bound its scratch. A file-backed loader can read only
 intersecting ranges. Reproducible sharded random initialization should use tensor
 identity and global offset rather than depend on request order.
 
+The shared workload checkpoint readers use bounded positional reads when file
+and destination dtypes match. The file reader fills the supplied CPU destination
+directly; several disjoint reads can run concurrently within that destination.
+Every read completes before the callback returns, including when another read
+fails. This avoids a full-tensor staging allocation and does not change the
+Executor's buffer lifetime. Layout transformations and dtype conversions retain
+their bounded copy paths. The application/provider owns file I/O; the compiler
+and runtime do not inspect model-specific checkpoint keys.
+
 Keep random-number block boundaries separate from copy granularity. A loader can
 generate fixed seeded blocks, assemble several in bounded host scratch, and copy
 them together without changing the values assigned to any shard. This avoids
@@ -153,6 +162,11 @@ Each checkpoint contains a JSON manifest and packed tensor payloads, including
 layout metadata and checksums. This is a ShadowSpill archive, not a `torch.load`
 state dictionary. Physical components and masters are retained separately and
 restored without conversions.
+
+For large export chunks, SHA-256 hashing overlaps the archive write in one CPU
+worker. Both finish before the export callback returns; no borrowed buffer is
+retained afterward. Archive checksums, file synchronization and atomic replacement
+remain part of the synchronous save operation.
 
 ```python
 from shadowspill import load_checkpoint, save_checkpoint

@@ -8,6 +8,7 @@ import sys
 import tempfile
 import zipfile
 from collections.abc import Mapping
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, BinaryIO, cast
 
@@ -31,11 +32,23 @@ class _Writer:
         self.stream: BinaryIO | None = None
         self.written = 0
         self.digest = hashlib.sha256()
+        self.hash_worker: ThreadPoolExecutor | None = None
 
     def abort(self) -> None:
-        if self.stream is not None:
-            self.stream.close()
-            self.stream = None
+        try:
+            if self.stream is not None:
+                self.stream.close()
+                self.stream = None
+        finally:
+            if self.hash_worker is not None:
+                self.hash_worker.shutdown(wait=True)
+                self.hash_worker = None
+
+    def close(self) -> None:
+        try:
+            self.close_tensor()
+        finally:
+            self.abort()
 
     def close_tensor(self) -> None:
         if self.stream is not None:
@@ -72,8 +85,21 @@ class _Writer:
         ):
             raise ValueError("tensor export chunks are not contiguous and consistent")
         view = byte_view(tensor)
-        self.stream.write(view)
-        self.digest.update(view)
+        if view.nbytes >= 1 << 20:
+            if self.hash_worker is None:
+                self.hash_worker = ThreadPoolExecutor(
+                    max_workers=1, thread_name_prefix="checkpoint-hash"
+                )
+            pending = self.hash_worker.submit(self.digest.update, view)
+            try:
+                self.stream.write(view)
+            finally:
+                # Export buffers are borrowed only until this callback returns.
+                # Complete hashing even when the archive write fails.
+                pending.result()
+        else:
+            self.stream.write(view)
+            self.digest.update(view)
         self.written += view.nbytes
 
 
@@ -121,7 +147,7 @@ def save_checkpoint(
 
                 try:
                     executor.export_tensors(write, chunk_bytes=chunk_bytes)
-                    writer.close_tensor()
+                    writer.close()
                 except BaseException:
                     writer.abort()
                     raise

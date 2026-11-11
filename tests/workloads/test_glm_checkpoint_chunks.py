@@ -62,14 +62,13 @@ def test_copy_chunk_reads_only_the_requested_expert(tmp_path, monkeypatch):
         name = "layers.1.mlp.w13._data"
         weight = physical_state(model)[name]
         calls = []
-        original = reader.weights.source.tensor
+        original = reader.weights.source.copy_into
 
-        def record(key, *, meta=False):
-            if not meta:
-                calls.append(key)
-            return original(key, meta=meta)
+        def record(key, offset, destination):
+            calls.append(key)
+            return original(key, offset, destination)
 
-        monkeypatch.setattr(reader.weights.source, "tensor", record)
+        monkeypatch.setattr(reader.weights.source, "copy_into", record)
         destination = torch.empty(13, dtype=weight.dtype)
         reader.copy_chunk(name, weight.shape, 2 * weight[0].numel() + 3, destination)
         assert calls == ["model.language_model.layers.1.mlp.experts.2.gate_proj.weight"]

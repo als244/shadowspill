@@ -49,8 +49,7 @@ class Source:
             if self.copy_range is not None:
                 self.copy_range(reader, offset, destination)
             elif self.assemble is None and len(self.keys) == 1:
-                value = reader.tensor(self.keys[0]).view(-1)
-                destination.copy_(value[offset : offset + destination.numel()])
+                reader.copy_into(self.keys[0], offset, destination)
             else:
                 raise ValueError(
                     "checkpoint transform has no bounded copy implementation"

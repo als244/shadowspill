@@ -83,10 +83,13 @@ def test_streams_strided_and_mixed_dtype_storage_with_different_chunk_sizes(tmp_
     assert executor.initialized
 
 
-def test_partial_write_preserves_existing_checkpoint(tmp_path):
+@pytest.mark.parametrize("large", [False, True])
+def test_partial_write_preserves_existing_checkpoint(tmp_path, large):
     path = tmp_path / "checkpoint.ssp"
     path.write_bytes(b"existing checkpoint")
     executor = MemoryExecutor()
+    if large:
+        executor.values = {"large": torch.ones(1 << 20)}
     original = executor.export_tensors
 
     def fail(callback, **kwargs):
@@ -98,9 +101,31 @@ def test_partial_write_preserves_existing_checkpoint(tmp_path):
 
     executor.export_tensors = fail
     with pytest.raises(RuntimeError, match="injected export failure"):
-        save_checkpoint(executor, path, chunk_bytes=16)
+        save_checkpoint(executor, path, chunk_bytes=(1 << 20) if large else 16)
     assert path.read_bytes() == b"existing checkpoint"
     assert list(tmp_path.iterdir()) == [path]
+
+
+def test_large_export_buffers_can_be_reused_as_soon_as_callback_returns(tmp_path):
+    executor = MemoryExecutor()
+    expected = torch.arange((3 << 18) + 17, dtype=torch.float32)
+    executor.values = {"large": expected.clone()}
+    export = executor.export_tensors
+
+    def reuse(callback, **kwargs):
+        def write(request, chunk):
+            callback(request, chunk)
+            chunk.zero_()
+
+        export(write, **kwargs)
+
+    executor.export_tensors = reuse
+    path = tmp_path / "checkpoint.ssp"
+    save_checkpoint(executor, path, chunk_bytes=1 << 20)
+    assert not executor.values["large"].count_nonzero()
+    executor.export_tensors = export
+    load_checkpoint(executor, path, chunk_bytes=(1 << 19) + 3)
+    torch.testing.assert_close(executor.values["large"], expected, rtol=0, atol=0)
 
 
 def test_corrupted_tensor_cannot_be_used_after_restore(tmp_path):
