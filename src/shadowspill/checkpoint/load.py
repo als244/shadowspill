@@ -2,33 +2,33 @@
 
 from __future__ import annotations
 
-import hashlib
-import json
 import os
 import sys
-import zipfile
+import tarfile
 from collections.abc import Callable
+from dataclasses import replace
+from io import BufferedReader
 from typing import TYPE_CHECKING, Any, cast
 
 import torch
 
 from shadowspill.artifacts.tensors import TensorChunk
 
+from .archive import ContentHash, read_manifest
 from .frozen import validate_restore
 from .identity import describe_difference, inventory, state_identity
 from .tensors import byte_view, geometry, region_bytes
+from .weights import select_weights
 
 if TYPE_CHECKING:
     from shadowspill.execution import Executor
 
 
-def _manifest(archive: zipfile.ZipFile, executor: Executor) -> dict[str, Any]:
-    if archive.getinfo("manifest.json").file_size > 16 << 20:
-        raise ValueError("checkpoint manifest exceeds 16 MiB")
-    manifest = json.loads(archive.read("manifest.json"))
+def _manifest(archive: tarfile.TarFile, executor: Executor) -> dict[str, Any]:
+    manifest = read_manifest(archive)
     if (
         manifest.get("format") != "shadowspill.checkpoint"
-        or manifest.get("version") != 1
+        or manifest.get("version") != 2
         or manifest.get("byteorder") != sys.byteorder
         or manifest.get("logical_rank", 0) != executor.logical_rank
         or not isinstance(manifest.get("metadata"), dict)
@@ -43,32 +43,46 @@ def _manifest(archive: zipfile.ZipFile, executor: Executor) -> dict[str, Any]:
             + describe_difference(
                 manifest["tensors"],
                 inventory(executor),
-                omitted=manifest.get("omitted_parameters", ()),
+                omitted=(
+                    *manifest.get("omitted_parameters", ()),
+                    *manifest.get("derived_tensors", {}),
+                ),
             )
         )
-    return cast(dict[str, Any], manifest)
+    selection = select_weights(executor, manifest.get("weights"))
+    if (
+        manifest.get("derived_tensors") != selection.derived
+        or manifest.get("retained_weight_copies") != selection.retained
+        or set(selection.derived).intersection(
+            entry["name"] for entry in manifest["tensors"]
+        )
+    ):
+        raise ValueError("checkpoint weight reconstruction differs")
+    return manifest
 
 
 def checkpoint_metadata(
     executor: Executor, path: str | os.PathLike[str]
 ) -> dict[str, Any]:
     """Read loop compatibility information before restoring any tensors."""
-    with zipfile.ZipFile(path) as archive:
+    with tarfile.open(path, "r:") as archive:
         return dict(_manifest(archive, executor)["metadata"])
 
 
 class _Reader:
-    def __init__(self, archive: zipfile.ZipFile, manifest: dict[str, Any]):
+    def __init__(self, archive: tarfile.TarFile, manifest: dict[str, Any]):
         self.archive = archive
+        self.stream = cast(BufferedReader, archive.fileobj)
         entries = manifest["tensors"]
         self.entries = {entry["name"]: entry for entry in entries}
         members = [entry["member"] for entry in entries]
         if (
             len(self.entries) != len(entries)
-            or sorted(archive.namelist())
+            or sorted(archive.getnames())
             != sorted(
                 [
                     "manifest.json",
+                    "manifest.blake3",
                     *members,
                 ]
             )
@@ -76,16 +90,14 @@ class _Reader:
         ):
             raise ValueError("invalid checkpoint tensor inventory")
         for entry in entries:
-            info = archive.getinfo(entry["member"])
-            if (
-                info.file_size != entry["bytes"]
-                or info.compress_type != zipfile.ZIP_STORED
-            ):
+            info = archive.getmember(entry["member"])
+            if info.size != entry["bytes"]:
                 raise ValueError("checkpoint tensor size or encoding differs")
-        self.stream: zipfile.ZipExtFile | None = None
+        self.active = False
         self.name = ""
         self.consumed = 0
-        self.digest = hashlib.sha256()
+        self.digest = ContentHash()
+        self.scratch: torch.Tensor | None = None
 
     def fill(self, chunk: TensorChunk, tensor: torch.Tensor) -> None:
         entry = self.entries.get(chunk.name)
@@ -96,13 +108,14 @@ class _Reader:
         ):
             raise ValueError(f"checkpoint tensor geometry differs: {chunk.name}")
         if chunk.offset == chunk.region_offset:
-            if self.stream is not None:
+            if self.active:
                 raise ValueError("previous checkpoint tensor was not consumed")
-            self.stream = cast(zipfile.ZipExtFile, self.archive.open(entry["member"]))
+            self.stream.seek(self.archive.getmember(entry["member"]).offset_data)
+            self.active = True
             self.name, self.consumed = chunk.name, 0
-            self.digest = hashlib.sha256()
+            self.digest.reset(tensor.nbytes)
         if (
-            self.stream is None
+            not self.active
             or self.name != chunk.name
             or (
                 (chunk.offset - chunk.region_offset) * tensor.element_size()
@@ -113,20 +126,74 @@ class _Reader:
                 "checkpoint requests must consume each tensor sequentially"
             )
         view = byte_view(tensor)
+        if view.nbytes > entry["bytes"] - self.consumed:
+            raise ValueError(f"checkpoint request exceeds tensor: {chunk.name}")
+        # Read directly into the destination; ExFileObject.readinto would first
+        # allocate a separate bytes object containing the same payload.
         if self.stream.readinto(view) != view.nbytes:
             raise ValueError(f"checkpoint tensor is truncated: {chunk.name}")
         self.digest.update(view)
         self.consumed += view.nbytes
         if self.consumed == entry["bytes"]:
-            self.stream.close()
-            self.stream = None
-            if self.digest.hexdigest() != entry["sha256"]:
+            self.active = False
+            if self.digest.hexdigest() != entry["blake3"]:
                 raise ValueError(f"checkpoint tensor checksum differs: {chunk.name}")
 
-    def close(self) -> None:
-        if self.stream is not None:
-            self.stream.close()
-            self.stream = None
+    def derive(
+        self,
+        source: TensorChunk,
+        request: TensorChunk,
+        tensor: torch.Tensor,
+        chunk_bytes: int,
+    ) -> None:
+        """Read and validate one selected copy, casting into a bounded destination.
+
+        A strict subregion still checksums the entire selected source. Reading
+        it again avoids model-sized staging or a restore-order dependency in
+        Executor; even the borrowed scratch is bounded by ``chunk_bytes``.
+        """
+        width = min(
+            max(1, chunk_bytes // source.dtype.itemsize),
+            source.storage_elements
+            if source.region_elements is None
+            else source.region_elements,
+        )
+        if (
+            self.scratch is None
+            or self.scratch.dtype != source.dtype
+            or self.scratch.numel() < width
+        ):
+            self.scratch = torch.empty(width, dtype=source.dtype, device="cpu")
+
+        def consume(
+            begin: int, end: int, destination: torch.Tensor | None = None
+        ) -> None:
+            for offset in range(begin, end, width):
+                count = min(width, end - offset)
+                assert self.scratch is not None
+                temporary = self.scratch[:count]
+                self.fill(replace(source, offset=offset), temporary)
+                if destination is not None:
+                    destination[offset - begin : offset - begin + count].copy_(
+                        temporary
+                    )
+
+        if request.offset == request.region_offset:
+            consume(source.region_offset, request.region_offset)
+        end = request.offset + tensor.numel()
+        consume(request.offset, end, tensor)
+        region_end = request.region_offset + (
+            request.storage_elements
+            if request.region_elements is None
+            else request.region_elements
+        )
+        if end == region_end:
+            source_end = source.region_offset + (
+                source.storage_elements
+                if source.region_elements is None
+                else source.region_elements
+            )
+            consume(end, source_end)
 
 
 def load_checkpoint(
@@ -146,8 +213,10 @@ def load_checkpoint(
     Executor uninitialized. All persistent tensors, including CPU controls, load.
     Partial checkpoints require the same frozen_state_id and a bounded loader
     for the omitted base parameters, even when the Executor was initialized.
+    Ordinary omitted weight copies are reconstructed by bounded casts from the
+    archive's selected representation; encoded representations remain physical.
     """
-    with zipfile.ZipFile(path) as archive:
+    with tarfile.open(path, "r:") as archive:
         manifest = _manifest(archive, executor)
         omitted = validate_restore(executor, manifest, frozen_state_id)
         if omitted and fill_tensor is None:
@@ -155,16 +224,17 @@ def load_checkpoint(
                 "partial checkpoint requires fill_tensor for the frozen base"
             )
         reader = _Reader(archive, manifest)
+        chunks = {chunk.name: chunk for chunk in executor.tensor_chunks()}
+        derived = manifest["derived_tensors"]
 
         def fill(chunk: TensorChunk, tensor: torch.Tensor) -> None:
             if chunk.name in omitted:
                 assert fill_tensor is not None
                 fill_tensor(chunk, tensor)
+            elif chunk.name in derived:
+                reader.derive(chunks[derived[chunk.name]], chunk, tensor, chunk_bytes)
             else:
                 reader.fill(chunk, tensor)
 
-        try:
-            executor.initialize(fill, chunk_bytes=chunk_bytes, restore=True)
-        finally:
-            reader.close()
+        executor.initialize(fill, chunk_bytes=chunk_bytes, restore=True)
         return dict(manifest["metadata"])

@@ -2,47 +2,43 @@
 
 from __future__ import annotations
 
-import hashlib
 import os
 import sys
 import tempfile
-import zipfile
 from collections.abc import Mapping
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, BinaryIO, cast
+from typing import IO, TYPE_CHECKING, Any
 
 import torch
 
 from shadowspill.artifacts._values import encoded
 from shadowspill.artifacts.tensors import TensorChunk
 
+from .archive import ContentHash, finish, header, padding
 from .frozen import omitted_parameters, validate_identity
 from .identity import state_identity
 from .tensors import byte_view, geometry, region_bytes
+from .weights import WeightRepresentation, select_weights
 
 if TYPE_CHECKING:
     from shadowspill.execution import Executor
 
 
 class _Writer:
-    def __init__(self, archive: zipfile.ZipFile):
+    def __init__(self, archive: IO[bytes]):
         self.archive = archive
         self.entries: list[dict[str, Any]] = []
-        self.stream: BinaryIO | None = None
+        self.active = False
+        self.names: set[str] = set()
         self.written = 0
-        self.digest = hashlib.sha256()
+        self.digest = ContentHash()
         self.hash_worker: ThreadPoolExecutor | None = None
 
     def abort(self) -> None:
-        try:
-            if self.stream is not None:
-                self.stream.close()
-                self.stream = None
-        finally:
-            if self.hash_worker is not None:
-                self.hash_worker.shutdown(wait=True)
-                self.hash_worker = None
+        if self.hash_worker is not None:
+            self.hash_worker.shutdown(wait=True)
+            self.hash_worker = None
 
     def close(self) -> None:
         try:
@@ -51,18 +47,19 @@ class _Writer:
             self.abort()
 
     def close_tensor(self) -> None:
-        if self.stream is not None:
-            self.stream.close()
-            self.stream = None
+        if self.active:
             if self.written != self.entries[-1]["bytes"]:
                 raise ValueError("incomplete tensor export")
-            self.entries[-1]["sha256"] = self.digest.hexdigest()
+            self.entries[-1]["blake3"] = self.digest.hexdigest()
+            padding(self.archive, self.written)
+            self.active = False
 
     def write(self, chunk: TensorChunk, tensor: torch.Tensor) -> None:
         if chunk.offset == chunk.region_offset:
             self.close_tensor()
-            if any(entry["name"] == chunk.name for entry in self.entries):
+            if chunk.name in self.names:
                 raise ValueError(f"duplicate tensor export: {chunk.name}")
+            self.names.add(chunk.name)
             member = f"tensors/{len(self.entries)}"
             self.entries.append(
                 {
@@ -71,12 +68,11 @@ class _Writer:
                     "bytes": region_bytes(chunk),
                 }
             )
-            self.stream = cast(
-                BinaryIO, self.archive.open(member, "w", force_zip64=True)
-            )
-            self.written, self.digest = 0, hashlib.sha256()
+            header(self.archive, member, region_bytes(chunk))
+            self.written, self.active = 0, True
+            self.digest.reset(tensor.nbytes)
         if (
-            self.stream is None
+            not self.active
             or any(
                 self.entries[-1][key] != value for key, value in geometry(chunk).items()
             )
@@ -92,13 +88,13 @@ class _Writer:
                 )
             pending = self.hash_worker.submit(self.digest.update, view)
             try:
-                self.stream.write(view)
+                self.archive.write(view)
             finally:
                 # Export buffers are borrowed only until this callback returns.
                 # Complete hashing even when the archive write fails.
                 pending.result()
         else:
-            self.stream.write(view)
+            self.archive.write(view)
             self.digest.update(view)
         self.written += view.nbytes
 
@@ -110,6 +106,7 @@ def save_checkpoint(
     metadata: Mapping[str, Any] | None = None,
     chunk_bytes: int = 64 << 20,
     frozen_state_id: str | None = None,
+    weights: WeightRepresentation = "master",
 ) -> None:
     """Save all persistent tensors without a full-model host snapshot.
 
@@ -122,12 +119,17 @@ def save_checkpoint(
     information only.
     With frozen_state_id, omit unchanged frozen parameters; retain trainable
     tensors, optimizer state, buffers and anything mutated by an admitted Plan.
+    ``weights="master"`` saves ordinary master weights once and derives compute
+    copies on load. ``"compute"`` instead reconstructs masters from rounded
+    compute values. Encoded representations or incompatible owned layouts retain
+    both copies, with the reason recorded in ``retained_weight_copies``.
     """
     # Reject non-JSON metadata before streaming model-sized payloads.
     if len(encoded(dict(metadata or {}))) > 16 << 20:
         raise ValueError("checkpoint metadata exceeds 16 MiB")
     validate_identity(frozen_state_id)
     omitted = set() if frozen_state_id is None else omitted_parameters(executor)
+    selection = select_weights(executor, weights)
     destination = Path(path)
     destination.parent.mkdir(parents=True, exist_ok=True)
     temporary: str | None = None
@@ -136,46 +138,49 @@ def save_checkpoint(
             dir=destination.parent, prefix=f".{destination.name}.", delete=False
         ) as stream:
             temporary = stream.name
-            with zipfile.ZipFile(
-                stream, "w", compression=zipfile.ZIP_STORED
-            ) as archive:
-                writer = _Writer(archive)
+            writer = _Writer(stream.file)
 
-                def write(chunk: TensorChunk, tensor: torch.Tensor) -> None:
-                    if chunk.name not in omitted:
-                        writer.write(chunk, tensor)
+            def write(chunk: TensorChunk, tensor: torch.Tensor) -> None:
+                if chunk.name not in omitted and chunk.name not in selection.derived:
+                    writer.write(chunk, tensor)
 
-                try:
-                    executor.export_tensors(write, chunk_bytes=chunk_bytes)
-                    writer.close()
-                except BaseException:
-                    writer.abort()
-                    raise
-                manifest = encoded(
-                    {
-                        "format": "shadowspill.checkpoint",
-                        "version": 1,
-                        "byteorder": sys.byteorder,
-                        "state": state_identity(executor),
-                        "program": executor.plan.program.digest,
-                        "logical_rank": executor.logical_rank,
-                        "additional_programs": {
-                            name: plan.program.digest
-                            for name, plan in executor.plans.items()
-                        },
-                        "tensors": writer.entries,
-                        "metadata": dict(metadata or {}),
-                        "frozen_state_id": frozen_state_id,
-                        "omitted_parameters": sorted(omitted),
-                    }
-                )
-                if len(manifest) > 16 << 20:
-                    raise ValueError("checkpoint manifest exceeds 16 MiB")
-                archive.writestr("manifest.json", manifest)
+            try:
+                executor.export_tensors(write, chunk_bytes=chunk_bytes)
+                writer.close()
+            except BaseException:
+                writer.abort()
+                raise
+            manifest = encoded(
+                {
+                    "format": "shadowspill.checkpoint",
+                    "version": 2,
+                    "byteorder": sys.byteorder,
+                    "state": state_identity(executor),
+                    "program": executor.plan.program.digest,
+                    "logical_rank": executor.logical_rank,
+                    "additional_programs": {
+                        name: plan.program.digest
+                        for name, plan in executor.plans.items()
+                    },
+                    "tensors": writer.entries,
+                    "metadata": dict(metadata or {}),
+                    "frozen_state_id": frozen_state_id,
+                    "omitted_parameters": sorted(omitted),
+                    "weights": weights,
+                    "derived_tensors": selection.derived,
+                    "retained_weight_copies": selection.retained,
+                }
+            )
+            finish(stream.file, manifest)
             stream.flush()
             os.fsync(stream.fileno())
         os.replace(temporary, destination)
         temporary = None
+        directory = os.open(destination.parent, os.O_RDONLY | os.O_DIRECTORY)
+        try:
+            os.fsync(directory)
+        finally:
+            os.close(directory)
     finally:
         if temporary is not None:
             Path(temporary).unlink(missing_ok=True)

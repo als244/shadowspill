@@ -1,7 +1,7 @@
 """Checkpoint archives contain only owned regions and identify logical ranks."""
 
 import json
-import zipfile
+import tarfile
 
 import pytest
 import torch
@@ -45,8 +45,8 @@ def test_checkpoint_roundtrip_owns_only_declared_region(tmp_path, rank):
     expected = executor.shard.clone()
     path = tmp_path / "checkpoint.ssp"
     save_checkpoint(executor, path, chunk_bytes=12)
-    with zipfile.ZipFile(path) as archive:
-        manifest = json.loads(archive.read("manifest.json"))
+    with tarfile.open(path) as archive:
+        manifest = json.loads(archive.extractfile("manifest.json").read())
         entry = manifest["tensors"][0]
         assert entry["bytes"] == executor.shard.nbytes
         assert entry["region_offset"] == rank * 8

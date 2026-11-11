@@ -158,21 +158,57 @@ using the same names and storage offsets. Consume each view before the callback
 returns; stream it to files without retaining a full-model snapshot.
 
 `save_checkpoint` and `load_checkpoint` use this interface for atomic archives.
-Each checkpoint contains a JSON manifest and packed tensor payloads, including
-layout metadata and checksums. This is a ShadowSpill archive, not a `torch.load`
-state dictionary. Physical components and masters are retained separately and
-restored without conversions.
+Each checkpoint is an uncompressed TAR archive containing a JSON manifest and
+packed tensor payloads, including layout metadata and BLAKE3 content hashes.
+The manifest has its own small content hash. TAR checks only its headers, so
+there is no second full-payload CRC pass. This is a ShadowSpill archive, not a
+`torch.load` state dictionary. By default, `weights="master"` stores each ordinary
+master weight once and reconstructs its compute copy on load. Parameters without a
+separate master are stored normally. `weights="compute"` instead saves the
+compute copy and casts it into the master on load, intentionally losing the
+master's additional precision. Optimizer state and buffers remain independent
+of this choice. `Trainer.save` accepts the same setting.
 
-For large export chunks, SHA-256 hashing overlaps the archive write in one CPU
-worker. Both finish before the export callback returns; no borrowed buffer is
-retained afterward. Archive checksums, file synchronization and atomic replacement
-remain part of the synchronous save operation.
+The selected representation is authoritative. Reconstruction uses captured
+optimizer ownership, registered storage aliases and the receiving rank's tensor
+geometry. A source must cover the destination's complete owned region. Packed
+or scaled tensor components, incompatible storage layouts, and insufficient
+local shard coverage retain both physical copies; the manifest's
+`retained_weight_copies` records the reason. A plain payload is never mistaken
+for a logical encoded weight. Frozen encoded bases can still be omitted using
+`frozen_state_id` independently of this policy.
+
+The archive records the selection and derived-tensor relationships, validates
+them against the receiving Program, and checksums each stored source completely.
+Restoration uses at most one ordinary CPU scratch chunk for casts, in addition
+to the destination supplied by Executor. It rereads the selected source when
+filling the derived copy, avoiding a whole-model snapshot or dependency on
+Executor's initialization order. This trades extra read/checksum work during
+restore for a smaller checkpoint. A subregion restore still validates all bytes
+of its selected source. Version 2 archives encode this contract; older archives
+without it are not accepted.
+
+For large export chunks, BLAKE3 hashing overlaps the archive write in one CPU
+worker and uses four native hashing threads. The same native pool is reused
+across tensors; small chunks use a serial hasher. Both hashing and writing finish
+before the export callback returns; no borrowed buffer is retained afterward.
+Payload verification, file synchronization, atomic replacement and destination
+directory synchronization remain part of the synchronous save operation.
+Reads fill the destination directly, without an additional archive-sized or
+chunk-sized byte-string copy. The immutable Program identity is cached, so
+repeated saves do not serialize the entire graph again merely for provenance.
+
+This version change concerns training checkpoints only. Saved Programs, Profiles
+and Plans keep their existing artifact format.
 
 ```python
 from shadowspill import load_checkpoint, save_checkpoint
 
 save_checkpoint(executor, "step.ssp", chunk_bytes=64 << 20)
 load_checkpoint(executor, "step.ssp", chunk_bytes=64 << 20)
+
+# Optional smaller checkpoint: restoring masters loses compute-rounding bits.
+save_checkpoint(executor, "compute-step.ssp", weights="compute")
 ```
 
 Restore validates the logical rank and the training state, not the Program: the

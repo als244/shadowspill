@@ -5,7 +5,7 @@ import os
 import shutil
 import subprocess
 import sys
-import zipfile
+import tarfile
 from dataclasses import asdict
 from pathlib import Path
 from types import SimpleNamespace
@@ -189,9 +189,9 @@ def test_text_phases_preserve_packing_metrics_and_exact_cold_resume(
     ).read_bytes()
 
     def stored_tensors(root):
-        with zipfile.ZipFile(root / "checkpoints/step_00000006.ssp") as archive:
-            manifest = json.loads(archive.read("manifest.json"))
-            return {v["name"]: v["sha256"] for v in manifest["tensors"]}
+        with tarfile.open(root / "checkpoints/step_00000006.ssp") as archive:
+            manifest = json.loads(archive.extractfile("manifest.json").read())
+            return {v["name"]: v["blake3"] for v in manifest["tensors"]}
 
     assert stored_tensors(whole) == stored_tensors(resumed)
     child = subprocess.run(

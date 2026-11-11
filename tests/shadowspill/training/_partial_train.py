@@ -2,7 +2,7 @@
 
 import json
 import sys
-import zipfile
+import tarfile
 from pathlib import Path
 
 import torch
@@ -53,8 +53,8 @@ with Trainer(
         if result.step == 1:
             owner.evaluate(args=[(torch.ones(2, 3, dtype=torch.bfloat16),)])
             owner.save(directory / "partial.ssp", chunk_bytes=12)
-            with zipfile.ZipFile(directory / "partial.ssp") as archive:
-                manifest = json.loads(archive.read("manifest.json"))
+            with tarfile.open(directory / "partial.ssp") as archive:
+                manifest = json.loads(archive.extractfile("manifest.json").read())
             assert manifest["omitted_parameters"] == [
                 "base",
                 "evaluation_only",
@@ -62,7 +62,9 @@ with Trainer(
             ]
             entries = {entry["name"]: entry for entry in manifest["tensors"]}
             assert entries["master.delta"]["dtype"] == "torch.float32"
-            assert {"delta", "moving", "calls"} <= entries.keys()
+            assert {"moving", "calls"} <= entries.keys()
+            assert "delta" not in entries
+            assert manifest["derived_tensors"] == {"delta": "master.delta"}
 
     source = Source()
     trainer.fit(source, steps=3, run_dir=directory / mode, callbacks=[checkpoint])

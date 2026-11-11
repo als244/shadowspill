@@ -13,7 +13,7 @@ if TYPE_CHECKING:
     from shadowspill.execution import Executor
 
 #: What the manifest records about a tensor beyond its geometry.
-ARCHIVE_KEYS = frozenset({"member", "bytes", "sha256"})
+ARCHIVE_KEYS = frozenset({"member", "bytes", "blake3"})
 
 
 def inventory(executor: Executor) -> dict[str, dict[str, Any]]:

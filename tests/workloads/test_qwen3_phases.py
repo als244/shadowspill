@@ -5,7 +5,7 @@ import math
 import os
 import subprocess
 import sys
-import zipfile
+import tarfile
 
 import numpy as np
 import pytest
@@ -198,8 +198,8 @@ def test_qwen_recipe_builds_profiles_replans_and_executes_saved_plan(tmp_path, r
         assert [row["step"] for row in metrics] == [1, 2, 3]
         assert all(math.isfinite(row["train/loss"]) for row in metrics)
         assert metrics[-1]["train/loss"] < metrics[0]["train/loss"]
-        with zipfile.ZipFile(directory / "checkpoints/step_00000003.ssp") as archive:
-            manifest = json.loads(archive.read("manifest.json"))
+        with tarfile.open(directory / "checkpoints/step_00000003.ssp") as archive:
+            manifest = json.loads(archive.extractfile("manifest.json").read())
         assert any(item["dtype"] == "torch.float32" for item in manifest["tensors"])
     # Replan the actual saved measurements with CUDA hidden; even Torch imports
     # are forbidden here, not just CUDA execution.

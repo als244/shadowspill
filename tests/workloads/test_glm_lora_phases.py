@@ -6,7 +6,7 @@ import os
 import shutil
 import subprocess
 import sys
-import zipfile
+import tarfile
 from dataclasses import asdict
 from pathlib import Path
 
@@ -155,16 +155,17 @@ def test_cli_replan_preserves_preparation_settings_and_capture_validation(recipe
 
 
 def manifest(root, step):
-    with zipfile.ZipFile(root / f"training/checkpoints/step_{step:08d}.ssp") as archive:
-        return json.loads(archive.read("manifest.json"))
+    with tarfile.open(root / f"training/checkpoints/step_{step:08d}.ssp") as archive:
+        return json.loads(archive.extractfile("manifest.json").read())
 
 
 def compare_replay(reference, actual, *, learning_rate, steps):
     """Hold fast-kernel replay to the numerical gate's existing state bounds."""
     records = {}
-    with zipfile.ZipFile(reference) as left, zipfile.ZipFile(actual) as right:
+    with tarfile.open(reference) as left, tarfile.open(actual) as right:
         expected, observed = (
-            json.loads(archive.read("manifest.json")) for archive in (left, right)
+            json.loads(archive.extractfile("manifest.json").read())
+            for archive in (left, right)
         )
         assert observed["state"] == expected["state"]
         entries = {item["name"]: item for item in observed["tensors"]}
@@ -175,17 +176,17 @@ def compare_replay(reference, actual, *, learning_rate, steps):
             geometry = {
                 key: value
                 for key, value in before.items()
-                if key not in {"sha256", "member"}
+                if key not in {"blake3", "member"}
             }
             assert all(after[key] == value for key, value in geometry.items()), name
             values = tuple(
                 torch.frombuffer(
-                    bytearray(archive.read(entry["member"])),
+                    bytearray(archive.extractfile(entry["member"]).read()),
                     dtype=getattr(torch, entry["dtype"].removeprefix("torch.")),
                 ).as_strided(entry["shape"], entry["stride"], entry["storage_offset"])
                 for archive, entry in ((left, before), (right, after))
             )
-            exact = before["sha256"] == after["sha256"]
+            exact = before["blake3"] == after["blake3"]
             if (
                 not values[0].is_floating_point()
                 or name.startswith("optimizer_group.")

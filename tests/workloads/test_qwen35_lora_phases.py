@@ -6,7 +6,7 @@ import os
 import shutil
 import subprocess
 import sys
-import zipfile
+import tarfile
 from pathlib import Path
 
 import numpy as np
@@ -99,8 +99,8 @@ def test_random_public_initializer_needs_only_configuration(checkpoint, tmp_path
 
 
 def manifest(root, step):
-    with zipfile.ZipFile(root / f"training/checkpoints/step_{step:08d}.ssp") as archive:
-        return json.loads(archive.read("manifest.json"))
+    with tarfile.open(root / f"training/checkpoints/step_{step:08d}.ssp") as archive:
+        return json.loads(archive.extractfile("manifest.json").read())
 
 
 @pytest.mark.cuda
@@ -200,8 +200,8 @@ def test_qwen_recipe_cold_execution_and_partial_resume(tmp_path, checkpoint):
     )
     assert worker.returncode == 0, worker.stdout + worker.stderr
     actual = manifest(cold, 3)
-    assert {x["name"]: x["sha256"] for x in actual["tensors"]} == {
-        x["name"]: x["sha256"] for x in expected["tensors"]
+    assert {x["name"]: x["blake3"] for x in actual["tensors"]} == {
+        x["name"]: x["blake3"] for x in expected["tensors"]
     }
     for name, metric in (("metrics", "train/loss"), ("evaluation", "validation_loss")):
         original = [

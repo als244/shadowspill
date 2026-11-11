@@ -1,13 +1,14 @@
 """Partial archives retain mutations/buffers and require an explicit frozen base."""
 
 import json
-import zipfile
+import tarfile
 from types import SimpleNamespace
 
 import pytest
 import torch
 
 from shadowspill import load_checkpoint, save_checkpoint
+from tests.shadowspill.checkpoint.archive_helpers import write_contents
 from tests.shadowspill.execution.test_checkpoint import MemoryExecutor
 
 
@@ -45,8 +46,8 @@ def test_partial_restore_fills_only_frozen_base_and_preserves_all_other_state(tm
     expected = {name: tensor.clone() for name, tensor in value.values.items()}
     path = tmp_path / "adapters.ssp"
     save_checkpoint(value, path, chunk_bytes=7, frozen_state_id="base-v1")
-    with zipfile.ZipFile(path) as archive:
-        manifest = json.loads(archive.read("manifest.json"))
+    with tarfile.open(path) as archive:
+        manifest = json.loads(archive.extractfile("manifest.json").read())
     assert manifest["omitted_parameters"] == ["base", "tied_base"]
     assert {item["name"] for item in manifest["tensors"]} == expected.keys() - {"base"}
     for tensor in value.values.values():
@@ -91,8 +92,13 @@ def test_trainable_alias_prevents_omitting_the_shared_storage(tmp_path):
     value.plan.program.bindings["registrations"][-1]["trainable"] = True
     path = tmp_path / "adapters.ssp"
     save_checkpoint(value, path, frozen_state_id="base-v1")
-    with zipfile.ZipFile(path) as archive:
-        assert json.loads(archive.read("manifest.json"))["omitted_parameters"] == []
+    with tarfile.open(path) as archive:
+        assert (
+            json.loads(archive.extractfile("manifest.json").read())[
+                "omitted_parameters"
+            ]
+            == []
+        )
 
 
 def test_old_program_cannot_claim_missing_trainability_is_frozen(tmp_path):
@@ -106,16 +112,16 @@ def test_missing_mutable_tensor_is_not_delegated_to_base_loader(tmp_path):
     value = executor()
     path = tmp_path / "adapters.ssp"
     save_checkpoint(value, path, frozen_state_id="base-v1")
-    with zipfile.ZipFile(path) as archive:
-        contents = {name: archive.read(name) for name in archive.namelist()}
+    with tarfile.open(path) as archive:
+        contents = {
+            name: archive.extractfile(name).read() for name in archive.getnames()
+        }
     manifest = json.loads(contents["manifest.json"])
     removed = next(item for item in manifest["tensors"] if item["name"] == "moving")
     manifest["tensors"].remove(removed)
     del contents[removed["member"]]
     contents["manifest.json"] = json.dumps(manifest).encode()
-    with zipfile.ZipFile(path, "w") as archive:
-        for name, data in contents.items():
-            archive.writestr(name, data)
+    write_contents(path, contents)
     with pytest.raises(ValueError, match="geometry differs: moving"):
         load_checkpoint(
             value, path, frozen_state_id="base-v1", fill_tensor=lambda r, t: t.zero_()

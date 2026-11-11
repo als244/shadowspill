@@ -65,6 +65,7 @@ def optimizer_templates(
             "name": binding.name,
             "role": binding.role.value,
             "parameter_name": binding.parameter_name,
+            "component_path": binding.component_path,
             "object_id": names.get(binding.name),
             "mutable": binding.mutable,
             "shape": tuple(binding.tensor.shape),

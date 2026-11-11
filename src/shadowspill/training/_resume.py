@@ -11,6 +11,7 @@ import torch
 
 from shadowspill.checkpoint import load_checkpoint, save_checkpoint
 from shadowspill.checkpoint.load import checkpoint_metadata
+from shadowspill.checkpoint.weights import WeightRepresentation
 from shadowspill.execution.tensors import TensorChunk
 from shadowspill.pytorch._rng import restore_rng, rng_state
 
@@ -20,7 +21,14 @@ if TYPE_CHECKING:
     from .trainer import Trainer
 
 
-def save(trainer: Trainer, path: str | Path, *, source: Any, chunk_bytes: int) -> Path:
+def save(
+    trainer: Trainer,
+    path: str | Path,
+    *,
+    source: Any,
+    chunk_bytes: int,
+    weights: WeightRepresentation,
+) -> Path:
     source = trainer._source if source is None else source
     source_state = getattr(source, "state_dict", None)
     schedules = {}
@@ -47,6 +55,7 @@ def save(trainer: Trainer, path: str | Path, *, source: Any, chunk_bytes: int) -
         metadata=metadata,
         chunk_bytes=chunk_bytes,
         frozen_state_id=trainer.frozen_state_id,
+        weights=weights,
     )
     return Path(path)
 

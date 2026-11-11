@@ -2,7 +2,7 @@
 
 import json
 import sys
-import zipfile
+import tarfile
 from pathlib import Path
 
 import torch
@@ -75,11 +75,14 @@ with Trainer(plan, evaluation_plan=evaluation) as trainer:
         for index in range(3):
             check(trainer, index)
         trainer.save(checkpoint, chunk_bytes=40)
-        with zipfile.ZipFile(checkpoint) as archive:
-            entries = json.loads(archive.read("manifest.json"))["tensors"]
+        with tarfile.open(checkpoint) as archive:
+            manifest = json.loads(archive.extractfile("manifest.json").read())
+            entries = manifest["tensors"]
         names = {entry["name"] for entry in entries}
         assert {"weight.payload", "weight.scale", "master.weight"} <= names
         assert "weight" not in names
+        assert not manifest["derived_tensors"]
+        assert manifest["retained_weight_copies"]["weight"]
         uninterrupted = check(trainer, 3)
         torch.save(uninterrupted, root / "uninterrupted.pt")
     else:

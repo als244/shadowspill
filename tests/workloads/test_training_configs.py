@@ -5,7 +5,7 @@ import math
 import os
 import subprocess
 import sys
-import zipfile
+import tarfile
 from pathlib import Path
 
 import pytest
@@ -141,10 +141,10 @@ def test_supplied_config_tiny_training_through_saved_phases(tmp_path, family, lo
     assert evaluation and all(math.isfinite(row["eval/loss"]) for row in evaluation)
     tensors = []
     for step in (2, 3):
-        with zipfile.ZipFile(root / f"checkpoints/step_{step:08d}.ssp") as archive:
-            metadata = json.loads(archive.read("manifest.json"))
+        with tarfile.open(root / f"checkpoints/step_{step:08d}.ssp") as archive:
+            metadata = json.loads(archive.extractfile("manifest.json").read())
             tensors.append(
-                {item["name"]: item["sha256"] for item in metadata["tensors"]}
+                {item["name"]: item["blake3"] for item in metadata["tensors"]}
             )
     names = [
         name

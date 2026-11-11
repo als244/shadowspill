@@ -677,6 +677,11 @@ RNG states are preserved; custom generators remain application-owned. Loop state
 supports small plain Python containers and CPU tensors/arrays, without pickle.
 Checkpoints are single bounded-stream archives; partial weight-only export and
 model checkpoint conversion are separate from this full-resume path.
+`save(..., weights="master")` is the default: ordinary compute weights are
+reconstructed from their saved masters. Explicit `weights="compute"` reduces
+master precision on resume. Encoded copies or incompatible owned shards retain
+their physical state with the reason recorded in the manifest. See the
+[checkpoint representation contract](state-import.md#export-and-checkpoints).
 
 Trainer runs saved `build_step` Plans and optional read-only evaluation sharing
 trained parameter storage. The [distributed regression recipe](../../workloads/recipes/regression/README.md)

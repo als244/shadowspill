@@ -1,7 +1,7 @@
 """Streaming and failure behavior independent of a GPU/runtime instance."""
 
 import json
-import zipfile
+import tarfile
 from types import SimpleNamespace
 
 import pytest
@@ -9,6 +9,7 @@ import torch
 
 from shadowspill import load_checkpoint, save_checkpoint
 from shadowspill.execution.tensors import TensorChunk
+from tests.shadowspill.checkpoint.archive_helpers import write_contents
 
 
 class MemoryExecutor:
@@ -71,8 +72,8 @@ def test_streams_strided_and_mixed_dtype_storage_with_different_chunk_sizes(tmp_
     path = tmp_path / "checkpoint.ssp"
     save_checkpoint(executor, path, metadata={"updates": 7}, chunk_bytes=16)
     assert max(executor.chunks) <= 16
-    with zipfile.ZipFile(path) as archive:
-        assert len(archive.namelist()) == 4
+    with tarfile.open(path) as archive:
+        assert len(archive.getnames()) == 5
     for tensor in executor.values.values():
         tensor.zero_()
     executor.chunks.clear()
@@ -132,14 +133,14 @@ def test_corrupted_tensor_cannot_be_used_after_restore(tmp_path):
     executor = MemoryExecutor()
     path = tmp_path / "checkpoint.ssp"
     save_checkpoint(executor, path, chunk_bytes=16)
-    with zipfile.ZipFile(path) as archive:
-        contents = {name: archive.read(name) for name in archive.namelist()}
-    # Keep ZIP CRC valid, but invalidate the tensor's content hash.
+    with tarfile.open(path) as archive:
+        contents = {
+            name: archive.extractfile(name).read() for name in archive.getnames()
+        }
+    # Keep TAR framing valid, but invalidate the tensor's content hash.
     data = contents["tensors/0"]
     contents["tensors/0"] = bytes([data[0] ^ 1]) + data[1:]
-    with zipfile.ZipFile(path, "w") as archive:
-        for name, data in contents.items():
-            archive.writestr(name, data)
+    write_contents(path, contents)
     with pytest.raises(ValueError, match="checksum"):
         load_checkpoint(executor, path, chunk_bytes=16)
     assert not executor.initialized
@@ -151,8 +152,8 @@ def test_another_program_of_the_same_state_restores(tmp_path):
     executor = MemoryExecutor()
     path = tmp_path / "checkpoint.ssp"
     save_checkpoint(executor, path, metadata={"updates": 3})
-    with zipfile.ZipFile(path) as archive:
-        manifest = json.loads(archive.read("manifest.json"))
+    with tarfile.open(path) as archive:
+        manifest = json.loads(archive.extractfile("manifest.json").read())
     assert manifest["program"] == "example" and len(manifest["state"]) == 64
     executor.plan.program.digest = "rebuilt"
     for tensor in executor.values.values():

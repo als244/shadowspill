@@ -44,7 +44,8 @@ def test_quantized_training_evaluation_and_cold_checkpoint(
     if not torch.cuda.is_available():
         pytest.skip("requires CUDA")
 
-    def choices(program, _shares):
+    def choices(program, _shares, *, tail_save_counts=(0,)):
+        assert tuple(tail_save_counts) == (0,)
         return (
             tuple(
                 TaskAlternativeChoice(g.group_id, variant)
@@ -80,6 +81,8 @@ def test_quantized_training_evaluation_and_cold_checkpoint(
     assert bindings["weight"]["dtype"] == "torch.float32"
     assert bindings["compute.weight.payload"]["dtype"] == "torch.int8"
     assert bindings["compute.weight.scale"]["dtype"] == "torch.float32"
+    assert bindings["compute.weight.payload"]["component_path"] == ("payload",)
+    assert bindings["compute.weight.scale"]["component_path"] == ("scale",)
     assert bindings["weight"]["initialization"]["kind"] == "external"
     selected = save_plan(training, tmp_path / "training.ssp")
     assert selected.selections and all(

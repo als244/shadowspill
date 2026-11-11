@@ -5,7 +5,7 @@ from __future__ import annotations
 import time
 from collections.abc import Callable, Iterable, Mapping, Sequence
 from pathlib import Path
-from typing import Any, Self
+from typing import Any, Literal, Self
 
 import torch
 
@@ -297,11 +297,23 @@ class Trainer:
         )
 
     def save(
-        self, path: str | Path, *, source: Any = None, chunk_bytes: int = 64 << 20
+        self,
+        path: str | Path,
+        *,
+        source: Any = None,
+        chunk_bytes: int = 64 << 20,
+        weights: Literal["master", "compute"] = "master",
     ) -> Path:
-        """Save bounded tensors plus loop, source, scheduler and default RNG state."""
+        """Save tensors and progress, selecting master weights by default.
+
+        ``weights="compute"`` reconstructs masters at compute precision on load.
+        Encoded or incompatible owned copies retain their exact physical state;
+        the checkpoint manifest records these exceptions.
+        """
         self._require_open()
-        return _resume.save(self, path, source=source, chunk_bytes=chunk_bytes)
+        return _resume.save(
+            self, path, source=source, chunk_bytes=chunk_bytes, weights=weights
+        )
 
     def load(
         self,
