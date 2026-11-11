@@ -7,6 +7,7 @@ import pytest
 from shadowspill.profiling.overlap_statistics import (
     PairObservation,
     paired_progress,
+    probe_trials,
     probe_work_counts,
 )
 
@@ -46,3 +47,17 @@ def test_work_counts_bound_tiny_tasks_and_very_large_messages():
     for runtime, transfer in ((1, 1), (10**9, 1), (1, 10**9), (2_000_000, 1_000_000)):
         tasks, copies = probe_work_counts(runtime, transfer)
         assert 1 <= tasks <= 8 and 3 <= copies <= 128
+
+
+def test_expensive_conditioned_pair_is_supported_without_claiming_repeatability():
+    task, copies, pair = trial()
+    assert paired_progress([task], [copies], [pair], minimum_trials=1) == pytest.approx(
+        (2 / 3, 0.5)
+    )
+    invalid = replace(pair, task_end_ns=1000)
+    assert paired_progress([task], [copies], [invalid], minimum_trials=1) is None
+    assert probe_trials(1_000_000, 100_000, 1, 20) == 3
+    assert probe_trials(40_000_000, 2_000_000, 1, 40) == 1
+    assert probe_trials(4_000_000_000, 2_000_000, 1, 128) == 1
+    with pytest.raises(ValueError, match="positive integer"):
+        paired_progress([task], [copies], [pair], minimum_trials=0)

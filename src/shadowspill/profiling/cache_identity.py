@@ -14,7 +14,7 @@ def task_identities(
     program: Program,
     jobs: Sequence[Mapping[str, Any]],
     *,
-    options: ProfilingOptions,
+    options: ProfilingOptions | None,
     environment: Mapping[str, Any],
 ) -> dict[str, dict[str, Any]]:
     definitions = {item.profile_key: item for item in program.task_definitions}
@@ -81,9 +81,10 @@ def task_identities(
                     ],
                 },
             )
-    policy = options.to_dict()
+    policy = None if options is None else options.to_dict()
     # A record with more samples can satisfy a smaller requested minimum.
-    policy.pop("minimum_samples")
+    if policy is not None:
+        policy.pop("minimum_samples")
     return {
         key: {
             "schema": "shadowspill.task-measurement-request/v1",

@@ -9,6 +9,7 @@ import torch
 
 from shadowspill import (
     MemoryBudgets,
+    OverlapProfileCache,
     Parallelism,
     ProfiledProgram,
     Profiles,
@@ -58,8 +59,9 @@ def main(mode, root):
         import triton
 
         compiler.compile_fx = compiler.compile_fx_inner = triton.compile = forbidden
+        cache = OverlapProfileCache(root / "cache", mode="refresh")
         overlap = measure_overlap(
-            profiled, info, device="cuda:0", rank_map={0: 1, 1: 0}
+            profiled, info, device="cuda:0", rank_map={0: 1, 1: 0}, cache=cache
         )
         assert overlap.metadata["overlap_calibration"]["attempted_tasks"] > 0
         observations = [
@@ -73,6 +75,29 @@ def main(mode, root):
             for row in observations
         )
         assert all(peer == overlap.to_dict() for peer in _gather(overlap.to_dict()))
+        # A fresh reader must reuse only globally agreed supported routes.
+        # Unsupported routes may be retried; original timing/memory is untouched.
+        repeated = measure_overlap(
+            profiled,
+            info,
+            device="cuda:0",
+            rank_map={0: 1, 1: 0},
+            cache=OverlapProfileCache(root / "cache"),
+        )
+        assert all(peer == repeated.to_dict() for peer in _gather(repeated.to_dict()))
+        assert len(repeated.metadata["overlap_calibration"]["cache"]["hits"]) == sum(
+            row["status"] == "measured" for row in observations
+        )
+        for key, original in overlap.tasks.items():
+            previous = {
+                (cost.timing_class, cost.bytes): cost
+                for cost in original.overlap_costs or ()
+            }
+            updated = {
+                (cost.timing_class, cost.bytes): cost
+                for cost in repeated.tasks[key].overlap_costs or ()
+            }
+            assert all(updated[item] == cost for item, cost in previous.items())
         merged = apply_profiles(profiled.program, profiled.profiles.merge(overlap))
         for key, original in profiled.task_profiles.items():
             updated = merged.task_profiles[key]

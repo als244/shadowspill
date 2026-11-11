@@ -242,14 +242,16 @@ and misses; original sample counts and timing diagnostics stay with each task.
 Cache directories are optional; saved public Profiles remain self-contained.
 
 `measure_overlap(profiled_program, communication_info, device=device,
-rank_map=..., stages=None, inputs=None)` returns a `Profiles` overlay containing
+rank_map=..., stages=None, inputs=None, trials=None, cache=None)` returns a `Profiles` overlay containing
 paired task/collective progress measurements. Call it on all participating ranks
 after communication calibration, then merge and apply it:
 
 ```python
-from shadowspill import measure_overlap, apply_profiles
+from shadowspill import OverlapProfileCache, measure_overlap, apply_profiles
 
-overlap = measure_overlap(profiled, communication, rank_map=rank_map)
+cache = OverlapProfileCache("/local-ssd/shadowspill-cache")
+# Reuse this instance across the candidate sweep on each participating rank.
+overlap = measure_overlap(profiled, communication, rank_map=rank_map, cache=cache)
 profiles = profiled.profiles.merge(overlap)
 profiled = apply_profiles(profiled.program, profiles)
 ```
@@ -260,6 +262,33 @@ unique form against small/middle/large actual transfer sizes, and records paired
 trial statistics in `TaskProfile.metadata["overlap_calibration"]`. It does not
 build, create execution pools, fit full-step timings or choose a Plan. Both save
 and recompute forms and complete composed/chunked tasks are measured as built.
+
+Admission releases unused allocator blocks once per task, allocates one buffer
+large enough for the admitted routes, then warms the task. Timing preserves that
+allocator workspace. Compatible isolated task and transfer baselines are reused
+within the live communicator session. By default, probes take three trials when
+their predicted work together fits 100 ms, otherwise one conditioned trial.
+`trials=N` requests a positive fixed count. One trial estimates progress; it does
+not establish repeatability. Repeated trials must also pass the dispersion check.
+
+`OverlapProfileCache` stores supported task/route evidence under
+`profiling/overlap/`, independently of ordinary task measurements. Reuse requires
+matching finalized code, representative input lineage, numerical settings,
+allocator/stream policy, rank mapping, topology, backend, route geometry and
+sampling protocol. All ranks agree on identical cached evidence before skipping
+collectives. Fully cached tasks skip input preparation and executable restoration.
+Explicit `inputs` disable reuse; missing/unsupported probes are never negative
+cache entries. The `contribute`, `reuse`, `require` and `refresh` modes have the
+same meanings as `TaskProfileCache`. No candidate-wide memory evidence is reused.
+
+The overlay records cache hits/misses and per-rank preparation, input/dispatch,
+admission, buffer, warmup and probe wall times. Trial timing separates observer
+setup, enqueue, drain and Python event decoding. Drain time includes GPU waiting
+and native event conversion; these host intervals must not be added to device
+durations as independent costs. Cached observations retain their original trial
+statistics; cache metadata distinguishes those from newly measured work.
+Native allocator counters also record device-allocation/free calls and retries
+around each newly measured trial, outside its timed device interval.
 
 Supported rates apply only while compute and the corresponding collective phase
 actually overlap. Route identity includes operation, dtype, ordered groups,

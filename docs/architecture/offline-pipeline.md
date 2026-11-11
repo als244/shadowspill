@@ -237,6 +237,15 @@ communication phase. Solo task profiles remain reusable; overlap evidence is
 specific to the task implementation and collective configuration. Calibration
 uses actual NCCL work events and bounded actual message sizes, excludes arrival
 skew and post-compute tails, and never fits observed full-training-step times.
+Cleanup and transfer-buffer admission precede task warmup. Timed routes share
+one buffer and preserve cached task allocations. Isolated baselines are reused
+within a communicator session; optional `OverlapProfileCache` entries share
+supported paired evidence across candidates after all-rank agreement. Cache
+identity includes task/input lineage, route/backend/rank geometry and sampling
+policy. It never substitutes for candidate-specific memory evidence. Expensive
+probes use one conditioned trial by default; probes whose three trials are
+predicted to fit 100 ms use three. Host phase diagnostics keep GPU waiting,
+event processing and artifact I/O distinguishable.
 See [profile artifacts](../python/api/artifacts.md#profiles-and-taskprofile) for
 coverage, missing-sample reporting and the current model-owned/heterogeneous
 communication exclusions.

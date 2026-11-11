@@ -7,6 +7,7 @@ _PUBLIC = {
     "apply_profiles": ".apply",
     "measure_program": ".measure",
     "TaskProfileCache": ".cache",
+    "OverlapProfileCache": ".overlap_cache",
     "measure_overlap": ".overlap",
     "measure_pool_memory": ".pool_memory",
 }

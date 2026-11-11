@@ -186,6 +186,10 @@ class ArtifactStore:
         return self.root / "profiling" / "tasks"
 
     @property
+    def overlap_profiles(self) -> Path:
+        return self.root / "profiling" / "overlap"
+
+    @property
     def programs_archive(self) -> Path:
         # In the planning tree, not the build tree. A planning call archives
         # the program it was given so a plan's lineage points at an immutable
@@ -424,6 +428,7 @@ Optional content-addressed entries under a versioned root:
 - `build/graph_pairs/`: structural AOT graph pairs.
 - `build/optimizers/`: captured optimizer updates.
 - `profiling/tasks/`: finalized task timing and allocation evidence.
+- `profiling/overlap/`: compatible paired task/collective evidence.
 - `planning/programs/`: costed IR inputs.
 - `planning/requests/`: search inputs and settings.
 - `planning/results/`: selected schedules, diagnostics and certificates.

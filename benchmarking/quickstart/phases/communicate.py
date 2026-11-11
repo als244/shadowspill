@@ -1,7 +1,13 @@
 """Calibrate communication and paired interference for saved candidates."""
 
 from benchmarking.spill import resolve as spill_pool
-from shadowspill import CommunicationInfo, ProfiledProgram, Program, apply_profiles
+from shadowspill import (
+    CommunicationInfo,
+    OverlapProfileCache,
+    ProfiledProgram,
+    Program,
+    apply_profiles,
+)
 from shadowspill.communication.requests import collective_requests
 
 from .common import paths
@@ -54,6 +60,7 @@ def run(request):
         )
         if group.rank == 0:
             communication.save(root / "communication.ssp")
+        cache = OverlapProfileCache(root / "cache")
         for entry in index["candidates"]:
             path = root / "profiled" / entry["file"]
             if "failure" in entry or not path.is_file():
@@ -65,6 +72,7 @@ def run(request):
                 communication,
                 device=request["device"],
                 rank_map=group.rank_map,
+                cache=cache,
             )
             if group.rank == 0:
                 overlap.save(root / "overlap" / entry["file"])

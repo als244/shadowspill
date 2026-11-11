@@ -17,13 +17,18 @@ def paired_progress(
     solo_tasks: Sequence[PairObservation],
     solo_transfers: Sequence[PairObservation],
     together: Sequence[PairObservation],
+    *,
+    minimum_trials: int = 3,
 ) -> tuple[float, float] | None:
     """Use actual overlap and interior transfers; reject unidentifiable trials.
 
-    Exclude the first transfer (rank arrival) and post-task tails. Require three
-    supported trials and bounded median absolute deviation. A missing estimate
-    is not a guessed tiny rate, nor evidence of zero interference.
+    Exclude the first transfer (rank arrival) and post-task tails. Require the
+    requested number of supported trials and bounded median absolute deviation.
+    A single trial estimates progress, not repeatability. A missing estimate is
+    not a guessed tiny rate, nor evidence of zero interference.
     """
+    if type(minimum_trials) is not int or minimum_trials < 1:
+        raise ValueError("minimum overlap trials must be a positive integer")
     task_rates, transfer_rates = [], []
     for task, copies, pair in zip(solo_tasks, solo_transfers, together, strict=True):
         solo = task.task_end_ns - task.task_start_ns
@@ -48,7 +53,7 @@ def paired_progress(
             continue
         task_rates.append(task_rate)
         transfer_rates.append(transfer_rate)
-    if len(task_rates) < 3:
+    if len(task_rates) < minimum_trials:
         return None
     for values in (task_rates, transfer_rates):
         center = median(values)
@@ -62,3 +67,14 @@ def probe_work_counts(runtime_ns: int, transfer_ns: int) -> tuple[int, int]:
     tasks = max(1, min(8, math.ceil(4 * transfer_ns / max(1, runtime_ns))))
     copies = max(3, min(128, math.ceil(2 * tasks * runtime_ns / max(1, transfer_ns))))
     return tasks, copies
+
+
+def probe_trials(runtime_ns: int, transfer_ns: int, tasks: int, copies: int) -> int:
+    """Repeat cheap triplets; do not multiply seconds-long tasks by a fixed five.
+
+    Three trials are cheap when their estimated isolated and concurrent work
+    together fits 100 ms. Always take at least one complete conditioned triplet.
+    This estimate bounds extra repetitions, not the duration of one task.
+    """
+    triplet_ns = 2 * (tasks * runtime_ns + copies * transfer_ns)
+    return 3 if 3 * triplet_ns <= 100_000_000 else 1

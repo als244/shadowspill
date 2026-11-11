@@ -22,6 +22,7 @@ _PUBLIC = {
     "apply_profiles": "profiling.apply",
     "measure_program": "profiling.measure",
     "TaskProfileCache": "profiling.cache",
+    "OverlapProfileCache": "profiling.overlap_cache",
     "measure_overlap": "profiling.overlap",
     "MemoryBudgets": "artifacts.budgets",
     "PoolMemoryProfile": "artifacts.pool_memory",

@@ -188,6 +188,11 @@ worker receives the same combined result. It runs no compiled compute tasks.
 The subsequent `measure_overlap` call runs saved task/collective pairs on those
 workers and adds supported interference measurements to the compute profiles.
 This preserves single-GPU build/ordinary profiling and CPU-only planning.
+The shared recipe and quickstart reuse compatible paired evidence across search
+candidates through `OverlapProfileCache`. Standalone callers can pass the same
+cache instance to each `measure_overlap` call. By default, cheap probes take three
+trials and expensive probes take one; pass `trials=N` to override. Allocator
+cleanup precedes warmup, so timed trials reuse the conditioned workspace.
 
 `CommunicationInfo` contains node membership, rates/latencies, measured collective
 costs and communication memory evidence. Collective bytes describe the full
