@@ -5,6 +5,8 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 from statistics import median
 
+TRANSFER_REFERENCE_COPIES = 8
+
 
 @dataclass(frozen=True)
 class PairObservation:
@@ -70,11 +72,14 @@ def probe_work_counts(runtime_ns: int, transfer_ns: int) -> tuple[int, int]:
 
 
 def probe_trials(runtime_ns: int, transfer_ns: int, tasks: int, copies: int) -> int:
-    """Repeat cheap triplets; do not multiply seconds-long tasks by a fixed five.
+    """Repeat cheap pairs; do not multiply seconds-long tasks by a fixed five.
 
     Three trials are cheap when their estimated isolated and concurrent work
-    together fits 100 ms. Always take at least one complete conditioned triplet.
+    together fits 100 ms, including one shared eight-transfer reference burst.
+    Always take at least one complete conditioned pair and its solo references.
     This estimate bounds extra repetitions, not the duration of one task.
     """
-    triplet_ns = 2 * (tasks * runtime_ns + copies * transfer_ns)
-    return 3 if 3 * triplet_ns <= 100_000_000 else 1
+    pair_ns = 2 * tasks * runtime_ns + copies * transfer_ns
+    return (
+        3 if 3 * pair_ns + TRANSFER_REFERENCE_COPIES * transfer_ns <= 100_000_000 else 1
+    )

@@ -282,7 +282,7 @@ class _OverlapSession(MeasurementSession):
             task = {"digest": digest(identity), "environment": environment}
             for route in self.routes:
                 self.route_identities[key, route.timing_class, route.bytes] = {
-                    "protocol": "conditioned-shared-baselines/v1",
+                    "protocol": "conditioned-shared-baselines/v2",
                     "task": task,
                     "route": {
                         "timing_class": route.timing_class,

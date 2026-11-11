@@ -17,6 +17,7 @@ from shadowspill.errors import ProfilingError
 
 from .observation.native import _library
 from .overlap_statistics import (
+    TRANSFER_REFERENCE_COPIES,
     PairObservation,
     paired_progress,
     probe_trials,
@@ -46,7 +47,7 @@ class ProbeBaselines:
     """CPU observations only; scoped to one live set of communicators."""
 
     tasks: dict[str, tuple[PairObservation, ...]] = field(default_factory=dict)
-    transfers: dict[str, tuple[PairObservation, ...]] = field(default_factory=dict)
+    transfers: dict[str, PairObservation] = field(default_factory=dict)
 
 
 class ProbeWorkspace:
@@ -151,14 +152,13 @@ def measure_route(
             route.timing_class,
             route.bytes,
             [r.to_dict() for r in route.requests],
-            copies,
-            trials,
         )
     )
     hits = groups.gather(
         (task_identity in baselines.tasks, transfer_identity in baselines.transfers)
     )
     task_hit, transfer_hit = (all(row[i] for row in hits) for i in (0, 1))
+    reference = baselines.transfers[transfer_identity] if transfer_hit else None
     stream.synchronize()
     probe.stream.synchronize()
     wall: dict[str, list[dict[str, float]]] = defaultdict(list)
@@ -167,15 +167,18 @@ def measure_route(
     def sample(mode: str) -> PairObservation:
         started = perf_counter()
         memory_before = torch.cuda.memory_stats(stream.device)
+        # The isolated transfer median needs a short warmed burst, independent
+        # of how long a task must run to expose simultaneous interference.
+        sample_copies = TRANSFER_REFERENCE_COPIES if mode == "transfer" else copies
         gate, begin, end = [torch.cuda.Event(enable_timing=True) for _ in range(3)]  # type: ignore[no-untyped-call]
         gate.record(stream)
         torch.ops.shadowspill._collective_profile_begin(
-            len(probe.operations) * copies + 16, gate.cuda_event
+            len(probe.operations) * sample_copies + 16, gate.cuda_event
         )
         opened = perf_counter()
         try:
             if task_count > 1 and mode != "task":
-                probe.enqueue(gate, copies)
+                probe.enqueue(gate, sample_copies)
             begin.record(stream)
             for _ in range(task_count):
                 if mode != "transfer":
@@ -183,12 +186,12 @@ def measure_route(
                     del result  # Reuse one task workspace, even within a burst.
             end.record(stream)
             if task_count == 1 and mode != "task":
-                probe.enqueue(gate, copies)
+                probe.enqueue(gate, sample_copies)
         finally:
             enqueued = perf_counter()
             record = torch.ops.shadowspill._collective_profile_end()
             drained = perf_counter()
-        expected = 0 if mode == "task" else len(probe.operations) * copies
+        expected = 0 if mode == "task" else len(probe.operations) * sample_copies
         if record["errors"] or len(record["records"]) != expected:
             raise ProfilingError(
                 "incomplete or unexpected collective sequence in overlap probe"
@@ -235,16 +238,18 @@ def measure_route(
         for repeat in range(trials):
             modes = ("task", "transfer", "both")
             for mode in modes if repeat % 2 == 0 else tuple(reversed(modes)):
-                row = (
-                    baselines.tasks[task_identity][repeat]
-                    if mode == "task" and task_hit
-                    else baselines.transfers[transfer_identity][repeat]
-                    if mode == "transfer" and transfer_hit
-                    else sample(mode)
-                )
+                if mode == "transfer":
+                    if reference is None:
+                        reference = sample(mode)
+                    row = reference
+                elif mode == "task" and task_hit:
+                    row = baselines.tasks[task_identity][repeat]
+                else:
+                    row = sample(mode)
                 samples[mode].append(row)
         baselines.tasks[task_identity] = tuple(samples["task"])
-        baselines.transfers[transfer_identity] = tuple(samples["transfer"])
+        assert reference is not None
+        baselines.transfers[transfer_identity] = reference
         rates = paired_progress(
             samples["task"], samples["transfer"], samples["both"], minimum_trials=trials
         )
@@ -254,6 +259,7 @@ def measure_route(
             "status": "measured" if rates is not None else "unidentifiable_or_unstable",
             "task_count": task_count,
             "copies": copies,
+            "reference_copies": TRANSFER_REFERENCE_COPIES,
             "requested_trials": trials,
             "baseline_reuse": {"task": task_hit, "transfer": transfer_hit},
             "warmup_seconds": warmup_seconds,

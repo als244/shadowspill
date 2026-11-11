@@ -270,6 +270,10 @@ within the live communicator session. By default, probes take three trials when
 their predicted work together fits 100 ms, otherwise one conditioned trial.
 `trials=N` requests a positive fixed count. One trial estimates progress; it does
 not establish repeatability. Repeated trials must also pass the dispersion check.
+The isolated transfer reference uses one warmed eight-transfer burst per actual
+route, shared across task lengths and trial counts. Its first transfer is excluded
+from the median. Paired bursts still cover the task's interference window; those
+can be longer. This avoids repeating long transfer-only bursts for every task.
 
 `OverlapProfileCache` stores supported task/route evidence under
 `profiling/overlap/`, independently of ordinary task measurements. Reuse requires

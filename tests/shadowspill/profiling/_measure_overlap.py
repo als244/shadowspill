@@ -74,6 +74,12 @@ def main(mode, root):
             {r["logical_rank"] for r in row["per_rank"]} == {0, 1}
             for row in observations
         )
+        for row in observations:
+            for peer in row["per_rank"]:
+                assert peer["reference_copies"] == 8
+                assert len(peer["wall_times"].get("transfer", ())) == int(
+                    not peer["baseline_reuse"]["transfer"]
+                )
         assert all(peer == overlap.to_dict() for peer in _gather(overlap.to_dict()))
         # A fresh reader must reuse only globally agreed supported routes.
         # Unsupported routes may be retried; original timing/memory is untouched.
