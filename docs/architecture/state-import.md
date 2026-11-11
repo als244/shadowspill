@@ -72,6 +72,14 @@ The application must also bound its scratch. A file-backed loader can read only
 intersecting ranges. Reproducible sharded random initialization should use tensor
 identity and global offset rather than depend on request order.
 
+Keep random-number block boundaries separate from copy granularity. A loader can
+generate fixed seeded blocks, assemble several in bounded host scratch, and copy
+them together without changing the values assigned to any shard. This avoids
+repeated CPU thread-pool launches for small conversions. Fill constant tensors
+directly in the supplied destination; generating and copying zero blocks is
+unnecessary. These are loader optimizations, independent of execution chunking
+and checkpoint-region policies.
+
 ## Initial values and precision
 
 The model declares compute-weight and buffer dtypes. The optimizer declares moment

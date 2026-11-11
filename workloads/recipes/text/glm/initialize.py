@@ -51,15 +51,14 @@ class Initialize:
                 sample=self.values,
                 seed=self.seed,
                 block_elements=self.block_elements,
+                constant={"zero": 0.0, "one": 1.0, "fp8_scale": self.std / 64}.get(
+                    self.roles[request.name]
+                ),
             )
 
     def values(self, name, shape, start, stop, generator):
         role = self.roles[name]
         sample = torch.empty(stop - start, dtype=torch.float32)
-        if role in ("zero", "one", "fp8_scale"):
-            return sample.fill_(
-                {"zero": 0.0, "one": 1.0, "fp8_scale": self.std / 64}[role]
-            )
         if role == "lora_a":
             bound = shape[-1] ** -0.5
             return sample.uniform_(-bound, bound, generator=generator)

@@ -61,21 +61,32 @@ class Initialize:
             sample=self.values,
             seed=self.seed,
             block_elements=self.block_elements,
+            constant=self.constant(request.name),
         )
 
-    def values(self, name, shape, start, stop, generator):
-        values = torch.empty(stop - start, dtype=torch.float32)
+    def constant(self, name):
+        """Constant leaves need no RNG blocks or temporary full-precision copy."""
         leaf = name.rsplit(".", 1)[-1]
         qwen_moe = self.family in {"qwen3moe", "qwen35moe"}
-        if name in {"rotary.cosine", "rotary.sine"}:
-            return self.rotary(name, start, stop)
         if name.endswith("norm.weight"):
             centered = getattr(
                 self.config, "zero_centered_norm", False
             ) and not name.endswith("lin_norm.weight")
-            return values.fill_(0 if centered else 1)
+            return 0 if centered else 1
         if leaf in {"lora_b", "lora_gate_up_b", "lora_down_b"}:
-            return values.zero_()
+            return 0
+        if leaf == "A_log" and not qwen_moe:
+            return 0
+        if leaf == "dt_bias":
+            return 1 if qwen_moe else 0
+        return None
+
+    def values(self, name, shape, start, stop, generator):
+        if name in {"rotary.cosine", "rotary.sine"}:
+            return self.rotary(name, start, stop)
+        values = torch.empty(stop - start, dtype=torch.float32)
+        leaf = name.rsplit(".", 1)[-1]
+        qwen_moe = self.family in {"qwen3moe", "qwen35moe"}
         if leaf in {"lora_a", "lora_gate_up_a", "lora_down_a"}:
             bound = shape[-1] ** -0.5
             return (
@@ -84,13 +95,7 @@ class Initialize:
                 else values.normal_(std=bound, generator=generator)
             )
         if leaf == "A_log":
-            return (
-                values.uniform_(0.01, 16, generator=generator).log_()
-                if qwen_moe
-                else values.zero_()
-            )
-        if leaf == "dt_bias":
-            return values.fill_(1 if qwen_moe else 0)
+            return values.uniform_(0.01, 16, generator=generator).log_()
         if qwen_moe and (leaf in {"w13", "w2"} or leaf == "weight"):
             return values.normal_(
                 std=self.config.initializer_range, generator=generator

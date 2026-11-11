@@ -166,6 +166,14 @@ Generated frozen bases get a separate seed/configuration identity. Initializatio
 is recorded with the build; benchmark losses are not pretrained-model quality
 measurements. Real training retains its checkpoint initialization default.
 
+The shared host initializer fills constants, including fresh LoRA B factors,
+directly. It batches sixteen fixed RNG blocks per copy while preserving their
+original seeds and values across loader chunks and rank shards. With default
+FP32 generation, temporary storage is bounded by 32 MiB plus one 1 MiB RNG
+block, independently of the size of an expert bank. It leaves the process's CPU
+thread settings unchanged. This initialization batching is separate from the
+compiled execution-region chunk sizes searched during build and planning.
+
 Set evaluation and checkpoint cadences to zero before preparation for a benchmark.
 Checkpoint cadence and retention count can also change on a prepared run without
 rebuilding or replanning. Checkpoint reload tests and reference/state audits are
