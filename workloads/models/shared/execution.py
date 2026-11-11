@@ -61,9 +61,9 @@ def keep_local_intervals(graph, assignments, rules):
                 for flag in tree_flatten(local.get(parent, False))[0]
             )
             local[node] = tree_map(
-                lambda value, depends=depends: depends
-                if isinstance(value, torch.Tensor)
-                else False,
+                lambda value, depends=depends: (
+                    depends if isinstance(value, torch.Tensor) else False
+                ),
                 node.meta.get("val"),
             )
         if any(tree_flatten(local[node])[0]) and node.users:
@@ -220,11 +220,58 @@ def move_without_replay(info):
     )
 
 
-def text_execution_chunks(**options):
+_COMPACT_VIEWS = frozenset(
+    "aten." + name
+    for name in (
+        "alias.default",
+        "detach.default",
+        "view.default",
+        "_unsafe_view.default",
+        "permute.default",
+        "t.default",
+        "transpose.int",
+        "select.int",
+        "slice.Tensor",
+        "split.Tensor",
+        "split_with_sizes.default",
+        "unbind.int",
+        "unsqueeze.default",
+        "squeeze.default",
+        "squeeze.dim",
+        "squeeze.dims",
+        "expand.default",
+    )
+) | {"<built-in function getitem>"}
+
+
+def compact_without_replay(info):
+    """Move work once and compact internal primal views with proven consumers."""
+    if info.kind != "backward":
+        return None
+    return LifetimeSelection(
+        move=info.target.startswith("aten.") and info.effect_fence is None,
+        barrier=is_barrier(info.target),
+        compact=info.phase == "primal" and info.target in _COMPACT_VIEWS,
+        replay=False,
+    )
+
+
+def text_execution_chunks(*, lifetimes: ExecutionLifetimes | None = None, **options):
+    """Select text chunks with compact value boundaries and no extra replay.
+
+    The default supplies explicit FLA provider contracts, leaving unknown
+    providers as fences. Pass an ExecutionLifetimes policy to replace this
+    preset; an empty policy disables these lifetime transformations. Chunking
+    and checkpoint retention remain separate controls.
+    """
+    if lifetimes is None:
+        from mlops.integrations.shadowspill import fla_execution_lifetimes
+
+        lifetimes = fla_execution_lifetimes(select=compact_without_replay)
     chunks = TextExecutionChunks(**options)
     return ChunkRegions(
         TextExecutionBoundaries(chunks.sequence_length, chunks.rules),
         chunks,
         variants=chunks.variants,
-        lifetimes=ExecutionLifetimes(select=move_without_replay),
+        lifetimes=lifetimes,
     )

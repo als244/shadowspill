@@ -692,6 +692,12 @@ contract. Conditional or unknown alias returns are conservatively refused
 when lifetime analysis is needed. Parameter-gradient conversion barriers remain
 protected regardless of user movement choices.
 
+Provider adapters may supply these contracts while leaving rule/selector choices
+to the caller. For example, MLOps' optional `fla_execution_lifetimes` factory
+certifies specific FLA value operands; the [text workload preset](../../../workloads/recipes/README.md)
+uses them for movement and internal-view compaction without extra primal replay.
+The core `ChunkRegions` default remains `lifetimes=None`; it infers no provider
+semantics from a model name or operator name.
 
 Compaction changes storage layout and therefore needs a separate proof from
 readonly execution. `LayoutIndependentOperator(target, version, inputs)` in

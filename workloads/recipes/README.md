@@ -67,6 +67,17 @@ Attention selection is adapter-owned: Qwen's policy covers dense attention;
 GLM's covers its KDA and sparse attention operations. Chunk-local expert scratch
 must be regenerated within chunks. These choices do not change checkpoint cuts
 or require GPU residency; PressureFit controls saving, recomputation and spill.
+
+For selected execution chunks, the shared text preset also moves readonly work
+toward its consumers and compacts internal views when the complete storage and
+layout proofs permit it. It supplies explicit MLOps FLA value contracts;
+unknown providers remain fences. This can keep projection slices and gradients
+narrow around attention without repeating projections or expert work. It
+selects no additional primal replay. Advanced build callers can replace this
+preset through `text_execution_chunks(lifetimes=...)` using the generic
+`ExecutionLifetimes` controls; an empty policy disables these transformations.
+Every changed composition still goes through build, profiling and admission.
+
 `resolution_options` controls which SAVE/RECOMPUTE mixtures planning considers.
 `tail_save_counts` is a list of additional planning choices, automatically crossed
 with every resolution option:
