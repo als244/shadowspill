@@ -207,8 +207,14 @@ mean supplies a reducer that sums it too, as `sum_shares` in
 
 ## Checkpoints
 
-`save(path, source=None, chunk_bytes=...)` streams model tensors, masters,
-optimizer state and stored gradients through the Executor export interface.
+`save(path, source=None, chunk_bytes=..., weights="master")` streams persistent
+training state through the Executor export interface. By default, an ordinary
+master weight is stored once and its compute copy is reconstructed on load.
+`weights="compute"` instead saves the compute copy and reconstructs the master
+from its rounded values, intentionally losing the master's additional precision.
+Parameters without masters, optimizer state, buffers and stored gradients remain
+independent of this choice. Encoded weights, incompatible layouts or insufficient
+rank-owned coverage retain both copies; the manifest records why.
 It also saves Trainer progress and optional input-source state. `load` restores
 those tensors and counters into an already admitted compatible worker. File
 formatting lives in checkpoint helpers rather than the Executor itself.
@@ -219,13 +225,15 @@ computation/layout; the checkpoint supplies mutable values. It binds to the
 training state, the tensors by name, geometry and owned region, recorded as
 `state` in its manifest, so a Plan of the same state built elsewhere, with
 other kernels, another microbatch geometry or another budget, restores it; a
-different inventory is refused with the tensors named. Numerical qualification
-checks bitwise replay after restoring a checkpoint.
+different inventory is refused with the tensors named. Distributed callers use
+one path per logical rank. Restore requires matching logical rank and owned
+geometry; checkpoints are not automatically resharded to a different world size.
+Numerical qualification checks bitwise replay after restoring a checkpoint.
 
 For an immutable frozen base, construct `Trainer(plan, frozen_state_id="...")`.
-Checkpoints then omit unchanged frozen parameters. Trainable tensors, their
-compute weights and masters, optimizer state, persistent buffers and any mutated
-frozen parameters remain in the archive. The identity is supplied by the caller;
+Checkpoints then omit unchanged frozen parameters. Trainable weights use the
+selected representation above; optimizer state, persistent buffers and any
+mutated frozen parameters remain in the archive. The identity is supplied by the caller;
 use a checkpoint revision or content identity that also fixes model configuration.
 
 ```python
@@ -237,9 +245,10 @@ trainer.load("update.ssp", fill_tensor=fill_tensor)
 
 The loader fills Executor-provided CPU chunks for omitted base parameters only.
 Restore requires the same identity and explicit loader, even in an initialized
-worker. Every retained tensor must come from the checkpoint; a missing adapter,
-buffer or optimizer tensor is an error. Named evaluation Plans remain read-only
-with respect to shared model tensors.
+worker. Every retained tensor must come from a stored payload or a validated
+derived-copy relationship; a missing adapter, buffer or optimizer tensor is an
+error. Named evaluation Plans remain read-only with respect to shared model
+tensors. See [archive and reconstruction details](../../architecture/state-import.md#export-and-checkpoints).
 
 ## Reuse preparation across budgets and processes
 
