@@ -16,6 +16,25 @@ from shadowspill import (
 from ._example import communication, options, profiled, profiles, program
 
 
+def test_immutable_program_reuses_identity_but_replacement_recomputes(monkeypatch):
+    source = program()
+    original = type(source).to_dict
+    calls = []
+
+    def counted(value):
+        calls.append(value)
+        return original(value)
+
+    monkeypatch.setattr(type(source), "to_dict", counted)
+    first = source.digest
+    assert source.digest == first
+    assert len(calls) == 1
+    changed = replace(source, name=source.name + " changed")
+    assert changed.digest != first
+    assert len(calls) == 2
+    assert source.digest == first
+
+
 def test_phase_artifacts_are_self_contained_single_archives(tmp_path):
     plan = plan_program(
         profiled(),

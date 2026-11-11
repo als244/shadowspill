@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Callable, Mapping
 from dataclasses import asdict, dataclass, field
+from functools import cached_property
 from hashlib import sha256
 from types import MappingProxyType
 from typing import TYPE_CHECKING, Any, ClassVar
@@ -125,8 +126,10 @@ class Program(Artifact):
 
             task_collectives(self)
 
-    @property
+    @cached_property
     def digest(self) -> str:
+        # Programs and their nested metadata are immutable. Runtime setup and
+        # repeated checkpoints can share this identity without reserializing IR.
         return digest(self.to_dict())
 
     def to_dict(self) -> dict[str, Any]:
