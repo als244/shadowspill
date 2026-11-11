@@ -4,10 +4,12 @@ from datetime import timedelta
 
 import torch.distributed as dist
 
+from orchestration.communication import communication_probes
 from orchestration.lifecycle import Lifecycle
 from shadowspill import (
     OverlapProfileCache,
     ProfiledProgram,
+    Program,
     apply_profiles,
     measure_communication,
     measure_overlap,
@@ -29,19 +31,37 @@ def run(directory):
             root / f"logs/communication-rank-{dist.get_rank():05d}.jsonl",
             rank=dist.get_rank(),
         ) as timing:
-            for relative in program_paths(options, root=root):
+            candidates = program_paths(options, root=root)
+            if not candidates:
+                print(
+                    "communicate: no built candidates; skipping calibration", flush=True
+                )
+                return
+            with timing.phase("communication.requests"):
+                program, collectives = communication_probes(
+                    Program.load(root / "programs" / relative)
+                    for relative in candidates
+                )
+            timing.event(
+                "communication.probes",
+                candidates=len(candidates),
+                collectives=len(collectives),
+            )
+            with timing.phase("communication.measure"):
+                communication = measure_communication(
+                    program=program,
+                    collectives=collectives,
+                    rank_map={rank: rank for rank in range(options["ranks"])},
+                    device="cuda:0",
+                    warmup_seconds=options["warmup_seconds"],
+                    measure_seconds=options["measure_seconds"],
+                )
+            del program
+            for relative in candidates:
                 print(f"calibrating {relative}", flush=True)
                 timing.event("candidate", program=str(relative))
                 with timing.phase("profiled.load"):
                     profiled = ProfiledProgram.load(root / "profiled" / relative)
-                with timing.phase("communication.measure"):
-                    communication = measure_communication(
-                        program=profiled.program,
-                        rank_map={rank: rank for rank in range(options["ranks"])},
-                        device="cuda:0",
-                        warmup_seconds=options["warmup_seconds"],
-                        measure_seconds=options["measure_seconds"],
-                    )
                 with timing.phase("overlap.measure"):
                     overlap = measure_overlap(
                         profiled,

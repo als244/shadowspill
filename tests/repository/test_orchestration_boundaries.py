@@ -48,8 +48,8 @@ class Block(importlib.abc.MetaPathFinder):
             raise AssertionError('unexpected dependency: ' + fullname)
 block = Block()
 sys.meta_path.insert(0, block)
-for module in ('processes', 'rank_device',
-               'workers', 'lifecycle', 'candidates', 'nsys', 'nsys_worker'):
+for module in ('processes', 'rank_device', 'workers', 'lifecycle',
+               'candidates', 'communication', 'nsys', 'nsys_worker'):
     importlib.import_module('orchestration.' + module)
 block.blocked = {'benchmarking', 'qualification'}
 for module in ('workloads.recipes', 'workloads.recipes.phases',

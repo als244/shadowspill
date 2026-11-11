@@ -1,6 +1,7 @@
 """Calibrate communication and paired interference for saved candidates."""
 
 from benchmarking.spill import resolve as spill_pool
+from orchestration.communication import communication_probes
 from orchestration.workers import workers
 from shadowspill import (
     CommunicationInfo,
@@ -9,26 +10,16 @@ from shadowspill import (
     Program,
     apply_profiles,
 )
-from shadowspill.communication.requests import collective_requests
 
 from .common import paths
 
 
 def probes(root, index):
-    programs = [
+    return communication_probes(
         Program.load(root / "programs" / entry["file"])
         for entry in index["candidates"]
         if "failure" not in entry
-    ]
-    first = programs[0]
-    if any(program.parallelism != first.parallelism for program in programs):
-        raise ValueError("quickstart candidates must declare the same parallelism")
-    requests = {
-        request
-        for program in programs
-        for request in collective_requests(program, None)
-    }
-    return first, [request.to_dict() for request in sorted(requests)]
+    )
 
 
 def run(request):

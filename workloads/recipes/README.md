@@ -227,6 +227,13 @@ starts fresh unless `resume` is explicit.
 Phases are `build`, `profile`, `communicate`, `plan` and `execute`. With one rank,
 profiling also measures host transfers, so omit `communicate`. Multi-rank runs
 calibrate communication and computation overlap on the participating devices.
+Compatible candidates share one host-copy and collective calibration over the
+union of their exact collective requests, including training and evaluation.
+This matches quickstart: chunk sizes and retention variants do not repeat
+identical transfer probes. Each candidate still has its own measured overlap
+profile, with the existing cache for structurally identical task/route pairs.
+The shared calibration is saved beside every candidate; no measurements are
+reused across separate invocations by this grouping.
 DP build/profile uses one representative GPU; EP preparation needs all resource
 participants. Planning reads saved artifacts on CPU without importing Torch.
 
