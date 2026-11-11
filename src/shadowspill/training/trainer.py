@@ -147,22 +147,30 @@ class Trainer:
         input_loader: Callable[[int], tuple[tuple[Any, ...], Mapping[str, Any]]]
         | None = None,
         hyperparams: Mapping[str, Any] | None = None,
+        runtime_trace: bool = False,
     ) -> StepResult:
-        """Complete an update with host observations; schedules are zero-based."""
+        """Complete an update with host observations; schedules are zero-based.
+
+        ``runtime_trace=True`` also returns CPU-only ``diagnostics`` for this
+        real update. Its duration includes trace collection; no extra update or
+        change to optimizer hyperparameters is introduced.
+        """
         self._require_open()
         values = {name: fn(self.step_count) for name, fn in self.schedules.items()}
         values.update(hyperparams or {})
         started = time.perf_counter()
-        result = self.executor.run(
+        pending = self.executor.run(
             args=args,
             kwargs=kwargs,
             input_loader=input_loader,
             hyperparams=values,
+            runtime_trace=runtime_trace,
             collect_parameter_norms=bool(
                 self.parameter_norms_every
                 and (self.step_count + 1) % self.parameter_norms_every == 0
             ),
-        ).result()
+        )
+        result = pending.result()
         if not isinstance(result, TrainingResult):
             raise TypeError("training Plan returned an invalid result")
         self.step_count += 1
@@ -170,11 +178,12 @@ class Trainer:
             host = StepObservations.collect(
                 result.losses, result.metrics, result.parameter_metrics
             )
+            diagnostics = pending.diagnostics if runtime_trace else None
         finally:
             # Release the Executor's completed handle. StepResult keeps only CPU
             # observations, so fit never retains execution-pool output leases.
             self.executor.synchronize()
-            del result
+            del result, pending
         seconds = time.perf_counter() - started
         summary = MetricSummary()
         if self.metric_reducer is not None:
@@ -194,6 +203,7 @@ class Trainer:
             seconds,
             to_host(values),
             summary,
+            diagnostics,
         )
 
     def evaluate(

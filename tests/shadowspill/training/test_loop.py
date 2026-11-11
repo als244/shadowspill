@@ -77,3 +77,45 @@ def test_diagnostics_reuse_first_input_without_advancing_schedules(
     assert calls[0][1] == tmp_path / "startup"
     assert calls[0][2]["args"] == [(1,)]
     assert [call["args"] for call in executor.calls] == [[(1,)], [(2,)]]
+
+
+def test_step_trace_is_from_the_real_update_and_released_before_return(executor):
+    import weakref
+
+    original_run = executor.run
+    handles, events = [], []
+    evidence = object()
+
+    class Pending:
+        def __init__(self, inner):
+            self.inner = inner
+
+        def result(self):
+            events.append("result")
+            return self.inner.result()
+
+        @property
+        def diagnostics(self):
+            events.append("trace")
+            return evidence
+
+    def run(**inputs):
+        pending = Pending(original_run(**inputs))
+        handles.append(weakref.ref(pending))
+        return pending
+
+    executor.run = run
+    executor.synchronize = lambda: events.append("synchronize")
+    with Trainer(
+        executor.plan,
+        executor=executor,
+        schedules={"lr": lambda step: 0.1 / (step + 1)},
+    ) as trainer:
+        plain = trainer.step(args=[(1,)])
+        traced = trainer.step(args=[(2,)], runtime_trace=True)
+        assert trainer.step_count == 2
+        assert plain.diagnostics is None and traced.diagnostics is evidence
+        assert not any(handle() for handle in handles)
+        assert [call["runtime_trace"] for call in executor.calls] == [False, True]
+        assert [call["hyperparams"]["lr"] for call in executor.calls] == [0.1, 0.05]
+        assert events == ["result", "synchronize", "result", "trace", "synchronize"]

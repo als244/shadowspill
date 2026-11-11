@@ -6,6 +6,7 @@ import json
 import math
 import os
 import statistics
+from collections.abc import Mapping
 from contextlib import ExitStack
 from dataclasses import dataclass
 from pathlib import Path
@@ -29,11 +30,17 @@ class Context:
     world_size: int
 
 
-def validate(steps, warmup_steps, units_per_step):
+def validate(steps, warmup_steps, units_per_step, trace_final_step):
     if type(steps) is not int or steps < 1:
         raise ValueError("steps must be a positive integer")
     if type(warmup_steps) is not int or not 0 <= warmup_steps < steps:
         raise ValueError("warmup_steps must leave at least one measured update")
+    if type(trace_final_step) is not bool:
+        raise TypeError("trace_final_step must be a bool")
+    if trace_final_step and steps <= warmup_steps + 1:
+        raise ValueError(
+            "final-step tracing must leave at least one untraced measured update"
+        )
     if units_per_step is not None and (
         isinstance(units_per_step, bool)
         or not math.isfinite(units_per_step)
@@ -56,6 +63,7 @@ def run(
     units_per_step=None,
     unit_label="items",
     monitor=True,
+    trace_final_step=True,
 ):
     """Execute a saved training Plan in each participating fresh worker.
 
@@ -67,10 +75,12 @@ def run(
     Launch distributed workers with torchrun and orchestration.rank_device; each
     process must see its assigned GPU as cuda:0. WORLD_SIZE must match the Plan.
     No model construction, build, profiling, planning, evaluation, checkpoints,
-    runtime tracing or startup diagnostic runs are added here. Warmup updates
-    still train; they are excluded only from the reported steady median.
+    or startup diagnostic runs are added here. By default the final real update
+    collects a runtime trace on every rank. Warmup and traced updates still
+    train, but are excluded from the reported steady median. Trace files are
+    written after runtime cleanup; set ``trace_final_step=False`` to disable.
     """
-    validate(steps, warmup_steps, units_per_step)
+    validate(steps, warmup_steps, units_per_step, trace_final_step)
     worker_rank = int(os.environ.get("RANK", "0"))
     root = Path(output_dir)
     local = root / f"rank-{worker_rank:05d}"
@@ -99,6 +109,7 @@ def run(
                 rank_map,
                 units_per_step,
                 unit_label,
+                trace_final_step,
             )
 
 
@@ -116,6 +127,7 @@ def _execute(
     rank_map,
     units_per_step,
     unit_label,
+    trace_final_step,
 ):
     with timing.phase("imports"):
         from orchestration.workers import workers
@@ -131,8 +143,10 @@ def _execute(
             else plan.program.parallelism.world_size
         )
     records = []
+    diagnostics = None
 
     def completed(owner, result):
+        nonlocal diagnostics
         if not math.isfinite(result.loss) or not math.isfinite(result.seconds):
             raise FloatingPointError("training returned a nonfinite loss or duration")
         timing.event(
@@ -146,6 +160,12 @@ def _execute(
                 scalars=dict(result.summary.scalars),
             )
         )
+        if trace_final_step and result.step == steps:
+            diagnostics = result.diagnostics
+            if diagnostics is None:
+                raise RuntimeError(
+                    "final update did not return the requested runtime trace"
+                )
 
     with timing.managed("control_group", workers(count, rank_map=rank_map)) as group:
         context = Context(plan, group.logical_rank, group.rank, group.count)
@@ -178,7 +198,7 @@ def _execute(
                 source = inputs(context)
             with timing.phase("training.fit"):
                 trainer.fit(
-                    source,
+                    _traced_inputs(source, steps, trace_final_step),
                     steps=steps,
                     run_dir=local,
                     callbacks=[completed],
@@ -187,6 +207,23 @@ def _execute(
                     startup_diagnostics=False,
                 )
             capacity = trainer.executor.spill_capacity_bytes
+        trace = None
+        if diagnostics is not None:
+            with timing.phase("trace.write"):
+                from shadowspill.diagnostics.step_file import write_step_diagnostics
+
+                trace_path = local / "trace" / "step.json"
+                trace_path.parent.mkdir()
+                events = write_step_diagnostics(trace_path, diagnostics)
+                trace = dict(
+                    step=steps,
+                    diagnostics_path=str(trace_path.relative_to(root)),
+                    events_path=str(events.relative_to(root)),
+                    runtime_event_overflow=diagnostics.runtime.event_overflow,
+                    allocation_event_overflow=diagnostics.runtime.allocation_event_overflow,
+                    allocator_overflow=diagnostics.allocator.overflow,
+                )
+            del diagnostics
         # Gather only after runtime teardown, so cleanup cannot hide behind a
         # successful result file. Small host records never retain GPU outputs.
         with timing.phase("results.gather"):
@@ -196,6 +233,7 @@ def _execute(
                     worker_rank=group.rank,
                     steps=records,
                     spill_capacity_bytes=capacity,
+                    trace=trace,
                 )
             )
     if group.rank != 0:
@@ -207,6 +245,7 @@ def _execute(
             warmup_steps=warmup_steps,
             units_per_step=units_per_step,
             unit_label=unit_label,
+            trace_final_step=trace_final_step,
         )
         result.update(
             plan=str(path.resolve()),
@@ -225,8 +264,22 @@ def _execute(
     return result
 
 
-def summarize(per_rank, *, steps, warmup_steps, units_per_step, unit_label):
+def _traced_inputs(source, steps, trace_final_step):
+    for index, data in enumerate(source, 1):
+        if not isinstance(data, Mapping):
+            raise TypeError(
+                "each source item must contain keyword arguments for Trainer.step"
+            )
+        if "runtime_trace" in data:
+            raise ValueError("plan_runner owns runtime_trace; use trace_final_step")
+        yield dict(data, runtime_trace=trace_final_step and index == steps)
+
+
+def summarize(
+    per_rank, *, steps, warmup_steps, units_per_step, unit_label, trace_final_step=False
+):
     """Compare synchronous updates by max-rank time before taking the median."""
+    validate(steps, warmup_steps, units_per_step, trace_final_step)
     per_rank = sorted(per_rank, key=lambda row: row["rank"])
     if not per_rank or len({row["rank"] for row in per_rank}) != len(per_rank):
         raise ValueError("expected one result for every distinct logical rank")
@@ -239,15 +292,21 @@ def summarize(per_rank, *, steps, warmup_steps, units_per_step, unit_label):
             zip(*(rank["steps"] for rank in per_rank), strict=True)
         )
     ]
-    median = statistics.median(row["seconds"] for row in combined[warmup_steps:])
+    steady = combined[warmup_steps : steps - int(trace_final_step)]
+    median = statistics.median(row["seconds"] for row in steady)
     return dict(
         status="PASS",
         steps=combined,
         per_rank=per_rank,
         warmup_steps=warmup_steps,
+        trace_step=steps if trace_final_step else None,
+        steady_steps=[row["step"] for row in steady],
         median_seconds=median,
         units_per_step=units_per_step,
         unit_label=unit_label,
         units_per_second=None if units_per_step is None else units_per_step / median,
-        timing_definition="median of per-update maximum rank Trainer.step seconds",
+        timing_definition=(
+            "median of per-update maximum rank Trainer.step seconds, "
+            "excluding warmup and traced updates"
+        ),
     )

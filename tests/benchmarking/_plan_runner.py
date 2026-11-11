@@ -76,7 +76,7 @@ def distributed_coordination(directory):
             assert fill == 1 - rank
 
         def fit(self, source, *, callbacks, steps, **options):
-            assert source == 1 - rank
+            assert list(source) == [{"args": [(1 - rank,)], "runtime_trace": False}]
             for step in range(1, steps + 1):
                 callbacks[0](
                     self,
@@ -93,10 +93,11 @@ def distributed_coordination(directory):
         output_dir=root,
         steps=2,
         monitor=False,
+        trace_final_step=False,
         rank_map={0: 1, 1: 0},
         trainer_type=Trainer,
         initializer=lambda context: nullcontext(context.rank),
-        inputs=lambda context: context.rank,
+        inputs=lambda context: [{"args": [(context.rank,)]}],
     )
     if rank == 0:
         assert result["median_seconds"] == 2

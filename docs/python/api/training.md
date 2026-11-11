@@ -281,6 +281,15 @@ task, allocation and transfer records; `.result()` retains its normal output.
 Untraced calls return `None` for diagnostics and allocate no trace resources.
 Unlike `Trainer.diagnose`, tracing alone does not preserve training state.
 
+`Trainer.step(..., runtime_trace=True)` exposes the same evidence through
+`StepResult.diagnostics`. This is the actual scheduled training update, with
+normal optimizer changes and update counting. The diagnostics contain CPU-only
+records and survive Executor shutdown. `StepResult.seconds` includes trace
+collection overhead; untraced calls return `diagnostics=None`. A `fit` source
+can set this flag on particular updates. The
+[saved-Plan benchmark runner](../../../benchmarking/plan_runner/README.md)
+traces its final update by default and excludes it from steady throughput.
+
 ## Custom optimizers
 
 Custom optimizers must expose a tensor-only, capturable update. Python control

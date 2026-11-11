@@ -9,7 +9,7 @@ from types import SimpleNamespace
 import pytest
 
 from benchmarking.plan_runner import run
-from benchmarking.plan_runner.api import summarize
+from benchmarking.plan_runner.api import _traced_inputs, summarize, validate
 from benchmarking.plan_runner.report import report
 from orchestration.lifecycle import Lifecycle
 
@@ -63,6 +63,36 @@ def test_aggregation_uses_slowest_rank_per_update_and_preserves_losses():
         )
 
 
+def test_final_trace_is_excluded_from_steady_times_and_inputs_are_not_mutated():
+    source = [{"args": [(i,)]} for i in range(4)]
+    wrapped = list(_traced_inputs(source, 4, True))
+    assert [row["runtime_trace"] for row in wrapped] == [False, False, False, True]
+    assert all("runtime_trace" not in row for row in source)
+    ranks = [
+        dict(
+            rank=rank, steps=[dict(step=i + 1, seconds=t) for i, t in enumerate(times)]
+        )
+        for rank, times in enumerate(((100, 2, 4, 999), (200, 6, 2, 1000)))
+    ]
+    result = summarize(
+        ranks,
+        steps=4,
+        warmup_steps=1,
+        units_per_step=50,
+        unit_label="items",
+        trace_final_step=True,
+    )
+    assert result["median_seconds"] == 5
+    assert result["steady_steps"] == [2, 3] and result["trace_step"] == 4
+    assert result["steps"][-1]["seconds"] == 1000
+    assert result["units_per_second"] == 10
+    with pytest.raises(ValueError, match="untraced measured update"):
+        validate(2, 1, None, True)
+    validate(2, 1, None, False)
+    with pytest.raises(ValueError, match="owns runtime_trace"):
+        list(_traced_inputs([{"runtime_trace": True}], 1, False))
+
+
 @pytest.mark.parametrize("fail", [False, True])
 def test_runner_initializes_after_allocator_and_publishes_after_cleanup(
     tmp_path,
@@ -102,7 +132,7 @@ def test_runner_initializes_after_allocator_and_publishes_after_cleanup(
             actions.append("initialized")
 
         def fit(self, source, *, callbacks, **options):
-            assert list(source) == [{"args": [(1,)]}]
+            assert list(source) == [{"args": [(1,)], "runtime_trace": False}]
             assert options["checkpoint_every"] == options["tables_every"] == 0
             assert options["startup_diagnostics"] is False
             if fail:
@@ -137,6 +167,7 @@ def test_runner_initializes_after_allocator_and_publishes_after_cleanup(
         trainer_type=Trainer,
         steps=2,
         monitor=False,
+        trace_final_step=False,
     )
     if fail:
         with pytest.raises(RuntimeError, match="step failed"):
@@ -346,6 +377,35 @@ def test_real_saved_plan_benchmark_matches_eager_without_preparation(tmp_path):
     )
     assert result["median_seconds"] > 0 and result["units_per_second"] > 0
     assert result["predicted_seconds"] == plan.timeline.makespan_ns / 1e9
+    assert result["plan"] == str((source / "plans/training.ssp").resolve())
+    assert result["steady_steps"] == [2] and result["trace_step"] == 3
+    trace = result["per_rank"][0]["trace"]
+    assert trace["step"] == 3
+    assert not any(
+        trace[key]
+        for key in (
+            "runtime_event_overflow",
+            "allocation_event_overflow",
+            "allocator_overflow",
+        )
+    )
+    diagnostics = json.loads((output / trace["diagnostics_path"]).read_text())
+    assert diagnostics["tasks"]
+    from shadowspill.diagnostics.step_file import read_step_events
+
+    events = read_step_events(output / trace["diagnostics_path"])
+    assert events.runtime and events.allocator
+    phases = [
+        json.loads(line)
+        for line in (output / "rank-00000/phases.jsonl").read_text().splitlines()
+    ]
+    closed = next(
+        i
+        for i, row in enumerate(phases)
+        if row["name"] == "runtime.close" and row["boundary"] == "end"
+    )
+    written = next(i for i, row in enumerate(phases) if row["name"] == "trace.write")
+    assert closed < written
     assert all(path.read_bytes() == data for path, data in before.items())
     assert not list(output.rglob("*.ssp"))
     timing = report(output)

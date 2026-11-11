@@ -22,6 +22,7 @@ def benchmark(
     units_per_step=None,
     unit_label="items",
     monitor=True,
+    trace_final_step=True,
 ):
     """Launch an existing public training run's selected Plan on one node.
 
@@ -30,7 +31,7 @@ def benchmark(
     This benchmark always disables evaluation, checkpoint writes and resume.
     ``output_dir`` must be new; the original training run is read-only.
     """
-    validate(steps, warmup_steps, units_per_step)
+    validate(steps, warmup_steps, units_per_step, trace_final_step)
     if int(os.environ.get("WORLD_SIZE", "1")) > 1:
         raise ValueError("benchmark launches workers itself; use run inside torchrun")
     source = Path(run_dir).resolve()
@@ -46,6 +47,7 @@ def benchmark(
         warmup_steps=warmup_steps,
         units_per_step=units_per_step,
         unit_label=unit_label,
+        trace_final_step=trace_final_step,
     )
     (root / "request.json").write_text(json.dumps(request, indent=2) + "\n")
     command = worker_command(

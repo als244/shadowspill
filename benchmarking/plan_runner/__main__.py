@@ -19,6 +19,9 @@ def main():
     parser.add_argument("--units-per-step", type=float)
     parser.add_argument("--unit-label", default="items")
     parser.add_argument("--no-monitor", action="store_false", dest="monitor")
+    parser.add_argument(
+        "--no-final-trace", action="store_false", dest="trace_final_step"
+    )
     result = benchmark(**vars(parser.parse_args()))
     print(
         json.dumps(

@@ -2,9 +2,12 @@
 
 from collections.abc import Mapping
 from dataclasses import dataclass, field
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from .observations import MetricSummary, StepObservations
+
+if TYPE_CHECKING:
+    from shadowspill.diagnostics.step import StepDiagnostics
 
 
 @dataclass(frozen=True)
@@ -13,6 +16,7 @@ class StepResult(StepObservations):
     seconds: float = 0.0
     hyperparams: Mapping[str, Any] = field(default_factory=dict)
     summary: MetricSummary = field(default_factory=MetricSummary)
+    diagnostics: "StepDiagnostics | None" = None
 
     @property
     def loss(self) -> float:

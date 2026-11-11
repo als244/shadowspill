@@ -26,6 +26,7 @@ if __name__ == "__main__":
         output_dir="benchmarks/attempt-1",
         steps=7,
         warmup_steps=1,
+        trace_final_step=True,  # Default: trace update 7; time updates 2–6.
         units_per_step=2_097_152,  # Optional GLOBAL units per update.
         unit_label="tokens",
     )
@@ -102,14 +103,30 @@ distributed training.
 
 ## Timing and device observations
 
-All updates execute normally. `warmup_steps` only excludes initial updates from
-the reported steady median. For each update, take the maximum of all rank
-`Trainer.step` times, then take the median of the measured updates. Throughput
+All updates execute normally. By default, `trace_final_step=True` collects a
+runtime trace of the final training update on every rank. It does not add a
+diagnostic update or change the learning rate. The steady median excludes both
+the initial `warmup_steps` and that final traced update. At least one untraced
+measured update must remain. Set `trace_final_step=False` (CLI `--no-final-trace`)
+for a throughput-only run. The runner owns the per-input `runtime_trace` setting.
+
+For each update, take the maximum of all rank `Trainer.step` times, then take the
+median of the untraced measured updates. Throughput
 uses **global** units divided by this median. Losses and extra scalars remain
 per rank; the runner does not assume arbitrary workload losses can be summed.
 
 `result.json` records the saved Program/schedule identity, prediction, budgets,
-actual per-rank spill capacities, losses and all update times. Per-rank journals
+actual per-rank spill capacities, losses, all update times, the measured update
+indices and each rank's trace paths. Each rank writes `trace/step.json` and
+`trace/step.events.npz` after closing its runtime. These are the standard
+[step diagnostics](../../docs/python/step-diagnostics.md): measured versus
+simulated task times, input/reuse waits, transfers and collective records.
+Overflow flags remain explicit in the result; an incomplete trace must not be
+used for complete attribution. Event packing and file writes happen outside
+the training loop; trace collection itself still adds overhead to the final
+update. Detailed trace analysis belongs in CPU work after releasing the GPUs.
+
+Per-rank journals
 separately time imports, Plan loading, communicator opening, runtime creation,
 initialization, input creation, fit, runtime cleanup and result gathering. The
 parent launcher also times fresh-process startup and final process exit.
