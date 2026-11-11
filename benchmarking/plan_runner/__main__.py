@@ -3,6 +3,8 @@
 import argparse
 import json
 
+from orchestration.nsys import NsysCapture
+
 from .recipe import benchmark
 
 
@@ -22,7 +24,24 @@ def main():
     parser.add_argument(
         "--no-final-trace", action="store_false", dest="trace_final_step"
     )
-    result = benchmark(**vars(parser.parse_args()))
+    parser.add_argument("--nsys-steps", type=int, default=0, help="0 disables Nsight")
+    parser.add_argument("--nsys-start-step", type=int, default=2)
+    options = parser.parse_args()
+    if options.nsys_steps < 0:
+        parser.error("--nsys-steps must be nonnegative")
+    result = benchmark(
+        options.run_dir,
+        output_dir=options.output_dir,
+        steps=options.steps,
+        warmup_steps=options.warmup_steps,
+        units_per_step=options.units_per_step,
+        unit_label=options.unit_label,
+        monitor=options.monitor,
+        trace_final_step=options.trace_final_step,
+        nsys=NsysCapture(start_step=options.nsys_start_step, steps=options.nsys_steps)
+        if options.nsys_steps
+        else None,
+    )
     print(
         json.dumps(
             {

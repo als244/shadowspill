@@ -27,6 +27,7 @@ def test_top_level_public_surface_is_explicit() -> None:
         "Plan",
         "TaskProfile",
         "TaskProfileCache",
+        "OverlapProfileCache",
         "SweepResult",
         "apply_profiles",
         "measure_program",

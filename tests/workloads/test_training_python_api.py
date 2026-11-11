@@ -69,6 +69,15 @@ def test_checkpoint_model_and_method_select_frozen_candidates(tmp_path, monkeypa
     )
     with pytest.raises(ValueError, match="phase='plan'"):
         train(model, {"run_dir": root, "tail_save_counts": [0, 2]}, phase="execute")
+    # Capture is a shared execution control, including for this non-GLM recipe.
+    train(
+        model, {"run_dir": root, "nsys_start_step": 3, "nsys_steps": 2}, phase="execute"
+    )
+    captured = json.loads((root / "config.json").read_text())
+    assert captured["nsys_start_step"] == 3 and captured["nsys_steps"] == 2
+    assert captured["candidates"] == saved["candidates"]
+    with pytest.raises(ValueError, match="cadence"):
+        train(model, {"run_dir": root, "nsys_start_step": 2}, phase="execute")
 
 
 def test_ep_geometry_declares_collective_preparation_before_launch(

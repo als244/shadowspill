@@ -4,6 +4,7 @@ from contextlib import contextmanager
 from functools import partial
 
 from workloads.recipes.text import training
+from workloads.recipes.text.training import trainer_options as trainer_options
 
 from .arguments import parser
 from .settings import DEFAULTS
@@ -15,7 +16,6 @@ for _key, _value in DEFAULTS.items():
     defaults[_key] = _value
 defaults["microbatch_sizes"] = [1]
 defaults["minimum_evict_bytes"] = 128 << 10
-runtime_options = ("nsys_steps", "nsys_start_step")
 path_options = ("data", "checkpoint")
 
 
@@ -88,20 +88,6 @@ def initializer(options, metadata, *, rank=0):
         if describe(options, model, source) != metadata:
             raise ValueError("checkpoint/corpus metadata differs from the build")
         yield initialize
-
-
-def trainer_type():
-    from workloads.recipes.text.profiling import NsightTrainer
-
-    return NsightTrainer
-
-
-def trainer_options(options, metadata):
-    return dict(
-        **training.trainer_options(options, metadata),
-        nsys_start_step=options["nsys_start_step"],
-        nsys_steps=options["nsys_steps"],
-    )
 
 
 evaluation_metric = training.global_loss

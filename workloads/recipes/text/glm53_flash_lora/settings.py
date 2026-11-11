@@ -15,8 +15,6 @@ DEFAULTS = {
     "steps": 5,
     "execution_gib": 76,
     "spill_gib": 96,
-    "nsys_steps": 0,
-    "nsys_start_step": 2,
 }
 
 
@@ -31,7 +29,15 @@ def configure(args):
         values = {
             key: value
             for key, value in values.items()
-            if key in {"run_dir", *DEFAULTS, "resume", "microbatch_sizes"}
+            if key
+            in {
+                "run_dir",
+                *DEFAULTS,
+                "resume",
+                "microbatch_sizes",
+                "nsys_steps",
+                "nsys_start_step",
+            }
         }
     return shared("workloads.recipes.text.glm53_flash_lora.adapter", values, phase)
 
@@ -61,7 +67,6 @@ def validate(options):
         for key in (
             "eval_every",
             "checkpoint_every",
-            "nsys_steps",
             "external_headroom_mib",
             "warmup_seconds",
         )
@@ -69,18 +74,6 @@ def validate(options):
         raise ValueError("cadences, headroom and warmup must be nonnegative")
     if options["schedule_steps"] < max(2, options["steps"]):
         raise ValueError("schedule-steps must exceed one and cover steps")
-    if options["nsys_start_step"] < 1:
-        raise ValueError("nsys-start-step must be positive")
-    if options["nsys_steps"]:
-        first = options["nsys_start_step"]
-        last = first + options["nsys_steps"] - 1
-        if last > options["steps"]:
-            raise ValueError("steps must cover the requested Nsight capture")
-        for cadence in (options["eval_every"], options["checkpoint_every"]):
-            if cadence and any(step % cadence == 0 for step in range(first, last)):
-                raise ValueError(
-                    "evaluation/checkpoint cadence must lie outside capture"
-                )
     threshold = options["minimum_relative_loss_drop"]
     if threshold is not None:
         if not options["repeat_training_batch"]:

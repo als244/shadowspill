@@ -8,7 +8,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from benchmarking.plan_runner import run
+from benchmarking.plan_runner import NsysCapture, run
 from benchmarking.plan_runner.api import _traced_inputs, summarize, validate
 from benchmarking.plan_runner.report import report
 from orchestration.lifecycle import Lifecycle
@@ -23,7 +23,8 @@ class Block(importlib.abc.MetaPathFinder):
         if fullname.split('.')[0] in {'torch', 'workloads', 'shadowspill'}:
             raise AssertionError('CPU launcher imported ' + fullname)
 sys.meta_path.insert(0, Block())
-from benchmarking.plan_runner import Context, run, benchmark
+from benchmarking.plan_runner import Context, NsysCapture, run, benchmark
+assert NsysCapture().steps == 2
 from benchmarking.plan_runner.__main__ import main
 sys.argv = ['plan_runner', '--help']
 main()
@@ -91,6 +92,68 @@ def test_final_trace_is_excluded_from_steady_times_and_inputs_are_not_mutated():
     validate(2, 1, None, False)
     with pytest.raises(ValueError, match="owns runtime_trace"):
         list(_traced_inputs([{"runtime_trace": True}], 1, False))
+
+
+def test_nsight_and_runtime_trace_exclusions_can_overlap():
+    ranks = [dict(rank=0, steps=[dict(step=i, seconds=i) for i in range(1, 8)])]
+    for capture, steady in (
+        (NsysCapture(start_step=5), [2, 3, 4]),
+        (NsysCapture(start_step=6), [2, 3, 4, 5]),
+    ):
+        result = summarize(
+            ranks,
+            steps=7,
+            warmup_steps=1,
+            units_per_step=None,
+            unit_label="items",
+            trace_final_step=True,
+            nsys=capture,
+        )
+        assert result["steady_steps"] == steady
+        assert result["nsys_steps"] == list(capture.step_numbers)
+    with pytest.raises(ValueError, match="within the requested"):
+        validate(3, 1, None, True, NsysCapture(start_step=3))
+    with pytest.raises(ValueError, match="untraced measured"):
+        validate(4, 1, None, True, NsysCapture())
+
+
+@pytest.mark.parametrize("report_exists", [False, True])
+def test_recipe_launcher_requires_nsight_report_and_records_capture(
+    tmp_path, monkeypatch, report_exists
+):
+    from benchmarking.plan_runner import recipe
+
+    source, output = tmp_path / "source", tmp_path / "output"
+    (source / "plans").mkdir(parents=True)
+    (source / "plans/training.ssp").touch()
+    for name, value in (("config", {"ranks": 2}), ("model", {}), ("selected", {})):
+        (source / f"{name}.json").write_text(json.dumps(value))
+
+    def launch(command, **options):
+        assert command[1] == "profile"
+        assert "torch.distributed.run" in command
+        assert "--gpu-metrics-devices=cuda-visible" in command
+        request = json.loads((output / "request.json").read_text())
+        assert request["nsys"]["start_step"] == 3
+        (output / "result.json").write_text('{"status":"PASS"}')
+        if report_exists:
+            (output / "nsys/trace.nsys-rep").write_bytes(b"test-report")
+        return SimpleNamespace(returncode=0)
+
+    monkeypatch.setattr(recipe.subprocess, "run", launch)
+    options = dict(
+        output_dir=output,
+        steps=5,
+        monitor=False,
+        nsys=NsysCapture(start_step=3, executable="/bin/true"),
+    )
+    if not report_exists:
+        with pytest.raises(RuntimeError, match="without a nonempty report"):
+            recipe.benchmark(source, **options)
+    else:
+        result = recipe.benchmark(source, **options)
+        assert result["nsys"]["report_bytes"] == len(b"test-report")
+        assert result["nsys"]["content_verified"] is False
 
 
 @pytest.mark.parametrize("fail", [False, True])
@@ -298,8 +361,11 @@ def test_real_two_rank_gloo_coordination_and_logical_rank_permutation(tmp_path):
 
 @pytest.mark.cuda
 @pytest.mark.slow
-def test_real_saved_plan_benchmark_matches_eager_without_preparation(tmp_path):
+@pytest.mark.parametrize("nsys", [None, NsysCapture(start_step=3)])
+def test_real_saved_plan_benchmark_matches_eager_without_preparation(tmp_path, nsys):
     import copy
+    import shutil
+    import sqlite3
 
     import torch
 
@@ -316,12 +382,22 @@ def test_real_saved_plan_benchmark_matches_eager_without_preparation(tmp_path):
 
     if not torch.cuda.is_available():
         pytest.skip("requires CUDA")
+    if nsys is not None and shutil.which(nsys.executable) is None:
+        pytest.skip("requires Nsight Systems and device-metric permission")
+    steps = 5 if nsys is not None else 3
+    # Two tiny updates otherwise finish in ~5 ms, before the hardware metrics
+    # sampler produces a batch. Use more real microbatches, without padding the
+    # production capture interval with sleeps or extra optimizer updates.
+    microbatches = 128 if nsys is not None else 2
     torch.manual_seed(91)
     model = Network(tied=True)
     initial = copy.deepcopy(model.state_dict())
     examples = [
-        [((torch.randn(4, 8),), {"labels": torch.randn(4, 8)}) for _ in range(2)]
-        for _ in range(3)
+        [
+            ((torch.randn(4, 8),), {"labels": torch.randn(4, 8)})
+            for _ in range(microbatches)
+        ]
+        for _ in range(steps)
     ]
     optimizer = torch.optim.AdamW(
         model.parameters(), lr=torch.tensor(0.001), foreach=False
@@ -350,7 +426,7 @@ def test_real_saved_plan_benchmark_matches_eager_without_preparation(tmp_path):
         objective=objective,
         example_args=examples[0][0][0],
         example_kwargs=examples[0][0][1],
-        num_examples=2,
+        num_examples=microbatches,
     )
     profiled = apply_profiles(
         program,
@@ -370,7 +446,13 @@ def test_real_saved_plan_benchmark_matches_eager_without_preparation(tmp_path):
     plan.save(source / "plans/training.ssp")
     before = {path: path.read_bytes() for path in source.rglob("*") if path.is_file()}
     output = tmp_path / "benchmark"
-    result = benchmark(source, output_dir=output, steps=3, units_per_step=8)
+    result = benchmark(
+        source,
+        output_dir=output,
+        steps=steps,
+        units_per_step=4 * microbatches,
+        nsys=nsys,
+    )
     torch.testing.assert_close(
         torch.tensor([row["loss"] for row in result["per_rank"][0]["steps"]]),
         torch.tensor(losses),
@@ -378,9 +460,9 @@ def test_real_saved_plan_benchmark_matches_eager_without_preparation(tmp_path):
     assert result["median_seconds"] > 0 and result["units_per_second"] > 0
     assert result["predicted_seconds"] == plan.timeline.makespan_ns / 1e9
     assert result["plan"] == str((source / "plans/training.ssp").resolve())
-    assert result["steady_steps"] == [2] and result["trace_step"] == 3
+    assert result["steady_steps"] == [2] and result["trace_step"] == steps
     trace = result["per_rank"][0]["trace"]
-    assert trace["step"] == 3
+    assert trace["step"] == steps
     assert not any(
         trace[key]
         for key in (
@@ -417,3 +499,40 @@ def test_real_saved_plan_benchmark_matches_eager_without_preparation(tmp_path):
         ]
         > 0
     )
+    if nsys is not None:
+        capture = output / result["nsys"]["report_path"]
+        database = capture.with_suffix(".sqlite")
+        exported = subprocess.run(
+            [
+                nsys.executable,
+                "export",
+                "--type=sqlite",
+                f"--output={database}",
+                str(capture),
+            ],
+            text=True,
+            capture_output=True,
+            timeout=120,
+        )
+        assert exported.returncode == 0, exported.stdout + exported.stderr
+        with sqlite3.connect(database) as db:
+            strings = dict(db.execute("select id,value from StringIds"))
+            labels = [
+                text or strings.get(text_id)
+                for text, text_id in db.execute(
+                    'select text,textId from NVTX_EVENTS where "end" is not null'
+                )
+            ]
+            assert sorted(
+                label for label in labels if label and label.startswith("train/step=")
+            ) == ["train/step=3/rank=0", "train/step=4/rank=0"]
+            assert any(
+                label and label.startswith("shadowspill.task.") for label in labels
+            )
+            assert (
+                db.execute(
+                    "select count(*) from CUPTI_ACTIVITY_KIND_KERNEL"
+                ).fetchone()[0]
+                > 0
+            )
+            assert db.execute("select count(*) from GPU_METRICS").fetchone()[0] > 0

@@ -51,6 +51,56 @@ full copy of the model.
 The optional command is `python -m benchmarking.plan_runner RUN --output-dir OUT`.
 The Python function has the same controls; a large command line is not needed.
 
+## Nsight Systems
+
+Nsight capture is **off by default**. Enable it for any saved workload:
+
+```python
+from benchmarking.plan_runner import NsysCapture, benchmark
+
+if __name__ == "__main__":
+    result = benchmark(
+        "runs/selected",
+        output_dir="benchmarks/capture",
+        steps=7,
+        nsys=NsysCapture(start_step=5, steps=2),
+    )
+    print(result["nsys"]["report_path"])  # nsys/trace.nsys-rep
+```
+
+This runs updates 1–7 normally: warmup 1, timing 2–4, Nsight 5–6, and the default
+ShadowSpill runtime trace on 7. Captured updates are excluded from the steady
+median. The capture interval is one-based, must fit within the run, and must
+leave at least one measured update outside all tracing. A requested overlap
+with the final runtime trace is allowed, but combines both kinds of overhead.
+Even updates outside the capture window run under the attached collector;
+compare a separate capture-disabled run for an uninstrumented baseline.
+
+`NsysCapture` defaults to CUDA/NVTX/OS runtime collection, no CPU sampling,
+and device metrics on CUDA-visible GPUs at 1,000 Hz. It accepts `gpu_metrics`,
+`gpu_metrics_frequency` and `executable` overrides. GPU metrics require the
+appropriate host permissions; this API does not elevate privileges. One Nsight
+process wraps the entire worker tree, including torchrun workers. The shared
+Trainer adapter uses rank barriers and rank-zero cudaProfilerApi start/stop,
+labels `train/step=N/rank=R`, and enables the existing
+`profiler_annotations=True` task/transfer ranges only during captured updates.
+Collection stops without terminating the remaining updates.
+
+The launcher waits for workers and collector to exit and requires a nonempty
+`nsys/trace.nsys-rep`. `command.json` records the launch, and `result.json`
+records capture settings, steps, report path and size. `content_verified=False`
+means the report's ranges/kernels/metric samples still need offline inspection;
+a requested metric flag alone is not evidence of successful collection. Export
+or inspect the report after releasing the GPU allocation. The default runner
+does not add SQLite export or report processing to execution.
+
+Custom `run(...)` users pass the same `nsys=NsysCapture(...)` in each worker and
+launch their script with `capture.command(worker_command, output=report_stem)`.
+The low-level worker API cannot relaunch arbitrary Python hooks; it controls
+capture boundaries only. It does not claim to have saved an Nsight report.
+The saved-run `benchmark(...)` handles that launch and report check automatically.
+The optional CLI equivalents are `--nsys-steps 2 --nsys-start-step 5`.
+
 ## Any saved training Plan
 
 `run` is the lower-level worker API. Supply Python hooks instead of a saved
@@ -156,6 +206,7 @@ path. Interrupted runs keep their partial journals for this report too.
 | --- | --- |
 | `api.py` | Model-independent, rank-local saved-Plan execution and aggregation |
 | `recipe.py` | Fresh-worker launcher and bridge to existing saved recipe hooks |
+| [`orchestration/nsys.py`](../../orchestration/nsys.py) | Shared external-profiler launch settings and capture adapter |
 | [`orchestration/lifecycle.py`](../../orchestration/lifecycle.py) | Shared host phase journal used by recipes and benchmarks |
 | `monitor.py` | External GPU sampling with explicit process cleanup |
 | `report.py` | Offline CPU phase/device analysis |

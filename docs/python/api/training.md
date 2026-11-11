@@ -68,12 +68,16 @@ property sums the example losses. `Trainer.step` waits for completion. For direc
 asynchronous control use `Executor.run`, whose result handle waits only when
 `.result()` is called; the next run automatically waits for its predecessor.
 
-For an external profiler, `Executor.run(..., profiler_annotations=True)` adds
+For an external profiler, `Trainer.step(..., profiler_annotations=True)` or
+`Executor.run(..., profiler_annotations=True)` adds
 semantic task and runtime-transfer ranges to that invocation. The default is off.
 Annotations remain enabled until the result handle waits for task and transfer
 completion, then disable before the next invocation. They do not change the saved
 Plan or its admission. The [quickstart capture tool](../../../benchmarking/quickstart.md#nsight-captures-of-saved-winners)
 uses this option in fresh workers.
+The [saved-Plan runner](../../../benchmarking/plan_runner/README.md#nsight-systems)
+also uses these existing ranges for optional bounded captures. This is separate
+from `runtime_trace=True` and does not require collecting ShadowSpill's event log.
 
 ## Evaluation
 

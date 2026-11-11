@@ -45,11 +45,20 @@ def _execute(directory, timing):
             )
         with timing.phase("runtime.create"):
             trainer_type = getattr(definition, "trainer_type", lambda: Trainer)()
+            trainer_options = dict(definition.trainer_options(options, metadata))
+            if options.get("nsys_steps", 0):
+                from orchestration.nsys import nsight_trainer
+
+                trainer_type = nsight_trainer(trainer_type)
+                trainer_options.update(
+                    nsys_start_step=options["nsys_start_step"],
+                    nsys_steps=options["nsys_steps"],
+                )
             trainer = trainer_type(
                 plan,
                 evaluation_plan=evaluation,
                 rank_map=group.rank_map,
-                **definition.trainer_options(options, metadata),
+                **trainer_options,
             )
             trainer = stack.enter_context(timing.managed("runtime", trainer))
         # The execution allocator is installed before an adapter may load weights.

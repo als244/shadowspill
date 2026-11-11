@@ -102,10 +102,14 @@ def parser():
     result.add_argument(
         "--nsys-steps",
         type=int,
+        default=0,
         help="Updates captured under cudaProfilerApi; default disabled",
     )
     result.add_argument(
-        "--nsys-start-step", type=int, help="First captured update; default 2"
+        "--nsys-start-step",
+        type=int,
+        default=2,
+        help="First captured update; default 2",
     )
     result.add_argument("--repeat-training-batch", action="store_true")
     result.add_argument("--minimum-relative-loss-drop", type=float)

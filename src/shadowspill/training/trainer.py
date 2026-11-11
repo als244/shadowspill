@@ -148,12 +148,15 @@ class Trainer:
         | None = None,
         hyperparams: Mapping[str, Any] | None = None,
         runtime_trace: bool = False,
+        profiler_annotations: bool = False,
     ) -> StepResult:
         """Complete an update with host observations; schedules are zero-based.
 
         ``runtime_trace=True`` also returns CPU-only ``diagnostics`` for this
         real update. Its duration includes trace collection; no extra update or
         change to optimizer hyperparameters is introduced.
+        ``profiler_annotations=True`` independently enables the Executor's
+        semantic task/transfer ranges for external profilers such as Nsight.
         """
         self._require_open()
         values = {name: fn(self.step_count) for name, fn in self.schedules.items()}
@@ -165,6 +168,7 @@ class Trainer:
             input_loader=input_loader,
             hyperparams=values,
             runtime_trace=runtime_trace,
+            profiler_annotations=profiler_annotations,
             collect_parameter_norms=bool(
                 self.parameter_norms_every
                 and (self.step_count + 1) % self.parameter_norms_every == 0

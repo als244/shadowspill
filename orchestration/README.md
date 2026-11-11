@@ -13,10 +13,14 @@ choose a training or measurement protocol, or interpret a saved recipe directory
 | `workers` | Host Gloo rendezvous, launcher-to-logical rank mapping and small result gathers |
 | `lifecycle` | Append-only host phase journals, including context entry/cleanup and failures |
 | `candidates` | Record a local candidate's device exhaustion after releasing its traceback; other failures propagate |
+| `nsys` | CPU-only Nsight command configuration and a lazy Trainer adapter for shared capture boundaries |
 
 These modules import no model, recipe, benchmark or qualification implementation.
 Imports are CPU-only; `workers` imports PyTorch when a distributed group is
 entered, and candidate recovery imports it when an operation is attempted.
+The private `_nsys_trainer` worker module is imported only when capture is enabled;
+it uses cudaProfilerApi boundaries, rank barriers and the existing Executor NVTX
+annotation flag. It contains no model or recipe-specific logic.
 Worker coordination takes an explicit participant count and optional rank map,
 independent of any client's JSON schema:
 

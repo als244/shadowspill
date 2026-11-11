@@ -13,6 +13,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from orchestration.lifecycle import Lifecycle
+from orchestration.nsys import NsysCapture
 
 from .monitor import GpuMonitor
 
@@ -30,7 +31,7 @@ class Context:
     world_size: int
 
 
-def validate(steps, warmup_steps, units_per_step, trace_final_step):
+def validate(steps, warmup_steps, units_per_step, trace_final_step, nsys=None):
     if type(steps) is not int or steps < 1:
         raise ValueError("steps must be a positive integer")
     if type(warmup_steps) is not int or not 0 <= warmup_steps < steps:
@@ -41,6 +42,17 @@ def validate(steps, warmup_steps, units_per_step, trace_final_step):
         raise ValueError(
             "final-step tracing must leave at least one untraced measured update"
         )
+    if nsys is not None:
+        if not isinstance(nsys, NsysCapture):
+            raise TypeError("nsys must be NsysCapture or None")
+        if nsys.start_step + nsys.steps - 1 > steps:
+            raise ValueError("Nsight capture must fit within the requested updates")
+        measured = set(range(warmup_steps + 1, steps + 1))
+        measured.difference_update(nsys.step_numbers)
+        if trace_final_step:
+            measured.discard(steps)
+        if not measured:
+            raise ValueError("Nsight capture must leave an untraced measured update")
     if units_per_step is not None and (
         isinstance(units_per_step, bool)
         or not math.isfinite(units_per_step)
@@ -64,6 +76,7 @@ def run(
     unit_label="items",
     monitor=True,
     trace_final_step=True,
+    nsys=None,
 ):
     """Execute a saved training Plan in each participating fresh worker.
 
@@ -79,8 +92,12 @@ def run(
     collects a runtime trace on every rank. Warmup and traced updates still
     train, but are excluded from the reported steady median. Trace files are
     written after runtime cleanup; set ``trace_final_step=False`` to disable.
+    ``nsys=NsysCapture(...)`` bounds an external capture and enables semantic
+    annotations. Launch the worker tree with ``nsys.command`` (or use
+    ``benchmark`` to launch automatically). Captured updates are excluded from
+    steady timing; run() does not launch a collector inside an existing worker.
     """
-    validate(steps, warmup_steps, units_per_step, trace_final_step)
+    validate(steps, warmup_steps, units_per_step, trace_final_step, nsys)
     worker_rank = int(os.environ.get("RANK", "0"))
     root = Path(output_dir)
     local = root / f"rank-{worker_rank:05d}"
@@ -110,6 +127,7 @@ def run(
                 units_per_step,
                 unit_label,
                 trace_final_step,
+                nsys,
             )
 
 
@@ -128,6 +146,7 @@ def _execute(
     units_per_step,
     unit_label,
     trace_final_step,
+    nsys,
 ):
     with timing.phase("imports"):
         from orchestration.workers import workers
@@ -188,9 +207,19 @@ def _execute(
                 )
         with ExitStack() as runtime:
             with timing.phase("runtime.create"):
-                trainer = (trainer_type or Trainer)(
-                    plan, rank_map=group.rank_map, **options
-                )
+                factory = trainer_type or Trainer
+                if nsys is not None:
+                    from orchestration.nsys import nsight_trainer
+
+                    factory = nsight_trainer(factory)
+                    options.update(
+                        nsys_start_step=nsys.start_step, nsys_steps=nsys.steps
+                    )
+                elif options.get("nsys_steps", 0):
+                    raise ValueError(
+                        "runner owns Nsight capture; use nsys=NsysCapture(...)"
+                    )
+                trainer = factory(plan, rank_map=group.rank_map, **options)
                 runtime.enter_context(timing.managed("runtime", trainer))
             with timing.phase("weights.initialize"), initializer(context) as initialize:
                 trainer.initialize(initialize)
@@ -246,6 +275,7 @@ def _execute(
             units_per_step=units_per_step,
             unit_label=unit_label,
             trace_final_step=trace_final_step,
+            nsys=nsys,
         )
         result.update(
             plan=str(path.resolve()),
@@ -276,10 +306,17 @@ def _traced_inputs(source, steps, trace_final_step):
 
 
 def summarize(
-    per_rank, *, steps, warmup_steps, units_per_step, unit_label, trace_final_step=False
+    per_rank,
+    *,
+    steps,
+    warmup_steps,
+    units_per_step,
+    unit_label,
+    trace_final_step=False,
+    nsys=None,
 ):
     """Compare synchronous updates by max-rank time before taking the median."""
-    validate(steps, warmup_steps, units_per_step, trace_final_step)
+    validate(steps, warmup_steps, units_per_step, trace_final_step, nsys)
     per_rank = sorted(per_rank, key=lambda row: row["rank"])
     if not per_rank or len({row["rank"] for row in per_rank}) != len(per_rank):
         raise ValueError("expected one result for every distinct logical rank")
@@ -292,7 +329,12 @@ def summarize(
             zip(*(rank["steps"] for rank in per_rank), strict=True)
         )
     ]
-    steady = combined[warmup_steps : steps - int(trace_final_step)]
+    nsys_steps = [] if nsys is None else list(nsys.step_numbers)
+    steady = [
+        row
+        for row in combined[warmup_steps : steps - int(trace_final_step)]
+        if row["step"] not in nsys_steps
+    ]
     median = statistics.median(row["seconds"] for row in steady)
     return dict(
         status="PASS",
@@ -300,6 +342,7 @@ def summarize(
         per_rank=per_rank,
         warmup_steps=warmup_steps,
         trace_step=steps if trace_final_step else None,
+        nsys_steps=nsys_steps,
         steady_steps=[row["step"] for row in steady],
         median_seconds=median,
         units_per_step=units_per_step,

@@ -112,10 +112,33 @@ def test_step_trace_is_from_the_real_update_and_released_before_return(executor)
         schedules={"lr": lambda step: 0.1 / (step + 1)},
     ) as trainer:
         plain = trainer.step(args=[(1,)])
-        traced = trainer.step(args=[(2,)], runtime_trace=True)
-        assert trainer.step_count == 2
+        annotated = trainer.step(args=[(2,)], profiler_annotations=True)
+        traced = trainer.step(args=[(3,)], runtime_trace=True)
+        assert trainer.step_count == 3
+        assert annotated.diagnostics is None
         assert plain.diagnostics is None and traced.diagnostics is evidence
         assert not any(handle() for handle in handles)
-        assert [call["runtime_trace"] for call in executor.calls] == [False, True]
-        assert [call["hyperparams"]["lr"] for call in executor.calls] == [0.1, 0.05]
-        assert events == ["result", "synchronize", "result", "trace", "synchronize"]
+        assert [call["runtime_trace"] for call in executor.calls] == [
+            False,
+            False,
+            True,
+        ]
+        assert [call["profiler_annotations"] for call in executor.calls] == [
+            False,
+            True,
+            False,
+        ]
+        assert [call["hyperparams"]["lr"] for call in executor.calls] == [
+            0.1,
+            0.05,
+            0.1 / 3,
+        ]
+        assert events == [
+            "result",
+            "synchronize",
+            "result",
+            "synchronize",
+            "result",
+            "trace",
+            "synchronize",
+        ]

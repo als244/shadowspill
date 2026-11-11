@@ -5,10 +5,14 @@
 Both use the public Trainer and retain its normal execution checks.
 """
 
-__all__ = ["Context", "benchmark", "run"]
+__all__ = ["Context", "NsysCapture", "benchmark", "run"]
 
 
 def __getattr__(name):
+    if name == "NsysCapture":
+        from orchestration.nsys import NsysCapture
+
+        return NsysCapture
     if name == "benchmark":
         from .recipe import benchmark
 

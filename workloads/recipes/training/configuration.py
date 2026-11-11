@@ -32,6 +32,8 @@ DEFAULTS = dict(
     wandb_project=None,
     pool_memory=None,
     prepared_from=None,
+    nsys_steps=0,
+    nsys_start_step=2,
 )
 MUTABLE = {
     "steps",
@@ -47,6 +49,8 @@ MUTABLE = {
     "refresh_profiles",
     "checkpoint_every",
     "keep_last",
+    "nsys_steps",
+    "nsys_start_step",
 }
 
 
@@ -135,12 +139,23 @@ def configure(recipe, config, phase):
         "eval_updates",
         "keep_last",
         "program_workers",
+        "nsys_start_step",
     ):
         if type(options[key]) is not int or options[key] <= 0:
             raise ValueError(f"{key} must be a positive integer")
-    for key in ("eval_every", "checkpoint_every", "search_workers"):
+    for key in ("eval_every", "checkpoint_every", "search_workers", "nsys_steps"):
         if type(options[key]) is not int or options[key] < 0:
             raise ValueError(f"{key} must be a nonnegative integer")
+    if options["nsys_steps"]:
+        first = options["nsys_start_step"]
+        last = first + options["nsys_steps"] - 1
+        if last > options["steps"]:
+            raise ValueError("steps must cover the requested Nsight capture")
+        for cadence in (options["eval_every"], options["checkpoint_every"]):
+            if cadence and any(step % cadence == 0 for step in range(first, last)):
+                raise ValueError(
+                    "evaluation/checkpoint cadence must lie outside capture"
+                )
     for key in ("execution_gib", "spill_gib", "measure_seconds"):
         if (
             isinstance(options[key], bool)
