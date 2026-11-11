@@ -165,10 +165,17 @@ aggregates completed observations. Logging policy stays in the workload.
 
 ## Checkpoints
 
-`save_checkpoint` streams the Executor's persistent tensors, including configured
-compute weights, masters, optimizer state and host controls. It does not select
-one weight representation and reconstruct the others. Distributed callers save
-one archive per logical rank, containing that rank's owned regions.
+`save_checkpoint` streams persistent state with `weights="master"` by default:
+it stores an ordinary master once and reconstructs its compute copy by casting
+on restore. Captured optimizer updates publish these plain compute copies with
+the same cast. Explicit `weights="compute"` instead reconstructs masters from
+rounded compute values. Encoded representations, incompatible layouts or
+insufficient owned coverage retain both copies. Optimizer state and host controls
+are independent of this selection. See [weight selection and archive details](state-import.md#export-and-checkpoints).
+
+Distributed callers save one archive per logical rank, containing that rank's
+owned regions. A local master shard cannot replace a replicated compute weight
+that extends beyond its owned region.
 
 An explicit `frozen_state_id` allows unchanged frozen parameters to be omitted.
 Trainable tensors, optimizer state, buffers and tensors mutated by an admitted
