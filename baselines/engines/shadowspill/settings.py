@@ -29,8 +29,7 @@ SOURCE_PATHS = (
     "benchmarking/quickstart/phases",
     "benchmarking/quickstart/orchestrate.py",
     "benchmarking/quickstart/launch.py",
-    "benchmarking/processes.py",
-    "benchmarking/device_worker.py",
+    "orchestration",
     "src/shadowspill",
 )
 

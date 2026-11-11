@@ -7,7 +7,7 @@ import torch
 import torch.distributed as dist
 
 from benchmarking.quickstart.phases.common import experiment, plan_identity, write
-from benchmarking.quickstart.phases.distributed import workers
+from orchestration.workers import workers
 from shadowspill import Executor, Plan
 
 from .selection import completed
@@ -53,7 +53,7 @@ def run(args):
         raise ValueError("saved Plan changed after capture selection")
     # Install the allocator before the model factory can touch CUDA.
     with (
-        workers(request, index) as group,
+        workers(index.get("world_size", 1), rank_map=request.get("rank_map")) as group,
         Executor(
             plan, device=int(request["device"].split(":")[-1]), rank_map=group.rank_map
         ) as executor,

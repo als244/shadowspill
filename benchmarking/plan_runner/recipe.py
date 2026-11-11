@@ -6,10 +6,10 @@ import subprocess
 from contextlib import nullcontext
 from pathlib import Path
 
-from benchmarking.processes import worker_command
+from orchestration.lifecycle import Lifecycle
+from orchestration.processes import worker_command
 
 from .api import run, validate
-from .lifecycle import Lifecycle
 from .monitor import GpuMonitor
 
 

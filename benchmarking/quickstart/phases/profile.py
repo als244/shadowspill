@@ -2,18 +2,18 @@
 
 from functools import partial
 
+from orchestration.candidates import attempt
+from orchestration.workers import workers
 from shadowspill import Program, TaskProfileCache, apply_profiles, measure_program
 
-from .candidates import attempt
 from .common import paths, write
-from .distributed import workers
 
 
 def run(request):
     root, index = paths(request)
     count = index.get("preparation_world_size", 1)
     binding = request if count > 1 else {**request, "rank_map": None}
-    with workers(binding, {"world_size": count}) as group:
+    with workers(count, rank_map=binding.get("rank_map")) as group:
         _profile(request, root, index, group)
 
 

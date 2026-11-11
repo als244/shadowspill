@@ -7,6 +7,12 @@ Plan. Normal device compatibility, physical memory admission and spill sizing
 checks still apply. A Plan does not become portable to an incompatible GPU
 architecture by going through this runner.
 
+This package owns benchmark execution and reporting. Shared host journals and
+worker coordination live in [`orchestration`](../../orchestration/README.md).
+The generic `run` entry point takes workload hooks; only the separate `recipe`
+bridge knows how to read an existing recipe run. Training recipes never import
+this benchmark package.
+
 ## Existing public training run
 
 Use a short script like [examples/saved_run.py](examples/saved_run.py):
@@ -85,7 +91,7 @@ Executor, rank mapping and device; an optional `trainer_type` supports existing
 Trainer subclasses. This API accepts **training Plans from `build_step`**.
 
 Run the custom script directly on one GPU. For multiple GPUs use the normal
-launcher, e.g. `torchrun --standalone --nproc-per-node=8 -m benchmarking.rank_device script.py`.
+launcher, e.g. `torchrun --standalone --nproc-per-node=8 -m orchestration.rank_device script.py`.
 For multiple nodes, use the equivalent torchrun rendezvous options on each
 node. Each worker must expose its assigned GPU as `cuda:0`, run in a fresh
 process and participate at the saved Plan's world size. `rank_map` supports a

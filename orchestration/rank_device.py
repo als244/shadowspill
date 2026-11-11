@@ -2,7 +2,7 @@
 
 Run before importing CUDA-dependent modules, for example::
 
-    torchrun --standalone --nproc-per-node=8 -m benchmarking.rank_device \
+    torchrun --standalone --nproc-per-node=8 -m orchestration.rank_device \
         -m benchmarking.quickstart --distributed ...
 
 Global/local rank identities are preserved. ShadowSpill's automatic device

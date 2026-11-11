@@ -13,7 +13,7 @@ from tests.shadowspill.execution._cold import forbid_preparation
 
 forbid_preparation()
 from benchmarking.quickstart.phases.common import experiment, read  # noqa: E402
-from benchmarking.quickstart.phases.distributed import workers  # noqa: E402
+from orchestration.workers import workers  # noqa: E402
 from shadowspill import Executor, Plan, load_checkpoint, save_checkpoint  # noqa: E402
 from tests.shadowspill.execution._trace_checks import check_trace  # noqa: E402
 
@@ -77,5 +77,5 @@ def execute(root, request, group):
 if __name__ == "__main__":
     root = Path(sys.argv[1])
     request = read(root / "request.json")
-    with workers(request, {"world_size": 2}) as group:
+    with workers(2, rank_map=request.get("rank_map")) as group:
         execute(root, request, group)

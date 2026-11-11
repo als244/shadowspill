@@ -12,6 +12,7 @@ shadowspill/
 │                          and the PyTorch adapter
 ├── tests/                 fast tests mirroring product/tool boundaries
 ├── workloads/             model and data clients
+├── orchestration/         shared worker launch, host coordination and phase journals
 ├── training/              text-recipe configs and the prepare, train,
 │                          reference and compare commands
 ├── reference/             executable reference implementations
@@ -42,6 +43,17 @@ phases (calibrate, plan, warm, measure), and the verdict each gate reaches.
 acceptance rules live under `qualification/`. Build accepts ordinary user models
 and call examples. `shadowspill.training.Trainer` drives an Executor from saved
 Plans and iterable inputs, without importing recipes.
+
+`orchestration/` owns repository-only process infrastructure used by recipes,
+benchmarks and developer tools. It takes explicit worker counts and rank maps,
+without reading any client's saved configuration. Recipes never import
+benchmark implementation utilities. The installed engine never imports this
+package or other repository clients. See its [ownership map](../../orchestration/README.md).
+
+`benchmarking/plan_runner/` owns the saved-Plan measurement protocol, GPU sampling
+and reports. Its generic `run` API accepts initialization and input hooks. The
+separate `recipe` bridge reads saved workload configurations as a client;
+normal training recipes do not depend on the benchmark runner.
 
 `benchmarking/quickstart/` composes the public phase APIs in separate workers. The
 `bandwidth_frontier/` package consumes `ProfiledProgram` archives and runs CPU
@@ -197,6 +209,7 @@ tests/
 ├── integration/           fresh-process framework/backend integration
 ├── tools/                 source-tree tool tests
 ├── workloads/             workload definition tests
+├── orchestration/         process and host coordination tests
 ├── benchmarking/          corpus/frontier harness tests
 ├── qualification/         gate runner and acceptance-rule tests
 ├── training/              text-recipe command and runner tests

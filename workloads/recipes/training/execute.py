@@ -7,7 +7,7 @@ import time
 from contextlib import ExitStack
 from pathlib import Path
 
-from benchmarking.plan_runner.lifecycle import Lifecycle
+from orchestration.lifecycle import Lifecycle
 
 
 def run(directory):
@@ -19,7 +19,7 @@ def run(directory):
 
 def _execute(directory, timing):
     with timing.phase("imports"):
-        from benchmarking.quickstart.phases.distributed import workers
+        from orchestration.workers import workers
         from shadowspill import Plan, Trainer
         from shadowspill.training.logging import DistributedLogger, Wandb
         from workloads.recipes.phases import settings
@@ -33,9 +33,7 @@ def _execute(directory, timing):
         definition = adapter(options["recipe"])
     started = time.monotonic()
     with (
-        timing.managed(
-            "control_group", workers({}, {"world_size": options["ranks"]})
-        ) as group,
+        timing.managed("control_group", workers(options["ranks"])) as group,
         ExitStack() as stack,
     ):
         with timing.phase("plans.load"):

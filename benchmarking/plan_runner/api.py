@@ -11,7 +11,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from .lifecycle import Lifecycle
+from orchestration.lifecycle import Lifecycle
+
 from .monitor import GpuMonitor
 
 if TYPE_CHECKING:
@@ -63,7 +64,7 @@ def run(
     iterable of Trainer.step keyword mappings. Both run after Executor installs
     its allocator. Trainer options may be a mapping or a context-taking factory.
 
-    Launch distributed workers with torchrun and benchmarking.rank_device; each
+    Launch distributed workers with torchrun and orchestration.rank_device; each
     process must see its assigned GPU as cuda:0. WORLD_SIZE must match the Plan.
     No model construction, build, profiling, planning, evaluation, checkpoints,
     runtime tracing or startup diagnostic runs are added here. Warmup updates
@@ -117,7 +118,7 @@ def _execute(
     unit_label,
 ):
     with timing.phase("imports"):
-        from benchmarking.quickstart.phases.distributed import workers
+        from orchestration.workers import workers
         from shadowspill import Plan, Trainer
 
     with timing.phase("plans.load"):
@@ -146,9 +147,7 @@ def _execute(
             )
         )
 
-    with timing.managed(
-        "control_group", workers({"rank_map": rank_map}, {"world_size": count})
-    ) as group:
+    with timing.managed("control_group", workers(count, rank_map=rank_map)) as group:
         context = Context(plan, group.logical_rank, group.rank, group.count)
         with timing.phase("configuration"):
             options = (

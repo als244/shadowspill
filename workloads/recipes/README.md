@@ -72,8 +72,10 @@ or require GPU residency; PressureFit controls saving, recomputation and spill.
 with every resolution option:
 
 ```python
-"tail_save_counts": [0, 1, 2, 4, 8, 16],
-"resolution_options": ["0", "1/4", "1/2", "3/4", "1"],
+planning_options = {
+    "tail_save_counts": [0, 1, 2, 4, 8, 16],
+    "resolution_options": ["0", "1/4", "1/2", "3/4", "1"],
+}
 ```
 
 For each chosen count, save the last K eligible forward invocations in **each**

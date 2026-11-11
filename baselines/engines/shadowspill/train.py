@@ -7,8 +7,8 @@ import subprocess
 import traceback
 from pathlib import Path
 
-from benchmarking.processes import worker_command
 from benchmarking.quickstart.phases.common import read, write
+from orchestration.processes import worker_command
 from shadowspill.errors import PlanInfeasibleError
 
 from .preparation import prepare

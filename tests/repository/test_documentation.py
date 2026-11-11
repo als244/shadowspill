@@ -701,6 +701,8 @@ def test_current_contract_docs_are_backend_and_topology_neutral() -> None:
             ROOT / "benchmarking/quickstart.md",
             ROOT / "benchmarking/stage_traces/README.md",
             ROOT / "benchmarking/program_collection/README.md",
+            ROOT / "benchmarking/plan_runner/README.md",
+            ROOT / "orchestration/README.md",
             DOCS / "architecture/offline-pipeline.md",
             DOCS / "python/api/distributed.md",
         }  # These document the concrete framework/device phase boundaries.

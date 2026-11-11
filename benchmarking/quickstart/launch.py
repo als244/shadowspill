@@ -3,7 +3,7 @@
 import os
 import subprocess
 
-from benchmarking.processes import worker_command
+from orchestration.processes import worker_command
 
 from .phases.common import experiment, read
 from .phases.distributed import preparation_size

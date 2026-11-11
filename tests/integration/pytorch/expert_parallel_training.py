@@ -12,9 +12,9 @@ import subprocess
 from fractions import Fraction
 from pathlib import Path
 
-from benchmarking.processes import worker_command
 from benchmarking.quickstart import main as resume
 from benchmarking.quickstart import run
+from orchestration.processes import worker_command
 from shadowspill import CommunicationInfo, MemoryBudgets, ProfiledProgram, plan_program
 from shadowspill.planner import SearchOptions
 from shadowspill.planner.search.algorithms.pressurefit import PressureFit

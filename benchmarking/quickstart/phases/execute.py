@@ -4,16 +4,16 @@ import statistics
 from contextlib import nullcontext
 
 from benchmarking.spill import resolve as spill_pool
+from orchestration.workers import workers
 from shadowspill import Plan, Trainer
 
 from .candidates import example_inputs
 from .common import experiment, paths, plan_identity, read, write
-from .distributed import workers
 
 
 def run(request, selection):
     root, index = paths(request)
-    with workers(request, index) as group:
+    with workers(index.get("world_size", 1), rank_map=request.get("rank_map")) as group:
         _execute(request, selection, root, index, group)
 
 

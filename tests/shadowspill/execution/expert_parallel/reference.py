@@ -18,7 +18,7 @@ import torch.distributed as dist
 from torch import nn
 
 from benchmarking.quickstart.phases.common import experiment, read
-from benchmarking.quickstart.phases.distributed import workers
+from orchestration.workers import workers
 from qualification.numerical.tolerances import STEP_QUANTUM_DISAGREEMENTS
 from shadowspill import Plan
 from shadowspill.artifacts.tensors import TensorChunk
@@ -329,5 +329,5 @@ def reference(root, request, group):
 if __name__ == "__main__":
     root = Path(sys.argv[1])
     request = read(root / "request.json")
-    with workers(request, {"world_size": 2}) as group:
+    with workers(2, rank_map=request.get("rank_map")) as group:
         reference(root, request, group)

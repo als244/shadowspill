@@ -125,7 +125,7 @@ def test_capture_command_uses_existing_device_worker(saved_winner):
     root = saved_winner
     argv = command(settings(root), root / "winner", 4, 2, plan_digest="saved")
     assert "--nproc-per-node=2" in argv
-    assert "benchmarking.device_worker" in argv
+    assert "orchestration.device_worker" in argv
     assert "tools.pressurefit_trace.profile_winners" in argv
     assert "--flush-on-cudaprofilerstop=false" in argv
     assert "--capture-range=cudaProfilerApi" in argv

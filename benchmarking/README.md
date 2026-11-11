@@ -4,6 +4,10 @@ This tree is the self-contained, reproducible planning benchmark. It depends
 on the public ShadowSpill and model APIs, but never imports scripts or files
 from `qualification/`.
 
+Process launching, host worker groups and phase journals are shared through
+[`orchestration/`](../orchestration/README.md). Benchmark protocols and reporting
+stay here; normal workload recipes do not import this package.
+
 ```text
 benchmarking/
 ├── data_geometry.py                    the shared geometry vocabulary

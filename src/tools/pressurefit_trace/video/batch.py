@@ -14,7 +14,7 @@ from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from urllib.parse import quote
 
-from benchmarking.processes import worker_command
+from orchestration.processes import worker_command
 
 WIDTHS = {"720p": 1280, "1080p": 1920, "1440p": 2560, "4k": 3840}
 VIDEOS = ("cuts", "emission-placement", "execution")

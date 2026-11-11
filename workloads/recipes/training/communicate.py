@@ -4,7 +4,7 @@ from datetime import timedelta
 
 import torch.distributed as dist
 
-from benchmarking.plan_runner.lifecycle import Lifecycle
+from orchestration.lifecycle import Lifecycle
 from shadowspill import (
     OverlapProfileCache,
     ProfiledProgram,

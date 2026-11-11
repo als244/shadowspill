@@ -5,7 +5,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from benchmarking.quickstart.phases.distributed import Workers
+from orchestration.workers import Workers
 from shadowspill import ProfiledProgram
 from tests.shadowspill.offline._example import profiles, program
 from workloads.recipes.training import profile, profile_reuse
@@ -88,9 +88,9 @@ def test_collective_reuse_agrees_on_missing_files_and_peer_target_failure(prepar
     missing = SimpleNamespace(gather=lambda present: [present, False])
     assert profile_reuse.completed(p.path, p.model, p.options, missing) is None
     peer_failure = SimpleNamespace(
-        gather=lambda value: [True, True]
-        if isinstance(value, bool)
-        else [value, "peer target differs"]
+        gather=lambda value: (
+            [True, True] if isinstance(value, bool) else [value, "peer target differs"]
+        )
     )
     with pytest.raises(ValueError, match="peer target differs"):
         profile_reuse.completed(p.path, p.model, p.options, peer_failure)

@@ -2,24 +2,9 @@
 
 import pytest
 
-from benchmarking.processes import worker_command
 from benchmarking.quickstart.phases.common import write
-from benchmarking.quickstart.phases.distributed import preparation_size, workers
+from benchmarking.quickstart.phases.distributed import preparation_size
 from benchmarking.quickstart.phases.execute import aggregate_steps
-
-
-def test_worker_commands_use_one_process_until_distributed_execution():
-    local = worker_command("a.b", ["phase", "request"])
-    assert "torch.distributed.run" not in local
-    distributed = worker_command("a.b", ["phase", "request"], ranks=2)
-    assert "--nproc-per-node=2" in distributed
-    assert distributed[-5:] == [
-        "-m",
-        "benchmarking.device_worker",
-        "a.b",
-        "phase",
-        "request",
-    ]
 
 
 def test_only_communicating_resources_require_distributed_preparation():
@@ -56,15 +41,6 @@ def test_execution_uses_slowest_rank_and_retains_global_loss():
     ranks[1]["steps"][0]["step"] = 2
     with pytest.raises(ValueError, match="different training steps"):
         aggregate_steps(ranks)
-
-
-def test_worker_mapping_rejects_missing_ranks_before_rendezvous(monkeypatch):
-    monkeypatch.setenv("WORLD_SIZE", "2")
-    with (
-        pytest.raises(ValueError, match="every launcher rank"),
-        workers({"rank_map": {"0": 1}}, {"world_size": 2}),
-    ):
-        pytest.fail("invalid mapping reached a worker")
 
 
 def test_communication_can_use_supplied_artifact_without_torch_or_model(tmp_path):

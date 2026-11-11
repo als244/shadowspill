@@ -9,7 +9,7 @@ import time
 from pathlib import Path
 
 from benchmarking._serialization import atomic_json
-from benchmarking.processes import worker_command
+from orchestration.processes import worker_command
 
 from .process import launch
 
@@ -24,15 +24,18 @@ def prepare_run(args):
         if key not in {"output", "resume", "retry_failed", "discover_only"}
     }
     package = Path(__file__).parent
+    repository = package.parents[1]
     sources = [
         *package.glob("*.py"),
-        package.parent / "processes.py",
+        *package.glob("adapters/*.py"),
+        repository / "orchestration" / "processes.py",
+        repository / "orchestration" / "device_worker.py",
         package.parent / "_serialization.py",
     ]
     manifest = {
         "options": options,
         "source_hashes": {
-            str(path.relative_to(package.parent)): hashlib.sha256(
+            str(path.relative_to(repository)): hashlib.sha256(
                 path.read_bytes()
             ).hexdigest()
             for path in sorted(sources)

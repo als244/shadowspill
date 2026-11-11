@@ -68,7 +68,7 @@ def test_commands_advertise_each_nodes_address(tmp_path):
         "--local-addr=10.0.0.2",
     ):
         assert flag in grouped
-    assert grouped[-3:] == ["benchmarking.device_worker", "pkg.execute", str(tmp_path)]
+    assert grouped[-3:] == ["orchestration.device_worker", "pkg.execute", str(tmp_path)]
     remote = remote_command(NODES[1], grouped, {"A": "b c"})
     assert remote[:4] == ["ssh", "-o", "BatchMode=yes", "peer"]
     assert remote[4].startswith(

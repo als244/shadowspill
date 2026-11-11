@@ -3,8 +3,8 @@
 import re
 import subprocess
 
-from benchmarking.processes import worker_command
 from benchmarking.quickstart.phases.common import write
+from orchestration.processes import worker_command
 
 from .evidence import validate_sqlite
 from .selection import completed, digest, fingerprint, verified_capture

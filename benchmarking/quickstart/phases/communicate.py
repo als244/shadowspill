@@ -1,6 +1,7 @@
 """Calibrate communication and paired interference for saved candidates."""
 
 from benchmarking.spill import resolve as spill_pool
+from orchestration.workers import workers
 from shadowspill import (
     CommunicationInfo,
     OverlapProfileCache,
@@ -11,7 +12,6 @@ from shadowspill import (
 from shadowspill.communication.requests import collective_requests
 
 from .common import paths
-from .distributed import workers
 
 
 def probes(root, index):
@@ -44,7 +44,7 @@ def run(request):
     program, collectives = probes(root, index)
     from shadowspill import measure_communication, measure_overlap
 
-    with workers(request, index) as group:
+    with workers(index.get("world_size", 1), rank_map=request.get("rank_map")) as group:
         print(
             f"communicate: {len(collectives)} collective probes, {group.count} workers",
             flush=True,

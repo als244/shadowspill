@@ -1,4 +1,4 @@
-"""Fresh Python workers; distributed workers share the same logical CUDA ordinal."""
+"""Fresh Python workers for repository clients, with one visible GPU per rank."""
 
 import sys
 
@@ -17,7 +17,7 @@ def worker_command(module, arguments, *, ranks=1):
         *python,
         "-u",
         "-m",
-        "benchmarking.device_worker",
+        "orchestration.device_worker",
         module,
         *map(str, arguments),
     ]

@@ -2,7 +2,7 @@
 
 import sys
 
-from benchmarking.quickstart.phases.distributed import workers
+from orchestration.workers import workers
 from shadowspill import (
     Program,
     TaskProfileCache,
@@ -43,7 +43,7 @@ def profile_candidate(root, options, candidate, group, timing, cache=None):
 def run(directory):
     root, options = settings(directory)
     timing = {key: options[key] for key in ("warmup_seconds", "measure_seconds")}
-    with workers({}, {"world_size": options["preparation_ranks"]}) as group:
+    with workers(options["preparation_ranks"]) as group:
         cache = TaskProfileCache(
             root / "cache",
             mode="refresh" if options.get("refresh_profiles", False) else "contribute",

@@ -1,4 +1,4 @@
-"""Shared host phase journals, separate from device/runtime tracing."""
+"""Host phase journals for repository clients, separate from runtime tracing."""
 
 import json
 import os

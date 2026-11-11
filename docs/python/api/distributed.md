@@ -257,12 +257,12 @@ caller-owned rendezvous remains the caller's.
 
 Saved Inductor code retains its compilation device ordinal. If build used
 `cuda:0`, each worker must expose its GPU under that local ordinal before CUDA
-initialization. From this checkout, `benchmarking.device_worker` performs that
+initialization. From this checkout, `orchestration.device_worker` performs that
 selection before importing the target worker module:
 
 ```bash
 torchrun --standalone --nproc-per-node=8 --no-python \
-  python -m benchmarking.device_worker my_training_worker
+  python -m orchestration.device_worker my_training_worker
 ```
 
 An application can provide the equivalent environment setup in its own launcher.

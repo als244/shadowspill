@@ -2,7 +2,7 @@
 
 import sys
 
-from benchmarking.quickstart.phases.distributed import workers
+from orchestration.workers import workers
 from shadowspill import build_forward, build_step
 from workloads.recipes.phases import settings
 
@@ -68,7 +68,7 @@ def build_candidate(root, options, candidate, definition, group):
 def run(directory):
     root, options = settings(directory)
     definition = adapter(options["recipe"])
-    with workers({}, {"world_size": options["preparation_ranks"]}) as group:
+    with workers(options["preparation_ranks"]) as group:
         for candidate in available(root, options):
             attempt_candidate(
                 root,

@@ -4,11 +4,13 @@ from contextlib import nullcontext
 from functools import partial
 from pathlib import Path
 
+from orchestration.candidates import attempt
+from orchestration.workers import workers
 from shadowspill import build_step
 
-from .candidates import attempt, build_options, example_inputs
+from .candidates import build_options, example_inputs
 from .common import experiment, write
-from .distributed import preparation_size, workers
+from .distributed import preparation_size
 
 
 def run(request):
@@ -16,7 +18,7 @@ def run(request):
     count = preparation_size(setup)
     # A DP rank map belongs to execution; a local build has no rendezvous.
     binding = request if count > 1 else {**request, "rank_map": None}
-    with workers(binding, {"world_size": count}) as group:
+    with workers(count, rank_map=binding.get("rank_map")) as group:
         root = Path(request["output_dir"])
         if group.rank == 0:
             (root / "programs" / "index.json").unlink(missing_ok=True)

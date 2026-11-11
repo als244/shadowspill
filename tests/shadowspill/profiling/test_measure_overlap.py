@@ -5,7 +5,7 @@ import sys
 
 import pytest
 
-from benchmarking.processes import worker_command
+from orchestration.processes import worker_command
 
 
 @pytest.mark.cuda

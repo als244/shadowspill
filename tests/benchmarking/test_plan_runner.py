@@ -10,8 +10,8 @@ import pytest
 
 from benchmarking.plan_runner import run
 from benchmarking.plan_runner.api import summarize
-from benchmarking.plan_runner.lifecycle import Lifecycle
 from benchmarking.plan_runner.report import report
+from orchestration.lifecycle import Lifecycle
 
 
 def test_runner_import_and_cli_help_need_no_torch_or_workload():
@@ -245,7 +245,7 @@ def test_recipe_bridge_reuses_hooks_without_changing_saved_inputs(
 
 @pytest.mark.slow
 def test_real_two_rank_gloo_coordination_and_logical_rank_permutation(tmp_path):
-    from benchmarking.processes import worker_command
+    from orchestration.processes import worker_command
 
     result = subprocess.run(
         worker_command("tests.benchmarking._plan_runner", [tmp_path], ranks=2),

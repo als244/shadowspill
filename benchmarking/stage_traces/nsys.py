@@ -5,7 +5,7 @@ import time
 from pathlib import Path
 
 from benchmarking._serialization import atomic_json
-from benchmarking.processes import worker_command
+from orchestration.processes import worker_command
 
 from .process import launch, stamp, worker_environment
 from .report import verify

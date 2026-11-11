@@ -78,7 +78,7 @@ def worker_command(
         python,
         "-u",
         "-m",
-        "benchmarking.device_worker",
+        "orchestration.device_worker",
         module,
         str(root),
     ]

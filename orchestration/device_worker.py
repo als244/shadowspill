@@ -1,4 +1,4 @@
-"""Launch a single-node DP worker with its assigned GPU exposed as cuda:0.
+"""Launch a worker with its assigned GPU exposed as cuda:0.
 
 Run under torchrun, passing the target module and its arguments. Stable logical
 ordinals let ranks share compiler identities while retaining global DP ranks.

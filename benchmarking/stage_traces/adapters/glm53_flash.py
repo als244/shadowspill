@@ -1,4 +1,4 @@
-"""Checkpoint-shaped GLM adapter for the model-independent stage tracer."""
+"""GLM workload adapter owned by the stage-tracing benchmark."""
 
 from __future__ import annotations
 
