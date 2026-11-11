@@ -165,6 +165,25 @@ def test_encoded_or_different_storage_layouts_remain_explicit(tmp_path):
     assert len(info["tensors"]) == 3
 
 
+def test_nonlogical_backing_elements_remain_independent(tmp_path):
+    executor = mixed_executor()
+    master = torch.arange(30, dtype=torch.float32)
+    compute = torch.full((30,), -5, dtype=torch.bfloat16)
+    master_view = master.as_strided((3, 5), (10, 1))
+    compute_view = compute.as_strided((3, 5), (10, 1))
+    compute_view.copy_(master_view)
+    executor.values = {"weight": compute_view, "master.weight": master_view}
+    path = tmp_path / "backing.ssp"
+    save_checkpoint(executor, path)
+    expected_compute, expected_master = compute.clone(), master.clone()
+    compute.zero_()
+    master.zero_()
+    load_checkpoint(executor, path)
+    torch.testing.assert_close(compute, expected_compute, rtol=0, atol=0)
+    torch.testing.assert_close(master, expected_master, rtol=0, atol=0)
+    assert not manifest(path)["derived_tensors"]
+
+
 class OwnedExecutor:
     """Use real exported descriptors/leases while keeping I/O tests on the CPU."""
 

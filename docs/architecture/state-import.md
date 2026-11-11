@@ -172,7 +172,8 @@ of this choice. `Trainer.save` accepts the same setting.
 The selected representation is authoritative. Reconstruction uses captured
 optimizer ownership, registered storage aliases and the receiving rank's tensor
 geometry. A source must cover the destination's complete owned region. Packed
-or scaled tensor components, incompatible storage layouts, and insufficient
+or scaled tensor components, storage with holes or unused backing elements,
+incompatible storage layouts, and insufficient
 local shard coverage retain both physical copies; the manifest's
 `retained_weight_copies` records the reason. A plain payload is never mistaken
 for a logical encoded weight. Frozen encoded bases can still be omitted using

@@ -29,6 +29,20 @@ def _length(chunk: TensorChunk) -> int:
     )
 
 
+def _covers_storage(chunk: TensorChunk) -> bool:
+    """A logical dtype copy must cover every stored element exactly once."""
+    if chunk.storage_offset or len(chunk.stride) != len(chunk.shape):
+        return False
+    elements = 1
+    for stride, size in sorted(zip(chunk.stride, chunk.shape, strict=True)):
+        if size == 1:
+            continue
+        if stride != elements:
+            return False
+        elements *= size
+    return elements == chunk.storage_elements
+
+
 def select_weights(executor: Executor, weights: object) -> WeightSelection:
     """Omit a copy only when this rank can reconstruct its complete owned region.
 
@@ -104,6 +118,9 @@ def select_weights(executor: Executor, weights: object) -> WeightSelection:
                 )
             ):
                 retained[label] = "physical weight layouts cannot use a storage cast"
+                continue
+            if not _covers_storage(source):
+                retained[label] = "logical weight copy does not cover its full backing"
                 continue
             if (
                 source.region_offset > target.region_offset
