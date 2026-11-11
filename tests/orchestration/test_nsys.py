@@ -82,7 +82,8 @@ def test_capture_launch_scopes_metrics_to_the_rank_device(tmp_path):
     )
     assert command[-2:] == ["python", "worker.py"]
     assert "--capture-range=cudaProfilerApi" in command
-    assert "--capture-range-end=stop" in command
+    # `stop` and `repeat:1` finalize before the worker releases its host pool.
+    assert "--capture-range-end=repeat" in command
     assert "--wait=all" in command
     assert "--gpu-metrics-devices=cuda-visible" in command
     assert list(capture.step_numbers) == [5, 6]

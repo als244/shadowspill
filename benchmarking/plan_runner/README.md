@@ -91,7 +91,11 @@ that device. The shared Trainer adapter uses rank barriers and **each rank's**
 cudaProfilerApi start/stop,
 labels `train/step=N/rank=R`, and enables the existing
 `profiler_annotations=True` task/transfer ranges only during captured updates.
-Collection stops without terminating the remaining updates.
+Collection stops without terminating the remaining updates. The collector uses
+`--capture-range-end=repeat` with one start/stop pair so report conversion waits
+until the worker exits and releases its runtime and pinned spill pool. Using
+`stop` or `repeat:1` instead can start large report importers while those pools
+are still live. Remaining updates are outside the capture interval.
 
 The launcher waits for every worker and collector to exit and requires a
 nonempty report from **every rank**. By default the common capture directory is

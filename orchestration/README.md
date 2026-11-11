@@ -29,6 +29,8 @@ does not reuse calibration across machines or separate phase invocations.
 The private `_nsys_trainer` worker module is imported only when capture is enabled;
 it uses cudaProfilerApi boundaries, rank barriers and the existing Executor NVTX
 annotation flag. It contains no model or recipe-specific logic.
+The collector keeps its session open after the single capture range so Nsight
+converts the report after worker exit, when training pools have been released.
 Worker coordination takes an explicit participant count and optional rank map,
 independent of any client's JSON schema:
 

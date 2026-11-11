@@ -7,11 +7,13 @@ import torch.distributed as dist
 
 
 class NsightTrainerMixin:
-    """Use under nsys --capture-range=cudaProfilerApi --capture-range-end=stop.
+    """Use under nsys --capture-range=cudaProfilerApi --capture-range-end=repeat.
 
     Every rank controls its own collector. Barriers bound the interval across
     workers; per-worker NVTX ranges identify each complete update.
-    Trainer.fit evaluation/checkpoint work occurs after step returns.
+    Trainer.fit evaluation/checkpoint work occurs after step returns. This mixin
+    emits one start/stop pair; leaving the session open defers report conversion
+    until process exit, after the worker releases its runtime and pinned pool.
     """
 
     def __init__(self, *args, nsys_start_step=2, nsys_steps=0, **kwargs):

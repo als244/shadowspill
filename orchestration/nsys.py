@@ -65,7 +65,11 @@ class NsysCapture:
             "--cpuctxsw=none",
             "--osrt-threshold=10000",
             "--capture-range=cudaProfilerApi",
-            "--capture-range-end=stop",
+            # Keep the session open after our single start/stop pair. `stop`
+            # imports the report while the worker still holds its pinned pool;
+            # `repeat` ends collection but finalizes after the worker exits.
+            # Do not use repeat:1: reaching its limit finalizes immediately.
+            "--capture-range-end=repeat",
             "--wait=all",
             "--force-overwrite=false",
             f"--output={Path(output)}",
