@@ -120,7 +120,7 @@ def select_weights(executor: Executor, weights: object) -> WeightSelection:
                 retained[label] = "physical weight layouts cannot use a storage cast"
                 continue
             if not _covers_storage(source):
-                retained[label] = "logical weight copy does not cover its full backing"
+                retained[label] = "logical weight copy does not cover its full storage"
                 continue
             if (
                 source.region_offset > target.region_offset

@@ -64,7 +64,7 @@ def read_manifest(archive: tarfile.TarFile) -> dict[str, Any]:
 
 
 class ContentHash:
-    """Reuse the native worker pool across tensors, without parallel tiny updates."""
+    """Reuse BLAKE3's worker pool across tensors, without parallel tiny updates."""
 
     def __init__(self) -> None:
         self.small = blake3()
