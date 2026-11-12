@@ -372,12 +372,15 @@ EP task profiles include provider-owned collectives; additional EP contention
 calibration is not implemented. The current Qwen EP provider has no declared
 axis-chunk contract, so the recipe refuses execution chunking for those tasks.
 
-Separate two-H100 checks of the current checkpoint format cover DP restoration
-in a fresh process followed by two exact continuation updates, including uneven
-shards and reversed logical rank order. EP checks cover exact in-worker
-restoration of expert and shared state, including optimizer state. These checks
-use unchanged rank ownership and world size; fresh-process EP continuation and
-checkpoint resharding are not covered by them.
+Separate two-H100 checks of the current checkpoint format cover both DP and EP
+restoration in fresh processes followed by two exact continuation updates,
+including uneven shards, reversed logical rank order and optimizer state.
+Both master-selected and compute-selected checkpoints are covered. The EP case
+reconstructs replicated compute weights from master shards; no-master BF16
+checks cover both sharded and replicated compute weights. Compute-selected
+continuation uses masters reconstructed from the saved rounded values as its
+baseline. These checks use unchanged rank ownership and world size; checkpoint
+resharding is not covered.
 
 The [phase guide](../../architecture/offline-pipeline.md) describes the
 implementation boundary; [phase artifacts](artifacts.md) describes persistence.

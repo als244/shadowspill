@@ -187,8 +187,8 @@ for a logical encoded weight. Frozen encoded bases can still be omitted using
 `frozen_state_id` independently of this policy.
 
 The archive records the selection, local derived tensors and collectively
-gathered tensors, validates
-them against the receiving Program, and checksums each stored source completely.
+gathered tensors, validates them against the receiving Program, and checksums
+each stored source completely.
 Restoration uses at most one ordinary CPU scratch chunk for casts, in addition
 to the destination supplied by Executor. It rereads the selected source when
 filling the derived copy, avoiding a whole-model snapshot or dependency on
@@ -198,8 +198,8 @@ of its selected source. Collective reconstruction reads the restored host shards
 instead of rereading the archive and uses bounded host transfer buffers.
 `Executor.initialize(replicated_copies={name: (source_name, group_ref)})` is the
 underlying initialization primitive; it is separate from archive parsing and
-requires every worker to participate. Version 2 archives encode this contract; older archives
-without it are not accepted.
+requires every worker to participate. Version 2 archives encode this contract;
+older archives without it are not accepted.
 
 For large export chunks, BLAKE3 hashing overlaps the archive write in one CPU
 worker and uses four native hashing threads. The same native pool is reused

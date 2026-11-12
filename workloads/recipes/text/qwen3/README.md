@@ -141,7 +141,18 @@ The DP record uses engine `17c48169`; EP uses `af404765`; both use MLOps
 every later change. All ranks completed their updates with finite losses,
 consistent global loss reductions and admitted spill capacities. These short
 throughput runs do not establish convergence or a full tensor-reference check.
-EP measured about 9–10% above prediction; attribution of that gap remains open.
+EP measured about 9–10% above prediction. A subsequent seven-update replay of
+the 20 GiB EP Plan measured 25.292 s versus 23.105 s predicted, with two Nsight
+capture steps on every rank and a separate final runtime trace. It used engine
+`cd197853` and the same provider `403cb240`.
+
+The final runtime trace places about 2.025 s of rank 0's prediction error inside
+task durations and only 0.015 s in additional inter-task idle. EP dispatch and
+combine kernels are substantial parts of those tasks, but this does not identify
+a particular kernel or contention mechanism as the cause of the prediction gap.
+Additional EP contention calibration remains deferred. Capture start/stop and
+report conversion add considerable time outside steady updates; they are
+excluded from the throughput numbers above.
 
 ## Earlier 20 GiB comparison
 
