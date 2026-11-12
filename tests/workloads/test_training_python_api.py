@@ -7,6 +7,7 @@ from fractions import Fraction
 
 import pytest
 
+from shadowspill import ProfilingOptions
 from workloads.recipes import LoRA, Model, train
 from workloads.recipes.training import api as runner
 
@@ -31,12 +32,15 @@ def test_checkpoint_model_and_method_select_frozen_candidates(tmp_path, monkeypa
             moe_chunk_sizes=[8, 16],
             graph_pair_policies=["cost-input", "cost-attention", "attention-input"],
             tail_save_counts=[4, 0, 1, 4],
+            profiling=ProfilingOptions(conditioning_max_samples=7, maximum_samples=11),
         ),
         phase="build",
     )
     saved = json.loads((root / "config.json").read_text())
     assert len(saved["candidates"]) == 12
     assert saved["tail_save_counts"] == [0, 1, 4]
+    assert saved["profiling"]["conditioning_max_samples"] == 7
+    assert saved["profiling"]["maximum_samples"] == 11
     from workloads.recipes.training.search import search_options
 
     planner = search_options(saved).resolved_algorithm
@@ -58,6 +62,19 @@ def test_checkpoint_model_and_method_select_frozen_candidates(tmp_path, monkeypa
     with pytest.raises(ValueError, match="fresh run"):
         train(model, {"run_dir": root, "chunk_sizes": [4]}, phase="plan")
     train(model, {"run_dir": root, "refresh_profiles": True}, phase="profile")
+    train(
+        model, {"run_dir": root, "profiling": {"maximum_samples": 13}}, phase="profile"
+    )
+    assert (
+        json.loads((root / "config.json").read_text())["profiling"]["maximum_samples"]
+        == 13
+    )
+    with pytest.raises(ValueError, match="phase='profile'"):
+        train(
+            model,
+            {"run_dir": root, "profiling": {"maximum_samples": 14}},
+            phase="execute",
+        )
     with pytest.raises(ValueError, match="phase='profile'"):
         train(model, {"run_dir": root, "refresh_profiles": False}, phase="execute")
     with pytest.raises(ValueError, match="boolean"):

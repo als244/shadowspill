@@ -4,6 +4,7 @@ import argparse
 import json
 from pathlib import Path
 
+from shadowspill import ProfilingOptions
 from workloads.recipes.phases import run_phases
 
 
@@ -19,8 +20,12 @@ def main(argv=None):
     parser.add_argument("--steps", type=int, default=10)
     parser.add_argument("--execution-gib", type=float)
     parser.add_argument("--spill-gib", type=float)
-    parser.add_argument("--warmup-seconds", type=float, default=0.05)
-    parser.add_argument("--measure-seconds", type=float, default=0.18)
+    parser.add_argument(
+        "--warmup-seconds", type=float, default=ProfilingOptions().conditioning_seconds
+    )
+    parser.add_argument(
+        "--measure-seconds", type=float, default=ProfilingOptions().measurement_seconds
+    )
     parser.add_argument("--no-plots", dest="plots", action="store_false")
     parser.add_argument("--wandb-project")
     parser.add_argument("--wandb-mode", choices=("online", "offline"), default="online")

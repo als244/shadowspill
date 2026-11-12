@@ -92,6 +92,7 @@ def _measure(
             "duration_seconds": median(timing.samples) / 1e9,
             "samples": len(timing.samples),
             "target_met": timing.window.target_met,
+            "limit": timing.window.limit,
             "relative_mad": timing.relative_mad,
             "half_drift": timing.half_drift,
             "memory": memory,

@@ -13,7 +13,7 @@ from shadowspill.memory import PinnedHostPool, SpillPool
 from shadowspill.parallelism.agreement import agreement_digest
 from shadowspill.pytorch.accelerator import resolve_device
 from shadowspill.pytorch.toolchain import build_setup
-from shadowspill.task.profiling import ProfilingOptions
+from shadowspill.task.profiling import ProfilingOptions, resolve_options
 
 from .aggregation import combine_host
 from .binding.backend import shared_backend_setup
@@ -33,8 +33,9 @@ def measure_communication(
     collectives: Sequence[Mapping[str, Any]] | None = None,
     device: str | torch.device = "cuda",
     sizes_bytes: Sequence[int] = (1024, 1 << 20, 16 << 20, 64 << 20),
-    warmup_seconds: float = 0.05,
-    measure_seconds: float = 0.18,
+    options: ProfilingOptions | None = None,
+    warmup_seconds: float | None = None,
+    measure_seconds: float | None = None,
     spill: SpillPool | None = None,
 ) -> CommunicationInfo:
     """Calibrate spill copies and optionally a Program's lowered collectives.
@@ -69,12 +70,7 @@ def measure_communication(
             raise ValueError(
                 "sizes_bytes needs at least two distinct positive integers"
             )
-        options = ProfilingOptions(
-            conditioning_seconds=warmup_seconds,
-            conditioning_wall_seconds=max(1.0, warmup_seconds * 4),
-            measurement_seconds=measure_seconds,
-            measurement_wall_seconds=max(1.0, measure_seconds * 4),
-        )
+        options = resolve_options(options, warmup_seconds, measure_seconds)
         requests = collective_requests(program, collectives)
         if program is not None:
             count = 1 if program.parallelism is None else program.parallelism.world_size
@@ -105,8 +101,7 @@ def measure_communication(
                 "program": None if program is None else agreement_digest(program),
                 "requests": [item.to_dict() for item in requests],
                 "sizes": sizes,
-                "warmup": warmup_seconds,
-                "measure": measure_seconds,
+                "profiling_options": options.to_dict(),
                 "spill_kind": "pinned_host" if spill is None else spill.kind_name,
             }
         )
@@ -125,6 +120,7 @@ def measure_communication(
                 startup_error=failure,
             )
         backend = shared_backend_setup(bindings, requests, device_ordinal=target.index)
+        assert options is not None  # Invalid policies fail before worker agreement.
         with torch.cuda.device(target), torch.no_grad():
             host, failure = None, None
             try:
@@ -170,7 +166,12 @@ def measure_communication(
             result,
             measurements=measurements,
             fixed_device_bytes=fixed,
-            metadata={**result.metadata, **memory_metadata, "backend_setup": backend},
+            metadata={
+                **result.metadata,
+                **memory_metadata,
+                "backend_setup": backend,
+                "profiling_options": options.to_dict(),
+            },
         )
     finally:
         if bindings is not None:

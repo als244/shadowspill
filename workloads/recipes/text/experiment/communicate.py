@@ -6,6 +6,7 @@ from datetime import timedelta
 
 import torch.distributed as dist
 
+from orchestration.profiling import profiling_options
 from shadowspill import (
     ProfiledProgram,
     apply_profiles,
@@ -33,8 +34,7 @@ def run(directory):
                     program=profiled.program,
                     rank_map={rank: rank for rank in range(count)},
                     device="cuda:0",
-                    warmup_seconds=options.get("warmup_seconds", 0.05),
-                    measure_seconds=options.get("measure_seconds", 0.18),
+                    options=profiling_options(options),
                 )
                 overlap = measure_overlap(
                     profiled,

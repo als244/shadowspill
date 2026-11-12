@@ -3,6 +3,7 @@
 from functools import partial
 
 from orchestration.candidates import attempt
+from orchestration.profiling import profiling_options
 from orchestration.workers import workers
 from shadowspill import Program, TaskProfileCache, apply_profiles, measure_program
 
@@ -20,10 +21,7 @@ def run(request):
 def _profile(request, root, index, group):
     if group.rank == 0:
         (root / "profiled" / "index.json").unlink(missing_ok=True)
-    timing = {
-        "warmup_seconds": request["warmup_seconds"],
-        "measure_seconds": request["measure_seconds"],
-    }
+    timing = {"options": profiling_options(request)}
     cache = TaskProfileCache(root / "cache")
     for entry in index["candidates"]:
         if "failure" in entry:

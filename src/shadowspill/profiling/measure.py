@@ -19,6 +19,7 @@ from shadowspill.pytorch.accelerator import resolve_device
 from shadowspill.pytorch.task_inputs import prepare_inputs
 from shadowspill.pytorch.toolchain import build_setup
 from shadowspill.resources.preparation import prepare_resources
+from shadowspill.task.profiling import ProfilingOptions, resolve_options
 
 from .session import MeasurementSession
 
@@ -33,8 +34,9 @@ def measure_program(
     stages: Sequence[int] | None = None,
     rank_map: Mapping[int, int] | None = None,
     inputs: Mapping[str, Sequence[Any]] | None = None,
-    warmup_seconds: float = 0.05,
-    measure_seconds: float = 0.18,
+    options: ProfilingOptions | None = None,
+    warmup_seconds: float | None = None,
+    measure_seconds: float | None = None,
     external_headroom_bytes: int = 512 << 20,
     cache: TaskProfileCache | None = None,
 ) -> Profiles:
@@ -53,6 +55,7 @@ def measure_program(
     always measured afresh, and physical planning admission is still required.
     """
     started = perf_counter_ns()
+    options = resolve_options(options, warmup_seconds, measure_seconds)
     nonnegative_int(external_headroom_bytes, "external_headroom_bytes")
     if program.bindings.get("provider") != "torch-inductor-aot":
         raise ValueError("Program has no supported finalized task implementation")
@@ -91,8 +94,7 @@ def measure_program(
             program,
             target,
             inputs or {},
-            warmup_seconds,
-            measure_seconds,
+            options,
             groups=resources.groups,
             preparations=preparations,
             cache=cache,
@@ -129,6 +131,7 @@ def measure_program(
                 session.external + session.persistent + external_headroom_bytes
             )
         session.profiles.metadata = {
+            "profiling_options": options.to_dict(),
             "profiling_phase_timings_ns": {
                 "validation_and_preparation": cache_started - started,
                 "cache_lookup_and_load": cache_wall_ns,

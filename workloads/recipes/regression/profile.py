@@ -2,6 +2,7 @@
 
 import sys
 
+from orchestration.profiling import profiling_options
 from shadowspill import Program, apply_profiles, measure_program
 from workloads.recipes.phases import settings
 
@@ -11,8 +12,7 @@ def run(directory):
     program = Program.load(root / "program.ssp")
     profiles = measure_program(
         program,
-        warmup_seconds=options["warmup_seconds"],
-        measure_seconds=options["measure_seconds"],
+        options=profiling_options(options),
     )
     profiles.save(root / "profiles.ssp")
     apply_profiles(program, profiles).save(root / "profiled.ssp")

@@ -59,11 +59,24 @@ def measure_spill(
             if bindings is not None:
                 duration = max(bindings.gather(duration))
             # Native calibration uses three timing windows per large-copy mode.
-            warmup = min(4096, ceil(options.conditioning_seconds / max(duration, 1e-6)))
+            warmup = min(
+                options.conditioning_max_samples,
+                ceil(
+                    min(options.conditioning_seconds, options.conditioning_wall_seconds)
+                    / max(duration, 1e-6)
+                ),
+            )
             count = max(
-                1,
+                options.minimum_samples,
                 min(
-                    4096, ceil(options.measurement_seconds / (3 * max(duration, 1e-6)))
+                    options.maximum_samples,
+                    ceil(
+                        min(
+                            options.measurement_seconds,
+                            options.measurement_wall_seconds,
+                        )
+                        / (3 * max(duration, 1e-6))
+                    ),
                 ),
             )
             rows = measure(size, warmup, count)

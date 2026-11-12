@@ -4,6 +4,7 @@ import argparse
 import json
 from pathlib import Path
 
+from shadowspill import ProfilingOptions
 from workloads.recipes.phases import run_phases
 
 
@@ -30,8 +31,12 @@ def main(argv=None):
     parser.add_argument("--seed", type=int, default=0)
     parser.add_argument("--execution-gib", type=float)
     parser.add_argument("--spill-gib", type=float)
-    parser.add_argument("--warmup-seconds", type=float, default=0.05)
-    parser.add_argument("--measure-seconds", type=float, default=0.18)
+    parser.add_argument(
+        "--warmup-seconds", type=float, default=ProfilingOptions().conditioning_seconds
+    )
+    parser.add_argument(
+        "--measure-seconds", type=float, default=ProfilingOptions().measurement_seconds
+    )
     parser.add_argument("--no-plots", dest="plots", action="store_false")
     parser.add_argument("--resume", help="checkpoint for the execute phase")
     args = parser.parse_args(argv)

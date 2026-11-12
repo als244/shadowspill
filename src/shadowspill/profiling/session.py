@@ -41,8 +41,7 @@ class MeasurementSession:
         program: Program,
         device: torch.device,
         inputs: Mapping[str, Sequence[Any]],
-        warmup: float,
-        measurement: float,
+        options: ProfilingOptions,
         *,
         groups: GroupBindings | None = None,
         preparations: LoadedPreparations | None = None,
@@ -55,7 +54,11 @@ class MeasurementSession:
         self.program, self.device, self.inputs = program, device, inputs
         self.groups = groups
         self.preparations = preparations
-        self.warmup, self.measurement = warmup, measurement
+        self.options = options
+        if groups is not None and any(
+            value != options.to_dict() for value in groups.gather(options.to_dict())
+        ):
+            raise ValueError("profiling options must agree across workers")
         self.functions: dict[str, Any] = {}
         self.controls = ControlInputs(program, device, inputs)
         self.profiles = Profiles(setup=plain(program.setup))
@@ -86,13 +89,10 @@ class MeasurementSession:
             return
         if self.cache is None:
             return
-        options = ProfilingOptions(
-            conditioning_seconds=self.warmup, measurement_seconds=self.measurement
-        )
         self.cache_identities = task_identities(
             self.program,
             jobs,
-            options=options,
+            options=self.options,
             environment={
                 "allocator_config": os.environ.get(
                     "PYTORCH_ALLOC_CONF", os.environ.get("PYTORCH_CUDA_ALLOC_CONF")
@@ -114,7 +114,7 @@ class MeasurementSession:
                     record := self.cache.get(
                         identity,
                         self.program.bindings["manifests"][key],
-                        minimum_samples=options.minimum_samples,
+                        minimum_samples=self.options.minimum_samples,
                     )
                 ) is not None:
                     hits[key] = record
@@ -176,8 +176,7 @@ class MeasurementSession:
                     arguments,
                     self.program.bindings["manifests"][key],
                     device=self.device,
-                    warmup_seconds=self.warmup,
-                    measure_seconds=self.measurement,
+                    options=self.options,
                     continue_while=None
                     if self.groups is None
                     else self.groups.continue_sampling,

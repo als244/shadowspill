@@ -8,6 +8,7 @@ import math
 import re
 from dataclasses import dataclass
 
+from shadowspill import ProfilingOptions
 from workloads.models import catalog
 from workloads.providers import ModelImplementation
 
@@ -87,8 +88,8 @@ class ProfilingSpec:
     """Device and native-allocator measurement controls; no execution pools."""
 
     device: str = "cuda:0"
-    warmup_seconds: float = 0.05
-    measure_seconds: float = 0.18
+    warmup_seconds: float = ProfilingOptions().conditioning_seconds
+    measure_seconds: float = ProfilingOptions().measurement_seconds
     external_headroom_bytes: int = 512 << 20
 
     def __post_init__(self) -> None:

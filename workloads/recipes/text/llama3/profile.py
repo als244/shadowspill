@@ -2,16 +2,14 @@
 
 import sys
 
+from orchestration.profiling import profiling_options
 from shadowspill import Program, apply_profiles, measure_communication, measure_program
 from workloads.recipes.phases import settings
 
 
 def run(directory):
     root, options = settings(directory)
-    timing = {
-        "warmup_seconds": options["warmup_seconds"],
-        "measure_seconds": options["measure_seconds"],
-    }
+    timing = {"options": profiling_options(options)}
     for name in ("training", "evaluation"):
         print(f"profiling {name}", flush=True)
         program = Program.load(root / f"programs/{name}.ssp")

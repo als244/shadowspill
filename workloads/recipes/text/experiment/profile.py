@@ -4,6 +4,7 @@ import json
 import sys
 from pathlib import Path
 
+from orchestration.profiling import profiling_options
 from shadowspill import Program, apply_profiles, measure_communication, measure_program
 from workloads.recipes.phases import settings
 
@@ -38,10 +39,7 @@ def host_memory(meminfo="/proc/meminfo"):
 
 def run(directory):
     root, options = settings(directory)
-    timing = {
-        "warmup_seconds": options.get("warmup_seconds", 0.05),
-        "measure_seconds": options.get("measure_seconds", 0.18),
-    }
+    timing = {"options": profiling_options(options)}
     inventory = json.loads((root / "candidates.json").read_text())
     names = ["training", *(["evaluation"] if options.get("eval_every", 0) else [])]
     for relative in (

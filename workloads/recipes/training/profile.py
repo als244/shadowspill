@@ -2,6 +2,7 @@
 
 import sys
 
+from orchestration.profiling import profiling_options
 from orchestration.workers import workers
 from shadowspill import (
     Program,
@@ -42,7 +43,7 @@ def profile_candidate(root, options, candidate, group, timing, cache=None):
 
 def run(directory):
     root, options = settings(directory)
-    timing = {key: options[key] for key in ("warmup_seconds", "measure_seconds")}
+    timing = {"options": profiling_options(options)}
     with workers(options["preparation_ranks"]) as group:
         cache = TaskProfileCache(
             root / "cache",

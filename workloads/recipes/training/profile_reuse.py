@@ -1,5 +1,6 @@
 """Resume measurements after checking the current target and saved artifact."""
 
+from orchestration.profiling import profiling_options
 from shadowspill import Profiles, apply_profiles
 
 from .target import check_target
@@ -22,10 +23,16 @@ def completed(path, program, options, group):
             options["external_headroom_mib"] << 20
         ):
             raise ValueError("completed profile has different worker headroom")
-        result = apply_profiles(program, profiles)
+        if (
+            profiles.metadata.get("profiling_options")
+            == profiling_options(options).to_dict()
+        ):
+            result = apply_profiles(program, profiles)
     except Exception as failure:
         error = str(failure)
     errors = [value for value in group.gather(error) if value is not None]
     if errors:
         raise ValueError(f"cannot reuse completed profile {path}: {'; '.join(errors)}")
+    if not all(group.gather(result is not None)):
+        return None
     return result

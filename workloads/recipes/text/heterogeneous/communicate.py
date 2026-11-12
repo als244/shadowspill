@@ -13,6 +13,7 @@ from datetime import timedelta
 
 import torch.distributed as dist
 
+from orchestration.profiling import profiling_options
 from shadowspill import Program, measure_communication
 from workloads.recipes.phases import settings
 from workloads.recipes.text.launch import first_rank
@@ -62,8 +63,7 @@ def run(directory):
                 program=Program.load(root / "programs" / f"{measured}.ssp"),
                 rank_map={rank: rank for rank in range(count)},
                 device="cuda:0",
-                warmup_seconds=options.get("warmup_seconds", 0.05),
-                measure_seconds=options.get("measure_seconds", 0.18),
+                options=profiling_options(options),
             )
             if own and saving:
                 communication.save(root / "communication" / f"{slot}.ssp")

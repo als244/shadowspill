@@ -173,13 +173,15 @@ contracts and output aliases in addition to peak sizes.
 
 Task timing takes at least three samples and continues until the requested device
 time is covered and median variability/drift pass their thresholds, subject to
-the wall-time limit. The minimum count takes precedence over that limit: three
-four-second invocations still take twelve seconds. Short tasks typically need
-many more samples to cover the duration target. Allocation validation separately
+wall-time and maximum-sample limits. The minimum count takes precedence over
+the wall limit: three four-second invocations still take twelve seconds. Tiny
+tasks stop at the count cap instead of filling the duration target at any cost.
+The [profiling API](profiling.md) documents all controls and stop reasons.
+Allocation validation separately
 observes one cold invocation and three warmed invocations; reducing the timing
 minimum does not remove those checks. Profiles retain actual sample counts,
 durations and stability diagnostics. Task metadata also separates wall time for
-cold observation, conditioning, warmed observations, validation, timing and
+cold observation, warmed observations, validation, conditioning, timing and
 layout reconciliation. Each allocation observation reports execution/collection,
 decoding and initial synchronization time.
 

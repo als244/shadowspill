@@ -217,6 +217,8 @@ and the contract behind it.
 - [Phase artifacts](python/api/artifacts.md) — Program, Profiles,
   ProfiledProgram, Plan and SweepResult: what each holds, and how each is
   saved, loaded and reported.
+- [Profiling controls](python/api/profiling.md) — conditioning, timing/count
+  limits, stability evidence, cache reuse and shared runner configuration.
 - [Training and forward execution over saved plans](python/api/training.md) —
   Trainer and Executor: initialization, inputs and results, evaluation,
   schedules, parameter norms, checkpoints, startup diagnostics and custom

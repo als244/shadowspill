@@ -21,6 +21,7 @@ _PUBLIC = {
     "SweepResult": "artifacts",
     "apply_profiles": "profiling.apply",
     "measure_program": "profiling.measure",
+    "ProfilingOptions": "task.profiling",
     "TaskProfileCache": "profiling.cache",
     "OverlapProfileCache": "profiling.overlap_cache",
     "measure_overlap": "profiling.overlap",

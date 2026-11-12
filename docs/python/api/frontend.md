@@ -933,5 +933,7 @@ runtime trace. See [execution](training.md).
 
 `PartitionPolicy` supplies custom stage boundaries to the public builders;
 `PartitionSpec` is the accepted partition policy type. `measure_program` accepts
-`warmup_seconds` and `measure_seconds` directly. These phases do not create
-runtime pools. See [the build phase](../../architecture/offline-pipeline.md).
+public `ProfilingOptions` for conditioning/timing duration floors, maximum
+counts, wall limits and stability thresholds. The two duration shortcuts use
+the same policy. These phases do not create runtime pools. See the
+[profiling API](profiling.md) and [build phase](../../architecture/offline-pipeline.md).

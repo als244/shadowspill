@@ -3,6 +3,7 @@
 from pathlib import Path
 
 from benchmarking.spill import record as spill_record
+from orchestration.profiling import profiling_options
 
 from .launch import launch as _launch
 from .phases.common import read, reference, write
@@ -22,8 +23,9 @@ def run(
     communication_info=None,
     pool_memory=None,
     rank_map=None,
-    warmup_seconds=0.05,
-    measure_seconds=0.18,
+    profiling=None,
+    warmup_seconds=None,
+    measure_seconds=None,
     search_workers=1,
     resolution_options="quarters",
     tail_save_counts=(0,),
@@ -65,6 +67,9 @@ def run(
         "communication_info": communication,
         "pool_memory": memory_evidence,
         "rank_map": rank_map,
+        "profiling": None
+        if profiling is None
+        else profiling_options({"profiling": profiling}).to_dict(),
         "warmup_seconds": warmup_seconds,
         "measure_seconds": measure_seconds,
         "search_workers": search_workers,
@@ -116,8 +121,7 @@ def _validate(request, phase):
         raise ValueError("steps must be positive")
     if not set(request["run_budgets"]) <= set(request["search_budgets"]):
         raise ValueError("run budgets must be search budgets")
-    if request["warmup_seconds"] < 0 or request["measure_seconds"] <= 0:
-        raise ValueError("invalid measurement durations")
+    profiling_options(request)
     if (
         request.get("spill")
         and request["spill"]["arguments"]["capacity"] != request["spill_bytes"]

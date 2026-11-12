@@ -184,7 +184,7 @@ def test_collective_reuse_intersects_hits_before_restoring_tasks(
     session = object.__new__(MeasurementSession)
     session.program, session.cache, session.groups = program, cache, groups
     session.cache_allowed = True
-    session.warmup, session.measurement = 0.05, 0.18
+    session.options = ProfilingOptions()
     session.streams = SimpleNamespace(description=[])
     session.profiles, session.external = Profiles(), 10
     session.cache_hits, session.cache_misses = [], []

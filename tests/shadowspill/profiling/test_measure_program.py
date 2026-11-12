@@ -8,6 +8,7 @@ import torch
 
 from shadowspill import (
     Profiles,
+    ProfilingOptions,
     Program,
     TaskProfileCache,
     apply_profiles,
@@ -44,16 +45,22 @@ def test_saved_training_program_measurement_without_runtime_pools(
     program.save(tmp_path / "program.ssp")
     program = Program.load(tmp_path / "program.ssp")
     before = program.digest
+    timing = ProfilingOptions(
+        conditioning_seconds=0.001,
+        conditioning_max_samples=2,
+        measurement_seconds=0.003,
+        maximum_samples=5,
+    )
     profiles = measure_program(
         program,
-        warmup_seconds=0.001,
-        measure_seconds=0.003,
+        options=timing,
         cache=TaskProfileCache(tmp_path / "cache"),
     )
     assert set(profiles.tasks) == {
         item.profile_key for item in program.task_definitions
     }
     assert program.digest == before
+    assert profiles.metadata["profiling_options"] == timing.to_dict()
     assert torch.cuda.memory.get_allocator_backend() == "native"
     profiles.save(tmp_path / "profiles.ssp")
     profiles = Profiles.load(tmp_path / "profiles.ssp")
@@ -85,8 +92,7 @@ def test_saved_training_program_measurement_without_runtime_pools(
         patch.setattr(session, "measure_task", count_measurements)
         replay = measure_program(
             program,
-            warmup_seconds=0.001,
-            measure_seconds=0.003,
+            options=timing,
             external_headroom_bytes=(512 << 20) + 4096,
             cache=TaskProfileCache(tmp_path / "cache"),
         )
@@ -110,6 +116,8 @@ def test_saved_training_program_measurement_without_runtime_pools(
             )
             assert len(profile.metadata["allocation_observation_timings_ns"]) == 4
             assert profile.metadata["profiling_options"]["minimum_samples"] == 3
+            assert profile.metadata["conditioning"]["iterations"] <= 2
+            assert 3 <= profile.metadata["sampling"]["iterations"] <= 5
     subset = measure_program(
         program, stages=[0], warmup_seconds=0, measure_seconds=0.001
     )

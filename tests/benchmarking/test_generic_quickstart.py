@@ -13,7 +13,7 @@ pytestmark = pytest.mark.cuda
 
 
 def test_generic_quickstart_search_run_plot(tmp_path):
-    from shadowspill import SweepResult
+    from shadowspill import ProfilingOptions, SweepResult
 
     output = tmp_path / "quickstart"
     stdout = sys.stdout
@@ -26,8 +26,12 @@ def test_generic_quickstart_search_run_plot(tmp_path):
             output_dir=output,
             plots=True,
             communication_info=communication(),
-            warmup_seconds=0.001,
-            measure_seconds=0.002,
+            profiling=ProfilingOptions(
+                conditioning_seconds=0.001,
+                conditioning_max_samples=2,
+                measurement_seconds=0.002,
+                maximum_samples=4,
+            ),
         )
         == 0
     )

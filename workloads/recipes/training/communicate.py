@@ -6,6 +6,7 @@ import torch.distributed as dist
 
 from orchestration.communication import communication_probes
 from orchestration.lifecycle import Lifecycle
+from orchestration.profiling import profiling_options
 from shadowspill import (
     OverlapProfileCache,
     ProfiledProgram,
@@ -53,8 +54,7 @@ def run(directory):
                     collectives=collectives,
                     rank_map={rank: rank for rank in range(options["ranks"])},
                     device="cuda:0",
-                    warmup_seconds=options["warmup_seconds"],
-                    measure_seconds=options["measure_seconds"],
+                    options=profiling_options(options),
                 )
             del program
             for relative in candidates:

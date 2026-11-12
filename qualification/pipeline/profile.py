@@ -7,17 +7,14 @@ from pathlib import Path
 from mlops.dispatch import deterministic_kernels
 
 from benchmarking.spill import resolve
+from orchestration.profiling import profiling_options
 from shadowspill import Program, apply_profiles, measure_communication, measure_program
 
 
 def run(directory: Path) -> None:
     settings = json.loads((directory / "settings.json").read_text())
     program = Program.load(directory / "program.ssp")
-    timing = {
-        key: settings[key]
-        for key in ("warmup_seconds", "measure_seconds")
-        if key in settings
-    }
+    timing = {"options": profiling_options(settings)}
     with deterministic_kernels(settings.get("deterministic", False)):
         profiles = measure_program(
             program,

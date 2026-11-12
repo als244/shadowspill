@@ -2,6 +2,8 @@
 
 import argparse
 
+from shadowspill import ProfilingOptions
+
 
 def parser():
     parser = argparse.ArgumentParser(description=__doc__)
@@ -46,8 +48,12 @@ def parser():
     parser.add_argument("--seed", type=int, default=0)
     parser.add_argument("--execution-gib", type=float)
     parser.add_argument("--spill-gib", type=float)
-    parser.add_argument("--warmup-seconds", type=float, default=0.05)
-    parser.add_argument("--measure-seconds", type=float, default=0.18)
+    parser.add_argument(
+        "--warmup-seconds", type=float, default=ProfilingOptions().conditioning_seconds
+    )
+    parser.add_argument(
+        "--measure-seconds", type=float, default=ProfilingOptions().measurement_seconds
+    )
     parser.add_argument("--refresh-profiles", action=argparse.BooleanOptionalAction)
     parser.add_argument("--no-plots", dest="plots", action="store_false")
     parser.add_argument("--resume", help="Saved Trainer checkpoint archive")

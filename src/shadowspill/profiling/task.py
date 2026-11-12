@@ -29,22 +29,13 @@ def measure_task(
     manifest: Mapping[str, Any],
     *,
     device: torch.device,
-    warmup_seconds: float,
-    measure_seconds: float,
+    options: ProfilingOptions,
     continue_while: Callable[[bool, bool], bool] | None = None,
     check: Callable[[str | None], None] | None = None,
 ) -> TaskProfile:
     started = perf_counter_ns()
     cold = observe_task(function, arguments, device=device)
     cold_done = perf_counter_ns()
-    timer = EventTimer(lambda: function(*arguments))
-    options = ProfilingOptions(
-        conditioning_seconds=warmup_seconds, measurement_seconds=measure_seconds
-    )
-    conditioning = condition_task(
-        timer.sample, options=options, continue_while=continue_while
-    )
-    conditioned = perf_counter_ns()
     observations = [observe_task(function, arguments, device=device) for _ in range(3)]
     observed = perf_counter_ns()
     # All ranks must validate before any rank starts more communicating samples.
@@ -77,6 +68,13 @@ def measure_task(
     if check is not None:
         check(None)
     validated = perf_counter_ns()
+    timer = EventTimer(lambda: function(*arguments))
+    conditioning = condition_task(
+        timer.sample, options=options, continue_while=continue_while
+    )
+    conditioned = perf_counter_ns()
+    # Keep allocation decoding, validation and task preparation before this
+    # adjacent conditioning/timing pair, so CPU work cannot cool the task here.
     timing = collect_timing_samples(
         timer.sample, options=options, continue_while=continue_while
     )
@@ -141,10 +139,10 @@ def measure_task(
             "profiling_wall_ns": finished - started,
             "phase_timings_ns": {
                 "cold_observation": cold_done - started,
-                "conditioning": conditioned - cold_done,
-                "warm_observations": observed - conditioned,
+                "warm_observations": observed - cold_done,
                 "validation": validated - observed,
-                "timing": timed - validated,
+                "conditioning": conditioned - validated,
+                "timing": timed - conditioned,
                 "layout": finished - timed,
             },
             "allocation_observation_timings_ns": [

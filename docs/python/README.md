@@ -29,6 +29,7 @@ Entry points and contracts, grouped by responsibility.
 
 - [Framework-neutral Python APIs](api/neutral.md)
 - [Reusable planning artifacts](api/artifacts.md)
+- [Profiling controls and measurement evidence](api/profiling.md)
 - [Capacity-bound pool memory](api/pool-memory.md)
 - [Trainer and Executor](api/training.md)
 - [Distributed planning and training](api/distributed.md)

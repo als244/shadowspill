@@ -25,6 +25,7 @@ from shadowspill.pytorch.task_inputs import prepare_inputs
 from shadowspill.pytorch.toolchain import build_setup
 from shadowspill.resources.description import resource_groups
 from shadowspill.resources.preparation import prepare_resources
+from shadowspill.task.profiling import ProfilingOptions
 
 from .cache_identity import task_identities
 from .overlap_cache import OverlapProfileCache, observed_cost
@@ -237,8 +238,7 @@ class _OverlapSession(MeasurementSession):
             profiled.program,
             device,
             inputs,
-            0,
-            0,
+            ProfilingOptions(conditioning_seconds=0, measurement_seconds=0),
             groups=groups,
             preparations=preparations,
         )

@@ -2,6 +2,7 @@
 
 from benchmarking.spill import resolve as spill_pool
 from orchestration.communication import communication_probes
+from orchestration.profiling import profiling_options
 from orchestration.workers import workers
 from shadowspill import (
     CommunicationInfo,
@@ -45,8 +46,7 @@ def run(request):
             collectives=collectives,
             rank_map=group.rank_map,
             device=request["device"],
-            warmup_seconds=request["warmup_seconds"],
-            measure_seconds=request["measure_seconds"],
+            options=profiling_options(request),
             spill=spill_pool(request),
         )
         if group.rank == 0:

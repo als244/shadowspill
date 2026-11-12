@@ -29,6 +29,7 @@ def main(argv=None):
     parser.add_argument("--rank-map", type=json.loads)
     parser.add_argument("--warmup-seconds", type=float)
     parser.add_argument("--measure-seconds", type=float)
+    parser.add_argument("--profiling", type=json.loads)
     parser.add_argument("--external-headroom-gib", type=float)
     parser.add_argument("--search-workers", type=int)
     parser.add_argument(
@@ -93,6 +94,7 @@ def main(argv=None):
         "steps",
         "warmup_seconds",
         "measure_seconds",
+        "profiling",
         "search_workers",
         "plots",
         "rank_map",

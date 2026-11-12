@@ -705,6 +705,7 @@ def test_current_contract_docs_are_backend_and_topology_neutral() -> None:
             ROOT / "orchestration/README.md",
             DOCS / "architecture/offline-pipeline.md",
             DOCS / "python/api/distributed.md",
+            DOCS / "python/api/profiling.md",
         }  # These document the concrete framework/device phase boundaries.
     }
     violations = {path: values for path, values in violations.items() if values}

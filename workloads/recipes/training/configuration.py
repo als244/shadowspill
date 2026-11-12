@@ -7,6 +7,8 @@ from collections.abc import Mapping
 from os import PathLike, fspath
 from pathlib import Path, PurePosixPath
 
+from orchestration.profiling import profiling_options
+
 PHASES = {"all", "build", "profile", "communicate", "plan", "execute"}
 DEFAULTS = dict(
     run_dir=None,
@@ -16,8 +18,9 @@ DEFAULTS = dict(
     execution_gib=28,
     spill_gib=144,
     external_headroom_mib=512,
-    warmup_seconds=0.05,
-    measure_seconds=0.18,
+    profiling=None,
+    warmup_seconds=None,
+    measure_seconds=None,
     refresh_profiles=False,
     plots=True,
     eval_every=2,
@@ -47,6 +50,9 @@ MUTABLE = {
     "spill_gib",
     "pool_memory",
     "refresh_profiles",
+    "profiling",
+    "warmup_seconds",
+    "measure_seconds",
     "checkpoint_every",
     "keep_last",
     "nsys_steps",
@@ -76,6 +82,8 @@ def configure(recipe, config, phase):
         key: fspath(value) if isinstance(value, PathLike) else value
         for key, value in config.items()
     }
+    if requested.get("profiling") is not None:
+        requested["profiling"] = profiling_options(requested).to_dict()
     for key in (
         "pool_memory",
         "resume",
@@ -113,6 +121,11 @@ def configure(recipe, config, phase):
                 )
             if key == "refresh_profiles" and phase != "profile":
                 raise ValueError("changed refresh_profiles requires phase='profile'")
+            if (
+                key in {"profiling", "warmup_seconds", "measure_seconds"}
+                and phase != "profile"
+            ):
+                raise ValueError("changed profiling options require phase='profile'")
             if (
                 key
                 in {
@@ -156,7 +169,7 @@ def configure(recipe, config, phase):
                 raise ValueError(
                     "evaluation/checkpoint cadence must lie outside capture"
                 )
-    for key in ("execution_gib", "spill_gib", "measure_seconds"):
+    for key in ("execution_gib", "spill_gib"):
         if (
             isinstance(options[key], bool)
             or not isinstance(options[key], int | float)
@@ -164,8 +177,9 @@ def configure(recipe, config, phase):
             or options[key] <= 0
         ):
             raise ValueError(f"{key} must be positive")
-    if options["warmup_seconds"] < 0 or options["external_headroom_mib"] < 0:
-        raise ValueError("warmup and headroom must be nonnegative")
+    profiling_options(options)
+    if options["external_headroom_mib"] < 0:
+        raise ValueError("headroom must be nonnegative")
     if type(options.get("refresh_profiles", False)) is not bool:
         raise ValueError("refresh_profiles must be a boolean")
     if options["preparation_ranks"] not in (1, options["ranks"]):

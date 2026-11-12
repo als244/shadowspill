@@ -41,6 +41,7 @@ def _measure(
             "duration_seconds": median(row[index] for row in samples) / 1e9,
             "samples": len(samples),
             "target_met": timing.window.target_met,
+            "limit": timing.window.limit,
             "relative_mad": timing.relative_mad,
             "half_drift": timing.half_drift,
         }

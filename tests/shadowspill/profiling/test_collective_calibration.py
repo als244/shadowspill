@@ -94,8 +94,10 @@ def _worker(worker, rendezvous):
             setup={"test_backend": "gloo"},
             options=ProfilingOptions(
                 conditioning_seconds=0.001,
+                conditioning_max_samples=2,
                 conditioning_wall_seconds=0.1,
                 measurement_seconds=0.002,
+                maximum_samples=4,
                 measurement_wall_seconds=0.2,
             ),
             bindings=bound,
@@ -105,6 +107,7 @@ def _worker(worker, rendezvous):
         for row in rows:
             peers = row["per_rank"]
             assert len({peer["samples"] for peer in peers}) == 1
+            assert all(3 <= peer["samples"] <= 4 for peer in peers)
             assert len(peers) == len(row["ranks"])
             assert row["duration_seconds"] > 0
             info = CommunicationInfo(

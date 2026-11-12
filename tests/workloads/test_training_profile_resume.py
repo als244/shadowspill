@@ -6,7 +6,7 @@ from types import SimpleNamespace
 import pytest
 
 from orchestration.workers import Workers
-from shadowspill import ProfiledProgram
+from shadowspill import ProfiledProgram, ProfilingOptions
 from tests.shadowspill.offline._example import profiles, program
 from workloads.recipes.training import profile, profile_reuse
 
@@ -17,6 +17,7 @@ def prepared(tmp_path, monkeypatch):
     measured = profiles()
     measured.setup = {"gpu": "fixture"}
     measured.metadata.update(memory_kind="measured", external_headroom_bytes=0)
+    measured.metadata["profiling_options"] = ProfilingOptions().to_dict()
     candidate = {"path": "candidate/batch-1"}
     options = {"eval_every": 1, "external_headroom_mib": 0}
     group = Workers(0, {0: 0})
@@ -104,3 +105,9 @@ def test_target_validation_precedes_reuse(prepared, monkeypatch):
     p = prepared
     with pytest.raises(ValueError, match="target differs"):
         profile_reuse.completed(p.path, p.model, p.options, p.group)
+
+
+def test_changed_timing_policy_requires_fresh_measurement(prepared):
+    p = prepared
+    changed = {**p.options, "profiling": {"maximum_samples": 7}}
+    assert profile_reuse.completed(p.path, p.model, changed, p.group) is None

@@ -5,6 +5,7 @@ from datetime import timedelta
 
 import torch.distributed as dist
 
+from orchestration.profiling import profiling_options
 from shadowspill import Program, measure_communication
 from workloads.recipes.phases import settings
 
@@ -17,8 +18,7 @@ def run(directory):
             program=Program.load(root / "program.ssp"),
             rank_map={rank: rank for rank in range(options["ranks"])},
             device="cuda:0",
-            warmup_seconds=options["warmup_seconds"],
-            measure_seconds=options["measure_seconds"],
+            options=profiling_options(options),
         )
         if dist.get_rank() == 0:
             communication.save(root / "communication.ssp")
