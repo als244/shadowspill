@@ -6,8 +6,10 @@ execution worker then loads the saved Plan, one per kind of GPU when ranks
 differ in hardware, and binds its logical rank.
 Only execution opens ShadowSpill's runtime pools. The CUDA training path supports
 symmetric DP with weights, gradients and optimizer data sharded over the same
-groups; broader declarations and ranks that differ in hardware are described
-below with their implementation limits.
+groups. Model-owned expert parallelism also runs through compatible providers;
+the Qwen3 recipe has completed an eight-H100 DP/EP budget sweep. Broader
+declarations and ranks that differ in hardware are described below with their
+implementation and [qualification limits](#qualification-scope).
 
 ## Simple DP
 
@@ -116,9 +118,10 @@ exchange = parallelism.group("partition")
 
 This describes ownership, not an executable EP recipe. The model supplies each
 local expert slice and the distributed operation. Builders lower local
-parameter shards and replicated optimizer updates alongside sharded DP. Their
-build/profile and CPU planning checks pass; their multi-GPU execution is outside
-the [qualification scope](#qualification-scope). Model-owned communication binds
+parameter shards and replicated optimizer updates alongside sharded DP. The
+16-rank, two-group example above is illustrative; its complete multi-GPU
+execution is outside the [qualification scope](#qualification-scope). The tested
+eight-rank Qwen EP recipe uses a different layout. Model-owned communication binds
 through [provider resources](../../architecture/resources.md), whose group
 references execution resolves to the process groups it creates.
 Weights and gradients may be replicated while optimizer data is sharded; when
@@ -336,6 +339,10 @@ Checkpoint helpers stream owned tensor chunks. Use distinct archive paths per
 logical rank. A checkpoint rejects a different logical rank, but can be restored
 by another launcher rank assigned to that same logical rank. The helpers
 assume unchanged topology and do not reshard a checkpoint automatically.
+The default saves the authoritative master weights and reconstructs the compute
+copy only when this rank owns the required source elements in a compatible
+layout. A locally sharded master may not cover a replicated compute tensor;
+in that case the checkpoint keeps both copies and records the reason.
 See [Trainer checkpoints](training.md) for loop/source state and frozen-base
 partial checkpoints.
 
@@ -347,5 +354,24 @@ checkpoint restoration and shared evaluation. Tiny catalog full-training and
 LoRA also have separate distributed checks. These do not qualify every model,
 provider, repeated-replica layout or arbitrary model-owned communication path.
 The baseline controller has also passed full-training and LoRA checks
-on two H100s. The [phase guide](../../architecture/offline-pipeline.md) describes the
+on two H100s.
+
+The [Qwen3 recipe](../../../workloads/recipes/text/qwen3/README.md#eight-h100-budget-sweep)
+has completed seven full-model updates on eight H100s at each of 20, 40 and
+77 GiB per GPU, with both sharded DP and EP8. Those throughput runs use real
+tokenized text, random host initialization and a 96 GiB spill limit per rank;
+their recorded revisions and search candidates are listed in the recipe guide.
+They do not include checkpoint/evaluation I/O or a full tensor-reference check.
+EP task profiles include provider-owned collectives; additional EP contention
+calibration is not implemented. The current Qwen EP provider has no declared
+axis-chunk contract, so the recipe refuses execution chunking for those tasks.
+
+Separate two-H100 checks of the current checkpoint format cover DP restoration
+in a fresh process followed by two exact continuation updates, including uneven
+shards and reversed logical rank order. EP checks cover exact in-worker
+restoration of expert and shared state, including optimizer state. These checks
+use unchanged rank ownership and world size; fresh-process EP continuation and
+checkpoint resharding are not covered by them.
+
+The [phase guide](../../architecture/offline-pipeline.md) describes the
 implementation boundary; [phase artifacts](artifacts.md) describes persistence.
