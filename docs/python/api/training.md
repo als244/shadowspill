@@ -213,8 +213,11 @@ master weight is stored once and its compute copy is reconstructed on load.
 `weights="compute"` instead saves the compute copy and reconstructs the master
 from its rounded values, intentionally losing the master's additional precision.
 Parameters without masters, optimizer state, buffers and stored gradients remain
-independent of this choice. Encoded weights, incompatible layouts or insufficient
-rank-owned coverage retain both copies; the manifest records why.
+independent of this choice. Replicated compute weights with sharded masters are
+reconstructed collectively during load, using bounded CPU transfers after local
+archive checks. Ordinary sharded DP derives only the local compute shard;
+normal execution gathers it as needed. Encoded weights or incompatible physical
+layouts retain the required copies; the manifest records why.
 It also saves Trainer progress and optional input-source state. `load` restores
 those tensors and counters into an already admitted compatible worker. File
 formatting lives in checkpoint helpers rather than the Executor itself.

@@ -11,6 +11,7 @@ import torch
 from shadowspill.artifacts.plan import Plan
 from shadowspill.communication.binding.ranks import RankAssignment
 from shadowspill.memory import SpillPool
+from shadowspill.parallelism import GroupRef
 from shadowspill.pytorch.invocation import InvocationResult, ReusableCompletionEvent
 from shadowspill.pytorch.numerics import validate_numerical_settings
 from shadowspill.runtime.plan.annotations import TaskBoundaryAnnotations
@@ -21,6 +22,7 @@ from .distributed.sequence import independent_plans
 from .inputs import stage_inputs
 from .paths import ExecutionPath
 from .results import TrainingResult, collect_outputs
+from .tensor_copies import reconstruct_replicas
 from .tensors import TensorChunk, tensor_descriptors, visit_tensors
 from .tracing import InvocationTrace
 from .worker import create_paths
@@ -102,7 +104,16 @@ class Executor:
         *,
         chunk_bytes: int = 64 << 20,
         restore: bool = False,
+        replicated_copies: Mapping[str, tuple[str, GroupRef]] | None = None,
     ) -> None:
+        """Fill owned state, then optionally reconstruct declared replicas.
+
+        ``replicated_copies`` maps a destination name to a source name and its
+        ordered shard-owner group. The callback may leave those destinations
+        untouched: bounded CPU transfers fill them after all local reads pass.
+        All workers must participate, including workers with an empty mapping.
+        This is initialization, not an optimizer update or checkpoint reshard.
+        """
         self.synchronize()
         self._initialized = False
 
@@ -126,6 +137,22 @@ class Executor:
                 )
 
         coordinated(self._distributed, fill)
+        if replicated_copies is not None:
+            coordinated(
+                self._distributed,
+                lambda: reconstruct_replicas(
+                    {
+                        "": self._paths[0].storage,
+                        **{
+                            f"plans.{name}.": path.storage
+                            for name, path in self._named_paths.items()
+                        },
+                    },
+                    replicated_copies,
+                    self._distributed,
+                    chunk_bytes,
+                ),
+            )
         self._initialized = True
 
     def export_tensors(

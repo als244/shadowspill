@@ -13,6 +13,7 @@ from typing import TYPE_CHECKING, Any, cast
 import torch
 
 from shadowspill.artifacts.tensors import TensorChunk
+from shadowspill.parallelism import GroupRef
 
 from .archive import ContentHash, read_manifest
 from .frozen import validate_restore
@@ -46,14 +47,16 @@ def _manifest(archive: tarfile.TarFile, executor: Executor) -> dict[str, Any]:
                 omitted=(
                     *manifest.get("omitted_parameters", ()),
                     *manifest.get("derived_tensors", {}),
+                    *manifest.get("gathered_tensors", {}),
                 ),
             )
         )
     selection = select_weights(executor, manifest.get("weights"))
     if (
         manifest.get("derived_tensors") != selection.derived
+        or manifest.get("gathered_tensors") != selection.gathered
         or manifest.get("retained_weight_copies") != selection.retained
-        or set(selection.derived).intersection(
+        or (set(selection.derived) | set(selection.gathered)).intersection(
             entry["name"] for entry in manifest["tensors"]
         )
     ):
@@ -215,6 +218,8 @@ def load_checkpoint(
     for the omitted base parameters, even when the Executor was initialized.
     Ordinary omitted weight copies are reconstructed by bounded casts from the
     archive's selected representation; encoded representations remain physical.
+    Replicated compute weights are reconstructed collectively from restored
+    master shards using bounded CPU transfers. All distributed workers call load.
     """
     with tarfile.open(path, "r:") as archive:
         manifest = _manifest(archive, executor)
@@ -226,6 +231,7 @@ def load_checkpoint(
         reader = _Reader(archive, manifest)
         chunks = {chunk.name: chunk for chunk in executor.tensor_chunks()}
         derived = manifest["derived_tensors"]
+        gathered = manifest["gathered_tensors"]
 
         def fill(chunk: TensorChunk, tensor: torch.Tensor) -> None:
             if chunk.name in omitted:
@@ -233,8 +239,20 @@ def load_checkpoint(
                 fill_tensor(chunk, tensor)
             elif chunk.name in derived:
                 reader.derive(chunks[derived[chunk.name]], chunk, tensor, chunk_bytes)
+            elif chunk.name in gathered:
+                # Every valid element is filled after the coordinated local
+                # reads. Avoid an unnecessary full-replica zeroing pass.
+                return
             else:
                 reader.fill(chunk, tensor)
 
-        executor.initialize(fill, chunk_bytes=chunk_bytes, restore=True)
+        executor.initialize(
+            fill,
+            chunk_bytes=chunk_bytes,
+            restore=True,
+            replicated_copies={
+                name: (item["source"], GroupRef(name, item["groups"]))
+                for name, item in gathered.items()
+            },
+        )
         return dict(manifest["metadata"])

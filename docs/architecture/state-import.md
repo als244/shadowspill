@@ -171,22 +171,34 @@ of this choice. `Trainer.save` accepts the same setting.
 
 The selected representation is authoritative. Reconstruction uses captured
 optimizer ownership, registered storage aliases and the receiving rank's tensor
-geometry. A source must cover the destination's complete owned region. Packed
+geometry. A local source must cover the destination's complete owned region.
+Replicated compute weights can instead be reconstructed collectively from the
+restored master shards in their declared optimizer group. Each rank saves only
+its master shard; after all local reads and checksums succeed, bounded CPU
+broadcasts cast and fill the already allocated replicas. This adds no full
+GPU weight allocation and runs no optimizer update. Normal sharded DP still
+derives its local compute shard and gathers it during normal execution.
+Packed
 or scaled tensor components, storage with holes or unused backing elements,
-incompatible storage layouts, and insufficient
-local shard coverage retain both physical copies; the manifest's
+incompatible storage layouts, and unsupported ownership combinations retain
+the required physical copies; the manifest's
 `retained_weight_copies` records the reason. A plain payload is never mistaken
 for a logical encoded weight. Frozen encoded bases can still be omitted using
 `frozen_state_id` independently of this policy.
 
-The archive records the selection and derived-tensor relationships, validates
+The archive records the selection, local derived tensors and collectively
+gathered tensors, validates
 them against the receiving Program, and checksums each stored source completely.
 Restoration uses at most one ordinary CPU scratch chunk for casts, in addition
 to the destination supplied by Executor. It rereads the selected source when
 filling the derived copy, avoiding a whole-model snapshot or dependency on
 Executor's initialization order. This trades extra read/checksum work during
 restore for a smaller checkpoint. A subregion restore still validates all bytes
-of its selected source. Version 2 archives encode this contract; older archives
+of its selected source. Collective reconstruction reads the restored host shards
+instead of rereading the archive and uses bounded host transfer buffers.
+`Executor.initialize(replicated_copies={name: (source_name, group_ref)})` is the
+underlying initialization primitive; it is separate from archive parsing and
+requires every worker to participate. Version 2 archives encode this contract; older archives
 without it are not accepted.
 
 For large export chunks, BLAKE3 hashing overlaps the archive write in one CPU

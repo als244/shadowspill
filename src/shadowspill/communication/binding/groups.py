@@ -30,6 +30,8 @@ class GroupBindings:
             raise RuntimeError("initialize worker rendezvous before binding groups")
         self._owned: list[dist.ProcessGroup] = []
         self._groups: dict[tuple[int, ...], dist.ProcessGroup] = {}
+        self._host_groups: dict[tuple[int, ...], dist.ProcessGroup] = {}
+        self._timeout = timeout
         try:
             # CPU validation precedes backend group creation. An invalid local
             # assignment must be reported to peers rather than strand them.
@@ -120,6 +122,28 @@ class GroupBindings:
         dist.all_gather_object(observed, value, group=self._control)
         return observed
 
+    def bind_host_groups(self, groups: Sequence[Sequence[int]]) -> None:
+        """Bind an agreed, globally ordered set of CPU tensor-transfer groups.
+
+        Used outside invocation for bounded state restoration. Every worker
+        supplies the same groups, including groups it does not belong to.
+        """
+        for members in sorted(set(tuple(group) for group in groups)):
+            if members in self._host_groups:
+                continue
+            group = dist.new_group(
+                ranks=list(self.assignment.workers(members)),
+                backend="gloo",
+                timeout=self._timeout,
+                sort_ranks=False,
+            )
+            self._host_groups[members] = group
+            if self.logical_rank in members:
+                self._owned.append(group)
+
+    def host_group(self, members: Sequence[int]) -> dist.ProcessGroup:
+        return self._host_groups[tuple(members)]
+
     def check(self, error: str | None) -> None:
         failures = [
             f"worker {worker}: {item}"
@@ -138,3 +162,4 @@ class GroupBindings:
             dist.destroy_process_group(group)
         self._owned.clear()
         self._groups.clear()
+        self._host_groups.clear()

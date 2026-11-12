@@ -120,7 +120,9 @@ def save_checkpoint(
     With frozen_state_id, omit unchanged frozen parameters; retain trainable
     tensors, optimizer state, buffers and anything mutated by an admitted Plan.
     ``weights="master"`` saves ordinary master weights once and derives compute
-    copies on load. ``"compute"`` instead reconstructs masters from rounded
+    copies on load. Replicated compute weights with sharded masters are rebuilt
+    collectively from those shards, without storing the compute replicas.
+    ``"compute"`` instead reconstructs masters from rounded
     compute values. Encoded representations or incompatible owned layouts retain
     both copies, with the reason recorded in ``retained_weight_copies``.
     """
@@ -141,7 +143,11 @@ def save_checkpoint(
             writer = _Writer(stream.file)
 
             def write(chunk: TensorChunk, tensor: torch.Tensor) -> None:
-                if chunk.name not in omitted and chunk.name not in selection.derived:
+                if (
+                    chunk.name not in omitted
+                    and chunk.name not in selection.derived
+                    and chunk.name not in selection.gathered
+                ):
                     writer.write(chunk, tensor)
 
             try:
@@ -168,6 +174,7 @@ def save_checkpoint(
                     "omitted_parameters": sorted(omitted),
                     "weights": weights,
                     "derived_tensors": selection.derived,
+                    "gathered_tensors": selection.gathered,
                     "retained_weight_copies": selection.retained,
                 }
             )

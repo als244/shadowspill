@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from collections import defaultdict
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Literal
 
 from shadowspill.artifacts.tensors import registration_name
@@ -19,6 +19,7 @@ type WeightRepresentation = Literal["master", "compute"]
 class WeightSelection:
     derived: dict[str, str]
     retained: dict[str, str]
+    gathered: dict[str, dict[str, Any]] = field(default_factory=dict)
 
 
 def _length(chunk: TensorChunk) -> int:
@@ -44,7 +45,7 @@ def _covers_storage(chunk: TensorChunk) -> bool:
 
 
 def select_weights(executor: Executor, weights: object) -> WeightSelection:
-    """Omit a copy only when this rank can reconstruct its complete owned region.
+    """Omit a copy when owned state can reconstruct it locally or collectively.
 
     Encoded tensor components and incompatible layouts retain their physical
     state. Their conversion is not an ordinary dtype cast; the manifest reports
@@ -55,12 +56,18 @@ def select_weights(executor: Executor, weights: object) -> WeightSelection:
     chunks = {chunk.name: chunk for chunk in executor.tensor_chunks()}
     derived: dict[str, str] = {}
     retained: dict[str, str] = {}
+    gathered: dict[str, dict[str, Any]] = {}
     for prefix, plan in (
         ("", executor.plan),
         *((f"plans.{name}.", plan) for name, plan in executor.plans.items()),
     ):
         program = plan.program
         bindings = getattr(program, "bindings", {})
+        ownership = {
+            name: item
+            for item in bindings.get("parameter_ownership", ())
+            for name in item["names"]
+        }
         copies: dict[str, list[dict[str, Any]]] = defaultdict(list)
         masters: dict[str, list[dict[str, Any]]] = defaultdict(list)
         for binding in bindings.get("optimizer_bindings", ()):
@@ -122,6 +129,20 @@ def select_weights(executor: Executor, weights: object) -> WeightSelection:
             if not _covers_storage(source):
                 retained[label] = "logical weight copy does not cover its full storage"
                 continue
+            owner = ownership.get(parameter, {}).get("optimizer")
+            if (
+                weights == "master"
+                and owner is not None
+                and len(owner["groups"][0]) > 1
+                and compute_alias not in bindings.get("weight_shards", {})
+                and target.region_offset == 0
+                and _length(target) == source.storage_elements == owner["elements"]
+            ):
+                gathered[target.name] = {
+                    "source": source.name,
+                    "groups": [list(group) for group in owner["groups"]],
+                }
+                continue
             if (
                 source.region_offset > target.region_offset
                 or source.region_offset + _length(source)
@@ -134,4 +155,4 @@ def select_weights(executor: Executor, weights: object) -> WeightSelection:
             derived[target.name] = source.name
     if set(derived) & set(derived.values()):
         raise ValueError("checkpoint weight reconstruction cannot contain chains")
-    return WeightSelection(derived, retained)
+    return WeightSelection(derived, retained, gathered)

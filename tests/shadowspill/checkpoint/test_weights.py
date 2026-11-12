@@ -198,7 +198,8 @@ class OwnedExecutor:
     def export_tensors(self, callback, *, chunk_bytes):
         visit_tensors(self.storage, callback, chunk_bytes, initialize=False)
 
-    def initialize(self, callback, *, chunk_bytes, restore):
+    def initialize(self, callback, *, chunk_bytes, restore, replicated_copies=None):
+        assert not replicated_copies
         self.initialized = False
         visit_tensors(
             self.storage, callback, chunk_bytes, initialize=True, restore=restore
@@ -206,9 +207,10 @@ class OwnedExecutor:
         self.initialized = True
 
 
-@pytest.mark.parametrize("replicated", [False, True])
+@pytest.mark.parametrize(
+    "replicated,weights", [(False, "master"), (False, "compute"), (True, "compute")]
+)
 @pytest.mark.parametrize("rank", [0, 1])
-@pytest.mark.parametrize("weights", ["master", "compute"])
 def test_owned_tail_shards_and_replicated_compute_copies(
     tmp_path, rank, weights, replicated
 ):
@@ -232,11 +234,8 @@ def test_owned_tail_shards_and_replicated_compute_copies(
     path = tmp_path / "shard.ssp"
     save_checkpoint(executor, path, weights=weights, chunk_bytes=11)
     info = manifest(path)
-    if replicated and weights == "master":
-        assert not info["derived_tensors"]
-        assert "does not cover" in info["retained_weight_copies"]["layer.weight"]
-    else:
-        assert len(info["derived_tensors"]) == 1
+    assert len(info["derived_tensors"]) == 1
+    assert not info["gathered_tensors"]
     for value in executor.values.values():
         value.fill_(-7)
     load_checkpoint(executor, path, chunk_bytes=13)

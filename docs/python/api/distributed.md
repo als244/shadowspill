@@ -339,10 +339,16 @@ Checkpoint helpers stream owned tensor chunks. Use distinct archive paths per
 logical rank. A checkpoint rejects a different logical rank, but can be restored
 by another launcher rank assigned to that same logical rank. The helpers
 assume unchanged topology and do not reshard a checkpoint automatically.
-The default saves the authoritative master weights and reconstructs the compute
-copy only when this rank owns the required source elements in a compatible
-layout. A locally sharded master may not cover a replicated compute tensor;
-in that case the checkpoint keeps both copies and records the reason.
+The default saves each rank's authoritative master shards. Sharded compute
+weights are reconstructed locally and gathered by the normal Plan when needed.
+For replicated compute weights with sharded masters, all workers participate
+in restore: after validating their local archives, they exchange bounded CPU
+chunks to reconstruct the complete replicas before the first forward. This
+does not allocate a full weight tensor on the GPU or run an optimizer step.
+`weights="compute"` instead saves compute weights and recreates local masters
+from their rounded values. Parameters without masters retain their normal
+owned storage. Encoded or incompatible physical layouts still keep their
+required physical copies and record the reason.
 See [Trainer checkpoints](training.md) for loop/source state and frozen-base
 partial checkpoints.
 

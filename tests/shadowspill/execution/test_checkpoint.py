@@ -46,8 +46,9 @@ class MemoryExecutor:
                     chunk,
                 )
 
-    def initialize(self, callback, *, chunk_bytes, restore):
+    def initialize(self, callback, *, chunk_bytes, restore, replicated_copies=None):
         assert restore
+        assert not replicated_copies
         self.initialized = False
         self.export_tensors(callback, chunk_bytes=chunk_bytes)
         self.initialized = True
