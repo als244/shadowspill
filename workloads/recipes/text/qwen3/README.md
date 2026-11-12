@@ -37,8 +37,8 @@ Set `parallelism="ep"` to distribute experts across the rank group. EP build and
 profiling require every resource participant; each microbatch candidate gets its
 own token-capacity resource. EP execution chunks are currently refused because
 the provider has no declared axis-chunk contract. This is independent of DP
-execution chunking and checkpoint recomputation. The new public EP campaign is
-pending; the historical performance table below covers DP only.
+execution chunking and checkpoint recomputation. Both DP8 and EP8 have completed
+the budget sweep below; its EP runs use unchunked execution.
 
 For full-training DP, chunk candidates currently split the surrounding dense
 projections. Its opaque MoE operations contain sequence-length metadata and
@@ -64,13 +64,15 @@ train(model, {**saved, "execution_gib": 40}, phase="plan")
 train(model, saved, phase="execute")
 ```
 
-The distributed `communicate` phase measures host copies and collectives, then
-paired task/NCCL interference for each saved batch candidate. It saves
-`overlap/{candidate}/training.ssp` and merges the measurements into the profiles.
-Planning uses these measured progress rates when transfers overlap computation;
-the original isolated task timing and memory contracts stay intact. Changing
-budgets reuses this evidence. Changing task implementations or the communication
-setup requires compatible new measurements. See
+The distributed `communicate` phase measures host copies and collectives. For
+DP it also measures paired task/NCCL interference for each saved batch candidate,
+saves `overlap/{candidate}/training.ssp` and merges the measurements into the
+profiles. Planning uses these measured progress rates when transfers overlap
+computation; the original isolated task timing and memory contracts stay intact.
+EP task timings include their internal collectives; extra EP contention
+calibration is not implemented. Changing budgets reuses compatible evidence.
+Changing task implementations or the communication setup requires compatible
+new measurements. See
 [distributed calibration](../../../../docs/python/api/distributed.md#communication-calibration-and-cpu-planning)
 for the public API and measurement limits.
 
@@ -78,12 +80,12 @@ The shared workers have one purpose each; recipe modules delegate to them:
 
 | File | Responsibility | Saved output |
 | --- | --- | --- |
-| `build.py` | Adapter setup, task compilation, resource declarations | `programs/{candidate}/training.ssp` |
-| `profile.py` | Task timing and memory on one representative GPU | `profiles/`, `profiled/` |
-| `communicate.py` | Host copies, collectives, communication memory and paired task interference | `communication/`, `overlap/`, enriched `profiles/` and `profiled/` |
-| `plan.py` | Microbatch, chunk, retention and ordering search under memory budgets | `search.json`, `selected.json`, `plans/training.ssp`, `reports/` |
-| `execute.py` | Fresh worker, bounded initialization, Trainer updates/checkpoint | `training/rank-NNNNN/` |
-| `../initialization.py` | Identical random tensor values across shards/chunk sizes | Fills Executor buffers |
+| [Shared build](../../training/build.py) | Adapter setup, task compilation, resource declarations | `programs/{candidate}/training.ssp` |
+| [Shared profile](../../training/profile.py) | Task timing and memory; one representative DP worker or all EP participants | `profiles/`, `profiled/` |
+| [Shared communicate](../../training/communicate.py) | Host copies, collectives, communication memory and supported paired task interference | `communication/`, `overlap/`, enriched `profiles/` and `profiled/` |
+| [Shared plan](../../training/plan.py) | Microbatch, chunk, retention and ordering search under memory budgets | `search.json`, `selected.json`, `plans/training.ssp`, `reports/` |
+| [Shared execute](../../training/execute.py) | Fresh worker, bounded initialization, Trainer updates/checkpoint | `training/rank-NNNNN/` |
+| [Text initialization](../initialization.py) | Identical random tensor values across shards/chunk sizes | Fills Executor buffers |
 
 `--microbatch-sizes` lists the exact candidates to build and profile. The default
 is `1 2 4 8 16 32`; for example, `--microbatch-sizes 4 16` builds only those two
@@ -109,7 +111,39 @@ and execution load those artifacts without retuning inside a task. An eager
 compiler cache is not a substitute for these saved bindings. Other providers
 keep their own preparation contracts.
 
-## Measured eight-H100 run
+## Eight-H100 budget sweep
+
+The November 10–11 campaign completed seven updates at every budget with
+4,096-token sequences, 64 sequences per rank and 2,097,152 global tokens per
+update. Both layouts used real tokenized FineWeb-Edu data, random host
+initialization, BF16 compute weights, FP32 gradients/master weights/Adam moments,
+and a 96 GiB maximum pinned spill pool per rank. Evaluation and checkpoint I/O
+were disabled for this throughput protocol. Measured time is the median of
+the slowest rank's `Trainer.step` time over updates 2–7.
+
+| Device budget per rank | DP8 predicted | DP8 measured | EP8 predicted | EP8 measured |
+| --- | ---: | ---: | ---: | ---: |
+| 20 GiB | 18.313 s | 18.712 s | 23.105 s | 25.390 s |
+| 40 GiB | 17.761 s | 18.556 s | 22.964 s | 25.183 s |
+| 77 GiB | 17.619 s | 18.181 s | 22.500 s | 24.540 s |
+
+DP searched microbatch sizes `[8, 16, 32]`, projection chunks `[0, 1024]` and all
+three graph-pair policies: 18 built/profiled Programs. EP searched the same
+microbatch and policy lists with unchunked execution: nine Programs. Both
+searched factor orderings and crossed tail counts `[0, 1, 2, 4, 8, 16]` with
+resolution options `["0", "1/4", "1/2", "3/4", "1"]`. All winners selected
+`cost-input` and unchunked execution. DP selected batch 16 / `1x4rp` at 20 GiB
+and batch 32 / `1x2rp` at 40 and 77 GiB. EP selected batch 16 at every budget,
+with `2x2rp` at 20/40 GiB and `4x1rp` at 77 GiB.
+
+The DP record uses engine `17c48169`; EP uses `af404765`; both use MLOps
+`403cb240`. These are results at the recorded revisions, not measurements of
+every later change. All ranks completed their updates with finite losses,
+consistent global loss reductions and admitted spill capacities. These short
+throughput runs do not establish convergence or a full tensor-reference check.
+EP measured about 9–10% above prediction; attribution of that gap remains open.
+
+## Earlier 20 GiB comparison
 
 The November 9, 2026 full-model check used FineWeb-Edu text encoded with the
 official Qwen tokenizer, 4,096-token sequences, 64 sequences per rank per update,
