@@ -22,6 +22,7 @@ def test_top_level_public_surface_is_explicit() -> None:
         "build_step",
         "Program",
         "Profiles",
+        "ProfilingOptions",
         "PoolMemoryProfile",
         "ProfiledProgram",
         "Plan",

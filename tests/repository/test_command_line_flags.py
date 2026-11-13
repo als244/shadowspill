@@ -119,7 +119,7 @@ def _readers(path: Path) -> list[Path]:
         ROOT / "workloads/recipes/distributed_training.py": ("regression",),
     }
     if path in recipe_packages:
-        return [
+        readers = [
             path,
             *(
                 reader
@@ -127,6 +127,16 @@ def _readers(path: Path) -> list[Path]:
                 for reader in sorted((path.parent / package).glob("*.py"))
             ),
         ]
+        # Phase modules delegate their timing controls to the shared resolver.
+        # Follow that reader only when a phase actually imports it.
+        if any(
+            isinstance(node, ast.ImportFrom)
+            and node.module == "orchestration.profiling"
+            for reader in readers
+            for node in ast.walk(ast.parse(reader.read_text(), filename=str(reader)))
+        ):
+            readers.append(ROOT / "orchestration/profiling.py")
+        return readers
     if path.parent == ROOT / "baselines/moe_layer":
         return list(path.parent.rglob("*.py"))
     package_commands = {

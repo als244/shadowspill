@@ -121,7 +121,7 @@ class SpillStorage:
             or value.nbytes != self.sizes[alias]
         ):
             raise ValueError("input storage differs from the declared spill payload")
-        # Input staging passes raw storage bytes. A native byte copy avoids
+        # Input staging passes raw storage bytes. A C byte copy avoids
         # dispatching PyTorch's CPU thread pool for each small input, while the
         # chunk context still owns the lease or commits a remote/SSD write.
         # Typed and device sources retain Tensor.copy_'s conversion semantics.
