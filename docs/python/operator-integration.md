@@ -1,8 +1,8 @@
 # Integrating an operator library
 
 ShadowSpill captures a model's computation through PyTorch and compiles explicit
-forward/backward tasks. A provider does not need MLOps, a particular model family,
-or its own chunk loop to participate. Ordinary supported PyTorch operations use
+forward/backward tasks. Providers expose ordinary operators; the compiler owns execution-region
+chunk loops. Ordinary supported PyTorch operations use
 the frontend's built-in contracts. Opaque operators need explicit additional
 contracts for transformations whose semantics the frontend cannot inspect.
 

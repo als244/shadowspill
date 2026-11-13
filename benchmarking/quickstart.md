@@ -239,7 +239,7 @@ versions with the optional ShadowSpill integration expose
 SonicMoE LoRA. Include its separate `sonicmoe_chunk_rules()` alongside the other
 operator rules in each applicable chunk policy. The rules do not pick a chunk
 size or retention policy; every candidate still passes ordinary compilation,
-profiling and admission. See [provider contracts](../docs/integrations/mlops.md#gradient-storage-and-precision)
+profiling and admission. See [gradient destination writes](../docs/integrations/mlops.md#gradient-destination-writes)
 for precision permissions and unsupported paths that retain ordinary accumulation.
 
 Each graph-pair policy defines independent `save` and `recompute` cuts; the

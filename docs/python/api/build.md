@@ -1,13 +1,12 @@
 # Build and finalize task implementations
 
+Build converts a model and example calls into a saved `Program` of compiled
+forward, backward and optimizer tasks. It uses a representative GPU to finalize
+CUDA implementations, but does not initialize persistent training state, measure
+task durations or create execution/spill pools. Measurement and planning follow
+as [separate phases](../phases.md).
 
-The optional `chunking` build policy selects axis chunking for effective stages;
-see the [policy reference](frontend.md#axis-chunking-policies).
-
-## Capture and finalization
-
-The builders separate export, partition, compilation and lowering from task
-timing and runtime pools:
+## Inputs and capture
 
 ```python
 from shadowspill import build_forward
@@ -19,52 +18,15 @@ program = build_forward(
 program.save("program.ssp")
 ```
 
-The model may have CPU or meta parameters. Build uses a
-representative GPU to finalize local CUDA task implementations. Model-owned
-distributed operators require their participants and saved
-[provider resource descriptions](../../architecture/resources.md). It accepts normal
-positional and keyword arguments, including nested structures and specialized
-non-tensor values. It records semantic module/parameter names, output storage
-geometry, scheduled compiler-buffer lifetimes and explicit unresolved memory
-requirements for provider calls. No persistent-state initialization or task
-duration profiling occurs. Generated kernels are finalized by executing complete
-tasks with valid example controls and outputs from their producer tasks. This
-avoids benchmarking indexing kernels on unrelated synthetic integer buffers
-during standalone compilation. Selected binaries are saved in the Program;
-measurement and execution do not select new kernels or depend on an earlier
-process's compiler cache.
+The model may hold CPU or meta parameters. Example arguments can include nested
+structures and specialized non-tensor values. Build records module/parameter
+names, output geometry, compiler-buffer lifetimes and unresolved memory
+requirements of opaque calls. Model-owned distributed operators require all
+participants and saved [resource descriptions](../../architecture/resources.md).
 
-The saved Inductor tuners also disable post-load reduction tile expansion,
-coordinate-descent and combination searches, and lookup of a different cached
-winner. Those controls apply to the saved copies after build finishes tuning;
-ordinary build and eager autotuning keep their configured behavior. Retaining
-one binary alone is insufficient because Inductor can otherwise introduce new
-reduction candidates when loading it in a fresh process.
+`partition` sets checkpoint stages; optional `chunking` controls their execution
+regions and slices. See the [policy reference](frontend.md#axis-chunking-policies).
 
-When building with PyTorch's `emulate_precision_casts=True`, compilation also
-preserves native CUDA BF16/FP16 `sigmoid_backward` scalar rounding for matching
-strided operands. The native kernel rounds the complement and first product;
-the ordinary AOT decomposition uses FP32 arithmetic inside the operation.
-ShadowSpill makes those rounds explicit before AOT decomposition so they can
-remain in one fused pointwise kernel. CPU, other dtypes, and builds with
-emulation disabled keep their existing compiler behavior. This does not change
-the selected chunk reduction or stored-gradient precision.
-
-The applied numerical contract is versioned in compilation/cache identity and
-recorded as `task_metadata[key]["numerical_contracts"]`. Chunked and composed
-tasks include their children's contracts. Changing the arithmetic requires a
-new finalized implementation and matching profiles; planning and cold execution
-use the saved implementation without rerunning this transformation.
-
-Paired finalization and measurement retain only resolved backward inputs while
-invoking backward; forward-only inputs and outputs are released first.
-Before preparing a different task, they release idle allocator cache so its
-inputs do not fragment large cached buffers from another task geometry. This
-preparation is outside measured task invocations.
-Finalization also resolves backend outputs whose device was provisional in
-compiler metadata, such as attention RNG controls returned on CPU. Those values
-have host lifetimes and no GPU allocation; conflicting observed storage locations
-fail build before profiling or planning.
 An optional `forward_fn(model, *args, **kwargs)` selects another model method or
 computation without changing registered parameter names. For example, an
 evaluation loss can use `forward_fn=lambda m, *a, **kw: m.loss(*a, **kw)` with
@@ -78,8 +40,9 @@ optimizer. It compiles gradient-creation and accumulation forms for each stage:
 
 ```python
 from shadowspill import (
-    build_forward_backward, StepDataOrdering, apply_profiles, plan_program,
+    build_forward_backward, apply_profiles, plan_program,
 )
+from shadowspill.step import StepDataOrdering
 
 program = build_forward_backward(
     model, objective=objective, example_args=(features,),
@@ -128,6 +91,37 @@ gradient conversion and write-back to compute weights, so those costs and
 allocations are profiled and planned. Build does not modify the supplied model
 or optimizer.
 
+## Finalization and precision
+
+Finalization executes complete tasks with valid controls and outputs from their
+producers, so indexing kernels do not see unrelated synthetic integer buffers.
+The selected implementations are saved for later measurement and execution.
+
+Paired finalization and measurement retain only resolved backward inputs while
+invoking backward; forward-only inputs and outputs are released first.
+Before preparing a different task, they release idle allocator cache so its
+inputs do not fragment large cached buffers from another task geometry. This
+preparation is outside measured task invocations.
+Finalization also resolves backend outputs whose device was provisional in
+compiler metadata, such as attention RNG controls returned on CPU. Those values
+have host lifetimes and no GPU allocation; conflicting observed storage locations
+fail build before profiling or planning.
+
+When building with PyTorch's `emulate_precision_casts=True`, compilation also
+preserves native CUDA BF16/FP16 `sigmoid_backward` scalar rounding for matching
+strided operands. The native kernel rounds the complement and first product;
+the ordinary AOT decomposition uses FP32 arithmetic inside the operation.
+ShadowSpill makes those rounds explicit before AOT decomposition so they can
+remain in one fused pointwise kernel. CPU, other dtypes, and builds with
+emulation disabled keep their existing compiler behavior. This does not change
+the selected chunk reduction or stored-gradient precision.
+
+The applied numerical contract is versioned in compilation/cache identity and
+recorded as `task_metadata[key]["numerical_contracts"]`. Chunked and composed
+tasks include their children's contracts. Changing the arithmetic requires a
+new finalized implementation and matching profiles; planning and cold execution
+use the saved implementation without rerunning this transformation.
+
 ## Saved implementations
 
 Packaged tasks retain importable Python custom-op registration modules, their
@@ -150,6 +144,13 @@ or changed candidates before benchmarking. Fixed kernels may compile lazily
 without selecting a different implementation. This compiler integration does
 not discover or patch external operation libraries.
 
+The saved Inductor tuners also disable post-load reduction tile expansion,
+coordinate-descent and combination searches, and lookup of a different cached
+winner. Those controls apply to the saved copies after build finishes tuning;
+ordinary build and eager autotuning keep their configured behavior. Retaining
+one binary alone is insufficient because Inductor can otherwise introduce new
+reduction candidates when loading it in a fresh process.
+
 External operator tuning and dispatch belong to the operation provider's
 [`OperatorPreparation`](../operator-preparation.md) adapter. Its opaque manifest
 can contain selected configurations together with immutable binaries. The
@@ -164,7 +165,6 @@ implementations their model uses; the builder does not discover libraries or
 choose adapters by model name. Kernel export/load tests belong with the provider,
 and compiler integration tests belong with the adapter. Core tests the generic
 lifecycle and saved training through these public interfaces.
-
 
 See [repository structure](../../development/repository.md) for implementation owners.
 

@@ -528,6 +528,19 @@ def test_normative_python_examples_compile_and_use_valid_public_keywords() -> No
                 ):
                     module = importlib.import_module(node.module)
                     for alias in node.names:
+                        if alias.name == "*":
+                            continue
+                        if not hasattr(module, alias.name):
+                            # Python's from-import can also name a submodule
+                            # that the package has not imported yet.
+                            try:
+                                importlib.import_module(f"{node.module}.{alias.name}")
+                            except ModuleNotFoundError:
+                                failures.append(
+                                    f"{document.relative_to(ROOT)} block {index}: "
+                                    f"{node.module} has no import {alias.name}"
+                                )
+                                continue
                         value = getattr(module, alias.name, None)
                         if inspect.isfunction(value) or inspect.isclass(value):
                             try:

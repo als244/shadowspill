@@ -1,565 +1,246 @@
 # Task boundaries
 
-Every planned task runs between two calls. `before_task` makes the task's
-inputs real and opens the scope its allocations belong to; `after_task` closes
-that scope, publishes what the task produced, and hands the plan's actions to
-the worker. Between them the dispatching thread runs the task's kernels and the
-runtime does nothing.
+A task boundary connects the planned storage layout to one compiled task call.
+`before_task` acquires inputs and opens an allocation scope; `after_task`
+publishes results and mutations, closes the scope and submits planned actions.
+The worker continues transfers and retirement while the frontend enqueues
+compute.
 
-Nearly everything ShadowSpill does to memory happens at one of these two
-points, which is why they are worth reading before anything else in the
-runtime.
-
-Related: [memory runtime](memory-runtime.md) for pools, leases and the worker;
-[physical admission](physical-admission.md) for the layout a plan is admitted
-under; [Runtime C API](../c/runtime.md) for the exact signatures.
+This page describes that lifecycle. See [memory runtime](memory-runtime.md) for
+pools and leases, [physical admission](physical-admission.md) for layout checks,
+and the [Runtime C API](../c/runtime.md) for exact signatures.
 
 ## Where the boundary begins and ends
 
-The two calls above are the neutral half. A frontend cannot stop there: the
-runtime answers with addresses, and something has to put those addresses into
-the frontend's own objects. That work is the frontend's by definition -- the
-runtime does not know what a PyTorch storage is, and keeping it that way is
-the point of the split -- so a task boundary is the whole operation, not the
-call inside it.
+The neutral runtime returns addresses. The frontend binds them to its own tensor
+storages and publishes the results. Boundary timing includes both layers:
 
 ```text
-before_task boundary                     # the frontend's, start to finish
-    check every input tensor is on the expected device
-    resolve the compute stream
-    shadowspill_before_task_handle(...)  # the neutral call, returns bindings
-    check each binding against the storage that will receive it
-    point each storage at the address the runtime returned
-    shadowspill_wait_task_allocations_handle(...)  # ranges this task will allocate into
+opening boundary
+    validate input devices and resolve the compute stream
+    shadowspill_before_task_handle(...) -> borrowed input bindings
+    validate bindings and rebind frontend storages
+    shadowspill_wait_task_allocations_handle(...)
 
-    ... the task's kernels run ...
+compiled task: enqueue kernels and allocate through the active scope
 
-after_task boundary
-    adopt the storages the task produced
-    rebind replacement views onto them
-    dematerialise what the plan said to release
-    shadowspill_after_task_handle(...)   # the neutral call
+closing boundary
+    adopt result storage and rebind replacement views
+    dematerialize released objects
+    shadowspill_after_task_handle(...)
 ```
 
-Read as a whole, execution alternates boundary, kernels, boundary, with
-nothing in between: every frontend action between two tasks falls inside one
-of them. This is what the boundary timestamps measure -- they are stamped by
-the operation, not by the neutral call within it, so a step's cost cannot hide
-in the space around a call. See
-[step diagnostics](../python/step-diagnostics.md) for the fields.
+Every frontend action between tasks belongs to a boundary. The
+[diagnostic timestamps](../python/step-diagnostics.md) cover the whole opening
+or closing operation, rather than only the nested C call. If any operation
+raises after the scope opens, the frontend must close or abort it.
 
-The PyTorch frontend does the above in one operation per boundary, so a task
-that fails partway cannot leave a scope open; see
-`shadowspill_abort_task_handle` below for what closes it when the boundary
-cannot complete.
-
-## What each call is responsible for
+## What each call does
 
 ### `shadowspill_before_task_handle`
 
-```text
-before_task(runtime, task, compute_stream) -> bindings
-    reject unless the handle belongs to this runtime and is a task
-    claim the task invocation            # fails if one is already active
-    record a BEFORE_TASK trace event
-    acquire the task's input objects:
-        for each distinct input:
-            refuse if the runtime has already failed
-            refuse if the object is not resident, or its version or lease
-                differs from what the plan expects
-            if a fetch is still in flight, make the compute stream wait on
-                its readiness event
-            take an owner reference and record the binding
-    enter the task scope                 # this thread is now "inside" the task
-    return the borrowed binding array
-```
+1. Validate the runtime/task handle and claim the invocation. Concurrent use of
+   the same task handle is refused. Record the opening trace event and establish
+   fixed-layout task-start dependencies.
+2. Check the runtime failure latch and acquire each distinct input: residency,
+   version and lease must match the Plan.
+3. Make the compute stream wait for in-flight fetches' readiness events, take
+   owner references and return bindings.
+4. Open the thread-local task scope.
 
-The bindings are a borrowed view of an array the task record owns; the caller
-must not free them or use them past `after_task`.
-
-The refusal in the middle is how a failure anywhere - including on the worker
-thread - stops the next task. Object acquisition consults the failure latch
-before it hands any object over, so a runtime that has already failed cannot
-start new work.
+Bindings borrow the task record's array. Do not free them or keep them past
+`after_task`. A worker failure prevents the next object acquisition and therefore
+stops new task submission.
 
 ### `shadowspill_wait_task_allocations_handle`
 
-```text
-wait_task_allocations(runtime, task, compute_stream)
-    for every allocation the plan pinned to a range for this task:
-        for each transfer that still owns that range:
-            if it has not been dispatched yet, spin until the worker
-                publishes its completion event
-            make the compute stream wait on that event
-        for each earlier task that must finish with that range first:
-            make the compute stream wait on the completion event its
-                after_task published
-```
+Inputs have been acquired, but future workspace allocations may reuse ranges
+still held by a transfer or earlier task. This call establishes those dependencies
+before the first kernel:
 
-A task's inputs are acquired above, but its workspace and intermediates are
-allocated later, as the compiled graph runs. Each of those reuses a range the
-plan assigned, and the range may still belong to a transfer in flight.
-Resolving that where the allocation happens would put the wait inside the
-task, where it cannot be told apart from compute. Resolving it here, at the
-boundary, gives up some overlap -- the first kernel waits on a range only the
-last allocation needs -- and buys an interval where the wait is measurable.
-The allocator still makes its call, and finds the dependency already
-published.
+- For a transfer, wait on the host until the worker has submitted it and
+  published a completion event, then insert a compute-stream wait on that event.
+- For an earlier task, insert a stream wait on its published completion event.
 
-The spin is a rendezvous with the worker, not with the copy: it ends when the
-transfer has *started* and published its event, and the copy itself is then
-waited on by the stream rather than the host. That makes it two different
-waits on two clocks. In step diagnostics the spin lies inside the opening
-boundary's host interval, between `before_task_entered_at_seconds` and
-`before_task_exited_at_seconds`, and `allocation_reuse_wait_seconds` is how
-long the compute stream then waited. They are usually very different sizes.
+The host rendezvous waits for event publication, not copy completion. It can
+still limit frontend run-ahead: a transfer may be submitted only after its
+trigger task finishes. `before_task_entered_at_seconds` through
+`before_task_exited_at_seconds` includes the host wait;
+`allocation_reuse_wait_seconds` measures the subsequent compute-stream wait.
+These are different intervals and should not be added as independent stalls.
 
-**This is what bounds the frontend's run-ahead.** A transfer publishes its
-completion event only when the worker submits the copy, and the worker
-submits it only after the task that triggers it has completed on the device.
-So a task whose allocations reuse ranges held by a transfer cannot leave its
-opening boundary until that trigger task has finished executing. The
-dispatcher is therefore pinned to device progress, not merely to the
-worker's, and the lead it holds over the stream stays near zero however far
-ahead the host could otherwise run. The spin is where the wait lands: the
-host absorbs almost all of it, and the stream's own wait for the same ranges
-stays small, because the dispatcher stops issuing before the stream would
-have to stop executing.
+Establishing all range dependencies here can delay the first kernel for a range
+used only later in the task. It also makes that wait observable at the boundary;
+the allocation itself finds its dependency already published.
 
 ### `shadowspill_after_task_handle`
 
-```text
-after_task(runtime, task, compute_stream)
-    status = latched failure, if any
-    validate the allocation contract is complete
-    publish mutations: bump each mutated object's authoritative version
-    if the task has actions, task-owned retirements, or a range
-            successor that waits on its completion:
-        record a completion event on the compute stream
-        attach that event to every lease the task retired
-        publish it as the task's completion for those successors
-        instantiate the plan's actions against current object state
-        publish the action batch and wake the worker
-        wait until the worker has issued this batch's fetches
-    on failure:
-        discard the batch, clear pending handoffs, latch the failure
-        publish a retirement event anyway, so allocations freed inside the
-            task still have a completion to retire against
-    release the completion event
-    record an AFTER_TASK trace event
-    leave the task scope
-```
+1. Check the latched status and completed allocation sequence.
+2. Publish mutations by advancing authoritative object versions.
+3. When actions, retirements or range successors need a fence, record task
+   completion on the compute stream and attach it to retired leases.
+4. Reserve action destinations, instantiate the action batch against current
+   object state, publish it and wake the worker.
+5. Wait until the worker has issued this batch's fetches, then leave the scope.
+
+Completion events mean the preceding kernels have been enqueued, not that they
+have finished. On failure, discard unpublished actions, clear pending handoffs
+and latch the error. Retirement still receives a fence so released allocations
+can be reclaimed safely. The scope is closed on either path.
 
 ### `shadowspill_abort_task_handle`
 
-The escape hatch when a frontend opened a scope and cannot reach `after_task`.
-It finalizes the task's retirements, clears pending handoffs and leaves the
-scope, without publishing mutations or actions. It is only valid from the
-thread currently inside that task.
+Abort closes an opened scope when frontend rebinding, argument assembly, kernel
+launch, result publication or interruption prevents normal completion. It is
+valid only from the thread inside the task. It finalizes retirements and clears
+handoffs without publishing mutations or actions.
 
-Abort exists because `before_task` and `after_task` are not adjacent: between
-them the frontend rebinds storages, assembles arguments, and runs the kernels,
-and any of that can raise. What actually calls it:
-
-| Scenario | Where |
-|---|---|
-| Rebinding a storage onto its planned lease fails | between the two boundaries |
-| Assembling the task's arguments raises | between the two boundaries |
-| The compiled callable itself raises | during the kernel launch |
-| Output classification or publication raises | inside `after_task`'s caller |
-| The dispatching thread is interrupted - `KeyboardInterrupt`, a cancelled future | anywhere in between |
-
-In each case the frontend has already claimed the invocation and opened the
-scope, so simply propagating the exception would leave the task permanently
-"active": the handle refuses a second invocation, the task's freed leases keep
-their claim with no completion event coming, and closing the plan waits for a
-scope that will never be left.
-
-What abort deliberately does **not** do is publish. A task that did not finish
-did not produce its outputs, so its mutations must not bump object versions and
-its actions must not be instantiated - a fetch triggered by a task that
-never ran would fetch into a lease the plan expected that task to fill.
-
-Abort is not a way to recover from a *runtime* failure. A latched failure is
-not cleared by aborting; the next `before_task` still refuses. Abort only
-closes a scope the frontend opened and cannot close normally.
+Propagating an exception without cleanup would leave the invocation active and
+leases awaiting a completion event that will never arrive. Abort fixes that
+incomplete lifecycle; it does not clear a latched runtime failure or make the
+failed task's outputs valid.
 
 ### `shadowspill_submit_action_batch_handle`
 
-An action batch is a task with no compute: a record whose actions are the point.
-It enters a task scope and runs the same `after_task` body, so fetches and
-evictions can be issued without a kernel between them.
+An action-only batch uses a task scope and the same closing path, with no kernel
+call between the boundaries. It submits transfers and releases without inventing
+compute work.
 
-## What is asynchronous, from the dispatching thread
+## Asynchronous work and blocking points
 
-This is the part worth being exact about.
+At return from `after_task`:
 
-| Work | When the dispatcher returns from `after_task` |
+| Work | State |
 |---|---|
-| The task's kernels | Enqueued on the compute stream, not finished |
-| Fetches this task triggers | **Issued** on the transfer lane, not landed |
-| Evictions this task triggers | May not be issued yet |
-| Releases this task triggers | May not be issued yet |
-| Retirement of leases freed in the task | Queued against the completion event |
-| Returning retired ranges to the pool | Done by the worker, later |
+| Task kernels | Enqueued, possibly still running |
+| Triggered fetches | Issued; their readiness events are available |
+| Triggered evictions/releases | May still be waiting for the worker |
+| Leases freed during the task | Retiring against its completion event |
+| Returning retired capacity | Worker responsibility after completion |
 
-`after_task` blocks in exactly one place: it waits until the worker has
-*published* the batch's fetches. Published means the copy has been issued on
-the transfer lane and its readiness event exists — not that any byte has moved.
-That is enough for the next task, because the next `before_task` will insert a
-stream wait on that readiness event rather than waiting on the CPU.
+Fetch publication is the closing boundary's worker handshake. Opening a task
+can also wait for allocation-range event publication, and capacity reservations
+can wait for pending releases. Thus asynchronous execution does not mean every
+host boundary is nonblocking. `shadowspill_plan_wait_idle` drains one Plan;
+`shadowspill_runtime_wait_idle` drains the runtime.
 
-Everything else is the worker's, and the dispatcher never waits for it.
-`shadowspill_plan_wait_idle` is the call that waits for all of one plan's;
-`shadowspill_runtime_wait_idle` waits for the whole runtime's.
-
-### Who owns what
-
-The split is worth stating directly, because both threads touch the same
-objects, leases and pools.
-
-| | Dispatching thread | Worker thread |
+| Responsibility | Dispatching thread | Worker |
 |---|---|---|
-| Task scope | Owns it. Enters at `before_task`, leaves at `after_task` or abort | Never enters one |
-| Object acquisition | Validates state, takes owner references, inserts stream waits | Never acquires for a task |
-| Allocation | Serves every allocation, planned or dynamic, from its own thread | Never allocates for a task |
-| Actions | Instantiates and publishes the batch; reserves each destination | Issues the copies, publishes readiness, completes and unlinks them |
-| Retirement | Links freed leases to the scope; attaches one completion event | Polls the events, returns the ranges to the pool |
-| Failure | Latches what it sees; refuses to start new work once latched | Latches what it sees; the dispatcher hears it at the next boundary |
+| Task scope | Enters, allocates, closes/aborts | Never enters |
+| Input acquisition | Validates and inserts stream waits | Does not acquire task inputs |
+| Actions | Reserves destinations and publishes batch | Issues copies and publishes readiness |
+| Retirement | Links freed leases to completion fence | Polls completion and returns ranges |
+| Failure | Latches errors and refuses new work | Latches errors seen by the next boundary |
 
-Two rules follow, and both are load-bearing:
+The dispatcher does not take over retirement when capacity is unavailable. It
+waits for the worker's capacity epoch to advance or for a no-progress result.
+The fetch handshake and Plan idle wait use active polling on the critical path;
+the runtime-wide idle wait uses a condition variable.
 
-**The worker never blocks the dispatcher except at one point.** That point is
-the fetch-publication handshake at the end of `after_task`. Everything else the
-worker does - moving bytes, polling completions, returning ranges - happens
-while the dispatcher is already running the next task.
+## Allocation scopes and validation
 
-**The dispatcher never does the worker's work.** It does not wait for a copy,
-poll an event, or return a range, even when that would be convenient. An
-allocation that cannot be served waits for the worker to return capacity to the
-pool, and leaves the wait when the pool's capacity epoch moves or when nothing
-is left to wait for ([memory runtime](memory-runtime.md)); it does not go and
-retire leases itself. This is why a stalled worker shows up as a blocked
-allocator rather than as a dispatcher that silently took over.
+A thread-local task scope identifies the invocation, Plan, pool, allocation
+ordinal and freed leases. Framework allocator callbacks use it without an
+explicit task ID. Two threads may run different task handles; one handle cannot
+host concurrent invocations.
 
-The handshake is an active atomic poll on both sides. Neither thread enters a
-condition wait, a sleep, or a scheduler yield, because both are on the critical
-path of a step and a scheduler round trip is longer than the work being waited
-for. The same is true of `shadowspill_plan_wait_idle`; the runtime-wide
-`shadowspill_runtime_wait_idle`, which is not on that path, does use a
-condition variable.
+Each request is checked against the measured envelope and allocation sequence.
+Planned allocations use fixed offsets. Within an uninterrupted group of frees,
+order may differ if the same identities and geometry are released exactly once.
+Frees cannot move across an allocation, and unresolved frees block both the next
+invariant allocation and task completion.
 
-## How allocations find their task
+Work outside a task can use an explicit allocation scope, as isolated profiling
+does before a Plan exists. The caller reserves a
+[Plan identity](plan-identity.md#the-id) and associates the scope with it.
+Unscoped allocations instead take the dynamic, unattributed path. Failed scopes
+are aborted rather than published.
 
-The task scope is thread-local. While a thread is inside a task, the scope
-names the task, its invocation, the pool its allocations come from, how many
-allocations it has made, and which leases it has freed.
+### What a scope owes when it ends
 
-```text
-memory_pool_allocate(...)
-    task  = current task scope, if this thread is inside one
-    if inside a task:
-        check the request against the task's allocation envelope
-        match it against the next step of the task's allocation contract
-        if the plan placed this allocation, use its fixed offset
-    ...
-    commit: charge the scope, advance the allocation ordinal
-```
+Every scoped lease records its originating Plan and scope. Closing the scope
+accounts for all three outcomes:
 
-Within an uninterrupted group of frees, the runtime accepts any order of the
-same allocation identities and geometry. Host wrappers can release their
-references in a different order without changing the live set at the next
-allocation. Each free is consumed once; an unresolved free still blocks the
-next invariant allocation and task completion. Frees cannot move across an
-allocation step. The recorded trace and fixed offsets remain unchanged.
+| Outcome | Ownership after close |
+|---|---|
+| Freed during the scope | Retired against its completion fence; reusable only after safe completion |
+| Explicitly promoted | Held by the caller, such as a returned objective tensor |
+| Retained by the framework/library | Still attributed to the originating scope until its owner releases it |
 
-Three consequences follow from the scope being thread-local:
-
-- An allocation made by a framework callback - PyTorch's allocator calling
-  into ShadowSpill from inside a kernel launch - is attributed to the right
-  task without anyone passing a task ID.
-- An allocation made outside any task scope is unattributed and unplanned,
-  which is legal but takes the dynamic path rather than a planned offset.
-- Two threads can be inside two different tasks at once. Two threads inside
-  the *same* task handle is refused, because the handle owns the validation
-  and action records that a second invocation would race.
-
-A lease freed inside the task is linked to the scope rather than retired
-immediately. `after_task` attaches one completion event to all of them, so the
-worker can return every range the task freed against a single fence instead of
-one event per free.
-
-## The allocation scope
-
-Most allocations are made inside a task, and the task scope is what owns them.
-Profiling is the case that is not: to measure what one task costs, the profiler
-runs it on its own, outside any plan, and the bytes it allocates still have to
-belong to something the runtime can account for.
-
-An allocation scope is that something. It is opened around work that is not a
-task, and closed when the work ends, and everything allocated between is its
-own -- without inventing a fake task to hold it, which would put a task in the
-runtime's tables that no plan admitted.
-
-It is told which plan it belongs to, rather than reading one from a task,
-because when profiling runs **that plan does not exist yet**: profiling is what
-the plan will be built from. The caller names the plan id here and names it
-again in the description it later creates the plan from, so the bytes a probe
-measured and the plan built from that measurement carry one number. The id
-comes from `shadowspill_runtime_next_plan_id` before either exists, which is
-why it is taken rather than returned -- see [plan
-identity](plan-identity.md#the-id).
-
-A scope that fails partway is aborted rather than closed, which releases what
-it made without publishing anything.
-
-## What a scope owes when it ends
-
-Every allocation belongs to exactly one scope: the task scope a thread is
-inside, or an allocation scope opened around work that is not a task. Either way
-the scope names the plan it belongs to — a task scope takes it from the task's
-plan, an allocation scope is told it, because a scope deliberately runs outside
-any task and so has none to read it from. That pair, plan and scope, is what a
-lease records; [plan identity](plan-identity.md) is why neither half is an
-identity alone.
-
-When the scope ends, each allocation it made has reached one of three states,
-and the rule is that all three are *accounted for* — not that the third never
-happens.
-
-**Freed inside the scope.** The ordinary end, and the mechanism above: the lease
-is linked to the scope and retired against the closing call's single completion
-event. Freed is not the same as reusable: a released range becomes
-available to a successor only once the stream that last used it establishes
-completion, which is [causal reuse](memory-runtime.md#causal-reuse).
-
-**Promoted out of the scope.** The deliberate exception, for a value that must
-outlive the work that produced it: the step's outputs, which the caller reads
-after the step returns. Promotion is explicit and recorded, which is what makes
-the value's new owner nameable — the caller holds it, and releases it when it
-drops the tensor.
-
-**Retained past the scope.** A framework may hold a tensor beyond the task that
-allocated it, and often should: a kernel that caches scratch across invocations,
-a library that keeps a handle's working buffer. The scope that made it is gone,
-but an owner still exists and will release it when it drops the tensor.
-
-The rule is therefore not that allocations die with their scope. It is that a
-surviving allocation is **attributable** — the runtime can say which scope made
-it, how large it is, and where it sits — so that residue is a fact someone can
-look at rather than a difference between runs that nobody can explain. What is
-worth refusing is not survival; it is *invisible* survival.
+Scope closure does not revoke a live tensor. Audits report retained allocations'
+offsets, sizes and originating scopes so unexpected retention is diagnosable.
+Compiled libraries may retain state, but that state must have explicit accounting
+and placement. A provider's own stateless interface may impose stricter rules.
 
 ### What actually releases a lease
 
-Nothing in ShadowSpill decides when a promoted value dies. The chain runs
-through the framework's own ownership, and it is worth following once because
-every rule above depends on it.
+For a PyTorch tensor, the release chain is:
 
 ```text
-Python name  ->  torch.Tensor  ->  Storage  ->  data_ptr  ->  lease -> pool range
-     |                                              |
-     +-- last reference dropped                     +-- the address the range starts at
-         (del, rebinding, scope exit, gc of a cycle)
-                    |
-                    v
-         torch frees the storage, which calls the pluggable
-         allocator's free(address, ...) callback
-                    |
-                    v
-         the adapter maps address -> allocation, then
-         memory_pool_free(...) releases or defers the lease
+last owning reference disappears
+    -> tensor storage frees its address
+    -> pluggable allocator maps address to allocation
+    -> memory_pool_free releases or defers the lease
+    -> worker returns the range after its completion fence
 ```
 
-Three consequences a caller has to live with:
+Reference cycles can delay this chain until collection. A scope cannot forcibly
+reclaim storage still reachable through a tensor: a later use would access freed
+memory, and a later free could release a newly assigned allocation at the same
+address. Forced release is only an explicit teardown escape hatch.
 
-- **Release is driven by the framework's reference count, not by a ShadowSpill
-  call.** A lease survives exactly as long as some Python object reaches the
-  tensor. Dropping the last name is what starts the release; nothing else does.
-- **A reference cycle defers release until the collector runs.** A tensor
-  reachable only from a cycle is alive as far as the framework is concerned, so
-  its lease is alive too. Code that must release before a boundary collects
-  first rather than assuming the last `del` was enough.
-- **The address is the identity.** The free callback receives a raw address and
-  maps it back to an allocation; it has no other handle. This is why reclaiming
-  a lease behind the framework's back is unsafe: the tensor is still reachable,
-  still holds that address, and a later free would either fail the lookup or —
-  worse, if the range has been reissued — return someone else's allocation.
+Small retained allocations can split a large free range and prevent a later
+contiguous reservation despite ample aggregate free bytes. Attribute them and
+place expected long-lived state before the reservation; do not free it behind
+its owner's back. [Causal reuse](memory-runtime.md#causal-reuse) governs when a
+released range becomes available.
 
-That last point is the whole argument against forced release as a default. The
-framework and the runtime agree on exactly one fact, the address, and forcing a
-lease out from under a live tensor breaks that agreement in the direction that
-cannot be detected.
+## Planned actions and capacity
 
-### Why it matters beyond the bytes
+Fetch, eviction, writeback and release actions are instantiated at the closing
+boundary of their trigger task. Destination leases are reserved before the batch
+is published. If pending releases can make room, the reservation waits and
+retries with its priority preserved; the simulator models the same delay.
+`after_task` returns `NO_PROGRESS` when the destination cannot fit even after all
+pending releases. The worker cannot repair an impossible destination later.
 
-A stranded lease is rarely expensive in itself — it is usually scratch, and
-scratch is small. The cost is *where* it sits. A scope's allocations are placed
-by the allocator as the scope runs, which for a task executing inside a plan
-means immediately above whatever contiguous range the plan reserved. When that
-reservation is released and the stray is not, the freed space cannot merge with the
-free range beyond it: the pool is left split in two, and a later request for a
-contiguous range larger than either half fails against a pool that is almost
-entirely free.
+## Frontend storage bindings
 
-That is the failure mode to keep in mind. Aggregate free bytes say nothing; a
-few bytes in the wrong place cost the largest contiguous range, which is the
-quantity a fixed layout actually needs.
+CPU-valued outputs, controls and literals remain ordinary CPU bindings. Their
+GPU object/alias extents are zero, and mixed-device results transfer ownership
+only for unique device roots. CPU values receive neither device allocation
+ordinals nor automatic spill-pool placement. Training republishes CPU root
+bindings each step, including Export-lifted literals absent from the original
+module.
 
-### Examples
+Captured location describes where a value is used, not where a template was
+initialized. An opaque optimizer can start with CPU/meta templates while its
+spillable state has fake device geometry; CPU counters remain CPU bindings.
+[Profiling](../python/api/profiling.md#task-measurement) materializes authentic
+control producers on each value's captured device. Generated representatives
+for proven arithmetic-only statistics do not change runtime values.
 
-- A kernel's workspace, allocated through the framework's allocator while a
-  task runs and dropped when the kernel returns. Freed inside the scope, retired
-  with the scope's fence. **Legal.**
-- A step's objective values, produced by the last task that computes them and
-  read by the caller after the step returns. Promoted out of the scope; the
-  caller owns them and releases them by dropping them. **Legal.**
-- A buffer a framework caches on first use and keeps for the process — a
-  provider's retained handle state, say. Allocated before any scope is open, so
-  it belongs to no scope and is not subject to this rule. **Legal, and
-  deliberately placed low in the pool so it cannot split a later reservation.**
-- A kernel's scratch buffer that its library caches and reuses on the next
-  invocation, held by the framework rather than by any scope. **Legal and
-  expected** — but it must be attributable, and its position matters, for the
-  reason above.
-- The same buffer, with nothing able to say which scope made it or that it is
-  still live. **The actual problem**: not that it survives, but that its
-  survival is invisible until a later layout fails.
-
-### Auditing it
-
-A scope can be closed and audited: at its end the runtime knows how many of its
-allocations are still live, because every allocation record carries the scope
-that made it. An audit names them — offset, size, and originating scope — rather
-than reporting a count, because a count cannot distinguish the legal cases above
-from the illegal one, and because the offset is what explains a fragmentation
-failure.
-
-Forced release is deliberately not the answer for retained allocations at all.
-An owner still holds them, and reclaiming a lease whose pointer the frontend
-still has trades a clean, explainable failure for a use-after-free. It remains
-available only as a loud escape hatch for teardown, where the alternative is
-abandoning the pool.
-
-Where an allocation is expected to outlive its scope, the mitigation is
-placement rather than lifetime: put it where it cannot split a later reservation, as
-the provider's retained state already is. Attribution is what makes that
-possible, because an allocation nobody can name cannot be placed deliberately.
-
-## What a plan's actions do here
-
-The plan says which objects to fetch, evict, write back or release, and
-which task triggers each. Those actions are not executed at `before_task`; they are instantiated at
-the `after_task` of their trigger task, against object state as it is then.
-
-An action's destination lease is reserved before the batch is published, so a
-fetch that cannot fit is reported at the boundary that triggered it rather than
-somewhere inside the worker. Coming up short is not itself fatal: the
-reservation keeps its priority, waits for the worker to return room, and
-retries, and the simulator models the same wait, so a plan that comes up short
-is slower rather than rejected. `after_task` returns `NO_PROGRESS` only when the
-pool could not hold the destination even after every pending release — the
-trigger's fetch had nowhere to land and nothing was left to free for it.
-
-## CPU values and transient backward outputs
-
-An explicitly CPU-valued task result remains an ordinary CPU tensor binding.
-Forward and training execution do not adopt it as device storage or give it a
-device-allocation ordinal. Mixed CPU/device public results likewise transfer
-ownership only for their unique device storage roots. CPU results are not
-charged as device workspace or automatically placed in a spill pool.
-
-The same rule applies to root values whose captured device is CPU, including
-tensor literals created with `device="cpu"` inside the model. Export's lifted
-literal values need not be attributes of the original module. Their object and
-alias extents in the GPU memory plan are zero; their ordinary tensor views
-retain CPU shape, stride and offset. Training republishes CPU root bindings
-each step so that releasing a prior step's references cannot discard constants
-needed by the next step. This does not change the capture device selected for
-ordinary example inputs or model parameters.
-
-These contracts describe where a task uses a value, not where it was
-initialized. An opaque optimizer may retain CPU/meta state templates; capture
-describes its spillable state with fake device geometry, matching profiling and
-execution. Its ordinary CPU counters and hyperparameters keep their CPU bindings.
-
-When partitioning derives authentic integer or boolean intermediates for
-profiling, it executes the required producer slice. Each input is materialized
-on its own captured device: explicit CPU controls stay on the CPU even when
-other inputs or outputs use the execution device. The public builders do not
-derive these values while partitioning: finalization and profiling replay the
-compiled producers instead, without an execution pool ([phase
-APIs](../python/api/profiling.md#task-measurement)).
-
-Integer outputs used exclusively in proven fixed-shape arithmetic are marked
-numeric statistics. Isolated profiling supplies ones and records that generated
-value policy; it does not claim a real routing distribution. Any indexing,
-mutation or unknown operation downstream preserves the authentic-control rule.
-Actual execution always consumes the producer's real integer values.
-
-Control-value dependency discovery walks stages backwards, then evaluates the
-needed slices in topological order. This avoids Python recursion limits for
-long chains and restores only the current slice's inputs to their captured
-devices. Intermediate host snapshots are released after their last consumer;
-only the required integer/boolean values remain as profiling representatives.
-
-A backward entrypoint may return a tensor whose gradient the outer program
-does not consume. The allocation is still live during that call. Lowering
-charges such output roots as transient workspace using the measured allocation
-timeline. A root shared with a retained output is not charged a second time.
-This is ordinary memory accounting; no operator-specific allowance is needed.
-
-## Failure
-
-Both boundaries return a `ShadowSpillStatus`, and a failure latched anywhere -
-including on the worker - reaches the caller at the next one. The first cause
-is preserved separately: `shadowspill_runtime_failure()` reports the failure
-that stopped the runtime, while the return value reports what this call saw.
-
-`after_task` cleans up whether or not it succeeded. It is never correct to skip
-it because an earlier call failed; the scope stays open and the task's leases
-keep their claim until it runs.
-
-How each scope handles a failure, and why a process that is exiting is
-abandoned rather than closed, is in [failure, abort, and process
-exit](failure-and-exit.md).
-
-### Repeated forward contracts
-
-Forward capture reuses equivalent inference contracts within a capture, as training
-does for graph pairs. The key includes the graph, tensor geometry and aliasing,
-input roles, representation components and metadata, and explicit mutations.
-Reuse replaces occurrence-specific inputs and provenance; it does not substitute
-one layer's weights or control values for another's. Compilation and profiling
-continue to consume the physical contract.
-
-### Activation-gradient memory format
-
-A compiled backward expects a specific memory format for incoming activation
-gradients. ShadowSpill normalizes each outgoing activation gradient to the
-canonical format of its corresponding forward input (including channels-last
-where applicable). Any needed layout conversion is inside the backward graph,
-before compilation and profiling, so its allocations and runtime are planned.
-Parameter gradients can retain independent dense transposed storage; they do not
-need this activation-boundary normalization.
-
-Backward dependencies follow the objective through actual stage VJPs. A floating
-output may require gradients locally but feed only a detached or nondifferentiable
-consumer. Such an output remains available to forward execution and receives no
-cotangent input. Root selection is applied inside AOT capture, so the compiler
-can remove the unused derivative rather than leaving an uninitialized gradient
-object for planning to fetch. A manual stage with no path to an objective gradient
-is rejected with a diagnostic; combine that stage with its differentiable consumer.
+A backward result unused by the outer program still occupies storage during
+its call. Lowering accounts for that root as transient workspace, except when
+it shares a root already charged to a retained result. Activation-gradient
+layout conversions occur inside the compiled backward so their cost is measured;
+see [cotangent layouts](graph-pair-construction.md#what-a-cotangent-is-laid-out-like).
 
 ### Retained views after state mutation
 
 A functionalized mutation replaces an object's device allocation. Retained
-frontend views of that object share the canonical PyTorch storage handle, while
-keeping their own shapes, strides and offsets. Fetch and release can then rebind
-one handle for all of those views. Giving separate storage handles the same
-pointer is insufficient: after eviction or checkpoint restore, a later fetch
-would update only the representative and leave the other views stale. Storage
-publication unifies the handles without copying device data.
+frontend views share its canonical PyTorch storage handle while keeping their
+own shapes, strides and offsets. Fetch, release and checkpoint restore can then
+rebind every view through one handle. Separate storage handles holding the same
+pointer would leave some views stale after the representative was rebound.
+Unifying handles does not copy device data.
 
-Previous: [Memory runtime](memory-runtime.md). Next: [Failure, abort, and
-process exit](failure-and-exit.md).
+## Failure
+
+Both boundaries return `ShadowSpillStatus`. A failure latched on either thread
+reaches a subsequent boundary; `shadowspill_runtime_failure()` preserves its
+first cause separately from the current call's status. Always finish cleanup
+through the closing or abort path after a scope has opened.
+
+See [failure, abort and process exit](failure-and-exit.md) for scope cleanup and
+why a terminating process may abandon the runtime rather than close it.

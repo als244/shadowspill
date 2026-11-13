@@ -1,297 +1,210 @@
 # Axis chunking within a stage
 
-Operator-library authors can start with the
-[integration guide](../python/operator-integration.md), which explains which
-contracts are required and how to qualify their forward/backward behavior.
+Chunking executes independent positions of a logical tensor axis in bounded
+slices. It reduces temporary activations and recomputation workspace. Full
+stage inputs, outputs and saved values still need their full storage.
 
-A stage whose operations act independently on logical axis positions can execute a bounded
-slice at a time. This limits transient activations and backward recomputation
-workspace. Public inputs and outputs retain their complete shapes, so their
-storage remains part of ordinary residency planning.
-The declared independent domain can be any supported tensor axis; it need not
-be token positions. Factored axes align operands with different numbers of
-physical elements per logical position.
+Models express the full computation. The builder generates chunk loops from
+caller policies and operator semantics; providers do not implement these loops.
+Any supported tensor axis can define the independent domain. Factored axes
+preserve its coordinates through flattening, reshaping and permutation.
 
-The builder's `partition` policy defines checkpoint stages. A direct
-`ChunkPolicy` selects whole stages for axis chunking. `ChunkRegions` instead
-partitions each explicit task into internal execution regions, then applies a
-chunk policy to each region. A checkpoint stage can therefore contain both
-whole-sequence operations and chunked regions with different chunk sizes.
-The [policy reference](../python/api/frontend.md#axis-chunking-policies) describes
-these controls. The library does not select boundaries from a model name.
+## Checkpoints, execution regions and chunks
 
-Execution-region chunk loops belong to ShadowSpill's builder and saved
-executable. Models express the full tensor computation. Providers implement
-operators and may supply versioned rules describing axis independence, local
-scratch and gradient reductions; these rules do not implement the loops.
-Recipe policies choose region boundaries and chunk sizes. Provider-internal
-kernel tiling and an existing model's chunked loss head are separate mechanisms.
+| Control | What it changes | What remains unchanged |
+|---|---|---|
+| `partition` | Checkpoint-stage boundaries and their derived inputs/outputs | Operator mathematics |
+| Graph-pair retention policy | Values retained from forward until backward | Execution-region boundaries |
+| Direct `ChunkPolicy` | Chunking of a complete stage | Its checkpoint boundary and retained cut |
+| `ChunkRegions` | Internal execution cuts and per-region chunk policies | The parent graph pair's retained cut |
+| `ChunkRegions.lifetimes` | Approved ordering, replay or compaction before execution cuts | The parent task's public storage interface |
 
-## Capture and differentiation
+A checkpoint stage can contain whole-axis operations and several chunked
+regions. Execution-region edges live only within one task call, but a cut can
+still materialize a full-axis intermediate. A cut alone does not reduce memory.
+The [policy reference](../python/api/frontend.md#axis-chunking-policies) defines
+the public controls; [operator integration](../python/operator-integration.md)
+explains the declarations required from a library.
 
-Training capture constructs explicit full-stage forward and backward graphs,
-including creator and accumulating gradient forms. Axis propagation transforms
-these graphs after their retention cuts and precision conversions are resolved.
-It does not differentiate a Python chunk loop or capture a different autograd
-program for each slice.
+### Compose regions inside an outer slice
 
-An optional outer `ChunkRegions.lifetimes` policy first schedules approved
-readonly operations on the complete task. It resolves declarative rules and
-immutable callback selections before gradient destination routing and execution
-partitioning. Moving a producer toward its consumer can therefore avoid a
-full-axis execution boundary that the original instruction order would create.
-The movement pass does not replay work, alter retained values, or change the
-parent storage contract. The default `None` leaves the schedule unchanged.
+`AxisChunks.regions` nests execution regions within an outer chunk loop. For
+example, an independent group can use an outer bound of 8,192 positions, with
+one inner projection using 2,048 and another operation using 8,192. Their
+intermediate edge spans at most the outer slice, rather than the full axis.
+Each slice finishes its last consumers before the next begins.
 
-Dispatcher ownership and alias contracts determine read/write dependencies;
-fake execution supplies geometry, not alias proof. Unknown opaque effects and
-overlapping writes stop movement. Selected barriers stay in place and every
-candidate is checked against all their complete live backing sets, including
-siblings of partial views. Parameter-gradient conversions are protected before
-chunk reductions, including conversions followed by literal scalar scaling,
-negation, or gradient layout changes. Moving such a conversion after a chunk
-loop could sum contributions in the compute dtype instead of the parameter's
-wider gradient dtype. Semantic backing counts exclude external inputs, opaque
-workspace and allocator overhead and are not physical admission estimates.
+The complete group must pass the outer separability checks. An operation that
+needs the whole axis stays outside it. Nesting introduces neither checkpoint
+saves nor repeated expensive computation in the explicit graph.
 
-Normalized resolved choices, used readonly-contract versions and movement
-decisions enter the composed executable identity. Source occurrence reports are
-separate inspection metadata. Cold execution never reloads a policy callback.
-Compilation and profiling see the transformed complete task, and ordinary
-planning still owns variant selection, spill and physical admission. See the
-[lifetime policy reference](../python/api/frontend.md#execution-lifetimes) for
-selectors, contracts and current refusals. Explicit `compact=True` selections
-prepare internal aliases and consider escaping sibling views jointly. Separate
-versioned input-layout contracts prove logical value preservation; readonly
-execution alone is insufficient. Layout changes propagate through alias and
-fresh operations until a complete dense fresh result has unchanged geometry.
-Input/external aliases, written backings and raw storage-sensitive consumers
-are protected. A speculative copy group is accepted only with the same outer
-storage contract, a reduction at a protected barrier and no increase elsewhere.
-Normalized view/copy decisions and used layout versions also enter identity.
-Compilation/profiling measures copies as part of the final composition; the
-semantic inventory does not substitute for physical admission.
+## Construction order
 
-Explicit `replay=True` selections run between movement and compaction. Captured
-primal provenance, original dependency versions, effects, output aliases/writes
-and gradient-conversion protection constrain each copy. Structural tuple access
-accompanies its selected producer unless excluded. Copies are shared within each
-consumer region and never inserted into regions containing protected barriers.
-Changed alias relationships require input-value semantics even when strides stay
-unchanged. Each proposal preserves the task boundary and cannot increase any
-protected backing inventory. Normalized decisions and copy origins enter identity;
-callbacks run only for the original operations during build. There are no default
-replay selections or implicit permissions based on cost. Profiling includes every
-extra operation before ordinary planning makes its admission/selection decision.
+1. Capture the full-stage forward and backward graphs, including gradient
+   creation and accumulation forms. Resolve retention and precision conversions.
+2. Apply selected lifetime transformations to the complete explicit task.
+3. Route eligible parameter-gradient contributions to shared destinations.
+4. Resolve execution cuts and chunk policies; propagate axis/reduction roles.
+5. Specialize full and tail children, then compile the complete composition.
 
-Execution policies see source module paths resolved for the current checkpoint
-occurrence, including operations emitted by its derivative or recomputation.
-The [source-provenance contract](graph-pair-construction.md#structural-deduplication)
-keeps these selections consistent across structural reuse and disk restore.
-Generated operations without source provenance carry no guessed module path.
+The builder transforms explicit graphs; it does not differentiate a Python
+chunk loop. Policy selectors see source paths for the current checkpoint
+occurrence, including its derivative and recomputation operations. Structural
+reuse rebinds those paths; generated operations receive no guessed provenance.
+See [structural deduplication](graph-pair-construction.md#structural-deduplication).
 
-A chunk dimension may contain factors before and after the logical axis index.
-This preserves axis coordinates through reshaping, permutation, flattened batches,
-and feature dimensions. Sliced inputs use bounded dense copies with a canonical
-offset, preserving permutation order needed by captured views. Full and tail
-child graphs are specialized for their actual
-geometry; compatible child contracts share compilation.
+## Axis and reduction semantics
 
-During a build, identical resolved axis transforms, split templates and semantic
-storage contracts share bounded caches. Outer slicing is separate from inner
-region composition: full/tail slice graphs can be reused while inner policies
-resolve again for the current occurrence. Keys include explicit graph semantics,
-dispatcher schemas, tensor geometry, input aliases/backing sizes, roles,
-axis/rule contracts and gradient accumulation settings. Nested slice source
-metadata and representative-value provenance bind to the current occurrence;
-the template preserves its sliced geometry and transformation overrides.
+Built-in rules cover supported elementwise operations, feature reductions,
+views and matrix products. Opaque operations require versioned rules. Matching
+shapes alone cannot prove independence, and an extent equal to an activation
+axis does not make a parameter gradient sliceable.
 
-Split templates are reusable only after lifetime processing, gradient routing
-and partition assignments have resolved. Fake observations rebind complete
-storage aliases to the current inputs, and child graphs receive current source
-metadata. Their already observed outputs also supply the parent boundary facts;
-the complete graph need not run a second time just to recover output geometry.
-Concrete tensors, unsupported representations and symbolic geometry use the
-ordinary observation path. These caches are released on normal or exceptional
-build exit. Partition, lifetime and chunk-policy callbacks still run for every
-occurrence. Saved-state cuts, executable identities and physical admission remain
-unchanged; the complete composed tasks are still compiled and profiled normally.
-Split graphs use PyTorch's deferred FX wrapper generation: copying or inspecting
-their structure need not regenerate Python code. Calling the graph or reading
-its `.code` generates the current wrapper, including after graph edits. This
-changes construction cost, not task compilation or runtime kernel selection.
+| Value role | Forward assembly | Backward treatment |
+|---|---|---|
+| Sliced | Write each slice into the full output geometry | Slice its cotangent for each child |
+| Shared/axis-independent | Assemble one result | Supply its cotangent to the first child only; later children receive zero |
+| Additive statistic | Sum chunk results | Supply the same upstream cotangent to every child |
+| Chunk-local scratch | Keep only within the child | Cannot escape through a boundary or retained cut |
 
-Built-in rules accept supported elementwise operations, feature reductions,
-views and matrix products. A shared parameter gradient is a sum of chunk VJPs.
-Sliced outputs concatenate into the full boundary geometry. Unknown operations,
-nonadditive chunk reductions, unsupported effects and ambiguous aliases fail
-capture. A caller-supplied operator rule certifies semantics; validating its
-shapes cannot prove that an opaque implementation is independent along the selected axis.
+Chunk-local scratch may scale with the domain without preserving original axis
+order, as in an internal permutation. A provider rule must restore ordered
+coordinates before ordinary operators mix it with sliced values. Nonlinear
+aggregates of additive statistics run outside the chunked region.
 
-Child computations retain the captured tensor dtypes and precision policy.
-Changing matrix shapes and reduction order can change floating-point rounding.
-A narrow contribution rounded before conversion to a wider accumulator retains
-that rounding; the accumulator's dtype does not increase the precision of the
-contribution-producing operation. Numerical qualification must cover the chosen
-chunk size and precision combination.
+Sliced inputs use bounded dense copies with canonical offsets and the order
+required by captured views. Full and tail children use their actual geometry.
+Unknown operations, nonadditive reductions, unsupported effects and ambiguous
+aliases are refused. Differentiable aliased stage outputs receive independent
+roots so their cotangents stay inside the explicit backward graph.
 
-For a fresh shared backward gradient, the first chunk produces its buffer and
-subsequent chunks receive that buffer as a mutated input. An existing gradient
-input, including one carried from an earlier microbatch, is updated from the
-first chunk. Eligible matrix-gradient products add directly into that storage;
-the builder's `fuse_narrow_gradient_accumulation` setting also applies here.
-An opaque provider gradient or an unsupported product epilogue can still require
-a temporary contribution and an in-place addition inside the compiled child.
-Broadcast gradient layouts that cannot be mutated as dense tensors use explicit
-assembly instead of an accumulating child.
+## Shortening temporary lifetimes
 
-Before execution partitioning, eligible parameter-gradient sums are routed to
-one destination. A first contribution may donate its storage when it is fresh
-and has no other readers; an existing gradient input can receive multiple
-contributions directly. Later execution regions consume that same destination.
-This transformation follows gradient assembly and stops at contribution
-producers. It does not turn intermediate activation adjoints into parameter
-destinations. Narrow sum trees keep their association when narrow fusion is
-disabled. Aliased or externally observed contributions remain explicit sums.
+Lifetime processing runs before execution partitioning, when it can prevent a
+premature full-axis intermediate from becoming a region edge. The default
+`lifetimes=None` leaves instruction order unchanged. Each transformation is
+explicitly selected:
 
-Explicit parameter-gradient outputs retain their gradient role through assembly
-and execution cuts, including individual tensor outputs of opaque backward
-operators. A feature extent equal to an activation axis length does not establish
-that the parameter gradient contains independent activation slices. Other outputs
-of the same opaque operator retain their own roles and axis contracts.
+| Transformation | Effect | Required proof |
+|---|---|---|
+| Movement | Delay approved readonly work toward its consumer | Preserve dependencies, mutation versions and protected live backing sets |
+| Replay | Copy selected work into consumer regions | Preserve primal provenance, effects, aliases and gradient conversions; never infer permission from cost |
+| Compaction | Copy internal views into smaller backing storage | Versioned input-layout semantics, a lower protected peak and no increase at another protected point |
 
-An axis-independent forward output is assembled once. Its upstream cotangent
-enters only the first child backward; later children receive zeros for that
-port. This adds its contribution once when it meets a chunk-summed parameter
-gradient. In contrast, a summed forward statistic receives the same upstream
-cotangent in every child. Both remain linear VJP contributions.
+The order is movement, replay, compaction. Movement does not repeat work.
+Replay copies are shared within a consumer region and are never inserted into
+a region containing a protected barrier. Tuple access accompanies its selected
+producer unless explicitly excluded.
 
-Opaque scratch can instead be declared chunk local. Its dimensions may scale
-with the axis extent without claiming original axis order. It cannot escape in
-a boundary or retained cut, and ordinary operators cannot mix it with ordered
-axis positions. An explicit provider rule must restore the axis contract.
-This permits
-internal dispatch permutations while refusing invalid concatenation of local
-indices. A provider may expose additive sufficient statistics; a nonlinear
-aggregate remains a separate full-domain computation.
+Dispatcher schemas establish ownership and read/write dependencies; fake
+execution provides geometry, not alias proof. Unknown effects and overlapping
+writes block movement. Readonly behavior alone does not authorize relayout.
+Compaction follows aliases and consumers until a complete fresh dense result
+has unchanged geometry; input/external aliases, written backings and
+storage-sensitive consumers remain protected.
 
-Differentiable stage outputs that alias inputs or each other receive independent
-roots. This keeps their cotangents inside the explicit backward graph rather
-than an autograd wrapper. Downstream boundary geometry is observed again before
-capture. Fresh output views retain the offsets required by their consumers.
+Checks count complete backing allocations, including sibling views. They also
+protect gradient casts, literal scaling, negation and layout changes before
+chunk reduction, so moving work cannot silently change accumulation precision.
+Semantic backing counts exclude external inputs, opaque workspace and allocator
+overhead; only complete-task profiling establishes physical admission.
 
-## Retention and storage
+Resolved choices, used semantic versions and copy origins enter executable
+identity. Callbacks run during build, including after structural reuse, and are
+absent from saved execution. See the
+[lifetime reference](../python/api/frontend.md#execution-lifetimes) for selectors
+and refusal conditions.
 
-Checkpoint boundaries and execution boundaries have different lifetimes.
-Only checkpoint inputs and the graph pair's saved values cross the forward to
-backward interval. Internal execution boundaries are local to one task call;
-the composition drops their references after their last consumer. Changing
-execution partitioning leaves the outer graph pair's retention cut unchanged.
-An internal cut can still increase transient workspace by materializing an
-intermediate. It is not a promise that a complete task fits its memory budget.
+## Gradient destinations and precision
 
-Each stage occurrence retains one graph-pair choice. A `save` variant stores its
-full set of saved roots across the full axis; chunking does not make those roots
-smaller. A `recompute` variant retains the chosen full-stage cut and rebuilds
-chunk-local intermediates during its explicit backward. Chunk size does not
-change that cut. A policy may restrict a selected nonterminal stage to either
-variant, while mandatory endpoint requirements still apply.
+For a fresh parameter gradient, the first contribution creates its buffer.
+Later chunks, regions and microbatches update that destination. If an earlier
+microbatch already supplied a gradient, even the first chunk accumulates into
+it. A fresh contribution can donate storage only when it has no other readers.
+Aliased or externally observed contributions remain explicit sums.
 
-The composition allocates full result roots once, adopting complete first-child
-results when their exact physical storage matches the public contract. Each child invocation runs in
-the parent's allocation scope, writes its axis slice or adds its shared gradient
-contribution, then releases child results and input copies before the next
-invocation. Explicit additive gradient mutations preserve their declared prior
-storage. Other mutations are refused.
+Eligible matrix products write directly into the destination. Opaque providers
+without a destination overload, unsupported epilogues and layouts that cannot
+be mutated densely use a temporary contribution or explicit assembly. This
+routing applies to parameter gradients, not intermediate activation gradients.
 
-Host output locations reported by child lowering remain host locations in the
-parent's assembly and allocation contract. Full and tail children must agree on
-those locations; a mixed host/device view of one output root is refused.
+`fuse_narrow_gradient_accumulation` permits fused arithmetic at narrow gradient
+dtypes. When disabled, narrow contributions retain their explicit rounding and
+sum association. A contribution rounded before widening stays rounded; a wide
+accumulator cannot restore its lost precision. Chunk geometry can still change
+floating-point reduction order.
 
-Full boundaries, saved values and shared gradients are ordinary planner objects.
-PressureFit chooses their residency and transfers. Internal chunks are not
-scheduler tasks, microbatches, independently spillable views, or separate
-optimizer updates. No planner or runtime special case identifies an attention
-architecture.
+A completed additive subtotal crossing a region edge enters a downstream chunk
+loop once. A mutable destination is shared across all iterations. Provenance
+through shared linear subgraphs distinguishes these cases; a nonadditive
+aggregation ends that provenance and is not thereby certified for chunking.
 
-An execution composition invokes its children in graph order. Whole-region
-children and chunk-loop children share the parent's allocation scope. Before an
-edge is consumed, its geometry, offsets and aliases match the captured contract.
-Compiler-owned outputs can be reused only when their physical allocation matches
-that contract; otherwise the composition materializes the declared storage.
-Expanded boundary views retain their zero strides. Assembly writes each distinct
-physical element once, preserving the captured broadcast aliases.
-Explicit gradient materialization changes storage ownership while preserving
-the value's sliced, shared, or additive-reduction layout. Independent gradient
-outputs retain independent storage after chunk assembly.
+## Storage and execution
 
-An axis composition can contain an execution composition inside each slice.
-Each inner region selects its own chunk bound. Its intermediate boundaries
-span only the enclosing slice, and their last uses finish before the next
-outer slice starts. The complete group passes the outer axis contract before
-its children are formed. Whole-axis operations remain outside that group.
-This nesting changes execution lifetimes without introducing checkpoint saves
-or extra copies of expensive computation in the explicit graph.
+Both graph-pair variants retain their selected full-axis roots. `recompute`
+regenerates local intermediates in backward; chunk size does not change its
+retained cut. A policy can restrict a nonterminal stage's variants, subject to
+mandatory endpoint requirements.
 
-Gradient ownership is established before inner execution partitioning. The
-first contribution creates a destination; subsequent inner and outer chunks,
-and later microbatches, use that destination. A completed additive subtotal
-crossing an execution cut enters a downstream chunk loop once. A mutable
-gradient destination instead remains shared across every iteration. Shared
-linear subgraphs preserve subtotal provenance across their own cuts. An
-unchunked aggregation runs once on completed values and ends that provenance
-when its operation has no additive contract. This does not certify the
-aggregation for chunking; an enclosing axis composition still has to pass its
-complete separability checks.
+A composition allocates full result roots once, or adopts a child's result when
+its physical storage exactly matches the boundary. Children run in the parent's
+allocation scope, write slices or add gradients, then release local results and
+input copies. Whole-region children follow the same graph order and release
+rules. Explicit gradient mutations preserve destination storage; other mutations
+are refused.
 
-## Compilation, measurement and execution
+Assembly preserves shapes, strides, offsets and aliases. Expanded views retain
+zero strides and each distinct physical element is written once. Independent
+gradient outputs keep independent storage. Host results stay on the host; full
+and tail children must agree on locations, and mixed host/device views of one
+root are refused.
 
-The executable archive contains a versioned composition and finalized child
-payloads. An unsupported composition version requires rebuilding the Program.
-Identity includes the original explicit graph, full axis extent, logical domain
-name, chunk size, input/output axis mappings, operator-rule versions, child contracts and
-physical output storage. Kernel source identities distinguish identically named
-kernels from different child specializations.
-Creator and accumulating children have distinct contracts. Only specializations
-invoked by the complete composition are packaged and finalized.
-Nested payloads restore recursively, including full and tail execution
-compositions. Their resolved child contracts participate in parent identity;
-changing any inner size requires profiling the resulting complete parent.
+Full boundaries, saved values and shared gradients are planner objects.
+PressureFit chooses their placement and transfers. Internal chunks are neither
+microbatches nor separately scheduled or spillable tasks.
 
-Measurement restores and runs the complete composition under the ordinary
-allocator. Its timing and allocation evidence include the loop, input copies,
-assembly, full roots, providers and child workspace. Child measurements alone
-cannot certify a parent. Allocation evidence passes through the existing
-profile binding, physical admission and planning pipeline. Planning remains
-framework independent and does not import the frontend.
+## Reuse, profiling and saved execution
 
-A saved Plan executes without the source model, policy callback, capture or
-compiler caches. Runtime admission and pool bounds apply to the complete task.
-`row_chunks` metadata in the [artifact reference](../python/api/artifacts.md#axis-task-metadata)
-records the resolved contract; it does not prescribe residency.
-`execution_regions` records nested child bindings, local releases and each
-selected child's own axis contract. The complete parent remains the unit of
-profiling and planning; child code reuse does not imply profile reuse across
-different parent compositions.
+Build-local caches reuse axis transforms, split templates and observed storage
+facts after lifetime choices, gradient routing and partition assignments have
+resolved. Keys include graph/schema semantics, geometry, aliases, roles, axis
+rules and accumulation settings. Reuse rebinds current inputs and provenance;
+inner policies still resolve for each occurrence. Unsupported or symbolic
+representations use ordinary observation. Caches are released on build exit.
+Deferred FX wrapper generation avoids regenerating Python source merely to
+inspect a split graph; it does not change runtime selection.
 
-## Boundaries and limitations
+Executable identity includes the graph, logical domain, full extent, chunk
+sizes, mappings, semantic versions, child storage and kernel identities.
+Creator and accumulator children remain distinct. Only invoked full/tail forms
+are finalized and saved, recursively for nested regions.
 
-The supported scope is first-order chunked regions with explicit additive
-gradients and no untracked random or mutable state. This is a semantic
-requirement, not a bitwise reproducibility guarantee: normal fused execution
-can change rounding and near-tied routing or sparse selections across different
-chunk geometries. Discrete choices needed by backward must still agree with
-their own forward execution through the provider's retention contract.
-Generic terminal training losses, random state replay,
-wrapped tensor components and arbitrary mutation protocols require additional
-contracts. Sequence attention, recurrence, convolution and global routing
-statistics must remain outside a selected chunked region unless a provider
-supplies a contract that preserves their complete semantics. Merely dividing a sequence
-into windows does not satisfy this condition.
+Profile the **complete parent task**. Its time and allocation evidence include
+copies, loops, assembly, full roots and opaque provider workspace. Reusing child
+code does not permit reusing a different parent's profile. Changed inner sizes
+require measuring the resulting parent before planning and admission.
 
-Chunking reduces transient workspace. It does not reduce full boundary
-storage, aggregate saved activations, resident parameters, or workspace inside
-an unsplit sequence operation. Build finalization and profiling run without a
-Plan, so residency planning cannot spill between their internal child calls.
-If an allowed variant cannot fit as a complete task, build or measurement fails;
-no unmeasured implementation or silent unchunked replacement is admitted.
+A saved Plan needs neither model nor policy callbacks nor compiler caches.
+[`row_chunks` metadata](../python/api/artifacts.md#axis-task-metadata) records the
+resolved axis description; `execution_regions` records child bindings and local
+releases. These records do not choose residency. Planning remains framework
+independent, and the parent is its unit of timing and memory admission.
+
+## Limits
+
+The supported scope is first-order differentiation with explicit additive
+gradients and no untracked random or mutable state. Required discrete choices
+must match their own forward during backward; fused arithmetic does not promise
+bitwise equality across different geometries.
+
+Attention, recurrence, convolution and global routing statistics cannot be
+windowed merely because an input has a sequence axis. They need semantics that
+certify the proposed split. Generic terminal losses, random-state replay,
+wrapped tensor components and arbitrary mutation protocols need additional
+support.
+
+Chunking cannot shrink full boundaries, retained activations, weights or private
+workspace inside an unsplit operation. Build finalization and profiling run
+without a Plan, so placement cannot spill between their internal child calls.
+A complete task that does not fit is refused; it is not silently replaced by an
+unmeasured implementation.

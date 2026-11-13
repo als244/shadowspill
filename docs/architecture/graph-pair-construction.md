@@ -144,6 +144,12 @@ function of the graph's structure rather than of the strides one capture
 happened to produce. It is the same reasoning that keeps the compiler from
 choosing an output's geometry through shape padding.
 
+Outgoing activation gradients are normalized to the canonical format of their
+corresponding forward input, including channels-last where applicable. Any
+conversion is inside the backward graph before compilation and profiling.
+Parameter gradients may retain independent dense transposed storage; they do
+not need activation-boundary normalization.
+
 ## Structural deduplication
 
 Before AOT capture, ShadowSpill computes the stage structural contract from:

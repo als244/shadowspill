@@ -13,7 +13,7 @@ profiling, and memory planning. It has the same contract for every model.
 | Stage contract | The inputs, outputs, explicit mutations, and storage/alias relationships derived for that occurrence. Equivalent contracts may share compiled artifacts without sharing parameter values. |
 | Graph pair | A compiled forward/backward alternative for a training stage, such as save or recompute. |
 | Task | One scheduled entrypoint invocation. A training stage normally contributes forward and backward tasks; optimizer and transfer actions are planned separately. |
-| Execution region | A local interval inside an explicit task, optionally run in row chunks. It adds no checkpoint save or scheduled task. |
+| Execution region | A local interval inside an explicit task, optionally chunked along a declared axis. It adds no checkpoint save or scheduled task. |
 
 A stage is not a named layer type, a device kernel, or a memory reservation. Ten
 identically structured experts can be ten stage occurrences and share a small
@@ -67,41 +67,33 @@ A policy is applied during capture for each relevant input structure. Labels
 are local to that graph. Reusing a policy across a geometry sweep does not
 require exactly the same number of operations at every geometry.
 
-## Microbatches of one export
+## Reusing a partition across microbatches
 
-An accumulated step exports its objective once and calls the exported program
-once per microbatch, and a partition is a function of that program: the policy
-reads only its graph, and the split and the folds after it follow from what the
-policy returned. So a program is split once, by its first microbatch.
+An accumulated step exports its objective once and applies the exported program
+to each microbatch. The first microbatch establishes the partition. Later ones
+with identical input shapes, strides, dtypes and layouts reuse the split,
+rebinding stage inputs, outputs and complete alias relationships to their own
+storages. They do not reuse another microbatch's tensor values.
 
-A later microbatch whose inputs have the first one's geometry -- the shape,
-stride, dtype and layout of every input -- takes the first one's stages, and
-only the values they were recorded with change. Each stage's inputs and
-outputs are mapped onto the later microbatch's own inputs storage for storage,
-so a view of an input stays a view of that input and two values that shared a
-storage still share one. A stage value the mapping cannot reproduce, a wrapper
-around several tensors or a layout other than strided, sends that microbatch
-through the first one's split with its own inputs instead, so the mapping is a
-shortcut to the same stages and never a different answer. A microbatch whose
-inputs differ in geometry is split for itself.
+Different geometry requires a new split. If rebinding cannot represent a value
+—for example a tensor wrapper or unsupported layout—the builder observes the
+same partition using that microbatch's inputs. Reuse is an optimization, not a
+change to the selected computation. Forward-only capture similarly deduplicates
+by graph, geometry, aliases, roles, representation metadata and mutations while
+rebinding occurrence-specific values and provenance.
 
-Integer and boolean controls require authentic values from their producer
-slices or the caller. Arithmetic-only statistics are different: partitioning
-follows every downstream use across stages and permits generated profiling values
-only through a small whitelist of fixed-shape ATen arithmetic. Indexing, scalar
-extraction, mutations and unknown/custom operators retain the strict control
-requirement. This lets meta-built MoE models expose numeric expert counts without
-running the whole model merely to prepare a loss statistic. Runtime computation
-and integer dtypes remain unchanged.
+Integer and boolean controls used for indexing or unknown operations need
+values from their actual producers or the caller. Fixed-shape arithmetic-only
+statistics may use generated profiling representatives after all downstream
+uses pass a restricted ATen check. This does not alter runtime values or dtypes.
+Public builders replay the required compiled producers during finalization and
+[profiling](../python/api/profiling.md#task-measurement); they do not run the whole
+model during partitioning to obtain them. Compatible later microbatches reuse
+representatives after checking geometry.
 
-When partitioning derives these values, it evaluates producers for only a
-program's first microbatch; later microbatches check the derived values against
-their own geometry. The public builders leave them to finalization and
-profiling, which replay the compiled producers ([phase
-APIs](../python/api/profiling.md#task-measurement)). Which microbatch creates a
-stage's gradient and which adds into it is not decided here: every microbatch
-carries both backward forms and the step's ordering chooses ([graph-pair
-construction](graph-pair-construction.md#accumulating-onto-gradients-that-already-exist)).
+Gradient creation is separate from partition reuse. Every microbatch carries
+both creator and accumulator backward forms; the step ordering chooses which
+runs. See [gradient accumulation](graph-pair-construction.md#accumulating-onto-gradients-that-already-exist).
 
 ## What a boundary means
 
@@ -154,6 +146,3 @@ conditions do not belong in the planner, simulator, runtime or operator kernels.
 See also [phase APIs](../python/phases.md),
 [graph-pair construction](graph-pair-construction.md), and
 [task boundaries](task-boundaries.md).
-
-Axis chunking is selected separately from boundaries; see
-[axis chunking](axis-chunking.md) for the stage-contained loop and its contracts.

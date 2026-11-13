@@ -1,5 +1,8 @@
 # Communication measurement
 
+Measure transfer and overlap costs separately from task profiles, then supply
+both to planning. These probes use GPUs and communication participants; planning
+only reads their saved results. The [phase guide](../phases.md) shows the order.
 
 ## Host and external transfers
 

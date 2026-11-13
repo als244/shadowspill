@@ -1,5 +1,7 @@
 # Executor and shared plan state
 
+Execute an admitted saved Plan and own its persistent state. Use
+[Trainer](training.md) when you also want the training-loop interface.
 
 ## Fresh worker and invocation
 
