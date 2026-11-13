@@ -3,7 +3,7 @@
 `build_step` captures a supplied optimizer's local update. Build declares tensor
 geometry and initialization recipes; Executor later owns and initializes the
 storage. Planning decides update order without constructing an optimizer or
-allocating model state. See the [phase API](offline-pipeline.md) for the complete
+allocating model state. See the [phase API](../python/phases.md) for the complete
 build, profile, plan and execution sequence.
 
 ```python

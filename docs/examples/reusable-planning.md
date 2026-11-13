@@ -73,5 +73,5 @@ provider overhead must be supplied explicitly; it never defaults to zero.
 
 For reproducible comparisons, keep the Program, Profiles, CommunicationInfo,
 selected Plans and reports alongside the configuration and source revision. Each
-phase artifact is one archive file. The [phase API guide](../architecture/offline-pipeline.md)
+phase artifact is one archive file. The [phase API guide](../python/phases.md)
 describes their contents and compatibility checks.

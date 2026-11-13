@@ -166,7 +166,7 @@ The implementation and trace arrays use **positions** $p=b+1$: position 0 is
 before task 0. Cut endpoints in the trace retain the signed boundary notation.
 See [trace positions and semantic labels](../python/pressurefit-trace.md#semantic-labels-and-positions).
 
-### Prepare — deriving the residency problem
+### Prepare the residency problem
 
 Preparation derives anchor lists, fresh-output reservations, access/write
 lists, boundary capacities, and estimated transfer durations. It checks that
@@ -532,7 +532,7 @@ emitted schedules. A pressure repair reruns the greedy reducer; a trigger
 repair can produce a new schedule without making a new cut. The trajectory
 is not guaranteed to improve makespan at every step.
 
-## Place — measuring whether the layout fits
+## Place the layout
 
 Occupancy and address extent are different: even when live bytes fit, a fixed
 offset assignment can extend beyond the physical pool because of overlapping

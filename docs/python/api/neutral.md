@@ -5,6 +5,17 @@ the artifact store, the planner, the simulator, physical admission and the
 runtime. Nothing here imports a framework, so a saved program can be planned,
 simulated, and admitted with no model and no device present.
 
+## Contents
+
+- [shadowspill.errors](#shadowspillerrors)
+- [shadowspill.ir](#shadowspillir)
+- [shadowspill.step](#shadowspillstep)
+- [shadowspill.task](#shadowspilltask)
+- [shadowspill.store](#shadowspillstore)
+- [shadowspill.planner](#shadowspillplanner)
+- [shadowspill.simulator](#shadowspillsimulator)
+- [shadowspill.runtime](#shadowspillruntime)
+
 ## `shadowspill.errors`
 
 What planning raises when it cannot answer. `PlanningError` is the base, and
@@ -86,7 +97,7 @@ task/NCCL interference to existing profiles after communication calibration.
 The standard distributed quickstart and text recipes run it during their
 communication phase. Empty overlap evidence retains isolated timing and is
 reported as unmeasured, not a measured absence of interference. For calibration,
-see [distributed phases](../../architecture/offline-pipeline.md#logical-parallelism-and-distributed-plans).
+see [distributed phases](distributed.md#ownership-and-setup).
 
 Indexed compiled projections:
 
@@ -259,7 +270,7 @@ faster than the stored answer or the store holds a refusal.
 it keeps beside a certified plan, for a caller that compares many plans and
 runs one.
 
-The application workflow uses the [public phase APIs](../../architecture/offline-pipeline.md).
+The application workflow uses the [public phase APIs](../phases.md).
 This lower-level planner accepts an already constructed ShadowSpillPlanningProblem;
 it performs no model capture, compilation or profiling.
 
@@ -829,7 +840,7 @@ Runtime(
 
 PyTorch callers construct `shadowspill.pytorch.Runtime` instead, which supplies
 that frontend and takes the same remaining arguments; [the frontend
-page](frontend.md#runtime) documents them, the pools a runtime holds, and what a
+page](runtime.md#runtime) documents them, the pools a runtime holds, and what a
 closing plan leaves behind. Allocator selection is process-global and
 irreversible, so exactly one runtime is opened per process, before the
 framework makes any device allocation.
@@ -840,7 +851,7 @@ from a runtime to a framework.
 Pools can use pinned host, remote or [SSD storage](ssd.md). Runtime owns
 calibration, independently of the frontend and pool kind.
 `calibrate_transfer_capabilities()` accepts route selection, small/large probe
-sizes and warmup/measured counts; its [arguments](frontend.md#runtime) apply to
+sizes and warmup/measured counts; its [arguments](runtime.md#runtime) apply to
 the neutral runtime as well. It measures solo and concurrent traffic, then
 atomically publishes `transfer_capabilities` while locally idle. Planning
 consumes this snapshot rather than recalibrating. The simulator uses the supplied

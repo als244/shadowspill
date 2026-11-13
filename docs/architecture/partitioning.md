@@ -98,7 +98,7 @@ When partitioning derives these values, it evaluates producers for only a
 program's first microbatch; later microbatches check the derived values against
 their own geometry. The public builders leave them to finalization and
 profiling, which replay the compiled producers ([phase
-APIs](offline-pipeline.md#task-measurement)). Which microbatch creates a
+APIs](../python/api/profiling.md#task-measurement)). Which microbatch creates a
 stage's gradient and which adds into it is not decided here: every microbatch
 carries both backward forms and the step's ordering chooses ([graph-pair
 construction](graph-pair-construction.md#accumulating-onto-gradients-that-already-exist)).
@@ -151,7 +151,7 @@ small standalone policy. Larger workload policies belong beside their models;
 for example, they can bound each decoder layer and vision block. Model-specific
 conditions do not belong in the planner, simulator, runtime or operator kernels.
 
-See also [phase APIs](offline-pipeline.md),
+See also [phase APIs](../python/phases.md),
 [graph-pair construction](graph-pair-construction.md), and
 [task boundaries](task-boundaries.md).
 

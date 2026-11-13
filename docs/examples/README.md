@@ -2,7 +2,7 @@
 
 These examples compose the public build, profiling, planning and execution APIs
 from `shadowspill`. Preparation produces saved artifacts; fresh execution workers
-consume Plans. See the [phase guide](../architecture/offline-pipeline.md) for the
+consume Plans. See the [phase guide](../python/phases.md) for the
 API boundaries and the [Python reference](../python/README.md) for details.
 
 ## Start here
@@ -19,7 +19,7 @@ API boundaries and the [Python reference](../python/README.md) for details.
    — real checkpoint/data, chunk and retention search, pinned-host budgets,
    evaluation and checkpointing through the normal saved phases.
 
-The [README recipes](../../README.md#real-model-training) cover Llama, Qwen3.5 LoRA,
+The [README recipes](../../README.md#model-recipes) cover Llama, Qwen3.5 LoRA,
 Qwen3 distributed training and GLM Flash LoRA. The [model catalog](../../workloads/MODELS.md)
 lists model dimensions, precisions and available implementations.
 

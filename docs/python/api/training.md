@@ -4,7 +4,21 @@
 `build_step` → `measure_program` → `apply_profiles` → `plan_program`. Construct
 Trainer in a fresh worker with the resulting Plan; it never builds, profiles,
 or searches. See the [complete example](../../examples/generic-training.md) and
-[phase API guide](../../architecture/offline-pipeline.md).
+[phase API guide](../phases.md).
+
+## Contents
+
+- [Trainer](#trainer)
+- [Inputs, objectives and results](#inputs-objectives-and-results)
+- [Evaluation](#evaluation)
+- [Updates, schedules and loop policy](#updates-schedules-and-loop-policy)
+- [Parameter norms and custom logging](#parameter-norms-and-custom-logging)
+- [Logger helpers](#logger-helpers)
+- [Checkpoints](#checkpoints)
+- [Reuse preparation across budgets and processes](#reuse-preparation-across-budgets-and-processes)
+- [Data parallel training and resource ownership](#data-parallel-training-and-resource-ownership)
+- [Startup diagnostics](#startup-diagnostics)
+- [Custom optimizers](#custom-optimizers)
 
 ## Trainer
 

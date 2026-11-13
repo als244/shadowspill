@@ -489,7 +489,7 @@ on its own captured device: explicit CPU controls stay on the CPU even when
 other inputs or outputs use the execution device. The public builders do not
 derive these values while partitioning: finalization and profiling replay the
 compiled producers instead, without an execution pool ([phase
-APIs](offline-pipeline.md#task-measurement)).
+APIs](../python/api/profiling.md#task-measurement)).
 
 Integer outputs used exclusively in proven fixed-shape arithmetic are marked
 numeric statistics. Isolated profiling supplies ones and records that generated

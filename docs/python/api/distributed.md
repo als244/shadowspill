@@ -382,5 +382,5 @@ continuation uses masters reconstructed from the saved rounded values as its
 baseline. These checks use unchanged rank ownership and world size; checkpoint
 resharding is not covered.
 
-The [phase guide](../../architecture/offline-pipeline.md) describes the
+The [phase guide](../phases.md) describes the
 implementation boundary; [phase artifacts](artifacts.md) describes persistence.

@@ -5,7 +5,7 @@ boundaries. See [Trainer and Executor](api/training.md) for normal usage.
 
 ## Preparation failures
 
-The [phase APIs](../architecture/offline-pipeline.md) separate preparation from
+The [phase APIs](phases.md) separate preparation from
 execution. Build and measurement use ordinary allocations, while planning uses
 only saved artifacts. None of these phases constructs runtime pools.
 

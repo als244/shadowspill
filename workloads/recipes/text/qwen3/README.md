@@ -105,7 +105,7 @@ check does not qualify the 30B model's performance or memory use on eight GPUs.
 The underlying common DP Executor is qualified on two H100s, and the recipe's
 test runs the tiny model through every phase on one and two GPUs, with separate
 compiler caches for each phase. The recipe opts into MLOps' supported
-[operator preparation](../../../../docs/operator-preparation.md): BF16 SonicMoE
+[operator preparation](../../../../docs/python/operator-preparation.md): BF16 SonicMoE
 builds archive their selected provider kernels and tuning choices. Profiling
 and execution load those artifacts without retuning inside a task. An eager
 compiler cache is not a substitute for these saved bindings. Other providers

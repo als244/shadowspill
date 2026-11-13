@@ -78,6 +78,8 @@ preset through `text_execution_chunks(lifetimes=...)` using the generic
 `ExecutionLifetimes` controls; an empty policy disables these transformations.
 Every changed composition still goes through build, profiling and admission.
 
+## Resolution and tail-save search
+
 `resolution_options` controls which SAVE/RECOMPUTE mixtures planning considers.
 `tail_save_counts` is a list of additional planning choices, automatically crossed
 with every resolution option:
@@ -115,6 +117,8 @@ phase="plan")`; the runner rejects changing them only at execution time.
 Planning takes the minimum admitted predicted duration over the crossed search.
 It is a finite heuristic search, not an exhaustive optimization of all schedules.
 
+## Planning concurrency
+
 CPU planning has two independent concurrency controls:
 
 | Option | Default | Work assigned to each worker |
@@ -140,6 +144,8 @@ the native library's automatic thread count in each process. Both controls may
 change without rebuilding. They apply only to CPU planning. `planning-work.json`
 records actual process concurrency, per-Program elapsed time and case counts,
 and total planning wall time; summed worker time is not wall time.
+
+## Benchmark initialization
 
 For performance sweeps, generate weights in host memory and omit evaluation and
 checkpoint I/O:
@@ -179,6 +185,8 @@ Checkpoint cadence and retention count can also change on a prepared run without
 rebuilding or replanning. Checkpoint reload tests and reference/state audits are
 separate opt-in validation work, not part of a throughput sweep.
 
+## Execution diagnostics
+
 Execution also writes small host-side lifecycle journals under `logs/`:
 `execute-launcher.jsonl` records the worker process lifetime, and
 `execution-rank-00000.jsonl` (one per launcher rank) records imports, Plan loading,
@@ -197,6 +205,8 @@ plus evaluation/checkpoint work when enabled. Combine wall timestamps with an
 external device-utilization sampler to distinguish startup and cleanup from
 training. Sampled GPU activity is not a measurement of achieved FLOPs. Journals
 end before Python process teardown; the launcher includes that remaining time.
+
+## Saved phases and reuse
 
 Local build/profile GPU exhaustion is recorded in `candidate-failures.json`
 and `search.json`, and other candidates remain eligible. Other errors fail the
@@ -267,6 +277,8 @@ artifact must match the exact spill capacity and all logical ranks; its physical
 allowance already includes the observed global pool-registration charge.
 See [pool calibration](../../docs/python/api/pool-memory.md).
 
+## Execution memory and checkpoints
+
 Execution loads the selected Plans, initializes their buffers using bounded
 adapter callbacks, and calls the ordinary `Trainer`. The default pinned spill
 pool reserves the selected worker's required peak plus 5%, capped by `spill_gib`;
@@ -278,6 +290,8 @@ is printed at initialization and recorded in `completed.json`. See
 `keep_last` and `resume` control checkpoints. A distributed resume path may
 contain `{rank}`. `steps` is the total desired update count, including restored
 updates; keep `schedule_steps` fixed across a continuation.
+
+## Nsight capture
 
 Nsight boundaries are shared execution options for every recipe:
 `nsys_steps=0` disables them by default, while `nsys_start_step=2` identifies the

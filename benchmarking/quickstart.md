@@ -25,7 +25,7 @@ same runner with their own model/input/initialization helpers. The
 provider resources and uses distributed build/profiling when its tasks communicate.
 Ordinary DP qualification does not certify its transport.
 The core APIs can be used directly without quickstart; see the
-[public phase guide](../docs/architecture/offline-pipeline.md).
+[public phase guide](../docs/python/phases.md).
 
 ## Complete example
 
@@ -239,7 +239,7 @@ versions with the optional ShadowSpill integration expose
 SonicMoE LoRA. Include its separate `sonicmoe_chunk_rules()` alongside the other
 operator rules in each applicable chunk policy. The rules do not pick a chunk
 size or retention policy; every candidate still passes ordinary compilation,
-profiling and admission. See [provider contracts](../docs/architecture/custom-gradient-destinations.md#sonicmoe-provider-adapter)
+profiling and admission. See [provider contracts](../docs/integrations/mlops.md#gradient-storage-and-precision)
 for precision permissions and unsupported paths that retain ordinary accumulation.
 
 Each graph-pair policy defines independent `save` and `recompute` cuts; the

@@ -4,7 +4,7 @@ Build records model structure; execution owns its values. A saved Program or Pla
 contains names, shapes, dtypes, storage relationships and initialization
 descriptions. It does not contain a checkpoint or a live Python model.
 
-See [the offline pipeline](offline-pipeline.md) for the phase boundaries. This
+See [the offline pipeline](../python/phases.md) for the phase boundaries. This
 page explains how tensors cross the execution boundary without creating another
 model-sized host allocation.
 

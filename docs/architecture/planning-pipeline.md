@@ -17,7 +17,7 @@ Executor in a fresh worker
     -> execution
 ```
 
-The [phase API](offline-pipeline.md) describes the public calls and artifacts.
+The [phase API](../python/phases.md) describes the public calls and artifacts.
 Build owns stage partitioning, operator-level recomputation and task
 implementations. Profiling supplies costs. Planning owns example traversal,
 optimizer placement, stage save/recompute selection and transfers. Execution
@@ -138,4 +138,4 @@ and memory evidence before admission.
 
 Previous: [Fixed-offset placement](fixed-placement.md). Next: [Plan
 identity](plan-identity.md).
-See also: [training composition](training.md) and [phase API](offline-pipeline.md).
+See also: [training composition](training.md) and [phase API](../python/phases.md).

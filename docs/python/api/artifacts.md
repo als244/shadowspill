@@ -22,8 +22,18 @@ Import these names from `shadowspill`. Building finalizes task implementations
 and may require a representative GPU. Measurement uses the ordinary PyTorch
 allocator. Applying profiles, planning, inspecting archives and writing reports
 require neither an accelerator nor ShadowSpill pools. Executor sets up pools in a fresh
-worker. See the [phase architecture](../../architecture/offline-pipeline.md)
+worker. See the [phase architecture](../phases.md)
 for the full API and current qualification limits.
+
+## Contents
+
+- [Program](#program)
+- [Profiles and TaskProfile](#profiles-and-taskprofile)
+- [ProfiledProgram](#profiledprogram)
+- [Plan](#plan)
+- [SweepResult](#sweepresult)
+- [Persistence and reports](#persistence-and-reports)
+- [Lower-level planning records](#lower-level-planning-records)
 
 ## Program
 
@@ -355,7 +365,7 @@ bindings. Model code and preparation caches are not needed to load it. Checkpoin
 weights and compatible runtime/provider libraries remain external. Distributed
 execution also requires compatible communication memory records and backend
 bindings; a logical-rank declaration alone is not execution admission. See the
-[phase API guide](../../architecture/offline-pipeline.md) for worker startup.
+[phase API guide](../phases.md) for worker startup.
 
 ## SweepResult
 

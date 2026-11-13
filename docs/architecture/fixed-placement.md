@@ -88,7 +88,7 @@ up to the alignment. A search takes that sum out of the capacity it plans
 against, so these objects are never charged per boundary again, and every plan
 it measures lays the slice out from the leases the plan actually has, exactly
 as the final layout does. How the shipped search settles them is
-[prepare](pressurefit.md#prepare--deriving-the-residency-problem).
+[prepare](pressurefit.md#prepare-the-residency-problem).
 
 ## The occupancy index
 

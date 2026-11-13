@@ -31,6 +31,16 @@ For only the two duration floors, `measure_program(warmup_seconds=...,
 measure_seconds=...)` is a shortcut to the same policy. Do not combine these
 shortcuts with `options`; conflicting specifications are rejected.
 
+## Contents
+
+- [Bounds and defaults](#bounds-and-defaults)
+- [What actually runs](#what-actually-runs)
+- [Cache reuse and artifacts](#cache-reuse-and-artifacts)
+- [Training runner and quickstart](#training-runner-and-quickstart)
+- [Task warmup versus sustained GPU operation](#task-warmup-versus-sustained-gpu-operation)
+- [Task measurement](#task-measurement)
+- [Profile overrides](#profile-overrides)
+
 ## Bounds and defaults
 
 The following controls bound each unique task's conditioning and timing.
@@ -183,3 +193,80 @@ of seconds, and these APIs do not silently lock clocks or change power limits.
 An optional pilot training trace can validate predictions under the actual
 compute/transfer mixture. Judge refinements on subsequent steps or other
 budgets, rather than fitting and evaluating the same trace.
+
+## Task measurement
+
+`measure_program(program)` restores the finalized tasks on a representative GPU
+and returns a reusable Profiles collection. It uses PyTorch's ordinary native
+allocator with bounded allocation observation, not ShadowSpill pools. By default
+it measures all unique task forms; `stages=[...]` selects stage indices and omits
+standalone optimizer work. Backward inputs include saved values from the exact
+forward form. An `inputs` mapping can supply flat task arguments by profile key
+when automatic values are unsuitable or control semantics are unknown.
+Build and measurement preserve the caller's default CPU and target-device random
+generator states. Execution consumes random values normally.
+
+Structural capture does not read model payloads to compute inter-stage controls.
+When an integer/boolean input is produced by another stage, build-time provider
+finalization and profiling obtain it by replaying the compiled producer with the
+ordinary profiling inputs. This preparation runs outside task timing and also
+works when profiling a stage subset. Caller overrides apply to producer inputs
+as well. Only the needed dependency slice is materialized, with CPU snapshots
+between producers; generated index arrays are not embedded in Program archives.
+Unknown root controls still require explicit values. CPU task outputs retain
+their dependencies but have zero GPU extent, and Executor holds their host values
+until the last ordered consumer.
+
+Measurement records durations, allocation lifetimes, output aliases and observed
+fixed memory. Logical free requests establish nonoverlapping temporary lifetimes
+on each allocation stream, independently of native addresses. Profiling compares
+exact-size reuse with a largest-first interval assignment and retains the smaller
+slot inventory. An interval slot reserves its largest request and can serve
+different sizes at the same address; returned roots and persistent state remain
+separate in that assignment. Different allocation streams retain separate slots.
+The saved allocation contract describes exact requests and ownership; admission
+reserves slot capacities, and execution binds each request within that capacity.
+
+`external_headroom_bytes` (512 MiB by default) additionally reserves
+worker headroom in that fixed-memory total; Executor inherits this saved setting.
+This is conservative: profiling observes loaded library/context memory, while
+the worker reserves headroom above its startup baseline. Planning therefore
+includes the reservation before fitting the task arena into the total GPU budget.
+The build/target setup must match. It does not compile or change
+task definitions. Provider resources that cannot be observed completely
+remain an execution-qualification concern; they are not silently treated as zero.
+
+Workspace totals permit logical simulation. They do **not** establish allocation
+order, storage handoffs, charged alignment, persistent provider allocations or
+the task code required for execution. Built Programs contain packaged code
+for fresh workers; memory evidence must describe those exact implementations.
+With complete observed allocation evidence, planning also constructs a physical
+`memory_layout` entirely on CPU. It validates the saved traces against compiler
+storage contracts, allocates ranges, and includes dependencies needed for safe
+range reuse in the simulated timeline. Layout and admission facts travel in the
+Plan archive, with identities checked against its program and schedule.
+
+Estimated memory, missing code, or incomplete allocation evidence keep a Plan
+simulation-only, as reported by `simulation_only_reasons`. Inconsistent evidence
+is an error. Physical placement is necessary for execution but does not replace
+the worker's dependency, provider-resource and available-memory checks. Executor
+validates those requirements before using its admitted layout.
+
+
+## Profile overrides
+
+```python
+from shadowspill import TaskProfile
+
+overrides = Profiles(
+    setup=profiles.setup,
+    tasks={profile_key: TaskProfile(duration_seconds=0.0072)},
+)
+profiles = profiles.merge(overrides)
+```
+
+Later supplied values overwrite earlier values. Omitted fields are preserved,
+so this timing override preserves existing memory information. Supplied values
+without classification metadata are estimates. Task compatibility and setup
+mismatches are errors. Changes to editable Profiles never alter an already
+created ProfiledProgram or Plan.

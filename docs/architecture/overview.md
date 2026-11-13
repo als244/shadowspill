@@ -49,7 +49,7 @@ without a process group. Communication costs come from `CommunicationInfo`:
 compatible measurements take precedence over estimates from rates and topology.
 Model-owned distributed operations may require their own group-aware preparation.
 
-See [the phase APIs](offline-pipeline.md) for signatures, examples, supported
+See [the phase APIs](../python/phases.md) for signatures, examples, supported
 parallelism and current limitations.
 
 ## Artifacts, costs and execution
@@ -170,7 +170,7 @@ waits where possible rather than blocking the dispatcher until bytes arrive.
 
 ## Further reading
 
-Start with [the public phase APIs](offline-pipeline.md), then follow the relevant
+Start with [the public phase APIs](../python/phases.md), then follow the relevant
 implementation boundary:
 
 - [IR](ir.md), [capture and lowering](lowering.md),

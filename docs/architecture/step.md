@@ -14,7 +14,7 @@ build_step → Program → measure_program → Profiles
                                       plan_program → Plan
 ```
 
-The public [phase API](offline-pipeline.md) defines the artifacts and their
+The public [phase API](../python/phases.md) defines the artifacts and their
 save/load boundaries. [Program collection](../../benchmarking/program_collection/README.md)
 stops at a saved `ProfiledProgram`; [planning evaluation](../../benchmarking/planning_eval/README.md)
 consumes it without importing a model or framework.

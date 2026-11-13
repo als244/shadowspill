@@ -50,7 +50,7 @@ axes and chunk size by returning `AxisChunks`. Providers supply semantic facts;
 workloads choose where to use them. Keep reusable provider facts independent of
 any execution engine. Put the adapter that constructs ShadowSpill rules in this
 repository or the caller's integration package. For example,
-[`shadowspill.integrations.mlops`](mlops.md) converts standalone `mlops.operator_metadata`
+[`shadowspill.integrations.mlops`](../integrations/mlops.md) converts standalone `mlops.operator_metadata`
 records without duplicating their operator semantics. The engine does not
 discover libraries or select policies by architecture name.
 
@@ -196,7 +196,7 @@ the separate [execution-lifetime controls](api/frontend.md#execution-lifetimes).
    cannot be offloaded between that operation's internal kernels.
 
 External compiler caches, source hashes and autotuning behavior belong to the
-provider. See [prepared operators](../operator-preparation.md) for packaging
+provider. See [prepared operators](operator-preparation.md) for packaging
 selected implementations and [resources](../architecture/resources.md) for
 non-tensor resource lifecycles. Neither interface substitutes for an axis contract.
 

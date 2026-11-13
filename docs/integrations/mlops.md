@@ -15,7 +15,7 @@ this repository.
 
 These helpers do not select model dispatch, checkpoint boundaries, chunk sizes,
 retention or spill placement. They do not initialize CUDA. The generic
-[operator integration guide](operator-integration.md) describes the same build
+[operator integration guide](../python/operator-integration.md) describes the same build
 APIs for any operation library.
 
 ```python
@@ -53,7 +53,7 @@ does not create a separate product tensor and then add it. Empty experts preserv
 the prior contents. Activation and routing gradients and other unconsumed outputs
 retain their ordinary values.
 
-Version 1 supports complete aligned contiguous FP32, BF16 or FP16 destinations
+Destination fusion supports complete aligned contiguous FP32, BF16 or FP16 destinations
 at the original gradient dtype, one finite literal scale, and canonical up-B
 gate/up ordering. Narrow accumulation obeys ShadowSpill's explicit
 `fuse_narrow_gradient_accumulation` permission: products, scale and prior sum
@@ -212,12 +212,12 @@ cuts and save/recompute policies. Each search candidate still builds, profiles
 and plans its own selected implementations. No precision settings, routing
 choices, retention decisions or gradient arithmetic change.
 
-The initial adapter covers the BF16 Sonic path. FP8, expert parallelism and
+The Sonic preparation adapter covers BF16. FP8, expert parallelism and
 unrelated attention providers require their own preparation implementations. A small
 real BF16 saved-Plan fixture has independent gradient/checkpoint coverage;
 prepared full-model, other-dtype and distributed qualification remain separate.
 The provider mechanisms and lifecycle limits are described in
-[operator preparation](../operator-preparation.md).
+[operator preparation](../python/operator-preparation.md).
 
 CPU tests in `tests/workloads/test_mlops_integration.py` exercise actual custom-op capture,
 grouped outputs, dtype permissions, canonical layouts and conservative fallbacks.
@@ -261,10 +261,9 @@ backward compiler. FP8/EP preparations and other external compilers need their
 own qualified adapters. An explicitly
 selected Sonic workload should use `sonicmoe_preparation()` instead.
 
-Programs built with the earlier engine-owned Quack tuning records or v1 Sonic
-preparations must be rebuilt and reprofiled. Saved v2 tasks own both choices and
-binaries, including host-cache shortcuts; loader validation refuses missing or
-incompatible state before execution can select another implementation.
+Saved tasks own both selected configurations and binaries, including host-cache
+shortcuts. Loading refuses incompatible sources, schemas or specializations;
+rebuild and profile after changing the provider implementation.
 
 ## Retaining router choices
 

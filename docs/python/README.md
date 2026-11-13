@@ -1,60 +1,40 @@
-# Python guide
+# Python guides and API
 
-The public workflow separates build, measurement, CPU planning and fresh-worker
-execution. Each phase produces an artifact that can be saved and reused. Trainer
-runs an already prepared Plan through Executor. This directory contains guides
-and the `api/` reference.
+Start with the [training example](../examples/generic-training.md) or the
+[phase guide](phases.md). All public phase entry points are available from
+`shadowspill`; PyTorch-specific policies live in `shadowspill.pytorch`.
 
-## Guides
+## Prepare and run
 
-How to use the system and how to read what it produces.
+| Topic | Reference |
+| --- | --- |
+| Capture and finalize task implementations | [Build](api/build.md) |
+| Checkpoint partitioning, execution chunking, retention and lifetimes | [Frontend policies](api/frontend.md) |
+| Task timing, memory observation and cache reuse | [Profiling](api/profiling.md) |
+| Copy/collective measurement and overlap | [Communication](api/communication.md) |
+| Saved Programs, profiles, Plans and sweeps | [Artifacts](api/artifacts.md), [cache guide](artifact-store.md) |
+| Inputs, schedules, evaluation and checkpoints | [Trainer](api/training.md) |
+| Asynchronous calls and shared state across Plans | [Executor](api/executor.md) |
+| Logical ownership, calibration and multi-worker execution | [Distributed training](api/distributed.md) |
+| Pool capacities, calibration and external storage | [Pool memory](api/pool-memory.md), [SSD](api/ssd.md), [allocator integration](allocator.md) |
+| Direct pool/runtime access for adapter tooling | [Low-level runtime](api/runtime.md) |
 
-- [Integrating an operator library](operator-integration.md)
-- [Training with saved plans](../examples/generic-training.md)
-- [Independent build, profile, plan and execution APIs](../architecture/offline-pipeline.md)
-- [Artifacts and caches](artifact-store.md)
-- [PyTorch allocator integration](allocator.md)
-- [Errors, failures, and cleanup](failures.md)
-- [Interpreting a Plan](plan-report.md)
-- [Planning diagnostic fields](plan-report-fields.md)
-- [PressureFit cut traces](pressurefit-trace.md)
-- [Interpreting execution diagnostics](step-diagnostics.md)
-- [program and annotated-plan JSON](planning-json.md)
-- [Pool occupancy over a step](occupancy.md)
-- [Practical examples](../examples/README.md)
+## Inspect and diagnose
 
-## API reference
+- [Plan reports](plan-report.md) and [search fields](plan-report-fields.md).
+- [Execution diagnostics](step-diagnostics.md) and [timing an invocation](api/timing.md).
+- [Pool occupancy](occupancy.md) and [PressureFit cut traces](pressurefit-trace.md).
+- [Diagnostic API](api/diagnostics.md), [planning JSON](planning-json.md) and [failure handling](failures.md).
 
-Entry points and contracts, grouped by responsibility.
+## Extend
 
-- [Framework-neutral Python APIs](api/neutral.md)
-- [Reusable planning artifacts](api/artifacts.md)
-- [Profiling controls and measurement evidence](api/profiling.md)
-- [Capacity-bound pool memory](api/pool-memory.md)
-- [Trainer and Executor](api/training.md)
-- [Distributed planning and training](api/distributed.md)
-- [Frontend and lifecycle](api/frontend.md)
-- [SSD spill storage](api/ssd.md)
-- [Planning and step diagnostics](api/diagnostics.md)
-- [Timing: the step on the device clock](api/timing.md)
+- [Operator integration](operator-integration.md): capture, derivatives, axes and reductions.
+- [Prepared operators](operator-preparation.md): external kernel export and loading.
+- [Custom partitioning example](../examples/custom-partitioning.md).
+- [Framework-neutral API](api/neutral.md): IR, planning, simulation and runtime tooling.
+- [Optional library adapters](../integrations/README.md).
 
-The phase entrypoints are imported from `shadowspill`: builders, parallelism and
-resource declarations, measurement, profile application, planning, reports,
-artifact classes, Executor, checkpoint helpers and Trainer.
-`shadowspill.memory` supplies pool configurations; `shadowspill.pytorch` supplies
-build policies and low-level integration. `shadowspill.training` supplies
-training-loop tools.
-`shadowspill.ssd` and `shadowspill.network` configure additional spill storage.
-The lower-level packages `shadowspill.ir`,
-`shadowspill.step`, `shadowspill.task`, `shadowspill.store`,
-`shadowspill.planner`, `shadowspill.planning`, `shadowspill.reporting`,
-`shadowspill.simulator`, `shadowspill.diagnostics` and `shadowspill.runtime`
-are public for tooling, experiments, and independent planning. None of them
-imports a framework, so any of them can be read without one.
-`shadowspill.profiling` is the GPU measurement phase and imports PyTorch; artifact
-loading, profile application, planning and reporting remain CPU-only.
-
-## Optional operator libraries
-
-[MLOps integration](mlops.md) adapts standalone provider contracts to build
-controls. The library owns operator semantics; this repository owns the adapter.
+Artifact loading, profile application, planning and reports are CPU-only.
+`shadowspill.profiling` imports PyTorch and performs device measurements.
+The neutral IR, planner and runtime interfaces do not import a framework.
+For design rather than API usage, read the [architecture index](../architecture/README.md).

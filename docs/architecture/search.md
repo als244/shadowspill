@@ -133,7 +133,7 @@ CPU-only: they neither build nor measure tasks. They take `memory_budgets` and
 plan store or hands one budget's plan to the next: the plan key, stored answers
 and incumbent replay above belong to `shadowspill.planner.plan_program`, which
 plans a `ShadowSpillPlanningProblem` against an artifact store and takes the
-plan to beat as `incumbent`. See the [phase API guide](offline-pipeline.md) for
+plan to beat as `incumbent`. See the [phase API guide](../python/phases.md) for
 the complete workflow.
 
 ## Writing one

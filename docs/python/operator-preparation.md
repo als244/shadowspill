@@ -1,7 +1,7 @@
 # Preparing external operator kernels
 
 For capture, derivative and independent-axis requirements, start with
-[Integrating an operator library](python/operator-integration.md). Preparation
+[Integrating an operator library](operator-integration.md). Preparation
 packages selected implementations; it does not certify chunking semantics.
 
 `OperatorPreparation` lets an operator provider attach its selected implementations,
@@ -125,7 +125,7 @@ failures participate in the existing coordinated startup error protocol.
 ## Optional real-provider regression
 
 With the native backend and MLOps dependencies listed in the test's
-[scope and setup](../tests/workloads/prepared_sonic/README.md), run the maintained
+[scope and setup](../../tests/workloads/prepared_sonic/README.md), run the maintained
 saved-Program regression from this repository:
 
 ```bash
@@ -137,4 +137,4 @@ gradient destinations, cold profiling/execution, strict physical admission,
 and checkpoint resume in another process. It uses independent CPU references
 and forbids external compilation or autotuning during saved phases. The slow
 test is opt-in and does not replace the complete qualification gates or
-distributed/full-model checks. See its [scope and setup](../tests/workloads/prepared_sonic/README.md).
+distributed/full-model checks. See its [scope and setup](../../tests/workloads/prepared_sonic/README.md).

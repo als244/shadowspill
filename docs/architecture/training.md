@@ -2,7 +2,7 @@
 
 Preparation produces saved phase artifacts; training consumes a Plan. Models,
 objectives, data packing and qualification thresholds stay outside the installed
-trainer. See the [phase API](offline-pipeline.md) for the full artifact contracts.
+trainer. See the [phase API](../python/phases.md) for the full artifact contracts.
 
 ```mermaid
 flowchart LR

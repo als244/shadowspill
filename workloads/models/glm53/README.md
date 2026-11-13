@@ -57,7 +57,7 @@ The shared runner builds and profiles compute on one GPU, then launches all
 ranks for communication calibration and execution.
 
 Weights, gradients and optimizer data use the common logical parallelism
-specification. See the [phase API](../../../docs/architecture/offline-pipeline.md) and the
+specification. See the [phase API](../../../docs/python/phases.md) and the
 [shared recipe arguments](../glm53_flash/README.md#quickstart-configuration).
 `tiny=true` selects a small random fixture explicitly; `layer_limit` selects a
 checkpoint prefix. Omit both for all 78 layers.

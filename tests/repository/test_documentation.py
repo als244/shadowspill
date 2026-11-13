@@ -151,7 +151,8 @@ def _documented_symbol(reference: str, name: str) -> bool:
 
 def _python_page_expectations() -> dict[Path, set[str]]:
     expectations = {
-        PYTHON_API / "frontend.md": set(_all_exports(_MEMORY_MODULE)),
+        PYTHON_API / "runtime.md": set(_all_exports(_MEMORY_MODULE)),
+        PYTHON_API / "frontend.md": set(),
         PYTHON_API / "artifacts.md": set(),
         PYTHON_API / "training.md": set(_all_exports(_TRAINING_MODULE)),
         PYTHON_API / "diagnostics.md": set(_all_exports(_REPORTING_MODULE)),
@@ -177,6 +178,8 @@ def _python_page_expectations() -> dict[Path, set[str]]:
             page = {
                 "diagnostics": PYTHON_API / "diagnostics.md",
                 "program": PYTHON_API / "artifacts.md",
+                "runtime": PYTHON_API / "runtime.md",
+                "invocation": PYTHON_API / "runtime.md",
             }.get(node.module, PYTHON_API / "frontend.md")
         else:
             continue
@@ -307,43 +310,25 @@ def test_all_local_markdown_links_and_anchors_resolve() -> None:
 def test_documentation_index_exposes_reading_paths() -> None:
     index = (DOCS / "README.md").read_text()
     for target in (
-        "architecture/overview.md",
-        "architecture/ir.md",
-        "architecture/lowering.md",
-        "architecture/graph-pair-construction.md",
-        "architecture/pressurefit.md",
-        "architecture/graph-pair-selection.md",
-        "architecture/physical-admission.md",
-        "architecture/planning-pipeline.md",
-        "architecture/simulation.md",
-        "architecture/memory-runtime.md",
+        "architecture/README.md",
         "python/README.md",
-        "python/plan-report.md",
-        "python/step-diagnostics.md",
-        "python/planning-json.md",
-        "python/failures.md",
+        "python/phases.md",
         "examples/README.md",
         "examples/generic-training.md",
-        "examples/forward-only.md",
-        "examples/reusable-planning.md",
-        "examples/diagnostics.md",
-        "examples/custom-partitioning.md",
         "c/README.md",
         "development/README.md",
+        "integrations/README.md",
     ):
         assert f"]({target})" in index
 
 
 def test_root_readme_remains_a_minimal_entrypoint() -> None:
     readme = (ROOT / "README.md").read_text()
-    sections = re.findall(r"^## (.+)$", readme, re.MULTILINE)
-    assert sections == ["Phases", "Training from a config", "Real model training"]
-    examples = re.findall(r"<details>.*?</details>", readme, re.DOTALL)
-    assert len(examples) == 4
-    assert all("<summary>" in example and "```" in example for example in examples)
-    assert all(len(example.splitlines()) <= 20 for example in examples)
-    collapsed = re.sub(r"<details>.*?</details>", "", readme, flags=re.DOTALL)
-    assert len(collapsed.splitlines()) <= 90
+    assert len(readme.splitlines()) <= 100
+    assert "](docs/README.md)" in readme
+    assert "](docs/examples/generic-training.md)" in readme
+    assert "](workloads/recipes/README.md)" in readme
+    assert "```python" in readme
 
 
 def test_architecture_overview_describes_public_phase_boundaries() -> None:
@@ -365,15 +350,25 @@ def test_architecture_overview_describes_public_phase_boundaries() -> None:
     assert "```mermaid" in overview
 
 
-def test_architecture_index_groups_one_flat_reading_path() -> None:
-    index = (DOCS / "README.md").read_text()
-    for heading in (
-        "### Foundations",
-        "### PyTorch lowering",
-        "### Planning",
-        "### Execution",
-    ):
-        assert heading in index
+def test_public_manuals_are_reachable_from_the_documentation_index() -> None:
+    """Allow focused sub-indexes without leaving newly added manuals orphaned."""
+    manuals = {
+        path.resolve() for path in _markdown_files() if path.is_relative_to(DOCS)
+    }
+    pending = [DOCS / "README.md"]
+    reached = set()
+    while pending:
+        page = pending.pop()
+        if page in reached:
+            continue
+        reached.add(page)
+        for raw in _MARKDOWN_LINK.findall(page.read_text()):
+            target, _ = _local_link(page, raw)
+            if target in manuals and target not in reached:
+                pending.append(target)
+    assert not manuals - reached, sorted(
+        str(path.relative_to(ROOT)) for path in manuals - reached
+    )
 
 
 def test_examples_cover_complete_public_workflows() -> None:
@@ -696,6 +691,7 @@ def test_current_contract_docs_are_backend_and_topology_neutral() -> None:
         if not path.is_relative_to(ROOT / "baselines")
         and not path.is_relative_to(ROOT / "workloads")
         and not path.is_relative_to(ROOT / "tests/workloads")
+        and not path.is_relative_to(DOCS / "integrations")
         and path
         not in {
             ROOT / "benchmarking/quickstart.md",
@@ -703,7 +699,9 @@ def test_current_contract_docs_are_backend_and_topology_neutral() -> None:
             ROOT / "benchmarking/program_collection/README.md",
             ROOT / "benchmarking/plan_runner/README.md",
             ROOT / "orchestration/README.md",
-            DOCS / "architecture/offline-pipeline.md",
+            DOCS / "python/api/build.md",
+            DOCS / "python/api/communication.md",
+            DOCS / "python/api/executor.md",
             DOCS / "python/api/distributed.md",
             DOCS / "python/api/profiling.md",
         }  # These document the concrete framework/device phase boundaries.

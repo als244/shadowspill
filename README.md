@@ -1,151 +1,68 @@
 # ShadowSpill
 
-Run PyTorch models within a memory budget by planning what to keep on the GPU,
-spill to host memory, and recompute.
+Run PyTorch models within a memory budget by planning which tensors to keep on
+the device, spill to host or external storage, and recompute during backward.
 
 [Install](docs/development/repository.md#setup) ·
-[Quickstart](benchmarking/quickstart.md) ·
-[API guide](docs/architecture/offline-pipeline.md) ·
-[Docs](docs/README.md)
+[Training example](docs/examples/generic-training.md) ·
+[Python guide](docs/python/README.md) · [All docs](docs/README.md)
 
-## Phases
+## Build, profile and plan
 
-Pseudocode; application-specific model, optimizer and data setup is omitted.
+The application supplies its model, optimizer, objective and example inputs.
+Build and profile on a representative GPU; reuse those artifacts to plan on CPU.
 
 ```python
 import shadowspill as ss
 
-# 1. Build: export, partition and compile on a representative GPU.
-program = ss.build_step(model, optimizer=optimizer, objective=loss,
+# Capture, partition and compile the computation.
+program = ss.build_step(model, optimizer=optimizer, objective=objective,
                         example_args=(inputs, targets))
-
-# 2. Profile: measure GPU task timing/memory and communication separately.
 profiles = ss.measure_program(program)
 profiled = ss.apply_profiles(program, profiles)
 communication = ss.measure_communication(program=program)
 
-# 3. Plan on CPU: reuse measurements with different GPU/spill budgets.
+# Choose a schedule that fits the declared budgets.
 plan = ss.plan_program(profiled, memory_budgets=memory_budgets,
                        communication_info=communication)
-ss.write_report(plan, "report")  # Simulated timeline and memory use.
 plan.save("training.ssp")
+ss.write_report(plan, "report")
 ```
 
-**Execute in a fresh worker.** `Trainer` manages the Executor and training loop.
-Create it before any other device allocation in that worker:
+Each phase result can be saved and reused. See the [phase guide](docs/python/phases.md)
+for process boundaries and links to the detailed controls.
+
+## Execute in a fresh worker
+
+Create Trainer before any other device allocation in this worker. Only execution
+opens ShadowSpill's runtime pools; the saved Plan contains its task implementations.
 
 ```python
 import shadowspill as ss
 
-# 4. Execute: only this phase creates ShadowSpill runtime pools.
 with ss.Trainer(ss.Plan.load("training.ssp")) as trainer:
-    trainer.initialize(fill_tensor)  # Bounded loading or random initialization.
+    trainer.initialize(fill_tensor)  # Fill bounded buffers from a checkpoint or RNG.
     trainer.fit(training_batches, steps=100)
     trainer.save("checkpoint.ssp")
 ```
 
-Each phase artifact supports save/load. See the [Trainer example](docs/examples/generic-training.md)
-for runnable code, evaluation and checkpoint loading.
+The [complete example](docs/examples/generic-training.md) defines the model,
+objective, inputs and initializer used by these APIs.
 
-## Training from a config
+## Model recipes
 
-A fine-tune is one JSON config and two commands: tokenize a corpus with the
-checkpoint's tokenizer, then run.
+For model checkpoints and datasets, the [shared Python runner](workloads/recipes/README.md)
+composes candidate construction, profiling, search and training. Start from a
+commented script and edit its configuration:
 
-```json
-{"checkpoint": {"family": "qwen3", "directory": "/models/Qwen3-1.7B"},
- "data": "data/qwen3", "optimizer_args": {"lr": 1e-5},
- "max_seq_len": 2048, "max_tokens_per_step": 16384, "steps": 1000}
-```
+| Workload | Example |
+| --- | --- |
+| Qwen3.5 LoRA | [Script](workloads/recipes/text/qwen35_lora/example.py), [guide](workloads/recipes/text/qwen35_lora/README.md) |
+| GLM-5.3-Flash LoRA | [Script](workloads/recipes/text/glm53_flash_lora/example.py), [guide](workloads/recipes/text/glm53_flash_lora/README.md) |
+| Qwen3 full training and expert parallelism | [Guide](workloads/recipes/text/qwen3/README.md) |
+| Llama full training | [Script](workloads/recipes/text/train_llama3.py) |
 
-```bash
-python -m training.prepare finetune.json --dataset HuggingFaceFW/fineweb-edu \
-  --files sample/10BT/000_00000.parquet
-python -m training.train finetune.json run_dir=runs/qwen3
-```
-
-The model streams in from the checkpoint, the objective and optimizer default
-to next-token prediction and AdamW, the GPU and host budgets come from the
-hardware unless given, and `ranks=N` trains on N GPUs with weights, gradients
-and optimizer state sharded over them. From Python, `training.run("finetune.json",
-run_dir="runs/qwen3")` does the same and returns the final step. `engine=pytorch`
-runs the same config eagerly for a step-by-step comparison, and
-`python -m training.reference` checks a step against the Hugging Face model.
-See the [training guide](training/README.md).
-
-## Real model training
-
-The [shared Python runner](workloads/recipes/README.md) accepts a model source and
-readable configuration. Linked recipes include data, search and training setup.
-
-<details>
-<summary><strong>Llama 3 8B — full training</strong></summary>
-
-```python
-from workloads.models.catalog import build_on_meta
-
-model = build_on_meta("llama3-8b", dtype="bfloat16", max_seq_len=4096)
-# Four examples of 4 × 4K tokens = 16 sequences per update; random initialization.
-program = ss.build_step(model, optimizer=optimizer, objective=next_token_loss,
-                        example_args=(tokens, targets), num_examples=4)
-```
-
-[Complete recipe](workloads/recipes/text/train_llama3.py)
-
-</details>
-
-<details>
-<summary><strong>GLM-5.3-Flash — LoRA at 32K on eight GPUs</strong></summary>
-
-```python
-import torch
-from workloads.models.glm53_flash.checkpoint import GLMCheckpoint
-
-checkpoint = GLMCheckpoint(checkpoint_path)
-model = checkpoint.build_model(lora_rank=32, lora_factor_dtype=torch.bfloat16)
-# One 32K sequence per GPU; frozen base keeps checkpoint precision, including FP8.
-program = ss.build_step(model, optimizer=optimizer, objective=next_token_loss,
-                        example_args=(tokens, targets),
-                        parallelism=ss.Parallelism.dp(ranks_per_replica=8))
-```
-
-[Commented training script](workloads/recipes/text/glm53_flash_lora/example.py) ·
-[Recipe and measured results](workloads/recipes/text/glm53_flash_lora/README.md)
-
-</details>
-
-<details>
-<summary><strong>Qwen3.5-35B-A3B — LoRA at 32K</strong></summary>
-
-```python
-from workloads.recipes import LoRA, Model, train
-
-model = Model.from_checkpoint(checkpoint_path, lora=LoRA(rank=32, alpha=32))
-# The commented script supplies data, candidate lists and memory budgets.
-train(model, config)
-```
-
-[Commented training script](workloads/recipes/text/qwen35_lora/example.py) ·
-[Recipe and search controls](workloads/recipes/text/qwen35_lora/README.md)
-
-</details>
-
-<details>
-<summary><strong>Qwen3-30B-A3B — full training on eight GPUs</strong></summary>
-
-```python
-from workloads.models.catalog import build_on_meta
-
-model = build_on_meta("qwen3moe-30b-a3b", dtype="bfloat16", max_seq_len=4096)
-# 16 examples of 4 × 4K tokens per GPU = 512 sequences globally; random initialization.
-program = ss.build_step(model, optimizer=optimizer, objective=next_token_loss,
-                        example_args=(tokens, targets), num_examples=16,
-                        parallelism=ss.Parallelism.dp(ranks_per_replica=8))
-```
-
-[Complete recipe](workloads/recipes/text/qwen3/README.md)
-
-</details>
-
-`Parallelism.dp(...)` shards weights, gradients and optimizer data by default.
-See the [model catalog](workloads/MODELS.md) for other families and recipe details.
+The separate [config-based training harness](training/README.md) supports eager
+comparisons and reference checks. Use [quickstart](benchmarking/quickstart.md)
+for generic model-factory experiments. These source-tree tools call the same
+library APIs; model-specific policies stay outside the core engine.

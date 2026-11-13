@@ -20,3 +20,22 @@ implementations.
 Public documentation is normative and describes only shipped behavior.
 Root-cause narratives, engineering plans, and logs belong under the ignored
 internal documentation tree, `docs/internal/`.
+
+## Documentation ownership
+
+Keep one authoritative reference per subject and link it from examples and
+guides. Entry pages should help readers choose a task, not enumerate every
+implementation detail. Place workflow instructions under `docs/python/`,
+signatures and constraints under `docs/python/api/`, design invariants under
+`docs/architecture/`, and library-specific adapters under `docs/integrations/`.
+Keep the native API in `docs/c/` and runnable examples under `docs/examples/`.
+
+Use current behavior and concrete names. Explain what a control changes and
+which phase consumes it. Preserve shape, ownership and compatibility limits;
+link their reference instead of repeating long qualifications in every guide.
+Keep historical measurements and investigations under `docs/internal/`.
+
+Run `python -m pytest -q tests/repository/test_documentation.py` after editing.
+The checks cover public Markdown links and anchors, source signatures, Python
+example syntax and keywords, API export coverage, and documentation reachability.
+They do not replace execution tests for examples that require a device.
