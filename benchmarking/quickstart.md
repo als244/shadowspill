@@ -235,7 +235,7 @@ overrides for those controls are refused before selecting workers.
 Provider accumulation contracts can be shared across these candidates through
 the factory's `build_options["gradient_destination_rules"]`. For example, MLOps
 versions with the optional ShadowSpill integration expose
-`mlops.integrations.shadowspill.sonicmoe_gradient_destination_rules()` for
+`shadowspill.integrations.mlops.sonicmoe_gradient_destination_rules()` for
 SonicMoE LoRA. Include its separate `sonicmoe_chunk_rules()` alongside the other
 operator rules in each applicable chunk policy. The rules do not pick a chunk
 size or retention policy; every candidate still passes ordinary compilation,

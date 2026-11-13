@@ -75,10 +75,10 @@ _BUILTIN_FORWARD_CHOICES = frozenset({"aten.topk.default"})
 def _is_forward_choice(node: torch.fx.Node) -> bool:
     if node.op != "call_function":
         return False
-    declared = getattr(node.target, "shadowspill_retain_for_backward", False)
+    declared = getattr(node.target, "retain_for_backward", False)
     if type(declared) is not bool:
         raise CaptureError(
-            f"{node.target}.shadowspill_retain_for_backward must be a static bool"
+            f"{node.target}.retain_for_backward must be a static bool"
         )
     return declared is True or str(node.target) in _BUILTIN_FORWARD_CHOICES
 
@@ -168,7 +168,7 @@ class RetentionPolicy:
     explicit replay of those operations is refused. Retention never requests residency.
     Top-k and provider-declared choices retain their backward-required state
     in every variant by default. Providers set the static boolean attribute
-    ``shadowspill_retain_for_backward`` on their public operator overload.
+    ``retain_for_backward`` on their public operator overload.
     Explicit rules can override this independently for either variant;
     model checkpoint annotations retain their precedence.
     """

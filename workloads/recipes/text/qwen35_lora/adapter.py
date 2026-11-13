@@ -60,10 +60,10 @@ def describe(options):
 @contextmanager
 def setup(options, *, rank=0):
     import torch
-    from mlops.integrations.shadowspill import sonicmoe_gradient_destination_rules
     from mlops.optim import AdamW
 
     from shadowspill import Parallelism
+    from shadowspill.integrations.mlops import sonicmoe_gradient_destination_rules
     from workloads.models.construction import build_on_meta
     from workloads.models.qwen35moe.config import from_huggingface
     from workloads.models.qwen35moe.implementations.mlops import Model

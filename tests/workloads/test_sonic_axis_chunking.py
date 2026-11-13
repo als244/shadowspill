@@ -6,20 +6,17 @@ from math import ceil
 
 import pytest
 import torch
-from mlops.integrations.shadowspill import operator_chunk_rules
 from torch._subclasses.fake_tensor import FakeTensorMode
 from torch.fx.experimental.proxy_tensor import make_fx
 from torch.utils._python_dispatch import TorchDispatchMode
 
 from shadowspill.errors import CaptureError
+from shadowspill.integrations.mlops import operator_chunk_rules
 from shadowspill.pytorch.capture.aot import capture_graph_pair
 from shadowspill.pytorch.capture.artifacts import GraphArtifact
 from shadowspill.pytorch.chunking import (
     AxisChunks,
-    AxisFrom,
     ChunkAxis,
-    ChunkLocal,
-    OperatorRule,
 )
 from shadowspill.pytorch.chunking.geometry import LocalLayout
 from shadowspill.pytorch.chunking.transform import chunk_artifact
@@ -28,26 +25,9 @@ from tests.shadowspill.pytorch.chunking.test_axis_vjp import executable
 
 def sonic_rules(batch):
     """Candidate contracts; no readonly, replay, or FP8 certification here."""
-    local = ChunkLocal(0)
-    specifications = {
-        "sonicmoe_routing_metadata": ((None, local, local, local), (0,)),
-        "lora_sonicmoe_up_fwd": ((local, local, local), ()),
-        "lora_sonicmoe_up_bwd": ((AxisFrom(1), None, None, None), (1, 2, 3)),
-        "lora_sonicmoe_down_fwd": ((AxisFrom(10), local), ()),
-        "lora_sonicmoe_down_bwd": (
-            (local, None, None, None, AxisFrom(9)),
-            (1, 2, 3),
-        ),
-    }
-    return (
-        *operator_chunk_rules(batch),
-        *(
-            OperatorRule(
-                f"mlops.{name}.default", "bf16-lora-candidate-1", axes, reductions
-            )
-            for name, (axes, reductions) in specifications.items()
-        ),
-    )
+    from shadowspill.integrations.mlops import sonicmoe_chunk_rules
+
+    return (*operator_chunk_rules(batch), *sonicmoe_chunk_rules())
 
 
 def inputs_for(batch, distribution, *, device="cpu"):

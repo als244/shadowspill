@@ -2,9 +2,9 @@
 
 import pytest
 import torch
-from mlops.integrations.shadowspill import operator_chunk_rules
 from torch.fx.experimental.proxy_tensor import make_fx
 
+from shadowspill.integrations.mlops import operator_chunk_rules
 from shadowspill.pytorch.capture.aot import capture_graph_pair
 from shadowspill.pytorch.capture.artifacts import GraphArtifact, TensorGeometry
 from shadowspill.pytorch.chunking import AxisChunks, ChunkAxis, StageInfo

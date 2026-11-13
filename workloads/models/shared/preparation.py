@@ -5,6 +5,7 @@ def operator_preparations(implementation, dtype):
     if implementation != "mlops":
         return ()
     import torch
-    from mlops.integrations.shadowspill import operator_preparations as descriptions
+
+    from shadowspill.integrations.mlops import operator_preparations as descriptions
 
     return descriptions(dtype=getattr(torch, dtype))

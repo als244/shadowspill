@@ -1,11 +1,10 @@
 """Explicit provider contracts for GLM's ordinary packed-token recipe."""
 
-from mlops.integrations.shadowspill import (
+from shadowspill.integrations.mlops import (
     mhc_chunk_rules,
     operator_chunk_rules,
     sonicmoe_chunk_rules,
 )
-
 from workloads.models.shared.execution import text_execution_chunks
 from workloads.recipes.text.retention import graph_pair_policy
 

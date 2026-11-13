@@ -1,7 +1,6 @@
 """Explicit workload choices using generic compiler and provider contracts."""
 
-from mlops.integrations.shadowspill import operator_chunk_rules, sonicmoe_chunk_rules
-
+from shadowspill.integrations.mlops import operator_chunk_rules, sonicmoe_chunk_rules
 from workloads.models.shared.execution import text_execution_chunks
 from workloads.recipes.text.retention import graph_pair_policy
 

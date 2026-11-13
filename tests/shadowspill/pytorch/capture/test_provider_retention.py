@@ -43,7 +43,7 @@ def test_provider_default_and_explicit_override_preserve_vjp(
     monkeypatch, declared, override
 ):
     monkeypatch.setattr(
-        TARGET, "shadowspill_retain_for_backward", declared, raising=False
+        TARGET, "retain_for_backward", declared, raising=False
     )
     graph, values = graph_and_values()
     policy = RetentionPolicy(
@@ -68,7 +68,7 @@ def test_provider_declaration_changes_capture_identity(monkeypatch):
     policy = RetentionPolicy(default="recompute")
     before = policy.digest(graph)
     assert "forward_choices" not in policy.capture_identity(graph)
-    monkeypatch.setattr(TARGET, "shadowspill_retain_for_backward", True, raising=False)
+    monkeypatch.setattr(TARGET, "retain_for_backward", True, raising=False)
     assert policy.digest(graph) != before
     assert policy.capture_identity(graph)["forward_choices"] == [str(TARGET)]
 
@@ -76,7 +76,7 @@ def test_provider_declaration_changes_capture_identity(monkeypatch):
 @pytest.mark.parametrize("invalid", ["retain", 1, None])
 def test_provider_declaration_requires_static_bool(monkeypatch, invalid):
     monkeypatch.setattr(
-        TARGET, "shadowspill_retain_for_backward", invalid, raising=False
+        TARGET, "retain_for_backward", invalid, raising=False
     )
     graph, _ = graph_and_values()
     with pytest.raises(CaptureError, match="must be a static bool"):

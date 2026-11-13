@@ -116,13 +116,14 @@ distributed behavior require qualification in addition to generic rewrite tests.
 
 ## SonicMoE provider adapter
 
-An MLOps installation with the optional ShadowSpill integration supplies
-`mlops.integrations.shadowspill.sonicmoe_gradient_destination_rules()` and
-`sonicmoe_chunk_rules()`. These are explicit provider contracts consumed by the
-same generic APIs; the core does not select rules by model family.
+ShadowSpill's optional MLOps adapter supplies
+`shadowspill.integrations.mlops.sonicmoe_gradient_destination_rules()` and
+`sonicmoe_chunk_rules()`. These translate standalone `mlops.contracts` records
+into the same generic build APIs. Operator semantics remain in MLOps; the adapter
+and compiler integration tests live here. No rules are selected by model family.
 
 ```python
-from mlops.integrations.shadowspill import (
+from shadowspill.integrations.mlops import (
     sonicmoe_chunk_rules,
     sonicmoe_gradient_destination_rules,
 )

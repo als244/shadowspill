@@ -6,8 +6,7 @@ their complete inputs unless an explicit provider contract permits splitting.
 
 from dataclasses import dataclass
 
-from mlops.integrations.shadowspill import operator_chunk_rules
-
+from shadowspill.integrations.mlops import operator_chunk_rules
 from shadowspill.pytorch.chunking import (
     AxisChunks,
     AxisFrom,

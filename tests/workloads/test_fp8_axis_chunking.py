@@ -5,11 +5,11 @@ from math import ceil
 
 import pytest
 import torch
-from mlops.integrations.shadowspill import operator_chunk_rules
 from torch._subclasses.fake_tensor import FakeTensorMode
 from torch.fx.experimental.proxy_tensor import make_fx
 
 from shadowspill.errors import CaptureError
+from shadowspill.integrations.mlops import operator_chunk_rules
 from shadowspill.pytorch import AxisChunks, ChunkAxis
 from shadowspill.pytorch.capture.aot import capture_graph_pair
 from shadowspill.pytorch.chunking.transform import chunk_artifact
@@ -107,7 +107,7 @@ def captured(function, values, size, axes, rules, tangent_axes):
 
 
 def fp8_capture(values, batch, size):
-    from mlops.integrations.shadowspill import sonicmoe_chunk_rules
+    from shadowspill.integrations.mlops import sonicmoe_chunk_rules
 
     axis = ChunkAxis(1)
     return captured(
@@ -293,7 +293,7 @@ def mhc_region(streams, projection, bias, scale):
 
 
 def mhc_capture(values, size):
-    from mlops.integrations.shadowspill import mhc_chunk_rules
+    from shadowspill.integrations.mlops import mhc_chunk_rules
 
     return captured(
         mhc_region,

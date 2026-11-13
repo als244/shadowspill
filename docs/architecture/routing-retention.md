@@ -26,11 +26,11 @@ provider can declare its default or use an explicit `RetentionRule`.
 ## Provider-owned default
 
 A provider may set the static boolean attribute
-`shadowspill_retain_for_backward = True` on its public `torch.ops` overload
+`retain_for_backward = True` on its public `torch.ops` overload
 after registering the operator:
 
 ```python
-torch.ops.my_provider.route.default.shadowspill_retain_for_backward = True
+torch.ops.my_provider.route.default.retain_for_backward = True
 ```
 
 No ShadowSpill import, provider discovery or engine-side operation list is

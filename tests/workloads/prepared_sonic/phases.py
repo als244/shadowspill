@@ -94,9 +94,9 @@ def prepare(directory, case):
 def build(directory, case):
     import torch
     from mlops.dispatch.context import weight_gradients_at
-    from mlops.integrations.shadowspill import sonicmoe_gradient_destination_rules
 
     from shadowspill import OperatorPreparation, build_forward_backward, build_step
+    from shadowspill.integrations.mlops import sonicmoe_gradient_destination_rules
     from shadowspill.pytorch import IsolateOperations
 
     from .model import Network, examples, objective
@@ -204,7 +204,7 @@ def execute(directory, case, *, resume=False):
     forbid_preparation(
         "tests.workloads.prepared_sonic.model",
         "tests.workloads.prepared_sonic.policy",
-        "mlops.integrations.shadowspill",
+        "shadowspill.integrations.mlops",
     )
     reference = torch.load(directory / "reference.pt", weights_only=True)
     from .observe import DestinationObserver

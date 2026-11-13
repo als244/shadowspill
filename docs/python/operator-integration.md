@@ -47,10 +47,12 @@ the cost policy and its interaction with saved-state declarations.
 
 The workload's `ChunkPolicy.configure_stage(stage)` chooses the region, its input
 axes and chunk size by returning `AxisChunks`. Providers supply semantic facts;
-workloads choose where to use them. Put reusable provider facts in an optional
-integration module in the operator library. Import ShadowSpill inside its rule
-factory if it is an optional dependency. The engine does not discover libraries
-or select policies by architecture name.
+workloads choose where to use them. Keep reusable provider facts independent of
+any execution engine. Put the adapter that constructs ShadowSpill rules in this
+repository or the caller's integration package. For example,
+[`shadowspill.integrations.mlops`](mlops.md) converts standalone `mlops.contracts`
+records without duplicating their operator semantics. The engine does not
+discover libraries or select policies by architecture name.
 
 For each selected input, `AxisChunks.inputs` identifies an **effective region
 input position** and its logical axis. Unlisted inputs are shared. Selected axes

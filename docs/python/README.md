@@ -53,3 +53,8 @@ are public for tooling, experiments, and independent planning. None of them
 imports a framework, so any of them can be read without one.
 `shadowspill.profiling` is the GPU measurement phase and imports PyTorch; artifact
 loading, profile application, planning and reporting remain CPU-only.
+
+## Optional operator libraries
+
+[MLOps integration](mlops.md) adapts standalone provider contracts to build
+controls. The library owns operator semantics; this repository owns the adapter.

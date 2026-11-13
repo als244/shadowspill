@@ -347,3 +347,8 @@ public C headers, local links and heading anchors, and the Python signatures
 mirrored in API examples. Installed headers remain authoritative for C layouts,
 ABI constants, and exact C signatures. Source remains authoritative for cache
 schema labels and internal implementation details.
+
+### Optional operator integrations
+
+- [MLOps](python/mlops.md) — axis/reduction facts, gradient destinations, value
+  layouts and prepared kernels through a caller-selected adapter.
