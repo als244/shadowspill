@@ -12,6 +12,71 @@ from workloads.recipes import LoRA, Model, train
 from workloads.recipes.training import api as runner
 
 
+@pytest.mark.parametrize(
+    "name",
+    [
+        "llama3-1b",
+        "olmoe-7b-a1b",
+        "qwen3-1.7b",
+        "qwen3moe-30b-a3b",
+        "qwen35-2b",
+        "qwen35moe-35b-a3b",
+    ],
+)
+def test_catalog_training_uses_common_defaults_and_freezes_search(
+    tmp_path, monkeypatch, name
+):
+    launches = []
+    monkeypatch.setattr(runner, "run_phases", lambda *a, **k: launches.append((a, k)))
+    model = Model.from_config(name)
+    root = train(
+        model,
+        dict(
+            run_dir=tmp_path / "run",
+            data=tmp_path / "data",
+            steps=100,
+            sequences_per_step=4,
+            microbatch_sizes=[1, 2, 4],
+        ),
+        phase="build",
+    )
+    saved = json.loads((root / "config.json").read_text())
+    assert saved["model"] == name
+    assert saved["schedule_steps"] == 100
+    assert saved["sequence_length"] == 2048
+    assert saved["initialization"] == "random"
+    assert launches[0][1] == {"ranks": 1, "preparation_ranks": 1}
+    assert [c["num_examples"] for c in saved["candidates"]] == [4, 2, 1]
+    train(model, {"run_dir": root, "execution_gib": 20}, phase="plan")
+    restored = json.loads((root / "config.json").read_text())
+    assert restored["candidates"] == saved["candidates"]
+    assert restored["model"] == name
+    with pytest.raises(ValueError, match="schedule_steps"):
+        train(model, {"run_dir": root, "steps": 101}, phase="execute")
+    assert len(launches) == 2
+
+
+@pytest.mark.parametrize(
+    ("name", "options", "message"),
+    [
+        ("llama3-tiny", {"parallelism": "ep", "ranks": 2}, "expert parallelism"),
+        ("olmoe-tiny", {"parallelism": "ep", "ranks": 3}, "divisible by ranks"),
+        ("qwen3-tiny", {"learning_rate": float("nan")}, "finite and positive"),
+    ],
+)
+def test_catalog_rejects_invalid_training_before_launch(
+    tmp_path, monkeypatch, name, options, message
+):
+    launches = []
+    monkeypatch.setattr(runner, "run_phases", lambda *a, **k: launches.append((a, k)))
+    with pytest.raises(ValueError, match=message):
+        train(
+            Model.from_config(name),
+            dict(run_dir=tmp_path / "run", data=tmp_path / "data", **options),
+        )
+    assert not launches and not (tmp_path / "run").exists()
+
+
 def test_checkpoint_model_and_method_select_frozen_candidates(tmp_path, monkeypatch):
     checkpoint = tmp_path / "checkpoint"
     checkpoint.mkdir()
@@ -109,6 +174,7 @@ def test_ep_geometry_declares_collective_preparation_before_launch(
             data=tmp_path / "data",
             ranks=8,
             parallelism="ep",
+            sequences_per_step=64,
             microbatch_sizes=[4, 16],
         ),
         phase="build",
@@ -172,6 +238,7 @@ def test_budget_runs_reuse_completed_measurements_without_mutating_source(
             run_dir=tmp_path / "prepared",
             data=tmp_path / "data",
             ranks=1,
+            sequences_per_step=64,
             microbatch_sizes=[4, 16],
             resume=tmp_path / "old-checkpoint.ssp",
         ),
@@ -235,7 +302,9 @@ import sys, runpy
 sys.modules['torch'] = None
 sys.modules['mlops'] = None
 from workloads.recipes import Model, LoRA, train
-assert Model.from_config('qwen3moe-tiny')
+for name in ('llama3', 'olmoe', 'qwen3', 'qwen35', 'qwen3moe', 'qwen35moe'):
+    assert Model.from_config(f'{name}-tiny')
+runpy.run_module('workloads.recipes.text.example')
 for name in ('qwen35_lora', 'glm53_flash_lora', 'qwen3'):
     runpy.run_module(f'workloads.recipes.text.{name}.example')
 assert sys.modules['torch'] is None and sys.modules['mlops'] is None

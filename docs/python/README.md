@@ -1,8 +1,14 @@
 # Python guides and API
 
-Start with the [training example](../examples/generic-training.md) or the
-[phase guide](phases.md). All public phase entry points are available from
-`shadowspill`; PyTorch-specific policies live in `shadowspill.pytorch`.
+For end-to-end training of a supported model, start with the
+[shared Python `train` runner](../../workloads/recipes/README.md). It owns the
+full workflow; users supply a model source, data and training/resource settings.
+
+For custom models, follow the [integration guide](custom-models.md). For direct
+control, use the [phase-API example](../examples/generic-training.md) and [phase guide](phases.md).
+`Trainer` runs a selected Plan; it is the execution layer beneath the shared
+runner. Public phase entry points are available from `shadowspill`, with
+PyTorch-specific policies in `shadowspill.pytorch`.
 
 ## Prepare and run
 

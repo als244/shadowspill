@@ -4,65 +4,52 @@ Run PyTorch models within a memory budget by planning which tensors to keep on
 the device, spill to host or external storage, and recompute during backward.
 
 [Install](docs/development/repository.md#setup) ·
-[Training example](docs/examples/generic-training.md) ·
+[Train from Python](workloads/recipes/README.md) ·
 [Python guide](docs/python/README.md) · [All docs](docs/README.md)
 
-## Build, profile and plan
+## Train a supported model
 
-The application supplies its model, optimizer, objective and example inputs.
-Build and profile on a representative GPU; reuse those artifacts to plan on CPU.
-
-```python
-import shadowspill as ss
-
-# Capture, partition and compile the computation.
-program = ss.build_step(model, optimizer=optimizer, objective=objective,
-                        example_args=(inputs, targets))
-profiles = ss.measure_program(program)
-profiled = ss.apply_profiles(program, profiles)
-communication = ss.measure_communication(program=program)
-
-# Choose a schedule that fits the declared budgets.
-plan = ss.plan_program(profiled, memory_budgets=memory_budgets,
-                       communication_info=communication)
-plan.save("training.ssp")
-ss.write_report(plan, "report")
-```
-
-Each phase result can be saved and reused. See the [phase guide](docs/python/phases.md)
-for process boundaries and links to the detailed controls.
-
-## Execute in a fresh worker
-
-Create Trainer before any other device allocation in this worker. Only execution
-opens ShadowSpill's runtime pools; the saved Plan contains its task implementations.
+Use the shared Python runner for build, profiling, search and training:
 
 ```python
-import shadowspill as ss
+from workloads.recipes import Model, train
 
-with ss.Trainer(ss.Plan.load("training.ssp")) as trainer:
-    trainer.initialize(fill_tensor)  # Fill bounded buffers from a checkpoint or RNG.
-    trainer.fit(training_batches, steps=100)
-    trainer.save("checkpoint.ssp")
+model = Model.from_config("llama3-1b")  # Full training from random weights.
+train(model, {
+    "run_dir": "runs/llama-pretrain",
+    "data": "/data/fineweb-llama",      # Text tokenized for this model.
+    "sequence_length": 2048,
+    "sequences_per_step": 4,
+    "microbatch_sizes": [1, 2, 4],     # Measure candidates and select a Plan.
+    "execution_gib": 24,               # Per-GPU budget; adapt to your hardware.
+    "spill_gib": 64,                   # Maximum pinned host capacity per rank.
+    "steps": 100,
+})
 ```
 
-The [complete example](docs/examples/generic-training.md) defines the model,
-objective, inputs and initializer used by these APIs.
+Run once from a configured checkout, without an outer `torchrun`. The runner
+launches fresh phase workers and saves artifacts under `run_dir`. It selects the
+fastest predicted Plan that fits; optional chunk and retention candidate lists
+extend the search.
 
-## Model recipes
+The catalog path covers Llama, OLMoE, dense Qwen and Qwen MoE full training.
+Checkpoint-based LoRA covers Qwen3.5 MoE and GLM-5.3-Flash. Start with the
+[training guide](workloads/recipes/README.md) for supported model names, data,
+defaults, distributed settings and saved-phase reuse, or edit a
+[commented language-model script](workloads/recipes/text/example.py).
 
-For model checkpoints and datasets, the [shared Python runner](workloads/recipes/README.md)
-composes candidate construction, profiling, search and training. Start from a
-commented script and edit its configuration:
+## Custom models and direct control
 
-| Workload | Example |
-| --- | --- |
-| Qwen3.5 LoRA | [Script](workloads/recipes/text/qwen35_lora/example.py), [guide](workloads/recipes/text/qwen35_lora/README.md) |
-| GLM-5.3-Flash LoRA | [Script](workloads/recipes/text/glm53_flash_lora/example.py), [guide](workloads/recipes/text/glm53_flash_lora/README.md) |
-| Qwen3 full training and expert parallelism | [Guide](workloads/recipes/text/qwen3/README.md) |
-| Llama full training | [Script](workloads/recipes/text/train_llama3.py) |
+Follow the [custom-model guide](docs/python/custom-models.md) and
+[complete language-model phase example](docs/examples/generic-training.md).
+They show where to supply your model, loss, data and initialization while using
+the same compiler, profiler, planner and runtime.
 
-The separate [config-based training harness](training/README.md) supports eager
-comparisons and reference checks. Use [quickstart](benchmarking/quickstart.md)
-for generic model-factory experiments. These source-tree tools call the same
-library APIs; model-specific policies stay outside the core engine.
+The [phase APIs](docs/python/phases.md) expose preparation and search directly.
+`shadowspill.Trainer` runs an already selected Plan and provides update loops,
+logging and checkpoints; see its [reference](docs/python/api/training.md) for
+custom execution loops. Model-specific setup stays outside the core engine.
+
+[Quickstart](benchmarking/quickstart.md) supports model-factory experiments.
+The separate [training harness](training/README.md) supports eager comparisons
+and reference checks.

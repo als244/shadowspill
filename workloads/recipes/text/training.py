@@ -1,5 +1,6 @@
 """Text-specific defaults and hooks for the model-independent training runner."""
 
+import math
 from fractions import Fraction
 
 from .phases.candidates import batch_sizes, build_candidates
@@ -13,7 +14,7 @@ DEFAULTS = dict(
     chunk_sizes=[0],
     moe_chunk_sizes=[0],
     graph_pair_policies=["cost-input"],
-    schedule_steps=10,
+    schedule_steps=None,
     learning_rate=2e-4,
     seed=0,
     initialization="checkpoint",
@@ -25,13 +26,21 @@ def validate(options):
         raise ValueError("initialization must be checkpoint or random")
     if not options["data"]:
         raise ValueError("data is required")
+    if options["schedule_steps"] is None:
+        options["schedule_steps"] = max(2, options["steps"])
     for name in ("sequence_length", "schedule_steps"):
         if type(options[name]) is not int or options[name] <= 0:
             raise ValueError(f"{name} must be a positive integer")
     if options["schedule_steps"] < max(2, options["steps"]):
         raise ValueError("schedule_steps must exceed one and cover steps")
-    if options["learning_rate"] <= 0:
-        raise ValueError("learning_rate must be positive")
+    rate = options["learning_rate"]
+    if (
+        isinstance(rate, bool)
+        or not isinstance(rate, int | float)
+        or not math.isfinite(rate)
+        or rate <= 0
+    ):
+        raise ValueError("learning_rate must be finite and positive")
     options["microbatch_sizes"] = list(batch_sizes(options))
     if any(
         not 0 <= Fraction(value) <= 1 for value in (options["resolution_options"] or ())

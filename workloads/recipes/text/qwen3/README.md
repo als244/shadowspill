@@ -1,7 +1,7 @@
 # Qwen3 MoE full training
 
 This recipe uses the [shared Python runner](../../README.md) with sharded DP or
-expert parallelism. The default model is Qwen3-30B-A3B: BF16 compute weights, FP32 gradients,
+expert parallelism. The example selects Qwen3-30B-A3B: BF16 compute weights, FP32 gradients,
 FP32 master weights and FP32 AdamW moments. DP shards weights, gradients and
 optimizer data across eight GPUs. EP owns each expert shard locally, replicates
 shared weights and gradients, and shards the shared optimizer state. The recipe
@@ -29,14 +29,15 @@ train(model, {
 
 Launch this script once, without an outer torchrun. DP uses one
 GPU for build/profile, hides GPUs for planning, and launches all eight workers
-for communication calibration and execution. Defaults are 4K tokens, 64 sequences
-per rank, five updates, and 77 GiB GPU / 96 GiB host spill per rank. The latter
-requires 768 GiB of host pools across the node.
+for communication calibration and execution. The script explicitly supplies the
+eight-GPU geometry; `Model.from_config` otherwise uses the common
+[single-GPU defaults](../../README.md#data-defaults-and-search). Its 96 GiB spill
+ceiling per rank permits up to 768 GiB of host pools across the node.
 
 Set `parallelism="ep"` to distribute experts across the rank group. EP build and
 profiling require every resource participant; each microbatch candidate gets its
 own token-capacity resource. EP execution chunks are currently refused because
-the provider has no declared axis-chunk contract. This is independent of DP
+the provider has no declared chunkable axes. This is independent of DP
 execution chunking and checkpoint recomputation. Both DP8 and EP8 have completed
 the budget sweep below; its EP runs use unchunked execution.
 
@@ -47,14 +48,14 @@ does not split those opaque operations. The LoRA adapters have separate provider
 contracts that support chunked expert execution.
 
 Profiling reserves 768 MiB of external GPU headroom (configurable with
-`--external-headroom-mib` when creating the run), in addition to calibrated
+`external_headroom_mib` when creating the run), in addition to calibrated
 communication overhead. This is included in the total GPU budget. Library and
 backend setup on an H100 SonicMoE worker takes more than 512 MiB outside the
 pool; the margin reduces the memory available to planning rather than relaxing
 runtime admission. Changing this reservation requires fresh profiles.
 
-Each phase also runs independently with `--phase build`, `profile`, `communicate`,
-`plan`, or `execute`. Start build with the data path and configuration. Subsequent
+Each phase also runs independently with `phase="build"`, `"profile"`, `"communicate"`,
+`"plan"`, or `"execute"`. Start build with the data path and configuration. Subsequent
 phases read saved settings; a new build requires a fresh directory. Change memory
 budgets only during planning:
 
@@ -87,19 +88,16 @@ The shared workers have one purpose each; recipe modules delegate to them:
 | [Shared execute](../../training/execute.py) | Fresh worker, bounded initialization, Trainer updates/checkpoint | `training/rank-NNNNN/` |
 | [Text initialization](../initialization.py) | Identical random tensor values across shards/chunk sizes | Fills Executor buffers |
 
-`--microbatch-sizes` lists the exact candidates to build and profile. The default
-is `1 2 4 8 16 32`; for example, `--microbatch-sizes 4 16` builds only those two
-sizes. Every size must be a positive integer dividing `--sequences-per-step`.
-Repeated entries are built once. When reducing the step size, supply a list of
-valid sizes as well. Changing the list requires a fresh build directory; later
-phases reuse the saved list. The former maximum-size option is removed.
-Planning searches all factor orderings for each size without rebuilding.
+`microbatch_sizes` lists the exact positive divisors of `sequences_per_step` to
+build and profile. Repeated entries are built once. Changing the list requires a
+fresh run; later phases reuse the saved list. Planning searches all factor
+orderings for each size without rebuilding.
 Inputs are rank-local
 and disjoint. Loss normalization uses the global token count. Random initialization
 draws Hugging Face's initial distributions, from a stable per-tensor RNG stream
 rather than the module-reset traversal order.
 
-`--model qwen3moe-tiny --ranks 1` supports local pipeline checks. Single-rank
+`Model.from_config("qwen3moe-tiny")` with short sequences supports local pipeline checks. Single-rank
 profiling also measures host copies, so it needs no communicate phase. Such a
 check does not qualify the 30B model's performance or memory use on eight GPUs.
 The underlying common DP Executor is qualified on two H100s, and the recipe's
@@ -182,7 +180,7 @@ This search used the default graph-pair policy and no explicit axis-chunk policy
 It searched batch/order choices and PressureFit's placement/variant decisions.
 The current shared runner also accepts independent `chunk_sizes`,
 `moe_chunk_sizes` and `graph_pair_policies` lists for DP; see its
-[search contract](../../README.md#search-and-saved-phases). The table above does
+[search contract](../../configuration.md#search-and-saved-phases). The table above does
 not qualify those additional candidates.
 
 The eight host pools alone require 768 GiB. The test used a 980 GiB node host

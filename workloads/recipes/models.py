@@ -61,8 +61,10 @@ class Model:
 
     @classmethod
     def from_config(cls, name):
-        from workloads.models.catalog import entry
+        """Train a catalog model from random weights through the shared runner."""
+        from workloads.models.catalog import READERS, entry
 
-        if entry(name).family != "qwen3moe":
-            raise ValueError("the full-training adapter currently supports Qwen3 MoE")
-        return cls("workloads.recipes.text.qwen3.adapter", {"model": name})
+        item = entry(name)
+        if item.family not in READERS:
+            raise ValueError(f"{item.family} requires its checkpoint-specific recipe")
+        return cls("workloads.recipes.text.catalog", {"model": name})

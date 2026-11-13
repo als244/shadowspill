@@ -1,17 +1,19 @@
 # ShadowSpill documentation
 
-ShadowSpill captures a fixed-shape PyTorch computation, measures its compiled
-tasks, and plans tensor residency, transfers and recomputation within memory
-budgets. Execution loads a saved Plan in a fresh worker. Trainer supplies the
-training loop; applications supply models, objectives and data.
+For supported model recipes, the [Python `train` runner](../workloads/recipes/README.md)
+handles build, profiling, search and training. Supply a model source, data and
+resource settings; the runner manages saved artifacts and execution workers.
+
+The core APIs also support custom models and separate phase control. `Trainer`
+is the execution layer for an already prepared Plan.
 
 ## Start with a task
 
 | I want to… | Start here |
 | --- | --- |
-| Install and run a small training example | [Setup](development/repository.md#setup), [training example](examples/generic-training.md) |
+| Install and train a supported model end to end | [Setup](development/repository.md#setup), [Python training](../workloads/recipes/README.md) |
+| Integrate a custom PyTorch model | [Custom-model guide](python/custom-models.md), [phase example](examples/generic-training.md) |
 | Build, profile, plan and execute separately | [Phase guide](python/phases.md) |
-| Train a model from a readable script | [Python recipes](../workloads/recipes/README.md) |
 | Control checkpoint boundaries, chunking or retention | [Partitioning example](examples/custom-partitioning.md), [build policies](python/api/frontend.md) |
 | Search budgets, microbatch sizes and policy candidates | [Quickstart](../benchmarking/quickstart.md) |
 | Understand predicted or measured performance | [Plan reports](python/plan-report.md), [execution diagnostics](python/step-diagnostics.md) |

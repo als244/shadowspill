@@ -7,20 +7,22 @@ API boundaries and the [Python reference](../python/README.md) for details.
 
 ## Start here
 
-1. [Training and checkpointing](generic-training.md) — build/profile, CPU planning,
+1. [Commented training script](../../workloads/recipes/text/example.py) — the shared
+   runner with a real language model and next-token loss.
+2. [Training and checkpointing](generic-training.md) — build/profile, CPU planning,
    bounded initialization and a Trainer loop in a fresh worker.
-2. [Forward-only execution](forward-only.md) — save and execute a prediction Plan,
+3. [Forward-only execution](forward-only.md) — save and execute a prediction Plan,
    or share model tensors with training for evaluation.
-3. [Reusable planning and budget sweeps](reusable-planning.md) — replan saved
+4. [Reusable planning and budget sweeps](reusable-planning.md) — replan saved
    profiles and produce simulated reports without a GPU.
-4. [Custom stage partitioning](custom-partitioning.md) — control build-time FX
+5. [Custom stage partitioning](custom-partitioning.md) — control build-time FX
    boundaries through a small policy.
-5. [Commented GLM LoRA script](../../workloads/recipes/text/glm53_flash_lora/example.py)
+6. [Commented GLM LoRA script](../../workloads/recipes/text/glm53_flash_lora/example.py)
    — real checkpoint/data, chunk and retention search, pinned-host budgets,
    evaluation and checkpointing through the normal saved phases.
 
-The [README recipes](../../README.md#model-recipes) cover Llama, Qwen3.5 LoRA,
-Qwen3 distributed training and GLM Flash LoRA. The [model catalog](../../workloads/MODELS.md)
+The [Python recipes](../../workloads/recipes/README.md) cover catalog full training
+and supported checkpoint LoRA. The [model catalog](../../workloads/MODELS.md)
 lists model dimensions, precisions and available implementations.
 
 ## Process and storage requirements

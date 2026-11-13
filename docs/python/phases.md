@@ -1,5 +1,9 @@
 # Build, profile, plan and execute
 
+For a supported model's complete training workflow, use the
+[shared Python `train` runner](../../workloads/recipes/README.md). This guide is
+for callers who need separate phases or their own model/data integration.
+
 ShadowSpill separates preparing a workload from running it. The phase functions
 are available from `shadowspill`; `Trainer` runs the selected Plan. Start with the
 [complete Python example](../examples/generic-training.md), which defines the

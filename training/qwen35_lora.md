@@ -20,7 +20,7 @@ train(model, {
 Each phase runs in a fresh process. Build constructs one training Program and
 one evaluation Program for every explicitly requested microbatch size, crossed
 with any chunk and retention candidates. Each size must divide the sequence
-count. See [search controls](../workloads/recipes/README.md#search-and-saved-phases).
+count. See [search controls](../workloads/recipes/configuration.md#search-and-saved-phases).
 Profiling uses
 the ordinary PyTorch allocator. CPU planning compares batch sizes and depth /
 breadth orderings, including joint memory admission for training and evaluation.

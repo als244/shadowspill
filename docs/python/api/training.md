@@ -1,5 +1,10 @@
 # Trainer
 
+For end-to-end training of supported models, start with the
+[Python `train(model, config)` runner](../../../workloads/recipes/README.md).
+It handles preparation, search and execution. This reference covers the lower
+level used to run an already selected Plan or write a custom training loop.
+
 `Trainer` runs a saved training `Plan`, manages update counts, and provides an
 optional loop, logging and checkpoints. Build, profile and plan first; Trainer
 never repeats those phases. Start with the [complete example](../../examples/generic-training.md)
@@ -22,7 +27,7 @@ with Trainer(Plan.load("training.ssp")) as trainer:
 `fill_tensor(chunk, destination)` fills bounded CPU tensor views. `chunk` gives
 the tensor name, dtype, owned geometry and flat element offset. The
 [example initializer](../../examples/generic-training.md#execute-in-a-fresh-worker)
-loads ordinary model tensors; Trainer initializes captured optimizer defaults.
+fills ordinary model tensors; Trainer initializes captured optimizer defaults.
 `initialize(..., chunk_bytes=64 << 20)` sets the maximum chunk size and returns
 Trainer. Use it before the first update. For eager model initialization outside
 saved execution, `shadowspill.training.reset_parameters(model)` calls each

@@ -62,12 +62,12 @@ This boundary applies to every family, including GLM: `config.py`,
 Recipes supply those models to the shared phase APIs. A new architecture does
 not add a model-specific build, planner, profiler or executor to ShadowSpill.
 
-The standalone [Llama](recipes/text/llama3/),
-[Qwen3 MoE](recipes/text/qwen3/), [Qwen3.5 LoRA](recipes/text/qwen35_lora/) and
-[GLM checkpoint LoRA](recipes/text/glm53_flash_lora/) recipes separate build, profile, plan
-and execution into small modules. They share the [recipe phase driver](recipes/phases.py) and resumable
-text-call adapter. GLM and Qwen3.5 also share [candidate preparation](recipes/text/phases/);
-model-specific initialization remains with each recipe.
+The [shared Python training runner](recipes/README.md) accepts catalog model
+names for Llama, OLMoE, dense Qwen and Qwen MoE full training, plus checkpoint
+sources for Qwen3.5 MoE and GLM Flash LoRA. It owns build/profile/plan/execute;
+model adapters supply construction, bounded initialization and resumable text
+inputs. See the [commented script](recipes/text/example.py). The standalone
+[Llama phase modules](recipes/text/llama3/) also illustrate direct phase control.
 The [configured text runner](recipes/text/experiment/) follows the same phases,
 preserving document packing, runtime norm logging, held-out evaluation and resume.
 The [distributed regression example](recipes/regression/) uses the same driver
