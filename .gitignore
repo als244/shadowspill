@@ -3,6 +3,7 @@
 
 # Isolated experiments and independent checkouts.
 /dev/
+/baselines/testing/
 
 # Python
 __pycache__/
