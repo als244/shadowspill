@@ -11,6 +11,7 @@ from types import SimpleNamespace
 import pytest
 import torch
 
+from shadowspill import ProfilingOptions
 from shadowspill.pytorch import numerics
 from shadowspill.pytorch.executable import restore_executable
 
@@ -93,7 +94,9 @@ def test_phase_rejects_configuration_changes_before_task_use(
         from shadowspill.profiling.session import MeasurementSession
 
         if phase == "profile":
-            invoke = partial(MeasurementSession, program, torch.device("cpu"), {}, 0, 0)
+            invoke = partial(
+                MeasurementSession, program, torch.device("cpu"), {}, ProfilingOptions()
+            )
         else:
             session = MeasurementSession.__new__(MeasurementSession)
             session.program = program
