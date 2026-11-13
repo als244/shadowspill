@@ -124,7 +124,7 @@ Timing events for a trace come from a separate pool, keeping them apart from the
 readiness dependencies required for correctness ([events](events.md#the-timing-pool)).
 
 The step-level result of all this is described field by field in
-[execution diagnostics](../python/step-diagnostics.md); the event and stream
+[execution diagnostics](../python/advanced/step-diagnostics.md); the event and stream
 calls the intervals rest on are in the [backend
 contract](../c/backends.md).
 

@@ -257,7 +257,7 @@ prevents the exit rather than delaying it. See
 
 The Python-facing taxonomy, structured diagnostic fields, automatic rollback,
 and normal close order are documented in [Errors, failures, and
-cleanup](../python/failures.md).
+cleanup](../python/advanced/failures.md).
 
 ## Optional tracing
 
@@ -267,7 +267,7 @@ profiler. When runtime tracing is enabled, bounded preallocated buffers record
 task, allocator, transfer, and failure events and are converted to Python only
 when diagnostics are resolved.
 
-See [Interpreting execution diagnostics](../python/step-diagnostics.md) for
+See [Interpreting execution diagnostics](../python/advanced/step-diagnostics.md) for
 allocator/lease evidence, runtime counters, transfer frontiers, task-boundary
 timing, and overflow handling.
 

@@ -31,7 +31,7 @@ closing boundary
 ```
 
 Every frontend action between tasks belongs to a boundary. The
-[diagnostic timestamps](../python/step-diagnostics.md) cover the whole opening
+[diagnostic timestamps](../python/advanced/step-diagnostics.md) cover the whole opening
 or closing operation, rather than only the nested C call. If any operation
 raises after the scope opens, the frontend must close or abort it.
 

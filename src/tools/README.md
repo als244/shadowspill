@@ -12,7 +12,7 @@ This package contains repository support files outside ShadowSpill's wheel.
 [Qualification](../../qualification/README.md) owns gate orchestration and
 acceptance checks. Runtime diagnostics and occupancy rendering live in the
 installed `shadowspill.diagnostics` package; see the
-[occupancy guide](../../docs/python/occupancy.md).
+[occupancy guide](../../docs/python/advanced/occupancy.md).
 
 The development install and test configuration put `src/` on Python's import
 path. Product behavior remains in `src/shadowspill/`.

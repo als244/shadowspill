@@ -99,6 +99,6 @@ communication and overlap calibration. Check `plan.simulation_only_reasons`
 before execution: estimated workspace alone cannot establish a safe physical
 layout. Worker startup also checks dependencies and available memory.
 
-[Artifact reuse](artifact-store.md), [pool calibration](api/pool-memory.md),
-[Plan reports](plan-report.md), [runtime diagnostics](step-diagnostics.md) and
-[failure handling](failures.md) cover inspection and troubleshooting.
+[Artifact reuse](advanced/artifact-store.md), [pool calibration](api/pool-memory.md),
+[Plan reports](advanced/plan-report.md), [runtime diagnostics](advanced/step-diagnostics.md) and
+[failure handling](advanced/failures.md) cover inspection and troubleshooting.

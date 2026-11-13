@@ -5,7 +5,7 @@ Use `save(path)` and `load(path)` on `Program`, `Profiles`, `ProfiledProgram`,
 self-contained; a `ProfiledProgram` includes its Program, and a Plan includes
 its selected code and applied profiles. Checkpoint tensors and compatible
 runtime/provider libraries remain external. See the
-[artifact API](api/artifacts.md#persistence-and-reports).
+[artifact API](../api/artifacts.md#persistence-and-reports).
 
 `write_report(result, path)` writes human-readable tables and timelines into the
 directory `path`.

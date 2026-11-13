@@ -444,5 +444,5 @@ the corresponding ordered effects stay inside the task graph.
 ## Lower-level planning records
 
 `ShadowSpillPlanningProblem`, `AnnotatedProgramPlan` and `TransferBandwidths`
-serve planner experiments and diagnostic tools. Their [JSON reference](../planning-json.md)
+serve planner experiments and diagnostic tools. Their [JSON reference](../advanced/planning-json.md)
 is separate from the phase archives above.

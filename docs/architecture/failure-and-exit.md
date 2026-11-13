@@ -11,7 +11,7 @@ and that difference decides everything below.
 
 Related: [memory runtime](memory-runtime.md) for leases, the worker, and the
 failure latch; [task boundaries](task-boundaries.md) for what `abort_task`
-does; [errors, failures, and cleanup](../python/failures.md) for the
+does; [errors, failures, and cleanup](../python/advanced/failures.md) for the
 Python-facing taxonomy and the normal close order.
 
 ## A failure inside a task

@@ -1,37 +1,27 @@
 # ShadowSpill documentation
 
-For supported model recipes, the [Python `train` runner](../workloads/recipes/README.md)
-handles build, profiling, search and training. Supply a model source, data and
-resource settings; the runner manages saved artifacts and execution workers.
-
-The core APIs also support custom models and separate phase control. `Trainer`
-is the execution layer for an already prepared Plan.
-
-## Start with a task
+Start with [installation](development/repository.md#setup), then choose a path.
 
 | I want to… | Start here |
 | --- | --- |
-| Install and train a supported model end to end | [Setup](development/repository.md#setup), [Python training](../workloads/recipes/README.md) |
-| Integrate a custom PyTorch model | [Custom-model guide](python/custom-models.md), [phase example](examples/generic-training.md) |
-| Build, profile, plan and execute separately | [Phase guide](python/phases.md) |
-| Control checkpoint boundaries, chunking or retention | [Partitioning example](examples/custom-partitioning.md), [build policies](python/api/frontend.md) |
-| Search budgets, microbatch sizes and policy candidates | [Quickstart](../benchmarking/quickstart.md) |
-| Understand predicted or measured performance | [Plan reports](python/plan-report.md), [execution diagnostics](python/step-diagnostics.md) |
-| Add an operator library | [Operator integration](python/operator-integration.md) |
-| Understand or modify the engine | [Architecture](architecture/README.md), [development](development/README.md) |
-| Integrate a native backend | [C guide](c/README.md) |
+| Train a supported model end to end | [Python training](../workloads/recipes/README.md): model, data, budgets, search and resume |
+| Use a custom model or call phases directly | [Custom models](python/custom-models.md), [phase guide](python/phases.md), [complete example](examples/generic-training.md) |
+| Tune, diagnose or extend the system | [Advanced guides](python/advanced/README.md): chunking, retention, artifacts, traces and operators |
 
-## Documentation map
+The supported `train` runner handles the whole workflow. The phase APIs expose
+build, profile, plan and execute separately; `Trainer` runs an already selected
+Plan. Both paths use the same compiler, planner and runtime.
 
-- [Python guide and API index](python/README.md): phase controls, artifacts,
-  Trainer/Executor, distributed execution, diagnostics and errors.
-- [Examples](examples/README.md): complete training, forward-only execution,
-  reusable planning, diagnostics and custom partitioning workflows.
-- [Architecture](architecture/README.md): design and invariants, grouped by subsystem.
-- [C reference](c/README.md): runtime, backends, pools, lanes, planner and simulator.
-- [Development](development/README.md): setup, source ownership, naming and checks.
-- [Optional integrations](integrations/README.md): adapters for specific operator libraries.
+## References and development
 
-Guides show how to perform a task; API references define exact controls;
-architecture pages explain why the implementation works. Experiment histories,
-qualification receipts and merge-review notes live under `docs/internal/`.
+| Directory | Contents |
+| --- | --- |
+| [Python API index](python/README.md) | Exact options, defaults and constraints in `python/api/` |
+| [Examples](examples/README.md) | Complete workflows to adapt |
+| [Architecture](architecture/README.md) | Engine design and invariants, grouped by subsystem |
+| [C reference](c/README.md) | Native runtime, backends, pools, planner and simulator |
+| [Development](development/README.md) | Setup, source ownership, naming and validation |
+| [Optional integrations](integrations/README.md) | Adapters for specific operator libraries |
+
+Experiment histories, qualification receipts and merge-review notes stay under
+`docs/internal/`; they are separate from the public guides.

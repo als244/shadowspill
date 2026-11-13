@@ -18,7 +18,7 @@ step = pending.diagnostics
 `pending.diagnostics` waits for completion and returns `StepDiagnostics`; it is
 `None` when tracing is disabled. Repeated reads reuse the completed result.
 The records contain seven views: `summary`, `tasks`, `transfers`, `timelines`,
-`allocator`, `runtime` and `collectives`. The [field guide](../step-diagnostics.md)
+`allocator`, `runtime` and `collectives`. The [field guide](../advanced/step-diagnostics.md)
 describes their clocks, byte counts and completeness flags.
 
 `Executor.run(..., profiler_annotations=True)` emits semantic task and transfer
@@ -33,11 +33,11 @@ opening runtime pools. Report generation and artifact persistence are separate:
 use `plan.save(path)` for a portable executable archive. Reports do not replace
 allocation evidence or make an estimated-memory Plan executable.
 
-[Interpreting a Plan](../plan-report.md) and the
+[Interpreting a Plan](../advanced/plan-report.md) and the
 [worked trace example](../../examples/diagnostics.md) show how to compare
 simulated costs with measured tasks and transfers.
 
-PressureFit's optional [cut-by-cut traces](../pressurefit-trace.md) retain search
+PressureFit's optional [cut-by-cut traces](../advanced/pressurefit-trace.md) retain search
 alternatives and memory-pressure evidence. These describe search decisions,
 not measured GPU execution.
 
@@ -45,7 +45,7 @@ not measured GPU execution.
 
 `RuntimeExecutionError` can carry `RuntimeFailureDiagnostics` with the failed
 task, allocation, capacity and contract operation. The runtime retains the
-first failure; see [failures and cleanup](../failures.md). A failed invocation
+first failure; see [failures and cleanup](../advanced/failures.md). A failed invocation
 is terminal for Executor and its runtime. Closing it still releases everything
 they hold, and an error the close raises names the failure as its cause. A new
 run needs a new process.

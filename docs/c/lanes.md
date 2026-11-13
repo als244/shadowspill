@@ -215,7 +215,7 @@ does not, the two are equal by construction. That is the difference between
 
 One lane serves one directional pair of pool kinds, so these are per route and
 per direction, and they accumulate for the life of the lane. The
-[step diagnostics](../python/step-diagnostics.md) report them beside the
+[step diagnostics](../python/advanced/step-diagnostics.md) report them beside the
 per-step view the trace gives, which is a different question and not a
 substitute.
 

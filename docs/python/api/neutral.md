@@ -196,7 +196,7 @@ profile recorded under an older one is not comparable.
 Optional caches for captured graphs and planner results,
 keyed by the inputs that affect each result. These support lower-level adapters
 and planner experiments; public phase artifacts use independent `save`/`load`
-archives. See [artifacts and caches](../artifact-store.md).
+archives. See [artifacts and caches](../advanced/artifact-store.md).
 
 `ArtifactStore` is the store: two trees under one root.
 
@@ -217,7 +217,7 @@ ArtifactStore.resolve(
 this run may do with each tree; `export_bypass_key` is a caller-provided
 identity the store validates and carries, and no key or path in either tree
 includes it. Every entry point's store arguments are resolved here; the [cache
-guide](../artifact-store.md) defines them. `initialize()` creates the tree,
+guide](../advanced/artifact-store.md) defines them. `initialize()` creates the tree,
 `artifacts()` returns the `PlanningArtifact` records this call touched, and
 `record(...)` adds one.
 
@@ -243,7 +243,7 @@ partial record. `ArtifactRecorder` is the callback a store takes to publish
 each artifact it touched as a `PlanningArtifact`; the capture and plan caches
 use the same protocol.
 
-[The artifact store](../artifact-store.md) has the layout and what each digest
+[The artifact store](../advanced/artifact-store.md) has the layout and what each digest
 covers.
 
 ## `shadowspill.planner`
@@ -316,7 +316,7 @@ plan_program(
 | `keep_resolutions` | `bool` | `False` | Files every resolved program's best plan beside the answer, certified like it, when the search runs: what each way of fixing the alternatives found, to read against the answer. Each is as large as the answer, and a resolution the search bounded away before it placed a plan has none; `deterministic` search options make every resolution report the plan it found. |
 
 Raises `TypeError` when `search_options` is neither a `SearchOptions` nor
-`None`. The store arguments follow the [cache guide](../artifact-store.md); there are no build-store arguments
+`None`. The store arguments follow the [cache guide](../advanced/artifact-store.md); there are no build-store arguments
 here, because planning writes nothing under `build/`.
 
 `incumbent` is the plan to beat. It reaches the search as a bound, and the
@@ -531,7 +531,7 @@ tuple[tuple[str, str], ...] | None = None` instead names explicit
 `to_dict()`, stored requests and plan keys, like `workers`; deserialization
 leaves them `None`. Recording requires a single device and
 `generic.deterministic=True`. The returned plan is unchanged. See
-[cut traces](../pressurefit-trace.md) for recording, replay and semantic labels.
+[cut traces](../advanced/pressurefit-trace.md) for recording, replay and semantic labels.
 
 | field | type | default | meaning |
 |---|---|---|---|
@@ -915,7 +915,7 @@ recalibrating.
 | `RuntimeExecutionError` | a call failed against a live runtime, carrying the latched diagnostics when there are any |
 | `RuntimeFailureDiagnostics` | what the runtime latched about its first failure |
 
-[Failures and cleanup](../failures.md) shows what raises them.
+[Failures and cleanup](../advanced/failures.md) shows what raises them.
 
 The production-memory-pool replay interface is `AdmissionReplayOperation` and
 `AdmissionReplayOperationKind` (the script), `AdmissionReplayLeaseState`,

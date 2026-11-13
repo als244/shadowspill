@@ -1,11 +1,11 @@
 # Errors, failures, and cleanup
 
 Build, measurement, planning and execution have separate ownership and failure
-boundaries. See [Trainer and Executor](api/training.md) for normal usage.
+boundaries. See [Trainer and Executor](../api/training.md) for normal usage.
 
 ## Preparation failures
 
-The [phase APIs](phases.md) separate preparation from
+The [phase APIs](../phases.md) separate preparation from
 execution. Build and measurement use ordinary allocations, while planning uses
 only saved artifacts. None of these phases constructs runtime pools.
 
@@ -60,7 +60,7 @@ outside this hierarchy.
 The low-level `shadowspill.runtime.admission_replay` helper raises
 `PhysicalAdmissionError`, a `ValueError` with the failed operation's capacity,
 free-range and live-lease evidence. It directly probes the production memory-pool
-policy; see [the neutral API page](api/neutral.md#physical-admission).
+policy; see [the neutral API page](../api/neutral.md#physical-admission).
 
 `InputGuardError` is deliberately outside the hierarchy — it is a `ValueError`
 raised at a call, not during planning. So is the `require` store's refusal: a
@@ -90,7 +90,7 @@ afterwards. Pool bounds and device allocation failures are enforced either way.
 Distributed workers whose Programs disagree on what they exchange, or whose
 Plans would issue their collectives in different orders, are refused with a
 `ValueError` before any collective runs; see
-[fresh execution workers](api/distributed.md#fresh-execution-workers).
+[fresh execution workers](../api/distributed.md#fresh-execution-workers).
 
 `PlanInfeasibleError` is a negative feasibility result. `PlanSearchExhaustedError`
 means a bounded search did not establish a result. Neither returns a partial
@@ -212,5 +212,5 @@ them and retry close. Completed outputs remain valid until explicitly released.
 
 The allocator shim is process-global. After runtime teardown it stays closed,
 so further GPU work belongs in another fresh worker. See the
-[execution reference](api/training.md), [allocator guide](allocator.md) and
-[memory runtime](../architecture/memory-runtime.md#failure-and-teardown).
+[execution reference](../api/training.md), [allocator guide](allocator.md) and
+[memory runtime](../../architecture/memory-runtime.md#failure-and-teardown).

@@ -610,7 +610,7 @@ chunking = FeedForwardChunks()
 ```
 
 For a provider-oriented walkthrough and qualification checklist, see
-[Integrating an operator library](../operator-integration.md).
+[Integrating an operator library](../advanced/operator-integration.md).
 
 `OperatorRule(target, version, output_axes, reductions=())` certifies one opaque
 operator overload's semantics. `target: str` names that exact overload;

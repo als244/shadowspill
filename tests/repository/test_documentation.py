@@ -328,7 +328,9 @@ def test_documentation_index_exposes_reading_paths() -> None:
     for target in (
         "architecture/README.md",
         "python/README.md",
+        "python/custom-models.md",
         "python/phases.md",
+        "python/advanced/README.md",
         "examples/README.md",
         "examples/generic-training.md",
         "c/README.md",
@@ -340,10 +342,12 @@ def test_documentation_index_exposes_reading_paths() -> None:
 
 def test_root_readme_remains_a_minimal_entrypoint() -> None:
     readme = (ROOT / "README.md").read_text()
-    assert len(readme.splitlines()) <= 100
+    assert len(readme.splitlines()) <= 60
     assert "](docs/README.md)" in readme
     assert "](docs/examples/generic-training.md)" in readme
     assert "](workloads/recipes/README.md)" in readme
+    assert "](docs/python/custom-models.md)" in readme
+    assert "](docs/python/advanced/README.md)" in readme
     assert "```python" in readme
 
 
@@ -434,7 +438,7 @@ def test_examples_cover_complete_public_workflows() -> None:
 
 
 def test_failure_guide_covers_public_boundaries_and_cleanup() -> None:
-    reference = (DOCS / "python" / "failures.md").read_text()
+    reference = (DOCS / "python" / "advanced" / "failures.md").read_text()
     for required in (
         "RuntimeConfigurationError",
         "PlanningError",
@@ -714,7 +718,7 @@ def test_pressurefit_architecture_covers_the_algorithm_contract() -> None:
 
 
 def test_diagnostic_and_serialization_guides_cover_runtime_schemas() -> None:
-    plan_report = (DOCS / "python" / "plan-report.md").read_text()
+    plan_report = (DOCS / "python" / "advanced" / "plan-report.md").read_text()
     for required in (
         "## Structure",
         "## Transfer assumptions and budgets",
@@ -726,7 +730,9 @@ def test_diagnostic_and_serialization_guides_cover_runtime_schemas() -> None:
     ):
         assert required in plan_report
 
-    step_diagnostics = (DOCS / "python" / "step-diagnostics.md").read_text()
+    step_diagnostics = (
+        DOCS / "python" / "advanced" / "step-diagnostics.md"
+    ).read_text()
     for required in (
         "## Structure",
         "## Summary",
@@ -739,7 +745,7 @@ def test_diagnostic_and_serialization_guides_cover_runtime_schemas() -> None:
     ):
         assert required in step_diagnostics
 
-    serialization = (DOCS / "python" / "planning-json.md").read_text()
+    serialization = (DOCS / "python" / "advanced" / "planning-json.md").read_text()
     for required in (
         "## Program format",
         "## ShadowSpillPlanningProblem format",
@@ -845,7 +851,7 @@ def test_every_step_diagnostics_field_is_described_in_its_guide() -> None:
     """
 
     source = (ROOT / "src/shadowspill/diagnostics/step.py").read_text()
-    guide = (ROOT / "docs/python/step-diagnostics.md").read_text()
+    guide = (ROOT / "docs/python/advanced/step-diagnostics.md").read_text()
     undocumented: dict[str, list[str]] = {}
     for node in ast.walk(ast.parse(source)):
         if not isinstance(node, ast.ClassDef):
@@ -913,7 +919,7 @@ def test_search_diagnostic_fields_are_described_in_the_reference() -> None:
         "src/shadowspill/planner/diagnostics/candidates.py",
         "src/shadowspill/planner/diagnostics/counters.py",
     )
-    reference = (ROOT / "docs/python/plan-report-fields.md").read_text()
+    reference = (ROOT / "docs/python/advanced/plan-report-fields.md").read_text()
     undocumented: dict[str, list[str]] = {}
     for module in modules:
         for node in ast.walk(ast.parse((ROOT / module).read_text())):

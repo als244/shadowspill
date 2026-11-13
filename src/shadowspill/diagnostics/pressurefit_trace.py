@@ -2,7 +2,8 @@
 
 Positions in the binary file are zero-based cells: position 0 precedes task 0,
 and position p > 0 follows task p - 1. Cut endpoints use the algorithm's
-boundary numbers instead (position minus one). See docs/python/pressurefit-trace.md.
+boundary numbers instead (position minus one).
+See docs/python/advanced/pressurefit-trace.md.
 """
 
 from __future__ import annotations

@@ -7,8 +7,8 @@ the frontend's built-in contracts. Opaque operators need explicit additional
 contracts for transformations whose semantics the frontend cannot inspect.
 
 This guide separates basic integration from optional optimizations. See the
-[frontend reference](api/frontend.md#axis-chunking-policies) for exact chunk-policy
-types and the [axis-chunking architecture](../architecture/axis-chunking.md) for
+[frontend reference](../api/frontend.md#axis-chunking-policies) for exact chunk-policy
+types and the [axis-chunking architecture](../../architecture/axis-chunking.md) for
 transformation and storage details.
 
 ## What an operator must provide
@@ -40,7 +40,7 @@ them as distinct graph operations and choose execution regions accordingly.
 
 The flop formula helps choose a saved-state cut; it is not a task timing or
 workspace measurement. Explicit retention rules can override that cost choice.
-See [graph-pair construction](../architecture/graph-pair-construction.md) for
+See [graph-pair construction](../../architecture/graph-pair-construction.md) for
 the cost policy and its interaction with saved-state declarations.
 
 ## Define the independent domain
@@ -50,7 +50,7 @@ axes and chunk size by returning `AxisChunks`. Providers supply semantic facts;
 workloads choose where to use them. Keep reusable provider facts independent of
 any execution engine. Put the adapter that constructs ShadowSpill rules in this
 repository or the caller's integration package. For example,
-[`shadowspill.integrations.mlops`](../integrations/mlops.md) converts standalone `mlops.operator_metadata`
+[`shadowspill.integrations.mlops`](../../integrations/mlops.md) converts standalone `mlops.operator_metadata`
 records without duplicating their operator semantics. The engine does not
 discover libraries or select policies by architecture name.
 
@@ -156,20 +156,20 @@ not yield the full-domain sort order.
 Use the graph pair's retention policies to regenerate such scratch inside each
 chunk while retaining any required ordered routing choices. This applies to
 SAVE as well as RECOMPUTE. Chunking does not shrink the full saved cut or change
-checkpoint boundaries. See [routing retention](../architecture/routing-retention.md)
-and [graph-pair policies](api/frontend.md#graph-pair-policies).
+checkpoint boundaries. See [routing retention](../../architecture/routing-retention.md)
+and [graph-pair policies](../api/frontend.md#graph-pair-policies).
 
 An additive output declaration permits summing contributions; it does not prove
 the provider can write directly into an existing gradient. Ordinary accumulation
 may still allocate a contribution and add it in place. To fuse its production,
-provide the separate [gradient-destination rules](../architecture/custom-gradient-destinations.md).
+provide the separate [gradient-destination rules](../../architecture/custom-gradient-destinations.md).
 The first contribution creates the buffer; subsequent chunks, regions and
 microbatches can accumulate into it. Preserve the declared precision and
 mutation/alias behavior of the replacement overload.
 
 Likewise, an axis rule does not authorize scheduling an opaque operation earlier,
 replaying it an extra time, or compacting its inputs. Those permissions belong to
-the separate [execution-lifetime controls](api/frontend.md#execution-lifetimes).
+the separate [execution-lifetime controls](../api/frontend.md#execution-lifetimes).
 
 ## How the declarations enter build, profile, plan and execute
 
@@ -197,7 +197,7 @@ the separate [execution-lifetime controls](api/frontend.md#execution-lifetimes).
 
 External compiler caches, source hashes and autotuning behavior belong to the
 provider. See [prepared operators](operator-preparation.md) for packaging
-selected implementations and [resources](../architecture/resources.md) for
+selected implementations and [resources](../../architecture/resources.md) for
 non-tensor resource lifecycles. Neither interface substitutes for an axis contract.
 
 ## Qualifying a new integration
@@ -214,6 +214,6 @@ uses collectives or distributed resources.
 Use tolerances appropriate to the arithmetic; bitwise equality across chunk
 geometries is not the default contract. Unsupported axes, aliasing, effects or
 nonadditive reductions should fail explicitly, rather than produce an apparently
-valid Plan. The maintained [axis tests](../../tests/shadowspill/pytorch/chunking/)
-and [saved provider regression](../../tests/workloads/prepared_sonic/README.md)
+valid Plan. The maintained [axis tests](../../../tests/shadowspill/pytorch/chunking)
+and [saved provider regression](../../../tests/workloads/prepared_sonic/README.md)
 illustrate these checks; the latter is one implementation, not a required library.

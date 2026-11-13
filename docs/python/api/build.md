@@ -125,7 +125,7 @@ In particular, configured precision-cast emulation preserves native low-precisio
 sigmoid-backward rounding through compilation.
 
 External kernel tuning and dispatch belong to explicit
-[`OperatorPreparation`](../operator-preparation.md) adapters. Build does not
+[`OperatorPreparation`](../advanced/operator-preparation.md) adapters. Build does not
 discover providers by model name. Adapters must save selections, validate their
 source/ABI and restore dispatch without silently choosing new kernels. Dynamically
 registered/native operations and transitive libraries need provider-specific

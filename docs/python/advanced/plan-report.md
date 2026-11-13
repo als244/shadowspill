@@ -72,12 +72,12 @@ admission evidence. Executor validates these again before execution.
 
 Logical simulated peaks alone do not establish a physical layout. Fragmentation,
 alignment, overlapping lifetimes, outputs and provider scratch all matter. See
-[physical admission](../architecture/physical-admission.md).
+[physical admission](../../architecture/physical-admission.md).
 
 ## Execution comparison
 
 `executor.run(..., runtime_trace=True)` returns a result handle whose
 `diagnostics` exposes measured tasks and transfers. Compare those records with
-`timeline`; [the worked example](../examples/diagnostics.md) shows the join.
+`timeline`; [the worked example](../../examples/diagnostics.md) shows the join.
 Keep simulated prediction, measured device intervals and host dispatch time
 separate. Diagnostic collection is opt-in and can add measured overhead.

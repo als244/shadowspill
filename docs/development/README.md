@@ -25,10 +25,12 @@ internal documentation tree, `docs/internal/`.
 
 Keep one authoritative reference per subject and link it from examples and
 guides. Entry pages should help readers choose a task, not enumerate every
-implementation detail. Place workflow instructions under `docs/python/`,
-signatures and constraints under `docs/python/api/`, design invariants under
+implementation detail. Keep the supported training guide in
+`workloads/recipes/README.md`, the custom-model and phase guides under
+`docs/python/`, and specialized guides under `docs/python/advanced/`.
+Put signatures and constraints under `docs/python/api/`, design invariants under
 `docs/architecture/`, and library-specific adapters under `docs/integrations/`.
-Keep the native API in `docs/c/` and runnable examples under `docs/examples/`.
+Keep the native API in `docs/c/` and complete examples under `docs/examples/`.
 
 Use current behavior and concrete names. Explain what a control changes and
 which phase consumes it. Preserve shape, ownership and compatibility limits;

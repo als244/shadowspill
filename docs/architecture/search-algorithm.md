@@ -140,7 +140,7 @@ caller's `SearchOptions`, and optional `admission`, `placement`, and `progress`.
 The base implementation raises `NotImplementedError`; algorithms need only
 override it when they support requested tracing. It must preserve the original
 answer and its planning identity. PressureFit reruns selected candidates and
-checks their outcomes against the ordinary search; see [cut traces](../python/pressurefit-trace.md).
+checks their outcomes against the ordinary search; see [cut traces](../python/advanced/pressurefit-trace.md).
 
 ## Defaults
 

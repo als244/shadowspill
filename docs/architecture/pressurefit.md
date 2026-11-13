@@ -164,7 +164,7 @@ point. The distinction matters when replaying cuts.
 
 The implementation and trace arrays use **positions** $p=b+1$: position 0 is
 before task 0. Cut endpoints in the trace retain the signed boundary notation.
-See [trace positions and semantic labels](../python/pressurefit-trace.md#semantic-labels-and-positions).
+See [trace positions and semantic labels](../python/advanced/pressurefit-trace.md#semantic-labels-and-positions).
 
 ### Prepare the residency problem
 
@@ -641,7 +641,7 @@ step: makespan, planning capacity, required layout bytes, repair count, and
 what happened to the plan.
 
 `SearchOptions.trace_directory` adds the detailed
-[PressureFit cut trace](../python/pressurefit-trace.md). The normal API finds
+[PressureFit cut trace](../python/advanced/pressurefit-trace.md). The normal API finds
 the winner first and reruns that candidate deterministically for recording.
 Explicit resolution/policy pairs can request more candidates without changing
 the selected plan or its cache key. Each trace includes:

@@ -38,5 +38,5 @@ inspect inter-task waits and the `fetch`/`evict` lanes. A slow task calls for a
 kernel trace; a transfer delay calls for the lane's readiness, queue and completion
 evidence. Check trace completeness before drawing conclusions from missing events.
 
-[Plan inspection](../python/plan-report.md) and
-[execution trace fields](../python/step-diagnostics.md) define the records.
+[Plan inspection](../python/advanced/plan-report.md) and
+[execution trace fields](../python/advanced/step-diagnostics.md) define the records.

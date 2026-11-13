@@ -23,7 +23,7 @@ A checkpoint stage can contain whole-axis operations and several chunked
 regions. Execution-region edges live only within one task call, but a cut can
 still materialize a full-axis intermediate. A cut alone does not reduce memory.
 The [policy reference](../python/api/frontend.md#axis-chunking-policies) defines
-the public controls; [operator integration](../python/operator-integration.md)
+the public controls; [operator integration](../python/advanced/operator-integration.md)
 explains the declarations required from a library.
 
 ### Compose regions inside an outer slice

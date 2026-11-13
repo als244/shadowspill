@@ -8,7 +8,7 @@ this repository owns their translation and compiler integration tests.
 The caller chooses checkpoint boundaries, execution regions, axes, chunk sizes,
 retention and spill budgets. These helpers supply facts needed to implement
 those choices safely. Other libraries use the same
-[operator integration API](../python/operator-integration.md).
+[operator integration API](../python/advanced/operator-integration.md).
 
 | Helper | Build use |
 |---|---|
@@ -49,7 +49,7 @@ build_options = {
 
 Effective input positions can differ between forward and backward regions.
 Choose axes from the region's `StageInfo`, as in the
-[generic axis example](../python/operator-integration.md#example-affine-outputs-and-parameter-gradients).
+[generic axis example](../python/advanced/operator-integration.md#example-affine-outputs-and-parameter-gradients).
 Match `batch_size` to flattened batch/position geometry. It does not select an
 axis or authorize arbitrary feature splitting.
 
@@ -131,7 +131,7 @@ Build packages selected BF16 Sonic/Quack kernels and configurations during
 normal task finalization, excluding autotuner candidates. Provider factories
 own cache formats, source checks, launchers and binary validation. ShadowSpill
 stores their opaque manifests and uses the generic
-[preparation lifecycle](../python/operator-preparation.md).
+[preparation lifecycle](../python/advanced/operator-preparation.md).
 
 Saved profiling/execution loads those implementations without tuning or compiling
 them. Missing or incompatible sources, schemas, specializations or binaries are

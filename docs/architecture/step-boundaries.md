@@ -93,7 +93,7 @@ releases its buffers for that invocation. An untraced call uses a completion
 marker but does not collect the detailed task/transfer ledger.
 
 See [timelines](timelines.md), [the timing API](../python/api/timing.md), and
-[step diagnostics](../python/step-diagnostics.md) for the recorded fields.
+[step diagnostics](../python/advanced/step-diagnostics.md) for the recorded fields.
 
 Previous: [Failure, abort, and process exit](failure-and-exit.md). Next:
 [PyTorch adapter](adapter.md).

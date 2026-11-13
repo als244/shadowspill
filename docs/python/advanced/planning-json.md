@@ -1,7 +1,7 @@
 # Program and annotated-plan JSON
 
 Public phase artifacts use self-contained archives; see the
-[artifact API](api/artifacts.md). This page describes the lower-level planner's
+[artifact API](../api/artifacts.md). This page describes the lower-level planner's
 content-addressed JSON records. They are canonical, schema-tagged, validated on load, and designed
 for corpus collection, budget sweeps, inspection, and reproducible planning.
 Every schema below carries the one artifact version
@@ -460,5 +460,5 @@ strip validation evidence to make an artifact load.
 | Preserve one real execution observation | `StepDiagnostics.as_dict()` |
 
 The final two are diagnostic dictionaries, not reloadable planning artifacts.
-The [reusable artifact API](api/artifacts.md) shows the public constructors and
+The [reusable artifact API](../api/artifacts.md) shows the public constructors and
 planning calls.

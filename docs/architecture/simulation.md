@@ -181,7 +181,7 @@ boundaries](step-boundaries.md) defines that cycle — which synchronization
 points separate repeated invocations, and which of the boundary costs the
 makespan does and does not price.
 
-The [execution diagnostics guide](../python/step-diagnostics.md) defines the
+The [execution diagnostics guide](../python/advanced/step-diagnostics.md) defines the
 real-versus-simulated task and transfer fields, clock domains, selected-span
 summary, trace-integrity checks, and investigation workflow.
 

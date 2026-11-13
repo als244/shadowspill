@@ -39,7 +39,7 @@ Plan needs observed allocation evidence for its exact implementations. Numeric
 estimates can support simulation, but leave `plan.simulation_only_reasons`
 nonempty. Worker startup still checks compatibility and physical availability.
 See [pool memory](pool-memory.md), [artifacts](artifacts.md#plan) and
-[planning failures](../failures.md).
+[planning failures](../advanced/failures.md).
 
 ## Traversal and save choices
 

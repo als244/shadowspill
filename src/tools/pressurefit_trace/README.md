@@ -10,7 +10,7 @@ python -m tools.pressurefit_trace --help
 python -m tools.pressurefit_trace analyze runs/example/trace --output runs/example/analysis
 ```
 
-The [Python trace API](../../../docs/python/pressurefit-trace.md) covers recording;
+The [Python trace API](../../../docs/python/advanced/pressurefit-trace.md) covers recording;
 the [algorithm guide](../../../docs/architecture/pressurefit.md) defines the policies.
 All animation, frame rendering, encoding, galleries, and video-specific documentation
 live under [video/](video/README.md).
@@ -38,7 +38,7 @@ plan = plan_program(
 
 The API finds the winner, reruns it with tracing, and verifies the result.
 Explicit `trace_candidates` pairs record other resolutions/policies. See the
-[trace API guide](../../../docs/python/pressurefit-trace.md) for scope, metadata,
+[trace API guide](../../../docs/python/advanced/pressurefit-trace.md) for scope, metadata,
 and normal frontend semantic-label export. The optional `semantic_labels.json`
 sidecar must have the same program digest; the renderer works with the generic
 object/task labels when that sidecar is absent.

@@ -83,7 +83,7 @@ the frontend's lead is `compute_reached_at_seconds` minus
 ### Clocks
 
 Every measured time is in seconds, on one of the two clocks
-[timelines](../architecture/timelines.md) defines. Fields on the device
+[timelines](../../architecture/timelines.md) defines. Fields on the device
 timeline are named `compute_*` for the compute stream and `lane_*` for a
 transfer lane; fields on the host clock sit under `host` in the records and
 carry `before_task`, `after_task`, `queued`, `reserved`, `dispatched`, or
@@ -161,7 +161,7 @@ selected-task span = sum of selected task-event durations
 | `real_invocation_seconds` | Measured origin through the last required compute or transfer completion; `None` without all transfer timestamps. |
 | `real_terminal_tail_seconds` | Measured last computation through that completion; `None` without all transfer timestamps. |
 | `simulator_terminal_tail_seconds` | Simulated work after the last selected compute task. |
-| `cycle_seconds` | The step on the device clock: this invocation's origin on the compute stream to the marker recorded there once its required terminal work has drained. A traced invocation is isolated, so the cycle holds no caller work before the next run; `None` when nothing closed the cycle. See [timing](api/timing.md). |
+| `cycle_seconds` | The step on the device clock: this invocation's origin on the compute stream to the marker recorded there once its required terminal work has drained. A traced invocation is isolated, so the cycle holds no caller work before the next run; `None` when nothing closed the cycle. See [timing](../api/timing.md). |
 | `entry_delay_seconds` | Origin to the first task's compute start: the first task's readiness waits and frontend preparation. |
 | `exposed_tail_seconds` | Last task's compute end to the cycle's end: the invocation's terminal work, such as writeback, after its last task. `None` with `cycle_seconds`. |
 | `call_seconds` | The whole planned call on the host clock. |
@@ -236,7 +236,7 @@ same dependency on two clocks and are usually very different sizes. The host
 spins until the worker has *published* each event; the stream then waits for
 the copy itself. A long opening boundary with a small stream wait can mean the
 frontend absorbed the wait and could not run ahead. See
-[task boundaries](../architecture/task-boundaries.md).
+[task boundaries](../../architecture/task-boundaries.md).
 
 Interpret the deltas together:
 
@@ -345,7 +345,7 @@ Every field above is the *trace's* account of this step: what the plan
 scheduled, what the simulator priced, and what each lane reported for the one
 transfer it was asked about.
 `lane_statistics` is the *lane's own* account, read through the
-[lane contract](../c/lanes.md#what-a-lane-has-moved) by one call that serves a
+[lane contract](../../c/lanes.md#what-a-lane-has-moved) by one call that serves a
 built-in lane and a registered one alike -- nothing here knows which answered,
 and the counters come straight out of the struct every lane embeds.
 
@@ -541,4 +541,4 @@ caller releases them; it does not retain device markers or runtime buffers.
 | Runtime and plan identities are unclear | Join `task_id` with the saved [Plan](plan-report.md). |
 
 How the two clocks are measured, and why every lane can share one zero, is
-described in [timelines](../architecture/timelines.md).
+described in [timelines](../../architecture/timelines.md).

@@ -213,7 +213,7 @@ per rank; the runner does not assume arbitrary workload losses can be summed.
 actual per-rank spill capacities, losses, all update times, the measured update
 indices and each rank's trace paths. Each rank writes `trace/step.json` and
 `trace/step.events.npz` after closing its runtime. These are the standard
-[step diagnostics](../../docs/python/step-diagnostics.md): measured versus
+[step diagnostics](../../docs/python/advanced/step-diagnostics.md): measured versus
 simulated task times, input/reuse waits, transfers and collective records.
 Overflow flags remain explicit in the result; an incomplete trace must not be
 used for complete attribution. Event packing and file writes happen outside

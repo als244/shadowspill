@@ -126,5 +126,5 @@ The compiler checks destination ownership, rewrites the graph and profiles the
 complete task. It does not select rules by library or model name, infer an
 opaque kernel's internal allocation behavior, or change dispatch. Keep examples
 for individual libraries in their integration guides. The generic
-[operator integration guide](../python/operator-integration.md) explains the
+[operator integration guide](../python/advanced/operator-integration.md) explains the
 required declarations and validation.

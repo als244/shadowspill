@@ -78,8 +78,8 @@ then measure the actual workload under its intended memory budget.
 
 Ordinary capturable PyTorch operations need no provider integration. Custom
 operations need capture/derivative support; splitting them also requires explicit
-axis and reduction declarations. Follow [operator integration](operator-integration.md)
-and, for saved external kernels, [operator preparation](operator-preparation.md).
+axis and reduction declarations. Follow [operator integration](advanced/operator-integration.md)
+and, for saved external kernels, [operator preparation](advanced/operator-preparation.md).
 
 To contribute another supported recipe to the convenience API, implement the
 small [adapter hooks](../../workloads/recipes/configuration.md#adapter-boundary)

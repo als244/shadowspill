@@ -86,7 +86,7 @@ file of their own beside the plan, so storing a certificate never encodes the
 plan again, and the planning JSON writes them as lists of integers rather than
 a record per lease. Each column group is also a read-only sequence that
 decodes one entry at a time, so a reader that wants a placement by name gets
-one. [The planning JSON](../python/planning-json.md#physical-admission) lists
+one. [The planning JSON](../python/advanced/planning-json.md#physical-admission) lists
 the columns.
 
 A caller that only wants an admitted layout or an error calls
@@ -577,7 +577,7 @@ offsets, lifetimes, reuse dependencies and identity digests. `Plan.timeline`
 contains the admitted simulated schedule, and `Plan.diagnostics` records the
 search and any capacity refinement. Executor derives its task allocation limits
 from the saved measurement evidence. See [physical-layout
-diagnostics](../python/plan-report.md#physical-layout-diagnostics).
+diagnostics](../python/advanced/plan-report.md#physical-layout-diagnostics).
 
 When runtime tracing is enabled, `StepDiagnostics` adds actual allocation
 offsets, peaks, waits, scratch usage, failures, and execution-task identity.

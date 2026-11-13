@@ -31,5 +31,5 @@ required transfer tail, device invocation time and host submission work.
 `exposed_tail_seconds`. An isolated traced invocation closes its cycle at
 completion; it does not measure caller work between separate invocations.
 
-See [trace fields](../step-diagnostics.md#summary) and
+See [trace fields](../advanced/step-diagnostics.md#summary) and
 [timeline clocks](../../architecture/timelines.md) for the definitions.

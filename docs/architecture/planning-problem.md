@@ -52,7 +52,7 @@ the requested sweep. Collection does not bind budgets or communication costs.
 
 For a `ProfiledProgram` archive, the evaluator derives the diagnostic execution
 limit from its sweep; collection imposes no pool-size ceiling. JSON serialization
-is documented in the [planning format reference](../python/planning-json.md).
+is documented in the [planning format reference](../python/advanced/planning-json.md).
 
 Previous: [The ShadowSpillProgram](program.md). Next:
 [Simulation](simulation.md).

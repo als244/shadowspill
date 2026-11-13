@@ -46,7 +46,7 @@ by this C call in an exclusive `.pftrace` file, starting before its base
 reduction and including step/answer links. Only single-device problems are
 supported. Open/write/close errors fail the search. Python's normal planning
 API selects the winner before invoking this recording pass; the C API records
-the explicit policy arrays supplied to it. See the [trace format and reader](../python/pressurefit-trace.md).
+the explicit policy arrays supplied to it. See the [trace format and reader](../python/advanced/pressurefit-trace.md).
 
 The two policy axes are supplied as explicit `uint8_t` arrays with counts;
 their product is the candidate count per problem. The residency values use

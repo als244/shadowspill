@@ -422,7 +422,7 @@ occurrence-level task and retained-alias identities that graph-pair selection
 fixes, and the plan report keeps every legal variant beside the one each
 occurrence ran, with structural profiles stored once and referenced rather than
 copied per occurrence. See [unique stages and graph
-pairs](../python/plan-report.md#unique-stages-and-graph-pairs) for how to read
+pairs](../python/advanced/plan-report.md#unique-stages-and-graph-pairs) for how to read
 that evidence.
 
 ## Pseudocode
