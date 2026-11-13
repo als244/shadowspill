@@ -12,7 +12,8 @@ Start with the [training example](../examples/generic-training.md) or the
 | Checkpoint partitioning, execution chunking, retention and lifetimes | [Frontend policies](api/frontend.md) |
 | Task timing, memory observation and cache reuse | [Profiling](api/profiling.md) |
 | Copy/collective measurement and overlap | [Communication](api/communication.md) |
-| Saved Programs, profiles, Plans and sweeps | [Artifacts](api/artifacts.md), [cache guide](artifact-store.md) |
+| Budgets, traversal, save/recompute search and candidate sweeps | [Planning](api/planning.md) |
+| Saved Programs, profiles and Plans | [Artifacts](api/artifacts.md), [cache guide](artifact-store.md) |
 | Inputs, schedules, evaluation and checkpoints | [Trainer](api/training.md) |
 | Asynchronous calls and shared state across Plans | [Executor](api/executor.md) |
 | Logical ownership, calibration and multi-worker execution | [Distributed training](api/distributed.md) |

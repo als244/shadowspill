@@ -27,6 +27,10 @@ _SIGNATURE = re.compile(
     r"```text\n(.*?)\n```",
     re.DOTALL,
 )
+_OPTIONS_TABLE = re.compile(
+    r"<!-- api-options: ([^:]+):([A-Za-z0-9_.]+) -->\s*"
+    r"((?:\|[^\n]*\n)+)"
+)
 _C_FUNCTION = re.compile(r"\b(shadowspill_[A-Za-z0-9_]+)\s*\(")
 
 _MEMORY_MODULE = ROOT / "src" / "shadowspill" / "memory.py"
@@ -81,6 +85,18 @@ _REQUIRED_SIGNATURES = {
     "src/shadowspill/planner/search/algorithms/pressurefit/__init__.py:PressureFit.__call__",
     "src/shadowspill/pytorch/runtime.py:Runtime.__init__",
     "src/shadowspill/runtime/core.py:Runtime.__init__",
+}
+
+_REQUIRED_OPTIONS_TABLES = {
+    "src/shadowspill/build/step.py:build_step",
+    "src/shadowspill/profiling/measure.py:measure_program",
+    "src/shadowspill/communication/measure.py:measure_communication",
+    "src/shadowspill/profiling/overlap.py:measure_overlap",
+    "src/shadowspill/planning/plan.py:plan_program",
+    "src/shadowspill/planning/sweep.py:sweep_programs",
+    "src/shadowspill/training/trainer.py:Trainer.__init__",
+    "src/shadowspill/training/trainer.py:Trainer.step",
+    "src/shadowspill/training/trainer.py:Trainer.fit",
 }
 
 
@@ -499,6 +515,33 @@ def test_documented_python_signatures_match_source() -> None:
     )
 
 
+def test_phase_and_trainer_option_tables_match_source() -> None:
+    observed: set[str] = set()
+    for document in _normative_markdown_files():
+        for relative_path, qualified_name, table in _OPTIONS_TABLE.findall(
+            document.read_text()
+        ):
+            identity = f"{relative_path}:{qualified_name}"
+            assert identity not in observed, f"duplicate option reference: {identity}"
+            observed.add(identity)
+            actual: dict[str, str | None] = {}
+            for row in table.splitlines()[2:]:
+                name, default, *_ = row.strip("|").split("|")
+                name, default = name.strip().strip("`"), default.strip().strip("`")
+                assert name not in actual, f"{document}: duplicate argument {name}"
+                actual[name] = (
+                    None
+                    if default == "Required"
+                    else _canonical_default(ast.parse(default, mode="eval").body)
+                )
+            expected = dict(_source_parameters(ROOT / relative_path, qualified_name))
+            assert actual == expected, (
+                f"{document.relative_to(ROOT)} {identity}: "
+                f"documented={actual!r}, source={expected!r}"
+            )
+    assert observed == _REQUIRED_OPTIONS_TABLES
+
+
 def test_normative_python_examples_compile_and_use_valid_public_keywords() -> None:
     failures: list[str] = []
     public_parameters: dict[str, set[str]] = {}
@@ -513,6 +556,7 @@ def test_normative_python_examples_compile_and_use_valid_public_keywords() -> No
             }
     for document in _normative_markdown_files():
         parameters = dict(public_parameters)
+        modules = {}
         for index, source in enumerate(_PYTHON_FENCE.findall(document.read_text())):
             try:
                 compile(source, f"{document}#python-{index}", "exec")
@@ -523,6 +567,15 @@ def test_normative_python_examples_compile_and_use_valid_public_keywords() -> No
             # Identical short names can belong to different public modules.
             # Follow the example's imports instead of imposing another API's signature.
             for node in ast.walk(tree):
+                if isinstance(node, ast.Import):
+                    for alias in node.names:
+                        if alias.name == "shadowspill" or alias.name.startswith(
+                            "shadowspill."
+                        ):
+                            name = alias.asname or alias.name.split(".")[0]
+                            modules[name] = importlib.import_module(
+                                alias.name if alias.asname else name
+                            )
                 if isinstance(node, ast.ImportFrom) and (node.module or "").startswith(
                     "shadowspill"
                 ):
@@ -557,9 +610,40 @@ def test_normative_python_examples_compile_and_use_valid_public_keywords() -> No
                                     signature.parameters
                                 )
             for call in (node for node in ast.walk(tree) if isinstance(node, ast.Call)):
-                if not isinstance(call.func, ast.Name):
-                    continue
-                allowed = parameters.get(call.func.id)
+                display = ast.unparse(call.func)
+                allowed = None
+                if isinstance(call.func, ast.Name):
+                    allowed = parameters.get(call.func.id)
+                elif isinstance(call.func, ast.Attribute):
+                    parts = []
+                    root = call.func
+                    while isinstance(root, ast.Attribute):
+                        parts.append(root.attr)
+                        root = root.value
+                    # Returned objects and local instances need runtime type
+                    # information; only resolve statically imported API paths.
+                    if not isinstance(root, ast.Name):
+                        continue
+                    value = modules.get(root.id)
+                    if value is None:
+                        continue
+                    try:
+                        for part in reversed(parts):
+                            value = getattr(value, part)
+                    except AttributeError:
+                        failures.append(
+                            f"{document.relative_to(ROOT)} block {index}: "
+                            f"unknown public callable {display}"
+                        )
+                        continue
+                    try:
+                        signature = inspect.signature(value)
+                    except (TypeError, ValueError):
+                        continue
+                    if not any(
+                        p.kind == p.VAR_KEYWORD for p in signature.parameters.values()
+                    ):
+                        allowed = set(signature.parameters)
                 if allowed is None:
                     continue
                 unexpected = sorted(
@@ -570,7 +654,7 @@ def test_normative_python_examples_compile_and_use_valid_public_keywords() -> No
                 if unexpected:
                     failures.append(
                         f"{document.relative_to(ROOT)} block {index}: "
-                        f"{call.func.id} has unknown keywords {unexpected}"
+                        f"{display} has unknown keywords {unexpected}"
                     )
     assert not failures, "invalid documented Python examples:\n" + "\n".join(failures)
 

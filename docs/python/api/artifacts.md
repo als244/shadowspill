@@ -335,7 +335,7 @@ communication assumptions and supported task orderings.
 
 ## Plan
 
-`plan_program` returns a `Plan` or raises a diagnostic planning exception.
+[`plan_program`](planning.md) returns a `Plan` or raises a diagnostic planning exception.
 The Plan exposes `program`, `profiled_program`, `memory_budgets`,
 `communication_info`, `schedule`, `selections`, `timeline`, `memory_layout`,
 `diagnostics`, and a computed `summary`.
@@ -372,7 +372,7 @@ bindings; a logical-rank declaration alone is not execution admission. See the
 `sweep_programs` is an optional CPU loop over named ProfiledPrograms and memory
 budgets. `SweepResult.cases` keeps each candidate/budget's Plan or diagnostic
 failure. `best_per_budget` selects the fastest successful simulation for each
-budget. Users can also loop over `plan_program` directly.
+budget. Users can also loop over `plan_program` directly. See [planning options](planning.md#compare-programs-and-budgets).
 
 ## Persistence and reports
 

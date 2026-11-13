@@ -35,7 +35,9 @@ implementations, shapes, and compatibility requirements remain fixed.
 
 `sweep_programs` is an optional convenience loop. It records infeasible cases and
 keeps each successful Plan plus a winner for each budget. Callers can instead
-write their own loop over `plan_program`.
+write their own loop over `plan_program`. The convenience sweep uses default
+traversal; use an explicit loop to compare orderings. See
+[planning and search options](../python/api/planning.md).
 
 ```python
 from shadowspill import sweep_programs

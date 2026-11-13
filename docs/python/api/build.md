@@ -1,184 +1,140 @@
-# Build and finalize task implementations
+# Build
 
-Build converts a model and example calls into a saved `Program` of compiled
-forward, backward and optimizer tasks. It uses a representative GPU to finalize
-CUDA implementations, but does not initialize persistent training state, measure
-task durations or create execution/spill pools. Measurement and planning follow
-as [separate phases](../phases.md).
+Build captures a model and representative calls, partitions the computation and
+finalizes executable tasks into a `Program`. It needs a representative GPU even
+when model tensors start on CPU/meta. It does not initialize persistent training
+state, measure task performance or open execution/spill pools. See the
+[phase guide](../phases.md) for what follows.
 
-## Inputs and capture
+## Choose a builder
+
+| Function | Captured computation | Execute with |
+| --- | --- | --- |
+| `build_step` | Objective, backward and optimizer update | `Trainer` or `Executor` |
+| `build_forward_backward` | Objective and backward; gradients persist, no optimizer | `Executor`, with fresh/accumulating gradient modes |
+| `build_forward` | One forward call, optionally through `forward_fn` | `Executor`, or Trainer's `evaluation_plan` |
 
 ```python
-from shadowspill import build_forward
+from shadowspill import build_step
 
-program = build_forward(
-    model, example_args=(features,), example_kwargs={"mask": mask},
-    partition="auto", chunking=None, target="cuda:0",
+program = build_step(
+    model, objective=objective, optimizer=optimizer,
+    example_args=(features,), example_kwargs={"targets": targets},
+    num_examples=4,
 )
 program.save("program.ssp")
 ```
 
-The model may hold CPU or meta parameters. Example arguments can include nested
-structures and specialized non-tensor values. Build records module/parameter
-names, output geometry, compiler-buffer lifetimes and unresolved memory
-requirements of opaque calls. Model-owned distributed operators require all
-participants and saved [resource descriptions](../../architecture/resources.md).
+`objective(model, *args, **kwargs)` returns a scalar loss, `(loss, metrics)`, or
+[`ObjectiveResult`](frontend.md#inputs-objectives-and-partitioning). It owns normalization across
+microbatches and ranks. Model and optimizer values are not changed by build;
+weights and captured optimizer defaults are initialized later in the worker.
+The [complete example](../../examples/generic-training.md) defines these objects.
 
-`partition` sets checkpoint stages; optional `chunking` controls their execution
-regions and slices. See the [policy reference](frontend.md#axis-chunking-policies).
+## Training options
 
-An optional `forward_fn(model, *args, **kwargs)` selects another model method or
-computation without changing registered parameter names. For example, an
-evaluation loss can use `forward_fn=lambda m, *a, **kw: m.loss(*a, **kw)` with
-targets in `example_kwargs`. The default calls `model.forward`. The callback is
-only needed during build; the saved Program contains the captured computation.
+All arguments after `model` are keyword-only. `build_step` accepts:
 
-## Training builders
+<!-- api-options: src/shadowspill/build/step.py:build_step -->
 
-`build_forward_backward` adds an objective and persistent gradients without an
-optimizer. It compiles gradient-creation and accumulation forms for each stage:
+| Argument | Default | Meaning |
+| --- | --- | --- |
+| `model` | Required | PyTorch module, with CPU, meta or device tensors. |
+| `objective` | Required | Scalar training objective and optional reporting metrics. |
+| `optimizer` | Required | Capturable optimizer referring to this model's parameters. |
+| `example_args` | `()` | Positional arguments for one complete microbatch call. |
+| `example_kwargs` | `None` | Keyword arguments for that call. |
+| `num_examples` | `1` | Number of rank-local calls per update with that same signature. |
+| `example_calls` | `None` | Explicit sequence of `(args, kwargs)` pairs for differing call signatures. |
+| `partition` | `"auto"` | Checkpoint-stage boundaries. |
+| `chunking` | `None` | Optional execution regions, split axes and per-region chunk sizes. |
+| `graph_pair_policy` | `None` | Default `GraphPairPolicy()`, or independent retention rules for save/recompute variants. |
+| `grad_dtype` | `None` | Stored gradient dtype; default follows the parameter's logical dtype. |
+| `master_dtype` | `None` | Optional separate optimizer master-weight dtype. |
+| `fuse_narrow_gradient_accumulation` | `True` | Fuse supported gradient production into its accumulation destination. |
+| `gradient_destination_rules` | `()` | Explicit provider declarations for opaque operations that can accumulate into gradient destinations. |
+| `parallelism` | `None` | Logical ranks and tensor ownership; default is local execution. |
+| `resources` | `None` | Descriptions of shared backend resources required by model operators. |
+| `operator_preparation` | `()` | Explicit provider adapters for saving/restoring external kernel selections. |
+| `rank_map` | `None` | Worker → logical-rank mapping when build needs distributed participants. |
+| `target` | `"cuda"` | Representative device for finalizing task code. |
 
-```python
-from shadowspill import (
-    build_forward_backward, apply_profiles, plan_program,
-)
-from shadowspill.step import StepDataOrdering
+`build_forward_backward` accepts the same options **except** `optimizer` and
+`master_dtype`. It leaves optimizer policy to the caller.
 
-program = build_forward_backward(
-    model, objective=objective, example_args=(features,),
-    example_kwargs={"targets": targets}, num_examples=8,
-)
-# After measurement or explicit profiles, choose traversal entirely on CPU:
-plan = plan_program(
-    apply_profiles(program, profiles),
-    ordering=StepDataOrdering(depth=2, breadth=4),
-    memory_budgets=memory_budgets, communication_info=communication_info,
-)
-```
+### Calls and microbatches
 
-The objective receives `objective(model, *args, **kwargs)` and returns a scalar
-loss, optionally with metrics. `num_examples` fixes how many complete calls the
-program includes; ordering is a planning choice. Changing it reuses compiled
-forms and task profiles. Model mutations or RNG effects currently restrict
-reordering. Tied parameter contributions preserve both creation and mutation
-dependencies. `graph_pair_policy` defines independent saved-state cuts during build;
-the planner separately chooses among permitted stage variants and decides
-residency. See the [retention contract](frontend.md#graph-pair-policies)
-for default classification, explicit rules and selective saved cuts.
+`num_examples` counts complete calls, not samples or tokens. With
+`features.shape == (16, D)` and `num_examples=4`, one update processes 64 samples
+per rank. Each runtime `args`/`kwargs` sequence must contain four entries matching
+the captured signatures. The planner chooses their traversal later; it does
+not change their shapes or count.
 
-For differing example shapes or static metadata, both training builders accept
-`example_calls=[(args0, kwargs0), (args1, kwargs1)]` instead of
-`example_args`/`example_kwargs`/`num_examples`. Matching signatures reuse captures;
-each example retains its own signature and constants through save/load. The
-default one-example-plus-count form remains sufficient for uniform inputs.
+Use `example_calls=[(args0, kwargs0), (args1, kwargs1)]` **instead of**
+`example_args`, `example_kwargs` and `num_examples` for heterogeneous shapes or
+static metadata. Matching signatures share captures. Tensor values can vary at
+execution; specialized Python values remain fixed.
 
-`build_step` takes the same training arguments plus `optimizer=optimizer`, whose
-parameters must belong to the supplied model. It discovers optimizer tensor
-shapes and initialization defaults without allocating persistent state or
-changing that optimizer. Traceable local updates are packaged with the stages.
-`plan_program(..., optimizer_ordering="stage_interleaved")` places updates after
-their required gradient writes and all remaining reads of old weights;
-`optimizer_ordering="tail"` puts updates after backward. Both use the same
-Program and profiles. Opaque updates and unsupported first-use state creation
-are currently rejected explicitly.
+### Memory and precision
 
-`master_dtype=torch.float32` captures separate optimizer master weights while
-preserving the model's compute dtype. `grad_dtype` independently selects stored
-gradient precision. The optimizer determines moment/state dtypes from its own
-rules. Execution initializes masters from compute weights using bounded chunks;
-exports/checkpoints name them `master.<parameter-name>`. The update contains the
-gradient conversion and write-back to compute weights, so those costs and
-allocations are profiled and planned. Build does not modify the supplied model
-or optimizer.
+`partition`, `chunking` and `graph_pair_policy` control different decisions:
+checkpoint boundaries, temporary execution lifetimes, and retained intermediates
+inside each save/recompute variant. None forces retained tensors to remain on
+the GPU; planning selects variants and placement from the measured alternatives.
+Changing these controls requires building and profiling the affected tasks.
+See [frontend policies](frontend.md) and the
+[partitioning example](../../examples/custom-partitioning.md).
 
-## Finalization and precision
+The default graph pair uses a cost-based save policy; its recompute variant
+retains checkpoint inputs and supported routing choices, regenerating other
+intermediates. Explicit rules can change each variant independently.
 
-Finalization executes complete tasks with valid controls and outputs from their
-producers, so indexing kernels do not see unrelated synthetic integer buffers.
-The selected implementations are saved for later measurement and execution.
+`master_dtype=torch.float32` leaves model compute precision unchanged while
+adding optimizer master weights. `grad_dtype` controls stored gradients;
+optimizer rules determine moment/state dtypes. Ordinary masters are initialized
+from compute weights in bounded chunks. Trainable tensor wrappers require an
+explicit master dtype and separate initialization of physical components and
+`master.<parameter-name>`. See [initialization](../../architecture/state-import.md).
 
-Paired finalization and measurement retain only resolved backward inputs while
-invoking backward; forward-only inputs and outputs are released first.
-Before preparing a different task, they release idle allocator cache so its
-inputs do not fragment large cached buffers from another task geometry. This
-preparation is outside measured task invocations.
-Finalization also resolves backend outputs whose device was provisional in
-compiler metadata, such as attention RNG controls returned on CPU. Those values
-have host lifetimes and no GPU allocation; conflicting observed storage locations
-fail build before profiling or planning.
+Custom optimizers need a tensor-only capturable update. Python tensor-value
+branches, unsupported first-use state creation and step hooks are rejected;
+there is no eager optimizer fallback. Runtime controls such as scheduled learning
+rates must be captured as such, rather than baked-in Python constants.
 
-When building with PyTorch's `emulate_precision_casts=True`, compilation also
-preserves native CUDA BF16/FP16 `sigmoid_backward` scalar rounding for matching
-strided operands. The native kernel rounds the complement and first product;
-the ordinary AOT decomposition uses FP32 arithmetic inside the operation.
-ShadowSpill makes those rounds explicit before AOT decomposition so they can
-remain in one fused pointwise kernel. CPU, other dtypes, and builds with
-emulation disabled keep their existing compiler behavior. This does not change
-the selected chunk reduction or stored-gradient precision.
+## Forward-only options
 
-The applied numerical contract is versioned in compilation/cache identity and
-recorded as `task_metadata[key]["numerical_contracts"]`. Chunked and composed
-tasks include their children's contracts. Changing the arithmetic requires a
-new finalized implementation and matching profiles; planning and cold execution
-use the saved implementation without rerunning this transformation.
+`build_forward` accepts `model`, `example_args`, `example_kwargs`, `partition`,
+`chunking`, `parallelism`, `resources`, `operator_preparation`, `rank_map` and
+`target`, with the defaults above. It captures one call and has no objective,
+optimizer, gradient dtype, call-count or graph-pair retention argument.
 
-## Saved implementations
+Its additional `forward_fn=None` option defaults to `model.forward`. A callback
+`forward_fn(model, *args, **kwargs)` can instead capture another entry point,
+including a validation loss, while preserving registered tensor names. The
+callback is needed only at build time. See the
+[forward-only example](../../examples/forward-only.md).
 
-Packaged tasks retain importable Python custom-op registration modules, their
-source digests and operator schemas. Measurement and execution restore/check
-these registrations before loading task code; the original model need not be
-imported. Native or dynamically created registrations and cross-module kernel
-overrides require separate provider support. Shared backend resources use the
-optional, generic [`resources` builder argument](../../architecture/resources.md), with saved
-descriptions and checked initialization code. Stateless-op tests alone do not
-qualify these resources.
-Likewise, the registration digest is not a fingerprint of all transitive native
-libraries or proof that a provider's internal autotuning/resources are portable.
+## Saved implementations and compatibility
 
-The PyTorch frontend records Triton compiler selections while finalizing each
-unique executable with bounded representative inputs. Backward uses the
-corresponding forward's tensors. Kernel source, tuning keys and candidate
-configurations identify each selection and contribute to profile compatibility.
-Measurement and execution bind these choices and reject unseen specializations
-or changed candidates before benchmarking. Fixed kernels may compile lazily
-without selecting a different implementation. This compiler integration does
-not discover or patch external operation libraries.
+Finalization runs complete tasks with valid producer outputs for control inputs.
+It records compiler/kernel choices and imports needed to restore them. Profiling
+and execution use those choices; incompatible or unseen tuned specializations
+are rejected. Numerical backend settings also belong to implementation/profile
+identity; see [saved numerical settings](artifacts.md#numerical-backend-settings).
+In particular, configured precision-cast emulation preserves native low-precision
+sigmoid-backward rounding through compilation.
 
-The saved Inductor tuners also disable post-load reduction tile expansion,
-coordinate-descent and combination searches, and lookup of a different cached
-winner. Those controls apply to the saved copies after build finishes tuning;
-ordinary build and eager autotuning keep their configured behavior. Retaining
-one binary alone is insufficient because Inductor can otherwise introduce new
-reduction candidates when loading it in a fresh process.
+External kernel tuning and dispatch belong to explicit
+[`OperatorPreparation`](../operator-preparation.md) adapters. Build does not
+discover providers by model name. Adapters must save selections, validate their
+source/ABI and restore dispatch without silently choosing new kernels. Dynamically
+registered/native operations and transitive libraries need provider-specific
+support. Shared [resources](../../architecture/resources.md) likewise need saved
+descriptions and checked initialization. Model-owned collectives require all
+participants during build; see [distributed setup](distributed.md).
 
-External operator tuning and dispatch belong to the operation provider's
-[`OperatorPreparation`](../operator-preparation.md) adapter. Its opaque manifest
-can contain selected configurations together with immutable binaries. The
-provider must observe warm dispatch hits, isolate task-owned host caches,
-validate its source/ABI and reject missing specializations. ShadowSpill only
-owns the generic capture/export/load/activate lifecycle, artifact integrity,
-profile compatibility and physical memory admission. Ordinary calls outside a
-provider's activation retain their ordinary behavior.
-
-Callers explicitly supply the preparation descriptions for the operator
-implementations their model uses; the builder does not discover libraries or
-choose adapters by model name. Kernel export/load tests belong with the provider,
-and compiler integration tests belong with the adapter. Core tests the generic
-lifecycle and saved training through these public interfaces.
-
-See [repository structure](../../development/repository.md) for implementation owners.
-
-## Saved code and worker devices
-
-The current Inductor artifact format embeds a CUDA ordinal. Build records it;
-measurement and execution require the same process-local ordinal. In particular,
-setting `device=1` does not relocate code compiled for `cuda:0`. Device visibility
-can be arranged before CUDA initialization so separate workers each see their
-assigned physical GPU at ordinal zero. Execution requires the recorded compiler
-device binding. This limitation is separate from logical rank assignment.
-
-Worker-group binding preserves explicit logical membership order
-after applying the complete worker-to-logical-rank map and rejects inconsistent
-maps/Plan identities before backend group creation. Group validation alone does
-not establish provider correctness; each distributed backend needs qualification
-through complete build, measurement, calibration and fresh-worker execution.
+Current compiled artifacts embed a **process-local CUDA ordinal**. Measurement
+and execution must use the recorded binding: `device=1` cannot relocate code
+compiled for `cuda:0`. Set device visibility before CUDA initialization so each
+worker can see its assigned physical GPU at the compiled local ordinal. Logical
+rank mapping is a separate choice.

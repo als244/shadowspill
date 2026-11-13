@@ -16,7 +16,7 @@ optimizer = torch.optim.AdamW(model.parameters(), lr=3e-4, foreach=False)
 
 def objective(model, features, *, targets):
     error = model(features) - targets
-    # Four examples contribute to one update. The objective owns normalization.
+    # Four microbatches of 16 samples make one 64-sample update.
     return error.square().mean() / 4
 
 program = build_step(
@@ -28,14 +28,15 @@ program.save("program.ssp")
 profiles = measure_program(program)
 profiles.save("profiles.ssp")
 apply_profiles(program, profiles).save("profiled.ssp")
-measure_communication().save("communication.ssp")
+measure_communication(program=program).save("communication.ssp")
 torch.save(model.state_dict(), "initial.pt")
 ```
 
 `example_args` and `example_kwargs` describe the complete call, including nested
 inputs and model-specific metadata. For differing shapes, use
 `example_calls=[(args0, kwargs0), (args1, kwargs1)]` instead of one example and a
-count. This fixes the examples in the Program; planning chooses their traversal.
+count. This fixes the microbatch calls in the Program; planning chooses their traversal.
+`num_examples` counts calls, not individual samples.
 
 ## Plan on CPU
 
@@ -67,21 +68,29 @@ def fill_tensor(chunk, destination):
     source = initial[chunk.name].reshape(-1)
     destination.copy_(source[chunk.offset:chunk.offset + destination.numel()])
 
+def training_batches():
+    while True:
+        # One yielded item is one update containing four microbatch calls.
+        yield {
+            "args": [(torch.randn(16, 16),) for _ in range(4)],
+            "kwargs": [{"targets": torch.randn(16, 8)} for _ in range(4)],
+        }
+
 with Trainer(Plan.load("training.ssp")) as trainer:
     trainer.initialize(fill_tensor)
-    for _ in range(5):
-        result = trainer.step(
-            args=[(torch.randn(16, 16),) for _ in range(4)],
-            kwargs=[{"targets": torch.randn(16, 8)} for _ in range(4)],
-        )
-        print(result.step, result.loss)
-    trainer.save("runs/regression/checkpoint")
+    trainer.fit(training_batches(), steps=5, run_dir="runs/regression")
+    trainer.save("runs/regression/checkpoint.ssp")
 ```
 
 Construct Trainer before initializing a different device allocator in this worker.
 Trainer creates the Executor, installs its allocator, initializes bounded pools,
 and binds the saved task implementations. The example uses CPU inputs; the
 Executor transfers them according to the plan.
+
+For a custom loop, call `trainer.step(args=..., kwargs=...)` directly. To resume,
+replace `initialize` with `load("runs/regression/checkpoint.ssp")` and set a larger
+total `steps` target. This synthetic source generates new data; a real resumable
+source can also save and restore its position.
 
 For prediction or validation, build and plan a separate `build_forward` Program.
 Pass that Plan as `evaluation_plan` to Trainer to share the current model tensors.

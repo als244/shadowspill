@@ -4,82 +4,84 @@ Measure transfer and overlap costs separately from task profiles, then supply
 both to planning. These probes use GPUs and communication participants; planning
 only reads their saved results. The [phase guide](../phases.md) shows the order.
 
-## Host and external transfers
+## API options
 
-Explicit latency is charged as a transfer phase. Concurrent fetch/evict rates
-default to independent full-duplex lanes; callers can provide different rates.
-The communication description is saved alongside the plan, independently of
-compute measurements. Symmetric distributed simulations account for local host
-shards, weight gathers and explicitly lowered gradient reductions.
+`measure_communication` returns `CommunicationInfo`, saved independently and
+passed to `plan_program`. With no arguments it measures local pinned-host copies.
 
-`measure_communication()` optionally measures pinned-host copies on one GPU,
-using ordinary PyTorch allocation and CUDA events. It returns CommunicationInfo;
-save it independently and pass it to later planning runs. A size sweep fits
-startup latency and bandwidth, and simultaneous copies measure overlapping lane
-rates. Raw medians, sample counts, variability and fit errors are retained.
-Neither planning nor execution triggers this probe. Copy buffer use is bounded
-by twice the largest requested size on each of host and GPU.
+<!-- api-options: src/shadowspill/communication/measure.py:measure_communication -->
 
-`spill=SSDPool(...)` or `spill=RemotePool(...)` selects an external backend for
-calibration and for Executor/Trainer construction. Measurement uses bounded native
-probe pools and the real transfer lanes, including staging and completion; it does
-not install the execution allocator. Its memory bound also includes backend staging
-and alignment slack. Build, task profiling and planning have no spill setting.
-Execution sizes the default pinned-host pool from the admitted peak with 5%
-headroom, capped by the planned spill budget. Explicit pool sizes and backend
-calibration must satisfy the [pool sizing rules](training.md#trainer). Initializers,
-controls and checkpoint export use bounded byte-range access on every backend.
-Compound weight/gradient-shard transfers use the selected spill backend;
-non-addressable storage uses bounded staging. Each distributed worker owns its
-own spill pool. Remote pools may share a server endpoint while owning separate
-server allocations.
+| Argument | Default | Meaning |
+| --- | --- | --- |
+| `program` | `None` | Derive collective probes from this Program's lowered transfers. |
+| `rank_map` | `None` | Complete worker → logical-rank mapping for distributed probes. |
+| `collectives` | `None` | Explicit probes replacing derived ones; `[]` means host copies only. |
+| `device` | `"cuda"` | Device used by this worker. |
+| `sizes_bytes` | `(1024, 1 << 20, 16 << 20, 64 << 20)` | Host-copy size sweep used to fit latency/bandwidth. |
+| `options` | `None` | Default `ProfilingOptions()`, or explicit timing bounds. |
+| `warmup_seconds` | `None` | Conditioning-time shortcut, mutually exclusive with `options`. |
+| `measure_seconds` | `None` | Measurement-time shortcut, mutually exclusive with `options`. |
+| `spill` | `None` | Pinned-host copies, or an explicit external spill-backend configuration. |
 
-## Distributed collective probes
-
-`measure_communication(program=program, rank_map=..., device=...)` derives
-collective probes from saved transfer geometry. With multiple workers, initialize
-distributed rendezvous first and call on every worker with the same complete
-worker-to-logical-rank map. Each worker passes its own Program; the workers'
-Programs must agree on what the ranks exchange, as at execution. No compiled
-task is executed. Host copies are sampled
-concurrently across workers; the shared result uses the minimum observed rates
-and maximum fitted latency, preserving every worker's observations. Each collective
-group is then probed separately, using coordinated repetition counts and completion
-timing. Logical member order is retained after worker remapping. Topology is
-derived from physical hostname membership. Every worker receives the same result.
-Calibration records NCCL version, group options, relevant environment settings
-and configuration-file digests separately from compute setup. Workers must agree
-on this backend setup, except for the settings that belong to one node: the
-interfaces and devices it reaches the network through, its logging, and the
-variables naming where something is installed or written, which are recorded
-per worker. Changing the setup invalidates matching communication timings and
-memory records without invalidating single-GPU compute profiles.
-
-## Compute and transfer overlap
-
-`measure_overlap(profiled_program, communication_info, ...)` then measures saved
-compute tasks alone, transfers alone, and both together on all participants.
-It returns an additive Profiles overlay for merge/apply before planning. The
-distributed quickstart and homogeneous text recipes include this step in their
-communication phase. Solo task profiles remain reusable; overlap evidence is
-specific to the task implementation and collective configuration. Calibration
-uses actual NCCL work events and bounded actual message sizes, excludes arrival
-skew and post-compute tails, and never fits observed full-training-step times.
-Cleanup and transfer-buffer admission precede task warmup. Timed routes share
-one buffer and preserve cached task allocations. Isolated baselines are reused
-within a communicator session; optional `OverlapProfileCache` entries share
-supported paired evidence across candidates after all-rank agreement. Cache
-identity includes task/input lineage, route/backend/rank geometry and sampling
-policy. It never substitutes for candidate-specific memory evidence. Expensive
-probes use one conditioned trial by default; probes whose three trials are
-predicted to fit 100 ms use three. Host phase diagnostics keep GPU waiting,
-event processing and artifact I/O distinguishable.
-See [profile artifacts](artifacts.md#profiles-and-taskprofile) for
-coverage, missing-sample reporting and the current model-owned/heterogeneous
-communication exclusions.
+After applying compute profiles, `measure_overlap(profiled_program,
+communication_info, ...)` returns a `Profiles` overlay. Merge it with the base
+profiles and apply the result before planning:
 
 ```python
-# All workers have initialized rendezvous and loaded the same Program.
+from shadowspill import apply_profiles, measure_overlap
+
+overlap = measure_overlap(profiled, communication)
+profiled = apply_profiles(profiled.program, profiled.profiles.merge(overlap))
+```
+
+<!-- api-options: src/shadowspill/profiling/overlap.py:measure_overlap -->
+
+| Argument | Default | Meaning |
+| --- | --- | --- |
+| `profiled_program` | Required | Program with isolated compute measurements applied. |
+| `communication_info` | Required | Compatible collective calibration. |
+| `device` | `"cuda"` | Device used by this worker. |
+| `rank_map` | `None` | Complete worker → logical-rank mapping. |
+| `stages` | `None` | All stages, or an explicit subset of stage indices. |
+| `inputs` | `None` | Explicit task inputs by profile key; disables overlap-cache reuse. |
+| `trials` | `None` | Three trials when predicted work fits 100 ms, otherwise one; a positive integer fixes the count. |
+| `cache` | `None` | Shared `OverlapProfileCache` for compatible paired measurements. |
+
+Call distributed probes on every participant after rendezvous. Overlap evidence
+currently covers supported sharded collective transfers; model-owned opaque
+communication is excluded and recorded as missing coverage. No relevant routes
+means an empty overlay. See the [distributed workflow](distributed.md).
+
+## Host and external transfers
+
+A size sweep fits copy latency and bandwidth; simultaneous copies measure
+fetch/evict overlap. Raw timings, sample counts, variability and fit errors stay
+in `CommunicationInfo`. Local probes use ordinary PyTorch allocation and CUDA
+events, bounded by twice the largest requested size on each of host and GPU.
+Planning and execution never launch these calibration probes implicitly.
+
+`spill=SSDPool(...)` or `spill=RemotePool(...)` selects an external backend.
+Calibration uses bounded native probes with its actual staging/completion paths
+and alignment overhead; it does not install the execution allocator. Use the same
+backend for execution. Default pinned-host execution capacity is the admitted
+peak plus 5%, capped by the planning budget. Explicit capacities must satisfy the
+[pool sizing rules](training.md#constructor-options). Every distributed worker
+owns its spill pool, including when workers share a remote server endpoint.
+
+Supplied transfer rates can support simulation without measurement. Concurrent
+fetch/evict rates default to independent full-duplex lanes; callers can provide
+different rates. Compatible measured costs take precedence over supplied rates.
+
+## Distributed calibration
+
+Initialize rendezvous, then call on every worker with the same complete
+worker-to-logical-rank map. Each worker supplies its own Program; their saved
+transfer descriptions must agree on what ranks exchange. The probes do not
+execute compiled model tasks.
+
+```python
+from shadowspill import measure_communication
+
 communication = measure_communication(
     program=program,
     rank_map={worker: worker for worker in range(8)},
@@ -89,98 +91,78 @@ if worker_rank == 0:
     communication.save("communication.ssp")
 ```
 
-## Probe specification
+Host copies are measured concurrently across workers. The shared result uses
+minimum observed rates and maximum fitted latency, retaining all observations.
+Each collective group is then measured separately, with coordinated repetitions.
+Every worker receives the same result; logical member order follows `rank_map`,
+and physical host membership determines topology.
 
-An explicit `collectives=[...]` replaces derived probes; `collectives=[]` selects
-host copies only. A probe is a plain dictionary, for example
-`dict(operation="reduce_scatter", ranks=[0, 1], tensor_bytes=64 << 20,
-dtype="torch.bfloat16")`. Supported operations are all-gather, reduce-scatter and
-all-reduce. Bytes describe the full padded gather output/scatter input, or the
-full tensor on each all-reduce participant. Sizes must contain whole elements in
-each shard. Duplicate probes are removed. Calls without Program, overrides or
-rank_map measure only local host copies.
+Calibration records NCCL version, group settings and relevant environment/config
+identity. Workers must agree on shared settings; node-local device/interface and
+installation paths are recorded separately. Changing the backend setup
+invalidates matching communication evidence without invalidating isolated
+compute profiles. See [distributed execution](distributed.md).
 
-Gather probes accept `inplace=True` when the input shard occupies its ordered
-slot inside the full output buffer. Program-derived weight gathers select this
-form. Calibration preserves that layout, and cost lookup distinguishes it from
-a gather with separate buffers. All-reduce is in-place. Native gradient evictions
-use in-place reduce-scatter; optimizer tasks use a separate output so the input
-accumulator remains available to an overlapping spill.
+## Explicit collective probes
 
-Derived requests cover lowered weight fetches, gradient completion and update
-publication tasks. Model-owned communication requires its own lowering before
-automatic derivation is supported. Exact observed collective timings do not infer
-a general scale-up/out rate or overlapping-group contention.
+`collectives=[...]` replaces Program-derived probes; `collectives=[]` selects
+host copies only. For example:
 
-## Memory evidence
+```python
+probe = dict(
+    operation="reduce_scatter", ranks=[0, 1],
+    tensor_bytes=64 << 20, dtype="torch.bfloat16",
+)
+```
 
-CommunicationInfo also owns communication memory evidence. Each collective row
-can contain a `memory` mapping with `workspace_bytes`, `memory_kind` and per-rank
-allocation traces/contracts. Calibration observes the same allocating-output
-callable used for execution, separately from event timing. Returned collective
-outputs are accounted as Program objects, not counted again as workspace.
-`fixed_device_bytes` covers retained communicator resources; its metadata records
-the setup, groups, topology and per-rank native/NVML observations. This remains
-separate from compute/provider overhead in Profiles.
+Supported operations are all-gather, reduce-scatter and all-reduce. Bytes describe
+the full gathered output/scattered input, or the tensor per all-reduce
+participant. Every shard must contain whole elements. Duplicate probes are
+removed. Gather `inplace=True` places the input shard within its output slot;
+Program-derived weight gathers use this form. All-reduce is in-place. Native
+gradient evictions use in-place reduce-scatter; optimizer tasks use a separate
+output so overlapping spill can still read the accumulator.
 
-NCCL-owned allocations use ordinary external headroom. Executor warms the saved
-collective forms before admitting its arena, adds measured communicator memory
-to the reservation, and checks physical usage at admission and completed calls.
-An overrun of external or whole-process memory is reported and execution
-continues unless `reject_overbudget=True`, which refuses it; pool bounds and
-device allocation failures stay enforced either way.
-These external resources are distinct from task-local PyTorch allocations, which
-still require allocation contracts. Estimated task memory remains simulation-only.
+Automatic probes cover lowered weight fetches, gradient completion and update
+publication. Opaque model-owned communication is measured within its task;
+standalone probes require an explicit lowering. Exact collective samples do not
+infer general scale-up/out rates or contention between arbitrary groups.
 
-The IR also supports explicit framework collective tasks with declared input,
-output and completion dependencies. Their durations and workspace are resolved from
-CommunicationInfo during planning, so applying compute profiles does not require
-a process group or dummy collective profiles. The saved ProfiledProgram can leave
-both fields unspecified for those tasks. Planning requires their missing memory
-information, including an explicit zero when appropriate; unknown is never zero.
-Manually supplied numeric memory values default to estimates and permit simulated
-timelines only. A memory-only observation can omit `duration_seconds`, allowing
-timing to come from another compatible observation or the supplied rates.
-Model/provider operations that communicate internally retain their ordinary
-measured task duration and memory in Profiles.
+## Compute and transfer overlap
 
-## Scheduling and execution
+Overlap calibration times the saved task alone, the transfer alone and both
+together, using actual NCCL work events and bounded message sizes. It excludes
+arrival skew and post-compute transfer tails, and does not fit a full training
+step. Isolated baselines and buffer allocations are reused within the session;
+`OverlapProfileCache` can also reuse compatible paired evidence across candidates.
+Its identity includes task/input lineage, routes, backend/rank geometry and
+sampling policy, and reuse requires all-rank agreement.
 
-Generated training plans place optimizer reductions, local updates and weight
-publication on the same ordered compute resource as forward/backward. Separate
-collective cost records preserve single-GPU compute profiling; they do not put
-communication on an independent task stream. Each reduction/update/publication
-sequence is placed together, either interleaved after the corresponding backward
-work or at the tail. Reports retain phase labels and ring-equivalent traffic.
+Expensive probes default to one conditioned trial; cheap probes use three when
+their predicted work fits 100 ms. Override with `trials` for repeatability studies.
+A single trial estimates contention, not statistical stability. Insufficient
+memory or unsupported samples remain explicit missing evidence. See
+[profile artifacts](artifacts.md#profiles-and-taskprofile) for coverage fields
+and model-owned/heterogeneous communication exclusions.
 
-Parameter gathers remain inside compound fetches. Gradient reduce-scatter and
-optional cross-replica all-reduce remain inside compound evictions. These transfers
-can overlap unrelated compute using the existing readiness/completion boundaries.
-The generic IR can describe independent task lanes, but concurrent shared-reader
-retirement is not qualified; generated DP plans deliberately retain ordered task
-execution.
+## Memory evidence and planning
 
-The runtime's existing task-boundary handshake acknowledges submission of queued
-collective transfers before the next explicit task is dispatched. Within a batch,
-collective evictions precede collective fetches, independent of event polling.
-This guarantees host submission order without waiting for GPU completion.
+`CommunicationInfo` includes retained communicator memory and per-collective
+allocation evidence, separately from compute/provider overhead. Returned
+collective outputs are Program objects, not duplicate workspace charges.
+Explicit framework-collective tasks can leave duration/memory unresolved in
+compute profiles; planning obtains them from CommunicationInfo. Unknown memory
+is never zero, and numeric estimates alone do not qualify execution.
 
-Worker rendezvous, rank mapping, compatible Plan sequences and sharded checkpoint
-loading are covered by the [distributed execution reference](distributed.md#fresh-execution-workers).
+The total device budget includes compute and communication overhead. Executor
+warms saved collective forms before admitting its arena, then checks actual
+memory use. External/whole-process overruns are reported by default;
+`reject_overbudget=True` refuses them. Pool bounds remain enforced in either mode.
+See [memory reservation](../../architecture/memory-runtime.md#external-memory-reservation-and-enforcement).
 
-The GPU allowance includes fixed compute/provider and communication overhead.
-Planning subtracts both before scheduling objects/workspace, and reporting adds
-them back to the total peak. Background weight-fetch and gradient-eviction callbacks have no task
-allocation scope, so their observed scratch is conservatively reserved per
-sharded object and collective operation rather than assumed to retire at the next asynchronous submission.
-Explicit communication tasks account for scratch over their task lifetimes.
-Spill capacity is separate. No physical memory is allocated for these calculations.
-
-Task resource lanes bind to stable CUDA streams in the worker. Native task and
-physical-reuse dependencies insert stream waits; independent lanes can overlap.
-Each invocation joins its lanes before output acquisition and result completion,
-including when successive calls originate on different caller streams. Retained
-BLAS workspaces are initialized before the fixed execution arena is admitted.
-Profiling includes per-resource library capacity in fixed memory, and the saved
-setup records the BLAS backend and workspace settings. The cuBLAS/cuBLASLt bound
-is conservative when the libraries share a workspace.
+Generated training Plans keep optimizer reductions, updates and publication on
+the ordered compute resource. Weight-fetch and gradient-eviction collectives
+can overlap unrelated compute on transfer lanes; the overlap profiles model
+that contention. These are different mechanisms. See
+[distributed scheduling](distributed.md) and [runtime transfers](../../architecture/memory-runtime.md#transfers)
+for ownership, dependencies and supported execution scope.

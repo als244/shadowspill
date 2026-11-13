@@ -1,19 +1,26 @@
 # Build, profile, plan and execute
 
-Use separate preparation and execution processes. Build produces executable
-tasks; profiling supplies timings and allocation evidence; CPU planning selects
-a schedule; a fresh worker executes it. The [complete training example](../examples/generic-training.md)
-defines all application callbacks used below.
+ShadowSpill separates preparing a workload from running it. The phase functions
+are available from `shadowspill`; `Trainer` runs the selected Plan. Start with the
+[complete Python example](../examples/generic-training.md), which defines the
+model, objective, initializer and input loop.
 
-| Phase | Requires a device? | Saved result |
-| --- | --- | --- |
-| Build | Representative GPU; model-owned collectives also need their participants | `Program` |
-| Profile compute | Representative GPU | `Profiles`, then `ProfiledProgram` |
-| Measure communication | Target GPU(s) and spill/collective configuration | `CommunicationInfo`; optional overlap profiles |
-| Plan and report | CPU only | `Plan`, report |
-| Execute | Target worker(s), fresh allocator state | Training results and optional checkpoints |
+| Phase | Public API | Result | Needs GPU? |
+| --- | --- | --- | --- |
+| Build | `build_step` (or `build_forward` / `build_forward_backward`) | `Program`: captured calls and finalized task code | Yes |
+| Profile tasks | `measure_program` → `apply_profiles` | `Profiles` → `ProfiledProgram`: measured tasks and memory | Measurement does; applying profiles is CPU-only |
+| Measure communication | `measure_communication`, optionally `measure_overlap` | `CommunicationInfo` and overlap profiles | Yes, with the required participants |
+| Plan | `plan_program` or `sweep_programs` | `Plan`: selected variants, schedule and memory layout | No |
+| Execute | `Trainer` or `Executor` | Results and optional checkpoints | Yes, in a fresh worker |
 
-## Build and profile
+Each artifact can be saved and loaded independently. A Plan includes task code
+and planning evidence; model values come from initialization or a checkpoint.
+Compatible runtime/operator libraries must be installed in the execution worker.
+
+## Minimal phase calls
+
+Prepare with a representative GPU. The application defines the model, objective,
+optimizer and example inputs:
 
 ```python
 import shadowspill as ss
@@ -22,86 +29,72 @@ program = ss.build_step(
     model, optimizer=optimizer, objective=objective,
     example_args=(inputs, targets), num_examples=4,
 )
-program.save("program.ssp")
 profiles = ss.measure_program(program)
-profiles.save("profiles.ssp")
 ss.apply_profiles(program, profiles).save("profiled.ssp")
 ss.measure_communication(program=program).save("communication.ssp")
 ```
 
-The application defines model, objective, optimizer and representative inputs.
-`num_examples` fixes the rank-local calls in one update; `example_calls` can
-describe calls with different shapes. `build_forward` captures a forward-only
-computation; `build_forward_backward` omits optimizer updates.
+`num_examples=4` means four complete rank-local microbatch calls per update.
+If each input batch has 16 samples, the update has 64 samples per rank. The
+objective supplies the corresponding loss normalization. Build accepts CPU/meta
+model state but still uses a GPU to finalize code; there is no separate CPU-only
+prepare phase. Neither build nor compute profiling opens execution/spill pools.
 
-Build accepts CPU/meta model state and finalizes selected task implementations
-on the device. It is not a CPU-only preparation phase. Neither build nor compute
-profiling creates execution/spill pools.
-
-Separate controls determine checkpoint stages (`partition`), execution regions
-and axis sizes (`chunking`), and saved intermediates (`graph_pair_policy`).
-These change executables and require build/profile before planning. See the
-[partitioning example](../examples/custom-partitioning.md) and [policy reference](api/frontend.md).
-
-[Build details](api/build.md) explain capture, finalization and saved code.
-[Profiling](api/profiling.md) documents conditioning, sample limits, allocation
-observations and reusable task measurements. [Communication](api/communication.md)
-covers transfer and overlap calibration; [distributed training](api/distributed.md)
-shows the multi-worker workflow. Optional [pool-memory calibration](api/pool-memory.md)
-measures device costs of large spill pools separately.
-
-## Plan on CPU
+Plan on CPU, reusing those artifacts:
 
 ```python
-import shadowspill as ss
-
 plan = ss.plan_program(
     ss.ProfiledProgram.load("profiled.ssp"),
-    memory_budgets=ss.MemoryBudgets(execution_bytes=40 << 30, spill_bytes=128 << 30),
+    memory_budgets=ss.MemoryBudgets(execution_bytes=24 << 30, spill_bytes=128 << 30),
     communication_info=ss.CommunicationInfo.load("communication.ssp"),
 )
 plan.save("training.ssp")
 ss.write_report(plan, "report")
 ```
 
-Planning and reporting do not import PyTorch or initialize a device. Reuse the
-same measured artifacts for different budgets, traversal orders and planner
-settings. `sweep_programs` compares already-profiled Programs; it does not build
-candidates. [Quickstart](../../benchmarking/quickstart.md) and the
-[shared recipe runner](../../workloads/recipes/README.md) can also construct and
-profile candidate microbatch sizes, chunk sizes and retention policies.
-
-A numeric workspace estimate permits simulation, but execution requires observed
-allocation evidence for the saved implementations. Check
-`plan.simulation_only_reasons`. Missing memory is never treated as zero. Physical
-placement is necessary for execution; worker startup still checks compatibility
-and actual available memory.
-
-## Execute in a fresh worker
+Execute in a **fresh process**, before another device allocator initializes:
 
 ```python
 import shadowspill as ss
 
 with ss.Trainer(ss.Plan.load("training.ssp")) as trainer:
-    trainer.initialize(fill_tensor)
-    trainer.fit(training_batches, steps=100)
+    trainer.initialize(fill_tensor)  # Or trainer.load("checkpoint.ssp") to resume.
+    trainer.fit(training_batches(), steps=100)
 ```
 
-`fill_tensor` fills bounded destination views from checkpoint data or random
-initialization. Training batches supply the Plan's fixed call structure and
-example count. Trainer does not build, profile or plan. Construct it before
-another device allocator initializes in this process.
+`fill_tensor` fills bounded CPU views. Each item yielded by `training_batches()`
+supplies one update's inputs, matching the Plan's fixed calls. `steps=100` is the total target
+count, including restored updates. Trainer never builds, profiles or searches.
+Its default pinned-host pool uses the required spill peak plus 5%, capped by the
+planned budget.
 
-See [Trainer](api/training.md) for inputs, schedules, evaluation and checkpoints,
-or [Executor](api/executor.md) for asynchronous invocation and shared Plan state.
-The default pinned-host pool uses the admitted spill peak plus 5%, capped at the
-planned spill budget. [Pool-memory rules](api/pool-memory.md) describe calibrated
-capacity and portability.
+## Where options belong
 
-## Reuse and inspect
+| Change | Control | Work needed |
+| --- | --- | --- |
+| Model/objective/optimizer, precision, input shapes or microbatch count | [Build arguments](api/build.md) | Build and profile affected implementations, then plan |
+| Checkpoint boundaries, split axes/chunk sizes or retained intermediates | `partition`, `chunking`, `graph_pair_policy` in [frontend policies](api/frontend.md) | Build/profile each candidate, then compare Plans |
+| Timing windows, sample caps or external-memory headroom | [Profiling options](api/profiling.md) | Measure with the requested settings, apply profiles, then plan |
+| Transfer backend, collective layout or communication costs | [Communication measurement](api/communication.md) | Obtain compatible measurements, then plan; changed ownership can also require build |
+| Device/spill budget, microbatch traversal, save-tail choices or search effort | [Planning options](api/planning.md) | Replan existing compatible profiles on CPU |
+| Input values, captured learning-rate controls, logging or checkpoints | [Trainer options](api/training.md) | Execute the chosen Plan |
 
-[Artifact reference](api/artifacts.md) describes save/load and compatibility.
-[Artifact and cache guidance](artifact-store.md) distinguishes durable artifacts
-from disposable compiler caches. [Plan reports](plan-report.md),
-[execution diagnostics](step-diagnostics.md) and [failure handling](failures.md)
-explain how to inspect outcomes.
+Changing a retention policy changes **what each graph saves**. Planning separately
+chooses **which graph runs** and **where saved values live**. Selecting a save
+variant does not force GPU residency.
+
+`sweep_programs` compares supplied ProfiledPrograms and budgets; it does not
+create or profile candidates. The source-tree [recipe runner](../../workloads/recipes/README.md)
+and [quickstart](../../benchmarking/quickstart.md) can construct candidate
+microbatch sizes, chunk sizes and retention policies, then search their Plans.
+The generic phase APIs accept arbitrary supported models; recipes provide
+application-specific model/data setup around them.
+
+For multi-worker runs, follow [distributed setup](api/distributed.md), including
+communication and overlap calibration. Check `plan.simulation_only_reasons`
+before execution: estimated workspace alone cannot establish a safe physical
+layout. Worker startup also checks dependencies and available memory.
+
+[Artifact reuse](artifact-store.md), [pool calibration](api/pool-memory.md),
+[Plan reports](plan-report.md), [runtime diagnostics](step-diagnostics.md) and
+[failure handling](failures.md) cover inspection and troubleshooting.

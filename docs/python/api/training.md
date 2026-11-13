@@ -1,336 +1,256 @@
-# Training and forward execution over saved plans
+# Trainer
 
-`Trainer` manages training through an Executor. Preparation is separate:
-`build_step` → `measure_program` → `apply_profiles` → `plan_program`. Construct
-Trainer in a fresh worker with the resulting Plan; it never builds, profiles,
-or searches. See the [complete example](../../examples/generic-training.md) and
-[phase API guide](../phases.md).
+`Trainer` runs a saved training `Plan`, manages update counts, and provides an
+optional loop, logging and checkpoints. Build, profile and plan first; Trainer
+never repeats those phases. Start with the [complete example](../../examples/generic-training.md)
+or [phase guide](../phases.md).
 
-## Contents
+## Start or resume
 
-- [Trainer](#trainer)
-- [Inputs, objectives and results](#inputs-objectives-and-results)
-- [Evaluation](#evaluation)
-- [Updates, schedules and loop policy](#updates-schedules-and-loop-policy)
-- [Parameter norms and custom logging](#parameter-norms-and-custom-logging)
-- [Logger helpers](#logger-helpers)
-- [Checkpoints](#checkpoints)
-- [Reuse preparation across budgets and processes](#reuse-preparation-across-budgets-and-processes)
-- [Data parallel training and resource ownership](#data-parallel-training-and-resource-ownership)
-- [Startup diagnostics](#startup-diagnostics)
-- [Custom optimizers](#custom-optimizers)
-
-## Trainer
+Construct Trainer in a fresh execution process, before another device allocator
+initializes. The Plan must come from `build_step`.
 
 ```python
 from shadowspill import Plan, Trainer
 
 with Trainer(Plan.load("training.ssp")) as trainer:
     trainer.initialize(fill_tensor)
-    result = trainer.step(args=[(features,)], kwargs=[{"targets": targets}])
-    print(result.step, result.loss)
+    trainer.fit(training_batches(), steps=100, run_dir="run")
+    trainer.save("run/checkpoint.ssp")
 ```
 
-The Plan must come from `build_step`. Its example count and input signatures fix
-the per-call inputs. `fill_tensor(chunk, destination)` fills Executor-provided CPU
-buffers; `chunk` identifies a tensor name, dtype, local storage geometry and flat
-chunk offset. Initialization streams bounded chunks and creates optimizer defaults
-without assembling a full model on the device.
+`fill_tensor(chunk, destination)` fills bounded CPU tensor views. `chunk` gives
+the tensor name, dtype, owned geometry and flat element offset. The
+[example initializer](../../examples/generic-training.md#execute-in-a-fresh-worker)
+loads ordinary model tensors; Trainer initializes captured optimizer defaults.
+`initialize(..., chunk_bytes=64 << 20)` sets the maximum chunk size and returns
+Trainer. Use it before the first update. For eager model initialization outside
+saved execution, `shadowspill.training.reset_parameters(model)` calls each
+submodule's available `reset_parameters` method.
 
-For ordinary eager models, `shadowspill.training.reset_parameters(model)` calls
-each submodule's `reset_parameters` method when present. Saved execution uses
-the bounded `fill_tensor` interface above.
+To resume, replace `initialize` with `trainer.load("run/checkpoint.ssp")`.
+`fit(..., steps=100)` means **100 total completed updates**, including restored
+updates. A checkpoint at update 60 therefore runs 40 more. Loading a checkpoint
+and loading a Plan are separate: the former restores values and progress; the
+latter describes computation and memory placement.
 
-An optional existing `executor=` must belong to the same Plan. Trainer closes
-only an Executor it created. `close()` and context-manager exit wait for work and
-release owned resources. By default, Executor inherits the external-memory
-headroom recorded during profiling and included in the Plan's total GPU budget.
-An `external_headroom_bytes` override cannot exceed that planned reservation.
-Memory the process acquires outside the pool beyond that headroom is reported on
-stderr and execution continues; `reject_overbudget=True` on Trainer or Executor
-refuses it instead. Pool bounds and device allocation failures are enforced
-either way.
+## Constructor options
 
-`spill=SSDPool(...)` or `spill=RemotePool(...)` selects storage when Trainer creates
-its Executor; a supplied Executor takes it at construction. Pinned-host storage
-is the default. Its capacity is `min(ceil(1.05 * required_peak), spill_budget)`:
-the selected worker's peak plus 5%, capped by the planning budget. The requirement
-includes shared evaluation and gradient-accumulation paths and their persistent
-storage, not just the training Plan's individual peak. An otherwise unused pool
-has a one-byte logical minimum; the backend may round its physical registration
-to host pages. The saved Plan, schedule and planning budget are unchanged.
+<!-- api-options: src/shadowspill/training/trainer.py:Trainer.__init__ -->
 
-An explicitly supplied pool retains its requested capacity. It must cover the
-worker's joint requirement and cannot exceed the Plan's spill budget; communication
-costs must describe its backend. Inspect `trainer.executor.spill_capacity_bytes`
-for the actual capacity. Build/profile/planning open no execution spill pool.
-See [SSD storage](ssd.md) for setup, bounded I/O and sharded transfers.
+| Argument | Default | Meaning |
+| --- | --- | --- |
+| `plan` | Required | Executable training Plan from `build_step`. |
+| `evaluation_plan` | `None` | Separately prepared forward Plan sharing current model state. |
+| `schedules` | `None` | Captured optimizer control name → `callable(completed_steps)`. |
+| `metric_reducer` | `None` | Convert completed CPU observations into scalar metrics or `MetricSummary`. |
+| `frozen_state_id` | `None` | Stable base-checkpoint identity; permits omitting unchanged frozen weights from checkpoints. |
+| `parameter_norms_every` | `0` | Collect weight/gradient norms every N updates; zero disables collection. |
+| `device` | `0` | Process-local device ordinal; must match the compiled device binding. |
+| `rank_map` | `None` | Worker → logical-rank mapping for distributed execution. |
+| `spill` | `None` | Default pinned-host pool, or an explicit spill backend. |
+| `external_headroom_bytes` | `None` | Inherit the Plan's external-memory reservation; an override cannot increase it. |
+| `reject_overbudget` | `False` | Fail on observed external/whole-process budget overruns instead of reporting them. Pool bounds remain enforced either way. |
+| `executor` | `None` | Borrow an Executor for this exact Plan instead of creating one. |
 
-## Inputs, objectives and results
+The default pinned-host capacity is the worker's required spill peak plus 5%,
+capped by the Plan's spill budget. The peak includes shared evaluation and
+accumulation paths. `trainer.executor.spill_capacity_bytes` reports the selected
+capacity. An explicit `spill` keeps its requested capacity and must fit both the
+requirement and budget, with matching communication measurements. See
+[pool sizing](pool-memory.md) and [external storage](ssd.md).
 
-`step(args=..., kwargs=...)` takes sequences of positional tuples and keyword
-mappings, one entry per example. Alternatively,
-`input_loader(index) -> (args, kwargs)` supplies the example at each index; the
-Plan chooses the order its tasks consume them.
-The objective controls normalization across examples; Trainer does not infer
-weights from batch size or sequence length. Input trees support arbitrary model
-arguments, not only text tokens.
+A borrowed Executor owns device, rank, pool and headroom configuration. Set
+`spill` and `reject_overbudget` on that Executor; passing them alongside
+`executor=` is rejected. It must already contain any requested evaluation Plan
+and enable parameter norms if needed. `close()` or context-manager exit waits
+for work and closes only an Executor Trainer created.
 
-Before GPU dispatch, Executor validates the call and synchronously stages the
-consumed input storage in each rank's spill pool. CPU byte payloads use a direct
-copy without PyTorch's CPU thread pool; this preserves views and shared-storage
-inputs and does not change global thread settings. Bounds and backend write
-completion remain enforced, including bounded staging for remote and SSD pools.
-This host preparation precedes the GPU invocation timeline used by simulation
-and runtime diagnostics; end-to-end step timing includes it.
+## Inputs and one update
 
-`StepResult` holds CPU observations: per-example losses/metrics, update number,
-elapsed seconds, applied hyperparameters and optional reduced metrics. Its `loss`
-property sums the example losses. `Trainer.step` waits for completion. For direct
-asynchronous control use `Executor.run`, whose result handle waits only when
-`.result()` is called; the next run automatically waits for its predecessor.
+One `step` completes **one optimizer update** over all microbatch calls captured
+in the Plan. The build argument `num_examples` counts these complete calls,
+not individual samples. A Plan built with `num_examples=4` and input batch size
+16 processes 64 samples per rank per update.
 
-For an external profiler, `Trainer.step(..., profiler_annotations=True)` or
-`Executor.run(..., profiler_annotations=True)` adds
-semantic task and runtime-transfer ranges to that invocation. The default is off.
-Annotations remain enabled until the result handle waits for task and transfer
-completion, then disable before the next invocation. They do not change the saved
-Plan or its admission. The [quickstart capture tool](../../../benchmarking/quickstart.md#nsight-captures-of-saved-winners)
-uses this option in fresh workers.
-The [saved-Plan runner](../../../benchmarking/plan_runner/README.md#nsight-systems)
-also uses these existing ranges for optional bounded captures. This is separate
-from `runtime_trace=True` and does not require collecting ShadowSpill's event log.
+```python
+# Exactly four calls, matching the shapes captured at build time.
+result = trainer.step(
+    args=[(features0,), (features1,), (features2,), (features3,)],
+    kwargs=[{"targets": y0}, {"targets": y1}, {"targets": y2}, {"targets": y3}],
+)
+print(result.step, result.loss, result.seconds)
+```
+
+<!-- api-options: src/shadowspill/training/trainer.py:Trainer.step -->
+
+| Argument | Default | Meaning |
+| --- | --- | --- |
+| `args` | `None` | Sequence of positional tuples, one per captured call. |
+| `kwargs` | `None` | Sequence of keyword mappings, one per captured call. |
+| `input_loader` | `None` | Alternative to `args`/`kwargs`: repeatable `index -> (args, kwargs)` reader. |
+| `hyperparams` | `None` | Runtime optimizer controls or scalar fills of named persistent model buffers. |
+| `runtime_trace` | `False` | Collect this real update's task/allocation/transfer diagnostics. |
+| `profiler_annotations` | `False` | Emit task/transfer ranges for an external profiler. |
+
+The objective owns loss normalization across microbatches and ranks. Trainer
+neither divides by batch size nor performs an extra distributed loss reduction.
+A mean over four equally sized microbatches, for example, needs each call's mean
+loss divided by four. Input values may change; tensor signatures and captured
+non-tensor constants must match the Plan. Inputs are validated and staged in the
+spill pool before GPU execution.
+
+`StepResult` contains CPU `losses`, `metrics`, `parameter_metrics`, `step`,
+`seconds`, applied `hyperparams`, reduced `summary`, and optional `diagnostics`.
+`loss` sums the per-call losses. `seconds` includes input staging, execution and
+observation/trace collection; Python metric reducers, logging and checkpointing
+run outside that timer. Simulation describes the scheduled GPU work, so its
+duration is not an end-to-end loop timer. Results survive later updates and
+Trainer shutdown. Use [Executor](executor.md) for asynchronous calls.
+
+## Schedules and the optional loop
+
+`schedules={"optimizer_group.0.lr": schedule}` calls `schedule(step_count)` before
+each update, starting at zero. Only optimizer controls captured during build are
+valid schedule names. Explicit `step(hyperparams=...)` values override schedules;
+omitted controls use captured defaults. Python constants baked into an optimizer
+cannot become runtime controls later. `hyperparams` can also fill persistent
+model buffers by qualified name; omitted buffers keep their current values.
+Parameters and nonpersistent buffers cannot be filled this way.
+
+`fit` consumes **one mapping of `step` arguments per update**. For example, for a
+Plan with four microbatches:
+
+```python
+def training_batches():
+    for microbatches in data_loader:  # Each item contains four (features, targets) pairs.
+        yield {
+            "args": [(x,) for x, y in microbatches],
+            "kwargs": [{"targets": y} for x, y in microbatches],
+        }
+
+trainer.fit(training_batches(), steps=100, run_dir="run", log_every=10)
+```
+
+<!-- api-options: src/shadowspill/training/trainer.py:Trainer.fit -->
+
+| Argument | Default | Meaning |
+| --- | --- | --- |
+| `source` | Required | Iterable of mappings passed to `step`. |
+| `steps` | Required | Target total completed updates, not additional updates. |
+| `run_dir` | `None` | Optional directory for JSONL metrics, tables and default checkpoint paths. |
+| `log_every` | `1` | Scalar logging cadence; zero disables it. Console logging works without `run_dir`. |
+| `tables_every` | `100` | Reduced-metric table cadence; zero disables it. |
+| `logger` | `None` | Additional `logger(record)` destination; optional `.table(...)` receives tables. |
+| `callbacks` | `()` | `(trainer, result)` callbacks after logging and before checkpointing. |
+| `checkpoint_every` | `0` | Save cadence; zero disables automatic saves. |
+| `checkpoint_dir` | `None` | Defaults to `run_dir/checkpoints` when checkpointing is enabled. |
+| `keep_last` | `3` | Positive number of automatic checkpoints to retain. |
+| `startup_diagnostics` | `False` | Diagnose the first input before training; requires `run_dir` and a supported optimizer. |
+
+Enabled cadences also run on the final update. Automatic saves use the default
+master-weight representation. `fit` returns the last `StepResult`, or `None` if
+already at the requested count; an exhausted source before that count is an
+error. A resumable source supplies `state_dict`/`load_state_dict`. If the loaded
+checkpoint contains source progress, the next `fit` restores it before iteration
+and requires such a source. Use a custom `step` loop for application-specific
+validation or checkpoint policies.
 
 ## Evaluation
 
-Build and plan a forward computation separately, with the same parameter names
-and layouts, then pass `evaluation_plan=validation_plan`. `evaluate` accepts the
-same input-call syntax and returns the model's ordinary output on CPU. Both
-plans share current model tensors and are admitted together against one budget.
-Evaluation does not update optimizer state or advance schedules.
+Build and plan `build_forward` separately, then supply it as `evaluation_plan`.
+`evaluate(args=None, kwargs=None, input_loader=None)` uses that Plan's captured
+call structure and returns ordinary outputs on CPU. It shares the current model
+tensors, without an optimizer update, schedule advance or update-count change.
+Use `forward_fn` during build to capture a loss or another evaluation entry point.
 
-`build_forward(..., forward_fn=...)` can capture a loss method or other evaluation
-entry point. The default calls `model.forward`. The callback is needed only at
-build time. Direct Executor users can admit named plans with
-`Executor(training_plan, plans={"evaluation": validation_plan})` and select one
-with `run(plan="evaluation", ...)`.
-
-## Updates, schedules and loop policy
-
-`hyperparams` supplies per-call optimizer controls declared during build and scalar
-fills of persistent model buffers by their qualified names. For example,
-`hyperparams={"optimizer_group.0.lr": 0.001, "loss_scale": 2.0}` changes the first
-parameter group's learning rate and fills the model's `loss_scale` buffer before
-the call. Omitted optimizer controls use their captured defaults; omitted model
-buffers keep their current values. Model parameters, nonpersistent buffers and
-tensor-wrapper components cannot be set this way. Every rank stores a buffer
-whole, so under data parallelism a fill sets each rank's own copy.
-
-A `schedules` mapping passed to Trainer maps control names to
-`callable(completed_steps)`. Explicit per-call values override schedule outputs.
-Only captured runtime controls can change; a Python constant baked into an
-optimizer graph cannot become a runtime control later.
-
-`fit(source, steps=...)` consumes mappings of `step` keyword arguments. Optional
-arguments configure logging, callbacks and checkpoint cadence. An input source
-can implement `state_dict`/`load_state_dict` for checkpointed progress. Custom
-loops can call `step`, `evaluate`, `save` and `load` directly. A `metric_reducer`
-can aggregate completed `StepObservations` for application-specific reporting.
-
-## Parameter norms and custom logging
-
-`Trainer(plan, parameter_norms_every=N)` optionally collects compute-weight and
-final-gradient L2 norms on every Nth completed update. Zero (the default) creates
-no collector, norm buffers, diagnostic kernels or norm-summary transfers.
-The result is `result.parameter_metrics[name]`, containing CPU scalar
-tensors named `param_norm` and `grad_norm`; unobserved updates return an empty map.
-The frequency uses the restored step count after resume.
-
-```python
-def summarize(observations):
-    return {
-        f"gradient_norm/{name}": values["grad_norm"].item()
-        for name, values in observations.parameter_metrics.items()
-    }
-
-trainer = Trainer(plan, parameter_norms_every=100, metric_reducer=summarize)
-trainer.fit(source, steps=1000, logger=write_record, callbacks=[after_step])
-```
-
-`metric_reducer` receives host observations; `logger(record)` receives log records;
-each callback receives `(trainer, result)` after normal logging and before
-checkpointing. These are ordinary Python functions and can customize aggregation,
-destinations and loop behavior. They are not compiled tasks. Parameter norm
-collection itself is a bounded built-in operation, not an arbitrary tensor callback.
-
-Executor observes each compute weight at its first task read and the final
-gradient before its local optimizer update. It does not measure the FP32 master
-in place of the compute weight. Sharded norms sum squared contributions over
-unique owned elements, excluding padding and duplicate replicas. The collector
-uses one ordered task stream and retains no parameter or gradient references.
-
-Reduction buffers occupy 1 KiB plus eight bytes per observed parameter, subject
-to allocator alignment, within the existing execution pool and total GPU budget.
-If that spare space is unavailable, worker setup fails rather than exceeding the
-budget. There are no additional Program tasks or per-task allocations. Diagnostic
-kernels are prepared during worker setup; scalar summaries are copied at result
-completion. `StepResult.seconds` includes norm collection only on updates where
-it runs. Skipped updates do no norm computation or summary transfer; an enabled
-collector keeps its small buffers reserved between updates. Simulated timelines
-describe the saved training tasks and omit diagnostics. Python reducers and loggers
-run outside the step timer; total loop elapsed time includes them when enabled.
-Caller-owned CPU summaries survive later calls and executor shutdown.
-
-Direct users enable `Executor(plan, parameter_norms=True)` and can skip collection
-per call with `run(collect_parameter_norms=False)`. Collection defaults to enabled
-for its training Plan and disabled for named evaluation Plans. A Trainer supplied
-with an existing Executor requires that Executor to enable norms when N is nonzero.
-
-## Logger helpers
-
-`shadowspill.training.logging` holds two optional loggers to pass as
-`fit(logger=...)`. Importing it does not import W&B.
-
-`Wandb(*, project, run_dir, **options)` opens one W&B run in `run_dir`,
-passing `options` such as `entity`, `name`, `id` or `resume` to `wandb.init`.
-It logs every key of a record at the record's `step`, the completed update
-count, beside W&B's own system telemetry, and logs the tables of a
-`metric_reducer`'s `MetricSummary` whenever `fit` reaches `tables_every`. On
-opening it writes `wandb_run.json` into `run_dir` with the run's `project`,
-`id`, `name` and `url`, so whoever launched the worker can say where the run
-went; the text runner prints that URL once execution completes. `close()`
-finishes the run, with exit code 1 when a `with` block ends in an exception.
-
-`DistributedLogger(control_group, *, run_dir, wandb=None, device=None,
-reduce=sum_rank_records, max_pending=256, timeout=120)` adds one aggregate of
-the ranks' records to the per-rank console and JSONL output Trainer keeps.
-Every rank constructs and closes it in the same order over a CPU Gloo group.
-Background threads exchange completed CPU records through that group's store,
-so a step gains no collective and no task barrier; ranks must log the same
-steps in the same order, `max_pending` bounds the records a rank has in
-flight, and `timeout` how long a missing rank's record is awaited. The group's
-first rank passes the ranks' matching records, in group order, to `reduce` and
-writes the combined record, which must keep `step`, to the console and
-`run_dir/aggregate/metrics.jsonl`. With a `wandb` mapping, which must name a
-`project`, every rank also opens a run of its own under `run_dir/rank-NNNNN`,
-monitoring `device` (the current device by default), and the first rank an
-aggregate run under `run_dir/aggregate`; reducer tables stay in the rank runs.
-
-The default reducer, `sum_rank_records` (importable from the same module), sums
-`train/loss` and `train/work_units`, takes the largest `train/step_seconds`,
-`train/elapsed_seconds` and `eval/seconds`, and derives
-`train/units_per_second`. Summing `train/loss` relies on each rank's training
-loss already being its share over the step's global normalizer, which the
-objective provides. Nothing in the core says the same of an evaluation loss, so
-the default deliberately leaves `eval/loss`, like every other metric,
-rank-local. An application whose ranks each report a share of one evaluation
-mean supplies a reducer that sums it too, as `sum_shares` in
-`workloads/recipes/text/experiment/logging.py` does for the text recipes.
+Training and evaluation are admitted together against one budget. Their tensor
+names/layouts must agree; evaluation can require additional workspace even
+though its weights are shared. The [Executor reference](executor.md) describes
+shared state and named Plans.
 
 ## Checkpoints
 
-`save(path, source=None, chunk_bytes=..., weights="master")` streams persistent
-training state through the Executor export interface. By default, an ordinary
-master weight is stored once and its compute copy is reconstructed on load.
-`weights="compute"` instead saves the compute copy and reconstructs the master
-from its rounded values, intentionally losing the master's additional precision.
-Parameters without masters, optimizer state, buffers and stored gradients remain
-independent of this choice. Replicated compute weights with sharded masters are
-reconstructed collectively during load, using bounded CPU transfers after local
-archive checks. Ordinary sharded DP derives only the local compute shard;
-normal execution gathers it as needed. Encoded weights or incompatible physical
-layouts retain the required copies; the manifest records why.
-It also saves Trainer progress and optional input-source state. `load` restores
-those tensors and counters into an already admitted compatible worker. File
-formatting lives in checkpoint helpers rather than the Executor itself.
+| Method | Options | Result |
+| --- | --- | --- |
+| `save(path)` | `source=None`, `chunk_bytes=64 << 20`, `weights="master"` | Saved archive `Path`. `source` defaults to the most recent `fit` source. |
+| `load(path)` | `chunk_bytes=64 << 20`, `fill_tensor=None` | Trainer, with restored tensors and progress. `fill_tensor` supplies an omitted frozen base. |
 
-Saving waits for the pending invocation. Export is chunked and does not create a
-full-device snapshot. A checkpoint is separate from a Plan: the Plan describes
-computation/layout; the checkpoint supplies mutable values. It binds to the
-training state, the tensors by name, geometry and owned region, recorded as
-`state` in its manifest, so a Plan of the same state built elsewhere, with
-other kernels, another microbatch geometry or another budget, restores it; a
-different inventory is refused with the tensors named. Distributed callers use
-one path per logical rank. Restore requires matching logical rank and owned
-geometry; checkpoints are not automatically resharded to a different world size.
-Numerical qualification checks bitwise replay after restoring a checkpoint.
+Checkpoints include persistent training state, Trainer count/elapsed time,
+default RNG state, and source/schedule state when their callbacks expose it.
+Saving waits for outstanding work and streams bounded CPU chunks; it does not
+assemble a full-device snapshot.
 
-For an immutable frozen base, construct `Trainer(plan, frozen_state_id="...")`.
-Checkpoints then omit unchanged frozen parameters. Trainable weights use the
-selected representation above; optimizer state, persistent buffers and any
-mutated frozen parameters remain in the archive. The identity is supplied by the caller;
-use a checkpoint revision or content identity that also fixes model configuration.
+- `weights="master"` stores ordinary master weights once and reconstructs their
+  compute copies on load. This is the default.
+- `weights="compute"` stores compute weights and reconstructs masters from those
+  rounded values, losing the master's additional precision.
+- Parameters without masters and optimizer/buffer state are saved independently
+  of that choice. Encoded weights or incompatible layouts retain required copies;
+  the manifest explains exceptions.
+
+A compatible Plan can use different kernels, microbatch geometry or budgets if
+the checkpoint's tensor names, shapes and owned regions still match. Distributed
+workers save one archive per logical rank. Sharded compute weights are derived
+locally; replicated compute weights with sharded masters are reconstructed
+collectively during load. All ranks participate. Restore does not reshard to a
+different world size. See [distributed execution](distributed.md) and
+[checkpoint reconstruction](../../architecture/state-import.md#export-and-checkpoints).
+
+`frozen_state_id` enables checkpoints that omit unchanged frozen parameters.
+Use a stable base revision/content identity that also fixes model configuration.
+Restore requires that same identity and an explicit `fill_tensor` loader, even
+in an already initialized worker:
 
 ```python
-trainer = Trainer(plan, frozen_state_id="my-base-checkpoint-revision")
-trainer.initialize(fill_tensor)
-# ... train and save ...
-trainer.load("update.ssp", fill_tensor=fill_tensor)
+with Trainer(plan, frozen_state_id="base-checkpoint-revision") as trainer:
+    trainer.load("adapter-update.ssp", fill_tensor=fill_base_tensor)
+    trainer.fit(resumable_source, steps=100)
 ```
 
-The loader fills Executor-provided CPU chunks for omitted base parameters only.
-Restore requires the same identity and explicit loader, even in an initialized
-worker. Every retained tensor must come from a stored payload or a validated
-derived-copy relationship; a missing adapter, buffer or optimizer tensor is an
-error. Named evaluation Plans remain read-only with respect to shared model
-tensors. See [archive and reconstruction details](../../architecture/state-import.md#export-and-checkpoints).
+Trainable tensors, persistent buffers and mutated frozen parameters remain in the
+archive; a missing retained tensor is an error.
 
-## Reuse preparation across budgets and processes
+## Metrics and logger helpers
 
-Save Program and Profiles independently, or save a self-contained ProfiledProgram.
-Reload and replan it with different `MemoryBudgets` or `CommunicationInfo` on CPU.
-The resulting Plan is an executable archive that a fresh Executor can load with
-matching runtime/provider builds. See [budget sweeps](../../examples/reusable-planning.md).
+`metric_reducer(observations)` returns a scalar mapping or
+`shadowspill.training.observations.MetricSummary` with scalars and tables.
+`parameter_norms_every=N` additionally exposes CPU `param_norm`/`grad_norm` scalars
+under `result.parameter_metrics[name]` every Nth update, including after resume.
+It measures compute weights and final gradients, counts unique sharded elements,
+and needs small buffers within the existing device budget. Zero disables the
+collector entirely. Norms and tracing add measured runtime cost that the saved
+training simulation omits. See [norm observation details](../../architecture/optimizer.md#observing-parameters-and-gradients).
 
-## Data parallel training and resource ownership
+`shadowspill.training.logging` provides optional helpers; importing it does not
+import W&B:
 
-All builders take one `parallelism` argument. `Parallelism.dp(...)` describes
-logical model replicas and weight/gradient/optimizer storage sharding; actual
-process groups are bound later from the saved declarations and a complete rank
-map. Simple DP compute profiling uses one representative device. Distributed
-execution is qualified for the common sharded-DP path; [distributed
-status](distributed.md) states the scope.
+| Helper | Use |
+| --- | --- |
+| `Wandb(project=..., run_dir=..., **options)` | Context manager forwarding options to `wandb.init`; receives scalar records and tables. Writes `wandb_run.json`. |
+| `DistributedLogger(control_group, run_dir=..., wandb=None, device=None, reduce=sum_rank_records, max_pending=256, timeout=120)` | Asynchronously aggregates CPU records over a Gloo control group. All ranks construct, log the same steps and close in matching order. |
+| `sum_rank_records(records)` | Sums training loss/work units, takes maximum step/elapsed/eval times, and derives throughput. Other metrics, including evaluation loss, remain rank-local. |
+
+The default distributed reducer assumes each rank's loss is already its share of
+the global objective. Supply a different `reduce` function for other conventions.
+Distributed output lives in `run_dir/aggregate/metrics.jsonl`; an optional `wandb`
+mapping requires `project` and adds per-rank plus aggregate runs.
 
 ## Startup diagnostics
 
-`Trainer.diagnose(args=..., kwargs=..., directory="startup", warmup=1)` runs the
-saved Plan at zero learning rate and writes measured and simulated timelines.
-It requires the optimizer used by `build_step` to explicitly guarantee
-`zero_lr_preserves_state=True`, with a captured CPU tensor learning rate for every
-parameter group. MLOps AdamW provides this guarantee; ordinary PyTorch AdamW
-does not. Unsupported Plans fail before dispatching a diagnostic update.
+`diagnose(directory=..., warmup=1, args=None, kwargs=None, input_loader=None,
+hyperparams=None)` writes measured/simulated timelines and returns their summary.
+It runs at zero learning rate without advancing Trainer progress or schedules,
+and restores affected model buffers, controls and default RNG. Its time is
+excluded from `elapsed_seconds`; indexed inputs must be repeatable.
 
-Only affected model buffers are saved in a temporary file, using bounded CPU
-spill views. Parameters, master weights, moments and counters stay in place.
-Diagnostics restore model buffers, runtime controls and default RNG, and do not
-advance Trainer counters, schedules or input position. Their time is excluded
-from Trainer's elapsed training time. Indexed input loaders must be repeatable.
-GPU execution failures still make Executor unusable, as for any invocation.
+This requires the captured optimizer's explicit `zero_lr_preserves_state=True`
+guarantee and a CPU tensor learning rate per group. Ordinary PyTorch AdamW does
+not provide that guarantee. Unsupported Plans fail before a diagnostic update;
+a GPU execution failure still makes the Executor unusable.
 
-`Trainer.fit(..., startup_diagnostics=True, run_dir=...)` diagnoses its first
-input and then reuses it for training. The option defaults off. Each rank writes
-its own directory in distributed execution. The JSON text runner accepts the
-same `startup_diagnostics` option.
-
-For a trace of an actual invocation, use
-`pending = executor.run(..., runtime_trace=True)` and `pending.diagnostics`.
-Reading diagnostics waits for completion and returns `StepDiagnostics` with
-task, allocation and transfer records; `.result()` retains its normal output.
-Untraced calls return `None` for diagnostics and allocate no trace resources.
-Unlike `Trainer.diagnose`, tracing alone does not preserve training state.
-
-`Trainer.step(..., runtime_trace=True)` exposes the same evidence through
-`StepResult.diagnostics`. This is the actual scheduled training update, with
-normal optimizer changes and update counting. The diagnostics contain CPU-only
-records and survive Executor shutdown. `StepResult.seconds` includes trace
-collection overhead; untraced calls return `diagnostics=None`. A `fit` source
-can set this flag on particular updates. The
-[saved-Plan benchmark runner](../../../benchmarking/plan_runner/README.md)
-traces its final update by default and excludes it from steady throughput.
-
-## Custom optimizers
-
-Custom optimizers must expose a tensor-only, capturable update. Python control
-flow that reads tensor values and Python step hooks are rejected during build;
-there is no eager optimizer fallback in a saved Plan. Capture failures leave the
-caller's optimizer and parameters unchanged.
+For a trace of an ordinary training update, use `step(runtime_trace=True)` and
+read `result.diagnostics`. It changes weights/counts normally. External profiler
+ranges use the independent `profiler_annotations=True` flag. The
+[saved-Plan runner](../../../benchmarking/plan_runner/README.md#nsight-systems)
+can collect bounded Nsight captures with per-rank output files.

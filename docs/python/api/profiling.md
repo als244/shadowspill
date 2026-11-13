@@ -33,6 +33,7 @@ shortcuts with `options`; conflicting specifications are rejected.
 
 ## Contents
 
+- [API options](#api-options)
 - [Bounds and defaults](#bounds-and-defaults)
 - [What actually runs](#what-actually-runs)
 - [Cache reuse and artifacts](#cache-reuse-and-artifacts)
@@ -40,6 +41,33 @@ shortcuts with `options`; conflicting specifications are rejected.
 - [Task warmup versus sustained GPU operation](#task-warmup-versus-sustained-gpu-operation)
 - [Task measurement](#task-measurement)
 - [Profile overrides](#profile-overrides)
+
+## API options
+
+`measure_program` returns editable `Profiles`. `apply_profiles(program, profiles)`
+validates and attaches compatible measurements, returning a `ProfiledProgram`
+without GPU work. It does not measure missing tasks or assume missing memory is
+zero. Changing Profiles afterward does not alter an existing ProfiledProgram.
+
+<!-- api-options: src/shadowspill/profiling/measure.py:measure_program -->
+
+| Argument | Default | Meaning |
+| --- | --- | --- |
+| `program` | Required | Built Program containing finalized task code. |
+| `device` | `"cuda"` | Representative device; must match saved implementation/setup requirements. |
+| `stages` | `None` | All unique task forms. A stage-index subset excludes standalone optimizer tasks. |
+| `rank_map` | `None` | Worker → logical-rank mapping when tasks require distributed participants. |
+| `inputs` | `None` | Explicit flat task inputs by profile key when generated inputs cannot express control semantics. |
+| `options` | `None` | `ProfilingOptions()` defaults, or explicit bounds below. |
+| `warmup_seconds` | `None` | Shortcut overriding the conditioning-time target; cannot accompany `options`. |
+| `measure_seconds` | `None` | Shortcut overriding the measurement-time target; cannot accompany `options`. |
+| `external_headroom_bytes` | `512 << 20` | Additional worker reservation included in fixed device memory and the total planning budget. |
+| `cache` | `None` | Reusable `TaskProfileCache` across compatible candidates; explicit `inputs` disables reuse. |
+
+Task durations and allocation evidence are distinct: accurate timings alone do
+not qualify a Plan for execution. Candidate-wide fixed costs are observed even
+when individual task measurements come from cache. Transfer and overlap probes
+have a [separate API](communication.md).
 
 ## Bounds and defaults
 
@@ -217,46 +245,25 @@ Unknown root controls still require explicit values. CPU task outputs retain
 their dependencies but have zero GPU extent, and Executor holds their host values
 until the last ordered consumer.
 
-Measurement records durations, allocation lifetimes, output aliases and observed
-fixed memory. Logical free requests establish nonoverlapping temporary lifetimes
-on each allocation stream, independently of native addresses. Profiling compares
-exact-size reuse with a largest-first interval assignment and retains the smaller
-slot inventory. An interval slot reserves its largest request and can serve
-different sizes at the same address; returned roots and persistent state remain
-separate in that assignment. Different allocation streams retain separate slots.
-The saved allocation contract describes exact requests and ownership; admission
-reserves slot capacities, and execution binds each request within that capacity.
+Measurement records durations, allocation lifetimes, output aliases and fixed
+memory for the exact saved implementation. Temporary allocations can share slots
+when their lifetimes permit it; returned roots and persistent state retain their
+own storage. Planning uses that evidence to construct a physical layout and safe
+reuse dependencies on CPU. See [memory planning](../../architecture/memory-runtime.md#fixed-layout-with-bounded-dynamic-allocation).
 
-`external_headroom_bytes` (512 MiB by default) additionally reserves
-worker headroom in that fixed-memory total; Executor inherits this saved setting.
-This is conservative: profiling observes loaded library/context memory, while
-the worker reserves headroom above its startup baseline. Planning therefore
-includes the reservation before fitting the task arena into the total GPU budget.
-The build/target setup must match. It does not compile or change
-task definitions. Provider resources that cannot be observed completely
-remain an execution-qualification concern; they are not silently treated as zero.
-
-Workspace totals permit logical simulation. They do **not** establish allocation
-order, storage handoffs, charged alignment, persistent provider allocations or
-the task code required for execution. Built Programs contain packaged code
-for fresh workers; memory evidence must describe those exact implementations.
-With complete observed allocation evidence, planning also constructs a physical
-`memory_layout` entirely on CPU. It validates the saved traces against compiler
-storage contracts, allocates ranges, and includes dependencies needed for safe
-range reuse in the simulated timeline. Layout and admission facts travel in the
-Plan archive, with identities checked against its program and schedule.
-
-Estimated memory, missing code, or incomplete allocation evidence keep a Plan
-simulation-only, as reported by `simulation_only_reasons`. Inconsistent evidence
-is an error. Physical placement is necessary for execution but does not replace
-the worker's dependency, provider-resource and available-memory checks. Executor
-validates those requirements before using its admitted layout.
+Fixed device memory includes observed library/context costs plus
+`external_headroom_bytes`. Executor inherits that reservation; the total GPU
+budget must cover it before task storage is placed. Unobserved provider resources
+still need execution qualification; they are never silently treated as zero.
+Estimated or incomplete memory evidence leaves a Plan simulation-only, reported
+by `simulation_only_reasons`. Inconsistent evidence is an error. Worker startup
+also checks dependencies and actual available memory.
 
 
 ## Profile overrides
 
 ```python
-from shadowspill import TaskProfile
+from shadowspill import Profiles, TaskProfile
 
 overrides = Profiles(
     setup=profiles.setup,
