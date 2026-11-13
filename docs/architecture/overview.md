@@ -97,7 +97,7 @@ PyTorch or install the execution allocator.
 | `artifacts/` | Public artifacts, validation, archive encoding and tensor/task descriptions. |
 | `build/` | Public builders, capture composition, compilation and lowering. |
 | `profiling/` | GPU task measurement and CPU profile application. |
-| `parallelism/` | Logical groups, parameter/input placement and storage declarations. |
+| `parallelism/` | Logical groups, parameter placement and storage declarations. |
 | `resources/` | Generic provider descriptions, checked initialization and lifecycle. |
 | `communication/` | Communication costs, calibration and worker group binding. |
 | `planning/` | Public planning/sweeps, ordering, cost assembly and admission inputs. |
