@@ -1,7 +1,7 @@
 # Custom gradient destinations
 
 `build_step` and `build_forward_backward` accept `gradient_destination_rules`:
-explicit contracts that replace an opaque backward operator with a versioned
+rules that replace an opaque backward operator with a versioned
 accumulating overload. The rules apply to shared parameters across checkpoint
 regions, execution regions, full/tail chunks and subsequent microbatches. The
 first contribution creates the gradient; later contributions write into its
@@ -12,10 +12,10 @@ in-place additions apply when no custom rule matches. A rule does not change
 checkpoint retention or select chunk axes, region boundaries or chunk sizes;
 those remain independent build controls.
 
-## Operator contract
+## Accumulating overload requirements
 
 One rule names a fresh-output dispatcher overload, its accumulating replacement,
-the eligible output indices, and a positive contract version. For example:
+the eligible output indices, and a positive version number. For example:
 
 ```python
 from shadowspill import build_step
@@ -42,7 +42,7 @@ Its dispatcher schema must mark `destinations` mutable, for example
 `Tensor(a!)[] destinations`, and permit mutation of no other argument. The
 destination-list argument must be positional-capable in the schema. The rewrite
 normalizes positional-capable arguments into schema order, so later axis
-contracts can interpret the same call.
+rules can interpret the same call.
 
 The operator adds each selected contribution directly to its supplied buffer.
 It runs once for all selected outputs, preserves the other outputs, and returns
@@ -103,49 +103,28 @@ reusable across rule sets, while each store derives its accumulating forms with
 its own rules. Mappers must be deterministic for their context; do not mutate
 callback state during a build.
 The replacement call, arguments and version enter the graph's compatibility
-digest. Change the version when the mapping contract changes. Mutation records
+digest. Change the version when the supported mapping changes. Mutation records
 and aliases pass through normal `GraphArtifact` capture and cached restoration.
 Actual kernel workspace still needs normal compilation, profiling and physical
 admission: a mutation schema does not prove that a provider avoids an internal
-temporary. Chunked providers also need `OperatorRule` axis/reduction contracts
+temporary. Chunked providers also need `OperatorRule` axis/reduction descriptions
 for both their fresh and accumulating overloads. Final replacement graphs enter
 ordinary structural compilation and profiling; saved Programs and Plans carry
 the operator registration dependency and implementation digest. Rule callbacks
 are not needed by the saved executor. Each real provider's fused kernels and
 distributed behavior require qualification in addition to generic rewrite tests.
 
-## SonicMoE provider adapter
+## Integrating an operator library
 
-ShadowSpill's optional MLOps adapter supplies
-`shadowspill.integrations.mlops.sonicmoe_gradient_destination_rules()` and
-`sonicmoe_chunk_rules()`. These translate standalone `mlops.contracts` records
-into the same generic build APIs. Operator semantics remain in MLOps; the adapter
-and compiler integration tests live here. No rules are selected by model family.
+The operation library owns its accumulating overload, supported layouts/dtypes
+and any eligibility checks. A caller-side adapter constructs
+`GradientDestinationRule` objects from those facts. It may also supply
+`OperatorRule` output axes and reductions for the fresh and accumulating
+overloads when the caller selects chunked execution.
 
-```python
-from shadowspill.integrations.mlops import (
-    sonicmoe_chunk_rules,
-    sonicmoe_gradient_destination_rules,
-)
-
-gradient_rules = sonicmoe_gradient_destination_rules()
-chunk_rules = (*other_operator_rules, *sonicmoe_chunk_rules())
-# Pass gradient_rules as gradient_destination_rules to the builder.
-# Use chunk_rules in the AxisChunks values returned by the chunk policy.
-```
-
-The model must already select the SonicMoE LoRA provider. The adapter supports
-complete aligned same-dtype destinations, one literal scale and canonical up-B
-layout. Narrow accumulation honors `fuse_narrow_gradient_accumulation`; casts
-through a narrower intermediate, cropped ranks and FP8 containers keep the
-ordinary accumulation path. Its chunk contracts keep sorted rows and routing
-metadata local to a chunk and describe additive parameter reductions. They do
-not choose checkpoint cuts, execution regions, retention or chunk sizes, or
-certify expert-parallel communication as independent across an axis.
-
-The factories run at build time without initializing the accelerator. Saved
-execution loads the versioned provider overloads and does not call their mappers. The
-provider must still be installed and compatible with the saved artifact. This
-integration does not package external Triton/CuTe binaries or guarantee no JIT
-at first invocation. See the installed MLOps `docs/SHADOWSPILL.md` for its
-precision, layout and qualification scope.
+The compiler checks destination ownership, rewrites the graph and profiles the
+complete task. It does not select rules by library or model name, infer an
+opaque kernel's internal allocation behavior, or change dispatch. Keep examples
+for individual libraries in their integration guides. The generic
+[operator integration guide](../python/operator-integration.md) explains the
+required declarations and validation.

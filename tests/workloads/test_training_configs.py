@@ -14,8 +14,8 @@ import torch
 from shadowspill.artifacts.tensors import TensorChunk
 from shadowspill.training import config
 from shadowspill.training._hyperparams import set_hyperparams
-from shadowspill.training._model import build_optimizer
 from workloads.recipes.text.experiment.hyperparameters import scheduled_arguments
+from workloads.recipes.text.optimizer import build_optimizer
 
 CONFIGS = sorted(
     (Path(__file__).resolve().parents[2] / "training/configs").glob("*.json")

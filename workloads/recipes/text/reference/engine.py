@@ -10,10 +10,11 @@ from shadowspill.pytorch.accelerator import resolve_device
 from shadowspill.training import config
 from shadowspill.training._hyperparams import set_hyperparams
 from shadowspill.training._inputs import ScaledObjective, on_device
-from shadowspill.training._model import build_optimizer, initialize_model, model_mode
+from shadowspill.training._model import initialize_model, model_mode
 from shadowspill.training._weights import Weights
 from shadowspill.training.observations import StepObservations, parameter_norms
 from shadowspill.training.results import StepResult
+from workloads.recipes.text.optimizer import build_optimizer
 
 from ..experiment.hyperparameters import scheduled_arguments
 

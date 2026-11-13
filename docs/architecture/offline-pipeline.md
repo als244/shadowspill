@@ -510,12 +510,13 @@ owns the generic capture/export/load/activate lifecycle, artifact integrity,
 profile compatibility and physical memory admission. Ordinary calls outside a
 provider's activation retain their ordinary behavior.
 
-MLOps supplies its Sonic/Quack adapter in the MLOps package. The maintained MLOps
-baseline and text benchmark factories, and qualification builds, explicitly
-supply its preparation descriptions. Direct build callers must supply the
-appropriate provider description themselves. Provider-specific tests belong
-with that adapter; the engine tests the generic lifecycle and cross-package
-saved training. Historical Programs whose `triton_choices` field contains
+Callers explicitly supply the preparation descriptions for the operator
+implementations their model uses; the builder does not discover libraries or
+choose adapters by model name. Kernel export/load tests belong with the provider,
+and compiler integration tests belong with the adapter. Core tests the generic
+lifecycle and saved training through these public interfaces.
+
+Historical Programs whose `triton_choices` field contains
 external-provider records must be rebuilt and reprofiled with explicit
 preparation; the frontend refuses these mixed records instead of ignoring them.
 Pure Triton records retain their existing format.

@@ -530,7 +530,7 @@ win:
 Step 4 answers a miss in the currency it arrives in. An extent that overruns
 by a few tens of megabytes is a handful of leases overlapping, while capacity
 given back is charged to every boundary and paid in residency the reducer
-cuts. [PressureFit](pressurefit.md#place-measuring-whether-the-layout-fits)
+cuts. [PressureFit](pressurefit.md#place--measuring-whether-the-layout-fits)
 specifies which fetch moves and what bounds the moving.
 
 Capacity is therefore a property of a plan, not of the search: two plans can

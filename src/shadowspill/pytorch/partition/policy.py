@@ -25,8 +25,8 @@ class PartitionPolicy(Protocol):
     persisted request identity. The frontend derives inputs, outputs, mutations,
     aliases and backward graphs; policies do not declare memory or placement.
 
-    See docs/architecture/partitioning.md for the full contract and the GLM
-    workload's partition.py for a model-scale example.
+    See docs/architecture/partitioning.md for the requirements and
+    docs/examples/custom-partitioning.md for a standalone example.
     """
 
     def assign_stages(

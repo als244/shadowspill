@@ -42,7 +42,15 @@ phases (calibrate, plan, warm, measure), and the verdict each gate reaches.
 `workloads/` supplies optional model and data recipes; qualification budgets and
 acceptance rules live under `qualification/`. Build accepts ordinary user models
 and call examples. `shadowspill.training.Trainer` drives an Executor from saved
-Plans and iterable inputs, without importing recipes.
+Plans and iterable inputs, without importing recipes. Recipe-specific optimizer
+defaults live beside the recipes, not in the installed training implementation.
+
+`shadowspill.integrations` contains optional, caller-selected library adapters.
+Operator libraries own their output-axis, reduction, mutation and layout facts;
+adapters translate those facts into generic build settings. Core compilation,
+planning and execution do not discover libraries or select policies by their
+names. Architecture documentation describes these generic mechanisms; setup and
+examples for a particular library belong in its integration guide.
 
 `orchestration/` owns repository-only process infrastructure used by recipes,
 benchmarks and developer tools. It takes explicit worker counts and rank maps,
@@ -76,6 +84,7 @@ src/shadowspill/
 │       └── training/      boundaries, all backward forms and optimizer templates
 ├── communication/         calibration and reusable communication information
 │   └── binding/           resolve logical groups into calibration participants
+├── integrations/          explicit adapters from optional libraries to generic build APIs
 ├── execution/             saved-plan workers, initialization and bounded tensor export
 │   ├── recording/         opt-in task/transfer recording for Executor
 │   ├── distributed/       collective and shard-storage execution bindings

@@ -10,7 +10,7 @@ if TYPE_CHECKING:
     from shadowspill.pytorch.capture.artifacts import TensorGeometry
 
 
-def _name(value: str | None, label: str, *, optional: bool = False) -> None:
+def _validate_name(value: str | None, label: str, *, optional: bool = False) -> None:
     if value is None and optional:
         return
     if not isinstance(value, str) or not value.strip():
@@ -19,10 +19,10 @@ def _name(value: str | None, label: str, *, optional: bool = False) -> None:
 
 @dataclass(frozen=True, slots=True)
 class ReadonlyOperator:
-    """Versioned assertion of deterministic readonly opaque execution.
+    """Declare that an opaque operator is deterministic and only reads its inputs.
 
-    This cannot override dispatcher writes, RNG/effect registrations, or an
-    unknown alias-return contract. It certifies effects, not axis independence,
+    This cannot override dispatcher writes, RNG/effect registrations, or
+    unknown output aliases. This describes effects, not axis independence,
     computational cost or physical memory use.
     """
 
@@ -30,13 +30,13 @@ class ReadonlyOperator:
     version: str
 
     def __post_init__(self) -> None:
-        _name(self.target, "readonly operator target")
-        _name(self.version, "readonly operator version")
+        _validate_name(self.target, "readonly operator target")
+        _validate_name(self.version, "readonly operator version")
 
 
 @dataclass(frozen=True, slots=True)
 class LayoutIndependentOperator:
-    """Versioned value semantics for relayout of opaque input arguments.
+    """Identify inputs whose values can be copied into a different storage layout.
 
     ``inputs`` contains dispatcher argument indices, including keyword-only
     arguments and entire tensor lists. Replacing those inputs by strided tensors
@@ -46,9 +46,9 @@ class LayoutIndependentOperator:
     Output layout may change and is checked transitively. This does not certify
     effects, numerical bitwise invariance, axis independence or memory use.
 
-    A separate readonly contract is required. Mutation/RNG and unqualified ATen
-    overloads cannot be overridden. These contracts are resolved during build,
-    never during execution.
+    Also supply a ReadonlyOperator for this target. Mutation/RNG and unqualified
+    ATen overloads cannot be overridden. These declarations are resolved during
+    build, never during execution.
     """
 
     target: str
@@ -56,8 +56,8 @@ class LayoutIndependentOperator:
     inputs: tuple[int, ...]
 
     def __post_init__(self) -> None:
-        _name(self.target, "layout operator target")
-        _name(self.version, "layout operator version")
+        _validate_name(self.target, "layout operator target")
+        _validate_name(self.version, "layout operator version")
         if (
             not isinstance(self.inputs, tuple)
             or not self.inputs
@@ -115,11 +115,14 @@ class LifetimeRule:
     module_pattern: str | None = field(default=None, kw_only=True)
 
     def __post_init__(self) -> None:
-        _name(self.target, "lifetime rule target")
-        _name(self.source_target, "source target", optional=True)
-        _name(self.module_pattern, "module pattern", optional=True)
+        _validate_name(self.target, "lifetime rule target")
+        _validate_name(self.source_target, "source target", optional=True)
+        _validate_name(self.module_pattern, "module pattern", optional=True)
         selection = LifetimeSelection(
-            self.move, self.barrier, self.compact, self.replay
+            move=self.move,
+            barrier=self.barrier,
+            compact=self.compact,
+            replay=self.replay,
         )
         if all(
             value is None
@@ -165,7 +168,7 @@ class ExecutionLifetimes:
     Resolve rules and ``select`` at build time, before gradient destinations
     and execution regions are formed. The callback runs once per operation in
     that occurrence and returns immutable choices or ``None``. Only resolved
-    choices, effects contracts and scheduling decisions enter the executable
+    choices, operator effects and scheduling decisions enter the executable
     identity; callbacks and source module names never do. Unknown effects are
     fences, and protected storage sets may not increase. Compilation/profiling
     measures the final composition; ordinary planning owns physical admission.
@@ -183,7 +186,7 @@ class ExecutionLifetimes:
     producer unless explicitly excluded. Copies are shared within each consumer
     region; regions containing barriers never receive them. Changed dependency
     versions, externally observed/written outputs and gradient conversions are
-    protected. Value/layout contracts also guard changed alias relationships.
+    protected. Input-layout declarations also guard changed alias relationships.
     Expensive work is duplicated only if explicitly selected, and the final
     measured composition includes its cost. ``move=False`` does not pin a view
     selected for compaction preparation; ``barrier=True`` pins an operation.

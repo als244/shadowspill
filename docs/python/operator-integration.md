@@ -50,7 +50,7 @@ axes and chunk size by returning `AxisChunks`. Providers supply semantic facts;
 workloads choose where to use them. Keep reusable provider facts independent of
 any execution engine. Put the adapter that constructs ShadowSpill rules in this
 repository or the caller's integration package. For example,
-[`shadowspill.integrations.mlops`](mlops.md) converts standalone `mlops.contracts`
+[`shadowspill.integrations.mlops`](mlops.md) converts standalone `mlops.operator_metadata`
 records without duplicating their operator semantics. The engine does not
 discover libraries or select policies by architecture name.
 
@@ -104,7 +104,8 @@ Suppose a provider exposes `affine_fwd(x, weight, bias) -> y`, with
 features and the other dimensions contain independent positions. Weight and
 bias are shared; their backward outputs sum over those positions.
 
-The provider can publish this factory without creating any kernels or tensors:
+The caller-side integration can construct these rules without creating kernels
+or tensors. The operation library itself need not import ShadowSpill:
 
 ```python
 def affine_chunk_rules():
@@ -161,14 +162,14 @@ and [graph-pair policies](api/frontend.md#graph-pair-policies).
 An additive output declaration permits summing contributions; it does not prove
 the provider can write directly into an existing gradient. Ordinary accumulation
 may still allocate a contribution and add it in place. To fuse its production,
-provide the separate [gradient-destination contract](../architecture/custom-gradient-destinations.md).
+provide the separate [gradient-destination rules](../architecture/custom-gradient-destinations.md).
 The first contribution creates the buffer; subsequent chunks, regions and
 microbatches can accumulate into it. Preserve the declared precision and
 mutation/alias behavior of the replacement overload.
 
 Likewise, an axis rule does not authorize scheduling an opaque operation earlier,
 replaying it an extra time, or compacting its inputs. Those permissions belong to
-the separate [execution-lifetime contracts](api/frontend.md#execution-lifetimes).
+the separate [execution-lifetime controls](api/frontend.md#execution-lifetimes).
 
 ## How the declarations enter build, profile, plan and execute
 

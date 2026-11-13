@@ -147,11 +147,9 @@ requires building different Programs. The runner does not recognize architecture
 names or substitute a model-specific policy.
 
 The [custom partitioning example](../examples/custom-partitioning.md) shows a
-small standalone policy. A model-scale [workload
-policy](../../workloads/models/glm53_flash/README.md#partitioning) is optional
-and kept beside its model: it bounds each decoder layer and vision block. No
-model's condition belongs in the planner, simulator, runtime, or MLOps
-operators.
+small standalone policy. Larger workload policies belong beside their models;
+for example, they can bound each decoder layer and vision block. Model-specific
+conditions do not belong in the planner, simulator, runtime or operator kernels.
 
 See also [phase APIs](offline-pipeline.md),
 [graph-pair construction](graph-pair-construction.md), and

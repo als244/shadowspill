@@ -9,8 +9,8 @@ import torch
 from shadowspill import Parallelism, build_forward, build_step
 from shadowspill.training import config
 from shadowspill.training._inputs import ScaledObjective
-from shadowspill.training._model import build_optimizer
 from workloads.recipes.phases import settings
+from workloads.recipes.text.optimizer import build_optimizer
 
 from .group import rank_options, ranks
 from .hyperparameters import scheduled_arguments

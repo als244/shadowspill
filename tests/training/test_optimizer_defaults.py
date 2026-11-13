@@ -6,9 +6,9 @@ import pytest
 import torch
 from torch import nn
 
-from shadowspill.training._model import build_optimizer
 from workloads.numerical import build_case
 from workloads.precision import TrainingDtypes
+from workloads.recipes.text.optimizer import build_optimizer
 from workloads.recipes.text.precision import Precision
 
 

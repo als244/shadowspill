@@ -1,9 +1,22 @@
-# ShadowSpill integration
+# MLOps integration
 
-`shadowspill.integrations.mlops` supplies explicit provider contracts for
-ShadowSpill's generic build controls. The integration belongs to this repository. MLOps exposes standalone declarations through `mlops.contracts`; this adapter
-converts them to ShadowSpill build inputs. Neither declaration nor conversion
-initializes CUDA, selects a model, or installs a process-wide policy.
+`shadowspill.integrations.mlops` converts MLOps operator metadata into
+ShadowSpill build settings. It runs during build configuration and does no
+model computation. MLOps exposes its operator descriptions through
+`mlops.operator_metadata`; the adapter and compiler integration tests live in
+this repository.
+
+| Adapter helper | What it tells the compiler |
+| --- | --- |
+| `operator_chunk_rules`, `sonicmoe_chunk_rules`, `mhc_chunk_rules` | Which outputs follow a sliced input, stay local to a chunk, or sum across chunks |
+| `sonicmoe_gradient_destination_rules` | Which backward outputs can be produced directly into an existing gradient buffer |
+| `fla_execution_lifetimes` | Which operators only read their inputs, and which input positions accept different strides/backing storage |
+| `sonicmoe_preparation`, `operator_preparations` | Which provider factories save and load selected external kernels |
+
+These helpers do not select model dispatch, checkpoint boundaries, chunk sizes,
+retention or spill placement. They do not initialize CUDA. The generic
+[operator integration guide](operator-integration.md) describes the same build
+APIs for any operation library.
 
 ```python
 from shadowspill.integrations.mlops import (
@@ -38,7 +51,7 @@ destination. A single backward call handles all selected parameter outputs,
 using one GEMM per product with `C` and `D` referring to that destination. It
 does not create a separate product tensor and then add it. Empty experts preserve
 the prior contents. Activation and routing gradients and other unconsumed outputs
-retain their ordinary contracts.
+retain their ordinary values.
 
 Version 1 supports complete aligned contiguous FP32, BF16 or FP16 destinations
 at the original gradient dtype, one finite literal scale, and canonical up-B
@@ -51,7 +64,7 @@ FP8 base containers also keep the ordinary path; casts are never removed merely
 to enable fusion. One unsupported output does not prevent another eligible
 output of the same backward from using its destination.
 
-The dtype list describes the destination contract, not an expanded guarantee
+The dtype list describes supported gradient writes, not an expanded guarantee
 about every Sonic kernel or end-to-end training dtype. Actual BF16-factor
 training and two-rank data parallelism have dedicated integration coverage;
 FP16 epilogue coverage alone is not FP16 model qualification.
@@ -60,12 +73,10 @@ FP16 epilogue coverage alone is not FP16 model qualification.
 
 `operator_chunk_rules(batch_size=1)` supplies the common normalization, SwiGLU,
 rotary, gated-norm, basic mHC and builtin LoRA routing/dispatch/grouped-linear
-axis/reduction contracts. These declarations live beside the provider, rather
+output-axis and reduction descriptions. These declarations live beside the provider, rather
 than in model code. The batch factor describes flattened batch/position layouts;
 it does not choose an independent axis or certify arbitrary feature splitting.
-Pass the same batch geometry as the enclosing region. The factory's operator
-names, semantic versions and rules are unchanged by the ownership move.
-
+Pass the same batch geometry as the enclosing region.
 Combine those rules with the explicit SonicMoE and fused-mHC bundles when used.
 Models still express full tensors; ShadowSpill generates execution chunk loops.
 The workload chooses boundaries, domains, chunk sizes and retention policies.
@@ -93,16 +104,16 @@ or spill residency. They do not certify expert-parallel collectives or arbitrary
 provider effects as independent across an axis.
 
 `sonicmoe_chunk_rules(compute_precision="fp8_block")` explicitly selects the
-frozen block-FP8 expert contract, with BF16 activations/LoRA factors. It returns
+frozen block-FP8 expert rules, with BF16 activations/LoRA factors. It returns
 five rules for the original operators, leaving the FP8 data/scales shared.
 Activation quantization reduces features within each row, so token splitting
-preserves its scaling domain. The FP8 contract has a distinct executable
+preserves its scaling domain. The FP8 rule set has a distinct executable
 identity and excludes destination fusion, trainable base weights and
 `fp8_current`; ordinary in-place addition of gradient contributions remains.
 Full/tail chunks, arbitrary VJPs, rank32 factors and empty experts have direct
 H100 comparisons. Full-model saved execution remains a separate qualification.
 
-`mhc_chunk_rules(batch_size=1)` supplies token contracts for fused DeepGEMM
+`mhc_chunk_rules(batch_size=1)` supplies token-axis descriptions for fused DeepGEMM
 preprocessing and TileKernels postprocessing. Pre expects packed
 `[batch * sequence, 4, hidden]` streams; every invocation including tails needs
 32-token/128-hidden alignment. Fake capture checks this geometry too. Shared
@@ -113,7 +124,7 @@ feature dimensions.
 ## FLA value lifetimes
 
 `fla_execution_lifetimes(rules=(), select=None)` supplies readonly and input-layout
-contracts for the explicit FLA convolution, L2/gated normalization and Gated
+descriptions for the explicit FLA convolution, L2/gated normalization and Gated
 DeltaNet operations. The factory makes no scheduling choices on its own:
 
 ```python
@@ -140,7 +151,7 @@ Only the listed value operands have layout permission. In particular, L2
 backward accepts relayout of its incoming gradient, but its saved normalized
 output and statistics retain their original layouts. Weights, sequence metadata,
 other providers and ordered mutations are not given new permissions. The
-factory is CPU-only and does not import FLA kernels. Resolved contracts and
+factory is CPU-only and does not import FLA kernels. Resolved descriptions and
 choices enter executable identities; rebuild/profile changed policies before
 planning and saved execution.
 
@@ -202,13 +213,13 @@ and plans its own selected implementations. No precision settings, routing
 choices, retention decisions or gradient arithmetic change.
 
 The initial adapter covers the BF16 Sonic path. FP8, expert parallelism and
-unrelated attention providers require their own preparation contracts. A small
+unrelated attention providers require their own preparation implementations. A small
 real BF16 saved-Plan fixture has independent gradient/checkpoint coverage;
 prepared full-model, other-dtype and distributed qualification remain separate.
 The provider mechanisms and lifecycle limits are described in
 [operator preparation](../operator-preparation.md).
 
-CPU tests in `tests/workloads/test_mlops_contracts.py` exercise actual custom-op capture,
+CPU tests in `tests/workloads/test_mlops_integration.py` exercise actual custom-op capture,
 grouped outputs, dtype permissions, canonical layouts and conservative fallbacks.
 `test_sonicmoe_gradient_destinations.py` covers schemas, functionalization and
 ownership. `test_sonicmoe_gradient_destinations_gpu.py` checks real GEMM products,
@@ -218,11 +229,9 @@ cover full destinations in both directions and FP32/BF16, plus pairwise partial
 LoRA destinations; they check each product runs once and unconsumed outputs
 remain valid. These GPU checks follow the provider's supported compute
 capabilities (9.x/10.x); they skip RTX 5090/SM120, where normal dispatch selects
-another provider. CPU capture and contract checks remain applicable there.
-The optional engine tests require a ShadowSpill version exporting the destination
-and arbitrary-axis chunking APIs.
+another provider. CPU capture and metadata checks remain applicable there.
 
-For changes to prepared kernels or these build contracts, also run the
+For changes to prepared kernels or these build settings, also run the
 maintained real-provider regression from the ShadowSpill checkout, with this
 MLOps checkout and the pinned SonicMoE/Quack extras on its import path, on a
 GPU supported by the SonicMoE provider:
@@ -257,7 +266,9 @@ preparations must be rebuilt and reprofiled. Saved v2 tasks own both choices and
 binaries, including host-cache shortcuts; loader validation refuses missing or
 incompatible state before execution can select another implementation.
 
-The decomposed router also declares its own checkpoint default on the public
+## Retaining router choices
+
+The decomposed router declares its own checkpoint default on the public
 `torch.ops.mlops.lora_route.default` overload through the static boolean
 `retain_for_backward` annotation. This imports no ShadowSpill code.
 Both variants preserve backward-required expert IDs and weights by default;

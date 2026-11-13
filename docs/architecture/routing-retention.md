@@ -2,7 +2,7 @@
 
 Both graph-pair variants retain backward-required outputs of `aten.topk.default`
 and operators whose providers declare the saved-state default described below.
-MLOps declares it for `mlops.lora_route.default`: the selected expert IDs and
+A decomposed router can use this to preserve its selected expert IDs and
 routing weights. The default applies even when a
 variant uses `RetentionPolicy(default="recompute")`, and when its explicit
 rules select only dense-attention retention.
@@ -16,10 +16,10 @@ example, a routing derivative may also need regenerated logits for its softmax
 or sigmoid normalization. Retaining choices does not freeze all intermediate
 values or make a whole training step bitwise deterministic.
 
-These defaults describe operator contracts, independently of model architecture.
+These defaults depend on operator behavior, independently of model architecture.
 They cover architectures using these graph-visible operators. A provider that
 hides routing inside an opaque whole-MoE operation needs to expose a separate
-routing operation or an appropriate saved-state contract. ShadowSpill cannot
+routing operation whose outputs expose that saved state. ShadowSpill cannot
 infer internal routing tensors from that opaque call. An additional visible
 provider can declare its default or use an explicit `RetentionRule`.
 
@@ -44,8 +44,8 @@ It cannot reveal choices hidden inside a whole-MoE kernel.
 The resolved declaration is included in capture identity and in the resulting
 saved cut. Explicit user rules and model checkpoint annotations keep their
 existing precedence. Saved execution does not query the declaration again.
-MLOps owns its router declaration; core does not recognize its namespace or
-router name. Use matching provider sources when rebuilding older workloads.
+The provider owns its declaration; core does not recognize provider namespaces
+or router names. Use matching provider sources when rebuilding workloads.
 
 ## Advanced overrides
 
@@ -59,7 +59,7 @@ from shadowspill.pytorch import GraphPairPolicy, RetentionPolicy, RetentionRule
 policy = GraphPairPolicy(
     recompute=RetentionPolicy(
         default="recompute",
-        rules=(RetentionRule("mlops.lora_route.default", "recompute"),),
+        rules=(RetentionRule("my_provider.route.default", "recompute"),),
     ),
 )
 ```
@@ -74,7 +74,7 @@ architecture-specific chunk setting for routing retention.
 Saved routing tensors are ordinary saved activations. PressureFit chooses
 their residency and spill placement. They can use the pinned host pool, and
 they are not forced to stay on the GPU. Chunking slices the saved tensors using
-their established axis contracts; expert-local permutations and offsets can be
+their declared output axes; expert-local permutations and offsets can be
 regenerated from the saved IDs.
 
 For batch one and top-k eight, an int32 ID tensor plus an FP32 weight tensor
