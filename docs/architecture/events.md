@@ -47,8 +47,9 @@ it reserved.
 Each stream the runtime records completions on has a FIFO of leases. The
 worker queries only the head of each FIFO with `query_event`, follows an
 already-complete head immediately, and drains immediately completed
-successors, so the number of driver queries stays close to the number of
-completions. A completed lease lets whatever it protects move on -- an object
+successors. An incomplete head can be polled repeatedly; query counts can
+therefore greatly exceed completion counts. Polling readiness does not enqueue
+additional stream waits. A completed lease lets whatever it protects move on -- an object
 residency, a task allocation, or a retiring range -- and returns to the pool
 with its event.
 

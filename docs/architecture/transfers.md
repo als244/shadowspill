@@ -24,7 +24,7 @@ it must not disturb.
 
 What matters here is what a route holds: a queue, a stream, and the lane
 resolved from its two pools' kinds at create. The worker dispatches every
-transfer through that lane and makes no backend call of its own. The route's
+copy through that lane. Fixed-range reuse waits use backend events. The route's
 stream is where the events that order a transfer against compute are recorded,
 and the runtime calling thread, including lane methods it invokes, is its only
 writer. Independent I/O workers never enqueue device work there.
@@ -70,6 +70,13 @@ stays FIFO. The worker loop itself is described in
 route exactly as an eviction does, in the same order and against the same
 window; only what its completion publishes differs: the spill copy becomes
 current and the execution copy stays.
+
+The worker checks whether a fetch's fixed-range reuse dependencies have been
+published while the fetch is queued. It submits their stream waits only after
+claiming the fetch's queue turn, before dispatching its copy. Polling a fetch
+behind a blocked head therefore adds no device waits and cannot put that
+fetch's dependencies ahead of earlier transfers. Event lookup releases the
+object lock because a predecessor can be an eviction of that same object.
 
 Each queue serves two orders. Transfers the plan scheduled are dispatched in
 the order their boundaries triggered them. Transfers the plan did not

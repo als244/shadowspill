@@ -252,24 +252,6 @@ static int handle_transfer_locked(
     pthread_mutex_unlock(&object->lock);
     const int dependency_ready =
         shadowspill_action_destination_ready(action);
-    /*
-     * Insert fixed-range reuse waits without owning the current
-     * object.  A later fetch commonly reuses the range freed by
-     * an earlier eviction of this same object; resolving that
-     * predecessor therefore locks this exact object internally.
-     */
-    const ShadowSpillStatus dependency_wait_status =
-        dependency_ready > 0 &&
-            action->kind == SHADOWSPILL_RUNTIME_FETCH
-        ? shadowspill_fixed_layout_insert_dependency_waits(
-              action->plan_owner,
-              SHADOWSPILL_FIXED_ACTION_DESTINATION,
-              action->task_id,
-              action->action_ordinal,
-              action->activation_generation,
-              action->route->stream
-          )
-        : SHADOWSPILL_STATUS_OK;
     pthread_mutex_lock(&object->lock);
     if (dependency_ready < 0) {
         shadowspill_action_latch_failure(
@@ -277,19 +259,6 @@ static int handle_transfer_locked(
             action,
             SHADOWSPILL_STATUS_PLAN_VIOLATION,
             SHADOWSPILL_FAILURE_REASON_OBJECT_STATE_REJECTED,
-            object->object_id,
-            object->allocation_id,
-            object->size_bytes
-        );
-        pthread_mutex_unlock(&object->lock);
-        return -1;
-    }
-    if (dependency_wait_status != SHADOWSPILL_STATUS_OK) {
-        shadowspill_action_latch_failure(
-            runtime,
-            action,
-            dependency_wait_status,
-            SHADOWSPILL_FAILURE_REASON_BACKEND_CALL_REJECTED,
             object->object_id,
             object->allocation_id,
             object->size_bytes
@@ -333,6 +302,40 @@ static int handle_transfer_locked(
     if (!shadowspill_transfer_queue_claim(queue, action)) {
         pthread_mutex_unlock(&object->lock);
         return 0;
+    }
+    if (action->kind == SHADOWSPILL_RUNTIME_FETCH) {
+        /*
+         * Only enqueue reuse waits once this fetch owns its queue turn.
+         * A ready fetch behind a blocked head can be polled many times;
+         * those polls must neither flood the stream with duplicate waits
+         * nor place this fetch's dependencies before earlier transfers.
+         * Drop the object lock: a predecessor may evict this same object,
+         * and resolving its event takes that lock internally.
+         */
+        pthread_mutex_unlock(&object->lock);
+        const ShadowSpillStatus dependency_wait_status =
+            shadowspill_fixed_layout_insert_dependency_waits(
+                action->plan_owner,
+                SHADOWSPILL_FIXED_ACTION_DESTINATION,
+                action->task_id,
+                action->action_ordinal,
+                action->activation_generation,
+                action->route->stream
+            );
+        pthread_mutex_lock(&object->lock);
+        if (dependency_wait_status != SHADOWSPILL_STATUS_OK) {
+            shadowspill_action_latch_failure(
+                runtime,
+                action,
+                dependency_wait_status,
+                SHADOWSPILL_FAILURE_REASON_BACKEND_CALL_REJECTED,
+                object->object_id,
+                object->allocation_id,
+                object->size_bytes
+            );
+            pthread_mutex_unlock(&object->lock);
+            return -1;
+        }
     }
     int dispatched = action->kind == SHADOWSPILL_RUNTIME_FETCH
         ? shadowspill_action_dispatch_fetch_locked(runtime, action)

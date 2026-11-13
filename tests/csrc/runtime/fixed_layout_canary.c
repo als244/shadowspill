@@ -578,6 +578,110 @@ static int eviction_completion_orders_fixed_reuse(void) {
     return failed ? -1 : 0;
 }
 
+/*
+ * Two fetches share a FIFO. The first awaits an eviction whose trigger is
+ * still running; the second already has a published dependency. Polling the
+ * second while it cannot claim the queue must not enqueue that wait again.
+ */
+static int queued_fetch_waits_only_when_dispatched(void) {
+    ShadowSpillBackend mock = {0};
+    const ShadowSpillMockBackendConfig config = {0};
+    if (shadowspill_mock_backend_create(&config, &mock) != 0) return -1;
+    ShadowSpillRuntime *runtime = NULL;
+    ShadowSpillBackendStream compute = 0U;
+    int failed = shadowspill_test_create_runtime(
+        &mock, 128U, 128U, 16U, 1000U, &runtime
+    ) != SHADOWSPILL_STATUS_OK ||
+        mock.create_stream(mock.state, &compute) != 0;
+    const ShadowSpillObjectDescription objects[2] = {
+        {.object_id = 71U, .size_bytes = 64U, .retain_spill_copy = 1U,
+         .initial_pool_id = 1U, .initially_resident = 1U},
+        {.object_id = 72U, .size_bytes = 64U, .retain_spill_copy = 1U,
+         .initial_pool_id = 1U, .initially_resident = 1U},
+    };
+    failed = failed ||
+        shadowspill_register_object(runtime, &objects[0]) != SHADOWSPILL_STATUS_OK ||
+        shadowspill_register_object(runtime, &objects[1]) != SHADOWSPILL_STATUS_OK;
+    const ShadowSpillFixedPlacementDescription placements[3] = {
+        {.task_id = 1U, .ordinal = 0U, .object_id = 71U, .offset = 0U,
+         .bytes = 64U, .alignment_bytes = 16U, .kind = SHADOWSPILL_FIXED_ACTION_DESTINATION},
+        {.task_id = 3U, .ordinal = 0U, .object_id = 71U, .offset = 0U,
+         .bytes = 64U, .alignment_bytes = 16U, .kind = SHADOWSPILL_FIXED_ACTION_DESTINATION},
+        {.task_id = 3U, .ordinal = 1U, .object_id = 72U, .offset = 64U,
+         .bytes = 64U, .alignment_bytes = 16U, .kind = SHADOWSPILL_FIXED_ACTION_DESTINATION},
+    };
+    const ShadowSpillFixedDependencyDescription dependencies[2] = {
+        {.predecessor_task_id = 2U, .predecessor_action_ordinal = 0U,
+         .successor_task_id = 3U, .successor_ordinal = 0U,
+         .successor_kind = SHADOWSPILL_FIXED_ACTION_DESTINATION},
+        {.predecessor_task_id = 2U, .predecessor_action_ordinal = SHADOWSPILL_RUNTIME_NO_ID,
+         .successor_task_id = 3U, .successor_ordinal = 1U,
+         .successor_kind = SHADOWSPILL_FIXED_ACTION_DESTINATION},
+    };
+    const ShadowSpillFixedLayoutDescription layout = {
+        .abi_version = SHADOWSPILL_ABI_VERSION, .slice_bytes = 128U,
+        .placements = placements, .placement_count = 3U,
+        .dependencies = dependencies, .dependency_count = 2U,
+    };
+    const ShadowSpillRuntimeAction fetches[2] = {
+        {.object_id = 71U, .kind = SHADOWSPILL_RUNTIME_FETCH},
+        {.object_id = 72U, .kind = SHADOWSPILL_RUNTIME_FETCH},
+    };
+    const ShadowSpillRuntimeAction evict = {
+        .object_id = 71U, .kind = SHADOWSPILL_RUNTIME_EVICT,
+    };
+    const ShadowSpillObjectUpdate update = {.object_id = 71U, .version_delta = 1U};
+    const ShadowSpillRuntimeAction releases[2] = {
+        {.object_id = 71U, .kind = SHADOWSPILL_RUNTIME_RELEASE},
+        {.object_id = 72U, .kind = SHADOWSPILL_RUNTIME_RELEASE},
+    };
+    const ShadowSpillTaskDescription tasks[4] = {
+        {.task_id = 1U, .actions = fetches, .action_count = 1U},
+        {.task_id = 2U, .actions = &evict, .action_count = 1U,
+         .updates = &update, .update_count = 1U},
+        {.task_id = 3U, .actions = fetches, .action_count = 2U},
+        {.task_id = 4U, .actions = releases, .action_count = 2U},
+    };
+    failed = failed || shadowspill_test_admit_fixed_layout(runtime, &layout) != SHADOWSPILL_STATUS_OK;
+    for (uint32_t i = 0U; i < 4U && !failed; ++i) {
+        failed = shadowspill_test_admit_task(runtime, &tasks[i]) != SHADOWSPILL_STATUS_OK;
+    }
+    failed = failed || shadowspill_test_seal_fixed_layout(runtime) != SHADOWSPILL_STATUS_OK;
+    for (uint32_t invocation = 0U; invocation < 2U && !failed; ++invocation) {
+        ShadowSpillTestStatistics before = {0}, after = {0};
+        ShadowSpillObjectSnapshot first = {0}, second = {0};
+        failed = shadowspill_test_before_task(runtime, 1U, compute, NULL, 0U) != SHADOWSPILL_STATUS_OK ||
+            shadowspill_test_after_task(runtime, 1U, compute) != SHADOWSPILL_STATUS_OK ||
+            shadowspill_runtime_wait_idle(runtime) != SHADOWSPILL_STATUS_OK ||
+            shadowspill_test_statistics(runtime, &before) != SHADOWSPILL_STATUS_OK ||
+            shadowspill_test_before_task(runtime, 2U, compute, NULL, 0U) != SHADOWSPILL_STATUS_OK ||
+            shadowspill_mock_enqueue_compute(&mock, compute, 30000000U) != 0 ||
+            shadowspill_test_after_task(runtime, 2U, compute) != SHADOWSPILL_STATUS_OK ||
+            shadowspill_test_before_task(runtime, 3U, compute, NULL, 0U) != SHADOWSPILL_STATUS_OK ||
+            shadowspill_test_after_task(runtime, 3U, compute) != SHADOWSPILL_STATUS_OK ||
+            shadowspill_runtime_wait_idle(runtime) != SHADOWSPILL_STATUS_OK ||
+            shadowspill_object_snapshot(runtime, 71U, &first) != SHADOWSPILL_STATUS_OK ||
+            shadowspill_object_snapshot(runtime, 72U, &second) != SHADOWSPILL_STATUS_OK ||
+            first.residency != SHADOWSPILL_OBJECT_EXECUTION_READY ||
+            second.residency != SHADOWSPILL_OBJECT_EXECUTION_READY ||
+            (uintptr_t)first.execution_pointer + 64U != (uintptr_t)second.execution_pointer ||
+            shadowspill_test_statistics(runtime, &after) != SHADOWSPILL_STATUS_OK;
+        const uint64_t waits = after.runtime.wait_events_inserted - before.runtime.wait_events_inserted;
+        if (!failed && waits > 2U) {
+            fprintf(stderr, "queued fetch inserted %llu waits for two dependencies\n",
+                    (unsigned long long)waits);
+            failed = 1;
+        }
+        failed = failed || shadowspill_test_before_task(runtime, 4U, compute, NULL, 0U) != SHADOWSPILL_STATUS_OK ||
+            shadowspill_test_after_task(runtime, 4U, compute) != SHADOWSPILL_STATUS_OK ||
+            shadowspill_runtime_wait_idle(runtime) != SHADOWSPILL_STATUS_OK;
+    }
+    shadowspill_test_destroy_runtime(runtime);
+    if (compute != 0U) mock.destroy_stream(mock.state, compute);
+    shadowspill_backend_destroy(&mock);
+    return failed ? -1 : 0;
+}
+
 static int eviction_completion_orders_fixed_fetch_reuse(int same_object) {
     ShadowSpillBackend mock = {0};
     const ShadowSpillMockBackendConfig mock_config = {
@@ -1141,6 +1245,10 @@ int main(void) {
     }
     if (eviction_completion_orders_fixed_fetch_reuse(1) != 0) {
         fprintf(stderr, "same-object fixed fetch dependency failed\n");
+        return EXIT_FAILURE;
+    }
+    if (queued_fetch_waits_only_when_dispatched() != 0) {
+        fprintf(stderr, "queued fetch repeated its dependency waits\n");
         return EXIT_FAILURE;
     }
     if (layouts_share_one_slice() != 0) {
