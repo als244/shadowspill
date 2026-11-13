@@ -17,6 +17,8 @@ config = {
     "spill_gib": 96,  # Per rank: allow additional host RAM beyond the eight pools.
     "steps": 100,
     "schedule_steps": 100,
+    "learning_rate": 3e-4,
+    "eval_every": 0,  # Enable with a validation corpus when wanted.
     "checkpoint_every": 10,
 }
 

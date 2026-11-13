@@ -24,6 +24,8 @@ train(model, {
     "microbatch_sizes": [4, 16],
     "execution_gib": 20,
     "spill_gib": 96,
+    "learning_rate": 3e-4,
+    "eval_every": 0,  # Enable when val.bin is available.
 })
 ```
 
