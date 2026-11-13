@@ -62,6 +62,14 @@ The objective controls normalization across examples; Trainer does not infer
 weights from batch size or sequence length. Input trees support arbitrary model
 arguments, not only text tokens.
 
+Before GPU dispatch, Executor validates the call and synchronously stages the
+consumed input storage in each rank's spill pool. CPU byte payloads use a direct
+copy without PyTorch's CPU thread pool; this preserves views and shared-storage
+inputs and does not change global thread settings. Bounds and backend write
+completion remain enforced, including bounded staging for remote and SSD pools.
+This host preparation precedes the GPU invocation timeline used by simulation
+and runtime diagnostics; end-to-end step timing includes it.
+
 `StepResult` holds CPU observations: per-example losses/metrics, update number,
 elapsed seconds, applied hyperparameters and optional reduced metrics. Its `loss`
 property sums the example losses. `Trainer.step` waits for completion. For direct

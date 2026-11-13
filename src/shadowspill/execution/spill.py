@@ -1,5 +1,6 @@
 """Bounded host access to spill leases; backend addresses never escape as tensors."""
 
+import ctypes
 from collections.abc import Iterator, Mapping
 from contextlib import contextmanager
 from typing import cast
@@ -113,13 +114,30 @@ class SpillStorage:
                 yield offset, value.view(dtype)
 
     def copy_from(self, alias: str, value: torch.Tensor) -> None:
+        """Copy a complete payload synchronously through bounded spill access."""
         if (
             value.ndim != 1
             or not value.is_contiguous()
             or value.nbytes != self.sizes[alias]
         ):
             raise ValueError("input storage differs from the declared spill payload")
+        # Input staging passes raw storage bytes. A native byte copy avoids
+        # dispatching PyTorch's CPU thread pool for each small input, while the
+        # chunk context still owns the lease or commits a remote/SSD write.
+        # Typed and device sources retain Tensor.copy_'s conversion semantics.
+        byte_copy = (
+            value.device.type == "cpu"
+            and value.dtype == torch.uint8
+            and not value.is_neg()
+        )
         for offset, destination in self.chunks(
             alias, dtype=value.dtype, read=False, write=True
         ):
-            destination.copy_(value[offset : offset + destination.numel()])
+            if byte_copy:
+                ctypes.memmove(
+                    destination.data_ptr(),
+                    value.data_ptr() + offset,
+                    destination.nbytes,
+                )
+            else:
+                destination.copy_(value[offset : offset + destination.numel()])

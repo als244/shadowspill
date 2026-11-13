@@ -1,5 +1,7 @@
 """Bounded backend I/O keeps layouts, padding and byte representations intact."""
 
+from functools import partial
+
 import pytest
 import torch
 
@@ -73,6 +75,41 @@ def test_chunks_preserve_neighbors_and_abort_unfinished_write():
     for start, length in ((-1, 1), (0, -1), (owner.numel() + 1, 0)):
         with pytest.raises(ValueError, match="outside"):
             list(spill.chunks("a", dtype=owner.dtype, start=start, length=length))
+
+
+@pytest.mark.parametrize("kind", ["bytes", "typed", "negative_view"])
+def test_copy_from_preserves_offsets_and_bounded_backend_writes(kind):
+    dtype = torch.int16 if kind == "typed" else torch.uint8
+    source = torch.arange(29, dtype=dtype)[3:26]
+    if kind == "negative_view":
+        source = source._neg_view()
+    owner = torch.full((31,), 117, dtype=dtype)
+    target = owner[4:27]
+    spill = MemorySpill({"a": target})
+    spill.chunks = partial(spill.chunks, chunk_bytes=7)
+
+    spill.copy_from("a", source)
+
+    torch.testing.assert_close(target, source)
+    assert torch.all(owner[:4] == 117) and torch.all(owner[27:] == 117)
+    assert sum(size for _, _, size, _ in spill.transfers) == source.nbytes
+    assert all(
+        size <= 7 and direction == "write" for _, _, size, direction in spill.transfers
+    )
+
+
+def test_copy_from_rejects_mismatched_storage_before_writing():
+    owner = torch.full((6,), 117, dtype=torch.uint8)
+    spill = MemorySpill({"a": owner})
+    source = torch.arange(12, dtype=owner.dtype)
+    for value in (source, source[:6].reshape(2, 3), source[::2]):
+        with pytest.raises(ValueError, match="declared spill payload"):
+            spill.copy_from("a", value)
+    assert not spill.transfers
+    assert torch.all(owner == 117)
+    empty = MemorySpill({"a": torch.empty(0, dtype=torch.uint8)})
+    empty.copy_from("a", torch.empty(0, dtype=torch.uint8))
+    assert not empty.transfers
 
 
 @pytest.mark.parametrize(
