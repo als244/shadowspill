@@ -127,15 +127,23 @@ def _readers(path: Path) -> list[Path]:
                 for reader in sorted((path.parent / package).glob("*.py"))
             ),
         ]
-        # Phase modules delegate their timing controls to the shared resolver.
-        # Follow that reader only when a phase actually imports it.
-        if any(
-            isinstance(node, ast.ImportFrom)
-            and node.module == "orchestration.profiling"
+        # Follow shared readers only when a recipe actually imports them.
+        imported = {
+            module
             for reader in readers
             for node in ast.walk(ast.parse(reader.read_text(), filename=str(reader)))
-        ):
-            readers.append(ROOT / "orchestration/profiling.py")
+            if isinstance(node, ast.ImportFrom) and node.module
+            for module in (
+                node.module,
+                *(f"{node.module}.{name.name}" for name in node.names),
+            )
+        }
+        for module, relative_path in {
+            "orchestration.profiling": "orchestration/profiling.py",
+            "workloads.recipes.text.catalog": "workloads/recipes/text/catalog.py",
+        }.items():
+            if module in imported:
+                readers.append(ROOT / relative_path)
         return readers
     if path.parent == ROOT / "baselines/moe_layer":
         return list(path.parent.rglob("*.py"))
