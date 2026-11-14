@@ -44,7 +44,7 @@ def distributed_coordination(directory):
     from types import SimpleNamespace
 
     import shadowspill
-    from benchmarking.plan_runner import run
+    from benchmarks.plan_runner import run
 
     rank = int(os.environ["RANK"])
     root = Path(directory)

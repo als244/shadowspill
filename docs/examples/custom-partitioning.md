@@ -127,6 +127,6 @@ lifetime rules control movement and explicitly permitted local replay.
 [`GraphPairPolicy`](../python/api/frontend.md#graph-pair-policies) separately
 controls the SAVE and RECOMPUTE cuts. Retention does not pin a tensor to a device:
 the planner still chooses variants, placement and transfers. Quickstart can
-[search each retention policy's chunk candidates](../../benchmarking/quickstart.md#searching-chunk-and-retention-policies),
+[search each retention policy's chunk candidates](../../benchmarks/quickstart.md#searching-chunk-and-retention-policies),
 profile every resulting Program, and choose the admitted Plan with the lowest
 simulated time across the candidates.

@@ -7,9 +7,9 @@ from pathlib import Path
 
 import pytest
 
-from baselines import trace
-from baselines.common import write_json
-from baselines.engines.fsdp2.settings import Settings
+from benchmarks.baselines import trace
+from benchmarks.baselines.common import write_json
+from benchmarks.baselines.engines.fsdp2.settings import Settings
 
 TINY = {
     "model": "llama3-tiny",
@@ -50,7 +50,7 @@ def test_the_case_runs_as_its_sweep_ran_it_under_nsys(experiment):
     assert f"--output={output / 'trace'}" in command
     assert "--capture-range=cudaProfilerApi" in command
     assert "--gpu-metrics-devices=all" in command
-    launched = command[command.index("baselines.common.launch") - 2 :]
+    launched = command[command.index("benchmarks.baselines.common.launch") - 2 :]
     assert launched[launched.index("--python") + 1] == "/opt/py/bin/python"
     assert "--nsys-capture" in launched
     assert launched[launched.index("--steps") + 1] == "2"
@@ -90,7 +90,9 @@ def test_the_options_reach_nsys(experiment, tmp_path):
 
 
 def test_a_trace_reuses_the_cases_saved_preparation(tmp_path):
-    from baselines.engines.shadowspill.settings import Settings as ShadowSpillSettings
+    from benchmarks.baselines.engines.shadowspill.settings import (
+        Settings as ShadowSpillSettings,
+    )
 
     sweep = tmp_path / "sweeps" / "shadowspill"
     case = sweep / "cases" / "ex12__abcdef12"
@@ -105,7 +107,13 @@ def test_a_trace_reuses_the_cases_saved_preparation(tmp_path):
     )
     (case / "command.txt").write_text(
         shlex.join(
-            ["python", "-m", "baselines.common.launch", "--prepared", str(artifact)]
+            [
+                "python",
+                "-m",
+                "benchmarks.baselines.common.launch",
+                "--prepared",
+                str(artifact),
+            ]
         )
         + "\n"
     )

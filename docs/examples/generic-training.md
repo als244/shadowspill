@@ -4,10 +4,10 @@ This example trains the repository's Llama-3.2-1B decoder from random weights on
 next-token prediction. It uses real tokenized text, a summed cross-entropy loss
 normalized over the update, and AdamW with FP32 gradients/master weights.
 For an end-to-end call that also searches candidates, use the
-[commented Python runner](../../packages/workloads/src/shadowspill_workloads/recipes/text/example.py). The separate
+[commented Python runner](../../examples/train_text.py). The separate
 phases below show where a custom model, objective and data source enter.
 
-Prepare a corpus with the model's tokenizer using the [data guide](../../packages/workloads/src/shadowspill_workloads/recipes/text/data/README.md).
+Prepare a corpus with the model's tokenizer using the [data guide](../../packages/workloads/src/shadowspill_workloads/inputs/text/README.md).
 It supplies `train.bin`, `val.bin` and `meta.json`. Use paths and memory budgets
 appropriate to your machine. A smaller catalog preset is useful for pipeline
 checks, but needs a corpus whose token IDs fit its vocabulary.
@@ -25,7 +25,7 @@ from mlops.dispatch import set_weight_gradient_dtype
 from mlops.optim import AdamW
 from shadowspill import build_step, measure_program, apply_profiles, measure_communication
 from shadowspill_workloads.models.catalog import build_on_meta
-from shadowspill_workloads.recipes.text.data.calls import Inputs
+from shadowspill_workloads.inputs.text.calls import Inputs
 
 settings = {
     "model": "llama3-1b",
@@ -96,7 +96,7 @@ import json
 from pathlib import Path
 
 from shadowspill import Plan, Trainer
-from shadowspill_workloads.recipes.text.data.calls import Inputs
+from shadowspill_workloads.inputs.text.calls import Inputs
 from shadowspill_workloads.recipes.text.initialization import from_catalog
 
 settings = json.loads(Path("inputs.json").read_text())

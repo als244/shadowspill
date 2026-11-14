@@ -107,5 +107,5 @@ Workloads may explicitly reduce globally normalized losses after step completion
 
 See the [training example](../examples/generic-training.md),
 [checkpoint lifecycle](../python/api/training.md#checkpoints),
-[quickstart](../../benchmarking/quickstart.md), and
+[quickstart](../../benchmarks/quickstart.md), and
 [text recipes](../../packages/workloads/src/shadowspill_workloads/README.md).

@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from shadowspill_workloads.recipes.text.data.units import concatenated, unit_ranges
+from shadowspill_workloads.inputs.text.units import concatenated, unit_ranges
 from shadowspill_workloads.recipes.text.experiment.inputs import call_inputs
 
 

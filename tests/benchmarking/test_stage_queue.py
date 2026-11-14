@@ -10,10 +10,10 @@ from pathlib import Path
 
 import pytest
 
-from benchmarking._serialization import atomic_json
-from benchmarking.stage_traces import nsys
-from benchmarking.stage_traces.process import launch
-from benchmarking.stage_traces.queue import run_queue, select_attempts
+from benchmarks._serialization import atomic_json
+from benchmarks.stage_traces import nsys
+from benchmarks.stage_traces.process import launch
+from benchmarks.stage_traces.queue import run_queue, select_attempts
 
 
 def trace_options():

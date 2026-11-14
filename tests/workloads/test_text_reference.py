@@ -12,9 +12,9 @@ from tests.training._text_recipe import _config, _records
 def test_reference_uses_shared_bounded_initializer_and_plan_schedule_names(tmp_path):
     import torch
 
+    from reference.training.initialization import initializer
     from shadowspill.artifacts.tensors import TensorChunk
     from shadowspill.training._model import initialize_model
-    from shadowspill_workloads.recipes.text.reference.initialization import initializer
     from tests.training._synthetic import TinyModel, fill_tiny_tensor
 
     options = {"initialize": "@tests.training._synthetic:fill_tiny_tensor"}

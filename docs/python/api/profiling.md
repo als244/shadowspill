@@ -198,7 +198,7 @@ from the same defaults. It serializes Python policies into the run configuration
 Changing profiling controls is allowed in `phase="profile"`; completed profiles
 with a different effective policy are remeasured, and new planning must use the
 new profiled artifacts. `refresh_profiles=True` also requests fresh measurements.
-The generic `benchmarking.quickstart.run(..., profiling=timing)` exposes the
+The generic `benchmarks.quickstart.run(..., profiling=timing)` exposes the
 same policy. The two duration shortcuts remain mutually exclusive with an
 explicit policy throughout these paths.
 

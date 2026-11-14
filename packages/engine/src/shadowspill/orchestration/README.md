@@ -51,8 +51,8 @@ The clients keep their own policies:
 
 - `workloads/recipes` owns workload selection, data, initialization and saved
   recipe configuration, and composes the public training phases.
-- `benchmarking/quickstart` owns its candidate factory and budget sweep protocol.
-- `benchmarking/plan_runner` owns saved-Plan benchmarking, warmup exclusion,
+- `benchmarks/quickstart` owns its candidate factory and budget sweep protocol.
+- `benchmarks/plan_runner` owns saved-Plan benchmarking, warmup exclusion,
   per-rank timing aggregation, GPU sampling and offline reports. Its `recipe`
   module is an explicit consumer of saved workload recipes; its generic `run`
   API accepts caller hooks and has no recipe dependency.

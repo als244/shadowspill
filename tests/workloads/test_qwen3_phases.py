@@ -12,9 +12,9 @@ import pytest
 import torch
 
 from shadowspill.execution.tensors import TensorChunk
+from shadowspill_workloads.inputs.text.calls import Inputs
 from shadowspill_workloads.models.qwen3moe.config import PRESETS
 from shadowspill_workloads.models.shared.decoder import RotaryEmbedding
-from shadowspill_workloads.recipes.text.data.calls import Inputs
 from shadowspill_workloads.recipes.text.initialization import Initialize
 from shadowspill_workloads.recipes.text.qwen3.common import batch_sizes
 
@@ -113,7 +113,7 @@ def test_qwen_recipe_builds_profiles_replans_and_executes_saved_plan(tmp_path, r
         sys.executable,
         *(["-S"] if sys.flags.no_site else []),
         "-m",
-        "shadowspill_workloads.recipes.text.train_qwen3_distributed",
+        "examples.train_qwen3_distributed",
     ]
     command = [
         *entrypoint,

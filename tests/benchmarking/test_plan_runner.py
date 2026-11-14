@@ -8,9 +8,9 @@ from types import SimpleNamespace
 
 import pytest
 
-from benchmarking.plan_runner import NsysCapture, run
-from benchmarking.plan_runner.api import _traced_inputs, summarize, validate
-from benchmarking.plan_runner.report import report
+from benchmarks.plan_runner import NsysCapture, run
+from benchmarks.plan_runner.api import _traced_inputs, summarize, validate
+from benchmarks.plan_runner.report import report
 from shadowspill.orchestration.monitoring.lifecycle import Lifecycle
 
 
@@ -25,9 +25,9 @@ class Block(importlib.abc.MetaPathFinder):
                                     'shadowspill.execution'))):
             raise AssertionError('CPU launcher imported ' + fullname)
 sys.meta_path.insert(0, Block())
-from benchmarking.plan_runner import Context, NsysCapture, run, benchmark
+from benchmarks.plan_runner import Context, NsysCapture, run, benchmark
 assert NsysCapture().steps == 2
-from benchmarking.plan_runner.__main__ import main
+from benchmarks.plan_runner.__main__ import main
 sys.argv = ['plan_runner', '--help']
 main()
 """
@@ -124,7 +124,7 @@ def test_nsight_and_runtime_trace_exclusions_can_overlap():
 def test_recipe_launcher_requires_nsight_report_and_records_capture(
     tmp_path, monkeypatch, report_exists, external
 ):
-    from benchmarking.plan_runner import recipe
+    from benchmarks.plan_runner import recipe
 
     source, output = tmp_path / "source", tmp_path / "output"
     capture_dir = tmp_path / "shared" if external else output / "profiling"
@@ -275,7 +275,7 @@ def test_runner_initializes_after_allocator_and_publishes_after_cleanup(
 
 
 def test_monitor_child_is_stopped_on_exception(tmp_path, monkeypatch):
-    from benchmarking.plan_runner import monitor
+    from benchmarks.plan_runner import monitor
 
     actions = []
 
@@ -319,7 +319,7 @@ def test_offline_report_preserves_incomplete_spans_and_missing_samples(tmp_path)
 def test_recipe_bridge_reuses_hooks_without_changing_saved_inputs(
     tmp_path, monkeypatch
 ):
-    from benchmarking.plan_runner import recipe
+    from benchmarks.plan_runner import recipe
     from shadowspill.training.preparation import configuration
 
     source, output = tmp_path / "source", tmp_path / "output"
@@ -394,7 +394,7 @@ def test_real_saved_plan_benchmark_matches_eager_without_preparation(tmp_path, n
 
     import torch
 
-    from benchmarking.plan_runner import benchmark
+    from benchmarks.plan_runner import benchmark
     from shadowspill import (
         CommunicationInfo,
         MemoryBudgets,

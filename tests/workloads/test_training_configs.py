@@ -20,7 +20,7 @@ from shadowspill_workloads.recipes.text.experiment.hyperparameters import (
 from shadowspill_workloads.recipes.text.optimizer import build_optimizer
 
 CONFIGS = sorted(
-    (Path(__file__).resolve().parents[2] / "training/configs").glob("*.json")
+    (Path(__file__).resolve().parents[2] / "examples/training/configs").glob("*.json")
 )
 
 
@@ -123,7 +123,7 @@ def test_supplied_config_tiny_training_through_saved_phases(tmp_path, family, lo
             sys.executable,
             *(["-S"] if sys.flags.no_site else []),
             "-m",
-            "training.train",
+            "examples.training.train",
             str(fixture),
         ],
         env=os.environ,

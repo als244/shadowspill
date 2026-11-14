@@ -792,7 +792,7 @@ def test_current_contract_docs_are_backend_and_topology_neutral() -> None:
             set(forbidden.findall(path.read_text()))
         )
         for path in _normative_markdown_files()
-        if not path.is_relative_to(ROOT / "baselines")
+        if not path.is_relative_to(ROOT / "benchmarks/baselines")
         and not path.is_relative_to(
             ROOT / "packages/workloads/src/shadowspill_workloads"
         )
@@ -800,10 +800,11 @@ def test_current_contract_docs_are_backend_and_topology_neutral() -> None:
         and not path.is_relative_to(DOCS / "integrations")
         and path
         not in {
-            ROOT / "benchmarking/quickstart.md",
-            ROOT / "benchmarking/stage_traces/README.md",
-            ROOT / "benchmarking/program_collection/README.md",
-            ROOT / "benchmarking/plan_runner/README.md",
+            ROOT / "reference/training/README.md",
+            ROOT / "benchmarks/quickstart.md",
+            ROOT / "benchmarks/stage_traces/README.md",
+            ROOT / "benchmarks/program_collection/README.md",
+            ROOT / "benchmarks/plan_runner/README.md",
             ROOT / "packages/engine/src/shadowspill/orchestration/README.md",
             DOCS / "python/api/build.md",
             DOCS / "python/api/communication.md",

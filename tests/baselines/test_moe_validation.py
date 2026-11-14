@@ -1,7 +1,7 @@
 import pytest
 import torch
 
-from baselines.moe_layer.validation import all_finite
+from benchmarks.baselines.moe_layer.validation import all_finite
 
 
 @pytest.mark.parametrize("noncontiguous", [False, True])

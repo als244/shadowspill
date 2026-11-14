@@ -5,7 +5,7 @@ Model choices stay here; the runner builds, profiles, calibrates communication,
 plans on CPU and executes saved Plans in fresh workers.
 
 ```bash
-python -m benchmarking.quickstart \
+python -m benchmarks.quickstart \
   --factory shadowspill_workloads.recipes.text.benchmark.factory:experiment \
   --factory-args '{"model":"llama3-8b","sequence_length":1024,"sequences_per_step":64,"min_tokens_per_example":8192,"max_tokens_per_example":16384}' \
   --search-budget-gib 20 30 --run-budget-gib 20 30 --spill-gib 112 \
@@ -51,5 +51,5 @@ families, and shape/stride consistency and global loss normalization for tiny
 Llama. These checks do not establish large-model performance or every provider's
 portability.
 
-See the [phase quickstart guide](../../../../../../../benchmarking/quickstart.md) for
+See the [phase quickstart guide](../../../../../../../benchmarks/quickstart.md) for
 independent phase commands, custom communication costs and result locations.

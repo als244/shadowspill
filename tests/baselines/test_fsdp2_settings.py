@@ -4,9 +4,13 @@ import argparse
 
 import pytest
 
-from baselines.common.launch import command, engine_module
-from baselines.common.precision import Precision, Unsupported
-from baselines.engines.fsdp2.settings import Settings, add_arguments, from_namespace
+from benchmarks.baselines.common.launch import command, engine_module
+from benchmarks.baselines.common.precision import Precision, Unsupported
+from benchmarks.baselines.engines.fsdp2.settings import (
+    Settings,
+    add_arguments,
+    from_namespace,
+)
 
 BASE = {
     "model": "llama3-tiny",

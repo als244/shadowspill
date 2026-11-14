@@ -8,7 +8,7 @@ from dataclasses import replace
 
 import pytest
 
-from benchmarking.quickstart.phases.common import read, write
+from benchmarks.quickstart.phases.common import read, write
 from tests.benchmarking._profiled import measured
 from tests.shadowspill.offline._example import communication, profiled
 from tools.pressurefit_trace.__main__ import main
@@ -58,7 +58,7 @@ class Block(importlib.abc.MetaPathFinder):
         if fullname.split('.')[0] in {'torch', 'must_not_import'} or any(
             fullname == name or fullname.startswith(name + '.')
             for name in ('shadowspill.build', 'shadowspill.execution',
-                         'benchmarking.quickstart.runner')
+                         'benchmarks.quickstart.runner')
         ):
             raise AssertionError(fullname)
 sys.meta_path.insert(0, Block())

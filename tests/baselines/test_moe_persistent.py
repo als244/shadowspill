@@ -2,8 +2,8 @@ import json
 from pathlib import Path
 from types import SimpleNamespace
 
-from baselines.common import write_json
-from baselines.moe_layer import persistent
+from benchmarks.baselines.common import write_json
+from benchmarks.baselines.moe_layer import persistent
 
 
 def test_oom_restarts_remaining_cases_without_repeating_success(tmp_path, monkeypatch):

@@ -23,7 +23,7 @@ describes their clocks, byte counts and completeness flags.
 
 `Executor.run(..., profiler_annotations=True)` emits semantic task and transfer
 ranges for external GPU captures. This is independent of runtime-event tracing.
-Both flags default off. See the [saved-winner capture tool](../../../benchmarking/quickstart.md#nsight-captures-of-saved-winners)
+Both flags default off. See the [saved-winner capture tool](../../../benchmarks/quickstart.md#nsight-captures-of-saved-winners)
 for Nsight captures in fresh workers.
 
 ## Reports

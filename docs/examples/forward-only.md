@@ -76,4 +76,4 @@ current model tensors and one admitted execution workspace; see
 [shared evaluation](../python/api/training.md#evaluation).
 `run(..., profiler_annotations=True)` optionally adds semantic task/transfer
 ranges for an external profiler. See the
-[saved-Plan capture tool](../../benchmarking/quickstart.md#nsight-captures-of-saved-winners).
+[saved-Plan capture tool](../../benchmarks/quickstart.md#nsight-captures-of-saved-winners).

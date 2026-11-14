@@ -4,8 +4,8 @@ import json
 
 import pytest
 
-from baselines.common import results
-from baselines.common.results import (
+from benchmarks.baselines.common import results
+from benchmarks.baselines.common.results import (
     RESULT_SCHEMA,
     host_peak_bytes,
     memory_peaks,

@@ -14,13 +14,13 @@ class Block(importlib.abc.MetaPathFinder):
 
 def main():
     sys.meta_path.insert(0, Block())
-    from benchmarking.planning_eval.config import (
+    from benchmarks.planning_eval.config import (
         BandwidthScale,
         FrontierConfig,
         FrontierGrid,
         TransferBandwidthBaseline,
     )
-    from benchmarking.planning_eval.worker import evaluate_case
+    from benchmarks.planning_eval.worker import evaluate_case
 
     root, case = map(pathlib.Path, sys.argv[1:3])
     capacity = int(sys.argv[3])

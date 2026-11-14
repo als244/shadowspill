@@ -1,6 +1,6 @@
 # Qwen3.5 MoE checkpoint LoRA
 
-Start with the [commented Python script](example.py):
+Start with the [commented Python script](../../../../../../../examples/qwen35_lora.py):
 
 ```python
 from shadowspill_workloads.recipes import LoRA, Model, train
@@ -53,4 +53,4 @@ Start with a fresh run directory. Later calls may pass just the same `model`,
 `{"run_dir": ...}` and a named `phase`; they reuse `config.json`, including its
 exact candidate list. Change memory budgets during `phase="plan"` to reuse
 the saved measurements. Changing build choices requires a fresh run.
-The CLI `shadowspill_workloads.recipes.text.train_qwen35_lora` uses these same workers.
+The CLI `examples.train_qwen35_lora` uses these same workers.

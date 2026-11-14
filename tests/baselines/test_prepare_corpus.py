@@ -4,8 +4,8 @@ the requested token count, and readable by the engines."""
 import numpy
 import pytest
 
-from baselines.common.data import Corpus
-from baselines.scripts.prepare_corpus import prepare
+from benchmarks.baselines.common.data import Corpus
+from benchmarks.baselines.scripts.prepare_corpus import prepare
 
 pyarrow = pytest.importorskip("pyarrow")
 parquet = pytest.importorskip("pyarrow.parquet")

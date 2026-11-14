@@ -7,8 +7,8 @@ from types import SimpleNamespace
 import pytest
 import torch
 
-from benchmarking.quickstart.phases import build, communicate, plan, profile
-from benchmarking.quickstart.phases.common import paths, read, write
+from benchmarks.quickstart.phases import build, communicate, plan, profile
+from benchmarks.quickstart.phases.common import paths, read, write
 from shadowspill.artifacts.sweep import SweepResult
 from tests.shadowspill.offline._example import profiles, program
 

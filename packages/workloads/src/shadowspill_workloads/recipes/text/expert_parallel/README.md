@@ -6,7 +6,7 @@ leaves; `Resource` descriptions recreate their shared MoonEP buffer in build,
 profiling and execution. Models contain no ShadowSpill imports or live groups.
 
 ```bash
-python -m benchmarking.quickstart \
+python -m benchmarks.quickstart \
   --factory shadowspill_workloads.recipes.text.expert_parallel:experiment \
   --factory-args '{"model":"qwen3moe-30b-a3b","ranks":8,"sequence_length":4096,"sequences_per_step":64,"sequences_per_example":16}' \
   --search-budget-gib 30 50 77 --spill-gib 96 --steps 3 \

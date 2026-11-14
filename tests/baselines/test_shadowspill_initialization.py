@@ -6,9 +6,9 @@ import pytest
 import torch
 from safetensors.torch import save_file
 
-from baselines.engines.shadowspill.initialize import Initialize
-from baselines.engines.shadowspill.settings import Settings
-from benchmarking.quickstart.phases.common import write
+from benchmarks.baselines.engines.shadowspill.initialize import Initialize
+from benchmarks.baselines.engines.shadowspill.settings import Settings
+from benchmarks.quickstart.phases.common import write
 from shadowspill.artifacts.tensors import TensorChunk
 from tests.workloads.test_checkpoints import huggingface_state, materialized, metadata
 

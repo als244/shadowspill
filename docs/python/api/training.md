@@ -257,5 +257,5 @@ a GPU execution failure still makes the Executor unusable.
 For a trace of an ordinary training update, use `step(runtime_trace=True)` and
 read `result.diagnostics`. It changes weights/counts normally. External profiler
 ranges use the independent `profiler_annotations=True` flag. The
-[saved-Plan runner](../../../benchmarking/plan_runner/README.md#nsight-systems)
+[saved-Plan runner](../../../benchmarks/plan_runner/README.md#nsight-systems)
 can collect bounded Nsight captures with per-rank output files.

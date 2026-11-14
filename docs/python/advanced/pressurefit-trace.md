@@ -126,7 +126,7 @@ The collection tools add an optional `collection_context.json` sidecar with
 the same program digest, workload/geometry/ordering labels, and physical and
 usable planning budgets. Those annotations identify the winning configuration
 in the video; they do not alter the program or plan. See the
-[tool guide](../../../src/tools/pressurefit_trace/README.md) for physical-budget
+[tool guide](../../../tools/pressurefit_trace/README.md) for physical-budget
 overrides and recovery from capacity failures during geometry profiling.
 
 When semantic stage metadata is available, `read_manifest` adds `stages`
@@ -212,14 +212,14 @@ recorded or an unlinked pass's capacity cannot be established exactly. This is
 distinct from the per-boundary capacity after workspace/residency accounting.
 
 For source-tree capture, analysis, and animation commands, see the
-[PressureFit trace tools](../../../src/tools/pressurefit_trace/README.md). The tools
+[PressureFit trace tools](../../../tools/pressurefit_trace/README.md). The tools
 provide profiled-time and equal-width task-index views, semantic object labels,
 per-cut pressure replay, and explanation pauses comparing the selected cut with
 recorded alternatives.
 
-The same [tools directory](../../../src/tools/pressurefit_trace/README.md) also
+The same [tools directory](../../../tools/pressurefit_trace/README.md) also
 contains separate renderers for emission/placement and simulated execution.
-Those [plan videos](../../../src/tools/pressurefit_trace/video/plan/README.md) read the
+Those [plan videos](../../../tools/pressurefit_trace/video/plan/README.md) read the
 saved `AnnotatedProgramPlan`, optionally joined with semantic labels. A cut
 trace by itself does not provide physical addresses or copy timings. Both
 guides list input formats, commands, timing controls, and encoding arguments.

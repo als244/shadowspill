@@ -53,17 +53,17 @@ model = Model.from_checkpoint("/checkpoints/Qwen3.5-35B-A3B", lora=LoRA())
 # "frozen_state_id": "exact-base-checkpoint-revision"
 ```
 
-Commented scripts: [catalog full training](text/example.py),
-[Qwen3 distributed full training](text/qwen3/example.py),
-[Qwen3.5 LoRA](text/qwen35_lora/example.py),
-[GLM Flash LoRA](text/glm53_flash_lora/example.py).
+Commented scripts: [catalog full training](../../../../../examples/train_text.py),
+[Qwen3 distributed full training](../../../../../examples/qwen3.py),
+[Qwen3.5 LoRA](../../../../../examples/qwen35_lora.py),
+[GLM Flash LoRA](../../../../../examples/glm53_flash_lora.py).
 The checkpoint recipes document their storage/precision requirements.
 For a custom model or loss, follow the [custom-model guide](../../../../../docs/python/custom-models.md).
 
 ## Data, defaults and search
 
 Prepare `train.bin`, `val.bin` and `meta.json` with the model's tokenizer using
-the [data guide](text/data/README.md). The text runner shifts targets and
+the [data guide](../inputs/text/README.md). The text runner shifts targets and
 normalizes next-token loss over the global update. `sequences_per_step` is
 **per rank**; global tokens/update are `ranks * sequences_per_step * sequence_length`.
 Every `microbatch_sizes` entry must divide `sequences_per_step`.

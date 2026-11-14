@@ -8,7 +8,7 @@ from pathlib import Path
 import pytest
 
 ROOT = Path(__file__).resolve().parents[2]
-SCRIPTS = sorted((ROOT / "baselines/scripts").glob("*.sh"))
+SCRIPTS = sorted((ROOT / "benchmarks/baselines/scripts").glob("*.sh"))
 
 
 def programs(path):

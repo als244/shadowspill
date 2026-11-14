@@ -2,8 +2,8 @@
 
 import dataclasses
 
-from baselines.common.preparation import groups
-from baselines.engines.shadowspill.settings import Settings
+from benchmarks.baselines.common.preparation import groups
+from benchmarks.baselines.engines.shadowspill.settings import Settings
 
 
 def test_budget_grid_keeps_cases_and_groups_only_compatible_preparation(tmp_path):
@@ -58,8 +58,8 @@ def test_preparation_resumes_and_preserves_requests_when_extending_budgets(
 ):
     import json
 
-    from baselines.common.preparation import ensure
-    from baselines.sweep import process as sweep
+    from benchmarks.baselines.common.preparation import ensure
+    from benchmarks.baselines.sweep import process as sweep
 
     settings = Settings.from_dict({"model": "llama3-tiny", "execution_gib": 8})
     group = {

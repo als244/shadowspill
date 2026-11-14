@@ -7,10 +7,10 @@ import dataclasses
 
 import pytest
 
-from baselines.common.launch import command, engine_module
-from baselines.common.precision import Unsupported
-from baselines.engines.megatron_core.options import OPTIONS
-from baselines.engines.megatron_core.settings import (
+from benchmarks.baselines.common.launch import command, engine_module
+from benchmarks.baselines.common.precision import Unsupported
+from benchmarks.baselines.engines.megatron_core.options import OPTIONS
+from benchmarks.baselines.engines.megatron_core.settings import (
     IMPLEMENTATION,
     Settings,
     add_arguments,
@@ -254,7 +254,8 @@ def test_every_option_has_its_flag_in_the_readme():
     from pathlib import Path
 
     readme = (
-        Path(__file__).parents[2] / "baselines/engines/megatron_core/README.md"
+        Path(__file__).parents[2]
+        / "benchmarks/baselines/engines/megatron_core/README.md"
     ).read_text()
     missing = [
         option.name

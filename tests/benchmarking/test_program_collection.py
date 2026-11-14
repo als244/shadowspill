@@ -6,27 +6,27 @@ from pathlib import Path
 
 import pytest
 
-from benchmarking.program_collection.artifacts import save_profiled_program
-from benchmarking.program_collection.config import load_collection_config
-from benchmarking.program_collection.controller import (
+from benchmarks.program_collection.artifacts import save_profiled_program
+from benchmarks.program_collection.config import load_collection_config
+from benchmarks.program_collection.controller import (
     ControllerOptions,
     run_collection,
 )
-from benchmarking.program_collection.corpus import (
+from benchmarks.program_collection.corpus import (
     ProgramCaseIdentity,
 )
-from benchmarking.program_collection.journal import (
+from benchmarks.program_collection.journal import (
     begin_attempt,
     finish_attempt,
     load_case_status,
 )
-from benchmarking.program_collection.matrix import (
+from benchmarks.program_collection.matrix import (
     ProgramRequest,
     expand_program_requests,
 )
-from benchmarking.program_collection.paths import CollectionPaths
-from benchmarking.program_collection.resume import completed_artifact
-from benchmarking.program_collection.settings import (
+from benchmarks.program_collection.paths import CollectionPaths
+from benchmarks.program_collection.resume import completed_artifact
+from benchmarks.program_collection.settings import (
     CollectionConfig,
     GeometryAxes,
     ModelSpec,
@@ -37,7 +37,7 @@ from tests.benchmarking._fixtures import _fixture
 _REPOSITORY = Path(__file__).resolve().parents[2]
 _FULL_CONFIG = (
     _REPOSITORY
-    / "benchmarking"
+    / "benchmarks"
     / "program_collection"
     / "configs"
     / "full_model_program_corpus_v2.json"
@@ -212,7 +212,7 @@ def test_controller_records_each_failure_and_continues(
         ]
 
     monkeypatch.setattr(
-        "benchmarking.program_collection.controller._worker_command",
+        "benchmarks.program_collection.controller._worker_command",
         failing_command,
     )
     output = tmp_path / "corpus"
@@ -258,7 +258,7 @@ def test_controller_records_controller_exception_and_continues(
         raise OSError(f"cannot launch {prefix}")
 
     monkeypatch.setattr(
-        "benchmarking.program_collection.controller._run_one",
+        "benchmarks.program_collection.controller._run_one",
         broken_run,
     )
     output = tmp_path / "corpus"

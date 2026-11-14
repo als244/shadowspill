@@ -7,7 +7,7 @@ import sys
 
 import pytest
 
-from benchmarking.bandwidth_frontier.cli import main
+from benchmarks.bandwidth_frontier.cli import main
 from tests.shadowspill.offline._example import profiled
 
 
@@ -46,7 +46,7 @@ class Block(importlib.abc.MetaPathFinder):
         ):
             raise AssertionError('CPU sweep imported ' + fullname)
 sys.meta_path.insert(0, Block())
-from benchmarking.bandwidth_frontier.cli import main
+from benchmarks.bandwidth_frontier.cli import main
 main(sys.argv[1:])
 """
     child = subprocess.run(
@@ -70,7 +70,7 @@ main(sys.argv[1:])
 
 
 def test_resume_reuses_saved_plans_and_rejects_changed_inputs(tmp_path, monkeypatch):
-    from benchmarking.bandwidth_frontier import run
+    from benchmarks.bandwidth_frontier import run
 
     args = arguments(tmp_path)
     assert main(args) == 0

@@ -8,8 +8,8 @@ import numpy as np
 import pytest
 import torch
 
-from shadowspill_workloads.recipes.text.data.documents import IGNORE, TokenDocuments
-from shadowspill_workloads.recipes.text.data.packed import PackedTokens
+from shadowspill_workloads.inputs.text.documents import IGNORE, TokenDocuments
+from shadowspill_workloads.inputs.text.packed import PackedTokens
 from tests.training._synthetic import EOS, LENGTHS, write_dataset
 
 MAX_SEQ_LEN = 512
@@ -92,7 +92,7 @@ def test_ranks_share_a_steps_microbatches_and_its_normalizer(
     """Ranks take consecutive shares of every step's microbatches, equal or
     not, with the step's trained-token count as every rank's normalizer;
     their held-out calls are distinct and normalized over all ranks'."""
-    from shadowspill_workloads.recipes.text.data.source import PackedUpdates
+    from shadowspill_workloads.inputs.text.source import PackedUpdates
 
     geometry = dict(name="n", tokens=TOKENS, max_seq_len=MAX_SEQ_LEN)
     whole = PackedUpdates(data, counts=[4], **geometry)
@@ -117,7 +117,7 @@ def test_ranks_share_a_steps_microbatches_and_its_normalizer(
         whole.load_state_dict(state)
     with pytest.raises(ValueError, match="at least one microbatch"):
         PackedUpdates(data, counts=[2, 0], **geometry)
-    from shadowspill_workloads.recipes.text.data.units import held_out
+    from shadowspill_workloads.inputs.text.units import held_out
 
     evaluation = dict(name="n", max_seq_len=MAX_SEQ_LEN, capacity=TOKENS)
     halves = [

@@ -10,8 +10,8 @@ import pytest
 import torch
 from safetensors.torch import save_file
 
+from shadowspill_workloads.inputs.text.packed import PackedTokens
 from shadowspill_workloads.models import catalog
-from shadowspill_workloads.recipes.text.data.packed import PackedTokens
 from tests.workloads.test_checkpoints import huggingface_state, materialized, metadata
 
 EOS = 1
@@ -20,7 +20,7 @@ LENGTHS = (20, 33, 17, 40, 25, 30)
 
 def test_reference_matches_the_catalog_model_on_a_masked_corpus(tmp_path):
     pytest.importorskip("transformers")
-    from training.reference import reference_loss
+    from examples.training.reference import reference_loss
 
     family, name = "llama3", "llama3-tiny"
     source = materialized(name)

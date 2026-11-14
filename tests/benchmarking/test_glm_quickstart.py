@@ -10,7 +10,7 @@ import torch
 @pytest.mark.parametrize("family", ["glm53_flash", "glm53"])
 @pytest.mark.slow
 def test_glm_training_from_saved_phases(tmp_path, family):
-    from benchmarking.quickstart import run
+    from benchmarks.quickstart import run
     from shadowspill.artifacts.sweep import SweepResult
     from tests.shadowspill.offline._example import communication
 

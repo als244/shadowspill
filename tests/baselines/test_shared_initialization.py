@@ -5,15 +5,15 @@ import math
 import pytest
 import torch
 
-from baselines.common.initialization import (
+from benchmarks.baselines.common.initialization import (
     SharedInitialization,
     fill_parameters,
     fresh,
     shard_rows,
 )
-from baselines.common.training import pinned_parameters
-from baselines.engines.shadowspill.initialize import Initialize
-from baselines.engines.shadowspill.settings import Settings
+from benchmarks.baselines.common.training import pinned_parameters
+from benchmarks.baselines.engines.shadowspill.initialize import Initialize
+from benchmarks.baselines.engines.shadowspill.settings import Settings
 from shadowspill.artifacts.tensors import TensorChunk
 
 

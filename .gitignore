@@ -87,3 +87,12 @@ compile_commands.json
 /packages/*/build/
 /packages/*/dist/
 /packages/*/_skbuild/
+
+# Reorganized application output locations.
+/benchmarks/datasets
+/benchmarks/program_collection/planning_caches
+/benchmarks/planning_eval/planning_caches
+/benchmarks/planning_eval/results
+/benchmarks/quickstart_reports
+/benchmarks/baselines/experiments/**/output
+!/benchmarks/baselines/experiments/**/results/figures/*.png

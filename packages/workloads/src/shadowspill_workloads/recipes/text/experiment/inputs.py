@@ -2,8 +2,8 @@
 
 import torch
 
-from ..data.source import PackedUpdates, candidate_data
-from ..data.units import held_out
+from shadowspill_workloads.inputs.text.source import PackedUpdates, candidate_data
+from shadowspill_workloads.inputs.text.units import held_out
 from .group import ranks
 
 

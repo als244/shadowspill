@@ -4,8 +4,12 @@ import argparse
 
 import pytest
 
-from baselines.common import geometry
-from baselines.common.geometry import Geometry, accumulation_steps, recompute_layers
+from benchmarks.baselines.common import geometry
+from benchmarks.baselines.common.geometry import (
+    Geometry,
+    accumulation_steps,
+    recompute_layers,
+)
 
 
 @pytest.mark.parametrize("tokens,expected", [(4096, 64), (16384, 16), (131072, 2)])

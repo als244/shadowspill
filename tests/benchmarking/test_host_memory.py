@@ -7,13 +7,13 @@ import torch
 import torch.distributed as dist
 import torch.multiprocessing as mp
 
-from benchmarking import host_memory
-from benchmarking.host_memory.limits import Limit, Resources
+from benchmarks import host_memory
+from benchmarks.host_memory.limits import Limit, Resources
 
 
 def test_cgroup_budget_reuses_clean_unmapped_checkpoint_cache(tmp_path):
-    from benchmarking.host_memory.facts import _cgroup_available_memory
-    from benchmarking.host_memory.limits import (
+    from benchmarks.host_memory.facts import _cgroup_available_memory
+    from benchmarks.host_memory.limits import (
         Limit,
         Resources,
         validate_resources,
@@ -40,7 +40,7 @@ def test_cgroup_budget_reuses_clean_unmapped_checkpoint_cache(tmp_path):
 
 
 def test_cgroup_budget_keeps_nonreclaimable_file_memory_charged(tmp_path):
-    from benchmarking.host_memory.facts import _cgroup_available_memory
+    from benchmarks.host_memory.facts import _cgroup_available_memory
 
     (tmp_path / "memory.stat").write_text(
         "file 60\nshmem 10\nfile_mapped 10\n"

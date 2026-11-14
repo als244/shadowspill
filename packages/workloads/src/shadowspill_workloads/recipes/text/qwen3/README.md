@@ -8,7 +8,7 @@ shared weights and gradients, and shards the shared optimizer state. The recipe
 starts from random weights and reads real,
 already-tokenized text from `train.bin` plus `meta.json`.
 
-Start with the [commented Python script](example.py):
+Start with the [commented Python script](../../../../../../../examples/qwen3.py):
 
 ```python
 from shadowspill_workloads.recipes import Model, train

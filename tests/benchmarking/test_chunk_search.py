@@ -4,10 +4,10 @@ from types import SimpleNamespace
 
 import pytest
 
-from benchmarking.quickstart.phases import build, plan
-from benchmarking.quickstart.phases.candidates import example_inputs
-from benchmarking.quickstart.phases.common import read, write
-from benchmarking.quickstart.phases.distributed import preparation_size
+from benchmarks.quickstart.phases import build, plan
+from benchmarks.quickstart.phases.candidates import example_inputs
+from benchmarks.quickstart.phases.common import read, write
+from benchmarks.quickstart.phases.distributed import preparation_size
 from tests.shadowspill.offline._example import communication, program
 
 

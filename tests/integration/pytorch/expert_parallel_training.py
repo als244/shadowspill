@@ -12,8 +12,8 @@ import subprocess
 from fractions import Fraction
 from pathlib import Path
 
-from benchmarking.quickstart import main as resume
-from benchmarking.quickstart import run
+from benchmarks.quickstart import main as resume
+from benchmarks.quickstart import run
 from shadowspill import CommunicationInfo, MemoryBudgets, ProfiledProgram, plan_program
 from shadowspill.orchestration.launch.processes import worker_command
 from shadowspill.planner import SearchOptions

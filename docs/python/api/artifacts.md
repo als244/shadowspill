@@ -88,7 +88,7 @@ profiling and every execution worker. ShadowSpill records and validates:
   `medium` control and the `fp32_precision` control;
 - BF16/FP16 reduced-precision reduction, their split-K controls, FP16
   accumulation and preferred BLAS library;
-- cuDNN enablement, determinism, benchmarking/benchmark limit, and convolution
+- cuDNN enablement, determinism, benchmarks/benchmark limit, and convolution
   and RNN FP32 precision;
 - `CUBLAS_WORKSPACE_CONFIG`, `CUBLASLT_WORKSPACE_SIZE`,
   `NVIDIA_TF32_OVERRIDE` and `TORCH_ALLOW_TF32_CUBLAS_OVERRIDE` environment values.

@@ -57,7 +57,7 @@ def check_section(raw):
             "max_tokens_per_step must divide into whole units for every share"
         )
     if raw.get("eval_every"):
-        from shadowspill_workloads.recipes.text.data.units import held_out_units
+        from shadowspill_workloads.inputs.text.units import held_out_units
 
         held_out_units(
             raw.get("eval_tokens", raw["max_tokens_per_step"]),

@@ -4,7 +4,7 @@ import hashlib
 import re
 import sys
 
-from baselines.common.provenance import (
+from benchmarks.baselines.common.provenance import (
     ROOT,
     dispatch_record,
     environment_identity,
@@ -14,13 +14,18 @@ from baselines.common.provenance import (
 
 
 def test_source_identity_digests_every_python_file_under_the_paths():
-    identity = source_identity(["baselines/common", "baselines/__init__.py"])
+    identity = source_identity(
+        ["benchmarks/baselines/common", "benchmarks/baselines/__init__.py"]
+    )
     files = identity["file_sha256"]
-    assert "baselines/__init__.py" in files
-    assert "baselines/common/geometry.py" in files
+    assert "benchmarks/baselines/__init__.py" in files
+    assert "benchmarks/baselines/common/geometry.py" in files
     assert all(name.endswith(".py") and "__pycache__" not in name for name in files)
-    source = (ROOT / "baselines/common/geometry.py").read_bytes()
-    assert files["baselines/common/geometry.py"] == hashlib.sha256(source).hexdigest()
+    source = (ROOT / "benchmarks/baselines/common/geometry.py").read_bytes()
+    assert (
+        files["benchmarks/baselines/common/geometry.py"]
+        == hashlib.sha256(source).hexdigest()
+    )
     head = identity["git_head"]
     assert head is None or re.fullmatch(r"[0-9a-f]{40}", head)
     assert isinstance(identity["git_dirty"], bool)

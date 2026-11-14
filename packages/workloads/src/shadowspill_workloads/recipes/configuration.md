@@ -271,7 +271,7 @@ this isolates the worker's GPU before starting Nsight. Every rank controls its
 own cudaProfilerApi capture. The shared adapter adds per-rank update ranges and ShadowSpill task/transfer
 annotations. Evaluation/checkpoint cadences must fall outside the captured
 interval. For automatic collector launch, device metrics and saved-report
-handling, use the [saved-Plan benchmark API](../../../../../benchmarking/plan_runner/README.md#nsight-systems).
+handling, use the [saved-Plan benchmark API](../../../../../benchmarks/plan_runner/README.md#nsight-systems).
 These controls do not require a workload-specific Trainer subclass or adapter hook.
 
 ## Adapter boundary

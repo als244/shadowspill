@@ -39,7 +39,7 @@ For eight ranks, 4K sequences, 2M global tokens per step, and an 8K-token
 microbatch per rank:
 
 ```bash
-python -m benchmarking.quickstart \
+python -m benchmarks.quickstart \
   --factory shadowspill_workloads.recipes.text.glm.quickstart:glm53 \
   --factory-args '{"checkpoint":"/local/models/GLM-5.3","expert_storage":"fp8_block","ranks":8,"sequence_length":4096,"sequences_per_step":64,"sequences_per_example":[2]}' \
   --search-budget-gib 70 --run-budget-gib 70 --spill-gib "$SPILL_GIB" \

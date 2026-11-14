@@ -4,7 +4,7 @@ import json
 
 import pytest
 
-from benchmarking.spill import record, resolve
+from benchmarks.spill import record, resolve
 from shadowspill.memory import PinnedHostPool
 from shadowspill.network import RemotePool
 from shadowspill.ssd import SSDPool

@@ -6,15 +6,15 @@ from pathlib import Path
 
 import pytest
 
-from benchmarking.planning_eval.plan_artifacts import (
+from benchmarks.planning_eval.plan_artifacts import (
     load_annotated_plan,
     save_annotated_plan,
 )
-from benchmarking.program_collection.artifacts import (
+from benchmarks.program_collection.artifacts import (
     load_program,
     save_profiled_program,
 )
-from benchmarking.program_collection.corpus import (
+from benchmarks.program_collection.corpus import (
     ProgramCaseIdentity,
 )
 from shadowspill.ir import (

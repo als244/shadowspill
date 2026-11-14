@@ -40,7 +40,7 @@ def validate(options):
 
 
 def inputs(options, *, rank=0, split="train"):
-    from shadowspill_workloads.recipes.text.data.calls import Inputs
+    from shadowspill_workloads.inputs.text.calls import Inputs
 
     return training.check_source(
         Inputs(options, rank=rank, world_size=options["ranks"], split=split),

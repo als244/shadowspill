@@ -3,7 +3,7 @@
 import pytest
 import torch
 
-from baselines.engines.shadowspill.microbatches import split_microbatches
+from benchmarks.baselines.engines.shadowspill.microbatches import split_microbatches
 from shadowspill.pytorch.guards import capture_training_signatures
 
 

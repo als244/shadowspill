@@ -7,9 +7,9 @@ from pathlib import Path
 
 import pytest
 
-from baselines.common.provenance import ROOT
-from baselines.experiment import commands, config, process
-from baselines.experiment import run as runner
+from benchmarks.baselines.common.provenance import ROOT
+from benchmarks.baselines.experiment import commands, config, process
+from benchmarks.baselines.experiment import run as runner
 
 SPEC = {
     "schema_version": 1,
@@ -18,12 +18,14 @@ SPEC = {
     "sweeps": [
         {
             "engine": "fsdp2",
-            "config": "baselines/engines/fsdp2/configs/qualification.json",
+            "config": ("benchmarks/baselines/engines/fsdp2/configs/qualification.json"),
         },
         {
             "name": "deep",
             "engine": "deepspeed",
-            "config": "baselines/engines/deepspeed/configs/qualification.json",
+            "config": (
+                "benchmarks/baselines/engines/deepspeed/configs/qualification.json"
+            ),
             "python": "/opt/py/bin/python",
             "case_timeout": 60,
         },
@@ -48,7 +50,7 @@ def test_the_spec_resolves_names_and_interpreters(tmp_path):
     assert second["python"] == "/opt/py/bin/python" and second["case_timeout"] == 60
     matrix = tmp_path / "matrix.json"
     command = commands.sweep_command(spec, first, matrix, tmp_path / "sweep", limit=3)
-    assert command[1:4] == ["-m", "baselines.sweep", "--engine"]
+    assert command[1:4] == ["-m", "benchmarks.baselines.sweep", "--engine"]
     assert command[command.index("--config") + 1] == str(matrix)
     assert "--resume" not in command and command[-2:] == ["--limit", "3"]
     (tmp_path / "sweep").mkdir()
@@ -120,7 +122,9 @@ def test_a_matrix_that_names_a_shared_setting_is_refused(tmp_path, matrix):
             "sweeps": [
                 {
                     "engine": "fsdp2",
-                    "config": "baselines/engines/fsdp2/configs/qualification.json",
+                    "config": (
+                        "benchmarks/baselines/engines/fsdp2/configs/qualification.json"
+                    ),
                     "name": "a/b",
                 }
             ]
@@ -140,7 +144,7 @@ class Sweeps:
         self.commands, self.returncode, self.lines = [], returncode, lines
 
     def __call__(self, command, **options):
-        assert command[1:3] == ["-m", "baselines.sweep"]
+        assert command[1:3] == ["-m", "benchmarks.baselines.sweep"]
         self.commands.append(command)
         returncode, lines = self.returncode, self.lines
 
@@ -178,10 +182,13 @@ def test_a_dry_run_runs_each_sweeps_own_dry_run(tmp_path, monkeypatch):
     ]
     assert record(tmp_path)["report"]["status"] == "planned"
     log = (tmp_path / "out" / "sweeps" / "deep" / "launcher.log").read_text()
-    assert "baselines.sweep --engine deepspeed" in log and "a sweep's console" in log
+    assert (
+        "benchmarks.baselines.sweep --engine deepspeed" in log
+        and "a sweep's console" in log
+    )
     matrix = tmp_path / "out" / "matrices" / "deep.json"
     assert f"--config {matrix}" in log
-    source = ROOT / "baselines/engines/deepspeed/configs/qualification.json"
+    source = ROOT / "benchmarks/baselines/engines/deepspeed/configs/qualification.json"
     assert json.loads(matrix.read_text()) == json.loads(source.read_text())
     (console,) = (tmp_path / "out" / "runs").glob("*.log")
     text = console.read_text()

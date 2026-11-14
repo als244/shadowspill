@@ -1,0 +1,163 @@
+"""Compare runs' loss curves step by step.
+
+    python -m examples.training.compare <reference run dir> <run dir> [<run dir> ...]
+
+Every run trained on the same batches from the same initial weights, so the
+difference at each step is only what the runs computed differently -- which
+each run's packing.jsonl lets this check rather than assume. A run directory
+is one process's, holding metrics.jsonl and packing.jsonl, or a multi-rank
+run's: its losses in the aggregate/metrics.jsonl the ranks report together
+(under nodes/<index>/ when each node kept its own directory) and its
+documents in every rank-*/packing.jsonl. A step's documents are compared as
+one set over its ranks and microbatches, so runs that divide a step
+differently -- two ranks against one process -- still compare. Prints, for each
+run against the first: whether they trained on the same documents, the step-0
+difference, the largest over the first 10 steps, the mean over each 100
+steps, and the final validation loss when the runs validated; then draws the
+curves and differences into the reference run's compare.png.
+"""
+
+from __future__ import annotations
+
+import json
+import sys
+from pathlib import Path
+
+import matplotlib
+
+matplotlib.use("Agg")
+import matplotlib.pyplot as plt
+
+
+def metrics_file(run: Path) -> Path:
+    """The run's losses: its own, or the aggregate its ranks report."""
+
+    if (run / "metrics.jsonl").exists():
+        return run / "metrics.jsonl"
+    found = [
+        *run.glob("aggregate/metrics.jsonl"),
+        *run.glob("nodes/*/aggregate/metrics.jsonl"),
+    ]
+    if len(found) != 1:
+        raise SystemExit(
+            f"{run}: expected metrics.jsonl or one aggregate/metrics.jsonl, "
+            f"found {len(found)}"
+        )
+    return found[0]
+
+
+def packing_files(run: Path) -> list[Path]:
+    """The run's document records: its own, or every rank's."""
+
+    if (run / "packing.jsonl").exists():
+        return [run / "packing.jsonl"]
+    found = sorted(
+        [*run.glob("rank-*/packing.jsonl"), *run.glob("nodes/*/rank-*/packing.jsonl")]
+    )
+    if not found:
+        raise SystemExit(f"{run}: no packing.jsonl in the run or its rank directories")
+    return found
+
+
+def read(run: Path) -> tuple[dict[int, float], dict[int, float]]:
+    """Training and validation loss by step; a resumed run's later lines win."""
+
+    train, val = {}, {}
+    for line in metrics_file(run).read_text().splitlines():
+        record = json.loads(line)
+        if "train/loss" in record:
+            train[record["step"]] = record["train/loss"]
+        if "eval/loss" in record:
+            val[record["step"]] = record["eval/loss"]
+    return train, val
+
+
+def packing(run: Path) -> dict[int, list[str]]:
+    """The documents each step trained on, over every rank and microbatch, as
+    a sorted list of entries; a resumed process's later lines win."""
+
+    steps: dict[int, list[str]] = {}
+    for path in packing_files(run):
+        records = {}
+        for record in map(json.loads, path.read_text().splitlines()):
+            records[record["step"]] = [
+                json.dumps(entry)
+                for microbatch in record["microbatches"]
+                for entry in microbatch
+            ]
+        for step, entries in records.items():
+            steps.setdefault(step, []).extend(entries)
+    return {step: sorted(entries) for step, entries in steps.items()}
+
+
+def main() -> None:
+    runs = [Path(path) for path in sys.argv[1:]]
+    reference, *others = runs
+    ref_train, ref_val = read(reference)
+    figure, (curves, gaps) = plt.subplots(2, 1, figsize=(10, 8), sharex=True)
+    # One color per run, the same in both panels: C0 is the reference.
+    curves.plot(
+        list(ref_train),
+        list(ref_train.values()),
+        label=reference.name,
+        lw=0.8,
+        color="C0",
+    )
+
+    final = (
+        f"final val loss {list(ref_val.values())[-1]:.4f}"
+        if ref_val
+        else "no validation"
+    )
+    print(f"reference: {reference.name}, {final}")
+    for index, run in enumerate(others, start=1):
+        train, val = read(run)
+        steps = sorted(set(train) & set(ref_train))
+        gap = {step: train[step] - ref_train[step] for step in steps}
+        windows = [
+            sum(abs(gap[s]) for s in steps[i : i + 100]) / len(steps[i : i + 100])
+            for i in range(0, len(steps), 100)
+        ]
+        print(f"\n{run.name}: {len(steps)} shared steps")
+        ours, theirs = packing(run), packing(reference)
+        differing = [
+            step
+            for step in sorted(set(ours) & set(theirs))
+            if ours[step] != theirs[step]
+        ]
+        print(
+            "  documents        "
+            + (
+                f"DIFFER from step {differing[0]}"
+                if differing
+                else "identical at every step"
+            )
+        )
+        first_step = steps[0]
+        first = f"{train[first_step]:.6f} vs {ref_train[first_step]:.6f}"
+        print(f"  first-step loss      {first} (diff {gap[first_step]:+.2e})")
+        print(f"  max |diff| 0-9   {max(abs(gap[s]) for s in steps[:10]):.2e}")
+        print("  mean |diff| / 100 steps  " + "  ".join(f"{w:.4f}" for w in windows))
+        validated = set(val) & set(ref_val)
+        if validated:
+            last = max(validated)
+            difference = val[last] - ref_val[last]
+            print(f"  val loss at {last}  {val[last]:.4f} (diff {difference:+.4f})")
+        curves.plot(
+            steps, [train[s] for s in steps], label=run.name, lw=0.8, color=f"C{index}"
+        )
+        gaps.plot(steps, list(gap.values()), label=run.name, lw=0.6, color=f"C{index}")
+
+    curves.set_ylabel("training loss")
+    curves.legend()
+    gaps.axhline(0, color="black", lw=0.5)
+    gaps.legend()
+    gaps.set_ylabel(f"loss minus {reference.name}")
+    gaps.set_xlabel("step")
+    figure.tight_layout()
+    figure.savefig(reference / "compare.png", dpi=120)
+    print(f"\nwrote {reference / 'compare.png'}")
+
+
+if __name__ == "__main__":
+    main()

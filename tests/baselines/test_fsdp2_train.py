@@ -7,7 +7,7 @@ import textwrap
 import pytest
 import torch
 
-from baselines.engines.fsdp2.train import float8_filter
+from benchmarks.baselines.engines.fsdp2.train import float8_filter
 
 
 def test_float8_converts_block_linears_the_kernels_take():
@@ -29,7 +29,7 @@ def test_cpu_offloaded_initialization_matches_device_shards(tmp_path):
         from torch import nn
         from torch.distributed.device_mesh import init_device_mesh
         from torch.distributed.fsdp import CPUOffloadPolicy, OffloadPolicy, fully_shard
-        from baselines.engines.fsdp2.model import initialize
+        from benchmarks.baselines.engines.fsdp2.model import initialize
 
         torch.cuda.set_device(0)
         dist.init_process_group('nccl', init_method='file://' + sys.argv[1],

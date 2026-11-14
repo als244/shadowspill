@@ -116,7 +116,7 @@ def test_defaults_fill_what_a_config_leaves_out(tmp_path):
     }
     expanded = load_config(raw, ["run_dir=runs/x"])
     assert expanded["data"] == {
-        "@call": "shadowspill_workloads.recipes.text.data.packed:PackedTokens",
+        "@call": "shadowspill_workloads.inputs.text.packed:PackedTokens",
         "directory": "data/x",
     }
     assert (

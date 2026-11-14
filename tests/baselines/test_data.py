@@ -6,7 +6,7 @@ import numpy
 import pytest
 import torch
 
-from baselines.common.data import Corpus, synthetic_tokens
+from benchmarks.baselines.common.data import Corpus, synthetic_tokens
 
 
 def test_synthetic_tokens_are_deterministic_per_seed_and_distinct_per_rank():

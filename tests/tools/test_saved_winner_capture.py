@@ -5,7 +5,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from benchmarking.quickstart.phases.common import plan_identity, read, write
+from benchmarks.quickstart.phases.common import plan_identity, read, write
 from shadowspill import MemoryBudgets, Plan, plan_program
 from tests.shadowspill.offline._example import communication, profiled
 from tools.pressurefit_trace.profile_winners.capture import command, supported_traces

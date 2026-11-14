@@ -8,9 +8,9 @@ import pytest
 import torch
 
 from shadowspill.training import config
-from shadowspill_workloads.recipes.text.data.documents import IGNORE
-from shadowspill_workloads.recipes.text.data.packed import PackedTokens
-from shadowspill_workloads.recipes.text.data.units import held_out
+from shadowspill_workloads.inputs.text.documents import IGNORE
+from shadowspill_workloads.inputs.text.packed import PackedTokens
+from shadowspill_workloads.inputs.text.units import held_out
 from shadowspill_workloads.recipes.text.experiment.execute import checkpoint_directory
 from shadowspill_workloads.recipes.text.heterogeneous.data import (
     UnitUpdates,

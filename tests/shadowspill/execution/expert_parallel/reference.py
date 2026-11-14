@@ -17,7 +17,7 @@ import torch
 import torch.distributed as dist
 from torch import nn
 
-from benchmarking.quickstart.phases.common import experiment, read
+from benchmarks.quickstart.phases.common import experiment, read
 from qualification.numerical.tolerances import STEP_QUANTUM_DISAGREEMENTS
 from shadowspill import Plan
 from shadowspill.artifacts.tensors import TensorChunk

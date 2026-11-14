@@ -5,9 +5,9 @@ import argparse
 
 import pytest
 
-from baselines.common import precision
-from baselines.common.launch import engine_module
-from baselines.common.precision import (
+from benchmarks.baselines.common import precision
+from benchmarks.baselines.common.launch import engine_module
+from benchmarks.baselines.common.precision import (
     Capabilities,
     Precision,
     Unsupported,

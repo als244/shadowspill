@@ -304,7 +304,7 @@ sys.modules['mlops'] = None
 from shadowspill_workloads.recipes import Model, LoRA, train
 for name in ('llama3', 'olmoe', 'qwen3', 'qwen35', 'qwen3moe', 'qwen35moe'):
     assert Model.from_config(f'{name}-tiny')
-runpy.run_module('shadowspill_workloads.recipes.text.example')
+runpy.run_module('examples.train_text')
 for name in ('qwen35_lora', 'glm53_flash_lora', 'qwen3'):
     runpy.run_module(f'shadowspill_workloads.recipes.text.{name}.example')
 assert sys.modules['torch'] is None and sys.modules['mlops'] is None

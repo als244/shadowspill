@@ -2,8 +2,8 @@
 
 import csv
 
-from benchmarking.quickstart.phases.common import read, write
-from benchmarking.quickstart.results import write_measurements
+from benchmarks.quickstart.phases.common import read, write
+from benchmarks.quickstart.results import write_measurements
 
 
 def test_measurements_filter_replaced_plans_and_clear_stale_reports(tmp_path):

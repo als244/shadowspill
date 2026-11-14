@@ -9,22 +9,20 @@ shadowspill/
 │   ├── csrc/             native planner, runtime, backends and adapter
 │   ├── CMakeLists.txt    native build entry point
 │   └── pyproject.toml    engine metadata and dependencies
-├── src/tools/             trace analysis/videos, naming checks and sanitizer support
-├── tests/                 fast tests mirroring product/tool boundaries
 ├── packages/workloads/    installable optional model catalog and recipes
-├── training/              text-recipe configs and the prepare, train,
-│                          reference and compare commands
-├── reference/             executable reference implementations
-├── benchmarking/          quickstart, profiled-program corpora, and planning evaluation
-├── qualification/         gate commands, implementations, configurations, and docs
-├── baselines/             the training systems ShadowSpill is measured against
-├── docs/                  architecture, Python, C, examples, and development
-├── scripts/               one-command setup
+├── examples/              training programs and application configs
+├── benchmarks/            measurements, saved-Plan runners and external baselines
+├── tools/                 trace analysis, source checks and corpus applications
+├── tests/                 repository and cross-package checks
+├── reference/             independent algorithm and training oracles
+├── qualification/         numerical, performance and release campaigns
+├── docs/                  architecture, APIs, guides and development
+├── scripts/               environment setup
 └── pyproject.toml         workspace lint, type, and test configuration
 ```
 
 `qualification/` owns the complete gate implementation and its documentation.
-There is no forwarding package under `src/tools/`. `qualification/gates/`
+There is no forwarding package under `tools/`. `qualification/gates/`
 runs the selected gates; the numerical and performance gates' `matrix/`
 packages select and launch their cases, and the SSD and remote gates run those
 same matrices; `run.py` implements the single-case command. Product behavior
@@ -62,17 +60,17 @@ explicit worker counts and rank maps, without reading saved recipe configuration
 The engine imports no repository clients or model catalog. See the
 [ownership map](../../packages/engine/src/shadowspill/orchestration/README.md).
 
-`benchmarking/plan_runner/` owns the saved-Plan measurement protocol, GPU sampling
+`benchmarks/plan_runner/` owns the saved-Plan measurement protocol, GPU sampling
 and reports. Its generic `run` API accepts initialization and input hooks. The
 separate `recipe` bridge reads saved workload configurations as a client;
 normal training recipes do not depend on the benchmark runner.
 
-`benchmarking/quickstart/` composes the public phase APIs in separate workers. The
+`benchmarks/quickstart/` composes the public phase APIs in separate workers. The
 `bandwidth_frontier/` package consumes `ProfiledProgram` archives and runs CPU
 planning/plotting only. Corpus collection/evaluation remain
 separate: collection builds and profiles, while evaluation reads the saved
 corpus and plans budgets and transfer assumptions. Shared benchmark host-memory
-preflight lives in `benchmarking/host_memory/`; it checks physical/cgroup limits
+preflight lives in `benchmarks/host_memory/`; it checks physical/cgroup limits
 before the baseline worker creates spill pools.
 
 ## Python package

@@ -16,7 +16,7 @@ def test_offloader_integration_protects_gathered_storage_before_fsdp_frees_it():
         """
         import torch
         from torch import nn
-        from baselines.engines.fsdp2.offload import blocks_context
+        from benchmarks.baselines.engines.fsdp2.offload import blocks_context
 
         torch.set_num_threads(2)
         count = 1024 * 1024

@@ -8,9 +8,9 @@ import json
 
 import pytest
 
-from baselines.common.launch import command, engine_module
-from baselines.engines.automodel.options import OPTIONS
-from baselines.engines.automodel.settings import (
+from benchmarks.baselines.common.launch import command, engine_module
+from benchmarks.baselines.engines.automodel.options import OPTIONS
+from benchmarks.baselines.engines.automodel.settings import (
     IMPLEMENTATION,
     Settings,
     add_arguments,
@@ -219,7 +219,7 @@ def test_every_option_has_its_flag_in_the_readme():
     from pathlib import Path
 
     readme = (
-        Path(__file__).parents[2] / "baselines/engines/automodel/README.md"
+        Path(__file__).parents[2] / "benchmarks/baselines/engines/automodel/README.md"
     ).read_text()
     missing = [
         option.name

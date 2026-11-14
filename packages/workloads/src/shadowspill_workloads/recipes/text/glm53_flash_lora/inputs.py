@@ -1,6 +1,6 @@
 """Rank-local GLM calls, with KDA metadata and one global token normalizer."""
 
-from shadowspill_workloads.recipes.text.data.calls import Inputs as TextInputs
+from shadowspill_workloads.inputs.text.calls import Inputs as TextInputs
 from shadowspill_workloads.recipes.text.glm.data import (
     GLMTokenUpdates,
     next_token_prediction,

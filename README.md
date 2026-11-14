@@ -37,4 +37,4 @@ Run once from a configured checkout, without an outer `torchrun`. The runner
 measures candidates, selects the fastest predicted Plan that fits, and saves
 artifacts under `run_dir`. See the [training guide](packages/workloads/src/shadowspill_workloads/recipes/README.md)
 for supported models, data preparation, LoRA and distributed settings, or edit
-the [commented training script](packages/workloads/src/shadowspill_workloads/recipes/text/example.py).
+the [commented training script](examples/train_text.py).

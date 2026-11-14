@@ -5,7 +5,7 @@ import sys
 
 import pytest
 
-from benchmarking.quickstart import main, run
+from benchmarks.quickstart import main, run
 from tests.benchmarking._generic_quickstart import experiment
 from tests.shadowspill.offline._example import communication
 

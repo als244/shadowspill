@@ -91,6 +91,6 @@ def test_planning_a_saved_program_needs_no_frontend() -> None:
     to read costs that were measured months ago.
     """
 
-    for module in ("shadowspill.planner", "benchmarking.planning_eval.worker"):
+    for module in ("shadowspill.planner", "benchmarks.planning_eval.worker"):
         clean, detail = _imports_without_torch(module)
         assert clean, f"{module} pulled a framework in: {detail}"

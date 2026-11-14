@@ -8,8 +8,8 @@ import pytest
 import torch
 from torch import nn
 
-from baselines.common.precision import Precision
-from baselines.engines.megatron_core.train import (
+from benchmarks.baselines.common.precision import Precision
+from benchmarks.baselines.engines.megatron_core.train import (
     pinned_parameters,
     precision_evidence,
     stepped_of,

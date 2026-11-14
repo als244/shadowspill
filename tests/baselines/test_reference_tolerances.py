@@ -5,7 +5,7 @@ zero start."""
 import pytest
 import torch
 
-from baselines.common import reference
+from benchmarks.baselines.common import reference
 from qualification.numerical import metrics, tolerances
 
 BOUNDS = (

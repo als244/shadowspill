@@ -42,7 +42,7 @@ def test_stage_worker_replays_saved_pair(tmp_path, variant):
             sys.executable,
             *(["-S"] if sys.flags.no_site else []),
             "-m",
-            "benchmarking.stage_traces.worker",
+            "benchmarks.stage_traces.worker",
             "--artifact",
             str(artifact),
             "--output",

@@ -4,7 +4,7 @@ import json
 
 import pytest
 
-from benchmarking.quickstart import main, orchestrate, run
+from benchmarks.quickstart import main, orchestrate, run
 from shadowspill.memory import PinnedHostPool
 
 

@@ -43,9 +43,9 @@ No separate EP model import is needed; see
 | [models/](models) | One package per model family: its configuration, checkpoint reader, README and implementations (`pytorch`, `mlops`); `models/shared/` holds the code families share |
 | [lora/](lora) | LoRA targeting for the supplied models over MLOps's reusable projections |
 | [recipes/](recipes) | Caller-side model/data/objective composition |
-| [recipes/text/data/](recipes/text/data) | Corpus preparation, fixed token sequences, document packing and resumable sources |
+| [recipes/text/data/](inputs/text) | Corpus preparation, fixed token sequences, document packing and resumable sources |
 | [recipes/text/experiment/](recipes/text/experiment) | Configured text experiments with separate build, profile, CPU plan and fresh-worker execution |
-| [recipes/text/reference/](recipes/text/reference) | Ordinary PyTorch reference updates, evaluation and checkpoint/resume |
+| [recipes/text/reference/](../../../../reference/training) | Ordinary PyTorch reference updates, evaluation and checkpoint/resume |
 | [full_model.py](full_model.py) | Reproducible full-model specifications and construction |
 | [numerical.py](numerical.py) | Exact-scale cases shared by the numerical qualification's two arms |
 | [precision.py](precision.py) | Explicit precision settings used by supplied workloads |
@@ -66,7 +66,7 @@ The [shared Python training runner](recipes/README.md) accepts catalog model
 names for Llama, OLMoE, dense Qwen and Qwen MoE full training, plus checkpoint
 sources for Qwen3.5 MoE and GLM Flash LoRA. It owns build/profile/plan/execute;
 model adapters supply construction, bounded initialization and resumable text
-inputs. See the [commented script](recipes/text/example.py). The standalone
+inputs. See the [commented script](../../../../examples/train_text.py). The standalone
 [Llama phase modules](recipes/text/llama3) also illustrate direct phase control.
 The [configured text runner](recipes/text/experiment) follows the same phases,
 preserving document packing, runtime norm logging, held-out evaluation and resume.
@@ -96,9 +96,9 @@ the caller still imports `Model` from `implementations.pytorch`.
 
 ## Run an example
 
-- [Training recipes](../../../../training/README.md): complete configs, data preparation,
+- [Training recipes](../../../../examples/training/README.md): complete configs, data preparation,
   dtype overrides, schedules, logging, evaluation and checkpoints.
-- [Benchmark quickstart](../../../../benchmarking/quickstart.md): throughput presets or
+- [Benchmark quickstart](../../../../benchmarks/quickstart.md): throughput presets or
   a user experiment factory, budget/geometry search, plots and resolution plans.
 - [Generic training example](../../../../docs/examples/generic-training.md): a non-text
   model and iterable data.

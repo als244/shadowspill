@@ -8,9 +8,9 @@ from dataclasses import replace
 
 import pytest
 
-from baselines.common.launch import resolve, trainer_environment
-from baselines.engines.shadowspill.settings import Settings
-from benchmarking.quickstart.phases.common import write
+from benchmarks.baselines.common.launch import resolve, trainer_environment
+from benchmarks.baselines.engines.shadowspill.settings import Settings
+from benchmarks.quickstart.phases.common import write
 
 
 @pytest.mark.cuda
@@ -66,7 +66,7 @@ def test_saved_baseline_matches_reference_in_fresh_worker(
                 sys.executable,
                 *(["-S"] if sys.flags.no_site else []),
                 "-m",
-                "baselines.common.launch",
+                "benchmarks.baselines.common.launch",
                 "--engine",
                 "shadowspill",
                 "--gpus",
@@ -106,7 +106,7 @@ def test_saved_baseline_matches_reference_in_fresh_worker(
                 sys.executable,
                 *(["-S"] if sys.flags.no_site else []),
                 "-m",
-                "baselines.common.launch",
+                "benchmarks.baselines.common.launch",
                 "--engine",
                 "shadowspill",
                 "--gpus",

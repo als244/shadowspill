@@ -144,7 +144,7 @@ def expand_defaults(raw):
     expanded = dict(raw)
     if isinstance(expanded.get("data"), str):
         expanded["data"] = {
-            "@call": "shadowspill_workloads.recipes.text.data.packed:PackedTokens",
+            "@call": "shadowspill_workloads.inputs.text.packed:PackedTokens",
             "directory": expanded["data"],
         }
     for key, value in DEFAULTS.items():
@@ -186,7 +186,7 @@ def run_config(path, overrides=(), *, phase="all"):
     if raw.get("heterogeneous") is not None and (nodes or "ranks" in raw):
         raise ValueError("the heterogeneous section carries its own nodes and shares")
     if raw.get("eval_every") and raw.get("heterogeneous") is None:
-        from .data.units import held_out_units
+        from shadowspill_workloads.inputs.text.units import held_out_units
 
         # Refused here rather than after build, profile and planning.
         held_out_units(
@@ -202,7 +202,7 @@ def run_config(path, overrides=(), *, phase="all"):
                 "the PyTorch reference runs one worker; "
                 "ranks needs the shadowspill engine"
             )
-        from .reference.run import run_config as run_reference
+        from reference.training.run import run_config as run_reference
 
         return run_reference(path, overrides, options=raw)
     if raw.get("engine", "shadowspill") != "shadowspill":

@@ -7,11 +7,11 @@ import numpy
 import pytest
 import torch
 
-from baselines.common import runner
-from baselines.common.launch import resolve, trainer_environment
-from baselines.common.results import validate_row
-from baselines.engines.fsdp2 import settings as fsdp2
-from baselines.engines.fsdp2.settings import Settings
+from benchmarks.baselines.common import runner
+from benchmarks.baselines.common.launch import resolve, trainer_environment
+from benchmarks.baselines.common.results import validate_row
+from benchmarks.baselines.engines.fsdp2 import settings as fsdp2
+from benchmarks.baselines.engines.fsdp2.settings import Settings
 
 TINY = {
     "model": "llama3-tiny",

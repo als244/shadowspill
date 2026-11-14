@@ -6,7 +6,7 @@ from pathlib import Path
 
 from mlops.dispatch import deterministic_kernels
 
-from benchmarking.spill import resolve
+from benchmarks.spill import resolve
 from shadowspill import Program, apply_profiles, measure_communication, measure_program
 from shadowspill.orchestration.profiling import profiling_options
 

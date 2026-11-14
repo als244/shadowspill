@@ -89,7 +89,7 @@ variant does not force GPU residency.
 
 `sweep_programs` compares supplied ProfiledPrograms and budgets; it does not
 create or profile candidates. The source-tree [recipe runner](../../packages/workloads/src/shadowspill_workloads/recipes/README.md)
-and [quickstart](../../benchmarking/quickstart.md) can construct candidate
+and [quickstart](../../benchmarks/quickstart.md) can construct candidate
 microbatch sizes, chunk sizes and retention policies, then search their Plans.
 The generic phase APIs accept arbitrary supported models; recipes provide
 application-specific model/data setup around them.

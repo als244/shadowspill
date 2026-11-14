@@ -7,7 +7,7 @@ API boundaries and the [Python reference](../python/README.md) for details.
 
 ## Start here
 
-1. [Commented training script](../../packages/workloads/src/shadowspill_workloads/recipes/text/example.py) — the shared
+1. [Commented training script](../../examples/train_text.py) — the shared
    runner with a real language model and next-token loss.
 2. [Training and checkpointing](generic-training.md) — build/profile, CPU planning,
    bounded initialization and a Trainer loop in a fresh worker.
@@ -17,7 +17,7 @@ API boundaries and the [Python reference](../python/README.md) for details.
    profiles and produce simulated reports without a GPU.
 5. [Custom stage partitioning](custom-partitioning.md) — control build-time FX
    boundaries through a small policy.
-6. [Commented GLM LoRA script](../../packages/workloads/src/shadowspill_workloads/recipes/text/glm53_flash_lora/example.py)
+6. [Commented GLM LoRA script](../../examples/glm53_flash_lora.py)
    — real checkpoint/data, chunk and retention search, pinned-host budgets,
    evaluation and checkpointing through the normal saved phases.
 
@@ -40,6 +40,6 @@ lists model dimensions, precisions and available implementations.
 
 [Plan and execution diagnostics](diagnostics.md) compares simulated timelines
 with a saved Executor's runtime trace. The
-[saved-Plan capture tool](../../benchmarking/quickstart.md#nsight-captures-of-saved-winners)
+[saved-Plan capture tool](../../benchmarks/quickstart.md#nsight-captures-of-saved-winners)
 collects Nsight reports. One Executor runs its admitted Plans sequentially.
 See [failures and cleanup](../python/advanced/failures.md) for error handling.

@@ -7,12 +7,12 @@ from dataclasses import replace
 
 import pytest
 
-from benchmarking.planning_eval.source import discover_program_cases
-from benchmarking.program_collection.artifacts import (
+from benchmarks.planning_eval.source import discover_program_cases
+from benchmarks.program_collection.artifacts import (
     load_program,
     save_profiled_program,
 )
-from benchmarking.program_collection.corpus import ProgramCaseIdentity
+from benchmarks.program_collection.corpus import ProgramCaseIdentity
 from tests.benchmarking._profiled import measured
 
 
@@ -72,8 +72,8 @@ def test_saved_corpus_plans_without_build_torch_or_runtime(tmp_path):
 
 
 def test_estimates_are_not_promoted_to_physical_allocation_evidence(tmp_path):
-    from benchmarking.planning_eval.config import load_frontier_config
-    from benchmarking.planning_eval.inputs import planning_problem
+    from benchmarks.planning_eval.config import load_frontier_config
+    from benchmarks.planning_eval.inputs import planning_problem
     from tests.benchmarking.test_planning_eval import _CONFIG
 
     source = measured()

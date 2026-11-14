@@ -73,7 +73,7 @@ def test_references_name_objects_calls_and_partials() -> None:
         config.resolve("@fractions")
 
 
-CONFIGS = Path(__file__).resolve().parents[2] / "training" / "configs"
+CONFIGS = Path(__file__).resolve().parents[2] / "examples/training" / "configs"
 
 
 @pytest.mark.parametrize(
@@ -106,8 +106,8 @@ def test_a_config_on_mlops_asks_it_for_weight_gradients_at_its_grad_dtype(
 def test_fp16_model_and_optimizer_precision_survive_config(tmp_path, master):
     import torch
 
+    from reference.training.engine import EagerStep
     from shadowspill.training import reset_parameters
-    from shadowspill_workloads.recipes.text.reference.engine import EagerStep
     from tests.training._synthetic import write_dataset
 
     path = _write(
@@ -124,7 +124,7 @@ def test_fp16_model_and_optimizer_precision_survive_config(tmp_path, master):
             "optimizer": "@mlops.optim:AdamW",
             "optimizer_args": {},
             "data": {
-                "@call": "shadowspill_workloads.recipes.text.data.packed:PackedTokens",
+                "@call": "shadowspill_workloads.inputs.text.packed:PackedTokens",
                 "directory": str(write_dataset(tmp_path / "tokens")),
             },
         },

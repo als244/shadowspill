@@ -227,7 +227,7 @@ costs. Equal final task contracts can share code/profiles; a changed saved cut
 cannot borrow another cut's memory evidence. See
 [graph-pair construction](../../architecture/graph-pair-construction.md#save),
 [artifact metadata](artifacts.md#aot-graph-pair-cache), and the
-[candidate example](../../../benchmarking/quickstart.md#searching-chunk-and-retention-policies).
+[candidate example](../../../benchmarks/quickstart.md#searching-chunk-and-retention-policies).
 
 For unusual cost classification, subclass `RetentionPolicy.classify(node)`.
 It receives a traced FX node and returns `OperatorClass.MEMORY_BOUND`,

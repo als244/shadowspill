@@ -4,7 +4,7 @@ from itertools import accumulate
 
 import torch
 
-from ..data.fixed import TokenUpdates
+from shadowspill_workloads.inputs.text.fixed import TokenUpdates
 
 
 class GLMTokenUpdates(TokenUpdates):

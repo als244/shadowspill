@@ -2,9 +2,9 @@
 
 import pytest
 
-from benchmarking.quickstart.phases.common import write
-from benchmarking.quickstart.phases.distributed import preparation_size
-from benchmarking.quickstart.phases.execute import aggregate_steps
+from benchmarks.quickstart.phases.common import write
+from benchmarks.quickstart.phases.distributed import preparation_size
+from benchmarks.quickstart.phases.execute import aggregate_steps
 
 
 def test_only_communicating_resources_require_distributed_preparation():
@@ -65,7 +65,7 @@ class Block(importlib.abc.MetaPathFinder):
         if fullname.split('.')[0] == 'torch':
             raise AssertionError(fullname)
 sys.meta_path.insert(0, Block())
-from benchmarking.quickstart.phases.worker import main
+from benchmarks.quickstart.phases.worker import main
 sys.argv = ['worker', 'communicate', sys.argv[1]]
 main()
 """
@@ -92,7 +92,7 @@ def test_distributed_quickstart_profiles_locally_then_launches_mapped_workers(tm
 
     import torch
 
-    from benchmarking.quickstart import run
+    from benchmarks.quickstart import run
     from shadowspill import CommunicationInfo
 
     if not torch.cuda.is_available() or torch.cuda.device_count() < 2:

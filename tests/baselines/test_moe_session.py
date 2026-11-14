@@ -3,7 +3,7 @@ from unittest.mock import Mock
 
 import pytest
 
-from baselines.moe_layer import session
+from benchmarks.baselines.moe_layer import session
 
 
 @pytest.mark.parametrize(

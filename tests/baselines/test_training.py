@@ -2,9 +2,9 @@
 objective wraps, under the model's own parameter names, which are the
 names the family's reader maps."""
 
-from baselines.common.geometry import Geometry
-from baselines.common.models import ModelRequest
-from baselines.common.training import TrainingModel
+from benchmarks.baselines.common.geometry import Geometry
+from benchmarks.baselines.common.models import ModelRequest
+from benchmarks.baselines.common.training import TrainingModel
 
 
 class Recording:

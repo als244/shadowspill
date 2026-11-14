@@ -1,6 +1,6 @@
 import pytest
 
-from baselines.moe_layer.candidates import expanded
+from benchmarks.baselines.moe_layer.candidates import expanded
 
 
 @pytest.mark.parametrize("epilogue", [None, "gated", "lse"])

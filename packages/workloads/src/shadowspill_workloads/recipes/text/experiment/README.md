@@ -47,7 +47,7 @@ objects. The model, data and objective remain workload choices.
 A config needs `run_dir`, `data`, `max_seq_len`, `max_tokens_per_step` and
 `steps`, and a `checkpoint` or a `model`, a `model` executing only with an
 `initialize` or a `resume`; a missing one is named. A key the runner does not
-know is refused, with the nearest known name. `training.run` takes the same
+know is refused, with the nearest known name. `examples.training.run` takes the same
 config as a path or a mapping from Python.
 
 Schedule keys use the saved Plan's hyperparameter names. A hyperparameter a
@@ -133,7 +133,7 @@ With `ranks` the runner launches that many workers under
 follow. `rank_tokens_per_step` is set by the
 [heterogeneous recipe](../heterogeneous/README.md) for each node, its ranks'
 share of the step; the runner refuses it in a config.
-`engine="pytorch"` selects the ordinary [PyTorch reference loop](../reference).
+`engine="pytorch"` selects the ordinary [PyTorch reference loop](../../../../../../../reference/training).
 It uses `device` (default `"auto"`) and `compile` (default `true`), without
 constructing ShadowSpill Plans or installing the execution allocator. It preserves
 packing, schedules, optional observations, evaluation and local PyTorch checkpoints.

@@ -8,8 +8,8 @@ from mlops.optim import AdamW
 
 from shadowspill import build_forward, build_step
 from shadowspill.training.preparation.phases import settings
+from shadowspill_workloads.inputs.text.calls import Inputs
 from shadowspill_workloads.models.llama3.implementations.mlops import Model
-from shadowspill_workloads.recipes.text.data.calls import Inputs
 from shadowspill_workloads.recipes.text.objectives import (
     normalized_next_token_prediction as loss,
 )

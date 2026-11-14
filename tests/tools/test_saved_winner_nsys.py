@@ -8,7 +8,7 @@ import sys
 
 import pytest
 
-from benchmarking.quickstart import run
+from benchmarks.quickstart import run
 
 
 @pytest.mark.cuda

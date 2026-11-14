@@ -1,5 +1,6 @@
-"""The two entry points a newcomer meets: ``training.run`` on a path or a
-mapping with keyword overrides, and ``training.prepare`` driven by the config."""
+"""The two entry points a newcomer meets: ``examples.training.run`` on a path or a
+mapping with keyword overrides, and ``examples.training.prepare`` driven by
+the config."""
 
 from __future__ import annotations
 
@@ -10,8 +11,8 @@ import pyarrow as pa
 import pyarrow.parquet as pq
 import pytest
 
+from examples.training import run
 from tests.training._text_recipe import _config
-from training import run
 
 
 def test_run_takes_a_path_or_a_mapping_with_keyword_overrides(tmp_path):
@@ -53,7 +54,7 @@ def tokenizer_dir(tmp_path):
 
 
 def test_prepare_tokenizes_for_the_config(tmp_path, tokenizer_dir):
-    from training.prepare import main
+    from examples.training.prepare import main
 
     data = tmp_path / "tokens"
     config = tmp_path / "config.json"

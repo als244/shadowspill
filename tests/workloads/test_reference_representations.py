@@ -3,10 +3,10 @@
 import pytest
 import torch
 
+from reference.training.engine import EagerStep
 from shadowspill.training import checkpoints
 from shadowspill.training._model import initialize_model
 from shadowspill.training.observations import MetricSummary
-from shadowspill_workloads.recipes.text.reference.engine import EagerStep
 from tests.shadowspill.pytorch.representation_fixtures import model
 
 

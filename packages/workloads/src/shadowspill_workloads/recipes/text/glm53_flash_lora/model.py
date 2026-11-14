@@ -6,8 +6,8 @@ from pathlib import Path
 
 import torch
 
+from shadowspill_workloads.inputs.text.tokenizer import tokenizer_identity
 from shadowspill_workloads.models.glm53_flash.checkpoint import GLMCheckpoint
-from shadowspill_workloads.recipes.text.data.tokenizer import tokenizer_identity
 from shadowspill_workloads.recipes.text.glm.initialize import Initialize
 from shadowspill_workloads.recipes.text.training import frozen_state_identity
 

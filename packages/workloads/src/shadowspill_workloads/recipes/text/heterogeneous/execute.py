@@ -13,7 +13,7 @@ from shadowspill import Plan, Trainer
 from shadowspill.artifacts.tensors import registration_name, tensor_geometry
 from shadowspill.training import config
 from shadowspill.training.preparation.phases import settings
-from shadowspill_workloads.recipes.text.data.units import held_out
+from shadowspill_workloads.inputs.text.units import held_out
 from shadowspill_workloads.recipes.text.experiment import logging, results
 from shadowspill_workloads.recipes.text.experiment.execute import (
     checkpoint_directory,

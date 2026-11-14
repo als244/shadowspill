@@ -71,7 +71,7 @@ def test_distributed_regression_runs_through_saved_artifacts(tmp_path):
         sys.executable,
         *(["-S"] if sys.flags.no_site else []),
         "-m",
-        "shadowspill_workloads.recipes.distributed_training",
+        "examples.regression_training",
         "--run-dir",
         str(root),
         "--ranks",

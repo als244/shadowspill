@@ -4,9 +4,9 @@ import argparse
 
 import pytest
 
-from baselines.common.launch import command, engine_module
-from baselines.engines.shadowspill.precision import optimizer_arguments
-from baselines.engines.shadowspill.settings import (
+from benchmarks.baselines.common.launch import command, engine_module
+from benchmarks.baselines.engines.shadowspill.precision import optimizer_arguments
+from benchmarks.baselines.engines.shadowspill.settings import (
     Settings,
     add_arguments,
     from_namespace,

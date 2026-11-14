@@ -2,7 +2,7 @@
 which lock a package's version comes from, what is left to its source, and
 what a resolution departed from."""
 
-from baselines.scripts.nvidia_versions import departures, preferences
+from benchmarks.baselines.scripts.nvidia_versions import departures, preferences
 
 BRIDGE = """
 version = 1

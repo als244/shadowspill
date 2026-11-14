@@ -9,29 +9,33 @@ from pathlib import Path
 
 import pytest
 
-from baselines.common import write_json
-from baselines.common.launch import command, engine_module, trainer_command
-from baselines.common.provenance import ROOT
-from baselines.common.results import (
+from benchmarks.baselines.common import write_json
+from benchmarks.baselines.common.launch import command, engine_module, trainer_command
+from benchmarks.baselines.common.provenance import ROOT
+from benchmarks.baselines.common.results import (
     memory_peaks,
     read_rows,
     row,
     summarize_cycles,
     varied,
 )
-from baselines.engines.fsdp2.settings import Settings, add_arguments, from_namespace
-from baselines.sweep import config as sweep
-from baselines.sweep.config import comparable, expand, keep_names
-from baselines.sweep.process import run_case
-from baselines.sweep.reporting import (
+from benchmarks.baselines.engines.fsdp2.settings import (
+    Settings,
+    add_arguments,
+    from_namespace,
+)
+from benchmarks.baselines.sweep import config as sweep
+from benchmarks.baselines.sweep.config import comparable, expand, keep_names
+from benchmarks.baselines.sweep.process import run_case
+from benchmarks.baselines.sweep.reporting import (
     duration,
     ended_block,
     labels,
     started_block,
     tally,
 )
-from baselines.sweep.results import classify, failure_row, latest, to_attempt
-from baselines.sweep.run import main
+from benchmarks.baselines.sweep.results import classify, failure_row, latest, to_attempt
+from benchmarks.baselines.sweep.run import main
 
 #: A tiny case and the eight-GPU Qwen3-30B-A3B pretraining case.
 TINY = {
@@ -136,7 +140,7 @@ def test_a_engine_is_its_settings_module_launched_through_the_launcher():
     assert line[:11] == [
         sys.executable,
         "-m",
-        "baselines.common.launch",
+        "benchmarks.baselines.common.launch",
         "--engine",
         "fsdp2",
         "--python",
@@ -155,7 +159,7 @@ def test_a_engine_is_its_settings_module_launched_through_the_launcher():
         "--nproc-per-node=2",
         "--max-restarts=0",
         "-m",
-        "baselines.engines.fsdp2.train",
+        "benchmarks.baselines.engines.fsdp2.train",
         "--output",
         "out",
         "--case",
@@ -474,6 +478,6 @@ def test_only_the_cases_a_sweep_names_count(tmp_path):
 
 
 def test_the_guide_lists_every_case_name_code():
-    guide = (ROOT / "baselines" / "experiments" / "README.md").read_text()
+    guide = (ROOT / "benchmarks/baselines" / "experiments" / "README.md").read_text()
     for setting, code in sweep.CODES.items():
         assert f"| `{code}` | `{setting}` |" in guide

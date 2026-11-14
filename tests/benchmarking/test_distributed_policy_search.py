@@ -26,7 +26,7 @@ from tests.benchmarking._distributed_policy_search import (
 
 
 def test_distributed_policy_factory_preserves_update_and_worker_topology():
-    from benchmarking.quickstart.phases.candidates import build_options
+    from benchmarks.quickstart.phases.candidates import build_options
 
     setups = [experiment(device="cpu", logical_rank=rank) for rank in range(2)]
     assert setups[0]["metadata"] == setups[1]["metadata"]
@@ -209,8 +209,8 @@ def _cold_winner(directory):
 def test_distributed_quickstart_searches_policies_chunks_and_checks_saved_winner(
     tmp_path,
 ):
-    from benchmarking.quickstart import main, run
-    from benchmarking.quickstart.phases.common import plan_identity
+    from benchmarks.quickstart import main, run
+    from benchmarks.quickstart.phases.common import plan_identity
     from shadowspill import CommunicationInfo, Plan, Program, SweepResult
     from tests.spill_pool import spill_pool
 

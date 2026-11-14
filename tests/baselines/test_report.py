@@ -1,8 +1,16 @@
 """The frontier a report draws: grouping, dominance and labels, without
 rendering anything."""
 
-from baselines.common.results import memory_peaks, row, summarize_cycles
-from baselines.report import frontier, group_key, groups, label, point, slug, title
+from benchmarks.baselines.common.results import memory_peaks, row, summarize_cycles
+from benchmarks.baselines.report import (
+    frontier,
+    group_key,
+    groups,
+    label,
+    point,
+    slug,
+    title,
+)
 
 
 def completed(engine, tokens_per_second, device_gib, host_gib, **settings):

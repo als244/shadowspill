@@ -7,11 +7,11 @@ from types import SimpleNamespace
 import pytest
 import torch
 
-from baselines.engines.shadowspill import preparation
-from baselines.engines.shadowspill.reference import assemble
-from baselines.engines.shadowspill.settings import Settings
-from benchmarking.quickstart.phases.common import write
-from benchmarking.quickstart.phases.search import orderings, search_options
+from benchmarks.baselines.engines.shadowspill import preparation
+from benchmarks.baselines.engines.shadowspill.reference import assemble
+from benchmarks.baselines.engines.shadowspill.settings import Settings
+from benchmarks.quickstart.phases.common import write
+from benchmarks.quickstart.phases.search import orderings, search_options
 from shadowspill.artifacts.tensors import TensorChunk
 
 
@@ -55,18 +55,18 @@ def test_replanning_existing_profiles_does_not_launch_gpu_phases(tmp_path, monke
 
 
 def test_controller_is_not_launched_once_per_gpu():
-    from baselines.common.launch import trainer_command
+    from benchmarks.baselines.common.launch import trainer_command
 
     command = trainer_command("shadowspill", "python", 8, Path("/run"))
     assert "torch.distributed.run" not in command
-    assert "baselines.engines.shadowspill.train" in command
+    assert "benchmarks.baselines.engines.shadowspill.train" in command
     assert "torch.distributed.run" in trainer_command(
         "fsdp2", "python", 8, Path("/run")
     )
 
 
 def test_execution_supplies_the_complete_rank_assignment(monkeypatch):
-    from baselines.engines.shadowspill import execute
+    from benchmarks.baselines.engines.shadowspill import execute
     from shadowspill.communication.binding.ranks import RankAssignment
 
     settings = Settings(model="llama3-tiny", sequence_length=32, tokens_per_step=256)
@@ -124,7 +124,7 @@ def test_reference_exports_reconstruct_shards_and_reject_disagreements():
 
 
 def test_catalog_initializer_accepts_wrapped_parameter_chunks():
-    from baselines.engines.shadowspill.initialize import Initialize
+    from benchmarks.baselines.engines.shadowspill.initialize import Initialize
 
     request = TensorChunk(
         "model.embed.weight", (512, 128), torch.bfloat16, 0, 512 * 128, (128, 1)

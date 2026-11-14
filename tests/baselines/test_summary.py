@@ -6,9 +6,9 @@ import json
 
 import pytest
 
-from baselines import summary
-from baselines.common import write_json
-from baselines.common.results import memory_peaks, row, summarize_cycles
+from benchmarks.baselines import summary
+from benchmarks.baselines.common import write_json
+from benchmarks.baselines.common.results import memory_peaks, row, summarize_cycles
 
 MODEL = {"model": "llama3-8b", "implementation": "mlops", "mode": "full"}
 GEOMETRY = {"sequence_length": 4096, "world_size": 1}
@@ -177,7 +177,7 @@ def test_without_budgets_only_the_frontiers_are_given(experiment):
 
 
 def test_the_summary_names_the_commits_and_embeds_the_reports_figures(experiment):
-    from baselines.report import slug
+    from benchmarks.baselines.report import slug
 
     key = ("llama3-8b", "full", 4096, 0, "RTX 5090", 1)
     figures = experiment / "report" / "figures"
@@ -198,7 +198,7 @@ def test_the_summary_names_the_commits_and_embeds_the_reports_figures(experiment
 
 
 def test_a_published_summary_keeps_its_figures_and_no_path(experiment, tmp_path):
-    from baselines.report import slug
+    from benchmarks.baselines.report import slug
 
     key = ("llama3-8b", "full", 4096, 0, "RTX 5090", 1)
     figure = experiment / "report" / "figures" / f"{slug(key)}-device.png"

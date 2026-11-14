@@ -8,7 +8,7 @@ import pytest
 import torch
 from torch.utils.checkpoint import checkpoint
 
-from baselines.common.annotations import checkpoint_contexts, phase
+from benchmarks.baselines.common.annotations import checkpoint_contexts, phase
 
 
 @pytest.mark.parametrize("reentrant", [False, True])
@@ -34,13 +34,14 @@ def test_only_checkpoint_replay_is_labeled_recompute(monkeypatch, reentrant):
     expected = value.detach().clone().requires_grad_()
     expected.sin().square().sum().backward()
     if reentrant:
-        from baselines.engines.deepspeed.train import Checkpointed
+        from benchmarks.baselines.engines.deepspeed.train import Checkpointed
 
         def ds_checkpoint(fn, *args):
             return checkpoint(fn, *args, use_reentrant=True)
 
         monkeypatch.setitem(
-            sys.modules, "deepspeed",
+            sys.modules,
+            "deepspeed",
             SimpleNamespace(checkpointing=SimpleNamespace(checkpoint=ds_checkpoint)),
         )
         result = Checkpointed(Block(), annotations=True)(value)
@@ -51,7 +52,8 @@ def test_only_checkpoint_replay_is_labeled_recompute(monkeypatch, reentrant):
     assert seen == [("baseline.phase/checkpoint_forward",)]
     result.sum().backward()
     assert seen == [
-        ("baseline.phase/checkpoint_forward",), ("baseline.phase/recompute",)
+        ("baseline.phase/checkpoint_forward",),
+        ("baseline.phase/recompute",),
     ]
     assert active == []  # also handles non-reentrant early-stop exceptions
     torch.testing.assert_close(value.grad, expected.grad)

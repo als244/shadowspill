@@ -12,7 +12,7 @@ detailed diagnostics and extensions. Exact signatures and defaults live in the
 | Select microbatches, orderings, chunk sizes and retention candidates | [Training configuration](../../../packages/workloads/src/shadowspill_workloads/recipes/configuration.md) |
 | Separate checkpoint regions from execution chunks | [Partitioning example](../../examples/custom-partitioning.md), [build policies](../api/frontend.md) |
 | Replan saved profiles across budgets and search choices | [Reusable planning](../../examples/reusable-planning.md), [planning API](../api/planning.md) |
-| Benchmark a model factory or a saved Plan | [Quickstart](../../../benchmarking/quickstart.md), [Plan runner](../../../benchmarking/plan_runner/README.md) |
+| Benchmark a model factory or a saved Plan | [Quickstart](../../../benchmarks/quickstart.md), [Plan runner](../../../benchmarks/plan_runner/README.md) |
 
 ## Inspect artifacts and execution
 

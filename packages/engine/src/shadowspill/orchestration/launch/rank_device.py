@@ -4,7 +4,7 @@ Run before importing CUDA-dependent modules, for example::
 
     torchrun --standalone --nproc-per-node=8 \
         -m shadowspill.orchestration.launch.rank_device \
-        -m benchmarking.quickstart --distributed ...
+        -m benchmarks.quickstart --distributed ...
 
 Global/local rank identities are preserved. ShadowSpill's automatic device
 selection uses ordinal zero when only one GPU is visible. This gives every

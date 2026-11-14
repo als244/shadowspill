@@ -8,17 +8,17 @@ from pathlib import Path
 
 import pytest
 
-from benchmarking._serialization import atomic_json
-from benchmarking.planning_eval.cli import _find_resume_baseline
-from benchmarking.planning_eval.config import (
+from benchmarks._serialization import atomic_json
+from benchmarks.planning_eval.cli import _find_resume_baseline
+from benchmarks.planning_eval.config import (
     BandwidthScale,
     FrontierConfig,
     FrontierGrid,
     TransferBandwidthBaseline,
     load_frontier_config,
 )
-from benchmarking.planning_eval.controller import _recover_interrupted_points
-from benchmarking.planning_eval.journal import (
+from benchmarks.planning_eval.controller import _recover_interrupted_points
+from benchmarks.planning_eval.journal import (
     begin_point_attempt,
     finish_point_attempt,
     initialize_point,
@@ -26,24 +26,24 @@ from benchmarking.planning_eval.journal import (
     point_complete,
     recover_running_attempt,
 )
-from benchmarking.planning_eval.manifest import BaselinePaths
-from benchmarking.planning_eval.matrix import (
+from benchmarks.planning_eval.manifest import BaselinePaths
+from benchmarks.planning_eval.matrix import (
     FrontierPointRequest,
     expand_frontier_points,
     expand_grid_axes,
 )
-from benchmarking.planning_eval.process import execute_case_worker
-from benchmarking.planning_eval.provenance import (
+from benchmarks.planning_eval.process import execute_case_worker
+from benchmarks.planning_eval.provenance import (
     RepositoryProvenance,
 )
-from benchmarking.planning_eval.source import (
+from benchmarks.planning_eval.source import (
     CorpusProgramCase,
     corpus_manifest_digest,
     discover_program_cases,
 )
-from benchmarking.planning_eval.summary import write_frontier_summary
-from benchmarking.program_collection.artifacts import save_profiled_program
-from benchmarking.program_collection.corpus import (
+from benchmarks.planning_eval.summary import write_frontier_summary
+from benchmarks.program_collection.artifacts import save_profiled_program
+from benchmarks.program_collection.corpus import (
     ProgramCaseIdentity,
 )
 from shadowspill.schema import artifact_schema
@@ -55,7 +55,7 @@ _REPOSITORY = Path(__file__).resolve().parents[2]
 _REPOSITORY_HEAD = "487de0b355365d7ce84911630c96216e5bc9794b"
 _CONFIG = (
     _REPOSITORY
-    / "benchmarking"
+    / "benchmarks"
     / "planning_eval"
     / "configs"
     / "full_search_frontier_v2.json"
@@ -507,11 +507,11 @@ def test_resume_discovers_one_compatible_incomplete_baseline(
     expected = {
         "recorded_head": "a" * 40,
         "resume_head": "b" * 40,
-        "changed_files": ["benchmarking/planning_eval/summary.py"],
+        "changed_files": ["benchmarks/planning_eval/summary.py"],
         "classification": "harness_only",
     }
     monkeypatch.setattr(
-        "benchmarking.planning_eval.cli.resume_provenance_relationship",
+        "benchmarks.planning_eval.cli.resume_provenance_relationship",
         lambda _current, _recorded: expected,
     )
     provenance = RepositoryProvenance(

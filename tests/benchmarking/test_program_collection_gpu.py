@@ -7,11 +7,11 @@ import sys
 
 import pytest
 
-from benchmarking.program_collection.artifacts import load_program
-from benchmarking.program_collection.journal import load_case_status
-from benchmarking.program_collection.matrix import expand_program_requests
-from benchmarking.program_collection.paths import CollectionPaths
-from benchmarking.program_collection.settings import (
+from benchmarks.program_collection.artifacts import load_program
+from benchmarks.program_collection.journal import load_case_status
+from benchmarks.program_collection.matrix import expand_program_requests
+from benchmarks.program_collection.paths import CollectionPaths
+from benchmarks.program_collection.settings import (
     CollectionConfig,
     GeometryAxes,
     ModelSpec,
@@ -50,20 +50,20 @@ class Block(importlib.abc.MetaPathFinder):
 sys.meta_path.insert(0, Block())
 """
     worker = (
-        guard + "\nfrom benchmarking.program_collection.worker import main\n"
+        guard + "\nfrom benchmarks.program_collection.worker import main\n"
         "raise SystemExit(main())"
     )
     controller = (
         guard
         + f"""
-from benchmarking.program_collection import controller
+from benchmarks.program_collection import controller
 original = controller._worker_command
 def command(*args):
     values = original(*args)
     index = values.index("-m")
     return [*values[:index], "-c", {worker!r}, *values[index + 2:]]
 controller._worker_command = command
-from benchmarking.program_collection.cli import main
+from benchmarks.program_collection.cli import main
 raise SystemExit(main())
 """
     )

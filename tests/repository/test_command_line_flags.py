@@ -102,7 +102,7 @@ def _readers(path: Path) -> list[Path]:
     """
 
     recipe_packages = {
-        CATALOG / "recipes/text/train_llama3.py": ("llama3",),
+        ROOT / "examples/train_llama3.py": (CATALOG / "recipes/text/llama3",),
         CATALOG / "recipes/text/qwen3/arguments.py": (
             ".",
             "../phases",
@@ -118,7 +118,7 @@ def _readers(path: Path) -> list[Path]:
             "../phases",
             PREPARATION,
         ),
-        CATALOG / "recipes/distributed_training.py": ("regression",),
+        ROOT / "examples/regression_training.py": (CATALOG / "recipes/regression",),
     }
     if path in recipe_packages:
         readers = [
@@ -144,6 +144,9 @@ def _readers(path: Path) -> list[Path]:
             "shadowspill.orchestration.profiling": (
                 "packages/engine/src/shadowspill/orchestration/profiling.py"
             ),
+            "shadowspill_workloads.recipes.text.training": (
+                CATALOG / "recipes/text/training.py"
+            ),
             "shadowspill_workloads.recipes.text.catalog": (
                 CATALOG / "recipes/text/catalog.py"
             ),
@@ -151,7 +154,7 @@ def _readers(path: Path) -> list[Path]:
             if module in imported:
                 readers.append(ROOT / relative_path)
         return readers
-    if path.parent == ROOT / "baselines/moe_layer":
+    if path.parent == ROOT / "benchmarks/baselines/moe_layer":
         return list(path.parent.rglob("*.py"))
     package_commands = {
         ROOT / "qualification/numerical/run.py",

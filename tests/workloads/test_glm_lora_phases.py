@@ -22,7 +22,7 @@ from qualification.numerical.tolerances import (
 )
 from shadowspill.training.preparation.cli import arguments
 from shadowspill.training.preparation.configuration import configure as configure_shared
-from shadowspill_workloads.recipes.text.data.tokenizer import tokenizer_identity
+from shadowspill_workloads.inputs.text.tokenizer import tokenizer_identity
 from shadowspill_workloads.recipes.text.glm53_flash_lora.arguments import parser
 from shadowspill_workloads.recipes.text.glm53_flash_lora.inputs import Inputs
 from shadowspill_workloads.recipes.text.glm53_flash_lora.model import (
@@ -224,7 +224,7 @@ def test_glm_checkpoint_training_evaluation_and_cold_resume(recipe, tmp_path):
         sys.executable,
         *(["-S"] if sys.flags.no_site else []),
         "-m",
-        "shadowspill_workloads.recipes.text.train_glm53_flash_lora",
+        "examples.train_glm53_flash_lora",
     ]
     for phase in ("build", "profile", "plan", "execute"):
         arguments = cli if phase == "build" else ["--run-dir", str(root)]

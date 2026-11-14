@@ -6,7 +6,7 @@ import json
 
 import pytest
 
-from baselines import generate_experiment
+from benchmarks.baselines import generate_experiment
 
 TINY = [
     "--model",

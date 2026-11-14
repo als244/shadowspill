@@ -8,7 +8,7 @@ The model also mutates an integer buffer, exercising persistent model state.
 Start once from the parent process on a node with at least two visible GPUs:
 
 ```bash
-python -m shadowspill_workloads.recipes.distributed_training \
+python -m examples.regression_training \
   --run-dir runs/regression --ranks 2 --steps 10
 ```
 
@@ -32,13 +32,13 @@ or `execute`. Later phases read `config.json` and saved archives from `--run-dir
 A new build needs a fresh directory. For example:
 
 ```bash
-python -m shadowspill_workloads.recipes.distributed_training \
+python -m examples.regression_training \
   --run-dir runs/regression --ranks 2 --phase build
-python -m shadowspill_workloads.recipes.distributed_training --run-dir runs/regression --phase profile
-python -m shadowspill_workloads.recipes.distributed_training --run-dir runs/regression --phase communicate
-CUDA_VISIBLE_DEVICES= python -m shadowspill_workloads.recipes.distributed_training \
+python -m examples.regression_training --run-dir runs/regression --phase profile
+python -m examples.regression_training --run-dir runs/regression --phase communicate
+CUDA_VISIBLE_DEVICES= python -m examples.regression_training \
   --run-dir runs/regression --phase plan
-python -m shadowspill_workloads.recipes.distributed_training --run-dir runs/regression --phase execute
+python -m examples.regression_training --run-dir runs/regression --phase execute
 ```
 
 Use `--phase plan --execution-gib ... --spill-gib ...` to replan the measured
@@ -57,10 +57,10 @@ shared quickstart driver. It sweeps two microbatch sizes and the requested GPU
 budgets using the same public phase APIs:
 
 ```bash
-python -m benchmarking.quickstart \
+python -m benchmarks.quickstart \
   --factory shadowspill_workloads.recipes.regression.benchmark:experiment \
   --search-budget-gib 2 3 --spill-gib 0.125 --output-dir runs/regression-benchmark
 ```
 
-See the [quickstart guide](../../../../../../benchmarking/quickstart.md) for independent
+See the [quickstart guide](../../../../../../benchmarks/quickstart.md) for independent
 phases, CPU replanning and saved results.

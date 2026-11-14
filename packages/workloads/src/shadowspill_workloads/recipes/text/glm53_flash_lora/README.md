@@ -6,7 +6,7 @@ precision, LoRA targets and the KDA input metadata. The
 [shared runner](../../README.md) performs profiling, communication calibration,
 candidate planning and saved-Plan training in fresh workers.
 
-Start with the [commented Python script](example.py). Edit its paths and the
+Start with the [commented Python script](../../../../../../../examples/glm53_flash_lora.py). Edit its paths and the
 settings you want to compare. Its main configuration looks like this:
 
 ```python
@@ -51,7 +51,7 @@ validation and phase workers; configuration keys use underscores and accept
 `Path` objects for paths. Unknown options fail before creating a run.
 Build and profiling use one
 representative GPU; communication calibration and execution launch eight workers.
-The [32K launcher](../glm53_flash_lora_32k_8gpu.sh) supplies the eight-GPU defaults
+The [32K launcher](../../../../../../../examples/glm53_flash_lora_32k_8gpu.sh) supplies the eight-GPU defaults
 and a 100-update schedule. Weights, gradients, masters and optimizer data are
 sharded across the DP group. The frozen base preserves checkpoint BF16/FP32
 storage and FP8 data/scales. Dense GEMMs use BF16; FP8 experts use SonicMoE's FP8
@@ -69,7 +69,7 @@ This selection binding does not package the attention binaries or its backward
 compiler.
 
 The corpus must contain `train.bin`, `val.bin` and `meta.json` from the
-[text preparation tool](../data/README.md), including the base tokenizer's hash.
+[text preparation tool](../../../inputs/text/README.md), including the base tokenizer's hash.
 Each worker reads different rank-local windows. Training and validation losses
 are normalized by the global token count once. `train/global_mean_loss` sums
 rank contributions; `train/loss` is the worker's own contribution.
@@ -93,7 +93,7 @@ train(model, saved, phase="execute")
 
 On a scheduler, invoke only the phase for the current allocation; no GPU is
 needed for `plan`. The CLI remains available through
-`shadowspill_workloads.recipes.text.train_glm53_flash_lora` with the same option names.
+`examples.train_glm53_flash_lora` with the same option names.
 Single-GPU profiling measures host transfers itself; skip `communicate` for
 `ranks=1`. CPU-only `plan` reads saved artifacts and can change
 `execution_gib` and `spill_gib` without importing Torch or the model.
@@ -145,7 +145,7 @@ and ordering `1x1rp`.
 
 This recipe searches all factor orderings for the selected sizes; it has no
 ordering allowlist. A
-[quickstart factory](../../../../../../../benchmarking/quickstart.md#factory-inputs)
+[quickstart factory](../../../../../../../benchmarks/quickstart.md#factory-inputs)
 can also declare named input geometries and build controls. For an explicit
 ordering list, call `plan_program(ordering=StepDataOrdering(...))` for each desired choice;
 depth times breadth must equal that Program's microbatch count. See
@@ -250,7 +250,7 @@ building and optionally require `--minimum-relative-loss-drop 0.01`. That check
 requires at least four newly executed updates, including when resuming.
 
 Profile execution after preparing the plans with the shared
-[saved-Plan benchmark API](../../../../../../../benchmarking/plan_runner/README.md#nsight-systems).
+[saved-Plan benchmark API](../../../../../../../benchmarks/plan_runner/README.md#nsight-systems).
 It launches one collector per global rank, masks each collector to its worker's
 GPU, and saves reports under a configurable common directory. No GLM-specific
 capture path is needed. Capture spans completed updates, with per-rank NVTX ranges. Evaluation and

@@ -6,7 +6,7 @@ import argparse
 import os
 from pathlib import Path
 
-from benchmarking.spill import parse_remote
+from benchmarks.spill import parse_remote
 from shadowspill.memory import SpillPool
 from shadowspill.network import RemotePool
 from shadowspill.ssd import SSDPool, ssd

@@ -8,7 +8,7 @@ import textwrap
 
 import pytest
 
-from benchmarking.quickstart.phases.common import write
+from benchmarks.quickstart.phases.common import write
 from tests.shadowspill.offline._example import communication, profiled
 
 
@@ -72,7 +72,7 @@ def test_plan_worker_consumes_saved_profiles_without_torch_or_factory(
                 ):
                     raise AssertionError('plan worker imported ' + fullname)
         sys.meta_path.insert(0, Block())
-        from benchmarking.quickstart.phases.worker import main
+        from benchmarks.quickstart.phases.worker import main
         sys.argv = ['worker', 'plan', sys.argv[1]]
         main()
     """)
@@ -126,7 +126,7 @@ class Block(importlib.abc.MetaPathFinder):
         if fullname.split('.')[0] == 'torch':
             raise AssertionError('quickstart orchestration imported torch')
 sys.meta_path.insert(0, Block())
-from benchmarking.quickstart import main
+from benchmarks.quickstart import main
 main(['--help'])
 """
     child = subprocess.run(
@@ -140,7 +140,7 @@ main(['--help'])
 
 
 def test_initial_build_does_not_require_planning_budgets(tmp_path, monkeypatch):
-    from benchmarking.quickstart import main, orchestrate
+    from benchmarks.quickstart import main, orchestrate
 
     calls = []
     monkeypatch.setattr(
@@ -169,8 +169,8 @@ def test_initial_build_does_not_require_planning_budgets(tmp_path, monkeypatch):
 def test_public_tail_controls_reach_planning_and_require_replanning(
     tmp_path, monkeypatch
 ):
-    from benchmarking.quickstart import main, orchestrate, run
-    from benchmarking.quickstart.phases.search import search_options
+    from benchmarks.quickstart import main, orchestrate, run
+    from benchmarks.quickstart.phases.search import search_options
 
     phases = []
     monkeypatch.setattr(orchestrate, "_launch", lambda phase, *a: phases.append(phase))
@@ -229,7 +229,7 @@ def test_public_tail_controls_reach_planning_and_require_replanning(
 
 
 def test_joint_factory_offers_each_policy_at_each_chunk_and_input_geometry():
-    from benchmarking.quickstart.phases.candidates import build_options, example_inputs
+    from benchmarks.quickstart.phases.candidates import build_options, example_inputs
     from tests.benchmarking._generic_quickstart import chunked_experiment
 
     setup = chunked_experiment(device="cpu")
@@ -264,7 +264,7 @@ def test_joint_factory_offers_each_policy_at_each_chunk_and_input_geometry():
 def test_build_keeps_every_examples_arguments(tmp_path, monkeypatch, form):
     from types import SimpleNamespace
 
-    from benchmarking.quickstart.phases import build
+    from benchmarks.quickstart.phases import build
 
     inputs = {}
     if form != "kwargs":
@@ -305,7 +305,7 @@ def test_build_keeps_every_examples_arguments(tmp_path, monkeypatch, form):
 def test_quickstart_process_pipeline_and_offline_replanning(tmp_path, factory):
     import torch
 
-    from benchmarking.quickstart import main, run
+    from benchmarks.quickstart import main, run
     from tests.spill_pool import spill_pool
 
     if not torch.cuda.is_available():

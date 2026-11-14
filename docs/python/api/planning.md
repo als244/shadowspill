@@ -102,5 +102,5 @@ This convenience loop uses default traversal; it does not search microbatch
 sizes, chunk policies or orderings. For explicit orderings, loop over
 `plan_program`. For build/profile candidate generation as well, use the
 [recipe runner](../../../packages/workloads/src/shadowspill_workloads/recipes/README.md) or
-[quickstart](../../../benchmarking/quickstart.md). See the
+[quickstart](../../../benchmarks/quickstart.md). See the
 [budget-sweep example](../../examples/reusable-planning.md) for saving winners.

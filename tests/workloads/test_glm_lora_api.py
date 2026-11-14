@@ -162,7 +162,7 @@ def refuse(*args, **kwargs):
     raise AssertionError('import started a worker')
 runner.run_phases = refuse
 example = runpy.run_module(
-    'shadowspill_workloads.recipes.text.glm53_flash_lora.example')
+    'examples.glm53_flash_lora')
 assert example['config']['chunk_sizes'][0] == 0
 assert example['config']['spill_gib'] == 96
 assert example['config']['microbatch_sizes'] == [1]

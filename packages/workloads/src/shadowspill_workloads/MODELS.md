@@ -155,14 +155,14 @@ selects storage dtype without allocating weights. Quickstart does not choose
 FP16 automatically on older hardware. For example:
 
 ```bash
-python -m training.train training/configs/llama3_1b.json \
+python -m examples.training.train examples/training/configs/llama3_1b.json \
   model.dtype=float16 grad_dtype=@torch:float32 \
   optimizer_args.opt_state_dtype=@torch:float32 master_dtype=null
 ```
 
 For stock `torch.optim.AdamW`, FP32 moments with FP16 compute weights require
 FP32 masters. MLOps AdamW supports independently selected moment storage. See
-[training precision](../../../../training/README.md#precision-and-initialization).
+[training precision](../../../../examples/training/README.md#precision-and-initialization).
 
 FP8 is an [expert-compute setting](#expert-parallelism), not a value for
 `precision.model_dtype`. Selecting FP8 experts does not convert attention, router,
@@ -389,23 +389,23 @@ any configuration field it changes:
 ```
 
 This is the model portion of a request. Complete runnable examples are
-[Llama](../../../../training/configs/llama3_1b.json),
-[dense Qwen](../../../../training/configs/qwen35_1b.json), and
-[OLMoE](../../../../training/configs/olmoe_1b.json). The
-[training guide](../../../../training/README.md) explains data preparation, overrides,
+[Llama](../../../../examples/training/configs/llama3_1b.json),
+[dense Qwen](../../../../examples/training/configs/qwen35_1b.json), and
+[OLMoE](../../../../examples/training/configs/olmoe_1b.json). The
+[training guide](../../../../examples/training/README.md) explains data preparation, overrides,
 optimizer schedules, evaluation, W&B, and checkpoints.
 
 For a benchmark using a supplied throughput preset and saved resolution plans:
 
 ```bash
-python -m benchmarking.quickstart \
+python -m benchmarks.quickstart \
   --factory shadowspill_workloads.recipes.text.benchmark.factory:experiment \
   --factory-args '{"model":"llama3-8b","sequence_length":1024,"sequences_per_step":64,"min_tokens_per_example":8192,"max_tokens_per_example":16384}' \
   --search-budget-gib 20 30 --run-budget-gib 20 30 \
   --spill-gib 112 --output-dir runs/llama3
 ```
 
-The [quickstart guide](../../../../benchmarking/quickstart.md) describes every flag and
+The [quickstart guide](../../../../benchmarks/quickstart.md) describes every flag and
 custom experiment factories. The [text factory](recipes/text/benchmark/README.md)
 supplies catalog models and optional LoRA; `ranks` selects sharded DP. The GLM
 families use the same phase runner with family-specific construction and loading.
@@ -424,7 +424,7 @@ workers recreate the explicitly described resources.
 | [recipes/](recipes) | Caller-side model construction, objectives and data composition |
 | [precision.py](precision.py) | Supplied workload precision configuration |
 | [full_model.py](full_model.py) | Reproducible full-model specifications and construction |
-| [training/configs/](../../../../training/configs) | Concrete example training requests |
+| [examples/training/configs/](../../../../examples/training/configs) | Concrete example training requests |
 
 The shared Qwen package factors code two architectures use, including
 DeltaNet and full attention. Family packages remain small; adding EP does

@@ -6,9 +6,9 @@ import functools
 import pytest
 import torch
 
-from baselines.common import models
-from baselines.common.geometry import Geometry
-from baselines.common.models import (
+from benchmarks.baselines.common import models
+from benchmarks.baselines.common.geometry import Geometry
+from benchmarks.baselines.common.models import (
     ModelRequest,
     full_attention_layers,
     linear_work,

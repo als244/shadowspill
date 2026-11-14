@@ -5,10 +5,10 @@ import argparse
 
 import pytest
 
-from baselines.common.geometry import Geometry
-from baselines.common.launch import command, engine_module
-from baselines.common.precision import Unsupported
-from baselines.engines.deepspeed.settings import (
+from benchmarks.baselines.common.geometry import Geometry
+from benchmarks.baselines.common.launch import command, engine_module
+from benchmarks.baselines.common.precision import Unsupported
+from benchmarks.baselines.engines.deepspeed.settings import (
     Settings,
     add_arguments,
     deepspeed_config,

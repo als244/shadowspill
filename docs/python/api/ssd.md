@@ -60,7 +60,7 @@ drive nor the SSD extension. Measurement creates a bounded scratch pool using th
 real transfer lanes, without installing the execution allocator. A Plan measured
 for another spill kind must be replanned before execution.
 
-The phase [quickstart](../../../benchmarking/quickstart.md#spill-storage) accepts
+The phase [quickstart](../../../benchmarks/quickstart.md#spill-storage) accepts
 `--ssd-spill /local-nvme`. Pinned host memory remains the default. Sharded
 fetches read the owned payload through the selected backend before all-gather;
 gradient evictions reduce before writing the owned payload. One completion event

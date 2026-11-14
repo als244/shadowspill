@@ -128,7 +128,7 @@ def test_qwen_recipe_cold_execution_and_partial_resume(tmp_path, checkpoint):
         sys.executable,
         *(["-S"] if sys.flags.no_site else []),
         "-m",
-        "shadowspill_workloads.recipes.text.train_qwen35_lora",
+        "examples.train_qwen35_lora",
         "--data",
         str(data),
         "--checkpoint",

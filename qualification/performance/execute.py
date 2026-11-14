@@ -4,7 +4,7 @@ import json
 import sys
 from pathlib import Path
 
-from benchmarking.spill import resolve
+from benchmarks.spill import resolve
 from qualification.pipeline.observe import Observe
 from qualification.pipeline.state import initialize, load_inputs
 from qualification.runtime_evidence import check_physical_budget

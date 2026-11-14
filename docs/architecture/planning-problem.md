@@ -34,7 +34,7 @@ costed IR program with residency boundaries, simulation configuration, admission
 facts and budget limits. It is separate from both the selected schedule and
 search policy.
 
-[Program collection](../../benchmarking/program_collection/README.md) saves
+[Program collection](../../benchmarks/program_collection/README.md) saves
 `ProfiledProgram` archives. The evaluator derives a problem from the archive and
 the requested sweep. Collection does not bind budgets or communication costs.
 

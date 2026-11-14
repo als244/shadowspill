@@ -12,7 +12,7 @@ import traceback
 from dataclasses import replace
 from pathlib import Path
 
-from benchmarking.spill import parse_remote, record
+from benchmarks.spill import parse_remote, record
 from qualification.device_defaults import (
     add_memory_budget_arguments,
     performance_defaults,

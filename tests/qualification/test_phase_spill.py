@@ -5,7 +5,7 @@ from argparse import Namespace
 
 import pytest
 
-from benchmarking.spill import resolve
+from benchmarks.spill import resolve
 from qualification.numerical.prepare import load_request, save_request
 from qualification.numerical.request import CaseRequest, PlannedRequest
 from qualification.numerical.tolerances import SPILL_BUDGET

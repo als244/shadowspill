@@ -1,8 +1,8 @@
-"""training.compare reads one process's run and a multi-rank run alike."""
+"""examples.training.compare reads one process's run and a multi-rank run alike."""
 
 import json
 
-from training.compare import packing, read
+from examples.training.compare import packing, read
 
 
 def _write(path, records):

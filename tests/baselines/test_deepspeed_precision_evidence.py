@@ -5,7 +5,7 @@ from types import SimpleNamespace
 import pytest
 import torch
 
-from baselines.engines.deepspeed.train import precision_evidence
+from benchmarks.baselines.engines.deepspeed.train import precision_evidence
 
 
 class NoGather:

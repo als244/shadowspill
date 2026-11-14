@@ -3,10 +3,10 @@ from __future__ import annotations
 import ast
 from pathlib import Path
 
-from benchmarking.data_geometry import DataGeometry
+from benchmarks.data_geometry import DataGeometry
 
 _REPOSITORY = Path(__file__).resolve().parents[2]
-_BENCHMARKING = _REPOSITORY / "benchmarking"
+_BENCHMARKING = _REPOSITORY / "benchmarks"
 
 
 def test_data_geometry_groups_primary_and_derived_axes() -> None:

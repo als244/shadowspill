@@ -2,9 +2,9 @@ import json
 
 import pytest
 
-from baselines.moe_layer.config import Shape, summarize
-from baselines.moe_layer.plot import collect
-from baselines.moe_layer.sweep import selected_result
+from benchmarks.baselines.moe_layer.config import Shape, summarize
+from benchmarks.baselines.moe_layer.plot import collect
+from benchmarks.baselines.moe_layer.sweep import selected_result
 
 
 def test_full_counts_forward_input_and_weight_products():
@@ -49,7 +49,7 @@ def test_later_failed_attempt_does_not_reuse_older_success(tmp_path):
 
 
 def test_phase_plot_uses_measured_combined_interval(tmp_path):
-    from baselines.moe_layer.plot import phase_timings
+    from benchmarks.baselines.moe_layer.plot import phase_timings
 
     # Forward and backward maxima occur on different ranks. The direct total
     # is 10 ms, not the 18 ms sum of the separate maxima.
@@ -91,7 +91,7 @@ def test_bars_and_curves_use_same_phase_data_without_zero_for_failure():
     matplotlib.use("Agg")
     import matplotlib.pyplot as plt
 
-    from baselines.moe_layer.plot import draw_panel
+    from benchmarks.baselines.moe_layer.plot import draw_panel
 
     rows = [
         dict(
@@ -131,7 +131,7 @@ def test_bars_and_curves_use_same_phase_data_without_zero_for_failure():
 
 
 def test_memory_table_preserves_rank_and_phase_peaks(tmp_path):
-    from baselines.moe_layer.plot import collect_memory
+    from benchmarks.baselines.moe_layer.plot import collect_memory
 
     attempt = tmp_path / "case"
     attempt.mkdir()

@@ -138,7 +138,7 @@ def test_initialize_qwen35_norms_and_decay():
 def test_catalog_training_from_saved_phases(tmp_path, lora, ranks):
     import json
 
-    from benchmarking.quickstart import run
+    from benchmarks.quickstart import run
     from shadowspill.artifacts.sweep import SweepResult
 
     if not torch.cuda.is_available() or torch.cuda.device_count() < ranks:

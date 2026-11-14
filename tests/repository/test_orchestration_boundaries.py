@@ -10,18 +10,18 @@ def test_repository_clients_have_one_way_dependencies():
     root = Path(__file__).resolve().parents[2]
     rules = {
         "packages/workloads/src/shadowspill_workloads": (
-            "benchmarking",
+            "benchmarks",
             "qualification",
         ),
         "packages/engine/src/shadowspill": (
             "orchestration",
             "shadowspill_workloads",
-            "benchmarking",
+            "benchmarks",
             "qualification",
         ),
-        "benchmarking/plan_runner/api.py": (
+        "benchmarks/plan_runner/api.py": (
             "shadowspill_workloads",
-            "benchmarking.quickstart",
+            "benchmarks.quickstart",
         ),
     }
     violations = []
@@ -48,7 +48,7 @@ def test_shared_imports_are_cpu_only_and_recipes_need_no_benchmark_package():
     script = """
 import importlib, importlib.abc, sys
 class Block(importlib.abc.MetaPathFinder):
-    blocked = {'torch', 'shadowspill_workloads', 'benchmarking', 'qualification'}
+    blocked = {'torch', 'shadowspill_workloads', 'benchmarks', 'qualification'}
     def find_spec(self, fullname, path=None, target=None):
         if fullname.split('.')[0] in self.blocked:
             raise AssertionError('unexpected dependency: ' + fullname)
@@ -61,7 +61,7 @@ for module in ('launch.processes', 'launch.rank_device', 'launch.workers',
 for module in ('api', 'configuration', 'phases', 'candidates', 'reuse',
                'plan', 'search', 'execute'):
     importlib.import_module('shadowspill.training.preparation.' + module)
-block.blocked = {'benchmarking', 'qualification'}
+block.blocked = {'benchmarks', 'qualification'}
 for module in ('shadowspill_workloads.recipes',
                'shadowspill.training.preparation.phases',
                'shadowspill.training.preparation.build',
