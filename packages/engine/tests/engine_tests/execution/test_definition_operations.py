@@ -230,6 +230,17 @@ def test_definition_bound_operations_in_cold_worker(tmp_path, monkeypatch, provi
             n: p.detach().clone() for n, p in reference.named_parameters()
         }
     torch.save(oracle, tmp_path / "oracle.pt")
+    with example(resolved, objective, "step") as (binding, adapted), torch.no_grad():
+        after_split = reference(**binding.arguments(adapted, {"temperature": 1.0})[0])
+    (tmp_path / "agent-oracle.json").write_text(
+        json.dumps(
+            {
+                "loss": oracle["step_loss"].item(),
+                "after_step": oracle["predictions"][:3].tolist(),
+                "after_split": after_split[:3].tolist(),
+            }
+        )
+    )
     worker = subprocess.run(
         [
             sys.executable,
@@ -263,6 +274,25 @@ def test_definition_bound_operations_in_cold_worker(tmp_path, monkeypatch, provi
         in worker.stdout
     )
     assert "Qualified pre-reserved worker output files" in worker.stdout
+    agent = subprocess.run(
+        [
+            sys.executable,
+            str(Path(__file__).with_name("_agent_worker.py")),
+            str(tmp_path),
+        ],
+        env={**os.environ, "PYTHONHASHSEED": "4"},
+        capture_output=True,
+        text=True,
+        timeout=120,
+    )
+    assert agent.returncode == 0, (
+        agent.stdout
+        + agent.stderr
+        + (tmp_path / "agent" / "worker" / "stderr.log").read_text()
+        if (tmp_path / "agent" / "worker" / "stderr.log").exists()
+        else agent.stdout + agent.stderr
+    )
+    assert "Qualified installed agent-owned GPU bootstrap" in agent.stdout
     if provider:
         events = [json.loads(line) for line in event_path.read_text().splitlines()]
         by_process = {}

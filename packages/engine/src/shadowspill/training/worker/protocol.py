@@ -6,7 +6,7 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import Literal
 
-from shadowspill_client._records import Record, integer, record, text
+from shadowspill_client._records import Record, integer, names, record, text
 from shadowspill_client.protocol.codec import RecordCodec
 from shadowspill_client.protocol.requests import ArtifactRef, ComputeRequest, identifier
 
@@ -80,6 +80,37 @@ class WorkerBoot(Record):
         )
         if self.phase not in ("prepared", "start", "ready"):
             raise ValueError("unknown worker startup phase")
+
+
+@dataclass(frozen=True)
+class WorkerLaunch(Record):
+    """Trusted agent configuration on the inherited private channel only.
+
+    Definition packages are installed deployment configuration, never requested
+    Python imports. Initialization references are granted by the artifact owner.
+    Filesystem roots remain local command arguments supplied by the node agent.
+    """
+
+    startup: WorkerStartup
+    packages: Sequence[str]
+    weights: Sequence[ArtifactRef] = ()
+
+    def __post_init__(self) -> None:
+        object.__setattr__(
+            self, "startup", record(WorkerStartup, self.startup, "startup")
+        )
+        packages = names(self.packages, "installed definition packages")
+        if len(packages) > 64 or any(len(name) > 128 for name in packages):
+            raise ValueError("worker definition packages exceed their bound")
+        object.__setattr__(self, "packages", packages)
+        if not isinstance(self.weights, (tuple, list)) or len(self.weights) > 1024:
+            raise ValueError("worker weights require bounded artifact references")
+        weights = tuple(record(ArtifactRef, ref, "weights") for ref in self.weights)
+        if len({self.startup.bundle.id, *(ref.id for ref in weights)}) != 1 + len(
+            weights
+        ):
+            raise ValueError("worker initialization artifact IDs must be distinct")
+        object.__setattr__(self, "weights", weights)
 
 
 @dataclass(frozen=True)
@@ -205,6 +236,7 @@ class WorkerReply(Record):
 
 CODEC = RecordCodec(
     {
+        "worker.launch": WorkerLaunch,
         "worker.boot": WorkerBoot,
         "worker.call": WorkerCall,
         "worker.control": WorkerControl,

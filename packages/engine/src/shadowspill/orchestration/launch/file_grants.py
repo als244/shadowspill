@@ -16,7 +16,7 @@ from shadowspill_client.buffers import BufferBudget, BufferLease
 from shadowspill_client.protocol.codec import MAX_METADATA_BYTES, RecordCodec
 from shadowspill_client.protocol.requests import ArtifactRef
 
-from .staging import FileDelivery
+from .staging import COPY_BYTES, FileDelivery
 
 _CODEC = RecordCodec({"node.file": ArtifactRef})
 
@@ -36,6 +36,30 @@ def resolve_file(root: Path, reference: ArtifactRef) -> Path:
     info = path.lstat()
     if not stat.S_ISREG(info.st_mode) or info.st_size != reference.size_bytes:
         raise ValueError("granted file differs from the requested artifact")
+    return path
+
+
+def verify_file(root: Path, reference: ArtifactRef) -> Path:
+    """Recheck startup artifacts with bounded scratch before decoding/loading.
+
+    The agent retains the immutable grant through this read and the later worker
+    consumer lifetime. Input frames have their own prepared payload decoder.
+    """
+    path = resolve_file(root, reference)
+    digest = hashlib.sha256()
+    with path.open("rb", buffering=0) as stream:
+        remaining = reference.size_bytes
+        while remaining:
+            block = stream.read(min(remaining, COPY_BYTES))
+            try:
+                if not block:
+                    raise ValueError("granted artifact is truncated")
+                digest.update(block)
+                remaining -= len(block)
+            finally:
+                del block
+        if stream.read(1) or digest.hexdigest() != reference.sha256:
+            raise ValueError("granted artifact checksum differs from its reference")
     return path
 
 
