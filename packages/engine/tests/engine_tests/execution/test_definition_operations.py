@@ -295,6 +295,10 @@ def test_definition_bound_operations_in_cold_worker(tmp_path, monkeypatch, provi
     assert "Qualified installed agent-owned GPU bootstrap" in agent.stdout
     assert "Qualified production worker request/file coordination" in agent.stdout
     assert (
+        "Qualified pre-reserved worker logs and post-exit artifact transfer"
+        in agent.stdout
+    )
+    assert (
         "Qualified node-backed worker and input/artifact host accounting"
         in agent.stdout
     )

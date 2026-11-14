@@ -6,6 +6,7 @@ import io
 import json
 import os
 import sys
+from contextlib import contextmanager
 from pathlib import Path
 
 
@@ -25,6 +26,7 @@ from engine_tests.fixtures.definition_operations import records  # noqa: E402
 from shadowspill.orchestration.launch.admission import NodeAdmission  # noqa: E402
 from shadowspill.orchestration.launch.file_grants import FileGrants  # noqa: E402
 from shadowspill.orchestration.launch.host_arena import HostArena  # noqa: E402
+from shadowspill.orchestration.launch.log_files import LogFiles  # noqa: E402
 from shadowspill.orchestration.launch.node_capacity import discover_capacity  # noqa: E402
 from shadowspill.orchestration.launch.publication import (  # noqa: E402
     OutputFiles,
@@ -121,6 +123,28 @@ def observe(phase, process):
     )
 
 
+@contextmanager
+def worker_logs(memory):
+    logs = LogFiles(
+        lease,
+        device.id,
+        root=directory,
+        disk=disk,
+        memory=memory,
+        limit_bytes=64 << 10,
+    )
+    try:
+        yield logs
+    finally:
+        lease.close()
+        if sys.exc_info()[0] is not None:
+            path = logs.directory / "stderr.log"
+            if path.exists():
+                with path.open("rb") as stream:
+                    sys.stderr.write(stream.read(64 << 10).decode(errors="replace"))
+        logs.close()
+
+
 with (
     lease,
     HostArena(admission, 64 << 20, 100) as transfers,
@@ -134,6 +158,7 @@ with (
     ) as bundle_files,
     FileGrants(root=directory, memory=transfers.budget) as grants,
     OutputFiles(root=directory, disk=disk, memory=transfers.budget) as outputs,
+    worker_logs(transfers.budget) as logs,
 ):
     memory, metadata = transfers.budget, commands.budget
     arena_bytes = (144 << 20) + execution.max_staging_bytes
@@ -152,9 +177,8 @@ with (
             files=grants.root,
             outputs=outputs.root,
             cache=directory,
-            directory=directory / "worker",
+            logs=logs,
             cwd=directory,
-            log_limit_bytes=64 << 10,
         )
         with (
             start_processes({0: process}, stop=lease.close) as group,
@@ -300,6 +324,15 @@ with (
             inputs.staging.close()
         assert process.child.closed and lease.closed
         assert admission.used.host_bytes == arena_bytes
+        log_refs = logs.references()
+        with FileDelivery(
+            list(log_refs.values()), root=directory, disk=disk, memory=memory
+        ) as saved_logs:
+            saved_logs.receive(logs.open)
+            logs.close()
+            with saved_logs.use() as resolve:
+                for reference in log_refs.values():
+                    assert resolve(reference).stat().st_size == reference.size_bytes
 assert admission.used.claims == 0
 assert disk.used == memory.used == metadata.used == publication.budget.used == (0, 0)
 (directory / "host-accounting.json").write_text(
@@ -319,3 +352,4 @@ assert not any(name in sys.modules for name in ("torch", "triton", "pynvml"))
 print("Qualified installed agent-owned GPU bootstrap and binary publication")
 print("Qualified production worker request/file coordination")
 print("Qualified node-backed worker and input/artifact host accounting")
+print("Qualified pre-reserved worker logs and post-exit artifact transfer")

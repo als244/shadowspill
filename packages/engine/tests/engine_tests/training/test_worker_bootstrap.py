@@ -19,6 +19,7 @@ from shadowspill.orchestration.launch.admission import (
     ResourceRequest,
 )
 from shadowspill.orchestration.launch.file_grants import FileGrants, verify_file
+from shadowspill.orchestration.launch.log_files import LogFiles
 from shadowspill.orchestration.launch.staging import FileDelivery
 from shadowspill.training.worker import bootstrap
 from shadowspill.training.worker.channel import write_message
@@ -135,6 +136,10 @@ def test_real_owned_bootstrap_failure_releases_no_claim_until_child_cleanup(tmp_
         NodeCapacity("local", (AssignedDevice("gpu", "0", 2 << 30),), 4 << 30)
     )
     lease = admission.reserve(ResourceRequest({"gpu": 2 << 30}, 1 << 30))
+    disk, memory = BufferBudget(1 << 20, 100), BufferBudget(1 << 20, 100)
+    logs = LogFiles(
+        lease, "gpu", root=tmp_path, disk=disk, memory=memory, limit_bytes=64 << 10
+    )
     try:
         process = launch_worker(
             lease,
@@ -144,7 +149,7 @@ def test_real_owned_bootstrap_failure_releases_no_claim_until_child_cleanup(tmp_
             files=tmp_path,
             outputs=tmp_path,
             cache=tmp_path,
-            directory=tmp_path / "logs",
+            logs=logs,
             cwd=tmp_path,
             startup_timeout=5,
         )
@@ -154,11 +159,13 @@ def test_real_owned_bootstrap_failure_releases_no_claim_until_child_cleanup(tmp_
         assert process.child.closed and lease.closed and admission.used.claims == 0
         assert (
             "definition package is not installed"
-            in (tmp_path / "logs" / "stderr.log").read_text()
+            in (logs.directory / "stderr.log").read_text()
         )
         assert not process.child._ready
     finally:
         lease.close()
+        logs.close()
+    assert disk.used == memory.used == (0, 0)
 
 
 @pytest.mark.parametrize("issue", ["device", "host", "rendezvous"])
@@ -171,10 +178,19 @@ def test_launch_rejects_unadmitted_pools_and_missing_rendezvous_before_spawn(
     request = ResourceRequest(
         {"gpu": 1 if issue == "device" else 2 << 30}, 1 if issue == "host" else 1 << 30
     )
-    lease = SimpleNamespace(
-        request=request, launch=lambda *args, **kwargs: pytest.fail("spawned")
+    admission = NodeAdmission(
+        NodeCapacity("local", (AssignedDevice("gpu", "0", 2 << 30),), 4 << 30)
     )
-    with pytest.raises(ValueError):
+    lease = admission.reserve(request)
+    logs = LogFiles(
+        lease,
+        "gpu",
+        root=tmp_path,
+        disk=BufferBudget(1 << 20, 100),
+        memory=BufferBudget(1 << 20, 100),
+        limit_bytes=64 << 10,
+    )
+    with logs, lease, pytest.raises(ValueError):
         launch_worker(
             lease,
             "gpu",
@@ -183,7 +199,7 @@ def test_launch_rejects_unadmitted_pools_and_missing_rendezvous_before_spawn(
             files=tmp_path,
             outputs=tmp_path,
             cache=tmp_path,
-            directory=tmp_path / "logs",
+            logs=logs,
             cwd=tmp_path,
         )
 

@@ -65,6 +65,7 @@ for module in ('launch.processes', 'launch.rank_device', 'launch.workers',
                'launch.admission', 'launch.host_memory', 'launch.device_inventory',
                'launch.device_probe', 'launch.file_grants', 'launch.publication',
                'launch.slurm_job', 'launch.host_arena', 'launch.node_capacity',
+               'launch.log_files',
                'monitoring.lifecycle',
                'candidates', 'communication',
                'capture.nsys', 'capture.nsys_worker'):

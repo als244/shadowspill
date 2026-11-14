@@ -6,6 +6,7 @@ from pathlib import Path
 
 from shadowspill.orchestration.launch.admission import NodeLease
 from shadowspill.orchestration.launch.connected import ConnectedProcess
+from shadowspill.orchestration.launch.log_files import LogFiles
 from shadowspill.orchestration.launch.processes import worker_command
 
 from .channel import write_message
@@ -31,9 +32,8 @@ def launch_worker(
     files: Path,
     outputs: Path,
     cache: Path,
-    directory: Path,
+    logs: LogFiles,
     cwd: Path,
-    log_limit_bytes: int = 64 << 20,
     startup_timeout: float = 120,
 ) -> WorkerProcess:
     """Launch only inside an existing complete resource claim.
@@ -43,6 +43,7 @@ def launch_worker(
     lower bounds. This helper never discovers or invents allocation capacity.
     """
     CODEC.encode(launch)  # Complete bounded metadata check before any child launch.
+    logs.check(lease, device_id)
     startup = launch.startup
     if (
         lease.request.devices.get(device_id, 0) < startup.device_bytes
@@ -78,9 +79,9 @@ def launch_worker(
             "LOCAL_RANK": "0",
             "LOCAL_WORLD_SIZE": "1",
         },
-        directory=directory,
+        directory=logs.directory,
         cwd=cwd,
-        log_limit_bytes=log_limit_bytes,
+        log_limit_bytes=logs.limit_bytes,
         startup_timeout=startup_timeout,
     )
     try:
