@@ -22,8 +22,21 @@ request metadata, acceptance, dispatch and terminal outcomes through that journa
 Canonical request digests include binary payload checksums. An identical ID/content
 retry returns its original status; conflicting content or sequence reuse fails.
 Acceptance records retain their original journal position. Completed/skipped/failed
-outcomes are immutable, and a running request cannot be dispatched again. The
-training coordinator still must enforce contiguous acceptance and dependencies.
+outcomes are immutable, and a running request cannot be dispatched again.
+
+`training.session.acceptance.AcceptanceOrder` commits the contiguous validated
+prefix using that record interface, without importing server storage. Later upload
+completion waits for missing earlier metadata or validation. A bounded validation
+window preserves space for earlier requests. Dependencies must name earlier calls;
+failed dependencies reject delayed uploads too. Malformed inputs conservatively
+fail the already queued suffix, preserving successful earlier contributions for
+explicit corrected work under new IDs. Rejection waits for preceding execution to
+settle so its outcome reports the actual surviving counters and accumulation.
+The coordinator calls `advance` after completion and serializes it with writer
+takeover. Accepted dependencies still require a check at dispatch, since they can
+fail during execution. Durable record failure invalidates live state and requires
+reconciliation. None of these primitives dispatches workers or releases input
+owners; service integration supplies those lifecycle boundaries.
 
 Writable attachment calls `claim_writer` with a fresh handle identity and the
 current server incarnation. The durable `WriterLease` carries its epoch and next

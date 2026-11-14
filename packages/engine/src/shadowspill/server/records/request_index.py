@@ -62,6 +62,12 @@ class RequestIndex:
             is not None
         )
 
+    def id_at_sequence(self, sequence: int) -> str | None:
+        row = self._db.execute(
+            "SELECT id FROM requests WHERE sequence=?", (sequence,)
+        ).fetchone()
+        return None if row is None else str(row[0])
+
     def writer(self, writer_id: str) -> WriterLease | None:
         row = self._db.execute(
             "SELECT lease FROM writers WHERE id=?", (writer_id,)

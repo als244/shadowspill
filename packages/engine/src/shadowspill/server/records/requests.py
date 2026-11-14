@@ -138,6 +138,14 @@ class RequestRecords:
                 self._require(key)[1] for key in self._index.pending(after, limit)
             )
 
+    def at_sequence(self, sequence: int) -> tuple[ComputeRequest, RequestStatus] | None:
+        if type(sequence) is not int or not 1 <= sequence < 1 << 63:
+            raise ValueError("submission sequence must be a positive 63-bit integer")
+        with self._mutex:
+            self._usable()
+            key = self._index.id_at_sequence(sequence)
+            return None if key is None else self._require(key)
+
     def submit(self, request: ComputeRequest) -> RequestStatus:
         """Persist metadata/ID reservation; this is explicitly not acceptance."""
         with self._mutex:
