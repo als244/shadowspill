@@ -3,6 +3,7 @@
 from dataclasses import dataclass
 from typing import Protocol
 
+from shadowspill_client._records import text
 from shadowspill_client.protocol.results import ExecutionReceipt, Failure, RequestStatus
 
 from .state import OperationState
@@ -30,9 +31,13 @@ class InterruptedRequests(RecoverableRequests, Protocol):
 
 
 def fail_interrupted_requests(
-    records: InterruptedRequests, state: OperationState
+    records: InterruptedRequests,
+    state: OperationState,
+    *,
+    code: str = "server_restarted",
+    message: str = "Server restarted; recover live worker state from a checkpoint.",
 ) -> RecoverySummary:
-    """On controller restart, invalidate live state and commit explicit failures.
+    """After controller loss, invalidate live state and commit explicit failures.
 
     Dispatch must be journaled before any worker starts a command. A durable
     running record with no execution receipt is therefore uncertain; accepted or
@@ -41,6 +46,8 @@ def fail_interrupted_requests(
     these records, and no worker command is issued. Even an entirely terminal
     history cannot establish that its former mutable workers still exist.
     """
+    text(code, "recovery error code")
+    text(message, "recovery error message")
     state.invalidate()
     failed = uncertain = confirmed = after = 0
     while page := records.pending(after=after, limit=128):
@@ -50,8 +57,8 @@ def fail_interrupted_requests(
             records.fail(
                 status.identity.request_id,
                 Failure(
-                    "server_restarted",
-                    "Server restarted; recover live worker state from a checkpoint.",
+                    code,
+                    message,
                     "completed" if receipt else "unknown" if started else "not_started",
                     state_valid=False,
                     completed_updates=None

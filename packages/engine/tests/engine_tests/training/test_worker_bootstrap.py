@@ -221,6 +221,7 @@ sys.meta_path.insert(0, Block())
 from shadowspill.training.worker.launch import launch_worker, start_processes
 from shadowspill.training.worker.bootstrap import serve
 from shadowspill.training.worker.node import WorkerNode
+from shadowspill.training.session.controller import RunController
 """,
         ],
         capture_output=True,

@@ -32,10 +32,8 @@ from shadowspill.server.records.requests import RequestRecords, RunIdentity  # n
 from shadowspill.training.definitions import load_registry  # noqa: E402
 from shadowspill.training.preparation.bundle import TrainingBundle  # noqa: E402
 from shadowspill.training.preparation.job import JOB_NAME, PreparationJob  # noqa: E402
-from shadowspill.training.session.dispatch import RequestDispatcher  # noqa: E402
-from shadowspill.training.session.inputs import RequestInputs  # noqa: E402
+from shadowspill.training.session.controller import RunController  # noqa: E402
 from shadowspill.training.session.prepared import PreparedRequests  # noqa: E402
-from shadowspill.training.session.state import OperationState  # noqa: E402
 from shadowspill.training.worker.launch import start_processes  # noqa: E402
 from shadowspill.training.worker.node import WorkerNode  # noqa: E402
 from shadowspill.training.worker.protocol import WorkerScope  # noqa: E402
@@ -161,6 +159,8 @@ with (
     process, lease = processes[0], node.lease
     outputs, logs = node.files.outputs, node.logs[0]
     assert admission.used.host_bytes == lease.request.host_bytes + arena_bytes
+    prepared = PreparedRequests(family, cache_root=directory)
+    publishers = {}
     with (
         start_processes(processes, stop=node.stop) as group,
         WorkerRequests(
@@ -174,20 +174,20 @@ with (
             identity=RunIdentity("owner", "session", "run"),
             cache_root=directory,
         ) as journal,
+        RunController(
+            journal,
+            prepared,
+            transfer,
+            lambda call, receipt, result: publishers[call.request.identity.request_id](
+                call, receipt, result
+            ),
+            server_incarnation="agent",
+            budget=uploads.budget,
+        ) as controller,
     ):
         assert process.child._ready and process.child._socket.gettimeout() is None
         observe("ready", process)
-        state = OperationState()
-        dispatcher = RequestDispatcher(journal, state, max_pending=3)
-        prepared = PreparedRequests(family, cache_root=directory)
-        journal.claim_writer("writer", "agent")
-        inputs = RequestInputs(
-            journal,
-            dispatcher.order,
-            prepared.setup.config.execution,
-            prepared,
-            budget=uploads.budget,
-        )
+        assert controller.attach("writer").ready
 
         def invoke(operation, *, predictions=None, corrupt=False, **options):
             sequence = journal.last_sequence + 1
@@ -207,15 +207,7 @@ with (
                 count,
                 **options,
             )
-            prepared.register(inputs, request)
-            status = inputs.receive(name, None if wire is None else io.BytesIO(wire))
-            assert status.state == "accepted", status
-            data = inputs.take(name)
-
-            def execute(transition):
-                return transfer.execute(data, transition)
-
-            def publish(receipt, result):
+            def publish(data, receipt, result):
                 assert journal.execution(name) == receipt
                 if corrupt:
                     path = require_output(outputs.root, result._files[0].spec)
@@ -263,27 +255,28 @@ with (
                     grad_scale=data.controls.grad_scale,
                 )
 
-            try:
-                status = dispatcher.run(
-                    name, execute, publish, participates=data.participates
+            publishers[name] = publish
+            controller.register(request)
+            with io.BytesIO(wire or b"") as body:
+                status = controller.receive(name, None if wire is None else body)
+            assert status.state == "accepted", status
+            # The submitting body is already closed; only the server queue owns
+            # execution. Waiting reads records and cannot issue another command.
+            status = controller.wait(name, timeout=120)
+            controller.drain(timeout=120)
+            del publishers[name]
+            if corrupt:
+                assert status.failure.code == "publication_failed", status
+                assert status.failure.execution_effect == "completed"
+                assert status.failure.state_valid
+                assert status.failure.completed_updates == 2
+                assert (
+                    controller.register(request) == controller.receive(name) == status
                 )
-                if corrupt:
-                    assert status.failure.code == "publication_failed", status
-                    assert status.failure.execution_effect == "completed"
-                    assert status.failure.state_valid
-                    assert status.failure.completed_updates == 2
-                    assert (
-                        dispatcher.run(name, lambda _: pytest_fail(), publish) == status
-                    )
-                else:
-                    assert status.state == "completed", status
-            finally:
-                inputs.finish(name)
-            assert inputs.staging.used == (0, 0)
+            else:
+                assert status.state == "completed", status
+            assert controller.inputs.staging.used == (0, 0)
             observe(name, process)
-
-        def pytest_fail():
-            raise AssertionError("completed optimizer replayed")
 
         invoke(
             "step",
@@ -296,8 +289,7 @@ with (
         invoke("forward_backward", loss_params={"temperature": 1.0})
         invoke("optim_step", optim={"lr": 0.02}, grad_scale=-0.5, corrupt=True)
         invoke("forward", outputs="predictions", predictions="after_split")
-        assert state.boundary.completed_updates == 2 and state.boundary.valid
-        inputs.staging.close()
+        assert controller.boundary.completed_updates == 2 and controller.boundary.valid
     assert process.child.closed and lease.closed
     assert admission.used.host_bytes == arena_bytes
     log_refs = logs.references()
@@ -330,3 +322,4 @@ print("Qualified production worker request/file coordination")
 print("Qualified node-backed worker and input/artifact host accounting")
 print("Qualified pre-reserved worker logs and post-exit artifact transfer")
 print("Qualified production node worker lifecycle")
+print("Qualified connection-independent production controller queue")
