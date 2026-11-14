@@ -125,11 +125,11 @@ failures participate in the existing coordinated startup error protocol.
 ## Optional real-provider regression
 
 With the native backend and MLOps dependencies listed in the test's
-[scope and setup](../../../tests/workloads/prepared_sonic/README.md), run the maintained
+[scope and setup](../../../packages/workloads/tests/workload_tests/prepared_sonic/README.md), run the maintained
 saved-Program regression from this repository:
 
 ```bash
-python -m pytest -m slow tests/workloads/test_prepared_sonic.py
+python -m pytest -m slow packages/workloads/tests/workload_tests/test_prepared_sonic.py
 ```
 
 It covers both saved and recomputed BF16 LoRA training, nested chunks, fused
@@ -137,4 +137,4 @@ gradient destinations, cold profiling/execution, strict physical admission,
 and checkpoint resume in another process. It uses independent CPU references
 and forbids external compilation or autotuning during saved phases. The slow
 test is opt-in and does not replace the complete qualification gates or
-distributed/full-model checks. See its [scope and setup](../../../tests/workloads/prepared_sonic/README.md).
+distributed/full-model checks. See its [scope and setup](../../../packages/workloads/tests/workload_tests/prepared_sonic/README.md).

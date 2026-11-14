@@ -8,6 +8,11 @@ from dataclasses import replace
 import numpy as np
 import pytest
 
+from engine_tests.planner._examples import (
+    training_chain_config,
+    training_chain_initial,
+    training_chain_program,
+)
 from shadowspill.diagnostics.pressurefit_trace import read_manifest
 from shadowspill.ir import (
     MemoryLocation,
@@ -20,11 +25,6 @@ from shadowspill.planner import GenericPlanningOptions, SearchOptions
 from shadowspill.planner.search.algorithms.pressurefit import PressureFit
 from shadowspill.planner.search.algorithms.pressurefit.options import PressureFitOptions
 from shadowspill.planner.search.algorithms.pressurefit.tracing import record_plan_trace
-from tests.shadowspill.planner._examples import (
-    training_chain_config,
-    training_chain_initial,
-    training_chain_program,
-)
 from tools.pressurefit_trace.collect.budgets import execution_budget
 from tools.pressurefit_trace.data import (
     Trajectory,

@@ -22,7 +22,7 @@ _HARNESS_ONLY_RESUME_PATHS = frozenset(
         "benchmarks/planning_eval/manifest.py",
         "benchmarks/planning_eval/summary.py",
         "benchmarks/journals.py",
-        "tests/benchmarking/test_planning_eval.py",
+        "tests/benchmarks/test_planning_eval.py",
     }
 )
 

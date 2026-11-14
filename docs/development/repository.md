@@ -216,23 +216,22 @@ one that covers what it touches.
 
 The test tree mirrors the boundary under test, all the way down: a test for
 `packages/engine/src/shadowspill/profiling/` lives in
-`tests/shadowspill/profiling/`.
+`packages/engine/tests/engine_tests/profiling/`.
 
 ```text
 tests/
-├── shadowspill/           package tests matching packages/engine/src/shadowspill subpackages
-├── csrc/                  C, mock-backend, and device canaries, one directory per library
-├── integration/           fresh-process framework/backend integration
-├── tools/                 source-tree tool tests
-├── workloads/             workload definition tests
-├── orchestration/         process and host coordination tests
-├── benchmarking/          corpus/frontier harness tests
-├── qualification/         gate runner and acceptance-rule tests
-├── training/              text-recipe command and runner tests
-├── baselines/             baseline harness tests
-├── repository/            packaging, naming, links, and API documentation drift
-└── fixtures/              immutable test-only inputs
+├── integration/    application checks across installed packages
+├── benchmarks/     corpus/frontier and baseline harness tests
+├── tools/          reusable source-tool tests
+├── qualification/  gate runner and acceptance-rule tests
+└── repository/     packaging, naming, documentation and boundary checks
 ```
+
+Engine and workload tests live under their respective package roots. The engine
+keeps native and fresh-process canaries under `tests/engine_tests/native` and
+`tests/engine_tests/integration`; [test ownership](../../tests/README.md) describes
+the complete layout. Root `conftest.py` and `pyproject.toml` configure all three
+test roots, including dtype selection and subprocess imports.
 
 Long numerical and throughput runs belong in `qualification/`, not the unit
 suite.
@@ -283,14 +282,14 @@ mypy
 markers: `slow`, the end-to-end recipe and quickstart runs of minutes each,
 which `pytest -m slow` runs alone; and `fresh_process`, the tests that assert
 their own process's allocator state, which CTest runs one per process.
-`tests/csrc/test_canaries.py` runs the editable build tree's CTest canaries
+`packages/engine/tests/engine_tests/native/test_canaries.py` runs the editable build tree's CTest canaries
 from the suite: those that need neither the device backend nor a peer, those
 that need the device backend, and those that need a peer when
 `SHADOWSPILL_NETWORK_PEER` names one.
 
 The CMake build enables warnings as errors and registers with CTest the C
 canaries, the PyTorch canaries and the `fresh_process` tests, the last two
-listed in `tests/integration/CMakeLists.txt`. Each one's labels name what it
+listed in `packages/engine/tests/engine_tests/integration/CMakeLists.txt`. Each one's labels name what it
 needs: the device backend, a network peer, an SSD, or PyTorch. `ctest -L` and
 `-LE` take one regular expression, so excluding two labels joins them with `|`
 (`ctest -LE 'network|ssd'`); a `;` list excludes nothing. The PyTorch adapter's
@@ -316,7 +315,7 @@ that order, and nothing else unless `SHADOWSPILL_LIBRARY_DIRECTORY` names a
 directory to try first:
 
 ```bash
-SHADOWSPILL_LIBRARY_DIRECTORY=packages/engine/build/dev pytest tests/shadowspill
+SHADOWSPILL_LIBRARY_DIRECTORY=packages/engine/build/dev pytest packages/engine/tests/engine_tests
 ```
 
 A build the loader finds without being told to is the kind of mistake that

@@ -2,7 +2,7 @@
 
 import pytest
 
-from tests import precision
+from engine_tests import precision
 
 
 @pytest.mark.parametrize(

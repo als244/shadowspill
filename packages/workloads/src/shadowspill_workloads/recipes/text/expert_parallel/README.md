@@ -28,7 +28,7 @@ The provider requires SM90 and fixed GEMM policies. Local metadata/construction
 tests pass; saved EP transport and numerical qualification run on two H100s:
 
 ```bash
-python -m pytest tests/shadowspill/execution/expert_parallel/test_training.py -o addopts= -q
+python -m pytest packages/engine/tests/engine_tests/execution/expert_parallel/test_training.py -o addopts= -q
 ```
 
 That test covers both save/recompute choices, four examples per invocation,

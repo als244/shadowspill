@@ -9,8 +9,8 @@ from dataclasses import replace
 import pytest
 
 from benchmarks.quickstart.phases.common import read, write
-from tests.benchmarking._profiled import measured
-from tests.shadowspill.offline._example import communication, profiled
+from engine_tests.offline._example import communication, profiled
+from tests.benchmarks._profiled import measured
 from tools.pressurefit_trace.__main__ import main
 
 

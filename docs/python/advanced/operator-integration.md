@@ -214,6 +214,6 @@ uses collectives or distributed resources.
 Use tolerances appropriate to the arithmetic; bitwise equality across chunk
 geometries is not the default contract. Unsupported axes, aliasing, effects or
 nonadditive reductions should fail explicitly, rather than produce an apparently
-valid Plan. The maintained [axis tests](../../../tests/shadowspill/pytorch/chunking)
-and [saved provider regression](../../../tests/workloads/prepared_sonic/README.md)
+valid Plan. The maintained [axis tests](../../../packages/engine/tests/engine_tests/pytorch/chunking)
+and [saved provider regression](../../../packages/workloads/tests/workload_tests/prepared_sonic/README.md)
 illustrate these checks; the latter is one implementation, not a required library.

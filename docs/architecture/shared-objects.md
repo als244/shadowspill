@@ -70,7 +70,7 @@ value a later writer produced.
 object survives until its final owner closes — both plans destroyed and the public
 reference released — which is what
 `runtime_objects_survive_until_their_final_owner_closes` in
-`tests/csrc/runtime/runtime_plan_canary.c` covers. `retain_spill_copy` keeps the
+`packages/engine/tests/engine_tests/native/runtime/runtime_plan_canary.c` covers. `retain_spill_copy` keeps the
 spill copy authoritative while a device copy also exists.
 
 ## Ordering between plans

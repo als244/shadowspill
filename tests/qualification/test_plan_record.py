@@ -5,6 +5,21 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+from engine_tests.planner._examples import (
+    config,
+    exact_capacity_program,
+    exact_capacity_residency,
+)
+from engine_tests.planner.admission.test_admission import _causal_facts
+from engine_tests.simulator.test_admission_accounting import (
+    _config as causal_config,
+)
+from engine_tests.simulator.test_admission_accounting import (
+    _program as causal_program,
+)
+from engine_tests.simulator.test_admission_accounting import (
+    _schedule as causal_schedule,
+)
 from qualification.plan_record import (
     plan_record,
     write_plan_record,
@@ -18,21 +33,6 @@ from shadowspill.planner.search.algorithms.pressurefit.options import (
     PressureFitOptions,
 )
 from shadowspill.schema import artifact_schema
-from tests.shadowspill.planner._examples import (
-    config,
-    exact_capacity_program,
-    exact_capacity_residency,
-)
-from tests.shadowspill.planner.admission.test_admission import _causal_facts
-from tests.shadowspill.simulator.test_admission_accounting import (
-    _config as causal_config,
-)
-from tests.shadowspill.simulator.test_admission_accounting import (
-    _program as causal_program,
-)
-from tests.shadowspill.simulator.test_admission_accounting import (
-    _schedule as causal_schedule,
-)
 
 
 def _result() -> ProgramPlanResult:

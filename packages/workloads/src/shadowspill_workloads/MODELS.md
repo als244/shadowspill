@@ -330,7 +330,7 @@ The caller defines global loss normalization and any replication across EP
 groups. See the [distributed API](../../../../docs/python/api/distributed.md). Model
 implementations contain no ShadowSpill imports. The portable resource path has
 its own two-GPU acceptance test of saved EP training and checkpoints
-(`tests/shadowspill/execution/expert_parallel/`); live-module checks do not
+(`packages/engine/tests/engine_tests/execution/expert_parallel/`); live-module checks do not
 qualify a saved Plan.
 
 ## Inputs, outputs, and loss

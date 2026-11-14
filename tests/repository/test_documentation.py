@@ -796,7 +796,7 @@ def test_current_contract_docs_are_backend_and_topology_neutral() -> None:
         and not path.is_relative_to(
             ROOT / "packages/workloads/src/shadowspill_workloads"
         )
-        and not path.is_relative_to(ROOT / "tests/workloads")
+        and not path.is_relative_to(ROOT / "packages/workloads/tests/workload_tests")
         and not path.is_relative_to(DOCS / "integrations")
         and path
         not in {

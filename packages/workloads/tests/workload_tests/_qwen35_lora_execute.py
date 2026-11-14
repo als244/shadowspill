@@ -1,0 +1,14 @@
+"""Cold recipe execution must not reconstruct a model or prepare task graphs."""
+
+import sys
+
+from triton.runtime.autotuner import Autotuner
+
+from engine_tests.execution._cold import forbid_preparation, forbidden
+
+forbid_preparation("shadowspill_workloads.models.qwen35moe.implementations")
+Autotuner._bench = forbidden
+
+from shadowspill.training.preparation.execute import run  # noqa: E402
+
+run(sys.argv[1])

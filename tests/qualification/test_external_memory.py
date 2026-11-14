@@ -145,8 +145,8 @@ def test_default_reservation_and_enforcement_are_independent():
 
 @pytest.mark.parametrize("reject", [False, True])
 def test_plan_round_trip_preserves_the_enforcement_flag(reject):
+    from engine_tests.ir._examples import representative_plan
     from shadowspill.ir import ExecutionPlan, index_execution_plan
-    from tests.shadowspill.ir._examples import representative_plan
 
     plan = representative_plan()
     plan = replace(plan, admission=replace(plan.admission, reject_overbudget=reject))

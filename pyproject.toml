@@ -1,7 +1,7 @@
 [tool.pytest.ini_options]
-testpaths = ["tests"]
+testpaths = ["packages/engine/tests", "packages/workloads/tests", "tests"]
 addopts = "-q -m 'not fresh_process and not slow'"
-pythonpath = ["packages/engine/src", "packages/workloads/src", "."]
+pythonpath = ["packages/engine/src", "packages/workloads/src", "packages/engine/tests", "packages/workloads/tests", "."]
 markers = [
   "cuda: requires the qualified CUDA backend and accelerator",
   "network: requires a reachable memory daemon named by SHADOWSPILL_NETWORK_PEER",
@@ -11,7 +11,7 @@ markers = [
 ]
 
 [tool.ruff]
-src = ["packages/engine/src", "packages/workloads/src", "."]
+src = ["packages/engine/src", "packages/workloads/src", "packages/engine/tests", "packages/workloads/tests", "."]
 line-length = 88
 target-version = "py312"
 
@@ -33,7 +33,7 @@ ignore_missing_imports = true
 # Any throughout. Every forward would need a cast that asserts nothing, so
 # the Any-return check is off here. The gate itself covers `shadowspill`.
 [[tool.mypy.overrides]]
-module = "workloads.*"
+module = "shadowspill_workloads.*"
 warn_return_any = false
 
 [tool.coverage.run]
