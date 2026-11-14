@@ -105,6 +105,15 @@ errors without shrinking the request. Geometry coverage is checked separately
 for every requested batch option. This does not yet establish full setup,
 staging, device/spill or collective admission.
 
+Phase policies use `PolicyDefinition(id, kind, config, create)`. The CPU resolver
+validates and fills `Policy` configuration through the registered factory's
+configuration schema, records its source, and rejects unknown policies or a
+wrong phase kind. Reusing the resolved settings rechecks both source and exact
+defaults. Only the build boundary calls `create`, which returns the ordinary
+partition, chunking or graph-pair policy consumed by the existing phase engine.
+Request strings never name modules to import. The built-in partition definition
+supports the engine's `auto` and `whole` choices.
+
 `OptimizerDefinition` registers a factory for an ordinary capturable optimizer.
 The factory receives `(model, config, controls)`, where the build worker provides
 tensor-valued runtime controls. Each advertised control explicitly names its

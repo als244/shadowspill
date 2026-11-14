@@ -19,6 +19,7 @@ from .contracts import (
     Schema,
 )
 from .optimizer import OptimizerDefinition
+from .policies import PolicyDefinition, PolicyKind, ResolvedPolicy
 from .preparation import PreparationDefinition, ResolvedPreparationDefinition
 
 if TYPE_CHECKING:
@@ -141,6 +142,7 @@ class Registry:
     """
 
     def __init__(self) -> None:
+        from .policies import builtin_policy
         from .stacked import builtin_preparation
 
         self._models: dict[str, tuple[ModelDefinition, DefinitionSource]] = {}
@@ -148,6 +150,40 @@ class Registry:
         self._optimizers: dict[str, tuple[OptimizerDefinition, DefinitionSource]] = {}
         default = builtin_preparation()
         self._preparations = {default.definition.id: default}
+        policy, source = builtin_policy()
+        self._policies = {policy.id: (policy, source)}
+
+    def add_policy(
+        self, definition: PolicyDefinition, *, source: DefinitionSource
+    ) -> None:
+        if not isinstance(definition, PolicyDefinition) or not isinstance(
+            source, DefinitionSource
+        ):
+            raise TypeError("register a PolicyDefinition with DefinitionSource")
+        if definition.id in self._policies:
+            raise ValueError(f"policy already registered: {definition.id}")
+        self._policies[definition.id] = (definition, source)
+
+    def resolve_policy(
+        self,
+        definition: str,
+        *,
+        kind: PolicyKind,
+        config: Mapping[str, Value] | None = None,
+        source: DefinitionSource | None = None,
+    ) -> ResolvedPolicy:
+        try:
+            policy, installed = self._policies[definition]
+        except KeyError as error:
+            raise ValueError(
+                f"policy definition is not installed: {definition}"
+            ) from error
+        if policy.kind != kind:
+            raise ValueError(f"policy {definition} cannot configure {kind}")
+        if source is not None and source != installed:
+            raise ValueError(f"policy definition source changed: {definition}")
+        _, settings = _configuration(policy.config, {} if config is None else config)
+        return ResolvedPolicy(policy, installed, settings)
 
     def add_preparation(
         self, definition: PreparationDefinition, *, source: DefinitionSource
