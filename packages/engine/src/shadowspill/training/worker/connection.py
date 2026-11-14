@@ -78,14 +78,18 @@ class WorkerConnection:
         phase = self._phase
         reply = self._receive()
         expected = (
-            {("completed", "completed"), ("failed", "unknown")}
+            {
+                ("completed", "completed"),
+                ("failed", "completed"),
+                ("failed", "unknown"),
+            }
             if phase == "executing"
             else {("aborted", "not_started")}
         )
         if (reply.status, reply.effect) not in expected:
             self._invalid("worker completion reply differs from the released action")
         self._consumed()
-        if reply.status == "failed":
+        if reply.effect == "unknown":
             self.valid = False
         return reply
 

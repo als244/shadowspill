@@ -19,7 +19,7 @@ from shadowspill.training.worker.channel import write_message
 from shadowspill.training.worker.connection import WorkerConnection
 from shadowspill.training.worker.group import WorkerGroup
 from shadowspill.training.worker.loop import WorkerLoop
-from shadowspill.training.worker.protocol import WorkerReply, ticket
+from shadowspill.training.worker.protocol import WorkerOutputError, WorkerReply, ticket
 from shadowspill_client.buffers import BufferBudget
 from shadowspill_client.protocol.codec import ProtocolError
 
@@ -32,7 +32,15 @@ def commands(invocation=1, sequence=1):
 
 
 @contextmanager
-def workers(*, reject=None, execute=None, break_abort=False, count=2, binding=None):
+def workers(
+    *,
+    reject=None,
+    execute=None,
+    break_abort=False,
+    count=2,
+    binding=None,
+    publication=None,
+):
     connections, peers, threads, events, errors = {}, [], [], [], []
     barrier = Barrier(count)
 
@@ -62,6 +70,8 @@ def workers(*, reject=None, execute=None, break_abort=False, count=2, binding=No
                 execute(rank, bound.command)
             # A controller that waits for rank 0 before releasing rank 1 fails.
             barrier.wait(timeout=3)
+            if publication:
+                publication(rank, bound.command)
 
         worker = WorkerLoop(scope, bind, run, BufferBudget(16 << 20))
         original = worker.handle
@@ -132,6 +142,76 @@ def test_all_ready_workers_abort_before_known_unstarted_failure_and_can_continue
         result = group.run(commands(2, 2))
         assert all(reply.status == "completed" for reply in result.values())
         assert sum(phase == "execute" for _, phase, _ in events) == 2
+
+
+def test_publication_failure_waits_for_all_confirmed_effects_and_allows_new_work():
+    def publish(rank, command):
+        if rank == 0 and command.invocation == 1:
+            raise WorkerOutputError("rank-zero output disk full")
+
+    with workers(publication=publish) as (group, events, stopped):
+        result = group.run(commands())
+        assert result[0].status == "failed" and result[0].effect == "completed"
+        assert result[1].status == "completed"
+        assert group.valid and not stopped
+        assert all(connection.valid for connection in group.connections.values())
+        with pytest.raises(ExecutionNotStarted):
+            group.run(commands())
+        result = group.run(commands(2, 2))
+        assert all(reply.status == "completed" for reply in result.values())
+        assert sum(phase == "execute" for _, phase, _ in events) == 4
+
+
+def test_dispatch_commits_worker_effects_before_reporting_worker_publication_failure(
+    tmp_path,
+):
+    from engine_tests.server.test_request_records import store
+    from engine_tests.training.test_request_dispatch import HostWork, publish, submit
+    from shadowspill.training.session.dispatch import RequestDispatcher
+    from shadowspill.training.session.state import OperationState
+
+    def fail_output(rank, command):
+        if rank == 0 and command.invocation == 1:
+            raise WorkerOutputError("required worker output unavailable")
+
+    with store(tmp_path) as records, workers(publication=fail_output) as (group, _, _):
+        state = OperationState()
+        dispatcher = RequestDispatcher(records, state, max_pending=2)
+        submit(dispatcher, records, "a", 1)
+        submit(dispatcher, records, "queued", 2)
+        calls = []
+
+        def execute(transition):
+            calls.append(transition.request_id)
+            request = records.get(transition.request_id)[0]
+            work = HostWork()
+            work.replies = group.run(
+                {
+                    rank: replace(command, request=request)
+                    for rank, command in commands(
+                        len(calls), request.identity.sequence
+                    ).items()
+                }
+            )
+            return work
+
+        def output(receipt, work):
+            assert records.execution(receipt.identity.request_id) == receipt
+            for reply in work.replies.values():
+                if reply.status == "failed":
+                    raise OSError(reply.message)
+            return publish(receipt, work)
+
+        failed = dispatcher.run("a", execute, output, participates=True)
+        assert failed.failure.code == "publication_failed"
+        assert failed.failure.execution_effect == "completed"
+        assert failed.failure.completed_updates == 1 and failed.failure.state_valid
+        assert records.get("queued")[1].failure.failed_dependencies == ("a",)
+        assert dispatcher.run("a", execute, output, participates=True) == failed
+        assert calls == ["a"] and group.valid
+        submit(dispatcher, records, "new", 3)
+        done = dispatcher.run("new", execute, output, participates=True)
+        assert done.result.completed_updates == 2 and calls == ["a", "new"]
 
 
 def test_lost_abort_ack_is_uncertain_and_terminates_all_owned_workers():

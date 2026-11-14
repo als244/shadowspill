@@ -17,6 +17,7 @@ from shadowspill.training.worker.loop import WorkerLoop
 from shadowspill.training.worker.protocol import (
     WorkerCall,
     WorkerControl,
+    WorkerOutputError,
     WorkerReply,
     WorkerScope,
     ticket,
@@ -140,7 +141,7 @@ def test_staging_failure_is_known_not_started_and_corrected_work_can_continue():
     assert events == [("stage", 1), ("stage", 2), ("execute", 2)]
 
 
-def test_any_execute_exception_has_unknown_effects_and_stops_live_worker():
+def test_unclassified_execute_exception_has_unknown_effects_and_stops_live_worker():
     def fail(command):
         raise OSError("device lost")
 
@@ -151,6 +152,21 @@ def test_any_execute_exception_has_unknown_effects_and_stops_live_worker():
     assert not worker.valid and events == [("stage", 1), ("execute", 1)]
     with pytest.raises(RuntimeError, match="never replay"):
         worker.handle(call(2, 2))
+
+
+def test_confirmed_publication_failure_keeps_state_and_consumes_the_invocation():
+    def publish(command):
+        if command.invocation == 1:
+            raise WorkerOutputError("output disk full")
+
+    worker, events = loop(execute=publish)
+    ready = worker.handle(call())
+    reply = worker.handle(WorkerControl(ready.ticket, "execute"))
+    assert reply.status == "failed" and reply.effect == "completed"
+    assert reply.message == "output disk full" and worker.valid
+    ready = worker.handle(call(2, 2))
+    assert worker.handle(WorkerControl(ready.ticket, "execute")).status == "completed"
+    assert events == [("stage", 1), ("execute", 1), ("stage", 2), ("execute", 2)]
 
 
 def test_control_digest_cannot_release_different_ready_inputs():

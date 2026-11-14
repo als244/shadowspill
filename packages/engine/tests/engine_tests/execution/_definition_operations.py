@@ -62,6 +62,7 @@ worker = startup.bindings
 worker_invocations = count(1)
 worker_files = {}
 worker_outputs = []
+fail_worker_publication = False
 oracle = torch.load(root / "oracle.pt", weights_only=True)
 
 
@@ -82,21 +83,20 @@ state = OperationState()
 
 
 class HostOutputs:
-    def __init__(self, value):
-        self.value = value
+    def __init__(self, value, issue=None):
+        self.value, self.issue = value, issue
 
     def close(self):
         self.value = None
 
 
 def collect(value):
-    worker_outputs.append(
-        to_host(
-            (value.losses, value.metrics)
-            if isinstance(value, TrainingResult)
-            else value
-        )
+    host = to_host(
+        (value.losses, value.metrics) if isinstance(value, TrainingResult) else value
     )
+    if fail_worker_publication:
+        raise OSError("injected worker output disk failure")
+    worker_outputs.append(host)
 
 
 def exchange(message):
@@ -130,13 +130,22 @@ def submit(name, operation, *, datums=None, **options):
     return command, None if wire is None else io.BytesIO(wire)
 
 
-def invoke(name, operation, *, observe=None, publication_error=False, **options):
+def invoke(
+    name,
+    operation,
+    *,
+    observe=None,
+    publication_error=False,
+    worker_publication_error=False,
+    **options,
+):
     command, body = submit(name, operation, **options)
     accepted = inputs.receive(name, body)
     assert accepted.state == "accepted", accepted
     data = inputs.take(name)
 
     def execute(transition):
+        global fail_worker_publication
         assert journal.get(name)[1].state == "running"
         command = worker_call(data, transition, worker.scope, next(worker_invocations))
         worker_files.clear()
@@ -146,13 +155,24 @@ def invoke(name, operation, *, observe=None, publication_error=False, **options)
             )
         ready = exchange(command)
         assert ready.status == "ready", ready
-        completed = exchange(WorkerControl(ready.ticket, "execute"))
-        assert completed.status == "completed", completed
+        fail_worker_publication = worker_publication_error
+        try:
+            completed = exchange(WorkerControl(ready.ticket, "execute"))
+        finally:
+            fail_worker_publication = False
+        assert completed.status == (
+            "failed" if worker_publication_error else "completed"
+        ), completed
+        assert completed.effect == "completed" and worker_loop.valid
         assert running.staging.used == (0, 0)
-        return HostOutputs(worker_outputs.pop() if worker_outputs else None)
+        return HostOutputs(
+            worker_outputs.pop() if worker_outputs else None, completed.message
+        )
 
     def publish(receipt, outputs):
         assert journal.execution(name) == receipt
+        if outputs.issue:
+            raise OSError(outputs.issue)
         if observe is not None:
             observe(outputs.value, data)
         if publication_error:
@@ -171,7 +191,7 @@ def invoke(name, operation, *, observe=None, publication_error=False, **options)
 
     try:
         status = dispatcher.run(name, execute, publish, participates=data.participates)
-        if publication_error:
+        if publication_error or worker_publication_error:
             assert status.failure.code == "publication_failed", status
             assert status.failure.execution_effect == "completed"
             assert status.failure.completed_updates == 2 and status.failure.state_valid
@@ -290,7 +310,7 @@ with (
         "optim_step",
         optim={"lr": 0.02},
         grad_scale=-0.5,
-        publication_error=True,
+        worker_publication_error=True,
     )
     actual = snapshot(executor)
     for name, target in oracle["after_split"].items():
@@ -304,3 +324,4 @@ print("Qualified durable request dispatcher")
 print("Qualified prepared binary request inputs")
 print("Qualified saved worker commands")
 print("Qualified persistent worker invocation loop")
+print("Qualified worker publication failure with completed optimizer state")

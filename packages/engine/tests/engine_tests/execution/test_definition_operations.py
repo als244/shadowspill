@@ -254,6 +254,10 @@ def test_definition_bound_operations_in_cold_worker(tmp_path, monkeypatch, provi
     assert "Qualified persistent worker invocation loop" in worker.stdout
     assert "Qualified bounded installed initialization" in worker.stdout
     assert "Qualified admitted worker startup" in worker.stdout
+    assert (
+        "Qualified worker publication failure with completed optimizer state"
+        in worker.stdout
+    )
     if provider:
         events = [json.loads(line) for line in event_path.read_text().splitlines()]
         by_process = {}

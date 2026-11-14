@@ -11,6 +11,15 @@ from shadowspill_client.protocol.codec import RecordCodec
 from shadowspill_client.protocol.requests import ArtifactRef, ComputeRequest, identifier
 
 
+class WorkerOutputError(RuntimeError):
+    """Execution and cleanup completed, but required host publication failed.
+
+    Only the execution adapter may establish this boundary, after synchronizing
+    terminal work and releasing borrowed device output views. It does not permit
+    replay of the completed invocation.
+    """
+
+
 @dataclass(frozen=True)
 class WorkerScope(Record):
     run_id: str

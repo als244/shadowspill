@@ -13,6 +13,7 @@ from .channel import read_message, write_message
 from .protocol import (
     WorkerCall,
     WorkerControl,
+    WorkerOutputError,
     WorkerReply,
     WorkerScope,
     WorkerTicket,
@@ -100,6 +101,10 @@ class WorkerLoop:
         try:
             result = self._execute(bound)
             return WorkerReply(identity, "completed", "completed", result=result)
+        except WorkerOutputError as error:
+            return WorkerReply(
+                identity, "failed", "completed", message=_message(error)
+            )
         except Exception as error:
             self.invalidate()
             return WorkerReply(identity, "failed", "unknown", message=_message(error))

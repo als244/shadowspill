@@ -8,6 +8,7 @@ from shadowspill_client.buffers import BufferBudget
 from shadowspill_client.protocol.requests import ArtifactRef
 
 from .bindings import BoundWorkerCall, WorkerBindings
+from .protocol import WorkerOutputError
 
 if TYPE_CHECKING:
     from shadowspill.execution.executor import Executor
@@ -45,9 +46,27 @@ class WorkerExecution:
                 accumulate_gradients=call.command.accumulate_gradients,
                 runtime_trace=call.command.request.runtime_trace,
             ).result()
+            publication_error = None
+            result = None
             try:
-                result = self._collect(value)
+                # Establish completed device effects before classifying a later
+                # filesystem/transport error as publication failure.
                 self._executor.synchronize()
-                return result
+                try:
+                    result = self._collect(value)
+                except OSError as error:
+                    publication_error = (
+                        str(error).strip() or type(error).__name__
+                    )[:1024].rstrip()
+                    # A collector traceback can retain the borrowed GPU output
+                    # argument. Only a bounded message may survive this scope.
+                    error.__traceback__ = None
+                    error.__cause__ = error.__context__ = None
             finally:
                 del value
+            # Transfer/cleanup failure still invalidates the worker. A normal
+            # publication error alone leaves its confirmed training state live.
+            self._executor.synchronize()
+            if publication_error is not None:
+                raise WorkerOutputError(publication_error)
+            return result

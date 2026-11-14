@@ -64,6 +64,11 @@ class WorkerGroup:
         return self.run(commands)
 
     def run(self, commands: Mapping[int, WorkerCall]) -> Mapping[int, WorkerReply]:
+        """Return all confirmed effects, including host-publication failures.
+
+        The dispatcher records completion before its publisher handles a failed
+        output reply. Unknown execution/lost replies still stop the whole group.
+        """
         if not self._busy.acquire(blocking=False):
             raise RuntimeError("another worker-group invocation is in flight")
         try:
@@ -109,7 +114,7 @@ class WorkerGroup:
                 completed = {}
                 for rank, connection in self.connections.items():
                     reply = connection.finished()
-                    if reply.status != "completed":
+                    if reply.effect != "completed":
                         raise RuntimeError(
                             f"Worker {rank} failed after release: {reply.message}"
                         )
