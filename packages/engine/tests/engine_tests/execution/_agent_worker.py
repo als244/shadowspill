@@ -7,7 +7,6 @@ import json
 import os
 import sys
 from pathlib import Path
-from types import SimpleNamespace
 
 
 class Block(importlib.abc.MetaPathFinder):
@@ -30,10 +29,7 @@ from shadowspill.orchestration.launch.admission import (  # noqa: E402
     ResourceRequest,
 )
 from shadowspill.orchestration.launch.device_inventory import probe_devices  # noqa: E402
-from shadowspill.orchestration.launch.file_grants import (  # noqa: E402
-    FileGrants,
-    resolve_file,
-)
+from shadowspill.orchestration.launch.file_grants import FileGrants  # noqa: E402
 from shadowspill.orchestration.launch.host_memory import host_memory  # noqa: E402
 from shadowspill.orchestration.launch.publication import (  # noqa: E402
     OutputFiles,
@@ -48,13 +44,12 @@ from shadowspill.training.session.dispatch import RequestDispatcher  # noqa: E40
 from shadowspill.training.session.inputs import RequestInputs  # noqa: E402
 from shadowspill.training.session.prepared import PreparedRequests  # noqa: E402
 from shadowspill.training.session.state import OperationState  # noqa: E402
-from shadowspill.training.worker.bindings import worker_call  # noqa: E402
 from shadowspill.training.worker.launch import (  # noqa: E402
     launch_worker,
     start_processes,
 )
-from shadowspill.training.worker.output_files import FileOutputs  # noqa: E402
 from shadowspill.training.worker.protocol import WorkerLaunch, WorkerScope  # noqa: E402
+from shadowspill.training.worker.requests import NodeFiles, WorkerRequests  # noqa: E402
 from shadowspill.training.worker.runtime import PreparedWorker  # noqa: E402
 from shadowspill_client.buffers import BufferBudget  # noqa: E402
 from shadowspill_client.protocol.payload import MEDIA_TYPE, snapshot_batch  # noqa: E402
@@ -97,6 +92,7 @@ lease = admission.reserve(
     ResourceRequest({device.uuid: expected.device_bytes}, 8 << 30)
 )
 disk, memory = BufferBudget(128 << 20, 100), BufferBudget(64 << 20, 100)
+metadata = BufferBudget(16 << 20)
 oracle = json.loads((root / "agent-oracle.json").read_text())
 
 with (
@@ -124,6 +120,12 @@ with (
         )
         with (
             start_processes({0: process}, stop=lease.close) as group,
+            WorkerRequests(
+                group,
+                {0: prepared_worker},
+                {0: NodeFiles(directory, disk, memory, grants, outputs)},
+                metadata=metadata,
+            ) as transfer,
             RequestRecords(
                 directory / "requests",
                 identity=RunIdentity("owner", "session", "run"),
@@ -138,7 +140,6 @@ with (
             inputs = RequestInputs(
                 journal, dispatcher.order, prepared.setup.config.execution, prepared
             )
-            sink = FileOutputs(prepared_worker.outputs, root=outputs.root)
 
             def invoke(operation, *, predictions=None, corrupt=False, **options):
                 sequence = journal.last_sequence + 1
@@ -166,58 +167,21 @@ with (
                 data = inputs.take(name)
 
                 def execute(transition):
-                    command = worker_call(
-                        data,
-                        transition,
-                        expected.scope,
-                        group.connections[0].next_invocation,
-                    )
-                    frames = (
-                        {
-                            frame.reference.id: frame
-                            for frame in data.spool.frames.values()
-                        }
-                        if data.spool
-                        else {}
-                    )
-                    with FileDelivery(
-                        list(command.frames), root=directory, disk=disk, memory=memory
-                    ) as delivery:
-                        delivery.receive(lambda ref: frames[ref.id].path.open("rb"))
-                        with grants.lend(delivery, command.frames):
-                            bound = prepared_worker.bindings.bind(
-                                command, lambda ref: resolve_file(grants.root, ref)
-                            )
-                            file = outputs.reserve(sink.spec(bound))
-                            file.begin()
-                            try:
-                                reply = group.run({0: command})[0]
-                            except BaseException:
-                                group.close()
-                                file.finished()
-                                file.close()
-                                raise
-                            file.finished()
-                            return SimpleNamespace(
-                                reply=reply, file=file, bound=bound, close=file.close
-                            )
+                    return transfer.execute(data, transition)
 
                 def publish(receipt, result):
                     assert journal.execution(name) == receipt
                     if corrupt:
-                        path = require_output(outputs.root, sink.spec(result.bound))
+                        path = require_output(outputs.root, result._files[0].spec)
                         with path.open("r+b", buffering=0) as stream:
                             stream.write(b"corrupt!")
-                    assert result.reply.status == "completed", result.reply
-                    result.file.verify(result.reply.result)
-                    frame = prepared_worker.outputs[
-                        result.bound.command.candidate, result.bound.plan
-                    ]
+                    result.verify()
+                    frame = result.frames[0]
                     with (
-                        result.file.open(result.reply.result) as stream,
+                        result.open(0) as stream,
                         read_payload(
                             stream,
-                            result.reply.result,
+                            result.replies[0].result,
                             BufferBudget(frame.frame.size.staging),
                             limits=frame.frame.size,
                         ) as decoded,
@@ -290,6 +254,7 @@ with (
             invoke("forward", outputs="predictions", predictions="after_split")
             assert state.boundary.completed_updates == 2 and state.boundary.valid
         assert process.child.closed and lease.closed and admission.used.claims == 0
-assert disk.used == memory.used == (0, 0)
+assert disk.used == memory.used == metadata.used == (0, 0)
 assert not any(name in sys.modules for name in ("torch", "triton", "pynvml"))
 print("Qualified installed agent-owned GPU bootstrap and binary publication")
+print("Qualified production worker request/file coordination")

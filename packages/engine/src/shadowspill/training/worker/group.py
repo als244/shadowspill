@@ -51,6 +51,12 @@ class WorkerGroup:
         self, call: PreparedCall, transition: Transition
     ) -> Mapping[int, WorkerReply]:
         """Adapt an accepted prepared call after agents finish file delivery."""
+        return self.run(self.commands(call, transition))
+
+    def commands(
+        self, call: PreparedCall, transition: Transition
+    ) -> Mapping[int, WorkerCall]:
+        """Resolve the next invocation before agents reserve/deliver its files."""
         self._available()
         try:
             commands = {
@@ -63,7 +69,7 @@ class WorkerGroup:
                 raise ValueError("prepared call requires a different worker set")
         except (TypeError, ValueError, RuntimeError) as error:
             raise ExecutionNotStarted(str(error)) from error
-        return self.run(commands)
+        return MappingProxyType(commands)
 
     def run(self, commands: Mapping[int, WorkerCall]) -> Mapping[int, WorkerReply]:
         """Return all confirmed effects, including host-publication failures.

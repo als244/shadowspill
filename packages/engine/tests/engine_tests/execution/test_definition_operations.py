@@ -293,6 +293,7 @@ def test_definition_bound_operations_in_cold_worker(tmp_path, monkeypatch, provi
         else agent.stdout + agent.stderr
     )
     assert "Qualified installed agent-owned GPU bootstrap" in agent.stdout
+    assert "Qualified production worker request/file coordination" in agent.stdout
     if provider:
         events = [json.loads(line) for line in event_path.read_text().splitlines()]
         by_process = {}
