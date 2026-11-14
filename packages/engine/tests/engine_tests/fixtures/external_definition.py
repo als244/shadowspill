@@ -92,6 +92,7 @@ def register(registry):
             },
             requires=("class_logits",),
             participation=Participation(("valid",)),
+            padding_safe=True,
         ),
         source=SOURCE,
     )

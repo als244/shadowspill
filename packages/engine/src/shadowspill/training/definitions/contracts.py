@@ -62,6 +62,14 @@ class ModelDefinition:
 
 @dataclass(frozen=True)
 class ObjectiveDefinition:
+    """Installed objective semantics, including its explicit padding guarantee.
+
+    ``padding_safe`` asserts that schema/adapter padding contributes no loss or
+    scalar totals and preserves outputs for real data. Declaring a participation
+    field alone does not prove that a callable honors it. The preparation binder
+    requires this guarantee for padded operation families.
+    """
+
     id: str
     compute: Computation
     inputs: Schema
@@ -75,6 +83,7 @@ class ObjectiveDefinition:
     participation: Participation = field(default_factory=Participation)
     reduction: Literal["sum", "custom"] = "sum"
     bind: Callable[[Any, str], Computation] | None = None
+    padding_safe: bool = False
 
     def __post_init__(self) -> None:
         versioned_id(self.id)
@@ -88,6 +97,8 @@ class ObjectiveDefinition:
             raise TypeError("objective requires declared controls and participation")
         if self.reduction not in ("sum", "custom"):
             raise ValueError("declare summed or custom objective semantics")
+        if type(self.padding_safe) is not bool:
+            raise TypeError("objective padding_safe must be boolean")
         outputs = dict(self.outputs)
         if not outputs or self.default_outputs not in outputs:
             raise ValueError("objective must name a declared default output set")

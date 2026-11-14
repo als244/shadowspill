@@ -82,6 +82,7 @@ def register(registry):
             ),
             requires=("regression",),
             participation=Participation(("valid",)),
+            padding_safe=True,
             outputs={
                 "metrics": OutputSet(
                     model_inputs=(("value",),),

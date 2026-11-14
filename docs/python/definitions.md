@@ -3,14 +3,16 @@
 The trainer refactor adds public definition hooks under
 `shadowspill.training.definitions` and portable schema records under
 `shadowspill_client.protocol`. Install the engine's `training` extra to use these
-hooks. They currently support CPU inspection and the existing objective capture
-path. Service execution and automatic input packing are still under construction.
+hooks. They support CPU inspection and operation binding through the existing
+capture/build path. Service execution and full preparation remain under construction.
 
 A model definition describes an ordinary factory, validated configuration and
 input schema. An objective receives `(model, inputs, loss_inputs, loss_params)`
 and returns the existing `ObjectiveResult`, a scalar loss or `(loss, metrics)`.
 The objective owns its reduction. `simple_loss` adapts an ordinary
 `loss(predictions, targets)` function without changing its reduction.
+For a forward-only output set, a bound computation can return a mapping of its
+declared tensor outputs and scalar metrics without computing a training loss.
 
 Register both with a `Registry` using `add_model` and `add_objective`. Each
 registration supplies a `DefinitionSource`: distribution name, version and
@@ -42,6 +44,14 @@ declare their units, counted field axis and global sum/maximum or example count.
 Scheduled capacities include padding. These descriptions do not establish
 packing coverage or admit memory; that work belongs to preparation.
 
+An optional model `input_adapter(config, layout)` returns fixed views and bounded
+generated metadata for the selected physical buffer. The ordinary independent,
+fixed stacked case needs no custom adapter. Packed, variable or grouped model
+inputs require an explicit adapter, including sequence/group boundaries when
+needed. Both the adapter and objective must declare `padding_safe=True` to use
+padded operation families: padding must preserve real outputs and contribute no
+loss or scalar totals. A validity field alone does not establish this guarantee.
+
 The developing input pipeline validates owned binary snapshots with these same
 schemas before packing. It checks every supplied field, shared dimension, numeric
 range and global capacity, including later records in the call. Required paths
@@ -63,6 +73,17 @@ The extension tests capture and execute a real CPU classifier, compare masked,
 signed-weight gradients with an independent formula, change a runtime coefficient
 without recapture, and check the external path with catalog imports blocked.
 These are capture/interface checks, not qualification of the future service.
+
+The internal operation binder selects only the requested input/control closure,
+checks returned tensor shapes/dtypes and scalar metrics, and applies declared
+logical loss ownership without averaging. It saves definition and layout identity
+with each Program. Capture admission verifies actual coefficient reads and rejects
+input mutations, undeclared model-buffer mutations and any model-state mutation
+in evaluation. The existing builders produce optimizer, backward and output-only
+paths; optimizer builds enable the captured final gradient scale. Cold-worker
+integration checks cover weighted updates, selective forward outputs, accumulation
+with interposed evaluation, and all-masked outputs preserving gradients. Multi-node
+execution and durable output publication require separate service qualification.
 
 `OptimizerDefinition` registers a factory for an ordinary capturable optimizer.
 The factory receives `(model, config, controls)`, where the build worker provides
