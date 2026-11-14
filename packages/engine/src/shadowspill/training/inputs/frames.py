@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import struct
-from collections.abc import Mapping
+from collections.abc import Callable, Iterator, Mapping
 from types import MappingProxyType
 from typing import Any, Protocol, cast
 
@@ -94,6 +94,41 @@ class InputFrame:
             for path, value in fields.items()
         ):
             raise ValueError("input arrays differ from their prepared frame layout")
+
+        def chunks(path: Path) -> Iterator[memoryview]:
+            array = fields[path]
+            if array.flags.c_contiguous:
+                data = memoryview(array).cast("B")
+                for start in range(0, data.nbytes, FRAME_CHUNK_BYTES):
+                    yield data[start : start + FRAME_CHUNK_BYTES]
+            else:
+                # A full reshape/tobytes would allocate an unadmitted copy.
+                with np.nditer(
+                    array,
+                    flags=["external_loop", "buffered", "zerosize_ok"],
+                    # NumPy's current stub misspells "contig" as "config".
+                    op_flags=cast(Any, ["readonly", "contig"]),
+                    order="C",
+                    buffersize=FRAME_CHUNK_BYTES // array.dtype.itemsize,
+                ) as values:
+                    for value in values:
+                        yield memoryview(cast(NDArray[Any], value)).cast("B")
+
+        return self.write_chunks(stream, chunks, budget, artifact_id)
+
+    def write_chunks(
+        self,
+        stream: BufferWriter,
+        chunks: Callable[[Path], Iterator[memoryview]],
+        budget: BufferBudget,
+        artifact_id: str,
+    ) -> ArtifactRef:
+        """Encode the same fixed frame from serial, bounded borrowed byte views.
+
+        Producers must preserve dtype and C element order and use at most the
+        one FRAME_CHUNK_BYTES scratch reservation made here before invocation.
+        The writer does not retain views after advancing to the next chunk.
+        """
         with budget.reserve(self.write_bytes, timeout=0):
             digest = hashlib.sha256()
 
@@ -110,26 +145,37 @@ class InputFrame:
             write(memoryview(MAGIC + struct.pack("<Q", len(self.header))))
             write(memoryview(self.header))
             for path in self.shapes:
-                array = fields[path]
-                if not array.size:
+                remaining = tensor_bytes(self.dtypes[path], self.shapes[path])
+                if not remaining:
                     continue
-                if array.flags.c_contiguous:
-                    write(memoryview(array).cast("B"))
-                else:
-                    # A full reshape/tobytes would allocate an unadmitted copy.
-                    # The contig operand flag forces each strided piece into at
-                    # most one declared scratch block, in wire (C) order.
-                    with np.nditer(
-                        array,
-                        flags=["external_loop", "buffered", "zerosize_ok"],
-                        # NumPy's current stub misspells "contig" as "config".
-                        op_flags=cast(Any, ["readonly", "contig"]),
-                        order="C",
-                        buffersize=FRAME_CHUNK_BYTES // array.dtype.itemsize,
-                    ) as chunks:
-                        for chunk in chunks:
-                            # A single-operand iterator yields one array.
-                            write(memoryview(cast(NDArray[Any], chunk)).cast("B"))
+                producer = chunks(path)
+                try:
+                    for chunk in producer:
+                        try:
+                            if (
+                                not isinstance(chunk, memoryview)
+                                or chunk.ndim != 1
+                                or chunk.itemsize != 1
+                                or not chunk.c_contiguous
+                                or not 0
+                                < chunk.nbytes
+                                <= min(remaining, FRAME_CHUNK_BYTES)
+                            ):
+                                raise ValueError(
+                                    "frame producer exceeded its byte bound"
+                                )
+                            write(chunk)
+                            remaining -= chunk.nbytes
+                        finally:
+                            del chunk
+                    if remaining:
+                        raise ValueError(
+                            "frame producer ended before its declared size"
+                        )
+                finally:
+                    close = getattr(producer, "close", None)
+                    if close is not None:
+                        close()
             return ArtifactRef(
                 artifact_id, digest.hexdigest(), self.size.wire, MEDIA_TYPE
             )

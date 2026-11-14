@@ -22,11 +22,13 @@ forbid_preparation()
 
 from engine_tests.fixtures.definition_operations import records  # noqa: E402
 from shadowspill.execution.results import TrainingResult  # noqa: E402
+from shadowspill.execution.tensor_copy import host_chunks  # noqa: E402
 from shadowspill.server.records.requests import RequestRecords, RunIdentity  # noqa: E402
 from shadowspill.training.definitions import (  # noqa: E402
     InitializationRuntime,
     load_registry,
 )
+from shadowspill.training.inputs.frames import FRAME_CHUNK_BYTES, InputFrame  # noqa: E402
 from shadowspill.training.observations import to_host  # noqa: E402
 from shadowspill.training.preparation.bundle import TrainingBundle  # noqa: E402
 from shadowspill.training.preparation.job import JOB_NAME, PreparationJob  # noqa: E402
@@ -40,6 +42,7 @@ from shadowspill.training.worker.protocol import WorkerControl, WorkerScope  # n
 from shadowspill.training.worker.runtime import PreparedWorker  # noqa: E402
 from shadowspill_client.buffers import BufferBudget  # noqa: E402
 from shadowspill_client.protocol.payload import MEDIA_TYPE, snapshot_batch  # noqa: E402
+from shadowspill_client.protocol.payload_io import read_payload  # noqa: E402
 from shadowspill_client.protocol.requests import (  # noqa: E402
     ArtifactRef,
     ComputeRequest,
@@ -91,9 +94,43 @@ class HostOutputs:
 
 
 def collect(value):
-    host = to_host(
+    logical = (
         (value.losses, value.metrics) if isinstance(value, TrainingResult) else value
     )
+    leaves, _ = torch.utils._pytree.tree_flatten(logical)
+    fields = {
+        ("inputs", str(index)): tensor
+        for index, tensor in enumerate(leaves)
+        if isinstance(tensor, torch.Tensor)
+    }
+    frame = InputFrame(
+        {path: tuple(tensor.shape) for path, tensor in fields.items()},
+        {
+            path: str(tensor.dtype).removeprefix("torch.")
+            for path, tensor in fields.items()
+        },
+    )
+    stream = io.BytesIO()
+    reference = frame.write_chunks(
+        stream,
+        lambda path, values=fields: host_chunks(
+            values[path], chunk_bytes=FRAME_CHUNK_BYTES
+        ),
+        BufferBudget(frame.write_bytes),
+        "worker-output",
+    )
+    host = to_host(logical)
+    expected, _ = torch.utils._pytree.tree_flatten(host)
+    stream.seek(0)
+    with read_payload(
+        stream, reference, BufferBudget(frame.size.staging), limits=frame.size
+    ) as decoded:
+        for path in fields:
+            tensor = expected[int(path[1])]
+            assert decoded.datums[0].inputs[path[1]].data == (
+                tensor.contiguous().reshape(-1).view(torch.uint8).numpy().tobytes()
+            )
+    del fields, leaves, logical
     if fail_worker_publication:
         raise OSError("injected worker output disk failure")
     worker_outputs.append(host)
@@ -325,3 +362,4 @@ print("Qualified prepared binary request inputs")
 print("Qualified saved worker commands")
 print("Qualified persistent worker invocation loop")
 print("Qualified worker publication failure with completed optimizer state")
+print("Qualified bounded output frames from admitted Executor storage")

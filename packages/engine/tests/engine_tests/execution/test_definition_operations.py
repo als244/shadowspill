@@ -258,6 +258,10 @@ def test_definition_bound_operations_in_cold_worker(tmp_path, monkeypatch, provi
         "Qualified worker publication failure with completed optimizer state"
         in worker.stdout
     )
+    assert (
+        "Qualified bounded output frames from admitted Executor storage"
+        in worker.stdout
+    )
     if provider:
         events = [json.loads(line) for line in event_path.read_text().splitlines()]
         by_process = {}
