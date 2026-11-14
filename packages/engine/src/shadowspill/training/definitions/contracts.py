@@ -5,11 +5,14 @@ from __future__ import annotations
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from types import MappingProxyType
-from typing import Any, Literal
+from typing import TYPE_CHECKING, Any, Literal
 
 from shadowspill_client.protocol.controls import ControlSchema
 from shadowspill_client.protocol.definitions import OutputSet, Participation
 from shadowspill_client.protocol.inputs import InputSchema
+
+if TYPE_CHECKING:
+    from shadowspill.training.inputs.adapters import InputAdapter, InputLayout
 
 type Configuration = Callable[..., Any]
 type Schema = InputSchema | Callable[[Any], InputSchema]
@@ -36,6 +39,7 @@ class ModelDefinition:
     capabilities: Sequence[str] = ()
     batching: Literal["independent", "grouped", "whole_batch"] = "independent"
     mutable_buffers: Sequence[str] = ()
+    input_adapter: Callable[[Any, InputLayout], InputAdapter] | None = None
 
     def __post_init__(self) -> None:
         versioned_id(self.id)
@@ -45,6 +49,8 @@ class ModelDefinition:
             raise TypeError("inputs must be an InputSchema or a schema resolver")
         if self.batching not in ("independent", "grouped", "whole_batch"):
             raise ValueError("declare independent, grouped or whole_batch behavior")
+        if self.input_adapter is not None and not callable(self.input_adapter):
+            raise TypeError("input_adapter must be an installed binding function")
         for name in ("capabilities", "mutable_buffers"):
             values = tuple(getattr(self, name))
             if any(not isinstance(v, str) or not v for v in values) or len(

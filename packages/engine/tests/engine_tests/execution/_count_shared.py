@@ -4,9 +4,11 @@ from contextlib import ExitStack, contextmanager, nullcontext
 
 import torch
 
-from shadowspill.parallelism import InputPlacement
+from shadowspill.parallelism import InputFieldPlacement, InputPlacement
+from shadowspill.training.inputs.adapters import InputAdapter, InputBinding, InputLayout
 from shadowspill.training.inputs.coverage import certify_coverage
 from shadowspill.training.inputs.materialize import materialize_buffer
+from shadowspill.training.inputs.routing import route_buffer
 from shadowspill.training.inputs.shapes import BufferShape, PackingSchedule
 from shadowspill.training.inputs.validation import validate_batch
 from shadowspill.training.observations import to_host
@@ -30,9 +32,15 @@ def certified_examples(examples):
     limits = BatchConfig(limits={"positions": 6, "length": 2, "records": 3})
     shape = BufferShape(3, dict.fromkeys(paths, (2, 4)))
     schedule = PackingSchedule("count_repeat", [[shape] * 3])
-    proof = certify_coverage(schema, limits, InputPlacement.independent(1), [schedule])
+    placement = InputPlacement.independent(
+        1, fields=[InputFieldPlacement(path) for path in paths]
+    )
+    proof = certify_coverage(schema, limits, placement, [schedule])
     assert proof.construction == "slots"
-    budget = BufferBudget(8 << 20, max_requests=4)
+    binding = InputBinding(
+        InputLayout(schema, shape, placement, 0), InputAdapter(padding_safe=True)
+    )
+    budget = BufferBudget(8 << 20, max_requests=8)
     with ExitStack() as stack:
         snapshot = stack.enter_context(
             snapshot_batch(
@@ -50,9 +58,11 @@ def certified_examples(examples):
             buffer = stack.enter_context(
                 materialize_buffer(assignment, schema, index, budget)
             )
-            result.append(
-                tuple(torch.from_numpy(buffer.fields[path]) for path in paths)
+            adapted = stack.enter_context(
+                binding.adapt(route_buffer(buffer, placement, 0), budget)
             )
+            inputs, loss_inputs = adapted.torch_inputs()
+            result.append((inputs["x"], loss_inputs["target"], loss_inputs["mask"]))
         yield result
     assert budget.used == (0, 0)
 

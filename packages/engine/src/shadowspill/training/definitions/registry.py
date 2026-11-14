@@ -3,8 +3,8 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
-from dataclasses import asdict, dataclass, is_dataclass
-from typing import Any
+from dataclasses import asdict, dataclass, is_dataclass, replace
+from typing import TYPE_CHECKING, Any
 
 from shadowspill_client._records import Value, mapping, plain
 from shadowspill_client.protocol.controls import Scalar
@@ -19,6 +19,9 @@ from .contracts import (
     Schema,
 )
 from .optimizer import OptimizerDefinition
+
+if TYPE_CHECKING:
+    from shadowspill.training.inputs.adapters import InputBinding, InputLayout
 
 
 def _configuration(
@@ -53,6 +56,42 @@ class ResolvedModel:
         """Construct only when requested by preparation, never during inspection."""
         configured, _ = _configuration(self.definition.config, self.config)
         return self.definition.create(configured)
+
+    def bind_inputs(self, layout: InputLayout) -> InputBinding:
+        """Resolve fixed views/metadata without constructing the model or CUDA."""
+        from shadowspill.training.inputs.adapters import InputAdapter, InputBinding
+
+        declared = {
+            ("inputs", *field.path): replace(field, path=("inputs", *field.path))
+            for field in self.inputs.fields
+        }
+        supplied = {
+            tuple(field.path): field
+            for field in layout.schema.fields
+            if field.path[0] == "inputs"
+        }
+        if declared != supplied:
+            raise ValueError(
+                "adapter layout differs from the resolved model input schema"
+            )
+        if self.definition.input_adapter is None:
+            fields = {
+                tuple(field.path): field
+                for field in layout.schema.fields
+                if tuple(field.path) in layout.buffer.fields
+            }
+            if self.definition.batching != "independent" or any(
+                field.batching == "pack" or any(isinstance(n, str) for n in field.shape)
+                for field in fields.values()
+            ):
+                raise ValueError(
+                    "packed, variable or grouped inputs require a model input adapter"
+                )
+            adapter = InputAdapter(padding_safe=True)
+        else:
+            configured, _ = _configuration(self.definition.config, self.config)
+            adapter = self.definition.input_adapter(configured, layout)
+        return InputBinding(layout, adapter)
 
 
 @dataclass(frozen=True)

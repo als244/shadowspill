@@ -108,6 +108,21 @@ input geometry guarantees; model padding/independence, compiled metadata bounds,
 memory admission and collective compatibility still require separate preparation
 checks. The public trainer preparation path is not yet wired to these primitives.
 
+Installed `ModelDefinition` records can supply an `input_adapter(config, layout)`
+function returning an `InputAdapter`. `ResolvedModel.bind_inputs(InputLayout(...))`
+resolves it on CPU. The default handles independent, fixed-shape stacked fields;
+packed, variable-shape or grouped inputs require an explicit adapter. `InputView`
+can rename fields or reshape contiguous views without copying. Metadata fields
+declare their physical shapes, dtypes, padding and value bounds; the engine
+reserves their host storage before calling the adapter's fill function with
+caller-order regions, groups and logical-worker context. Views of sliced inputs
+retain their strides, and unsupported reshapes fail before allocating a copy.
+
+The resulting input signature and staging bound are inspectable before model
+construction. `padding_safe` describes the model-side assertion; objective
+masking and loss ownership must still be qualified when binding the operation.
+Adapters use ordinary functions, never a trainer loop or model-name branch.
+
 Traversal is a planning choice; microbatch geometry is a build choice. For eight
 instantiated calls, `StepDataOrdering(depth=2, breadth=4)` makes two passes of four
 microbatches each. Within a pass, stage-major execution can reuse fetched weights
