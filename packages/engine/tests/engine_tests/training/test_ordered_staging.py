@@ -4,12 +4,54 @@ from concurrent.futures import ThreadPoolExecutor
 
 import pytest
 
+from shadowspill.orchestration.launch.admission import NodeAdmission, NodeCapacity
+from shadowspill.orchestration.launch.host_arena import HostArena
 from shadowspill.training.session.staging import OrderedStaging
 from shadowspill_client import Execution
+from shadowspill_client.buffers import BufferBudget
 
 
 def queue(*, size=10, count=2):
     return OrderedStaging(Execution(max_staging_bytes=size, max_pending_requests=count))
+
+
+def test_input_owners_retain_node_arena_charge_through_queue_shutdown():
+    node = NodeAdmission(NodeCapacity("controller", (), 100))
+    arena = HostArena(node, 10, 2)
+    inputs = OrderedStaging(
+        Execution(max_staging_bytes=10, max_pending_requests=2), budget=arena.budget
+    )
+    first = inputs.register(1, 8)
+    payload = first.acquire().reserve(8)
+    assert arena.budget.used == inputs.used == (8, 1)
+    inputs.close()
+    with pytest.raises(RuntimeError, match="live buffer owners"):
+        arena.close()
+    assert node.used.host_bytes == 10
+    with pytest.raises(RuntimeError, match="live input owners"):
+        first.close()
+    payload.close()
+    first.close()
+    arena.close()
+    assert node.used.claims == 0
+
+
+@pytest.mark.parametrize(
+    "size,count,used", [(9, 2, False), (10, 1, False), (10, 2, True)]
+)
+def test_parent_budget_must_match_configured_input_capacity_and_have_no_owner(
+    size, count, used
+):
+    budget = BufferBudget(size, count)
+    owner = budget.reserve(0) if used else None
+    try:
+        with pytest.raises(ValueError, match="matching Execution"):
+            OrderedStaging(
+                Execution(max_staging_bytes=10, max_pending_requests=2), budget=budget
+            )
+    finally:
+        if owner is not None:
+            owner.close()
 
 
 def test_out_of_order_metadata_reserves_earlier_pipeline_before_later_upload():

@@ -82,9 +82,12 @@ class RequestInputs[Data: PreparedInput]:
         prepare: Callable[[ComputeRequest, BatchSnapshot | None, BufferBudget], Data],
         *,
         first_sequence: int = 1,
+        budget: BufferBudget | None = None,
     ) -> None:
         self._records, self._order, self._prepare = records, order, prepare
-        self.staging = OrderedStaging(execution, first_sequence=first_sequence)
+        self.staging = OrderedStaging(
+            execution, first_sequence=first_sequence, budget=budget
+        )
         self._slots: dict[str, _Slot[Data]] = {}
         self._registration_paused = False
 

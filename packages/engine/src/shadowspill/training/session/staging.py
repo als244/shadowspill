@@ -75,10 +75,28 @@ class OrderedStaging:
     tensor-free commands, and closes rejected/expired unclaimed tickets.
     """
 
-    def __init__(self, execution: Execution, *, first_sequence: int = 1) -> None:
+    def __init__(
+        self,
+        execution: Execution,
+        *,
+        first_sequence: int = 1,
+        budget: BufferBudget | None = None,
+    ) -> None:
         self._first = self._next = integer(first_sequence, "first sequence", minimum=1)
         self._maximum = execution.max_pending_requests
-        self._budget = BufferBudget(execution.max_staging_bytes, self._maximum)
+        if budget is not None and (
+            budget.max_bytes != execution.max_staging_bytes
+            or budget.max_requests != self._maximum
+            or budget.used != (0, 0)
+        ):
+            raise ValueError(
+                "input staging requires an unused budget matching Execution"
+            )
+        # An allocation service supplies its exclusive node-backed arena here.
+        # Standalone owners use the same queue with a private buffer budget.
+        self._budget = budget or BufferBudget(
+            execution.max_staging_bytes, self._maximum
+        )
         self._condition = Condition()
         self._entries: dict[int, StagingTicket] = {}
         self._finished: set[int] = set()

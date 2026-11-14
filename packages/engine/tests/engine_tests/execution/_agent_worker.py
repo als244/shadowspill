@@ -22,15 +22,10 @@ sys.meta_path.insert(0, Block())
 import numpy as np  # noqa: E402
 
 from engine_tests.fixtures.definition_operations import records  # noqa: E402
-from shadowspill.orchestration.launch.admission import (  # noqa: E402
-    AssignedDevice,
-    NodeAdmission,
-    NodeCapacity,
-    ResourceRequest,
-)
-from shadowspill.orchestration.launch.device_inventory import probe_devices  # noqa: E402
+from shadowspill.orchestration.launch.admission import NodeAdmission  # noqa: E402
 from shadowspill.orchestration.launch.file_grants import FileGrants  # noqa: E402
-from shadowspill.orchestration.launch.host_memory import host_memory  # noqa: E402
+from shadowspill.orchestration.launch.host_arena import HostArena  # noqa: E402
+from shadowspill.orchestration.launch.node_capacity import discover_capacity  # noqa: E402
 from shadowspill.orchestration.launch.publication import (  # noqa: E402
     OutputFiles,
     require_output,
@@ -50,6 +45,7 @@ from shadowspill.training.worker.launch import (  # noqa: E402
 )
 from shadowspill.training.worker.protocol import WorkerLaunch, WorkerScope  # noqa: E402
 from shadowspill.training.worker.requests import NodeFiles, WorkerRequests  # noqa: E402
+from shadowspill.training.worker.resources import WorkerHost, worker_request  # noqa: E402
 from shadowspill.training.worker.runtime import PreparedWorker  # noqa: E402
 from shadowspill_client.buffers import BufferBudget  # noqa: E402
 from shadowspill_client.protocol.payload import MEDIA_TYPE, snapshot_batch  # noqa: E402
@@ -76,35 +72,77 @@ prepared_worker = PreparedWorker.resolve(
     family, WorkerScope("run", "agent", "gpu-1", 0), bundle=reference
 )
 expected = prepared_worker.startup
-devices = probe_devices(environment=os.environ, root=directory)
-assert len(devices.devices) == 1
-device = devices.devices[0]
+controller_allowance = 1 << 30
 admission = NodeAdmission(
-    NodeCapacity(
-        "local",
-        (AssignedDevice(device.uuid, device.uuid, device.total_bytes),),
-        host_memory().available_bytes,
+    discover_capacity(
+        environment=os.environ,
+        root=directory,
+        node_id="local",
+        reserved_host_bytes=controller_allowance,
     )
 )
-# This tiny integration reserves a conservative explicit test envelope. General
-# process/decoded-artifact overhead policy remains a separate service gate.
+assert len(admission.capacity.devices) == 1
+device = admission.capacity.devices[0]
+# These explicit deployment allowances are qualified for this installed tiny
+# fixture only. Record kernel high-water observations without calling them a
+# maximum proof for arbitrary definitions or larger bundles.
 lease = admission.reserve(
-    ResourceRequest({device.uuid: expected.device_bytes}, 8 << 30)
+    worker_request({device.id: (expected, WorkerHost(2 << 30, 512 << 20))})
 )
-disk, memory = BufferBudget(128 << 20, 100), BufferBudget(64 << 20, 100)
-metadata = BufferBudget(16 << 20)
+disk = BufferBudget(128 << 20, 100)
+execution = prepared_worker.bindings.setup.config.execution
 oracle = json.loads((root / "agent-oracle.json").read_text())
+observations = []
+
+
+def host_peak(pid):
+    with Path(f"/proc/{pid}/status").open("rb") as stream:
+        raw = stream.read((64 << 10) + 1)
+    assert len(raw) <= 64 << 10
+    for line in raw.decode().splitlines():
+        if line.startswith("VmHWM:"):
+            _, amount, unit = line.split()
+            assert unit == "kB"
+            return int(amount) * 1024
+    raise AssertionError("owned process has no resident high-water observation")
+
+
+def observe(phase, process):
+    worker = host_peak(process.child.process.pid)
+    controller = host_peak(os.getpid())
+    assert worker <= lease.request.host_bytes
+    assert controller <= controller_allowance + arena_bytes
+    observations.append(
+        {
+            "phase": phase,
+            "worker_peak_bytes": worker,
+            "controller_peak_bytes": controller,
+        }
+    )
+
 
 with (
-    FileDelivery([reference], root=directory, disk=disk, memory=memory) as bundle_files,
-    FileGrants(root=directory, memory=memory) as grants,
-    OutputFiles(root=directory, disk=disk, memory=memory) as outputs,
+    lease,
+    HostArena(admission, 64 << 20, 100) as transfers,
+    HostArena(admission, 16 << 20, 2) as commands,
+    HostArena(admission, 64 << 20, 2) as publication,
+    HostArena(
+        admission, execution.max_staging_bytes, execution.max_pending_requests
+    ) as uploads,
+    FileDelivery(
+        [reference], root=directory, disk=disk, memory=transfers.budget
+    ) as bundle_files,
+    FileGrants(root=directory, memory=transfers.budget) as grants,
+    OutputFiles(root=directory, disk=disk, memory=transfers.budget) as outputs,
 ):
+    memory, metadata = transfers.budget, commands.budget
+    arena_bytes = (144 << 20) + execution.max_staging_bytes
+    assert admission.used.host_bytes == lease.request.host_bytes + arena_bytes
     bundle_files.receive(lambda _: (root / "training.ssp").open("rb"))
-    with grants.lend(bundle_files, [reference]), lease:
+    with grants.lend(bundle_files, [reference]):
         process = launch_worker(
             lease,
-            device.uuid,
+            device.id,
             WorkerLaunch(expected, packages),
             environment={
                 **os.environ,
@@ -133,12 +171,17 @@ with (
             ) as journal,
         ):
             assert process.child._ready and process.child._socket.gettimeout() is None
+            observe("ready", process)
             state = OperationState()
             dispatcher = RequestDispatcher(journal, state, max_pending=3)
             prepared = PreparedRequests(family, cache_root=directory)
             journal.claim_writer("writer", "agent")
             inputs = RequestInputs(
-                journal, dispatcher.order, prepared.setup.config.execution, prepared
+                journal,
+                dispatcher.order,
+                prepared.setup.config.execution,
+                prepared,
+                budget=uploads.budget,
             )
 
             def invoke(operation, *, predictions=None, corrupt=False, **options):
@@ -147,7 +190,7 @@ with (
                 payload, wire, count = None, None, 0
                 if operation != "optim_step":
                     datums = records(targets=operation != "forward")
-                    with snapshot_batch(datums, BufferBudget(1 << 20)) as snapshot:
+                    with snapshot_batch(datums, publication.budget) as snapshot:
                         payload = ArtifactRef(
                             name, snapshot.sha256, snapshot.size_bytes, MEDIA_TYPE
                         )
@@ -182,7 +225,7 @@ with (
                         read_payload(
                             stream,
                             result.replies[0].result,
-                            BufferBudget(frame.frame.size.staging),
+                            publication.budget,
                             limits=frame.frame.size,
                         ) as decoded,
                     ):
@@ -237,6 +280,7 @@ with (
                 finally:
                     inputs.finish(name)
                 assert inputs.staging.used == (0, 0)
+                observe(name, process)
 
             def pytest_fail():
                 raise AssertionError("completed optimizer replayed")
@@ -253,8 +297,25 @@ with (
             invoke("optim_step", optim={"lr": 0.02}, grad_scale=-0.5, corrupt=True)
             invoke("forward", outputs="predictions", predictions="after_split")
             assert state.boundary.completed_updates == 2 and state.boundary.valid
-        assert process.child.closed and lease.closed and admission.used.claims == 0
-assert disk.used == memory.used == metadata.used == (0, 0)
+            inputs.staging.close()
+        assert process.child.closed and lease.closed
+        assert admission.used.host_bytes == arena_bytes
+assert admission.used.claims == 0
+assert disk.used == memory.used == metadata.used == publication.budget.used == (0, 0)
+(directory / "host-accounting.json").write_text(
+    json.dumps(
+        {
+            "worker_host_claim_bytes": lease.request.host_bytes,
+            "controller_fixed_allowance_bytes": controller_allowance,
+            "agent_arena_claim_bytes": arena_bytes,
+            "observations": observations,
+            "all_claims_released": admission.used.claims == 0,
+        },
+        indent=2,
+    )
+    + "\n"
+)
 assert not any(name in sys.modules for name in ("torch", "triton", "pynvml"))
 print("Qualified installed agent-owned GPU bootstrap and binary publication")
 print("Qualified production worker request/file coordination")
+print("Qualified node-backed worker and input/artifact host accounting")
